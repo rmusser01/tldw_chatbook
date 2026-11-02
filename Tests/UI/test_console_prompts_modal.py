@@ -3729,3 +3729,15 @@ def test_captured_improvement_context_repr_hides_prompt_bytes() -> None:
     rendered = repr(context)
     assert "PRIVATE BODY" not in rendered
     assert "PRIVATE SYSTEM BYTES" not in rendered
+
+
+def test_mixins_navigation_preserves_browse_parent_and_focus():
+    state = ConsolePromptsState.initial().remember_focus(
+        "browse", "console-prompts-mixins"
+    )
+    entered = state.enter_mode("mixins").remember_focus(
+        "mixins", "console-mixins-library"
+    )
+    assert entered.mode == "mixins"
+    assert entered.go_back().mode == "browse"
+    assert entered.go_back().focus_for("browse") == "console-prompts-mixins"

@@ -1,0 +1,28 @@
+{
+  "base": "d83ca84cdbd8cb934ba747bcb7a2179b934904ed",
+  "cwd": "/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/mixins-original-attribution-uydjvxa4/source",
+  "argv": [
+    "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python",
+    "-m",
+    "pytest",
+    "-p",
+    "original_native_admission",
+    "Tests/Chatbooks/test_chatbook_prompt_round_trip.py::test_prompt_export_failure_is_atomic_bounded_and_private",
+    "-q",
+    "--tb=short",
+    "-p",
+    "no:cacheprovider",
+    "--basetemp",
+    "/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/mixins-original-attribution-uydjvxa4/archive-privacy-pytest"
+  ],
+  "plugin": "/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/mixins-original-attribution-uydjvxa4/original_native_admission.py",
+  "exit_code": 0,
+  "failed": [],
+  "tail": [
+    ".....                                                                    [100%]",
+    "============================= slowest 25 durations =============================",
+    "",
+    "(15 durations < 1s hidden.)",
+    "5 passed in 1.01s"
+  ]
+}

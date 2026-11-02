@@ -7,6 +7,8 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 from weakref import ReferenceType, ref
 
+from .console_prompt_mixins import MixinPreferences
+
 if TYPE_CHECKING:
     from .attachment_core import PendingAttachment
     from .console_chat_store import ConsoleChatSession, ConsoleChatStore
@@ -37,6 +39,7 @@ class ConsoleSessionInputSnapshot:
     _session_ref: ReferenceType[ConsoleChatSession] = field(repr=False)
     _settings: ConsoleSessionSettings | None = field(repr=False)
     _attachment_ids: tuple[str, ...] = field(repr=False)
+    prompt_mixin_preferences: MixinPreferences | None = field(default=None, repr=False)
 
 
 @dataclass(frozen=True, slots=True)
@@ -241,6 +244,7 @@ class ConsoleReceivedIntentInputMixin:
                 _session_ref=ref(session),
                 _settings=session.settings,
                 _attachment_ids=tuple(item.attachment_id for item in attachments),
+                prompt_mixin_preferences=session.prompt_mixin_preferences.preferences,
             )
 
     def session_inputs_are_current(
@@ -261,7 +265,14 @@ class ConsoleReceivedIntentInputMixin:
                 return False
             pending = session.pending_attachments
             return (
-                session.workspace_id == snapshot.workspace_id
+                (
+                    session.prompt_mixin_preferences.preferences is None
+                    if snapshot.prompt_mixin_preferences is None
+                    else session.prompt_mixin_preferences.preferences is not None
+                    and session.prompt_mixin_preferences.preferences.revision
+                    == snapshot.prompt_mixin_preferences.revision
+                )
+                and session.workspace_id == snapshot.workspace_id
                 and session.settings is snapshot._settings
                 and session.settings_revision == snapshot.settings_revision
                 and session.generation_settings_revision

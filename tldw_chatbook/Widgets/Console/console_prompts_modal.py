@@ -51,6 +51,7 @@ from .console_prompt_improve_view import (
     ConsolePromptImproveView,
     improvement_provider_summary,
 )
+from .console_prompt_mixins_view import ConsolePromptMixinsView
 from .console_prompts_browse import ConsolePromptsBrowse
 from .console_prompts_state import (
     ConsolePromptsState,
@@ -195,7 +196,7 @@ class ConsolePromptsModal(
 ):
     """One responsive modal shell with internal prompt-workbench modes."""
 
-    MODES = ("browse", "edit", "improve", "recipe", "draft_edit")
+    MODES = ("browse", "edit", "improve", "recipe", "draft_edit", "mixins")
 
     DEFAULT_CSS = """
     ConsolePromptsModal { align: center middle; }
@@ -232,7 +233,8 @@ class ConsolePromptsModal(
         improve_unavailable_reason: str = "",
         configure_provider: Callable[[], Any] | None = None,
         improvement_context: ConsolePromptImprovementContext | Any | None = None,
-        initial_mode: Literal["browse", "improve"] = "browse",
+        initial_mode: Literal["browse", "improve", "mixins"] = "browse",
+        mixin_flow: Any | None = None,
         activate_improvement_context: Callable[[], Any] | None = None,
         capture_manual_resolution: Callable[[], Any] | None = None,
         build_improvement_snapshot: Callable[..., Any] | None = None,
@@ -252,6 +254,8 @@ class ConsolePromptsModal(
         **kwargs: Any,
     ) -> None:
         super().__init__(**kwargs)
+        self._mixin_generation = 0
+        self._mixin_flow = mixin_flow
         self._capabilities = capabilities
         self._list_page = list_page
         self._search = search
@@ -273,7 +277,7 @@ class ConsolePromptsModal(
         self._insert_draft = insert_draft
         self._list_draft_collections = list_draft_collections
         self._assign_draft_collection = assign_draft_collection
-        if initial_mode not in {"browse", "improve"}:
+        if initial_mode not in {"browse", "improve", "mixins"}:
             raise ValueError(f"Unsupported initial Prompt mode: {initial_mode}")
         if initial_source not in {"local", "server", "draft_shelf"}:
             raise ValueError(f"Unsupported initial Prompt source: {initial_source}")
@@ -336,6 +340,8 @@ class ConsolePromptsModal(
                 yield (
                     self._improve_widget()
                     if self.state.mode == "improve"
+                    else Static("Loading mix-ins…")
+                    if self.state.mode == "mixins"
                     else self._browse_widget()
                 )
             with Vertical(id="console-prompts-dirty-guard"):
@@ -350,6 +356,242 @@ class ConsolePromptsModal(
                 yield Button("Back", id="console-prompts-back")
                 yield Button("Close", id="console-prompts-close")
 
+    def _mixin_enabled_count(self) -> int | None:
+        if self._mixin_flow is None:
+            return None
+        try:
+            return sum(
+                row.enabled
+                for row in self._mixin_flow.service.preferences(
+                    self._mixin_flow.session_id
+                ).entries
+            )
+        except Exception:  # noqa: BLE001 - unavailable choices must not masquerade as empty.
+            return None
+
+    def _mixin_ui_current(self, generation: int, view=None) -> bool:
+        if (
+            not self.is_mounted
+            or self.state.mode != "mixins"
+            or self._mixin_generation != generation
+        ):
+            return False
+        views = self.query(ConsolePromptMixinsView)
+        return view is None or bool(views and views.first() is view)
+
+    @staticmethod
+    def _mixin_editor_snapshot(view):
+        editors = view.query("PromptMixinEditor") if view is not None else ()
+        editor = editors.first() if editors else None
+        return editor, editor.read_draft() if editor is not None else None
+
+    async def _refresh_mixins(self, *, query=None, page=None):
+        if self.state.mode != "mixins" or not self.is_mounted:
+            return None
+        views = self.query(ConsolePromptMixinsView)
+        prior_view = views.first() if views else None
+        if prior_view is not None and prior_view.dirty:
+            return None
+        self._mixin_generation += 1
+        generation = self._mixin_generation
+        editor_snapshot = self._mixin_editor_snapshot(prior_view)
+        body = self.query_one("#console-prompts-body", Vertical)
+        try:
+            projection = await self._mixin_flow.project(query=query, page=page)
+        except Exception:  # noqa: BLE001 - stale ownership cannot mutate another chat.
+            if (
+                not self._mixin_ui_current(generation, prior_view)
+                or self._mixin_editor_snapshot(prior_view) != editor_snapshot
+            ):
+                return None
+            await body.remove_children()
+            if self._mixin_ui_current(generation):
+                await body.mount(
+                    Static(
+                        "Mix-ins unavailable or chat changed. Close and reopen Prompts.",
+                        markup=False,
+                    )
+                )
+            return None
+        if (
+            not self._mixin_ui_current(generation, prior_view)
+            or self._mixin_editor_snapshot(prior_view) != editor_snapshot
+        ):
+            return None
+        await body.remove_children()
+        if not self._mixin_ui_current(generation):
+            return None
+        view = ConsolePromptMixinsView(projection)
+        await body.mount(view)
+        return view if self._mixin_ui_current(generation, view) else None
+
+    @on(ConsolePromptsBrowse.MixinsRequested)
+    async def _open_mixins(self) -> None:
+        await self.enter_mode("mixins")
+
+    @on(ConsolePromptMixinsView.BrowseRequested)
+    async def _mixins_browse(self) -> None:
+        if self._holds_dirty_edit():
+            self._show_dirty_guard()
+            return
+        await self.enter_mode("browse")
+        await self.reload_browse()
+
+    @on(ConsolePromptMixinsView.RefreshRequested)
+    def _mixins_refresh(self, event) -> None:
+        if self._holds_dirty_edit():
+            self._show_dirty_guard()
+            return
+        self.run_worker(
+            self._refresh_mixins(query=event.query, page=event.page),
+            exclusive=True,
+            group="console-mixins",
+        )
+
+    @on(ConsolePromptMixinsView.IntentRequested)
+    def _mixins_intent(self, event) -> None:
+        if self._holds_dirty_edit():
+            self._show_dirty_guard()
+            return
+        self.run_worker(
+            self._apply_mixin_intent(event.intent),
+            exclusive=True,
+            group="console-mixins",
+        )
+
+    async def _apply_mixin_intent(self, intent) -> None:
+        views = self.query(ConsolePromptMixinsView)
+        if not self._mixin_ui_current(self._mixin_generation) or not views:
+            return
+        view = views.first()
+        generation = self._mixin_generation
+        editor_snapshot = self._mixin_editor_snapshot(view)
+        try:
+            if intent.action == "inspect":
+                record, definition = await self._mixin_flow.inspect(intent)
+                if (
+                    not self._mixin_ui_current(generation, view)
+                    or self._mixin_editor_snapshot(view) != editor_snapshot
+                ):
+                    return
+                self._mixin_editor_intent = intent
+                await view.show_editor(
+                    record,
+                    definition,
+                    is_current=lambda: self._mixin_ui_current(generation, view),
+                )
+                return
+            await self._mixin_flow.apply(intent)
+            if not self._mixin_ui_current(generation, view):
+                return
+            refreshed = await self._refresh_mixins()
+            if refreshed is None:
+                return
+            projection = refreshed.projection
+            index = next(
+                (
+                    i
+                    for i, row in enumerate(projection.preferences.entries)
+                    if row.source == intent.source
+                ),
+                None,
+            )
+            if index is not None:
+                self._focus_widget(f"console-mixin-enabled-{index}")
+            else:
+                self._focus_widget("console-mixins-library")
+        except Exception:  # noqa: BLE001 - show bounded recovery without source text.
+            if not self._mixin_ui_current(generation, view):
+                return
+            view.query_one("#console-mixins-status", Static).display = True
+            view.query_one("#console-mixins-status", Static).update(
+                "Mix-in unavailable or choices changed. Close and reopen Prompts to retry."
+            )
+
+    @on(ConsolePromptMixinsView.SaveRequested)
+    def _mixins_save(self) -> None:
+        self.run_worker(
+            self._save_mixin_editor(), exclusive=True, group="console-mixins"
+        )
+
+    async def _save_mixin_editor(self) -> None:
+        from ..Prompts.prompt_mixin_editor import PromptMixinEditor
+
+        views = self.query(ConsolePromptMixinsView)
+        if not self._mixin_ui_current(self._mixin_generation) or not views:
+            return
+        view = views.first()
+        generation = self._mixin_generation
+        editor = view.query_one(PromptMixinEditor)
+        submitted = editor.read_draft()
+        intent = self._mixin_editor_intent
+        try:
+            saved = await self._mixin_flow.save(
+                intent, view.editor_record, editor.read_name(), editor.read_definition()
+            )
+            if (
+                not self._mixin_ui_current(generation, view)
+                or self._mixin_editor_snapshot(view)[0] is not editor
+            ):
+                return
+            view.editor_record = saved
+            view.editor_initial = submitted
+            preferences = self._mixin_flow.service.preferences(intent.session_id)
+            self._mixin_editor_intent = replace(intent, revision=preferences.revision)
+            if editor.read_draft() != submitted:
+                status = view.query_one("#console-mixins-status", Static)
+                status.display = True
+                status.update(
+                    "Earlier Library edit saved. Newer changes are kept and unsaved; Save Library changes to keep them."
+                )
+                return
+            await self._refresh_mixins()
+        except Exception:  # noqa: BLE001 - validation/conflict keeps the dirty draft.
+            if (
+                not self._mixin_ui_current(generation, view)
+                or self._mixin_editor_snapshot(view)[0] is not editor
+            ):
+                return
+            view.query_one("#console-mixins-status", Static).display = True
+            view.query_one("#console-mixins-status", Static).update(
+                "Library changes were not saved. Check Name and Instructions, or reopen after a source/version change. Your edit is kept."
+            )
+
+    @on(ConsolePromptMixinsView.PreviewRequested)
+    def _mixins_preview(self) -> None:
+        self.run_worker(self._preview_mixins(), exclusive=True, group="console-mixins")
+
+    async def _preview_mixins(self) -> None:
+        views = self.query(ConsolePromptMixinsView)
+        if not self._mixin_ui_current(self._mixin_generation) or not views:
+            return
+        view = views.first()
+        generation = self._mixin_generation
+        try:
+            snapshot, payload = await self._mixin_flow.preview(view.intent("inspect"))
+            if not self._mixin_ui_current(generation, view):
+                return
+            text = "\n\n".join(
+                f"{item.definition.placement.title()} · {item.name} · v{item.record_version}\n{item.definition.body}"
+                for item in (snapshot.items if snapshot is not None else ())
+            )
+            if payload is not None:
+                import json
+
+                text += "\n\nExact next-send preview\n" + json.dumps(
+                    payload.next_send_payload, ensure_ascii=False, indent=2
+                )
+            view.query_one("#console-mixins-preview-content", Static).update(
+                text or "No mix-ins. The original payload is unchanged."
+            )
+        except Exception:  # noqa: BLE001 - preview never publishes selection facts.
+            if not self._mixin_ui_current(generation, view):
+                return
+            view.query_one("#console-mixins-status", Static).display = True
+            view.query_one("#console-mixins-status", Static).update(
+                "Next send mix-ins unavailable. Disable or remove unavailable selections, then preview again."
+            )
+
     def _browse_widget(self) -> ConsolePromptsBrowse:
         return ConsolePromptsBrowse(
             source=self.state.source,
@@ -358,13 +600,18 @@ class ConsolePromptsModal(
             improve_unavailable_reason=self._improve_unavailable_reason,
             can_configure_provider=self._can_offer_provider_recovery(),
             manual_improve_available=self._improvement_context is not None,
+            mixin_count=self._mixin_enabled_count(),
             id="console-prompts-browse",
         )
 
     def on_mount(self) -> None:
         self._apply_in_progress = False
         self._set_responsive(self.app.size.width, self.app.size.height)
-        if self.state.mode == "browse":
+        if self.state.mode == "mixins":
+            self.run_worker(
+                self._refresh_mixins(), exclusive=True, group="console-mixins"
+            )
+        elif self.state.mode == "browse":
             self.run_worker(
                 self.reload_browse(),
                 exclusive=False,
@@ -384,6 +631,7 @@ class ConsolePromptsModal(
         self._set_responsive(event.size.width, event.size.height)
 
     def on_unmount(self) -> None:
+        self._mixin_generation += 1
         if self._debounce_timer is not None:
             self._debounce_timer.stop()
         self._recipe_selecting = False
@@ -443,19 +691,23 @@ class ConsolePromptsModal(
 
     async def enter_mode(
         self, mode: PromptModalMode, *, focus_id: str | None = None
-    ) -> None:
+    ) -> bool:
         if mode not in self.MODES:
             raise ValueError(f"Unsupported prompt modal mode: {mode}")
         if self._recipe_selecting and self.state.mode == "browse" and mode != "browse":
             self._recipe_selecting = False
         self._remember_current_focus()
         self.state = self.state.enter_mode(mode)
+        entered_state = self.state
         await self._mount_mode(mode)
+        if not self.is_mounted or self.state is not entered_state:
+            return False
         self._reset_persistence_retry()
         self.call_after_refresh(
             self._focus_widget,
             focus_id or self.state.focus_for(mode),
         )
+        return True
 
     async def _back_internal(self, *, discard: bool = False) -> None:
         if self._apply_in_progress:
@@ -481,12 +733,15 @@ class ConsolePromptsModal(
         self.call_after_refresh(self._focus_widget, focus_id)
 
     async def _mount_mode(self, mode: PromptModalMode) -> None:
+        self._mixin_generation += 1
         body = self.query_one("#console-prompts-body", Vertical)
         await body.remove_children()
         self.query_one("#console-prompts-location", Static).update(
             self._location_copy(mode)
         )
-        if mode == "browse":
+        if mode == "mixins":
+            await self._refresh_mixins()
+        elif mode == "browse":
             browse = self._browse_widget()
             await body.mount(browse)
             await browse.show_result(self.browse_result, query=self.state.query)
@@ -535,7 +790,13 @@ class ConsolePromptsModal(
             await self._mount_recipe_choices(body)
 
     def _location_copy(self, mode: PromptModalMode) -> str:
-        mode_label = "Draft Shelf" if mode == "draft_edit" else mode.title()
+        mode_label = (
+            "Draft Shelf"
+            if mode == "draft_edit"
+            else "Mix-ins"
+            if mode == "mixins"
+            else mode.title()
+        )
         parts = ["Prompts", mode_label]
         if mode == "edit" and self.state.selected_source:
             parts.append(self.state.selected_source.title())
@@ -699,7 +960,7 @@ class ConsolePromptsModal(
             and self.state.selected_source
             and self._decoded is not None
             and self._decoded.artifact_type == "prompt"
-            and self._decoded.definition is not None
+            and isinstance(self._decoded.definition, BlockArtifactDefinition)
         )
         if can_apply_saved_prompt:
             return
@@ -948,11 +1209,66 @@ class ConsolePromptsModal(
                 compatibility_stale=False,
             )
 
+        if (
+            decoded.state == "supported_v3"
+            and self._mixin_flow is not None
+            and not self._recipe_selecting
+        ):
+            from ...Chat.console_prompt_mixins import MixinSourceRef
+            from ...Prompt_Management.prompt_scope_service import PromptCapabilityError
+            from .console_prompt_mixins_view import MixinWorkbenchIntent
+
+            try:
+                source_identity = self._mixin_flow.scope.mixin_source_identity(
+                    mode=source
+                )
+            except PromptCapabilityError:
+                browse.show_status(
+                    f"{source_label} cannot capture Mix-ins for chat. Keep browsing, or choose a source with snapshot reads.",
+                    retry=False,
+                )
+                return
+            if not await self.enter_mode("mixins"):
+                return
+            views = list(self.query(ConsolePromptMixinsView))
+            if not views or views[0].projection is None:
+                return
+            view = views[0]
+            try:
+                current_identity = self._mixin_flow.scope.mixin_source_identity(
+                    mode=source
+                )
+            except PromptCapabilityError:
+                view.query_one("#console-mixins-status", Static).display = True
+                view.query_one("#console-mixins-status", Static).update(
+                    "Mix-in source changed. Return to Browse and retry."
+                )
+                return
+            if source_identity[0] != current_identity[0] or any(
+                old is not new
+                for old, new in zip(source_identity[1:], current_identity[1:])
+            ):
+                view.query_one("#console-mixins-status", Static).display = True
+                view.query_one("#console-mixins-status", Static).update(
+                    "Mix-in source changed. Return to Browse and retry."
+                )
+                return
+            authority = source_identity[0]
+            intent = MixinWorkbenchIntent(
+                view.projection.session_id,
+                view.projection.incarnation_id,
+                view.projection.preferences.revision,
+                "inspect",
+                MixinSourceRef(authority, source, record["uuid"]),
+            )
+            await self._apply_mixin_intent(intent)
+            return
+
         if self._recipe_selecting:
             if (
                 decoded.state != "supported_v2"
                 or decoded.artifact_type != "recipe"
-                or decoded.definition is None
+                or not isinstance(decoded.definition, BlockArtifactDefinition)
             ):
                 browse.show_status(
                     "Choose a supported schema-v2 Recipe for this structured flow.",
@@ -980,7 +1296,9 @@ class ConsolePromptsModal(
             source=source,
             capabilities=capabilities,
         )
-        if decoded.state == "supported_v2" and decoded.definition is not None:
+        if decoded.state == "supported_v2" and isinstance(
+            decoded.definition, BlockArtifactDefinition
+        ):
             definition = decoded.definition
             unsaved = decoded.artifact_type == "recipe"
             if unsaved:
@@ -1778,6 +2096,9 @@ class ConsolePromptsModal(
 
     def _holds_dirty_edit(self) -> bool:
         """Whether closing now would discard edits -- the dirty guard's test."""
+        if self.state.mode == "mixins":
+            views = self.query(ConsolePromptMixinsView)
+            return bool(views and views.first().dirty)
         return self.state.mode in {"edit", "recipe", "draft_edit"} and bool(
             self.state.dirty
         )
@@ -1974,7 +2295,7 @@ class ConsolePromptsModal(
                 self.state.working_copy_unsaved
                 or decoded is None
                 or decoded.artifact_type != "prompt"
-                or decoded.definition is None
+                or not isinstance(decoded.definition, BlockArtifactDefinition)
                 or source is None
                 or identity is None
             ):

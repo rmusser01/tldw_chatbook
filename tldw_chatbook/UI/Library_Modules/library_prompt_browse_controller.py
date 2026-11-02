@@ -214,6 +214,11 @@ class LibraryPromptBrowseController:
                         browse_prompts,
                         mode="local",
                         query=scope.query,
+                        **(
+                            {"artifact_type": scope.artifact_type}
+                            if scope.artifact_type is not None
+                            else {}
+                        ),
                         collection_id=scope.collection_id,
                         sort_by=scope.sort_by,
                         sort_order=scope.sort_order,

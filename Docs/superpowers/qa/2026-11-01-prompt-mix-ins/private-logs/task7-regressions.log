@@ -1,0 +1,860 @@
+FFFFFFFFFFFFFFFFFFFF........FFF......................................... [ 40%]
+........................................................................ [ 80%]
+....................................                                     [100%]
+=================================== FAILURES ===================================
+_____________ test_prompts_global_f6_reaches_permanent_work_region _____________
+Tests/UI/test_library_prompts_reader.py:57: in test_prompts_global_f6_reaches_permanent_work_region
+    app = _build_test_app()
+          ^^^^^^^^^^^^^^^^^
+Tests/UI/test_library_prompts_canvas.py:188: in _build_test_app
+    app = _build_tldw_test_app(*args, **kwargs)
+          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+Tests/UI/app_factory.py:398: in _build_test_app
+    fake_app_config = build_test_app_config(
+Tests/UI/app_factory.py:125: in build_test_app_config
+    config = load_settings()
+             ^^^^^^^^^^^^^^^
+tldw_chatbook/config.py:2194: in load_settings
+    return _load_settings_guarded(
+tldw_chatbook/Backup_Recovery/config_participants.py:505: in wrapped
+    with operation(source, target=target):
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/contextlib.py:137: in __enter__
+    return next(self.gen)
+           ^^^^^^^^^^^^^^
+tldw_chatbook/Backup_Recovery/config_participants.py:436: in operation
+    with raw._scope(source, route, writing=True, selected_read=target) as active:
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/contextlib.py:137: in __enter__
+    return next(self.gen)
+           ^^^^^^^^^^^^^^
+tldw_chatbook/Backup_Recovery/raw_participants.py:897: in _scope
+    participant = _raw_participant(source)
+                  ^^^^^^^^^^^^^^^^^^^^^^^^
+tldw_chatbook/Backup_Recovery/raw_participants.py:325: in _raw_participant
+    participant = _register_raw_participant(source, owner, selected)
+                  ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+tldw_chatbook/Backup_Recovery/raw_participants.py:275: in _register_raw_participant
+    raise bootstrap.RecoveryRequired("raw_source_selection_changed")
+E   tldw_chatbook.Backup_Recovery.bootstrap.RecoveryRequired: raw_source_selection_changed
+______________ test_basic_edit_reaches_screen_owned_prompt_draft _______________
+Tests/UI/test_library_prompts_reader.py:114: in test_basic_edit_reaches_screen_owned_prompt_draft
+    app = _build_test_app()
+          ^^^^^^^^^^^^^^^^^
+Tests/UI/test_library_prompts_canvas.py:188: in _build_test_app
+    app = _build_tldw_test_app(*args, **kwargs)
+          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+Tests/UI/app_factory.py:398: in _build_test_app
+    fake_app_config = build_test_app_config(
+Tests/UI/app_factory.py:125: in build_test_app_config
+    config = load_settings()
+             ^^^^^^^^^^^^^^^
+tldw_chatbook/config.py:2194: in load_settings
+    return _load_settings_guarded(
+tldw_chatbook/Backup_Recovery/config_participants.py:505: in wrapped
+    with operation(source, target=target):
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/contextlib.py:137: in __enter__
+    return next(self.gen)
+           ^^^^^^^^^^^^^^
+tldw_chatbook/Backup_Recovery/config_participants.py:436: in operation
+    with raw._scope(source, route, writing=True, selected_read=target) as active:
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/contextlib.py:137: in __enter__
+    return next(self.gen)
+           ^^^^^^^^^^^^^^
+tldw_chatbook/Backup_Recovery/raw_participants.py:897: in _scope
+    participant = _raw_participant(source)
+                  ^^^^^^^^^^^^^^^^^^^^^^^^
+tldw_chatbook/Backup_Recovery/raw_participants.py:325: in _raw_participant
+    participant = _register_raw_participant(source, owner, selected)
+                  ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+tldw_chatbook/Backup_Recovery/raw_participants.py:275: in _register_raw_participant
+    raise bootstrap.RecoveryRequired("raw_source_selection_changed")
+E   tldw_chatbook.Backup_Recovery.bootstrap.RecoveryRequired: raw_source_selection_changed
+____________ test_basic_save_preserves_advanced_only_prompt_fields _____________
+Tests/UI/test_library_prompts_reader.py:172: in test_basic_save_preserves_advanced_only_prompt_fields
+    app = _build_test_app()
+          ^^^^^^^^^^^^^^^^^
+Tests/UI/test_library_prompts_canvas.py:188: in _build_test_app
+    app = _build_tldw_test_app(*args, **kwargs)
+          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+Tests/UI/app_factory.py:398: in _build_test_app
+    fake_app_config = build_test_app_config(
+Tests/UI/app_factory.py:125: in build_test_app_config
+    config = load_settings()
+             ^^^^^^^^^^^^^^^
+tldw_chatbook/config.py:2194: in load_settings
+    return _load_settings_guarded(
+tldw_chatbook/Backup_Recovery/config_participants.py:505: in wrapped
+    with operation(source, target=target):
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/contextlib.py:137: in __enter__
+    return next(self.gen)
+           ^^^^^^^^^^^^^^
+tldw_chatbook/Backup_Recovery/config_participants.py:436: in operation
+    with raw._scope(source, route, writing=True, selected_read=target) as active:
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/contextlib.py:137: in __enter__
+    return next(self.gen)
+           ^^^^^^^^^^^^^^
+tldw_chatbook/Backup_Recovery/raw_participants.py:897: in _scope
+    participant = _raw_participant(source)
+                  ^^^^^^^^^^^^^^^^^^^^^^^^
+tldw_chatbook/Backup_Recovery/raw_participants.py:325: in _raw_participant
+    participant = _register_raw_participant(source, owner, selected)
+                  ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+tldw_chatbook/Backup_Recovery/raw_participants.py:275: in _register_raw_participant
+    raise bootstrap.RecoveryRequired("raw_source_selection_changed")
+E   tldw_chatbook.Backup_Recovery.bootstrap.RecoveryRequired: raw_source_selection_changed
+__________ test_invalid_advanced_block_routes_save_focus_to_its_owner __________
+Tests/UI/test_library_prompts_reader.py:235: in test_invalid_advanced_block_routes_save_focus_to_its_owner
+    app = _build_test_app()
+          ^^^^^^^^^^^^^^^^^
+Tests/UI/test_library_prompts_canvas.py:188: in _build_test_app
+    app = _build_tldw_test_app(*args, **kwargs)
+          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+Tests/UI/app_factory.py:398: in _build_test_app
+    fake_app_config = build_test_app_config(
+Tests/UI/app_factory.py:125: in build_test_app_config
+    config = load_settings()
+             ^^^^^^^^^^^^^^^
+tldw_chatbook/config.py:2194: in load_settings
+    return _load_settings_guarded(
+tldw_chatbook/Backup_Recovery/config_participants.py:505: in wrapped
+    with operation(source, target=target):
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/contextlib.py:137: in __enter__
+    return next(self.gen)
+           ^^^^^^^^^^^^^^
+tldw_chatbook/Backup_Recovery/config_participants.py:436: in operation
+    with raw._scope(source, route, writing=True, selected_read=target) as active:
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/contextlib.py:137: in __enter__
+    return next(self.gen)
+           ^^^^^^^^^^^^^^
+tldw_chatbook/Backup_Recovery/raw_participants.py:897: in _scope
+    participant = _raw_participant(source)
+                  ^^^^^^^^^^^^^^^^^^^^^^^^
+tldw_chatbook/Backup_Recovery/raw_participants.py:325: in _raw_participant
+    participant = _register_raw_participant(source, owner, selected)
+                  ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+tldw_chatbook/Backup_Recovery/raw_participants.py:275: in _register_raw_participant
+    raise bootstrap.RecoveryRequired("raw_source_selection_changed")
+E   tldw_chatbook.Backup_Recovery.bootstrap.RecoveryRequired: raw_source_selection_changed
+_________________ test_prompts_mount_three_retained_roles_once _________________
+Tests/UI/test_library_prompts_reader.py:279: in test_prompts_mount_three_retained_roles_once
+    app = _build_test_app()
+          ^^^^^^^^^^^^^^^^^
+Tests/UI/test_library_prompts_canvas.py:188: in _build_test_app
+    app = _build_tldw_test_app(*args, **kwargs)
+          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+Tests/UI/app_factory.py:398: in _build_test_app
+    fake_app_config = build_test_app_config(
+Tests/UI/app_factory.py:125: in build_test_app_config
+    config = load_settings()
+             ^^^^^^^^^^^^^^^
+tldw_chatbook/config.py:2194: in load_settings
+    return _load_settings_guarded(
+tldw_chatbook/Backup_Recovery/config_participants.py:505: in wrapped
+    with operation(source, target=target):
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/contextlib.py:137: in __enter__
+    return next(self.gen)
+           ^^^^^^^^^^^^^^
+tldw_chatbook/Backup_Recovery/config_participants.py:436: in operation
+    with raw._scope(source, route, writing=True, selected_read=target) as active:
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/contextlib.py:137: in __enter__
+    return next(self.gen)
+           ^^^^^^^^^^^^^^
+tldw_chatbook/Backup_Recovery/raw_participants.py:897: in _scope
+    participant = _raw_participant(source)
+                  ^^^^^^^^^^^^^^^^^^^^^^^^
+tldw_chatbook/Backup_Recovery/raw_participants.py:325: in _raw_participant
+    participant = _register_raw_participant(source, owner, selected)
+                  ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+tldw_chatbook/Backup_Recovery/raw_participants.py:275: in _register_raw_participant
+    raise bootstrap.RecoveryRequired("raw_source_selection_changed")
+E   tldw_chatbook.Backup_Recovery.bootstrap.RecoveryRequired: raw_source_selection_changed
+_________ test_list_and_work_identity_survive_basic_advanced_and_info __________
+Tests/UI/test_library_prompts_reader.py:315: in test_list_and_work_identity_survive_basic_advanced_and_info
+    app = _build_test_app()
+          ^^^^^^^^^^^^^^^^^
+Tests/UI/test_library_prompts_canvas.py:188: in _build_test_app
+    app = _build_tldw_test_app(*args, **kwargs)
+          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+Tests/UI/app_factory.py:398: in _build_test_app
+    fake_app_config = build_test_app_config(
+Tests/UI/app_factory.py:125: in build_test_app_config
+    config = load_settings()
+             ^^^^^^^^^^^^^^^
+tldw_chatbook/config.py:2194: in load_settings
+    return _load_settings_guarded(
+tldw_chatbook/Backup_Recovery/config_participants.py:505: in wrapped
+    with operation(source, target=target):
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/contextlib.py:137: in __enter__
+    return next(self.gen)
+           ^^^^^^^^^^^^^^
+tldw_chatbook/Backup_Recovery/config_participants.py:436: in operation
+    with raw._scope(source, route, writing=True, selected_read=target) as active:
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/contextlib.py:137: in __enter__
+    return next(self.gen)
+           ^^^^^^^^^^^^^^
+tldw_chatbook/Backup_Recovery/raw_participants.py:897: in _scope
+    participant = _raw_participant(source)
+                  ^^^^^^^^^^^^^^^^^^^^^^^^
+tldw_chatbook/Backup_Recovery/raw_participants.py:325: in _raw_participant
+    participant = _register_raw_participant(source, owner, selected)
+                  ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+tldw_chatbook/Backup_Recovery/raw_participants.py:275: in _register_raw_participant
+    raise bootstrap.RecoveryRequired("raw_source_selection_changed")
+E   tldw_chatbook.Backup_Recovery.bootstrap.RecoveryRequired: raw_source_selection_changed
+__________ test_dirty_prompt_draft_survives_reader_route_and_revisit ___________
+Tests/UI/test_library_prompts_reader.py:370: in test_dirty_prompt_draft_survives_reader_route_and_revisit
+    app = _build_test_app()
+          ^^^^^^^^^^^^^^^^^
+Tests/UI/test_library_prompts_canvas.py:188: in _build_test_app
+    app = _build_tldw_test_app(*args, **kwargs)
+          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+Tests/UI/app_factory.py:398: in _build_test_app
+    fake_app_config = build_test_app_config(
+Tests/UI/app_factory.py:125: in build_test_app_config
+    config = load_settings()
+             ^^^^^^^^^^^^^^^
+tldw_chatbook/config.py:2194: in load_settings
+    return _load_settings_guarded(
+tldw_chatbook/Backup_Recovery/config_participants.py:505: in wrapped
+    with operation(source, target=target):
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/contextlib.py:137: in __enter__
+    return next(self.gen)
+           ^^^^^^^^^^^^^^
+tldw_chatbook/Backup_Recovery/config_participants.py:436: in operation
+    with raw._scope(source, route, writing=True, selected_read=target) as active:
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/contextlib.py:137: in __enter__
+    return next(self.gen)
+           ^^^^^^^^^^^^^^
+tldw_chatbook/Backup_Recovery/raw_participants.py:897: in _scope
+    participant = _raw_participant(source)
+                  ^^^^^^^^^^^^^^^^^^^^^^^^
+tldw_chatbook/Backup_Recovery/raw_participants.py:325: in _raw_participant
+    participant = _register_raw_participant(source, owner, selected)
+                  ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+tldw_chatbook/Backup_Recovery/raw_participants.py:275: in _register_raw_participant
+    raise bootstrap.RecoveryRequired("raw_source_selection_changed")
+E   tldw_chatbook.Backup_Recovery.bootstrap.RecoveryRequired: raw_source_selection_changed
+______________ test_dirty_create_prompt_draft_vetoes_reader_route ______________
+Tests/UI/test_library_prompts_reader.py:430: in test_dirty_create_prompt_draft_vetoes_reader_route
+    app = _build_test_app()
+          ^^^^^^^^^^^^^^^^^
+Tests/UI/test_library_prompts_canvas.py:188: in _build_test_app
+    app = _build_tldw_test_app(*args, **kwargs)
+          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+Tests/UI/app_factory.py:398: in _build_test_app
+    fake_app_config = build_test_app_config(
+Tests/UI/app_factory.py:125: in build_test_app_config
+    config = load_settings()
+             ^^^^^^^^^^^^^^^
+tldw_chatbook/config.py:2194: in load_settings
+    return _load_settings_guarded(
+tldw_chatbook/Backup_Recovery/config_participants.py:505: in wrapped
+    with operation(source, target=target):
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/contextlib.py:137: in __enter__
+    return next(self.gen)
+           ^^^^^^^^^^^^^^
+tldw_chatbook/Backup_Recovery/config_participants.py:436: in operation
+    with raw._scope(source, route, writing=True, selected_read=target) as active:
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/contextlib.py:137: in __enter__
+    return next(self.gen)
+           ^^^^^^^^^^^^^^
+tldw_chatbook/Backup_Recovery/raw_participants.py:897: in _scope
+    participant = _raw_participant(source)
+                  ^^^^^^^^^^^^^^^^^^^^^^^^
+tldw_chatbook/Backup_Recovery/raw_participants.py:325: in _raw_participant
+    participant = _register_raw_participant(source, owner, selected)
+                  ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+tldw_chatbook/Backup_Recovery/raw_participants.py:275: in _register_raw_participant
+    raise bootstrap.RecoveryRequired("raw_source_selection_changed")
+E   tldw_chatbook.Backup_Recovery.bootstrap.RecoveryRequired: raw_source_selection_changed
+________ test_import_replaces_only_work_content_and_keeps_list_mounted _________
+Tests/UI/test_library_prompts_reader.py:470: in test_import_replaces_only_work_content_and_keeps_list_mounted
+    app = _build_test_app()
+          ^^^^^^^^^^^^^^^^^
+Tests/UI/test_library_prompts_canvas.py:188: in _build_test_app
+    app = _build_tldw_test_app(*args, **kwargs)
+          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+Tests/UI/app_factory.py:398: in _build_test_app
+    fake_app_config = build_test_app_config(
+Tests/UI/app_factory.py:125: in build_test_app_config
+    config = load_settings()
+             ^^^^^^^^^^^^^^^
+tldw_chatbook/config.py:2194: in load_settings
+    return _load_settings_guarded(
+tldw_chatbook/Backup_Recovery/config_participants.py:505: in wrapped
+    with operation(source, target=target):
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/contextlib.py:137: in __enter__
+    return next(self.gen)
+           ^^^^^^^^^^^^^^
+tldw_chatbook/Backup_Recovery/config_participants.py:436: in operation
+    with raw._scope(source, route, writing=True, selected_read=target) as active:
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/contextlib.py:137: in __enter__
+    return next(self.gen)
+           ^^^^^^^^^^^^^^
+tldw_chatbook/Backup_Recovery/raw_participants.py:897: in _scope
+    participant = _raw_participant(source)
+                  ^^^^^^^^^^^^^^^^^^^^^^^^
+tldw_chatbook/Backup_Recovery/raw_participants.py:325: in _raw_participant
+    participant = _register_raw_participant(source, owner, selected)
+                  ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+tldw_chatbook/Backup_Recovery/raw_participants.py:275: in _register_raw_participant
+    raise bootstrap.RecoveryRequired("raw_source_selection_changed")
+E   tldw_chatbook.Backup_Recovery.bootstrap.RecoveryRequired: raw_source_selection_changed
+____ test_import_from_clean_editor_replaces_work_and_cancel_restores_editor ____
+Tests/UI/test_library_prompts_reader.py:496: in test_import_from_clean_editor_replaces_work_and_cancel_restores_editor
+    app = _build_test_app()
+          ^^^^^^^^^^^^^^^^^
+Tests/UI/test_library_prompts_canvas.py:188: in _build_test_app
+    app = _build_tldw_test_app(*args, **kwargs)
+          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+Tests/UI/app_factory.py:398: in _build_test_app
+    fake_app_config = build_test_app_config(
+Tests/UI/app_factory.py:125: in build_test_app_config
+    config = load_settings()
+             ^^^^^^^^^^^^^^^
+tldw_chatbook/config.py:2194: in load_settings
+    return _load_settings_guarded(
+tldw_chatbook/Backup_Recovery/config_participants.py:505: in wrapped
+    with operation(source, target=target):
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/contextlib.py:137: in __enter__
+    return next(self.gen)
+           ^^^^^^^^^^^^^^
+tldw_chatbook/Backup_Recovery/config_participants.py:436: in operation
+    with raw._scope(source, route, writing=True, selected_read=target) as active:
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/contextlib.py:137: in __enter__
+    return next(self.gen)
+           ^^^^^^^^^^^^^^
+tldw_chatbook/Backup_Recovery/raw_participants.py:897: in _scope
+    participant = _raw_participant(source)
+                  ^^^^^^^^^^^^^^^^^^^^^^^^
+tldw_chatbook/Backup_Recovery/raw_participants.py:325: in _raw_participant
+    participant = _register_raw_participant(source, owner, selected)
+                  ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+tldw_chatbook/Backup_Recovery/raw_participants.py:275: in _register_raw_participant
+    raise bootstrap.RecoveryRequired("raw_source_selection_changed")
+E   tldw_chatbook.Backup_Recovery.bootstrap.RecoveryRequired: raw_source_selection_changed
+_________ test_import_from_dirty_editor_is_vetoed_without_hiding_draft _________
+Tests/UI/test_library_prompts_reader.py:530: in test_import_from_dirty_editor_is_vetoed_without_hiding_draft
+    app = _build_test_app()
+          ^^^^^^^^^^^^^^^^^
+Tests/UI/test_library_prompts_canvas.py:188: in _build_test_app
+    app = _build_tldw_test_app(*args, **kwargs)
+          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+Tests/UI/app_factory.py:398: in _build_test_app
+    fake_app_config = build_test_app_config(
+Tests/UI/app_factory.py:125: in build_test_app_config
+    config = load_settings()
+             ^^^^^^^^^^^^^^^
+tldw_chatbook/config.py:2194: in load_settings
+    return _load_settings_guarded(
+tldw_chatbook/Backup_Recovery/config_participants.py:505: in wrapped
+    with operation(source, target=target):
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/contextlib.py:137: in __enter__
+    return next(self.gen)
+           ^^^^^^^^^^^^^^
+tldw_chatbook/Backup_Recovery/config_participants.py:436: in operation
+    with raw._scope(source, route, writing=True, selected_read=target) as active:
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/contextlib.py:137: in __enter__
+    return next(self.gen)
+           ^^^^^^^^^^^^^^
+tldw_chatbook/Backup_Recovery/raw_participants.py:897: in _scope
+    participant = _raw_participant(source)
+                  ^^^^^^^^^^^^^^^^^^^^^^^^
+tldw_chatbook/Backup_Recovery/raw_participants.py:325: in _raw_participant
+    participant = _register_raw_participant(source, owner, selected)
+                  ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+tldw_chatbook/Backup_Recovery/raw_participants.py:275: in _register_raw_participant
+    raise bootstrap.RecoveryRequired("raw_source_selection_changed")
+E   tldw_chatbook.Backup_Recovery.bootstrap.RecoveryRequired: raw_source_selection_changed
+__________ test_items_browse_settles_while_prompt_editor_remains_open __________
+Tests/UI/test_library_prompts_reader.py:568: in test_items_browse_settles_while_prompt_editor_remains_open
+    app = _build_test_app()
+          ^^^^^^^^^^^^^^^^^
+Tests/UI/test_library_prompts_canvas.py:188: in _build_test_app
+    app = _build_tldw_test_app(*args, **kwargs)
+          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+Tests/UI/app_factory.py:398: in _build_test_app
+    fake_app_config = build_test_app_config(
+Tests/UI/app_factory.py:125: in build_test_app_config
+    config = load_settings()
+             ^^^^^^^^^^^^^^^
+tldw_chatbook/config.py:2194: in load_settings
+    return _load_settings_guarded(
+tldw_chatbook/Backup_Recovery/config_participants.py:505: in wrapped
+    with operation(source, target=target):
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/contextlib.py:137: in __enter__
+    return next(self.gen)
+           ^^^^^^^^^^^^^^
+tldw_chatbook/Backup_Recovery/config_participants.py:436: in operation
+    with raw._scope(source, route, writing=True, selected_read=target) as active:
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/contextlib.py:137: in __enter__
+    return next(self.gen)
+           ^^^^^^^^^^^^^^
+tldw_chatbook/Backup_Recovery/raw_participants.py:897: in _scope
+    participant = _raw_participant(source)
+                  ^^^^^^^^^^^^^^^^^^^^^^^^
+tldw_chatbook/Backup_Recovery/raw_participants.py:325: in _raw_participant
+    participant = _register_raw_participant(source, owner, selected)
+                  ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+tldw_chatbook/Backup_Recovery/raw_participants.py:275: in _register_raw_participant
+    raise bootstrap.RecoveryRequired("raw_source_selection_changed")
+E   tldw_chatbook.Backup_Recovery.bootstrap.RecoveryRequired: raw_source_selection_changed
+_____ test_same_prompt_older_detail_load_cannot_overwrite_newer_generation _____
+Tests/UI/test_library_prompts_reader.py:676: in test_same_prompt_older_detail_load_cannot_overwrite_newer_generation
+    app = _build_test_app()
+          ^^^^^^^^^^^^^^^^^
+Tests/UI/test_library_prompts_canvas.py:188: in _build_test_app
+    app = _build_tldw_test_app(*args, **kwargs)
+          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+Tests/UI/app_factory.py:398: in _build_test_app
+    fake_app_config = build_test_app_config(
+Tests/UI/app_factory.py:125: in build_test_app_config
+    config = load_settings()
+             ^^^^^^^^^^^^^^^
+tldw_chatbook/config.py:2194: in load_settings
+    return _load_settings_guarded(
+tldw_chatbook/Backup_Recovery/config_participants.py:505: in wrapped
+    with operation(source, target=target):
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/contextlib.py:137: in __enter__
+    return next(self.gen)
+           ^^^^^^^^^^^^^^
+tldw_chatbook/Backup_Recovery/config_participants.py:436: in operation
+    with raw._scope(source, route, writing=True, selected_read=target) as active:
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/contextlib.py:137: in __enter__
+    return next(self.gen)
+           ^^^^^^^^^^^^^^
+tldw_chatbook/Backup_Recovery/raw_participants.py:897: in _scope
+    participant = _raw_participant(source)
+                  ^^^^^^^^^^^^^^^^^^^^^^^^
+tldw_chatbook/Backup_Recovery/raw_participants.py:325: in _raw_participant
+    participant = _register_raw_participant(source, owner, selected)
+                  ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+tldw_chatbook/Backup_Recovery/raw_participants.py:275: in _register_raw_participant
+    raise bootstrap.RecoveryRequired("raw_source_selection_changed")
+E   tldw_chatbook.Backup_Recovery.bootstrap.RecoveryRequired: raw_source_selection_changed
+___ test_detail_failure_keeps_prior_prompt_locked_and_retry_loads_selection ____
+Tests/UI/test_library_prompts_reader.py:752: in test_detail_failure_keeps_prior_prompt_locked_and_retry_loads_selection
+    app = _build_test_app()
+          ^^^^^^^^^^^^^^^^^
+Tests/UI/test_library_prompts_canvas.py:188: in _build_test_app
+    app = _build_tldw_test_app(*args, **kwargs)
+          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+Tests/UI/app_factory.py:398: in _build_test_app
+    fake_app_config = build_test_app_config(
+Tests/UI/app_factory.py:125: in build_test_app_config
+    config = load_settings()
+             ^^^^^^^^^^^^^^^
+tldw_chatbook/config.py:2194: in load_settings
+    return _load_settings_guarded(
+tldw_chatbook/Backup_Recovery/config_participants.py:505: in wrapped
+    with operation(source, target=target):
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/contextlib.py:137: in __enter__
+    return next(self.gen)
+           ^^^^^^^^^^^^^^
+tldw_chatbook/Backup_Recovery/config_participants.py:436: in operation
+    with raw._scope(source, route, writing=True, selected_read=target) as active:
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/contextlib.py:137: in __enter__
+    return next(self.gen)
+           ^^^^^^^^^^^^^^
+tldw_chatbook/Backup_Recovery/raw_participants.py:897: in _scope
+    participant = _raw_participant(source)
+                  ^^^^^^^^^^^^^^^^^^^^^^^^
+tldw_chatbook/Backup_Recovery/raw_participants.py:325: in _raw_participant
+    participant = _register_raw_participant(source, owner, selected)
+                  ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+tldw_chatbook/Backup_Recovery/raw_participants.py:275: in _register_raw_participant
+    raise bootstrap.RecoveryRequired("raw_source_selection_changed")
+E   tldw_chatbook.Backup_Recovery.bootstrap.RecoveryRequired: raw_source_selection_changed
+_________ test_unchanged_list_sync_does_not_recompose_prompt_work_pane _________
+Tests/UI/test_library_prompts_reader.py:804: in test_unchanged_list_sync_does_not_recompose_prompt_work_pane
+    app = _build_test_app()
+          ^^^^^^^^^^^^^^^^^
+Tests/UI/test_library_prompts_canvas.py:188: in _build_test_app
+    app = _build_tldw_test_app(*args, **kwargs)
+          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+Tests/UI/app_factory.py:398: in _build_test_app
+    fake_app_config = build_test_app_config(
+Tests/UI/app_factory.py:125: in build_test_app_config
+    config = load_settings()
+             ^^^^^^^^^^^^^^^
+tldw_chatbook/config.py:2194: in load_settings
+    return _load_settings_guarded(
+tldw_chatbook/Backup_Recovery/config_participants.py:505: in wrapped
+    with operation(source, target=target):
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/contextlib.py:137: in __enter__
+    return next(self.gen)
+           ^^^^^^^^^^^^^^
+tldw_chatbook/Backup_Recovery/config_participants.py:436: in operation
+    with raw._scope(source, route, writing=True, selected_read=target) as active:
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/contextlib.py:137: in __enter__
+    return next(self.gen)
+           ^^^^^^^^^^^^^^
+tldw_chatbook/Backup_Recovery/raw_participants.py:897: in _scope
+    participant = _raw_participant(source)
+                  ^^^^^^^^^^^^^^^^^^^^^^^^
+tldw_chatbook/Backup_Recovery/raw_participants.py:325: in _raw_participant
+    participant = _register_raw_participant(source, owner, selected)
+                  ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+tldw_chatbook/Backup_Recovery/raw_participants.py:275: in _register_raw_participant
+    raise bootstrap.RecoveryRequired("raw_source_selection_changed")
+E   tldw_chatbook.Backup_Recovery.bootstrap.RecoveryRequired: raw_source_selection_changed
+_______ test_prompt_items_sync_is_not_blocked_by_work_projection_failure _______
+Tests/UI/test_library_prompts_reader.py:828: in test_prompt_items_sync_is_not_blocked_by_work_projection_failure
+    app = _build_test_app()
+          ^^^^^^^^^^^^^^^^^
+Tests/UI/test_library_prompts_canvas.py:188: in _build_test_app
+    app = _build_tldw_test_app(*args, **kwargs)
+          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+Tests/UI/app_factory.py:398: in _build_test_app
+    fake_app_config = build_test_app_config(
+Tests/UI/app_factory.py:125: in build_test_app_config
+    config = load_settings()
+             ^^^^^^^^^^^^^^^
+tldw_chatbook/config.py:2194: in load_settings
+    return _load_settings_guarded(
+tldw_chatbook/Backup_Recovery/config_participants.py:505: in wrapped
+    with operation(source, target=target):
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/contextlib.py:137: in __enter__
+    return next(self.gen)
+           ^^^^^^^^^^^^^^
+tldw_chatbook/Backup_Recovery/config_participants.py:436: in operation
+    with raw._scope(source, route, writing=True, selected_read=target) as active:
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/contextlib.py:137: in __enter__
+    return next(self.gen)
+           ^^^^^^^^^^^^^^
+tldw_chatbook/Backup_Recovery/raw_participants.py:897: in _scope
+    participant = _raw_participant(source)
+                  ^^^^^^^^^^^^^^^^^^^^^^^^
+tldw_chatbook/Backup_Recovery/raw_participants.py:325: in _raw_participant
+    participant = _register_raw_participant(source, owner, selected)
+                  ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+tldw_chatbook/Backup_Recovery/raw_participants.py:275: in _register_raw_participant
+    raise bootstrap.RecoveryRequired("raw_source_selection_changed")
+E   tldw_chatbook.Backup_Recovery.bootstrap.RecoveryRequired: raw_source_selection_changed
+_______ test_prompt_work_sync_is_not_blocked_by_items_projection_failure _______
+Tests/UI/test_library_prompts_reader.py:864: in test_prompt_work_sync_is_not_blocked_by_items_projection_failure
+    app = _build_test_app()
+          ^^^^^^^^^^^^^^^^^
+Tests/UI/test_library_prompts_canvas.py:188: in _build_test_app
+    app = _build_tldw_test_app(*args, **kwargs)
+          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+Tests/UI/app_factory.py:398: in _build_test_app
+    fake_app_config = build_test_app_config(
+Tests/UI/app_factory.py:125: in build_test_app_config
+    config = load_settings()
+             ^^^^^^^^^^^^^^^
+tldw_chatbook/config.py:2194: in load_settings
+    return _load_settings_guarded(
+tldw_chatbook/Backup_Recovery/config_participants.py:505: in wrapped
+    with operation(source, target=target):
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/contextlib.py:137: in __enter__
+    return next(self.gen)
+           ^^^^^^^^^^^^^^
+tldw_chatbook/Backup_Recovery/config_participants.py:436: in operation
+    with raw._scope(source, route, writing=True, selected_read=target) as active:
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/contextlib.py:137: in __enter__
+    return next(self.gen)
+           ^^^^^^^^^^^^^^
+tldw_chatbook/Backup_Recovery/raw_participants.py:897: in _scope
+    participant = _raw_participant(source)
+                  ^^^^^^^^^^^^^^^^^^^^^^^^
+tldw_chatbook/Backup_Recovery/raw_participants.py:325: in _raw_participant
+    participant = _register_raw_participant(source, owner, selected)
+                  ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+tldw_chatbook/Backup_Recovery/raw_participants.py:275: in _register_raw_participant
+    raise bootstrap.RecoveryRequired("raw_source_selection_changed")
+E   tldw_chatbook.Backup_Recovery.bootstrap.RecoveryRequired: raw_source_selection_changed
+_____________ test_prompt_projection_fallback_runs_follow_up_once ______________
+Tests/UI/test_library_prompts_reader.py:900: in test_prompt_projection_fallback_runs_follow_up_once
+    app = _build_test_app()
+          ^^^^^^^^^^^^^^^^^
+Tests/UI/test_library_prompts_canvas.py:188: in _build_test_app
+    app = _build_tldw_test_app(*args, **kwargs)
+          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+Tests/UI/app_factory.py:398: in _build_test_app
+    fake_app_config = build_test_app_config(
+Tests/UI/app_factory.py:125: in build_test_app_config
+    config = load_settings()
+             ^^^^^^^^^^^^^^^
+tldw_chatbook/config.py:2194: in load_settings
+    return _load_settings_guarded(
+tldw_chatbook/Backup_Recovery/config_participants.py:505: in wrapped
+    with operation(source, target=target):
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/contextlib.py:137: in __enter__
+    return next(self.gen)
+           ^^^^^^^^^^^^^^
+tldw_chatbook/Backup_Recovery/config_participants.py:436: in operation
+    with raw._scope(source, route, writing=True, selected_read=target) as active:
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/contextlib.py:137: in __enter__
+    return next(self.gen)
+           ^^^^^^^^^^^^^^
+tldw_chatbook/Backup_Recovery/raw_participants.py:897: in _scope
+    participant = _raw_participant(source)
+                  ^^^^^^^^^^^^^^^^^^^^^^^^
+tldw_chatbook/Backup_Recovery/raw_participants.py:325: in _raw_participant
+    participant = _register_raw_participant(source, owner, selected)
+                  ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+tldw_chatbook/Backup_Recovery/raw_participants.py:275: in _register_raw_participant
+    raise bootstrap.RecoveryRequired("raw_source_selection_changed")
+E   tldw_chatbook.Backup_Recovery.bootstrap.RecoveryRequired: raw_source_selection_changed
+_______ test_bulk_mode_keeps_loaded_prompt_as_labelled_read_only_preview _______
+Tests/UI/test_library_prompts_reader.py:932: in test_bulk_mode_keeps_loaded_prompt_as_labelled_read_only_preview
+    app = _build_test_app()
+          ^^^^^^^^^^^^^^^^^
+Tests/UI/test_library_prompts_canvas.py:188: in _build_test_app
+    app = _build_tldw_test_app(*args, **kwargs)
+          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+Tests/UI/app_factory.py:398: in _build_test_app
+    fake_app_config = build_test_app_config(
+Tests/UI/app_factory.py:125: in build_test_app_config
+    config = load_settings()
+             ^^^^^^^^^^^^^^^
+tldw_chatbook/config.py:2194: in load_settings
+    return _load_settings_guarded(
+tldw_chatbook/Backup_Recovery/config_participants.py:505: in wrapped
+    with operation(source, target=target):
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/contextlib.py:137: in __enter__
+    return next(self.gen)
+           ^^^^^^^^^^^^^^
+tldw_chatbook/Backup_Recovery/config_participants.py:436: in operation
+    with raw._scope(source, route, writing=True, selected_read=target) as active:
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/contextlib.py:137: in __enter__
+    return next(self.gen)
+           ^^^^^^^^^^^^^^
+tldw_chatbook/Backup_Recovery/raw_participants.py:897: in _scope
+    participant = _raw_participant(source)
+                  ^^^^^^^^^^^^^^^^^^^^^^^^
+tldw_chatbook/Backup_Recovery/raw_participants.py:325: in _raw_participant
+    participant = _register_raw_participant(source, owner, selected)
+                  ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+tldw_chatbook/Backup_Recovery/raw_participants.py:275: in _register_raw_participant
+    raise bootstrap.RecoveryRequired("raw_source_selection_changed")
+E   tldw_chatbook.Backup_Recovery.bootstrap.RecoveryRequired: raw_source_selection_changed
+_______ test_eighty_columns_protect_basic_editor_and_keep_restore_grips ________
+Tests/UI/test_library_prompts_reader.py:1017: in test_eighty_columns_protect_basic_editor_and_keep_restore_grips
+    app = _build_test_app()
+          ^^^^^^^^^^^^^^^^^
+Tests/UI/test_library_prompts_canvas.py:188: in _build_test_app
+    app = _build_tldw_test_app(*args, **kwargs)
+          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+Tests/UI/app_factory.py:398: in _build_test_app
+    fake_app_config = build_test_app_config(
+Tests/UI/app_factory.py:125: in build_test_app_config
+    config = load_settings()
+             ^^^^^^^^^^^^^^^
+tldw_chatbook/config.py:2194: in load_settings
+    return _load_settings_guarded(
+tldw_chatbook/Backup_Recovery/config_participants.py:505: in wrapped
+    with operation(source, target=target):
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/contextlib.py:137: in __enter__
+    return next(self.gen)
+           ^^^^^^^^^^^^^^
+tldw_chatbook/Backup_Recovery/config_participants.py:436: in operation
+    with raw._scope(source, route, writing=True, selected_read=target) as active:
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/contextlib.py:137: in __enter__
+    return next(self.gen)
+           ^^^^^^^^^^^^^^
+tldw_chatbook/Backup_Recovery/raw_participants.py:897: in _scope
+    participant = _raw_participant(source)
+                  ^^^^^^^^^^^^^^^^^^^^^^^^
+tldw_chatbook/Backup_Recovery/raw_participants.py:325: in _raw_participant
+    participant = _register_raw_participant(source, owner, selected)
+                  ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+tldw_chatbook/Backup_Recovery/raw_participants.py:275: in _register_raw_participant
+    raise bootstrap.RecoveryRequired("raw_source_selection_changed")
+E   tldw_chatbook.Backup_Recovery.bootstrap.RecoveryRequired: raw_source_selection_changed
+______ test_improvement_target_is_pinned_once_and_shared_across_callbacks ______
+Tests/UI/test_console_prompts_controller.py:519: in test_improvement_target_is_pinned_once_and_shared_across_callbacks
+    await _wait_for_selector(console, pilot, "#console-native-composer")
+Tests/UI/test_destination_shells.py:1106: in _wait_for_selector
+    raise AssertionError(
+E   AssertionError: Timed out waiting for #console-native-composer. Visible text:
+
+During handling of the above exception, another exception occurred:
+Tests/UI/test_console_prompts_controller.py:517: in test_improvement_target_is_pinned_once_and_shared_across_callbacks
+    async with host.run_test(size=(140, 40)) as pilot:
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/contextlib.py:231: in __aexit__
+    await self.gen.athrow(value)
+../../../../Documents/GitHub/tldw_chatbook/.venv/lib/python3.12/site-packages/textual/app.py:2218: in run_test
+    raise self._exception
+../../../../Documents/GitHub/tldw_chatbook/.venv/lib/python3.12/site-packages/textual/message_pump.py:663: in _process_messages_loop
+    await self._dispatch_message(message)
+../../../../Documents/GitHub/tldw_chatbook/.venv/lib/python3.12/site-packages/textual/message_pump.py:727: in _dispatch_message
+    await self.on_event(message)
+../../../../Documents/GitHub/tldw_chatbook/.venv/lib/python3.12/site-packages/textual/message_pump.py:808: in on_event
+    await self._on_message(event)
+../../../../Documents/GitHub/tldw_chatbook/.venv/lib/python3.12/site-packages/textual/message_pump.py:829: in _on_message
+    await invoke(method, message)
+../../../../Documents/GitHub/tldw_chatbook/.venv/lib/python3.12/site-packages/textual/_callback.py:96: in invoke
+    return await _invoke(callback, *params)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../../../Documents/GitHub/tldw_chatbook/.venv/lib/python3.12/site-packages/textual/_callback.py:56: in _invoke
+    result = callback(*params[:parameter_count])
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+tldw_chatbook/UI/Screens/chat_screen.py:21573: in _adapt_console_workspace_to_width
+    left_rail = self.query_one("#console-left-rail")
+                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../../../Documents/GitHub/tldw_chatbook/.venv/lib/python3.12/site-packages/textual/dom.py:1505: in query_one
+    raise NoMatches(f"No nodes match {query_selector!r} on {base_node!r}")
+E   textual.css.query.NoMatches: No nodes match '#console-left-rail' on ChatScreen()
+__________ test_improvement_activation_refuses_a_moved_system_prompt ___________
+Tests/UI/test_console_prompts_controller.py:548: in test_improvement_activation_refuses_a_moved_system_prompt
+    await _wait_for_selector(console, pilot, "#console-native-composer")
+Tests/UI/test_destination_shells.py:1106: in _wait_for_selector
+    raise AssertionError(
+E   AssertionError: Timed out waiting for #console-native-composer. Visible text:
+
+During handling of the above exception, another exception occurred:
+Tests/UI/test_console_prompts_controller.py:546: in test_improvement_activation_refuses_a_moved_system_prompt
+    async with host.run_test(size=(140, 40)) as pilot:
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/contextlib.py:231: in __aexit__
+    await self.gen.athrow(value)
+../../../../Documents/GitHub/tldw_chatbook/.venv/lib/python3.12/site-packages/textual/app.py:2218: in run_test
+    raise self._exception
+../../../../Documents/GitHub/tldw_chatbook/.venv/lib/python3.12/site-packages/textual/message_pump.py:663: in _process_messages_loop
+    await self._dispatch_message(message)
+../../../../Documents/GitHub/tldw_chatbook/.venv/lib/python3.12/site-packages/textual/message_pump.py:727: in _dispatch_message
+    await self.on_event(message)
+../../../../Documents/GitHub/tldw_chatbook/.venv/lib/python3.12/site-packages/textual/message_pump.py:808: in on_event
+    await self._on_message(event)
+../../../../Documents/GitHub/tldw_chatbook/.venv/lib/python3.12/site-packages/textual/message_pump.py:829: in _on_message
+    await invoke(method, message)
+../../../../Documents/GitHub/tldw_chatbook/.venv/lib/python3.12/site-packages/textual/_callback.py:96: in invoke
+    return await _invoke(callback, *params)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../../../Documents/GitHub/tldw_chatbook/.venv/lib/python3.12/site-packages/textual/_callback.py:56: in _invoke
+    result = callback(*params[:parameter_count])
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+tldw_chatbook/UI/Screens/chat_screen.py:21573: in _adapt_console_workspace_to_width
+    left_rail = self.query_one("#console-left-rail")
+                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../../../Documents/GitHub/tldw_chatbook/.venv/lib/python3.12/site-packages/textual/dom.py:1505: in query_one
+    raise NoMatches(f"No nodes match {query_selector!r} on {base_node!r}")
+E   textual.css.query.NoMatches: No nodes match '#console-left-rail' on ChatScreen()
+________ test_improvement_snapshot_refuses_an_unpinned_provider_target _________
+Tests/UI/test_console_prompts_controller.py:572: in test_improvement_snapshot_refuses_an_unpinned_provider_target
+    await _wait_for_selector(console, pilot, "#console-native-composer")
+Tests/UI/test_destination_shells.py:1106: in _wait_for_selector
+    raise AssertionError(
+E   AssertionError: Timed out waiting for #console-native-composer. Visible text:
+
+During handling of the above exception, another exception occurred:
+Tests/UI/test_console_prompts_controller.py:570: in test_improvement_snapshot_refuses_an_unpinned_provider_target
+    async with host.run_test(size=(140, 40)) as pilot:
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/contextlib.py:231: in __aexit__
+    await self.gen.athrow(value)
+../../../../Documents/GitHub/tldw_chatbook/.venv/lib/python3.12/site-packages/textual/app.py:2218: in run_test
+    raise self._exception
+../../../../Documents/GitHub/tldw_chatbook/.venv/lib/python3.12/site-packages/textual/message_pump.py:663: in _process_messages_loop
+    await self._dispatch_message(message)
+../../../../Documents/GitHub/tldw_chatbook/.venv/lib/python3.12/site-packages/textual/message_pump.py:727: in _dispatch_message
+    await self.on_event(message)
+../../../../Documents/GitHub/tldw_chatbook/.venv/lib/python3.12/site-packages/textual/message_pump.py:808: in on_event
+    await self._on_message(event)
+../../../../Documents/GitHub/tldw_chatbook/.venv/lib/python3.12/site-packages/textual/message_pump.py:829: in _on_message
+    await invoke(method, message)
+../../../../Documents/GitHub/tldw_chatbook/.venv/lib/python3.12/site-packages/textual/_callback.py:96: in invoke
+    return await _invoke(callback, *params)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../../../Documents/GitHub/tldw_chatbook/.venv/lib/python3.12/site-packages/textual/_callback.py:56: in _invoke
+    result = callback(*params[:parameter_count])
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+tldw_chatbook/UI/Screens/chat_screen.py:21573: in _adapt_console_workspace_to_width
+    left_rail = self.query_one("#console-left-rail")
+                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../../../Documents/GitHub/tldw_chatbook/.venv/lib/python3.12/site-packages/textual/dom.py:1505: in query_one
+    raise NoMatches(f"No nodes match {query_selector!r} on {base_node!r}")
+E   textual.css.query.NoMatches: No nodes match '#console-left-rail' on ChatScreen()
+============================= slowest 25 durations =============================
+3.44s call     Tests/UI/test_console_prompts_controller.py::test_improvement_target_is_pinned_once_and_shared_across_callbacks
+3.43s call     Tests/UI/test_console_prompts_controller.py::test_improvement_snapshot_refuses_an_unpinned_provider_target
+3.40s call     Tests/UI/test_console_prompts_controller.py::test_improvement_activation_refuses_a_moved_system_prompt
+2.88s call     Tests/UI/test_library_prompts_reader.py::test_mixin_enable_refuses_absent_target_and_replaced_source
+2.28s call     Tests/UI/test_console_prompts_controller.py::test_library_prompt_insert_handoff_appends_onto_the_live_draft
+2.03s call     Tests/UI/test_console_prompts_controller.py::test_prompt_system_replacement_refreshes_visible_status_chip[append_active]
+2.03s call     Tests/UI/test_console_prompts_controller.py::test_prompts_modal_apply_refuses_when_the_system_prompt_moved
+2.02s call     Tests/UI/test_console_prompts_controller.py::test_prompts_modal_open_persists_the_reviewed_system_selection
+2.01s call     Tests/UI/test_console_prompts_controller.py::test_prompts_modal_dismissal_restores_composer_focus
+2.00s call     Tests/UI/test_console_prompts_controller.py::test_prompt_source_callables_forward_the_exact_service_contract
+1.99s call     Tests/UI/test_console_prompts_controller.py::test_prompt_system_replacement_refreshes_visible_status_chip[replace_snapshot]
+1.99s call     Tests/UI/test_console_prompts_controller.py::test_library_prompt_insert_handoff_is_blocked_before_setup_completes
+1.92s call     Tests/UI/test_console_prompts_controller.py::test_prompts_modal_reads_provider_recovery_off_the_screen_at_open
+1.92s call     Tests/UI/test_console_prompts_controller.py::test_improve_stays_unavailable_during_an_active_run_even_with_a_healthy_provider
+1.87s call     Tests/UI/test_console_prompts_controller.py::test_prompt_command_replaces_the_draft_with_the_resolved_body[{{"key": "value"}}-{"key": "value"}]
+1.83s call     Tests/UI/test_console_prompts_controller.py::test_prompt_application_keeps_durable_system_when_surface_sync_fails
+1.82s call     Tests/UI/test_console_prompts_controller.py::test_system_only_empty_apply_settles_prior_prompt_undo[True-False-True]
+1.82s call     Tests/UI/test_console_prompts_controller.py::test_improvement_validation_prefers_the_captured_snapshot
+1.81s call     Tests/UI/test_console_prompts_controller.py::test_prompt_application_handles_composer_failure_without_secondary_error
+1.79s call     Tests/UI/test_console_prompts_controller.py::test_prompt_search_filters_recipes_and_uses_a_prefix_fts_query
+1.76s call     Tests/UI/test_console_prompts_controller.py::test_prompt_application_rolls_back_draft_when_system_mutation_raises
+1.74s call     Tests/UI/test_console_prompts_controller.py::test_system_only_empty_apply_settles_prior_prompt_undo[False-True-False]
+1.73s call     Tests/UI/test_console_prompts_controller.py::test_prompt_application_refuses_stale_draft_system_session_and_expiry
+1.72s call     Tests/UI/test_console_prompts_controller.py::test_prompt_source_callables_name_the_source_they_cannot_reach
+1.72s call     Tests/UI/test_console_prompts_controller.py::test_system_command_applies_and_persists_the_resolved_system_part
+=========================== short test summary info ============================
+FAILED Tests/UI/test_library_prompts_reader.py::test_prompts_global_f6_reaches_permanent_work_region
+FAILED Tests/UI/test_library_prompts_reader.py::test_basic_edit_reaches_screen_owned_prompt_draft
+FAILED Tests/UI/test_library_prompts_reader.py::test_basic_save_preserves_advanced_only_prompt_fields
+FAILED Tests/UI/test_library_prompts_reader.py::test_invalid_advanced_block_routes_save_focus_to_its_owner
+FAILED Tests/UI/test_library_prompts_reader.py::test_prompts_mount_three_retained_roles_once
+FAILED Tests/UI/test_library_prompts_reader.py::test_list_and_work_identity_survive_basic_advanced_and_info
+FAILED Tests/UI/test_library_prompts_reader.py::test_dirty_prompt_draft_survives_reader_route_and_revisit
+FAILED Tests/UI/test_library_prompts_reader.py::test_dirty_create_prompt_draft_vetoes_reader_route
+FAILED Tests/UI/test_library_prompts_reader.py::test_import_replaces_only_work_content_and_keeps_list_mounted
+FAILED Tests/UI/test_library_prompts_reader.py::test_import_from_clean_editor_replaces_work_and_cancel_restores_editor
+FAILED Tests/UI/test_library_prompts_reader.py::test_import_from_dirty_editor_is_vetoed_without_hiding_draft
+FAILED Tests/UI/test_library_prompts_reader.py::test_items_browse_settles_while_prompt_editor_remains_open
+FAILED Tests/UI/test_library_prompts_reader.py::test_same_prompt_older_detail_load_cannot_overwrite_newer_generation
+FAILED Tests/UI/test_library_prompts_reader.py::test_detail_failure_keeps_prior_prompt_locked_and_retry_loads_selection
+FAILED Tests/UI/test_library_prompts_reader.py::test_unchanged_list_sync_does_not_recompose_prompt_work_pane
+FAILED Tests/UI/test_library_prompts_reader.py::test_prompt_items_sync_is_not_blocked_by_work_projection_failure
+FAILED Tests/UI/test_library_prompts_reader.py::test_prompt_work_sync_is_not_blocked_by_items_projection_failure
+FAILED Tests/UI/test_library_prompts_reader.py::test_prompt_projection_fallback_runs_follow_up_once
+FAILED Tests/UI/test_library_prompts_reader.py::test_bulk_mode_keeps_loaded_prompt_as_labelled_read_only_preview
+FAILED Tests/UI/test_library_prompts_reader.py::test_eighty_columns_protect_basic_editor_and_keep_restore_grips
+FAILED Tests/UI/test_console_prompts_controller.py::test_improvement_target_is_pinned_once_and_shared_across_callbacks
+FAILED Tests/UI/test_console_prompts_controller.py::test_improvement_activation_refuses_a_moved_system_prompt
+FAILED Tests/UI/test_console_prompts_controller.py::test_improvement_snapshot_refuses_an_unpinned_provider_target
+23 failed, 157 passed in 89.41s (0:01:29)

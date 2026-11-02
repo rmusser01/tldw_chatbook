@@ -11,6 +11,7 @@ from textual.css.query import QueryError
 from ...Library.library_prompts_state import build_prompt_editor_state
 from ...Widgets.Library.library_prompt_work_pane import LibraryPromptWorkPane
 from ...Widgets.Prompts.prompt_block_editor_state import PromptBlockEditorState
+from ...Widgets.Prompts.prompt_mixin_editor import PromptMixinEditor
 from .screen_constants import LIBRARY_PROMPT_SAVE_STATUS_COPY
 
 if TYPE_CHECKING:
@@ -27,6 +28,7 @@ async def acknowledge_prompt_save(
     submitted_state: PromptBlockEditorState | None,
     prepared_state: PromptBlockEditorState | None,
     save_fields: Mapping[str, Any],
+    submitted_mixin_draft: tuple[str, str, str] | None = None,
 ) -> None:
     """Adopt the committed record while retaining newer accepted controls.
 
@@ -39,6 +41,7 @@ async def acknowledge_prompt_save(
         submitted_state: Immutable submitted block working copy.
         prepared_state: Validated artifact state submitted to persistence.
         save_fields: Existing normalized service request.
+        submitted_mixin_draft: Raw literal fields captured before Save.
     """
     owner = controller
     # Removing a prior conflict affordance can await a DOM mutation. Capture
@@ -52,6 +55,12 @@ async def acknowledge_prompt_save(
     if canvas is not None and current_state is not None:
         current_state = canvas.capture_live_block_state()
         owner._library_prompt_block_state = current_state
+    current_mixin = (
+        owner.query_one(PromptMixinEditor).read_draft()
+        if submitted_mixin_draft is not None
+        else None
+    )
+    newer_mixin = current_mixin != submitted_mixin_draft
     current_fields = owner._read_library_prompt_editor_fields()
     newer_blocks = (
         current_state is not None
@@ -72,6 +81,18 @@ async def acknowledge_prompt_save(
         }
     )
     detail.update(id=new_id, version=version)
+    if submitted_mixin_draft is not None:
+        detail.update(
+            {
+                key: save_fields[key]
+                for key in (
+                    "artifact_type",
+                    "prompt_format",
+                    "prompt_schema_version",
+                    "prompt_definition",
+                )
+            }
+        )
     if prepared_state is not None:
         detail.update(
             artifact_type=prepared_state.artifact_type,
@@ -99,6 +120,8 @@ async def acknowledge_prompt_save(
         owner._library_prompt_original_name = save_fields["name"]
         owner._library_prompt_version = version
         owner._library_prompt_detached_structured = False
+    if submitted_mixin_draft is not None:
+        owner._library_prompt_mixin_draft = current_mixin if newer_mixin else None
     owner._selected_prompt_id = new_id
     owner._library_prompt_loaded_id = new_id
     owner._library_prompt_detail_selected_name = save_fields["name"]
@@ -126,14 +149,22 @@ async def acknowledge_prompt_save(
         )
     owner._library_prompt_block_state = state
     if canvas is not None:
-        working = replace(saved, block_editor_state=state)
+        working = replace(
+            saved,
+            block_editor_state=state,
+            mixin_draft=owner._library_prompt_mixin_draft,
+        )
         state = await canvas.sync_saved_editor_state(working)
         owner._library_prompt_block_state = state
         current_fields = owner._read_library_prompt_editor_fields()
-    owner._library_prompt_dirty = current_fields != submitted_fields or bool(
-        state is not None
-        and submitted_state is not None
-        and state.definition != submitted_state.definition
+    owner._library_prompt_dirty = (
+        newer_mixin
+        or current_fields != submitted_fields
+        or bool(
+            state is not None
+            and submitted_state is not None
+            and state.definition != submitted_state.definition
+        )
     )
     owner._sync_library_prompt_save_action_widgets()
     owner._set_library_prompt_discard_enabled(owner._library_prompt_dirty)

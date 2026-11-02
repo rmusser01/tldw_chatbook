@@ -250,3 +250,98 @@ def test_decoder_rejects_non_string_user_lane_values(value: Any) -> None:
 
     with pytest.raises(PromptChatbookRecordError):
         decode_chatbook_prompt_record(payload)
+
+
+def test_mixin_chatbook_v2_preserves_exact_definition():
+    import json
+
+    raw = json.dumps(
+        {
+            "kind": "text_mixin",
+            "schema_version": 3,
+            "body": "\n{style}\n### TITLE ###\n",
+            "placement": "before",
+        }
+    )
+    detail = _detail(
+        name="Literal",
+        author=None,
+        details=None,
+        system_prompt="",
+        user_prompt="\n{style}\n### TITLE ###\n",
+        keywords=[],
+        artifact_type="mixin",
+        prompt_format="structured",
+        prompt_schema_version=3,
+        prompt_definition=raw,
+    )
+    encoded = encode_chatbook_prompt_record(detail)
+    assert encoded["record_version"] == 2
+    assert decode_chatbook_prompt_record(encoded) == detail
+
+
+@pytest.mark.parametrize(
+    "overrides",
+    [
+        {"record_version": 1},
+        {"record_version": 999},
+        {"prompt_schema_version": True},
+        {"prompt_schema_version": 4},
+        {
+            "prompt_definition": '{"kind":"text_mixin","schema_version":3,"body":"secret","placement":"unknown"}'
+        },
+        {"prompt_format": "legacy"},
+        {"system_prompt": "different"},
+    ],
+)
+def test_mixin_chatbook_rejects_mismatched_or_malformed_record(overrides):
+    import json
+
+    record = _record(
+        record_version=2,
+        artifact_type="mixin",
+        prompt_format="structured",
+        prompt_schema_version=3,
+        system_prompt="",
+        user_prompt="secret",
+        prompt_definition=json.dumps(
+            {
+                "kind": "text_mixin",
+                "schema_version": 3,
+                "body": "secret",
+                "placement": "after",
+            }
+        ),
+    )
+    record.update(overrides)
+    with pytest.raises(PromptChatbookRecordError):
+        decode_chatbook_prompt_record(record)
+
+
+def test_mixin_chatbook_rejects_oversized_exact_definition_text():
+    raw = '{"kind":"text_mixin","schema_version":3,"body":"x","placement":"before"}'
+    record = _record(
+        record_version=2,
+        artifact_type="mixin",
+        prompt_format="structured",
+        prompt_schema_version=3,
+        system_prompt="",
+        user_prompt="x",
+        prompt_definition=raw + " " * 256_000,
+    )
+    with pytest.raises(PromptChatbookRecordError):
+        decode_chatbook_prompt_record(record)
+
+
+def test_mixin_chatbook_deeply_nested_definition_refuses_with_bounded_error():
+    record = _record(
+        record_version=2,
+        artifact_type="mixin",
+        prompt_format="structured",
+        prompt_schema_version=3,
+        system_prompt="",
+        user_prompt="x",
+        prompt_definition='{"secret":' * 10000 + "0" + "}" * 10000,
+    )
+    with pytest.raises(PromptChatbookRecordError):
+        decode_chatbook_prompt_record(record)

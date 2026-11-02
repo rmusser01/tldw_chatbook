@@ -163,9 +163,7 @@ class KeywordStore:
                     )
                     if is_deleted:
                         new_version = current_version + 1
-                        logger.info(
-                            f"Undeleting keyword '{keyword}' (ID: {kw_id}). New ver: {new_version}"
-                        )
+                        logger.info("Keyword undeleted.")
                         # Pass current_time for last_modified
                         cursor.execute(
                             f"UPDATE {self.spec.keywords_table} SET deleted=0, last_modified=?, version=?, client_id=? WHERE id=? AND version=?",
@@ -197,12 +195,12 @@ class KeywordStore:
                         self.update_fts(conn, kw_id, keyword)
                         return kw_id, kw_uuid
                     else:
-                        logger.debug(f"Keyword '{keyword}' already active.")
+                        logger.debug("Keyword already active.")
                         return kw_id, kw_uuid
                 else:
                     new_uuid = self.db._generate_uuid()
                     new_version = 1
-                    logger.info(f"Adding new keyword '{keyword}' UUID {new_uuid}")
+                    logger.info("Adding new keyword.")
                     # Pass current_time for last_modified
                     cursor.execute(
                         f"INSERT INTO {self.spec.keywords_table} (keyword, uuid, last_modified, version, client_id, deleted) VALUES (?, ?, ?, ?, ?, 0)",
@@ -231,9 +229,7 @@ class KeywordStore:
                     self.update_fts(conn, kw_id, keyword)
                     return kw_id, new_uuid
         except Exception as e:
-            logger.opt(exception=True).error(
-                f"Error in add_keyword for '{keyword}': {e}"
-            )
+            logger.error("Keyword write failed category={}", type(e).__name__)
             if isinstance(e, sqlite3.Error):
                 raise self.spec.make_database_error(
                     f"Failed to add/update keyword: {e}"
@@ -548,8 +544,10 @@ class KeywordStore:
                     logger.debug(f"No keyword changes {entity_label} {entity_id}.")
                 return True
         except Exception as e:
-            logger.opt(exception=True).error(
-                f"Error updating keywords {entity_label} {entity_id}: {e}"
+            logger.error(
+                "{} keyword membership update failed category={}",
+                self.spec.entity_label,
+                type(e).__name__,
             )
             if isinstance(e, sqlite3.Error):
                 raise self.spec.make_database_error(

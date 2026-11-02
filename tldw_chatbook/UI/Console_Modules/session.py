@@ -213,6 +213,7 @@ from ...Chat.console_switcher_state import (
 from ...Chat.thinking_blocks import normalize_thinking_history_policy
 from ...Chat.console_scratch_space import ConsoleScratchSnapshot
 from ...Chat.console_turn_context import ConsoleTurnConfigurationSnapshot
+from ...Chat.console_prompt_mixins import decode_mixin_preferences, encode_mixin_preferences
 from ...Chat.provider_catalog import provider_display_name
 from ...Chat.provider_readiness import provider_config_key
 from ...Character_Chat.visual_identity import (
@@ -6106,6 +6107,12 @@ class ConsoleSessionController:
                     session.canonical_settings_baseline
                 )
             ),
+            "prompt_mixin_preferences": (
+                json.loads(encode_mixin_preferences(session.prompt_mixin_preferences.preferences))
+                if session.prompt_mixin_preferences.preferences is not None
+                else session.prompt_mixin_preferences.raw
+            ),
+            "prompt_mixin_durable_revision": session.prompt_mixin_durable_revision,
             "context_policy_overrides": session.context_policy_overrides.to_dict(),
             "thinking_history_policy": session.thinking_history_policy,
             "updated_at": session.updated_at,
@@ -6165,6 +6172,10 @@ class ConsoleSessionController:
                 if raw_session.get("persisted_conversation_id") is not None
                 else None
             ),
+            prompt_mixin_preferences=decode_mixin_preferences(raw_session.get("prompt_mixin_preferences")),
+            prompt_mixin_durable_revision=(raw_session.get("prompt_mixin_durable_revision", 0)
+                if type(raw_session.get("prompt_mixin_durable_revision", 0)) is int
+                and raw_session.get("prompt_mixin_durable_revision", 0) >= 0 else 0),
             settings=self._restore_console_settings(raw_session.get("settings")),
             canonical_settings_baseline=self._restore_console_settings(
                 raw_session.get("canonical_settings_baseline")

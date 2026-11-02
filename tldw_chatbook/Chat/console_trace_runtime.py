@@ -94,7 +94,10 @@ def _saved_revision_ids(descriptor: TraceProvenance) -> Iterator[str]:
 
 def _current_text_revision_ids(descriptor: TraceProvenance) -> Iterator[str]:
     if type(descriptor) is DerivedTraceProvenance:
-        if descriptor.transform is TraceTransformKind.CURRENT_TURN_TEXT:
+        if descriptor.transform in {
+            TraceTransformKind.CURRENT_TURN_TEXT,
+            TraceTransformKind.PROMPT_MIXINS,
+        }:
             yield descriptor.inputs[0].revision_id
         else:
             for nested in descriptor.inputs:
@@ -664,10 +667,10 @@ class ConsoleTraceBoundaryFactory:
                     if terminal is not None and origin is not None:
                         source_revision_id = None
                         origin_head = self.service._call_message_tail(cursor, origin)
-                        if (
-                            origin_head is not None
-                            and origin_head.component_kind == "active_request"
-                        ):
+                        if origin_head is not None and origin_head.component_kind in {
+                            "active_request",
+                            "prompt_mixins",
+                        }:
                             source_row = cursor.execute(
                                 "SELECT semantic_revision_id FROM console_trace_events "
                                 "WHERE call_id = ? AND event_type = 'call_boundary'",
@@ -744,6 +747,19 @@ class ConsoleTraceBoundaryFactory:
                                 current_revision_id,
                                 replay_row_count=replay_row_count,
                                 source_revision_id=source_revision_id,
+                                replacement_attempt_id=(
+                                    self.service.operational_replacement_attempt(
+                                        cursor,
+                                        conversation_id=conversation_id,
+                                        source_user_id=origin.turn_id,
+                                        origin_call_id=origin.call_id,
+                                        current_user_id=turn_id,
+                                        assistant_revision_id=assistant_revision_id,
+                                    )
+                                    if source_revision_id is not None
+                                    and assistant_revision_id is not None
+                                    else None
+                                ),
                                 discarded_assistant_message_id=discarded_assistant_id,
                                 discarded_followups=discarded_followups,
                                 closed_assistant_message_id=closed_assistant_id,
@@ -868,6 +884,20 @@ class ConsoleTraceBoundaryFactory:
                     call_id=reserved.call_id,
                     semantic_revision_id=current_revision_id,
                 )
+                if route_record.route in {
+                    ConsoleRequestRoute.FRESH,
+                    ConsoleRequestRoute.AGENT_FIRST,
+                }:
+                    from tldw_chatbook.DB.console_prompt_mixins import (
+                        bind_attempt_trace_call,
+                    )
+
+                    bind_attempt_trace_call(
+                        cursor,
+                        conversation_id=conversation_id,
+                        user_message_id=turn_id,
+                        call_id=reserved.call_id,
+                    )
             assert reserved is not None
             return ConsoleTraceCallBoundary(
                 service=self.service,

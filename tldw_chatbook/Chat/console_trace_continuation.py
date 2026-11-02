@@ -806,7 +806,7 @@ def validate_completed_tool_turn(
             or source.source_message_id != origin.turn_id
             or source.source_conversation_id != owner.conversation_id
             or source.normalized_role != "user"
-            or origin_head.component_kind != "active_request"
+            or origin_head.component_kind not in {"active_request", "prompt_mixins"}
             or origin_head.artifact_id is None
         ):
             raise ValueError("completed_turn_source")
@@ -819,16 +819,36 @@ def validate_completed_tool_turn(
     )
     user = self.repository.get_semantic_revision(cursor, witness.user_revision_id)
     link = self.repository.get_response_link(cursor, terminal.call_id)
+    replacement = witness.replacement_attempt_id is not None
+    if replacement and (
+        not restoring_source
+        or assistant is None
+        or witness.replacement_attempt_id
+        != self.operational_replacement_attempt(
+            cursor,
+            conversation_id=owner.conversation_id,
+            source_user_id=origin.turn_id,
+            origin_call_id=origin.call_id,
+            current_user_id=current_turn_id,
+            assistant_revision_id=witness.assistant_revision_id,
+        )
+    ):
+        raise ValueError("completed_turn_replacement_attempt")
     if (
         user is None
         or (
             not (source_after_failure or unanswered)
             and (
                 assistant is None
-                or link is None
-                or link.link_kind != "revision"
-                or link.verification_outcome != "verified_equal"
-                or link.semantic_revision_id != witness.assistant_revision_id
+                or (
+                    not replacement
+                    and (
+                        link is None
+                        or link.link_kind != "revision"
+                        or link.verification_outcome != "verified_equal"
+                        or link.semantic_revision_id != witness.assistant_revision_id
+                    )
+                )
                 or assistant.normalized_role != "assistant"
                 or assistant.source_conversation_id != owner.conversation_id
             )
@@ -1000,7 +1020,7 @@ def validate_completed_tool_turn(
         and (
             key[0]
             not in (
-                {"active_request"}
+                {"active_request", "prompt_mixins"}
                 if restoring_source and sequence == origin_head.sequence
                 else {"project_instruction", "tool_call", "tool_result"}
                 if project_transition

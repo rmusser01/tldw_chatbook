@@ -839,6 +839,11 @@ class ConsolePromptQueueRegistry:
                 entry_id=entry_id,
             )
         next_request = custody_request
+        if next_request is not None and existing.custody_request is not None:
+            next_request = replace(next_request, configuration=replace(
+                next_request.configuration,
+                prompt_mixins=existing.custody_request.configuration.prompt_mixins,
+            ))
         if next_request is None and existing.custody_request is not None:
             next_request = replace(existing.custody_request, draft=text)
         state.waiting[index] = QueuedPrompt(

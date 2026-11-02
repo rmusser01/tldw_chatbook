@@ -1,0 +1,90 @@
+........................................................................ [ 45%]
+...........................................EEEEE........................ [ 91%]
+........FF....                                                           [100%]
+==================================== ERRORS ====================================
+_ ERROR at setup of test_prompt_v4_staged_migration_preserves_source_and_prompt_data[prompts-v5] _
+../../../../Documents/GitHub/tldw_chatbook/.venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py:735: in pytest_fixture_setup
+    return (yield)
+            ^^^^^
+Tests/Backup_Recovery/test_core_owners.py:91: in core_store
+    owner = classes[name](path, "recovery-fixture")
+            ^^^^^^^^^^^^^
+E   KeyError: 'prompts-v5'
+_ ERROR at setup of test_prompt_migration_rejects_extra_trigger_before_writing[4-prompts-v5] _
+../../../../Documents/GitHub/tldw_chatbook/.venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py:735: in pytest_fixture_setup
+    return (yield)
+            ^^^^^
+Tests/Backup_Recovery/test_core_owners.py:91: in core_store
+    owner = classes[name](path, "recovery-fixture")
+            ^^^^^^^^^^^^^
+E   KeyError: 'prompts-v5'
+_ ERROR at setup of test_prompt_migration_rejects_extra_trigger_before_writing[5-prompts-v5] _
+../../../../Documents/GitHub/tldw_chatbook/.venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py:735: in pytest_fixture_setup
+    return (yield)
+            ^^^^^
+Tests/Backup_Recovery/test_core_owners.py:91: in core_store
+    owner = classes[name](path, "recovery-fixture")
+            ^^^^^^^^^^^^^
+E   KeyError: 'prompts-v5'
+_ ERROR at setup of test_prompt_failed_migration_rolls_back_created_table[False-prompts-v5] _
+../../../../Documents/GitHub/tldw_chatbook/.venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py:735: in pytest_fixture_setup
+    return (yield)
+            ^^^^^
+Tests/Backup_Recovery/test_core_owners.py:91: in core_store
+    owner = classes[name](path, "recovery-fixture")
+            ^^^^^^^^^^^^^
+E   KeyError: 'prompts-v5'
+_ ERROR at setup of test_prompt_failed_migration_rolls_back_created_table[True-prompts-v5] _
+../../../../Documents/GitHub/tldw_chatbook/.venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py:735: in pytest_fixture_setup
+    return (yield)
+            ^^^^^
+Tests/Backup_Recovery/test_core_owners.py:91: in core_store
+    owner = classes[name](path, "recovery-fixture")
+            ^^^^^^^^^^^^^
+E   KeyError: 'prompts-v5'
+=================================== FAILURES ===================================
+__ test_native_rag_indexing_schema_zero_survives_restricted_validation[False] __
+Tests/Backup_Recovery/test_sqlite_validation.py:918: in test_native_rag_indexing_schema_zero_survives_restricted_validation
+    assert validate_candidate(owner, path, Event(), migrate=migrate) == ()
+E   AssertionError: assert ('unsupported_schema',) == ()
+E     
+E     Left contains one more item: 'unsupported_schema'
+E     Use -v to get more diff
+__ test_native_rag_indexing_schema_zero_survives_restricted_validation[True] ___
+Tests/Backup_Recovery/test_sqlite_validation.py:918: in test_native_rag_indexing_schema_zero_survives_restricted_validation
+    assert validate_candidate(owner, path, Event(), migrate=migrate) == ()
+E   AssertionError: assert ('unsupported_schema',) == ()
+E     
+E     Left contains one more item: 'unsupported_schema'
+E     Use -v to get more diff
+============================= slowest 25 durations =============================
+18.50s setup    Tests/Packaging/test_installed_distribution.py::test_built_artifact_ships_the_migrations_its_own_code_opens[wheel]
+2.28s call     Tests/Backup_Recovery/test_response_rules_restore.py::test_restricted_historical_restore_migrates_only_disposable_copy[76]
+2.21s call     Tests/Backup_Recovery/test_response_rules_restore.py::test_restricted_historical_restore_migrates_only_disposable_copy[77]
+2.08s call     Tests/Backup_Recovery/test_response_rules_restore.py::test_restricted_historical_restore_migrates_only_disposable_copy[78]
+1.91s call     Tests/Backup_Recovery/test_response_rules_restore.py::test_restricted_historical_restore_migrates_only_disposable_copy[79]
+1.77s call     Tests/Backup_Recovery/test_response_rules_restore.py::test_restricted_historical_restore_migrates_only_disposable_copy[80]
+1.31s call     Tests/Backup_Recovery/test_response_rules_restore.py::test_every_accepted_v80_catalog_migrates_to_its_exact_current_variant[None-0-81]
+1.25s call     Tests/Backup_Recovery/test_response_rules_restore.py::test_every_accepted_v80_catalog_migrates_to_its_exact_current_variant[None-0-80]
+1.22s call     Tests/Backup_Recovery/test_response_rules_restore.py::test_every_accepted_v80_catalog_migrates_to_its_exact_current_variant[None-1-80]
+1.19s call     Tests/Backup_Recovery/test_response_rules_restore.py::test_every_accepted_v80_catalog_migrates_to_its_exact_current_variant[None-3-80]
+1.15s call     Tests/Backup_Recovery/test_response_rules_restore.py::test_every_accepted_v80_catalog_migrates_to_its_exact_current_variant[None-1-82]
+1.15s call     Tests/Backup_Recovery/test_response_rules_restore.py::test_every_accepted_v80_catalog_migrates_to_its_exact_current_variant[None-0-82]
+1.14s call     Tests/Backup_Recovery/test_response_rules_restore.py::test_every_accepted_v80_catalog_migrates_to_its_exact_current_variant[None-2-80]
+1.14s call     Tests/Backup_Recovery/test_response_rules_restore.py::test_every_accepted_v80_catalog_migrates_to_its_exact_current_variant[None-2-82]
+1.10s call     Tests/Backup_Recovery/test_response_rules_restore.py::test_every_accepted_v80_catalog_migrates_to_its_exact_current_variant[None-3-82]
+1.10s call     Tests/Backup_Recovery/test_response_rules_restore.py::test_every_accepted_v80_catalog_migrates_to_its_exact_current_variant[None-1-81]
+1.07s call     Tests/Backup_Recovery/test_sqlite_validation.py::test_shared_study_assets_and_memberships
+1.06s call     Tests/Backup_Recovery/test_response_rules_restore.py::test_every_accepted_v80_catalog_migrates_to_its_exact_current_variant[None-2-81]
+1.04s call     Tests/Backup_Recovery/test_response_rules_restore.py::test_every_accepted_v80_catalog_migrates_to_its_exact_current_variant[None-3-81]
+
+(6 durations < 1s hidden.)
+=========================== short test summary info ============================
+ERROR Tests/Backup_Recovery/test_sqlite_validation.py::test_prompt_v4_staged_migration_preserves_source_and_prompt_data[prompts-v5]
+ERROR Tests/Backup_Recovery/test_sqlite_validation.py::test_prompt_migration_rejects_extra_trigger_before_writing[4-prompts-v5]
+ERROR Tests/Backup_Recovery/test_sqlite_validation.py::test_prompt_migration_rejects_extra_trigger_before_writing[5-prompts-v5]
+ERROR Tests/Backup_Recovery/test_sqlite_validation.py::test_prompt_failed_migration_rolls_back_created_table[False-prompts-v5]
+ERROR Tests/Backup_Recovery/test_sqlite_validation.py::test_prompt_failed_migration_rolls_back_created_table[True-prompts-v5]
+FAILED Tests/Backup_Recovery/test_sqlite_validation.py::test_native_rag_indexing_schema_zero_survives_restricted_validation[False]
+FAILED Tests/Backup_Recovery/test_sqlite_validation.py::test_native_rag_indexing_schema_zero_survives_restricted_validation[True]
+2 failed, 151 passed, 5 errors in 105.41s (0:01:45)

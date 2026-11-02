@@ -1,0 +1,7 @@
+.....                                                                    [100%]
+============================= slowest 25 durations =============================
+3.20s call     Tests/UI/test_console_prompt_mixins.py::test_real_console_prompts_action_retains_browse_and_controls_runtime
+2.57s call     Tests/UI/test_console_prompt_mixins.py::test_mounted_selection_order_toggles_reopen_and_origin_fence
+
+(13 durations < 1s hidden.)
+5 passed in 9.72s

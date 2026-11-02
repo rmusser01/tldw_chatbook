@@ -101,6 +101,7 @@ from __future__ import annotations
 
 import asyncio
 import inspect
+import time
 import uuid
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field, replace
@@ -127,6 +128,7 @@ from ...Constants import (
 )
 from ...Library.library_prompts_state import classify_prompt_save_error
 from ...Prompt_Management.prompt_artifact_codec import decode_prompt_artifact
+from ...Prompt_Management.prompt_artifact_models import BlockArtifactDefinition
 from ...Prompt_Management.prompt_improvement_models import (
     PromptImprovementRequestSnapshot,
     fingerprint_block_definition,
@@ -797,7 +799,9 @@ class _ConsolePromptImprovementFlow:
         if latest_version != getattr(captured, "recipe_version", None):
             raise ValueError("The selected Recipe version changed.")
         decoded = decode_prompt_artifact(latest)
-        if decoded.artifact_type != "recipe" or decoded.definition is None:
+        if decoded.artifact_type != "recipe" or not isinstance(
+            decoded.definition, BlockArtifactDefinition
+        ):
             raise ValueError("The selected Recipe is no longer compatible.")
         if fingerprint_block_definition(decoded.definition) != getattr(
             captured, "recipe_fingerprint", None
@@ -825,7 +829,9 @@ class _ConsolePromptImprovementFlow:
         if latest_version != captured.prompt_version:
             raise ValueError("The selected Prompt version changed.")
         decoded = decode_prompt_artifact(latest)
-        if decoded.artifact_type != "prompt" or decoded.definition is None:
+        if decoded.artifact_type != "prompt" or not isinstance(
+            decoded.definition, BlockArtifactDefinition
+        ):
             raise ValueError("The selected Prompt is no longer compatible.")
         if (
             fingerprint_block_definition(decoded.definition)
@@ -948,6 +954,293 @@ class _ConsolePromptImprovementFlow:
         )
 
 
+class _ConsolePromptMixinsFlow:
+    """One Workbench's exact-origin adapter over existing runtime/source owners."""
+
+    def __init__(
+        self, *, service, session_id: str, is_current, next_send_preview=None
+    ) -> None:
+        self.service, self.session_id, self.is_current = service, session_id, is_current
+        self.next_send_preview = next_send_preview
+        self.scope = service.prompt_scope_service
+        self.session = service.store._sessions[session_id]
+        self.incarnation = self.session.incarnation_id
+        self.binding = self.session.conversation_binding_revision
+        self.identity = None
+        try:
+            self.identity = self.scope.mixin_source_identity(mode="local")
+        except Exception:  # noqa: BLE001 - unsupported source stays visible.
+            self.identity = None
+        self.query, self.page = "", 1
+
+    def _current(self, intent=None) -> None:
+        from ...Chat.console_prompt_mixins import MixinSourceChangedError
+
+        if (
+            not self.is_current()
+            or self.service.store._sessions.get(self.session_id) is not self.session
+            or self.session.incarnation_id != self.incarnation
+            or self.session.conversation_binding_revision != self.binding
+            or self.service.prompt_scope_service is not self.scope
+        ):
+            raise MixinSourceChangedError("mixin_workbench_stale")
+        if self.identity is not None:
+            now = self.scope.mixin_source_identity(mode="local")
+            if now[0] != self.identity[0] or any(
+                a is not b for a, b in zip(now[1:], self.identity[1:])
+            ):
+                raise MixinSourceChangedError("mixin_source_changed")
+        if intent is not None and (
+            intent.session_id != self.session_id
+            or intent.incarnation_id != self.incarnation
+            or intent.revision != self.service.preferences(self.session_id).revision
+        ):
+            raise MixinSourceChangedError("mixin_workbench_revision_changed")
+
+    async def project(self, *, query=None, page=None):
+        from ...Chat.console_chat_store import ConsoleSettingsComponent
+        from ...Chat.console_prompt_mixins import (
+            MixinSnapshot,
+            MixinSourceRef,
+            reconcile_mixin_placements,
+        )
+        from ...Widgets.Console.console_prompt_mixins_view import (
+            MixinWorkbenchProjection,
+        )
+
+        self._current()
+        prefs = self.service.preferences(self.session_id)
+        if query is not None:
+            self.query = query
+        if page is not None:
+            self.page = page
+        candidates, unavailable, updated = [], set(), set()
+        observed = []
+        status = []
+        total_pages = 1
+        if self.identity is not None:
+            try:
+                result = await self.scope.browse_prompts(
+                    mode="local",
+                    artifact_type="mixin",
+                    query=self.query,
+                    page=self.page,
+                    page_size=10,
+                    sort_by="name",
+                    sort_order="asc",
+                )
+                self._current()
+                self.page = result.get("page", self.page)
+                total_pages = result.get("total_pages", 1)
+                candidates = [
+                    (
+                        row["name"],
+                        MixinSourceRef(self.identity[0], "local", row["uuid"]),
+                    )
+                    for row in result["items"]
+                ]
+            except Exception:  # noqa: BLE001 - source failures have bounded recovery copy.
+                status.append("Library unavailable. Reopen Prompts to retry.")
+        for row in prefs.entries:
+            try:
+                records = await self.scope.read_mixin_records(
+                    mode=row.source.backend, record_uuids=(row.source.record_uuid,)
+                )
+                self._current()
+                if (
+                    self.identity is None
+                    or row.source.authority_key != self.identity[0]
+                ):
+                    raise ValueError("mixin_source_changed")
+                record = records[0]
+                if (
+                    row.last_used_version is not None
+                    and record["version"] != row.last_used_version
+                ):
+                    updated.add(row.source)
+                definition = decode_prompt_artifact(record).definition
+                observed.append(
+                    MixinSnapshot(
+                        row.source, record["version"], record["name"], definition
+                    )
+                )
+                if definition.placement != row.placement:
+                    updated.add(row.source)
+            except Exception:  # noqa: BLE001 - disabled unavailable choices remain removable.
+                unavailable.add(row.source)
+        self._current()
+        if self.service.preferences(self.session_id) != prefs:
+            raise ValueError("mixin_workbench_revision_changed")
+        reconciled = reconcile_mixin_placements(prefs, tuple(observed))
+        prior_versions = {row.source: row.last_used_version for row in prefs.entries}
+        reconciled = replace(
+            reconciled,
+            entries=tuple(
+                replace(row, last_used_version=prior_versions[row.source])
+                for row in reconciled.entries
+            ),
+        )
+        if reconciled != prefs:
+            prefs = self.service.replace_preferences(
+                self.session_id, expected_revision=prefs.revision, value=reconciled
+            )
+        unsaved = (
+            ConsoleSettingsComponent.PROMPT_MIXINS
+            in self.session.settings_persistence_failures
+        )
+        if unsaved:
+            status.append(
+                "Choices are live but unsaved. Retry saving before closing this chat."
+            )
+        if unavailable:
+            status.append(
+                "Enabled mix-ins unavailable; disable, remove or recover them to send."
+                if any(
+                    row.enabled and row.source in unavailable for row in prefs.entries
+                )
+                else "Unavailable disabled choices are kept and do not block sending."
+            )
+        if updated:
+            status.append(
+                "Updated Library definitions apply to the next send; placement changes move to the new group end."
+            )
+        return MixinWorkbenchProjection(
+            self.session_id,
+            self.incarnation,
+            prefs,
+            tuple(candidates),
+            " ".join(status),
+            unsaved,
+            frozenset(unavailable),
+            frozenset(updated),
+            self.page,
+            total_pages,
+            self.query,
+        )
+
+    async def apply(self, intent):
+        from ...Chat.console_chat_store import ConsoleSettingsComponent
+
+        self._current(intent)
+        prefs = self.service.preferences(self.session_id)
+        if intent.action == "add":
+            await self.service.enable_reference(
+                self.session_id,
+                source=intent.source,
+                target_incarnation_id=self.incarnation,
+                expected_revision=intent.revision,
+                expected_source_fences=(self.scope, *self.identity[1:]),
+                is_current=self.is_current,
+            )
+        elif intent.action == "retry":
+            failure = self.session.settings_persistence_failures.get(
+                ConsoleSettingsComponent.PROMPT_MIXINS
+            )
+            if failure is not None:
+                await self.service.store.retry_console_settings_persistence(
+                    session_id=self.session_id,
+                    component=ConsoleSettingsComponent.PROMPT_MIXINS,
+                    revision=failure.revision,
+                    _expected_failure=failure,
+                )
+        else:
+            entries = list(prefs.entries)
+            index = next(
+                i for i, row in enumerate(entries) if row.source == intent.source
+            )
+            if intent.action == "toggle":
+                entries[index] = replace(
+                    entries[index], enabled=not entries[index].enabled
+                )
+            elif intent.action == "remove":
+                entries.pop(index)
+            elif intent.action in {"up", "down"}:
+                group = [
+                    i
+                    for i, row in enumerate(entries)
+                    if row.placement == entries[index].placement
+                ]
+                target = group.index(index) + (-1 if intent.action == "up" else 1)
+                if not 0 <= target < len(group):
+                    return
+                other = group[target]
+                entries[index], entries[other] = entries[other], entries[index]
+            else:
+                raise ValueError("mixin_invalid_action")
+            self.service.replace_preferences(
+                self.session_id,
+                expected_revision=intent.revision,
+                value=replace(prefs, entries=tuple(entries)),
+            )
+
+    async def inspect(self, intent):
+        self._current(intent)
+        if self.identity is None or intent.source.authority_key != self.identity[0]:
+            raise ValueError("mixin_source_changed")
+        records = await self.scope.read_mixin_records(
+            mode=intent.source.backend, record_uuids=(intent.source.record_uuid,)
+        )
+        self._current(intent)
+        return records[0], decode_prompt_artifact(records[0]).definition
+
+    async def save(self, intent, record, name, definition):
+        self._current(intent)
+        if not name.strip():
+            raise ValueError("mixin_name_required")
+        saved = await self.scope.save_prompt(
+            mode=intent.source.backend,
+            prompt_identifier=intent.source.record_uuid,
+            expected_version=record["version"],
+            name=name,
+            artifact_type="mixin",
+            prompt_format="structured",
+            prompt_schema_version=3,
+            prompt_definition={
+                "kind": "text_mixin",
+                "schema_version": 3,
+                "body": definition.body,
+                "placement": definition.placement,
+            },
+        )
+        self._current(intent)
+        from ...Chat.console_prompt_mixins import (
+            MixinSnapshot,
+            reconcile_mixin_placements,
+        )
+
+        prefs = self.service.preferences(self.session_id)
+        observed = MixinSnapshot(
+            intent.source, saved["version"], saved["name"], definition
+        )
+        reconciled = reconcile_mixin_placements(prefs, (observed,))
+        prior_versions = {row.source: row.last_used_version for row in prefs.entries}
+        # Editing a Library record is not a send and cannot publish "last used".
+        reconciled = replace(
+            reconciled,
+            entries=tuple(
+                replace(row, last_used_version=prior_versions[row.source])
+                for row in reconciled.entries
+            ),
+        )
+        if reconciled != prefs:
+            self.service.replace_preferences(
+                self.session_id, expected_revision=intent.revision, value=reconciled
+            )
+        return saved
+
+    async def preview(self, intent):
+        self._current(intent)
+        if self.next_send_preview is not None:
+            payload = await self.next_send_preview()
+            self._current(intent)
+            return None, payload
+        snapshot = await self.service.capture(
+            self.session_id, expected_revision=intent.revision, publish_facts=False
+        )
+        self._current(intent)
+        return snapshot, None
+
+
 class ConsolePromptsController:
     """Owns the Console shell's prompt cluster: the Prompt Library modal,
     `/prompt` + `/system` resolution and their pickers, the system-prompt
@@ -1001,6 +1294,7 @@ class ConsolePromptsController:
         app_instance: Any,
         composer_accessor: Callable[[], Any],
         chat_store_accessor: Callable[[], Any],
+        prompt_mixin_service_accessor: Callable[[], Any],
         ensure_active_console_session_settings: Callable[[], Any],
         apply_console_session_system_prompt: Callable[[str], None],
         sync_console_session_draft: Callable[[], None],
@@ -1136,6 +1430,7 @@ class ConsolePromptsController:
                 rollback so programmatic mutations cannot leave stale rows.
         """
         self._screen = screen
+        self._prompt_mixin_service_accessor = prompt_mixin_service_accessor
         self.app_instance = app_instance
         self._composer_accessor = composer_accessor
         self._chat_store_accessor = chat_store_accessor
@@ -1507,6 +1802,25 @@ class ConsolePromptsController:
                 session_id=session_id,
             )
 
+        async def mixin_preview_payload():
+            from ...Chat.console_chat_models import MessageAttachment
+
+            service = self._mixin_service()
+            return await service.preparation_owner.build_context_snapshot(
+                draft=composer.draft_text(),
+                session_id=session_id,
+                attachments=tuple(
+                    MessageAttachment(
+                        data=item.data,
+                        mime_type=item.mime_type or "image/png",
+                        display_name=item.display_name,
+                        position=index,
+                    )
+                    for index, item in enumerate(store.pending_attachments(session_id))
+                ),
+                staged_sources=tuple(store.workspace_context.allowed_sources),
+            )
+
         self.push_screen(
             ConsolePromptsModal(
                 capabilities=source.capabilities,
@@ -1532,6 +1846,17 @@ class ConsolePromptsController:
                 assign_draft_collection=source.assign_draft_collection,
                 initial_mode=initial_mode,
                 initial_source=initial_source,
+                mixin_flow=_ConsolePromptMixinsFlow(
+                    service=self._mixin_service(),
+                    session_id=session_id,
+                    next_send_preview=mixin_preview_payload,
+                    is_current=lambda: (
+                        store.active_session_id == session_id
+                        and self._ensure_console_chat_store() is store
+                        and getattr(self.app_instance, "prompt_scope_service", None)
+                        is source._service
+                    ),
+                ),
             ),
             callback=self._restore_console_composer_focus,
         )
@@ -1571,8 +1896,8 @@ class ConsolePromptsController:
 
     @staticmethod
     def _is_recipe_prompt_record(record: Mapping[str, Any]) -> bool:
-        """Return whether a normalized or raw record is a non-executable Recipe."""
-        return str(record.get("artifact_type") or "prompt").casefold() == "recipe"
+        """Return whether a normalized or raw record is not an executable Prompt."""
+        return str(record.get("artifact_type") or "prompt").casefold() != "prompt"
 
     @staticmethod
     def _console_prompt_prefix_fts_query(text: str) -> str:
@@ -1613,6 +1938,7 @@ class ConsolePromptsController:
                 mode="local",
                 query=query,
                 limit=self._CONSOLE_PROMPT_SEARCH_LIMIT,
+                artifact_type="prompt",
                 **fts_kwargs,
             )
             return [
@@ -1833,6 +2159,9 @@ class ConsolePromptsController:
         target: _ConsolePromptReplaceTarget,
     ) -> None:
         """Route one resolved Prompt through the shared dialog or fast path."""
+        if self._is_recipe_prompt_record(record):
+            self._warn_prompt_application(self._RECIPE_EXECUTION_BLOCKED_COPY)
+            return
         raw_system = record.get("system_prompt")
         system_text = (
             raw_system if isinstance(raw_system, str) and raw_system.strip() else None
@@ -1957,6 +2286,10 @@ class ConsolePromptsController:
             callback=_apply_picker_choice,
         )
 
+    def _mixin_service(self):
+        """Use the live runtime's selection owner without a second save engine."""
+        return self._prompt_mixin_service_accessor()
+
     async def _consume_pending_console_prompt_insert(self) -> None:
         """Settle and apply one typed Library append request, if pending."""
         handoffs = self.app_instance.pending_handoffs
@@ -1968,6 +2301,44 @@ class ConsolePromptsController:
             self._warn_prompt_application(self._PROMPT_APPLICATION_EXPIRED_COPY)
             return
         application = claim.value
+        from ..Navigation.pending_handoff_store import ConsoleMixinEnableRequest
+
+        if type(application) is ConsoleMixinEnableRequest:
+            store = self._ensure_console_chat_store()
+
+            def is_current():
+                return (
+                    handoffs.is_current_claim(claim)
+                    and store.active_session_id == application.target_session_id
+                    and self._screen.is_mounted
+                    and self._screen.is_active
+                    and not application.is_expired(now_monotonic=time.monotonic())
+                )
+
+            try:
+                await self._mixin_service().enable_reference(
+                    application.target_session_id,
+                    source=application.source,
+                    target_incarnation_id=application.target_incarnation_id,
+                    expected_revision=application.preference_revision,
+                    expected_source_fences=application.source_fences,
+                    is_current=is_current,
+                )
+            except asyncio.CancelledError:
+                handoffs.release_prompt_claim(claim)
+                raise
+            except ValueError:
+                handoffs.acknowledge(claim)
+                self._warn_prompt_application(
+                    "Mix-in unavailable or chat changed. Reopen Library and retry Enable in current chat."
+                )
+                return
+            except Exception:  # noqa: BLE001 - retain the exact claim after transient failure.
+                handoffs.release_prompt_claim(claim)
+                return
+            handoffs.acknowledge(claim)
+            self.app_instance.notify("Mix-in enabled for future sends.")
+            return
         if (
             not isinstance(application, PromptVariableApplication)
             or application.destination != "append_active"
@@ -2030,8 +2401,20 @@ class ConsolePromptsController:
         )
         if session_id is None or settings is None:
             return None
+        session = next(
+            (item for item in store.sessions() if item.id == session_id), None
+        )
+        preference_revision = None
+        try:
+            preference_revision = self._mixin_service().preferences(session_id).revision
+        except (ValueError, AttributeError):
+            pass
         return ConsolePromptTargetProjection(
             target_session_id=session_id,
+            target_incarnation_id=session.incarnation_id
+            if session is not None
+            else None,
+            preference_revision=preference_revision,
             system_fingerprint=fingerprint_system_text(
                 str(settings.system_prompt or "")
             ),

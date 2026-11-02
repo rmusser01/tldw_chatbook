@@ -450,3 +450,157 @@ applicable under the publication lock. Manual stage publication acquires boundar
 admission before publication, after source callbacks. Guard exit also runs after
 publication unlock. Stop can therefore acquire publication while a reader awaits
 its UI guard; the reader subsequently fails closed on revoked authority.
+Applied nonempty mix-ins also delimit a private clean-history cache boundary in
+`console_prepared_request.py`. Windowing recomputes it from retained units before
+the active turn; the frozen adapter-input witness survives system extraction and
+private-key stripping. Only the Anthropic adapter consumes it, mapping the exact
+source end through conversion and omitting stale/ambiguous ends within its existing
+four-breakpoint budget. Empty/disabled mix-ins preserve prior wire behavior.
+OpenAI retains automatic caching and its existing stable key; explicit history
+breakpoints are unavailable in the current client capability contract. See
+[provider caching qualification](llm-providers.md#cache-qualification-checked-2026-11-01).
+
+Operational prompt mix-in persistence is defined by ADR-286. Immutable values and
+strict preference codecs live in `Chat/console_prompt_mixins.py`; the frozen
+`MixinAttemptContribution` lives in `Chat/console_prompt_mixin_service.py` and
+borrows the existing acceptance/promotion transaction. Exact native anchors,
+conversation-owned retry rows and body-free message/checkpoint markers survive
+fork, promotion and terminal metadata writes. The strict fork envelope admits only
+the validated companion marker pair, retaining status, attachment labels and trace
+aliases without authority. Nonobject JSON metadata rewrites normalize to an object
+before restoring the durable marker pair. Current-send composition borrows this seam without activating inherited chat choices.
+
+
+`ConsolePromptMixinService` now owns live selection CAS and admission capture.
+`ConsoleSessionInputSnapshot` freezes the originating chat's references and
+preference revision synchronously at received Send/Queue intake; the received
+claim and checked configuration identity refuse changes during later native work.
+The legacy direct submit path carries only the added frozen value and input
+witness until its original configuration-resolution point, preserving existing
+attachment/prefill custody. New automatic origins and hook/native follow-ups get
+explicit empty mix-ins.
+
+`PromptScopeService.mixin_source_identity` qualifies local UUIDs with a stable,
+credential-free digest of the selected Prompt DB lexical path and exact backend/DB
+object fences. Memory authorities have process-local lifetime. Coherent local
+reads use the existing finite preparation-read owner, including cancellation
+retirement and a five-second preparation deadline; current server capability
+refuses capture. Bodies remain representation-hidden in
+`ConsoleTurnConfigurationSnapshot.prompt_mixins`, request custody, and detached
+execution copies. A queued text edit retains its admitted mix-ins while keeping
+existing behavior for the other edit-time configuration fields; drain never reads
+the library again. No configuration JSON recovery codec or persistent queue is
+introduced. Durable attempt recording and composition use the same frozen execution input.
+
+Selection saves join `ConsoleSettingsDurabilityOwner` and the store's existing
+serialized settings drain as `PROMPT_MIXINS`. Rapid edits coalesce, native writes
+retain exact session/incarnation/binding identity, and stale results cannot publish
+into replacement chats. The existing Model recovery surface adds a failure-only
+row with exact failure/revision retry. Supported selections round-trip through
+private session state and the existing off-loop hydration batch; temporary
+promotion seeds them through the existing restricted INSERT transaction capability.
+Unknown/corrupt preferences stay unavailable and preserved, and new/copy/fork
+chats start empty. Retry lookup maps legacy attempts to empty, returns recorded
+empty distinctly, and refuses missing new-format records; persisted lookup also
+checks the exact assistant anchor. Normal mix-in controls remain in the future
+Prompts/Workbench integration.
+
+Already-complete supplied custody/configuration is authoritative, including an
+explicit or default-empty snapshot. Custom complete-input callers opt into
+capture through the preparation seam or supply the exact frozen value; the runtime
+does not guess whether empty means uncaptured. Tool/transport continuation keeps
+the accepted envelope, while a new machine-origin turn starts empty.
+
+Direct uncustodied capture also retains the service's private body-free source
+currentness guard until admission. Queue rechecks after hook preparation and just
+before enqueue. Manual Submit rechecks after hook/library/provider preparation,
+before acceptance, and on the owning loop after the durable handoff drain before
+issuing its native commit. Pending `_PreparedSendContinuation` keeps the same
+representation-hidden witness/guard across pause and resume. A stale preaccept
+source fails the optimistic echo and abandons the preparation through the existing
+rollback path; drafts and attachments remain staged. Already-accepted/postcommit
+envelopes and supplied complete configurations do not acquire this guard or reload
+library bodies. No callback is stored in frozen configuration or serialized data.
+
+
+ADR-286 current-send composition is owned by `compose_current_mixin_messages` in
+`console_prepared_request.py`. It wraps the exact native current-user row after
+ordinary text transforms, retaining a private attempt marker through semantic
+preparation and agent/tool continuations; serialization removes it. Canonical
+messages, history, retrieval and summary input remain clean. Retry and accepted
+stopped-empty Resend read the original operational record (including recorded
+empty), while Regenerate, edit-and-resend and explicit Continue capture current
+choices. Raw damaged markers refuse Retry before dispatch.
+
+Initial acceptance contributes the frozen attempt to the native transaction.
+Replay accepts it before provider entry; a new empty regeneration assistant and
+its attempt share the existing `create_message` transaction. A failed write
+publishes neither row identity nor provider work. Temporary sessions retain full
+`MixinAttemptWrite` batches by attempt identity, including predecessors; promotion
+writes every batch once through the exact native-to-durable map, then publishes
+the latest marker. Contribution identity hashes all frozen fields, including the
+full literal body, rather than embedding bodies in fingerprint diagnostics.
+
+The unreleased v86 marker-preservation trigger permits only the exact recorded
+same-owner predecessor/successor transition. It continues to preserve valid markers
+against arbitrary metadata writes. The exact recovery schema catalog changes with
+that trigger; the schema version is 86 on current dev.
+
+Context Next Send uses the same literal composition and source fences with
+`capture(publish_facts=False)`: it does not publish last-used/reconciliation facts,
+schedule preference writes, or call the model. Prepared token/cost projections
+include the bodies as mandatory active input; overflow retains existing recovery.
+
+
+Task-38540 review refinement: synthetic Continue input is constructed and given an
+exact native anchor by the shared continuation helper, including Retry and
+Regenerate after restart. Accepted Retry/Regenerate and stopped-empty original
+Resend record `replaces_attempt_id`; an ordinary new Continue is not a replacement.
+Regenerate omits this optional relationship when the exact original snapshot is
+unavailable or corrupt, so valid current choices remain usable. Exact Retry still
+refuses; the new attempt must persist before dispatch and cannot restore trace
+history through the damaged original.
+
+The existing v86 attempt table now also has set-once `trace_call_id` and
+`result_revision_id` proof fields. Initial FRESH/AGENT_FIRST call reservation binds
+the call through the exact native dispatch checkpoint in that transaction. Tool
+loops never replace this binding. A complete replacement's result revision seals
+inside the existing generation settlement transaction. Clean-source restoration
+requires a bounded accepted replacement chain to the exact origin call and exact
+sealed result equality, so a surviving marker cannot authorize first responses or
+post-result edits. FK deletion clears unavailable proof without deleting snapshots
+or blocking diagnostic GC. Fork clears all three authority fields. Promotion
+keeps accepted relationship/history but leaves result/trace seals unset for old
+temporary attempts, which never owned a durable captured origin. New durable
+attempts establish their own proof. The exact recovery table/guard catalog follows
+these unreleased v86 changes.
+
+### Mix-in controls and selected-generation display
+
+The existing composer Menu → Prompts action opens Browse; its Mix-ins section owns enabled references and Before/After order. A queued entry retains its accepted snapshot even after Library edits, toggles or tab switches. Reopen restores references/flags/order; live and durable preference CAS revisions have distinct lifetimes. New/copy/fork chats do not inherit active selections.
+
+`ConsoleChatMessage.mixin_usage_count` and `ConsoleVariant.mixin_usage_count` are transient display projections. Generation capture/apply moves the count with that generation; a manual or unqualified replacement carries `None`. This prevents the prior generation's Retry label leaking onto a replacement. Operational snapshot validation remains the only Retry authority. Unknown counts do not mean zero.
+
+
+Final fork/replay ownership (ADR-286): the immutable fork fence and snapshot carry
+`MixinForkState`, read in the existing caller-cursor owner for saved sources and
+from owned receipts for temporary sources. The shared historical read/write seam
+remaps copied anchors and retains Retry predecessors outside the prefix with null
+anchors; fresh `MixinAttemptWrite` still requires two real live anchors. The SQL
+copier inserts retained records before publishing each source marker exactly once,
+including same-row Retry chains. Forks clear replacement/trace proof fields and
+active choices. Temporary fork history survives source closure and is imported by
+the restricted promotion contribution before any subsequent fresh Retry batches.
+The live publication derives marker/count/classification from this owned state,
+without render-time reads. Unavailable/partial/future markers remain unavailable;
+unreadable generic metadata carries only an unavailable discriminator, never its
+body or an invented receipt. `mixin_replay_status` is a transient display refusal
+classification and travels with generation selection; it grants no Retry authority.
+
+New current-choice Regenerate, edit-and-resend and Continue retain the shared
+body-free capture-currentness witness across provider/hook/transform waits and
+check before mutation/admission. Original Retry and already accepted configurations
+remain source-independent. Expected unavailable/stale mix-in Preview failures
+return bounded disable/remove/refresh guidance without unexpected-error traceback;
+unexpected failures retain their diagnostic path. Ordinary server Browse checks
+snapshot capability before entering Mix-ins and retains its server view on refusal.

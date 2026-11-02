@@ -1,0 +1,2060 @@
+I001 [*] Import block is un-sorted or un-formatted
+  --> Tests/Chat/test_console_prompt_mixin_composition.py:2:1
+   |
+ 1 |   """Literal, exact-owner mix-in composition."""
+ 2 | / from copy import deepcopy
+ 3 | | from dataclasses import replace
+ 4 | |
+ 5 | | from tldw_chatbook.Chat.console_prompt_mixins import (
+ 6 | |     MixinAttemptSnapshot, MixinSnapshot, MixinSourceRef,
+ 7 | | )
+ 8 | | from tldw_chatbook.Prompt_Management.prompt_artifact_models import LiteralMixinDefinition
+   | |_________________________________________________________________________________________^
+ 9 |
+10 |   REF = MixinSourceRef("profile-test", "local", "00000000-0000-4000-8000-000000000001")
+   |
+help: Organize imports
+   |
+5  | from tldw_chatbook.Chat.console_prompt_mixins import (
+   -     MixinAttemptSnapshot, MixinSnapshot, MixinSourceRef,
+6  +     MixinAttemptSnapshot,
+7  +     MixinSnapshot,
+8  +     MixinSourceRef,
+9  + )
+10 + from tldw_chatbook.Prompt_Management.prompt_artifact_models import (
+11 +     LiteralMixinDefinition,
+12 | )
+   - from tldw_chatbook.Prompt_Management.prompt_artifact_models import LiteralMixinDefinition
+13 |
+   |
+
+I001 [*] Import block is un-sorted or un-formatted
+  --> Tests/Chat/test_console_prompt_mixin_composition.py:37:5
+   |
+36 |   def test_exact_anchor_is_active_and_repreparation_does_not_wrap_again():
+37 | /     from tldw_chatbook.Chat.console_prepared_request import (
+38 | |         MIXIN_ATTEMPT_KEY, build_console_request, compose_current_mixin_messages,
+39 | |         prepare_provider_request, resolve_request_capacity, thaw_json,
+40 | |     )
+   | |_____^
+41 |       messages = [
+42 |           {"role": "user", "content": "old", "_native_message_id": "old"},
+   |
+help: Organize imports
+   |
+37 |     from tldw_chatbook.Chat.console_prepared_request import (
+   -         MIXIN_ATTEMPT_KEY, build_console_request, compose_current_mixin_messages,
+   -         prepare_provider_request, resolve_request_capacity, thaw_json,
+38 +         MIXIN_ATTEMPT_KEY,
+39 +         build_console_request,
+40 +         compose_current_mixin_messages,
+41 +         prepare_provider_request,
+42 +         resolve_request_capacity,
+43 +         thaw_json,
+44 |     )
+   |
+
+I001 [*] Import block is un-sorted or un-formatted
+  --> Tests/Chat/test_console_prompt_mixin_composition.py:63:5
+   |
+62 |   def test_unknown_anchor_refuses_instead_of_using_last_user():
+63 | /     import pytest
+64 | |     from tldw_chatbook.Chat.console_prepared_request import compose_current_mixin_messages
+65 | |     from tldw_chatbook.Chat.console_prompt_mixins import MixinSnapshotUnavailableError
+   | |______________________________________________________________________________________^
+66 |       with pytest.raises(MixinSnapshotUnavailableError, match="mixin_anchor_unavailable"):
+67 |           compose_current_mixin_messages([{"role": "user", "content": "hook"}], snapshot(), user_message_id="missing", attempt_id="att…
+   |
+help: Organize imports
+   |
+63 |     import pytest
+   -     from tldw_chatbook.Chat.console_prepared_request import compose_current_mixin_messages
+64 +
+65 +     from tldw_chatbook.Chat.console_prepared_request import (
+66 +         compose_current_mixin_messages,
+67 +     )
+68 |     from tldw_chatbook.Chat.console_prompt_mixins import MixinSnapshotUnavailableError
+   |
+
+I001 [*] Import block is un-sorted or un-formatted
+  --> Tests/Chat/test_console_prompt_mixin_composition.py:71:5
+   |
+70 |   def test_agent_tool_loop_preserves_mixin_owner_and_counts_body_once():
+71 | /     from uuid import uuid4
+72 | |     from tldw_chatbook.Chat.console_agent_bridge import ConsoleAgentTraceRequestFactory
+73 | |     from tldw_chatbook.Chat.console_prepared_request import build_console_request, compose_current_mixin_messages, prepare_provider_request, resolve_request_capacity, thaw_json
+74 | |     from tldw_chatbook.Chat.console_trace_provenance import ConsoleRequestRoute, ConsoleTraceCaptureMode, DerivedTraceProvenance, FrozenTracePolicy, ProviderArtifactTraceProvenance, SavedRevisionTraceProvenance, TraceProvenanceSource, TraceTransformKind
+   | |_____________________________________________________________________________________________________________________________________________________________________________________________________________________________________________________________^
+75 |       policy = FrozenTracePolicy(str(uuid4()), "credentials-v1", False, None)
+76 |       rows = compose_current_mixin_messages([{"role": "user", "content": "input", "_native_message_id": "user"}], snapshot("literal"), user_message_id="user", attempt_id="attempt")
+   |
+help: Organize imports
+   |
+71 |     from uuid import uuid4
+72 +
+73 |     from tldw_chatbook.Chat.console_agent_bridge import ConsoleAgentTraceRequestFactory
+   -     from tldw_chatbook.Chat.console_prepared_request import build_console_request, compose_current_mixin_messages, prepare_provider_request, resolve_request_capacity, thaw_json
+   -     from tldw_chatbook.Chat.console_trace_provenance import ConsoleRequestRoute, ConsoleTraceCaptureMode, DerivedTraceProvenance, FrozenTracePolicy, ProviderArtifactTraceProvenance, SavedRevisionTraceProvenance, TraceProvenanceSource, TraceTransformKind
+74 +     from tldw_chatbook.Chat.console_prepared_request import (
+75 +         build_console_request,
+76 +         compose_current_mixin_messages,
+77 +         prepare_provider_request,
+78 +         resolve_request_capacity,
+79 +         thaw_json,
+80 +     )
+81 +     from tldw_chatbook.Chat.console_trace_provenance import (
+82 +         ConsoleRequestRoute,
+83 +         ConsoleTraceCaptureMode,
+84 +         DerivedTraceProvenance,
+85 +         FrozenTracePolicy,
+86 +         ProviderArtifactTraceProvenance,
+87 +         SavedRevisionTraceProvenance,
+88 +         TraceProvenanceSource,
+89 +         TraceTransformKind,
+90 +     )
+91 |     policy = FrozenTracePolicy(str(uuid4()), "credentials-v1", False, None)
+   |
+
+I001 [*] Import block is un-sorted or un-formatted
+  --> Tests/Chat/test_console_prompt_mixin_composition.py:93:5
+   |
+92 | def test_mixin_overflow_is_mandatory_and_clean_history_remains_compactable():
+93 |     from tldw_chatbook.Chat.console_prepared_request import build_console_request, compose_current_mixin_messages, prepare_provider_request, resolve_request_capacity
+   |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+94 |     rows = [{"role": "user", "content": "old"}, {"role": "assistant", "content": "reply"}, {"role": "user", "content": "new", "_native_message_id": "new"}]
+95 |     composed = compose_current_mixin_messages(rows, snapshot("literal " * 100), user_message_id="new", attempt_id="attempt")
+   |
+help: Organize imports
+   |
+92 | def test_mixin_overflow_is_mandatory_and_clean_history_remains_compactable():
+   -     from tldw_chatbook.Chat.console_prepared_request import build_console_request, compose_current_mixin_messages, prepare_provider_request, resolve_request_capacity
+93 +     from tldw_chatbook.Chat.console_prepared_request import (
+94 +         build_console_request,
+95 +         compose_current_mixin_messages,
+96 +         prepare_provider_request,
+97 +         resolve_request_capacity,
+98 +     )
+99 |     rows = [{"role": "user", "content": "old"}, {"role": "assistant", "content": "reply"}, {"role": "user", "content": "new", "_native_message_id": "new"}]
+   |
+
+I001 [*] Import block is un-sorted or un-formatted
+  --> Tests/Chat/test_console_prompt_mixin_retry.py:2:1
+   |
+ 1 |   """Provider-boundary original Retry versus current-choice send behavior."""
+ 2 | / from dataclasses import replace
+ 3 | |
+ 4 | | import pytest
+ 5 | |
+ 6 | | from Tests.Chat.test_console_prompt_mixin_admission import A, Scope
+ 7 | | from Tests.Chat.test_console_trace_current_turn_transforms import trace_harness  # noqa: F401
+ 8 | | from tldw_chatbook.Chat.console_prompt_mixin_service import ConsolePromptMixinService
+ 9 | | from tldw_chatbook.Chat.console_prompt_mixins import MixinPreferences, MixinSelection
+   | |_____________________________________________________________________________________^
+10 |
+11 |   pytestmark = pytest.mark.bootstrap_profile
+   |
+help: Organize imports
+   |
+6  | from Tests.Chat.test_console_prompt_mixin_admission import A, Scope
+   - from Tests.Chat.test_console_trace_current_turn_transforms import trace_harness  # noqa: F401
+7  + from Tests.Chat.test_console_trace_current_turn_transforms import (
+8  +     trace_harness,  # noqa: F401
+9  + )
+10 | from tldw_chatbook.Chat.console_prompt_mixin_service import ConsolePromptMixinService
+   |
+
+F811 Redefinition of unused `trace_harness` from line 7
+  --> Tests/Chat/test_console_prompt_mixin_retry.py:26:68
+   |
+24 | @pytest.mark.asyncio
+25 | @pytest.mark.parametrize("capture", [False, True])
+26 | async def test_retry_original_regenerate_current_and_clean_history(trace_harness, monkeypatch, capture):
+   |                                                                    ^^^^^^^^^^^^^ `trace_harness` redefined here
+27 |     h = trace_harness
+28 |     capture_mode(monkeypatch, capture)
+   |
+  ::: Tests/Chat/test_console_prompt_mixin_retry.py:7:67
+   |
+ 6 | from Tests.Chat.test_console_prompt_mixin_admission import A, Scope
+ 7 | from Tests.Chat.test_console_trace_current_turn_transforms import trace_harness  # noqa: F401
+   |                                                                   ------------- previous definition of `trace_harness` here
+ 8 | from tldw_chatbook.Chat.console_prompt_mixin_service import ConsolePromptMixinService
+ 9 | from tldw_chatbook.Chat.console_prompt_mixins import MixinPreferences, MixinSelection
+   |
+help: Remove definition: `trace_harness`
+
+I001 [*] Import block is un-sorted or un-formatted
+  --> Tests/Chat/test_console_prompt_mixin_retry.py:56:5
+   |
+55 |   def capture_mode(monkeypatch, enabled):
+56 | /     from tldw_chatbook.Chat import console_chat_controller as module
+57 | |     from tldw_chatbook.Chat.console_turn_preparation import ConsoleTurnPreparation
+58 | |     from tldw_chatbook.Chat.console_trace_provenance import ConsoleTraceCaptureMode
+   | |___________________________________________________________________________________^
+59 |       def preparation(**kwargs):
+60 |           kwargs["capture_mode"] = ConsoleTraceCaptureMode.CAPTURE_ON if enabled else ConsoleTraceCaptureMode.CAPTURE_OFF
+   |
+help: Organize imports
+   |
+56 |     from tldw_chatbook.Chat import console_chat_controller as module
+57 +     from tldw_chatbook.Chat.console_trace_provenance import ConsoleTraceCaptureMode
+58 |     from tldw_chatbook.Chat.console_turn_preparation import ConsoleTurnPreparation
+   -     from tldw_chatbook.Chat.console_trace_provenance import ConsoleTraceCaptureMode
+59 |     def preparation(**kwargs):
+   |
+
+F811 Redefinition of unused `trace_harness` from line 7
+  --> Tests/Chat/test_console_prompt_mixin_retry.py:68:78
+   |
+66 | @pytest.mark.parametrize("enabled", [False, True])
+67 | @pytest.mark.parametrize("capture", [False, True])
+68 | async def test_original_retry_survives_reopen_deleted_source_and_latest_loss(trace_harness, monkeypatch, enabled, capture):
+   |                                                                              ^^^^^^^^^^^^^ `trace_harness` redefined here
+69 |     from Tests.Chat.test_console_turn_resend import _restore
+70 |     from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
+   |
+  ::: Tests/Chat/test_console_prompt_mixin_retry.py:7:67
+   |
+ 6 | from Tests.Chat.test_console_prompt_mixin_admission import A, Scope
+ 7 | from Tests.Chat.test_console_trace_current_turn_transforms import trace_harness  # noqa: F401
+   |                                                                   ------------- previous definition of `trace_harness` here
+ 8 | from tldw_chatbook.Chat.console_prompt_mixin_service import ConsolePromptMixinService
+ 9 | from tldw_chatbook.Chat.console_prompt_mixins import MixinPreferences, MixinSelection
+   |
+help: Remove definition: `trace_harness`
+
+F811 Redefinition of unused `trace_harness` from line 7
+   --> Tests/Chat/test_console_prompt_mixin_retry.py:119:71
+    |
+117 | @pytest.mark.asyncio
+118 | @pytest.mark.parametrize("trace_harness", [False, True], indirect=True)
+119 | async def test_current_choice_edit_continue_preview_and_clean_history(trace_harness, monkeypatch):
+    |                                                                       ^^^^^^^^^^^^^ `trace_harness` redefined here
+120 |     h = trace_harness
+121 |     service, scope = select(h, monkeypatch)
+    |
+   ::: Tests/Chat/test_console_prompt_mixin_retry.py:7:67
+    |
+  6 | from Tests.Chat.test_console_prompt_mixin_admission import A, Scope
+  7 | from Tests.Chat.test_console_trace_current_turn_transforms import trace_harness  # noqa: F401
+    |                                                                   ------------- previous definition of `trace_harness` here
+  8 | from tldw_chatbook.Chat.console_prompt_mixin_service import ConsolePromptMixinService
+  9 | from tldw_chatbook.Chat.console_prompt_mixins import MixinPreferences, MixinSelection
+    |
+help: Remove definition: `trace_harness`
+
+RUF059 Unpacked variable `service` is never used
+   --> Tests/Chat/test_console_prompt_mixin_retry.py:121:5
+    |
+119 | async def test_current_choice_edit_continue_preview_and_clean_history(trace_harness, monkeypatch):
+120 |     h = trace_harness
+121 |     service, scope = select(h, monkeypatch)
+    |     ^^^^^^^
+122 |     capture_mode(monkeypatch, False)
+123 |     first = await h.controller.submit_draft("input", session_id="session-1")
+    |
+help: Prefix it with an underscore or any other dummy variable pattern
+
+F811 Redefinition of unused `trace_harness` from line 7
+   --> Tests/Chat/test_console_prompt_mixin_retry.py:141:82
+    |
+140 | @pytest.mark.asyncio
+141 | async def test_snapshot_write_failure_blocks_initial_adapter_and_preserves_draft(trace_harness, monkeypatch):
+    |                                                                                  ^^^^^^^^^^^^^ `trace_harness` redefined here
+142 |     from tldw_chatbook.DB import console_prompt_mixins as records
+143 |     h = trace_harness
+    |
+   ::: Tests/Chat/test_console_prompt_mixin_retry.py:7:67
+    |
+  6 | from Tests.Chat.test_console_prompt_mixin_admission import A, Scope
+  7 | from Tests.Chat.test_console_trace_current_turn_transforms import trace_harness  # noqa: F401
+    |                                                                   ------------- previous definition of `trace_harness` here
+  8 | from tldw_chatbook.Chat.console_prompt_mixin_service import ConsolePromptMixinService
+  9 | from tldw_chatbook.Chat.console_prompt_mixins import MixinPreferences, MixinSelection
+    |
+help: Remove definition: `trace_harness`
+
+F811 Redefinition of unused `trace_harness` from line 7
+   --> Tests/Chat/test_console_prompt_mixin_retry.py:158:79
+    |
+156 | @pytest.mark.parametrize("trace_harness", [False, True], indirect=True)
+157 | @pytest.mark.parametrize("character", [False, True])
+158 | async def test_plain_character_streaming_and_nonstreaming_keep_bodies_literal(trace_harness, monkeypatch, character):
+    |                                                                               ^^^^^^^^^^^^^ `trace_harness` redefined here
+159 |     h = trace_harness
+160 |     service, scope = select(h, monkeypatch)
+    |
+   ::: Tests/Chat/test_console_prompt_mixin_retry.py:7:67
+    |
+  6 | from Tests.Chat.test_console_prompt_mixin_admission import A, Scope
+  7 | from Tests.Chat.test_console_trace_current_turn_transforms import trace_harness  # noqa: F401
+    |                                                                   ------------- previous definition of `trace_harness` here
+  8 | from tldw_chatbook.Chat.console_prompt_mixin_service import ConsolePromptMixinService
+  9 | from tldw_chatbook.Chat.console_prompt_mixins import MixinPreferences, MixinSelection
+    |
+help: Remove definition: `trace_harness`
+
+RUF059 Unpacked variable `service` is never used
+   --> Tests/Chat/test_console_prompt_mixin_retry.py:160:5
+    |
+158 | async def test_plain_character_streaming_and_nonstreaming_keep_bodies_literal(trace_harness, monkeypatch, character):
+159 |     h = trace_harness
+160 |     service, scope = select(h, monkeypatch)
+    |     ^^^^^^^
+161 |     scope.records[A.record_uuid]["prompt_definition"]["body"] = "literal alias {{x}} /command"
+162 |     if character:
+    |
+help: Prefix it with an underscore or any other dummy variable pattern
+
+F811 Redefinition of unused `trace_harness` from line 7
+   --> Tests/Chat/test_console_prompt_mixin_retry.py:172:56
+    |
+171 | @pytest.mark.asyncio
+172 | async def test_hook_user_row_is_never_the_mixin_anchor(trace_harness, monkeypatch):
+    |                                                        ^^^^^^^^^^^^^ `trace_harness` redefined here
+173 |     h = trace_harness
+174 |     select(h, monkeypatch)
+    |
+   ::: Tests/Chat/test_console_prompt_mixin_retry.py:7:67
+    |
+  6 | from Tests.Chat.test_console_prompt_mixin_admission import A, Scope
+  7 | from Tests.Chat.test_console_trace_current_turn_transforms import trace_harness  # noqa: F401
+    |                                                                   ------------- previous definition of `trace_harness` here
+  8 | from tldw_chatbook.Chat.console_prompt_mixin_service import ConsolePromptMixinService
+  9 | from tldw_chatbook.Chat.console_prompt_mixins import MixinPreferences, MixinSelection
+    |
+help: Remove definition: `trace_harness`
+
+F811 Redefinition of unused `trace_harness` from line 7
+   --> Tests/Chat/test_console_prompt_mixin_retry.py:185:62
+    |
+184 | @pytest.mark.asyncio
+185 | async def test_temporary_attempts_promote_with_retry_lineage(trace_harness, monkeypatch):
+    |                                                              ^^^^^^^^^^^^^ `trace_harness` redefined here
+186 |     import asyncio
+187 |     from tldw_chatbook.Chat.console_prompt_mixins import MixinAttemptWrite
+    |
+   ::: Tests/Chat/test_console_prompt_mixin_retry.py:7:67
+    |
+  6 | from Tests.Chat.test_console_prompt_mixin_admission import A, Scope
+  7 | from Tests.Chat.test_console_trace_current_turn_transforms import trace_harness  # noqa: F401
+    |                                                                   ------------- previous definition of `trace_harness` here
+  8 | from tldw_chatbook.Chat.console_prompt_mixin_service import ConsolePromptMixinService
+  9 | from tldw_chatbook.Chat.console_prompt_mixins import MixinPreferences, MixinSelection
+    |
+help: Remove definition: `trace_harness`
+
+I001 [*] Import block is un-sorted or un-formatted
+   --> Tests/Chat/test_console_prompt_mixin_retry.py:186:5
+    |
+184 |   @pytest.mark.asyncio
+185 |   async def test_temporary_attempts_promote_with_retry_lineage(trace_harness, monkeypatch):
+186 | /     import asyncio
+187 | |     from tldw_chatbook.Chat.console_prompt_mixins import MixinAttemptWrite
+    | |__________________________________________________________________________^
+188 |       h = trace_harness
+189 |       capture_mode(monkeypatch, False)
+    |
+help: Organize imports
+    |
+186 |     import asyncio
+187 +
+188 |     from tldw_chatbook.Chat.console_prompt_mixins import MixinAttemptWrite
+    |
+
+F811 Redefinition of unused `trace_harness` from line 7
+   --> Tests/Chat/test_console_prompt_mixin_retry.py:217:73
+    |
+215 | @pytest.mark.asyncio
+216 | @pytest.mark.parametrize("damage", ["missing", "count", "foreign", "parent", "revision", "pending", "marker"])
+217 | async def test_replacement_trace_proof_requires_exact_operational_owner(trace_harness, monkeypatch, damage):
+    |                                                                         ^^^^^^^^^^^^^ `trace_harness` redefined here
+218 |     from uuid import uuid4
+219 |     from tldw_chatbook.Chat.console_chat_models import ConsoleMessageRole
+    |
+   ::: Tests/Chat/test_console_prompt_mixin_retry.py:7:67
+    |
+  6 | from Tests.Chat.test_console_prompt_mixin_admission import A, Scope
+  7 | from Tests.Chat.test_console_trace_current_turn_transforms import trace_harness  # noqa: F401
+    |                                                                   ------------- previous definition of `trace_harness` here
+  8 | from tldw_chatbook.Chat.console_prompt_mixin_service import ConsolePromptMixinService
+  9 | from tldw_chatbook.Chat.console_prompt_mixins import MixinPreferences, MixinSelection
+    |
+help: Remove definition: `trace_harness`
+
+I001 [*] Import block is un-sorted or un-formatted
+   --> Tests/Chat/test_console_prompt_mixin_retry.py:218:5
+    |
+216 |   @pytest.mark.parametrize("damage", ["missing", "count", "foreign", "parent", "revision", "pending", "marker"])
+217 |   async def test_replacement_trace_proof_requires_exact_operational_owner(trace_harness, monkeypatch, damage):
+218 | /     from uuid import uuid4
+219 | |     from tldw_chatbook.Chat.console_chat_models import ConsoleMessageRole
+220 | |     from tldw_chatbook.Chat.console_trace_service import ConsoleTraceService
+    | |____________________________________________________________________________^
+221 |       h = trace_harness
+222 |       select(h, monkeypatch)
+    |
+help: Organize imports
+    |
+218 |     from uuid import uuid4
+219 +
+220 |     from tldw_chatbook.Chat.console_chat_models import ConsoleMessageRole
+    |
+
+C408 Unnecessary `dict()` call (rewrite as a literal)
+   --> Tests/Chat/test_console_prompt_mixin_retry.py:231:18
+    |
+229 | …b.transaction() as cursor:
+230 | …sion = cursor.execute("SELECT revision_id FROM console_trace_semantic_revisions WHERE live_message_id=? ORDER BY revision_sequence DESC LIMIT 1", (assistant.persisted_message_id,)).fetchone()[0]
+231 | …gs = dict(conversation_id=conversation, source_user_id=h.store.get_message(first.user_message_id).persisted_message_id, current_user_id=current.persisted_message_id, assistant_revision_id=revision)
+    |       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+232 | …rt service.operational_replacement_attempt(cursor, **kwargs) == assistant.metadata.mixin_attempt_id
+233 | …amage == "missing":
+    |
+help: Rewrite as a literal
+
+F811 Redefinition of unused `trace_harness` from line 7
+   --> Tests/Chat/test_console_prompt_mixin_retry.py:252:73
+    |
+251 | @pytest.mark.asyncio
+252 | async def test_regenerate_attempt_failure_rolls_back_empty_native_owner(trace_harness, monkeypatch):
+    |                                                                         ^^^^^^^^^^^^^ `trace_harness` redefined here
+253 |     from tldw_chatbook.DB import console_prompt_mixins
+254 |     h = trace_harness
+    |
+   ::: Tests/Chat/test_console_prompt_mixin_retry.py:7:67
+    |
+  6 | from Tests.Chat.test_console_prompt_mixin_admission import A, Scope
+  7 | from Tests.Chat.test_console_trace_current_turn_transforms import trace_harness  # noqa: F401
+    |                                                                   ------------- previous definition of `trace_harness` here
+  8 | from tldw_chatbook.Chat.console_prompt_mixin_service import ConsolePromptMixinService
+  9 | from tldw_chatbook.Chat.console_prompt_mixins import MixinPreferences, MixinSelection
+    |
+help: Remove definition: `trace_harness`
+
+F811 Redefinition of unused `trace_harness` from line 7
+   --> Tests/Chat/test_console_prompt_mixin_retry.py:269:72
+    |
+268 | @pytest.mark.asyncio
+269 | async def test_capture_masks_credentials_but_operational_body_is_exact(trace_harness, monkeypatch):
+    |                                                                        ^^^^^^^^^^^^^ `trace_harness` redefined here
+270 |     h = trace_harness
+271 |     service, scope = select(h, monkeypatch)
+    |
+   ::: Tests/Chat/test_console_prompt_mixin_retry.py:7:67
+    |
+  6 | from Tests.Chat.test_console_prompt_mixin_admission import A, Scope
+  7 | from Tests.Chat.test_console_trace_current_turn_transforms import trace_harness  # noqa: F401
+    |                                                                   ------------- previous definition of `trace_harness` here
+  8 | from tldw_chatbook.Chat.console_prompt_mixin_service import ConsolePromptMixinService
+  9 | from tldw_chatbook.Chat.console_prompt_mixins import MixinPreferences, MixinSelection
+    |
+help: Remove definition: `trace_harness`
+
+I001 [*] Import block is un-sorted or un-formatted
+  --> tldw_chatbook/Chat/console_prepared_request.py:63:5
+   |
+61 | def compose_current_mixin_messages(messages, snapshot, *, user_message_id, attempt_id):
+62 |     """Compose the exact native user anchor once; never select a trailing hook row."""
+63 |     from .console_prompt_mixins import compose_mixin_content, MixinSnapshotUnavailableError
+   |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+64 |
+65 |     if not snapshot.items:
+   |
+help: Organize imports
+   |
+62 |     """Compose the exact native user anchor once; never select a trailing hook row."""
+   -     from .console_prompt_mixins import compose_mixin_content, MixinSnapshotUnavailableError
+63 +     from .console_prompt_mixins import (
+64 +         MixinSnapshotUnavailableError,
+65 +         compose_mixin_content,
+66 +     )
+67 |
+   |
+
+I001 [*] Import block is un-sorted or un-formatted
+   --> tldw_chatbook/Chat/console_prompt_mixin_service.py:331:9
+    |
+329 |       async def accept_attempt(self, session_id: str, batch: MixinAttemptWrite) -> None:
+330 |           """Retain the exact operational record before any provider can be entered."""
+331 | /         import asyncio
+332 | |         from functools import partial
+333 | |         from .console_prompt_mixins import MixinSnapshotUnavailableError
+334 | |         from tldw_chatbook.DB.base_db import run_owned_db_call
+    | |______________________________________________________________^
+335 |
+336 |           session = self._session(session_id)
+    |
+help: Organize imports
+    |
+332 |         from functools import partial
+333 +
+334 +         from tldw_chatbook.DB.base_db import run_owned_db_call
+335 +
+336 |         from .console_prompt_mixins import MixinSnapshotUnavailableError
+    -         from tldw_chatbook.DB.base_db import run_owned_db_call
+337 |
+    |
+
+BLE001 Do not catch blind exception: `Exception`
+   --> tldw_chatbook/Chat/console_prompt_mixin_service.py:363:20
+    |
+361 |                         cancelled = True
+362 |                 worker.result()
+363 |             except Exception:
+    |                    ^^^^^^^^^
+364 |                 raise MixinSnapshotUnavailableError("mixin_attempt_save_failed") from None
+365 |         else:
+    |
+
+F821 Undefined name `Any`
+   --> tldw_chatbook/Chat/console_prompt_mixins.py:282:35
+    |
+281 | def compose_mixin_content(
+282 |     content: str | list[dict[str, Any]], snapshot: MixinAttemptSnapshot
+    |                                   ^^^
+283 | ) -> str | list[dict[str, Any]]:
+284 |     """Wrap only supplied content with literal bodies, without interpreting it."""
+    |
+
+F821 Undefined name `Any`
+   --> tldw_chatbook/Chat/console_prompt_mixins.py:283:27
+    |
+281 | def compose_mixin_content(
+282 |     content: str | list[dict[str, Any]], snapshot: MixinAttemptSnapshot
+283 | ) -> str | list[dict[str, Any]]:
+    |                           ^^^
+284 |     """Wrap only supplied content with literal bodies, without interpreting it."""
+285 |     if not snapshot.items:
+    |
+
+I001 [*] Import block is un-sorted or un-formatted
+  --> tldw_chatbook/Chat/console_trace_final_values.py:3:1
+   |
+ 1 |   """Credential-safe verification of final Chatbook-owned provider values."""
+ 2 |
+ 3 | / from __future__ import annotations
+ 4 | |
+ 5 | | import json
+ 6 | | from collections.abc import Callable, Mapping, Sequence
+ 7 | | from dataclasses import dataclass, field
+ 8 | | from enum import Enum
+ 9 | | from typing import cast
+10 | | from tldw_chatbook.Chat.console_project_instructions import (
+11 | |     canonical_provider_endpoint_identity,
+12 | | )
+13 | | from tldw_chatbook.Chat.console_prepared_request import freeze_json
+14 | | from tldw_chatbook.Chat.console_provider_endpoints import meaningful_adapter_base_url
+15 | | from tldw_chatbook.Chat.console_provider_support import (
+16 | |     CUSTOM_OPENAI_EXECUTION_KEYS,
+17 | | )
+18 | | from tldw_chatbook.Chat.console_trace_provenance import (
+19 | |     DerivedTraceProvenance,
+20 | |     OmittedTraceProvenance,
+21 | |     ProviderArtifactTraceProvenance,
+22 | |     ProviderRequestProvenance,
+23 | |     RequestRouteTraceProvenance,
+24 | |     SavedRevisionTraceProvenance,
+25 | |     TraceOmissionReason,
+26 | |     TraceProvenance,
+27 | |     TraceProvenanceSource,
+28 | |     current_turn_source_revision_id,
+29 | |     saved_response_source_revision_id,
+30 | | )
+31 | | from tldw_chatbook.Chat.console_trace_redaction import (
+32 | |     CredentialSanitizationResult,
+33 | |     CredentialSanitizer,
+34 | | )
+35 | | from tldw_chatbook.Chat.console_trace_models import (
+36 | |     MAX_SURFACE_REPLACEMENT_SPAN,
+37 | |     SemanticRevisionRef,
+38 | |     new_opaque_id,
+39 | | )
+40 | | from tldw_chatbook.Chat.provider_continuation import (
+41 | |     ProviderContinuationCheckpoint,
+42 | |     dump_provider_continuation_json,
+43 | | )
+44 | |
+45 | |
+46 | | from tldw_chatbook.provider_registry import ENGINE_RECORDS
+   | |__________________________________________________________^
+47 |
+48 |   _ENGINE_EXECUTION_KEYS = frozenset(record.key for record in ENGINE_RECORDS)
+   |
+help: Organize imports
+   |
+9  | from typing import cast
+10 +
+11 + from tldw_chatbook.Chat.console_prepared_request import freeze_json
+12 | from tldw_chatbook.Chat.console_project_instructions import (
+13 |     canonical_provider_endpoint_identity,
+14 | )
+   - from tldw_chatbook.Chat.console_prepared_request import freeze_json
+15 | from tldw_chatbook.Chat.console_provider_endpoints import meaningful_adapter_base_url
+16 | from tldw_chatbook.Chat.console_provider_support import (
+17 |     CUSTOM_OPENAI_EXECUTION_KEYS,
+18 | )
+19 + from tldw_chatbook.Chat.console_trace_models import (
+20 +     MAX_SURFACE_REPLACEMENT_SPAN,
+21 +     SemanticRevisionRef,
+22 +     new_opaque_id,
+23 + )
+24 | from tldw_chatbook.Chat.console_trace_provenance import (
+--------------------------------------------------------------------------------
+40 | )
+   - from tldw_chatbook.Chat.console_trace_models import (
+   -     MAX_SURFACE_REPLACEMENT_SPAN,
+   -     SemanticRevisionRef,
+   -     new_opaque_id,
+   - )
+41 | from tldw_chatbook.Chat.provider_continuation import (
+42 |     ProviderContinuationCheckpoint,
+43 |     dump_provider_continuation_json,
+44 | )
+   -
+   -
+45 | from tldw_chatbook.provider_registry import ENGINE_RECORDS
+   |
+
+SIM102 Use a single `if` statement instead of nested `if` statements
+   --> tldw_chatbook/Chat/console_trace_final_values.py:259:9
+    |
+257 |           ):
+258 |               SemanticRevisionRef(identity)
+259 | /         if self.replacement_attempt_id is not None:
+260 | |             if (type(self.replacement_attempt_id) is not str or not self.replacement_attempt_id
+261 | |                     or self.source_revision_id is None or self.assistant_revision_id is None):
+    | |______________________________________________________________________________________________^
+262 |                   raise ValueError("completed_turn_replacement_attempt")
+263 |           if self.source_revision_id is not None:
+    |
+help: Combine `if` statements using `and`
+
+B009 [*] Do not call `getattr` with a constant attribute value. It is not any safer than normal property access.
+   --> tldw_chatbook/Chat/console_trace_final_values.py:719:21
+    |
+717 |     """Independently reconstruct the exact generic gateway boundary values."""
+718 |
+719 |     execution_key = getattr(resolution, "execution_key")
+    |                     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+720 |     kwargs: dict[str, object | None] = {
+721 |         "api_endpoint": execution_key,
+    |
+help: Replace `getattr` with attribute access
+    |
+718 |
+    -     execution_key = getattr(resolution, "execution_key")
+719 +     execution_key = resolution.execution_key
+720 |     kwargs: dict[str, object | None] = {
+    |
+
+B009 [*] Do not call `getattr` with a constant attribute value. It is not any safer than normal property access.
+   --> tldw_chatbook/Chat/console_trace_final_values.py:722:27
+    |
+720 |     kwargs: dict[str, object | None] = {
+721 |         "api_endpoint": execution_key,
+722 |         "system_message": getattr(request, "system_message"),
+    |                           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+723 |         "messages_payload": _thaw(getattr(request, "messages_payload")),
+724 |         "api_key": getattr(resolution, "api_key"),
+    |
+help: Replace `getattr` with attribute access
+    |
+721 |         "api_endpoint": execution_key,
+    -         "system_message": getattr(request, "system_message"),
+722 +         "system_message": request.system_message,
+723 |         "messages_payload": _thaw(getattr(request, "messages_payload")),
+    |
+
+B009 [*] Do not call `getattr` with a constant attribute value. It is not any safer than normal property access.
+   --> tldw_chatbook/Chat/console_trace_final_values.py:723:35
+    |
+721 |         "api_endpoint": execution_key,
+722 |         "system_message": getattr(request, "system_message"),
+723 |         "messages_payload": _thaw(getattr(request, "messages_payload")),
+    |                                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+724 |         "api_key": getattr(resolution, "api_key"),
+725 |         "model": getattr(resolution, "model"),
+    |
+help: Replace `getattr` with attribute access
+    |
+722 |         "system_message": getattr(request, "system_message"),
+    -         "messages_payload": _thaw(getattr(request, "messages_payload")),
+723 +         "messages_payload": _thaw(request.messages_payload),
+724 |         "api_key": getattr(resolution, "api_key"),
+    |
+
+B009 [*] Do not call `getattr` with a constant attribute value. It is not any safer than normal property access.
+   --> tldw_chatbook/Chat/console_trace_final_values.py:724:20
+    |
+722 |         "system_message": getattr(request, "system_message"),
+723 |         "messages_payload": _thaw(getattr(request, "messages_payload")),
+724 |         "api_key": getattr(resolution, "api_key"),
+    |                    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+725 |         "model": getattr(resolution, "model"),
+726 |         "streaming": getattr(resolution, "streaming"),
+    |
+help: Replace `getattr` with attribute access
+    |
+723 |         "messages_payload": _thaw(getattr(request, "messages_payload")),
+    -         "api_key": getattr(resolution, "api_key"),
+724 +         "api_key": resolution.api_key,
+725 |         "model": getattr(resolution, "model"),
+    |
+
+B009 [*] Do not call `getattr` with a constant attribute value. It is not any safer than normal property access.
+   --> tldw_chatbook/Chat/console_trace_final_values.py:725:18
+    |
+723 |         "messages_payload": _thaw(getattr(request, "messages_payload")),
+724 |         "api_key": getattr(resolution, "api_key"),
+725 |         "model": getattr(resolution, "model"),
+    |                  ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+726 |         "streaming": getattr(resolution, "streaming"),
+727 |         "temp": getattr(resolution, "temperature"),
+    |
+help: Replace `getattr` with attribute access
+    |
+724 |         "api_key": getattr(resolution, "api_key"),
+    -         "model": getattr(resolution, "model"),
+725 +         "model": resolution.model,
+726 |         "streaming": getattr(resolution, "streaming"),
+    |
+
+B009 [*] Do not call `getattr` with a constant attribute value. It is not any safer than normal property access.
+   --> tldw_chatbook/Chat/console_trace_final_values.py:726:22
+    |
+724 |         "api_key": getattr(resolution, "api_key"),
+725 |         "model": getattr(resolution, "model"),
+726 |         "streaming": getattr(resolution, "streaming"),
+    |                      ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+727 |         "temp": getattr(resolution, "temperature"),
+728 |         "topp": getattr(resolution, "top_p"),
+    |
+help: Replace `getattr` with attribute access
+    |
+725 |         "model": getattr(resolution, "model"),
+    -         "streaming": getattr(resolution, "streaming"),
+726 +         "streaming": resolution.streaming,
+727 |         "temp": getattr(resolution, "temperature"),
+    |
+
+B009 [*] Do not call `getattr` with a constant attribute value. It is not any safer than normal property access.
+   --> tldw_chatbook/Chat/console_trace_final_values.py:727:17
+    |
+725 |         "model": getattr(resolution, "model"),
+726 |         "streaming": getattr(resolution, "streaming"),
+727 |         "temp": getattr(resolution, "temperature"),
+    |                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+728 |         "topp": getattr(resolution, "top_p"),
+729 |         "maxp": getattr(resolution, "top_p"),
+    |
+help: Replace `getattr` with attribute access
+    |
+726 |         "streaming": getattr(resolution, "streaming"),
+    -         "temp": getattr(resolution, "temperature"),
+727 +         "temp": resolution.temperature,
+728 |         "topp": getattr(resolution, "top_p"),
+    |
+
+B009 [*] Do not call `getattr` with a constant attribute value. It is not any safer than normal property access.
+   --> tldw_chatbook/Chat/console_trace_final_values.py:728:17
+    |
+726 |         "streaming": getattr(resolution, "streaming"),
+727 |         "temp": getattr(resolution, "temperature"),
+728 |         "topp": getattr(resolution, "top_p"),
+    |                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+729 |         "maxp": getattr(resolution, "top_p"),
+730 |         "topk": getattr(resolution, "top_k"),
+    |
+help: Replace `getattr` with attribute access
+    |
+727 |         "temp": getattr(resolution, "temperature"),
+    -         "topp": getattr(resolution, "top_p"),
+728 +         "topp": resolution.top_p,
+729 |         "maxp": getattr(resolution, "top_p"),
+    |
+
+B009 [*] Do not call `getattr` with a constant attribute value. It is not any safer than normal property access.
+   --> tldw_chatbook/Chat/console_trace_final_values.py:729:17
+    |
+727 |         "temp": getattr(resolution, "temperature"),
+728 |         "topp": getattr(resolution, "top_p"),
+729 |         "maxp": getattr(resolution, "top_p"),
+    |                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+730 |         "topk": getattr(resolution, "top_k"),
+731 |         "minp": getattr(resolution, "min_p"),
+    |
+help: Replace `getattr` with attribute access
+    |
+728 |         "topp": getattr(resolution, "top_p"),
+    -         "maxp": getattr(resolution, "top_p"),
+729 +         "maxp": resolution.top_p,
+730 |         "topk": getattr(resolution, "top_k"),
+    |
+
+B009 [*] Do not call `getattr` with a constant attribute value. It is not any safer than normal property access.
+   --> tldw_chatbook/Chat/console_trace_final_values.py:730:17
+    |
+728 |         "topp": getattr(resolution, "top_p"),
+729 |         "maxp": getattr(resolution, "top_p"),
+730 |         "topk": getattr(resolution, "top_k"),
+    |                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+731 |         "minp": getattr(resolution, "min_p"),
+732 |         "max_tokens": getattr(resolution, "max_tokens"),
+    |
+help: Replace `getattr` with attribute access
+    |
+729 |         "maxp": getattr(resolution, "top_p"),
+    -         "topk": getattr(resolution, "top_k"),
+730 +         "topk": resolution.top_k,
+731 |         "minp": getattr(resolution, "min_p"),
+    |
+
+B009 [*] Do not call `getattr` with a constant attribute value. It is not any safer than normal property access.
+   --> tldw_chatbook/Chat/console_trace_final_values.py:731:17
+    |
+729 |         "maxp": getattr(resolution, "top_p"),
+730 |         "topk": getattr(resolution, "top_k"),
+731 |         "minp": getattr(resolution, "min_p"),
+    |                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+732 |         "max_tokens": getattr(resolution, "max_tokens"),
+733 |         "seed": getattr(resolution, "seed"),
+    |
+help: Replace `getattr` with attribute access
+    |
+730 |         "topk": getattr(resolution, "top_k"),
+    -         "minp": getattr(resolution, "min_p"),
+731 +         "minp": resolution.min_p,
+732 |         "max_tokens": getattr(resolution, "max_tokens"),
+    |
+
+B009 [*] Do not call `getattr` with a constant attribute value. It is not any safer than normal property access.
+   --> tldw_chatbook/Chat/console_trace_final_values.py:732:23
+    |
+730 |         "topk": getattr(resolution, "top_k"),
+731 |         "minp": getattr(resolution, "min_p"),
+732 |         "max_tokens": getattr(resolution, "max_tokens"),
+    |                       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+733 |         "seed": getattr(resolution, "seed"),
+734 |         "presence_penalty": getattr(resolution, "presence_penalty"),
+    |
+help: Replace `getattr` with attribute access
+    |
+731 |         "minp": getattr(resolution, "min_p"),
+    -         "max_tokens": getattr(resolution, "max_tokens"),
+732 +         "max_tokens": resolution.max_tokens,
+733 |         "seed": getattr(resolution, "seed"),
+    |
+
+B009 [*] Do not call `getattr` with a constant attribute value. It is not any safer than normal property access.
+   --> tldw_chatbook/Chat/console_trace_final_values.py:733:17
+    |
+731 |         "minp": getattr(resolution, "min_p"),
+732 |         "max_tokens": getattr(resolution, "max_tokens"),
+733 |         "seed": getattr(resolution, "seed"),
+    |                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+734 |         "presence_penalty": getattr(resolution, "presence_penalty"),
+735 |         "frequency_penalty": getattr(resolution, "frequency_penalty"),
+    |
+help: Replace `getattr` with attribute access
+    |
+732 |         "max_tokens": getattr(resolution, "max_tokens"),
+    -         "seed": getattr(resolution, "seed"),
+733 +         "seed": resolution.seed,
+734 |         "presence_penalty": getattr(resolution, "presence_penalty"),
+    |
+
+B009 [*] Do not call `getattr` with a constant attribute value. It is not any safer than normal property access.
+   --> tldw_chatbook/Chat/console_trace_final_values.py:734:29
+    |
+732 |         "max_tokens": getattr(resolution, "max_tokens"),
+733 |         "seed": getattr(resolution, "seed"),
+734 |         "presence_penalty": getattr(resolution, "presence_penalty"),
+    |                             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+735 |         "frequency_penalty": getattr(resolution, "frequency_penalty"),
+736 |         "reasoning_effort": getattr(resolution, "reasoning_effort"),
+    |
+help: Replace `getattr` with attribute access
+    |
+733 |         "seed": getattr(resolution, "seed"),
+    -         "presence_penalty": getattr(resolution, "presence_penalty"),
+734 +         "presence_penalty": resolution.presence_penalty,
+735 |         "frequency_penalty": getattr(resolution, "frequency_penalty"),
+    |
+
+B009 [*] Do not call `getattr` with a constant attribute value. It is not any safer than normal property access.
+   --> tldw_chatbook/Chat/console_trace_final_values.py:735:30
+    |
+733 |         "seed": getattr(resolution, "seed"),
+734 |         "presence_penalty": getattr(resolution, "presence_penalty"),
+735 |         "frequency_penalty": getattr(resolution, "frequency_penalty"),
+    |                              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+736 |         "reasoning_effort": getattr(resolution, "reasoning_effort"),
+737 |         "reasoning_summary": getattr(resolution, "reasoning_summary"),
+    |
+help: Replace `getattr` with attribute access
+    |
+734 |         "presence_penalty": getattr(resolution, "presence_penalty"),
+    -         "frequency_penalty": getattr(resolution, "frequency_penalty"),
+735 +         "frequency_penalty": resolution.frequency_penalty,
+736 |         "reasoning_effort": getattr(resolution, "reasoning_effort"),
+    |
+
+B009 [*] Do not call `getattr` with a constant attribute value. It is not any safer than normal property access.
+   --> tldw_chatbook/Chat/console_trace_final_values.py:736:29
+    |
+734 |         "presence_penalty": getattr(resolution, "presence_penalty"),
+735 |         "frequency_penalty": getattr(resolution, "frequency_penalty"),
+736 |         "reasoning_effort": getattr(resolution, "reasoning_effort"),
+    |                             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+737 |         "reasoning_summary": getattr(resolution, "reasoning_summary"),
+738 |         "verbosity": getattr(resolution, "verbosity"),
+    |
+help: Replace `getattr` with attribute access
+    |
+735 |         "frequency_penalty": getattr(resolution, "frequency_penalty"),
+    -         "reasoning_effort": getattr(resolution, "reasoning_effort"),
+736 +         "reasoning_effort": resolution.reasoning_effort,
+737 |         "reasoning_summary": getattr(resolution, "reasoning_summary"),
+    |
+
+B009 [*] Do not call `getattr` with a constant attribute value. It is not any safer than normal property access.
+   --> tldw_chatbook/Chat/console_trace_final_values.py:737:30
+    |
+735 |         "frequency_penalty": getattr(resolution, "frequency_penalty"),
+736 |         "reasoning_effort": getattr(resolution, "reasoning_effort"),
+737 |         "reasoning_summary": getattr(resolution, "reasoning_summary"),
+    |                              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+738 |         "verbosity": getattr(resolution, "verbosity"),
+739 |         "thinking_effort": getattr(resolution, "thinking_effort"),
+    |
+help: Replace `getattr` with attribute access
+    |
+736 |         "reasoning_effort": getattr(resolution, "reasoning_effort"),
+    -         "reasoning_summary": getattr(resolution, "reasoning_summary"),
+737 +         "reasoning_summary": resolution.reasoning_summary,
+738 |         "verbosity": getattr(resolution, "verbosity"),
+    |
+
+B009 [*] Do not call `getattr` with a constant attribute value. It is not any safer than normal property access.
+   --> tldw_chatbook/Chat/console_trace_final_values.py:738:22
+    |
+736 |         "reasoning_effort": getattr(resolution, "reasoning_effort"),
+737 |         "reasoning_summary": getattr(resolution, "reasoning_summary"),
+738 |         "verbosity": getattr(resolution, "verbosity"),
+    |                      ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+739 |         "thinking_effort": getattr(resolution, "thinking_effort"),
+740 |         "thinking_budget_tokens": getattr(resolution, "thinking_budget_tokens"),
+    |
+help: Replace `getattr` with attribute access
+    |
+737 |         "reasoning_summary": getattr(resolution, "reasoning_summary"),
+    -         "verbosity": getattr(resolution, "verbosity"),
+738 +         "verbosity": resolution.verbosity,
+739 |         "thinking_effort": getattr(resolution, "thinking_effort"),
+    |
+
+B009 [*] Do not call `getattr` with a constant attribute value. It is not any safer than normal property access.
+   --> tldw_chatbook/Chat/console_trace_final_values.py:739:28
+    |
+737 |         "reasoning_summary": getattr(resolution, "reasoning_summary"),
+738 |         "verbosity": getattr(resolution, "verbosity"),
+739 |         "thinking_effort": getattr(resolution, "thinking_effort"),
+    |                            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+740 |         "thinking_budget_tokens": getattr(resolution, "thinking_budget_tokens"),
+741 |         "tools": _thaw(getattr(request, "tools")) or None,
+    |
+help: Replace `getattr` with attribute access
+    |
+738 |         "verbosity": getattr(resolution, "verbosity"),
+    -         "thinking_effort": getattr(resolution, "thinking_effort"),
+739 +         "thinking_effort": resolution.thinking_effort,
+740 |         "thinking_budget_tokens": getattr(resolution, "thinking_budget_tokens"),
+    |
+
+B009 [*] Do not call `getattr` with a constant attribute value. It is not any safer than normal property access.
+   --> tldw_chatbook/Chat/console_trace_final_values.py:740:35
+    |
+738 |         "verbosity": getattr(resolution, "verbosity"),
+739 |         "thinking_effort": getattr(resolution, "thinking_effort"),
+740 |         "thinking_budget_tokens": getattr(resolution, "thinking_budget_tokens"),
+    |                                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+741 |         "tools": _thaw(getattr(request, "tools")) or None,
+742 |         "response_format": _thaw(getattr(request, "response_format")),
+    |
+help: Replace `getattr` with attribute access
+    |
+739 |         "thinking_effort": getattr(resolution, "thinking_effort"),
+    -         "thinking_budget_tokens": getattr(resolution, "thinking_budget_tokens"),
+740 +         "thinking_budget_tokens": resolution.thinking_budget_tokens,
+741 |         "tools": _thaw(getattr(request, "tools")) or None,
+    |
+
+B009 [*] Do not call `getattr` with a constant attribute value. It is not any safer than normal property access.
+   --> tldw_chatbook/Chat/console_trace_final_values.py:741:24
+    |
+739 |         "thinking_effort": getattr(resolution, "thinking_effort"),
+740 |         "thinking_budget_tokens": getattr(resolution, "thinking_budget_tokens"),
+741 |         "tools": _thaw(getattr(request, "tools")) or None,
+    |                        ^^^^^^^^^^^^^^^^^^^^^^^^^
+742 |         "response_format": _thaw(getattr(request, "response_format")),
+743 |         "prompt_caching": getattr(resolution, "prompt_caching"),
+    |
+help: Replace `getattr` with attribute access
+    |
+740 |         "thinking_budget_tokens": getattr(resolution, "thinking_budget_tokens"),
+    -         "tools": _thaw(getattr(request, "tools")) or None,
+741 +         "tools": _thaw(request.tools) or None,
+742 |         "response_format": _thaw(getattr(request, "response_format")),
+    |
+
+B009 [*] Do not call `getattr` with a constant attribute value. It is not any safer than normal property access.
+   --> tldw_chatbook/Chat/console_trace_final_values.py:742:34
+    |
+740 |         "thinking_budget_tokens": getattr(resolution, "thinking_budget_tokens"),
+741 |         "tools": _thaw(getattr(request, "tools")) or None,
+742 |         "response_format": _thaw(getattr(request, "response_format")),
+    |                                  ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+743 |         "prompt_caching": getattr(resolution, "prompt_caching"),
+744 |     }
+    |
+help: Replace `getattr` with attribute access
+    |
+741 |         "tools": _thaw(getattr(request, "tools")) or None,
+    -         "response_format": _thaw(getattr(request, "response_format")),
+742 +         "response_format": _thaw(request.response_format),
+743 |         "prompt_caching": getattr(resolution, "prompt_caching"),
+    |
+
+B009 [*] Do not call `getattr` with a constant attribute value. It is not any safer than normal property access.
+   --> tldw_chatbook/Chat/console_trace_final_values.py:743:27
+    |
+741 |         "tools": _thaw(getattr(request, "tools")) or None,
+742 |         "response_format": _thaw(getattr(request, "response_format")),
+743 |         "prompt_caching": getattr(resolution, "prompt_caching"),
+    |                           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+744 |     }
+745 |     from tldw_chatbook.Chat.local_reasoning import (
+    |
+help: Replace `getattr` with attribute access
+    |
+742 |         "response_format": _thaw(getattr(request, "response_format")),
+    -         "prompt_caching": getattr(resolution, "prompt_caching"),
+743 +         "prompt_caching": resolution.prompt_caching,
+744 |     }
+    |
+
+B009 [*] Do not call `getattr` with a constant attribute value. It is not any safer than normal property access.
+   --> tldw_chatbook/Chat/console_trace_final_values.py:760:30
+    |
+758 |         kwargs["api_key_resolved"] = True
+759 |     elif execution_key in {"qwencloud", "deepseek"}:
+760 |         kwargs["api_mode"] = getattr(resolution, "api_mode")
+    |                              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+761 |         kwargs["api_base_url"] = getattr(resolution, "base_url") or None
+762 |     elif execution_key in (_ENGINE_EXECUTION_KEYS - CUSTOM_OPENAI_EXECUTION_KEYS):
+    |
+help: Replace `getattr` with attribute access
+    |
+759 |     elif execution_key in {"qwencloud", "deepseek"}:
+    -         kwargs["api_mode"] = getattr(resolution, "api_mode")
+760 +         kwargs["api_mode"] = resolution.api_mode
+761 |         kwargs["api_base_url"] = getattr(resolution, "base_url") or None
+    |
+
+B009 [*] Do not call `getattr` with a constant attribute value. It is not any safer than normal property access.
+   --> tldw_chatbook/Chat/console_trace_final_values.py:761:34
+    |
+759 |     elif execution_key in {"qwencloud", "deepseek"}:
+760 |         kwargs["api_mode"] = getattr(resolution, "api_mode")
+761 |         kwargs["api_base_url"] = getattr(resolution, "base_url") or None
+    |                                  ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+762 |     elif execution_key in (_ENGINE_EXECUTION_KEYS - CUSTOM_OPENAI_EXECUTION_KEYS):
+763 |         kwargs["api_base_url"] = resolution.base_url or None
+    |
+help: Replace `getattr` with attribute access
+    |
+760 |         kwargs["api_mode"] = getattr(resolution, "api_mode")
+    -         kwargs["api_base_url"] = getattr(resolution, "base_url") or None
+761 +         kwargs["api_base_url"] = resolution.base_url or None
+762 |     elif execution_key in (_ENGINE_EXECUTION_KEYS - CUSTOM_OPENAI_EXECUTION_KEYS):
+    |
+
+B009 [*] Do not call `getattr` with a constant attribute value. It is not any safer than normal property access.
+   --> tldw_chatbook/Chat/console_trace_final_values.py:766:26
+    |
+764 |     elif execution_key in {"moonshot", "zai"}:
+765 |         kwargs.update(
+766 |             api_base_url=getattr(resolution, "base_url") or None,
+    |                          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+767 |             request_timeout=getattr(resolution, "request_timeout"),
+768 |             request_retries=getattr(resolution, "request_retries"),
+    |
+help: Replace `getattr` with attribute access
+    |
+765 |         kwargs.update(
+    -             api_base_url=getattr(resolution, "base_url") or None,
+766 +             api_base_url=resolution.base_url or None,
+767 |             request_timeout=getattr(resolution, "request_timeout"),
+    |
+
+B009 [*] Do not call `getattr` with a constant attribute value. It is not any safer than normal property access.
+   --> tldw_chatbook/Chat/console_trace_final_values.py:767:29
+    |
+765 |         kwargs.update(
+766 |             api_base_url=getattr(resolution, "base_url") or None,
+767 |             request_timeout=getattr(resolution, "request_timeout"),
+    |                             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+768 |             request_retries=getattr(resolution, "request_retries"),
+769 |             request_retry_delay=getattr(resolution, "request_retry_delay"),
+    |
+help: Replace `getattr` with attribute access
+    |
+766 |             api_base_url=getattr(resolution, "base_url") or None,
+    -             request_timeout=getattr(resolution, "request_timeout"),
+767 +             request_timeout=resolution.request_timeout,
+768 |             request_retries=getattr(resolution, "request_retries"),
+    |
+
+B009 [*] Do not call `getattr` with a constant attribute value. It is not any safer than normal property access.
+   --> tldw_chatbook/Chat/console_trace_final_values.py:768:29
+    |
+766 |             api_base_url=getattr(resolution, "base_url") or None,
+767 |             request_timeout=getattr(resolution, "request_timeout"),
+768 |             request_retries=getattr(resolution, "request_retries"),
+    |                             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+769 |             request_retry_delay=getattr(resolution, "request_retry_delay"),
+770 |         )
+    |
+help: Replace `getattr` with attribute access
+    |
+767 |             request_timeout=getattr(resolution, "request_timeout"),
+    -             request_retries=getattr(resolution, "request_retries"),
+768 +             request_retries=resolution.request_retries,
+769 |             request_retry_delay=getattr(resolution, "request_retry_delay"),
+    |
+
+B009 [*] Do not call `getattr` with a constant attribute value. It is not any safer than normal property access.
+   --> tldw_chatbook/Chat/console_trace_final_values.py:769:33
+    |
+767 |             request_timeout=getattr(resolution, "request_timeout"),
+768 |             request_retries=getattr(resolution, "request_retries"),
+769 |             request_retry_delay=getattr(resolution, "request_retry_delay"),
+    |                                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+770 |         )
+771 |         continuations = getattr(request, "continuation_groups")
+    |
+help: Replace `getattr` with attribute access
+    |
+768 |             request_retries=getattr(resolution, "request_retries"),
+    -             request_retry_delay=getattr(resolution, "request_retry_delay"),
+769 +             request_retry_delay=resolution.request_retry_delay,
+770 |         )
+    |
+
+B009 [*] Do not call `getattr` with a constant attribute value. It is not any safer than normal property access.
+   --> tldw_chatbook/Chat/console_trace_final_values.py:771:25
+    |
+769 |             request_retry_delay=getattr(resolution, "request_retry_delay"),
+770 |         )
+771 |         continuations = getattr(request, "continuation_groups")
+    |                         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+772 |         if continuations:
+773 |             kwargs["provider_continuations"] = [
+    |
+help: Replace `getattr` with attribute access
+    |
+770 |         )
+    -         continuations = getattr(request, "continuation_groups")
+771 +         continuations = request.continuation_groups
+772 |         if continuations:
+    |
+
+B009 [*] Do not call `getattr` with a constant attribute value. It is not any safer than normal property access.
+   --> tldw_chatbook/Chat/console_trace_final_values.py:783:34
+    |
+781 |         "vllm",
+782 |     } | CUSTOM_OPENAI_EXECUTION_KEYS:
+783 |         kwargs["api_base_url"] = getattr(resolution, "base_url") or None
+    |                                  ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+784 |         if execution_key in CUSTOM_OPENAI_EXECUTION_KEYS:
+785 |             kwargs["api_key_resolved"] = True
+    |
+help: Replace `getattr` with attribute access
+    |
+782 |     } | CUSTOM_OPENAI_EXECUTION_KEYS:
+    -         kwargs["api_base_url"] = getattr(resolution, "base_url") or None
+783 +         kwargs["api_base_url"] = resolution.base_url or None
+784 |         if execution_key in CUSTOM_OPENAI_EXECUTION_KEYS:
+    |
+
+B009 [*] Do not call `getattr` with a constant attribute value. It is not any safer than normal property access.
+   --> tldw_chatbook/Chat/console_trace_final_values.py:786:40
+    |
+784 |         if execution_key in CUSTOM_OPENAI_EXECUTION_KEYS:
+785 |             kwargs["api_key_resolved"] = True
+786 |     elif execution_key == "openai" and getattr(request, "response_format") is not None:
+    |                                        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+787 |         kwargs["api_base_url"] = getattr(resolution, "base_url") or None
+788 |     else:
+    |
+help: Replace `getattr` with attribute access
+    |
+785 |             kwargs["api_key_resolved"] = True
+    -     elif execution_key == "openai" and getattr(request, "response_format") is not None:
+786 +     elif execution_key == "openai" and request.response_format is not None:
+787 |         kwargs["api_base_url"] = getattr(resolution, "base_url") or None
+    |
+
+B009 [*] Do not call `getattr` with a constant attribute value. It is not any safer than normal property access.
+   --> tldw_chatbook/Chat/console_trace_final_values.py:787:34
+    |
+785 |             kwargs["api_key_resolved"] = True
+786 |     elif execution_key == "openai" and getattr(request, "response_format") is not None:
+787 |         kwargs["api_base_url"] = getattr(resolution, "base_url") or None
+    |                                  ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+788 |     else:
+789 |         # TASK-2117: mirror the gateway's conditional endpoint pin for the
+    |
+help: Replace `getattr` with attribute access
+    |
+786 |     elif execution_key == "openai" and getattr(request, "response_format") is not None:
+    -         kwargs["api_base_url"] = getattr(resolution, "base_url") or None
+787 +         kwargs["api_base_url"] = resolution.base_url or None
+788 |     else:
+    |
+
+B009 [*] Do not call `getattr` with a constant attribute value. It is not any safer than normal property access.
+   --> tldw_chatbook/Chat/console_trace_final_values.py:940:26
+    |
+938 |             "provider_continuations": actual.value.get("provider_continuations", []),
+939 |         }
+940 |         verify_surface = getattr(surface_boundary, "_verify_surface_values")
+    |                          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+941 |         if not verify_surface(
+942 |             provenance,
+    |
+help: Replace `getattr` with attribute access
+    |
+939 |         }
+    -         verify_surface = getattr(surface_boundary, "_verify_surface_values")
+940 +         verify_surface = surface_boundary._verify_surface_values
+941 |         if not verify_surface(
+    |
+
+UP037 [*] Remove quotes from type annotation
+   --> tldw_chatbook/Chat/console_trace_provenance.py:551:19
+    |
+550 |     transform: TraceTransformKind
+551 |     inputs: tuple["TraceProvenance", ...] = field(repr=False)
+    |                   ^^^^^^^^^^^^^^^^^
+552 |     artifact: ProviderArtifactTraceProvenance | None = field(
+553 |         default=None,
+    |
+help: Remove quotes
+    |
+550 |     transform: TraceTransformKind
+    -     inputs: tuple["TraceProvenance", ...] = field(repr=False)
+551 +     inputs: tuple[TraceProvenance, ...] = field(repr=False)
+552 |     artifact: ProviderArtifactTraceProvenance | None = field(
+    |
+
+UP040 Type alias `TraceProvenance` uses `TypeAlias` annotation instead of the `type` keyword
+   --> tldw_chatbook/Chat/console_trace_provenance.py:580:1
+    |
+580 | / TraceProvenance: TypeAlias = (
+581 | |     SavedRevisionTraceProvenance
+582 | |     | RequestRouteTraceProvenance
+583 | |     | ProviderArtifactTraceProvenance
+584 | |     | OmittedTraceProvenance
+585 | |     | DerivedTraceProvenance
+586 | | )
+    | |_^
+help: Use the `type` keyword
+
+UP037 [*] Remove quotes from type annotation
+    --> tldw_chatbook/Chat/console_trace_provenance.py:1163:51
+     |
+1161 |         )
+1162 |
+1163 |     def without_oldest_units(self, count: int) -> "ConsoleRequestProvenance":
+     |                                                   ^^^^^^^^^^^^^^^^^^^^^^^^^^
+1164 |         """Return the aggregate aligned after deterministic unit windowing."""
+     |
+help: Remove quotes
+     |
+1162 |
+     -     def without_oldest_units(self, count: int) -> "ConsoleRequestProvenance":
+1163 +     def without_oldest_units(self, count: int) -> ConsoleRequestProvenance:
+1164 |         """Return the aggregate aligned after deterministic unit windowing."""
+     |
+
+RUF007 Prefer `itertools.pairwise()` over `zip()` when iterating over successive pairs
+    --> tldw_chatbook/Chat/console_trace_provenance.py:1325:53
+     |
+1323 |                 index < 0 or index >= len(self.messages_payload) for index in tool_loop
+1324 |             )
+1325 |             or any(left >= right for left, right in zip(tool_loop, tool_loop[1:]))
+     |                                                     ^^^
+1326 |         ):
+1327 |             raise TraceProvenanceAlignmentError(
+     |
+help: Replace `zip()` with `itertools.pairwise()`
+
+RUF007 Prefer `itertools.pairwise()` over `zip()` when iterating over successive pairs
+    --> tldw_chatbook/Chat/console_trace_provenance.py:1405:49
+     |
+1403 |         or any(type(index) is not int for index in tool_loop)
+1404 |         or any(index < 0 or index >= len(messages_payload) for index in tool_loop)
+1405 |         or any(left >= right for left, right in zip(tool_loop, tool_loop[1:]))
+     |                                                 ^^^
+1406 |     ):
+1407 |         raise TraceProvenanceAlignmentError("invalid verified provider projection")
+     |
+help: Replace `zip()` with `itertools.pairwise()`
+
+BLE001 Do not catch blind exception: `Exception`
+    --> tldw_chatbook/Chat/console_trace_provenance.py:1445:12
+     |
+1443 |                 SavedRevisionTraceProvenance(revision_id=revision.revision_id)
+1444 |             )
+1445 |     except Exception:
+     |            ^^^^^^^^^
+1446 |         failure = TraceProvenancePersistenceError()
+1447 |     if failure is not None:
+     |
+
+BLE001 Do not catch blind exception: `Exception`
+    --> tldw_chatbook/Chat/console_trace_provenance.py:1476:12
+     |
+1474 |             cursor = active_cursor
+1475 |             yield active_cursor
+1476 |     except Exception as error:
+     |            ^^^^^^^^^
+1477 |         failure = (
+1478 |             error
+     |
+
+UP017 [*] Use `datetime.UTC` alias
+  --> tldw_chatbook/Chat/console_trace_runtime.py:52:25
+   |
+51 | def _utc_now() -> str:
+52 |     return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+   |                         ^^^^^^^^^^^^
+help: Convert to `datetime.UTC` alias
+   |
+9  | from dataclasses import replace
+   - from datetime import datetime, timezone
+10 + from datetime import datetime, timezone, UTC
+11 |
+--------------------------------------------------------------------------------
+51 | def _utc_now() -> str:
+   -     return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+52 +     return datetime.now(UTC).isoformat().replace("+00:00", "Z")
+53 |
+   |
+
+TRY004 Prefer `TypeError` exception for invalid type
+   --> tldw_chatbook/Chat/console_trace_runtime.py:262:13
+    |
+260 |         semantic_provenance = request.semantic.provenance
+261 |         if not isinstance(provenance, ProviderRequestProvenance):
+262 |             raise ValueError("trace_provenance_unavailable")
+    |             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+263 |         if semantic_provenance is None:
+264 |             raise ValueError("trace_policy_unavailable")
+    |
+
+I001 [*] Import block is un-sorted or un-formatted
+  --> tldw_chatbook/Chat/console_trace_service.py:3:1
+   |
+ 1 |   """Persist bounded model surfaces and complete changed-only request headers."""
+ 2 |
+ 3 | / from __future__ import annotations
+ 4 | |
+ 5 | | import asyncio
+ 6 | | import json
+ 7 | | import sqlite3
+ 8 | | from collections import Counter
+ 9 | | from collections.abc import Callable, Iterable, Iterator, Mapping, Sequence
+10 | | from contextlib import contextmanager
+11 | | from dataclasses import dataclass, field, replace
+12 | | from types import MappingProxyType
+13 | | from typing import TYPE_CHECKING, Generic, Literal, TypeVar, cast, overload
+14 | | from weakref import ReferenceType, ref
+15 | |
+16 | | from tldw_chatbook.Chat.console_prepared_request import freeze_json
+17 | | from tldw_chatbook.Chat.console_semantic_revision import (
+18 | |     project_semantic_revision_provider_continuations,
+19 | |     project_semantic_revision_provider_message,
+20 | |     project_semantic_revision_provider_messages,
+21 | | )
+22 | | from tldw_chatbook.Chat.console_trace_final_values import (
+23 | |     _SURFACE_VERIFICATION_ISSUER,
+24 | |     _checkpoint_semantic_value,
+25 | |     CompletedToolTurnWitness,
+26 | |     FinalValueBinding,
+27 | |     ProviderCredentialSource,
+28 | |     ProviderOverlayProvenance,
+29 | |     ProviderRequestShadowBundle,
+30 | |     SurfaceDeltaAdmission,
+31 | |     VerifiedSurfaceDelta,
+32 | |     VerifiedSurfaceDeltaItem,
+33 | |     VerifiedSurfaceReplacement,
+34 | |     VerifiedSurfaceReplacementRange,
+35 | |     build_verified_surface_delta,
+36 | | )
+37 | | from tldw_chatbook.Chat.console_trace_models import (
+38 | |     MAX_SURFACE_REPLACEMENT_SPAN,
+39 | |     FrozenTracePolicy,
+40 | |     SemanticRevisionRef,
+41 | |     SurfaceReplacement,
+42 | |     TraceCallState,
+43 | |     TraceContentRef,
+44 | |     TraceOmission,
+45 | | )
+46 | | from tldw_chatbook.Chat.console_trace_custom_pii import (
+47 | |     CUSTOM_PII_RULESET_UNAVAILABLE,
+48 | |     redact_pii_value_for_ruleset_revision,
+49 | | )
+50 | | from tldw_chatbook.Chat.console_trace_provenance import (
+51 | |     DerivedTraceProvenance,
+52 | |     OmittedTraceProvenance,
+53 | |     ProviderArtifactTraceProvenance,
+54 | |     ProviderRequestProvenance,
+55 | |     RequestRouteTraceProvenance,
+56 | |     SavedRevisionTraceProvenance,
+57 | |     TraceOmissionReason,
+58 | |     TraceProvenance,
+59 | |     TraceProvenanceSource,
+60 | |     TraceTransformKind,
+61 | |     _project_verified_provider_request_provenance,
+62 | | )
+63 | | from tldw_chatbook.Chat.console_trace_redaction import (
+64 | |     CredentialSanitizer,
+65 | |     PIIRedactionSpan,
+66 | | )
+67 | | from tldw_chatbook.Chat.console_trace_repository import (
+68 | |     ConsoleTraceRepository,
+69 | |     HeaderComponentRef,
+70 | |     RequestHeaderRecord,
+71 | |     SurfaceNodeRecord,
+72 | |     SurfaceReplacementRecord,
+73 | |     TraceCallRecord,
+74 | |     TraceEventType,
+75 | | )
+76 | | from tldw_chatbook.Chat.conversation_local_marks_service import (
+77 | |     ConversationLocalMarksService,
+78 | | )
+79 | | from tldw_chatbook.Chat.message_metadata import MessageMetadata
+80 | | from tldw_chatbook.Chat.provider_continuation import parse_provider_continuation_json
+81 | | from tldw_chatbook.DB.base_db import operation_owned_connection
+82 | | from tldw_chatbook.DB.transaction_observer import (
+83 | |     current_managed_transaction,
+84 | |     register_transaction_completion,
+85 | | )
+   | |_^
+86 |
+87 |   if TYPE_CHECKING:
+   |
+help: Organize imports
+   |
+21 | )
+22 + from tldw_chatbook.Chat.console_trace_custom_pii import (
+23 +     CUSTOM_PII_RULESET_UNAVAILABLE,
+24 +     redact_pii_value_for_ruleset_revision,
+25 + )
+26 | from tldw_chatbook.Chat.console_trace_final_values import (
+27 |     _SURFACE_VERIFICATION_ISSUER,
+   -     _checkpoint_semantic_value,
+28 |     CompletedToolTurnWitness,
+--------------------------------------------------------------------------------
+37 |     VerifiedSurfaceReplacementRange,
+38 +     _checkpoint_semantic_value,
+39 |     build_verified_surface_delta,
+--------------------------------------------------------------------------------
+48 |     TraceOmission,
+   - )
+   - from tldw_chatbook.Chat.console_trace_custom_pii import (
+   -     CUSTOM_PII_RULESET_UNAVAILABLE,
+   -     redact_pii_value_for_ruleset_revision,
+49 | )
+   |
+
+RUF100 [*] Unused `noqa` directive (unused: `F401`; non-enabled: `E402`)
+   --> tldw_chatbook/Chat/console_trace_service.py:188:56
+    |
+186 | # exception do not pull this module's whole trace stack onto the boot path.
+187 | # Re-exported here so existing importers keep the SAME class object.
+188 | from tldw_chatbook.Chat.console_trace_errors import (  # noqa: E402, F401
+    |                                                        ^^^^^^^^^^^^^^^^^^
+189 |     TraceCallPersistenceError,
+190 |     TraceCallReservationStatus,
+    |
+help: Remove unused `noqa` directive
+    |
+187 | # Re-exported here so existing importers keep the SAME class object.
+    - from tldw_chatbook.Chat.console_trace_errors import (  # noqa: E402, F401
+188 + from tldw_chatbook.Chat.console_trace_errors import (
+189 |     TraceCallPersistenceError,
+    |
+
+BLE001 Do not catch blind exception: `Exception`
+   --> tldw_chatbook/Chat/console_trace_service.py:341:16
+    |
+339 |         except TraceCallPersistenceError:
+340 |             raise TraceCallPersistenceError(boundary=self) from None
+341 |         except Exception:
+    |                ^^^^^^^^^
+342 |             raise TraceCallPersistenceError(boundary=self) from None
+343 |         return self._started
+    |
+
+BLE001 Do not catch blind exception: `Exception`
+   --> tldw_chatbook/Chat/console_trace_service.py:365:16
+    |
+363 |                     omission_reason_code=self._started.omission_reason_code,
+364 |                 )
+365 |         except Exception:
+    |                ^^^^^^^^^
+366 |             raise TraceCallPersistenceError() from None
+367 |         return self._unknown
+    |
+
+BLE001 Do not catch blind exception: `Exception`
+   --> tldw_chatbook/Chat/console_trace_service.py:397:16
+    |
+395 |                     omission_reason_code=self._reserved.omission_reason_code,
+396 |                 )
+397 |         except Exception:
+    |                ^^^^^^^^^
+398 |             raise TraceCallPersistenceError(boundary=self) from None
+399 |         return self._reserved
+    |
+
+BLE001 Do not catch blind exception: `Exception`
+   --> tldw_chatbook/Chat/console_trace_service.py:413:16
+    |
+411 |                 occurred_at=occurred_at,
+412 |             )
+413 |         except Exception:
+    |                ^^^^^^^^^
+414 |             return False
+415 |         self._response_started_at = occurred_at
+    |
+
+BLE001 Do not catch blind exception: `Exception`
+   --> tldw_chatbook/Chat/console_trace_service.py:463:16
+    |
+461 |                 prior_omission_reason_code=self._started.omission_reason_code,
+462 |             )
+463 |         except Exception:
+    |                ^^^^^^^^^
+464 |             return False
+465 |         self._response_started_at = response_started_at
+    |
+
+BLE001 Do not catch blind exception: `Exception`
+   --> tldw_chatbook/Chat/console_trace_service.py:497:16
+    |
+495 |                 prior_omission_reason_code=self._started.omission_reason_code,
+496 |             )
+497 |         except Exception:
+    |                ^^^^^^^^^
+498 |             return None
+499 |         self._response_started_at = response_started_at
+    |
+
+RUF023 [*] `_SequenceNode.__slots__` is not sorted
+   --> tldw_chatbook/Chat/console_trace_service.py:536:17
+    |
+534 |       """One mutable node in an ephemeral implicit sequence tree."""
+535 |
+536 |       __slots__ = (
+    |  _________________^
+537 | |         "sequence",
+538 | |         "key",
+539 | |         "priority",
+540 | |         "left",
+541 | |         "right",
+542 | |         "parent",
+543 | |         "size",
+544 | |         "max_sequence",
+545 | |     )
+    | |_____^
+546 |
+547 |       def __init__(self, sequence: int, key: SurfaceReferenceKey) -> None:
+    |
+help: Apply a natural sort to `_SequenceNode.__slots__`
+    |
+536 |     __slots__ = (
+    -         "sequence",
+537 |         "key",
+538 +         "left",
+539 +         "max_sequence",
+540 +         "parent",
+541 |         "priority",
+    -         "left",
+542 |         "right",
+    -         "parent",
+543 +         "sequence",
+544 |         "size",
+    -         "max_sequence",
+545 |     )
+    |
+
+UP046 Generic class `_PersistentSequenceNode` uses `Generic` subclass instead of type parameters
+   --> tldw_chatbook/Chat/console_trace_service.py:684:31
+    |
+683 | @dataclass(frozen=True, slots=True)
+684 | class _PersistentSequenceNode(Generic[_SequenceValue]):
+    |                               ^^^^^^^^^^^^^^^^^^^^^^^
+685 |     """One path-copying implicit-treap node for live surface projections."""
+    |
+help: Use type parameters
+
+UP047 Generic function `_persistent_size` should use type parameters
+   --> tldw_chatbook/Chat/console_trace_service.py:744:5
+    |
+744 |   def _persistent_size(
+    |  _____^
+745 | |     root: _PersistentSequenceNode[_SequenceValue] | None,
+746 | | ) -> int:
+    | |_^
+747 |       return 0 if root is None else root.size
+    |
+help: Use type parameters
+
+UP047 Generic function `_persistent_merge` should use type parameters
+   --> tldw_chatbook/Chat/console_trace_service.py:750:5
+    |
+750 |   def _persistent_merge(
+    |  _____^
+751 | |     left: _PersistentSequenceNode[_SequenceValue] | None,
+752 | |     right: _PersistentSequenceNode[_SequenceValue] | None,
+753 | | ) -> _PersistentSequenceNode[_SequenceValue] | None:
+    | |_^
+754 |       if left is None:
+755 |           return right
+    |
+help: Use type parameters
+
+UP047 Generic function `_persistent_split` should use type parameters
+   --> tldw_chatbook/Chat/console_trace_service.py:775:5
+    |
+775 |   def _persistent_split(
+    |  _____^
+776 | |     root: _PersistentSequenceNode[_SequenceValue] | None,
+777 | |     count: int,
+778 | | ) -> tuple[
+    | |_^
+779 |       _PersistentSequenceNode[_SequenceValue] | None,
+780 |       _PersistentSequenceNode[_SequenceValue] | None,
+    |
+help: Use type parameters
+
+UP047 Generic function `_persistent_first_position_in_range` should use type parameters
+   --> tldw_chatbook/Chat/console_trace_service.py:807:5
+    |
+807 |   def _persistent_first_position_in_range(
+    |  _____^
+808 | |     root: _PersistentSequenceNode[_SequenceValue] | None,
+809 | |     start: int,
+810 | |     end: int,
+811 | | ) -> int | None:
+    | |_^
+812 |       if root is None or root.max_sequence < start or root.min_sequence > end:
+813 |           return None
+    |
+help: Use type parameters
+
+UP047 Generic function `_persistent_without_sequence_range` should use type parameters
+   --> tldw_chatbook/Chat/console_trace_service.py:827:5
+    |
+827 |   def _persistent_without_sequence_range(
+    |  _____^
+828 | |     root: _PersistentSequenceNode[_SequenceValue] | None,
+829 | |     start: int,
+830 | |     end: int,
+831 | | ) -> _PersistentSequenceNode[_SequenceValue] | None:
+    | |_^
+832 |       if root is None or root.max_sequence < start or root.min_sequence > end:
+833 |           return root
+    |
+help: Use type parameters
+
+UP047 Generic function `_persistent_insert_entries` should use type parameters
+   --> tldw_chatbook/Chat/console_trace_service.py:851:5
+    |
+851 |   def _persistent_insert_entries(
+    |  _____^
+852 | |     root: _PersistentSequenceNode[_SequenceValue] | None,
+853 | |     position: int,
+854 | |     entries: Iterable[tuple[int, _SequenceValue, str | None]],
+855 | | ) -> _PersistentSequenceNode[_SequenceValue] | None:
+    | |_^
+856 |       inserted: _PersistentSequenceNode[_SequenceValue] | None = None
+857 |       for sequence, value, domain in entries:
+    |
+help: Use type parameters
+
+UP047 Generic function `_persistent_iter` should use type parameters
+   --> tldw_chatbook/Chat/console_trace_service.py:866:5
+    |
+866 |   def _persistent_iter(
+    |  _____^
+867 | |     root: _PersistentSequenceNode[_SequenceValue] | None,
+868 | | ) -> Iterator[tuple[int, _SequenceValue, str | None]]:
+    | |_^
+869 |       stack: list[_PersistentSequenceNode[_SequenceValue]] = []
+870 |       current = root
+    |
+help: Use type parameters
+
+UP047 Generic function `_persistent_domain_count_before` should use type parameters
+   --> tldw_chatbook/Chat/console_trace_service.py:880:5
+    |
+880 |   def _persistent_domain_count_before(
+    |  _____^
+881 | |     root: _PersistentSequenceNode[_SequenceValue] | None,
+882 | |     position: int,
+883 | |     domain: str,
+884 | | ) -> int:
+    | |_^
+885 |       count = 0
+886 |       current = root
+    |
+help: Use type parameters
+
+RUF023 [*] `_ProjectedDescriptors.__slots__` is not sorted
+    --> tldw_chatbook/Chat/console_trace_service.py:1076:17
+     |
+1074 |       """Lazy view of a private persistent descriptor projection."""
+1075 |
+1076 |       __slots__ = (
+     |  _________________^
+1077 | |         "_root",
+1078 | |         "_domain",
+1079 | |         "_console_trace_delta",
+1080 | |         "_console_trace_delta_ordinal",
+1081 | |     )
+     | |_____^
+1082 |       _console_trace_projection = True
+     |
+help: Apply a natural sort to `_ProjectedDescriptors.__slots__`
+     |
+1076 |     __slots__ = (
+     -         "_root",
+     -         "_domain",
+1077 |         "_console_trace_delta",
+1078 |         "_console_trace_delta_ordinal",
+1079 +         "_domain",
+1080 +         "_root",
+1081 |     )
+     |
+
+RUF023 [*] `_ProjectedProviderValues.__slots__` is not sorted
+    --> tldw_chatbook/Chat/console_trace_service.py:1123:17
+     |
+1121 |       """Ephemeral values assembled from durable refs plus one admitted mutation."""
+1122 |
+1123 |       __slots__ = (
+     |  _________________^
+1124 | |         "_service",
+1125 | |         "_cursor",
+1126 | |         "_parent",
+1127 | |         "_appended",
+1128 | |         "_replacement",
+1129 | |         "_descriptor_root",
+1130 | |         "_owner_id",
+1131 | |         "_domain",
+1132 | |         "_cache",
+1133 | |         "_retained_artifact_values",
+1134 | |     )
+     | |_____^
+1135 |
+1136 |       def __init__(
+     |
+help: Apply a natural sort to `_ProjectedProviderValues.__slots__`
+     |
+1123 |     __slots__ = (
+     -         "_service",
+1124 +         "_appended",
+1125 +         "_cache",
+1126 |         "_cursor",
+1127 +         "_descriptor_root",
+1128 +         "_domain",
+1129 +         "_owner_id",
+1130 |         "_parent",
+     -         "_appended",
+1131 |         "_replacement",
+     -         "_descriptor_root",
+     -         "_owner_id",
+     -         "_domain",
+     -         "_cache",
+1132 |         "_retained_artifact_values",
+1133 +         "_service",
+1134 |     )
+     |
+
+RUF023 [*] `_PreparedSurfaceBoundary.__slots__` is not sorted
+    --> tldw_chatbook/Chat/console_trace_service.py:1247:17
+     |
+1245 |       """One-shot content-bearing preparation outside capability registries."""
+1246 |
+1247 |       __slots__ = (
+     |  _________________^
+1248 | |         "_service",
+1249 | |         "provenance",
+1250 | |         "messages_payload",
+1251 | |         "provider_continuations",
+1252 | |         "_delta_values",
+1253 | |         "_issued_values",
+1254 | |     )
+     | |_____^
+1255 |
+1256 |       def __init__(
+     |
+help: Apply a natural sort to `_PreparedSurfaceBoundary.__slots__`
+     |
+1247 |     __slots__ = (
+1248 +         "_delta_values",
+1249 +         "_issued_values",
+1250 |         "_service",
+1251 +         "messages_payload",
+1252 |         "provenance",
+     -         "messages_payload",
+1253 |         "provider_continuations",
+     -         "_delta_values",
+     -         "_issued_values",
+1254 |     )
+     |
+
+RUF023 [*] `ConsoleTraceService.__slots__` is not sorted
+    --> tldw_chatbook/Chat/console_trace_service.py:1515:17
+     |
+1513 |       """Translate verified provider values into reference-backed trace records."""
+1514 |
+1515 |       __slots__ = (
+     |  _________________^
+1516 | |         "repository",
+1517 | |         "_surface_ref_cache",
+1518 | |         "_parent_capabilities",
+1519 | |         "_prepared_capabilities",
+1520 | |         "_child_capabilities",
+1521 | |         "_pending_child_uses",
+1522 | |         "_settlement",
+1523 | |     )
+     | |_____^
+1524 |
+1525 |       def __init__(self, repository: ConsoleTraceRepository | None = None) -> None:
+     |
+help: Apply a natural sort to `ConsoleTraceService.__slots__`
+     |
+1515 |     __slots__ = (
+     -         "repository",
+     -         "_surface_ref_cache",
+1516 +         "_child_capabilities",
+1517 |         "_parent_capabilities",
+1518 +         "_pending_child_uses",
+1519 |         "_prepared_capabilities",
+     -         "_child_capabilities",
+     -         "_pending_child_uses",
+1520 |         "_settlement",
+1521 +         "_surface_ref_cache",
+1522 +         "repository",
+1523 |     )
+     |
+
+I001 [*] Import block is un-sorted or un-formatted
+    --> tldw_chatbook/Chat/console_trace_service.py:1683:9
+     |
+1681 |           abandoned.
+1682 |           """
+1683 | /         from tldw_chatbook.Chat.console_voice_trace_gateway import (
+1684 | |             _ClaimReleaseDisposition,
+1685 | |             ProvisionalTraceRegistry,
+1686 | |             ProvisionalTraceUnavailable,
+1687 | |             VoiceTraceImportContext,
+1688 | |         )
+1689 | |         from tldw_chatbook.Chat.console_voice_trace_promotion import (
+1690 | |             ConfirmedPreCommitTraceImportError,
+1691 | |         )
+     | |_________^
+1692 |
+1693 |           if type(registry) is not ProvisionalTraceRegistry:
+     |
+help: Organize imports
+     |
+1683 |         from tldw_chatbook.Chat.console_voice_trace_gateway import (
+     -             _ClaimReleaseDisposition,
+1684 |             ProvisionalTraceRegistry,
+1685 |             ProvisionalTraceUnavailable,
+1686 |             VoiceTraceImportContext,
+1687 +             _ClaimReleaseDisposition,
+1688 |         )
+     |
+
+BLE001 Do not catch blind exception: `Exception`
+    --> tldw_chatbook/Chat/console_trace_service.py:1716:16
+     |
+1714 |                 raise ProvisionalTraceImportRetryableError() from None
+1715 |             raise ProvisionalTraceImportExpiredError() from exc
+1716 |         except Exception:
+     |                ^^^^^^^^^
+1717 |             try:
+1718 |                 result = import_once()
+     |
+
+BLE001 Do not catch blind exception: `Exception`
+    --> tldw_chatbook/Chat/console_trace_service.py:1719:20
+     |
+1717 |             try:
+1718 |                 result = import_once()
+1719 |             except Exception:
+     |                    ^^^^^^^^^
+1720 |                 try:
+1721 |                     registry._abandon_claim(claim)
+     |
+
+BLE001 Do not catch blind exception: `Exception`
+    --> tldw_chatbook/Chat/console_trace_service.py:1750:20
+     |
+1748 |                         policy_id=identity.policy_id,
+1749 |                     )
+1750 |             except Exception:
+     |                    ^^^^^^^^^
+1751 |                 # A transaction exit may report failure after SQLite committed. Query
+1752 |                 # both immutable identities before any later allocation.
+     |
+
+BLE001 Do not catch blind exception: `Exception`
+    --> tldw_chatbook/Chat/console_trace_service.py:1787:24
+     |
+1785 |                 except TraceCallPersistenceError:
+1786 |                     raise
+1787 |                 except Exception:
+     |                        ^^^^^^^^^
+1788 |                     raise TraceCallPersistenceError(
+1789 |                         reservation_status="unknown"
+     |
+
+PLC0208 [*] Use a sequence type instead of a `set` when iterating over values
+    --> tldw_chatbook/Chat/console_trace_service.py:4329:27
+     |
+4327 |         parent_domain_counts = {
+4328 |             domain: parent.descriptors.domain_count(domain)
+4329 |             for domain in {"messages_payload", "provider_continuations"}
+     |                           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+4330 |         }
+4331 |         prepared_items = tuple(
+     |
+help: Convert to `tuple`
+     |
+4328 |             domain: parent.descriptors.domain_count(domain)
+     -             for domain in {"messages_payload", "provider_continuations"}
+4329 +             for domain in ("messages_payload", "provider_continuations")
+4330 |         }
+     |
+
+B009 [*] Do not call `getattr` with a constant attribute value. It is not any safer than normal property access.
+    --> tldw_chatbook/Chat/console_trace_service.py:4374:25
+     |
+4372 |                 ),
+4373 |                 replacement=(
+4374 |                     int(getattr(replacement_range, "start_sequence")),
+     |                         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+4375 |                     int(getattr(replacement_range, "end_sequence")),
+4376 |                 ),
+     |
+help: Replace `getattr` with attribute access
+     |
+4373 |                 replacement=(
+     -                     int(getattr(replacement_range, "start_sequence")),
+4374 +                     int(replacement_range.start_sequence),
+4375 |                     int(getattr(replacement_range, "end_sequence")),
+     |
+
+B009 [*] Do not call `getattr` with a constant attribute value. It is not any safer than normal property access.
+    --> tldw_chatbook/Chat/console_trace_service.py:4375:25
+     |
+4373 |                 replacement=(
+4374 |                     int(getattr(replacement_range, "start_sequence")),
+4375 |                     int(getattr(replacement_range, "end_sequence")),
+     |                         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+4376 |                 ),
+4377 |                 appended_domains=tuple(
+     |
+help: Replace `getattr` with attribute access
+     |
+4374 |                     int(getattr(replacement_range, "start_sequence")),
+     -                     int(getattr(replacement_range, "end_sequence")),
+4375 +                     int(replacement_range.end_sequence),
+4376 |                 ),
+     |
+
+PLC0208 [*] Use a sequence type instead of a `set` when iterating over values
+    --> tldw_chatbook/Chat/console_trace_service.py:4497:31
+     |
+4495 |                     if value_domain == domain
+4496 |                 )
+4497 |                 for domain in {"messages_payload", "provider_continuations"}
+     |                               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+4498 |             }
+4499 |             | (
+     |
+help: Convert to `tuple`
+     |
+4496 |                 )
+     -                 for domain in {"messages_payload", "provider_continuations"}
+4497 +                 for domain in ("messages_payload", "provider_continuations")
+4498 |             }
+     |
+
+B009 [*] Do not call `getattr` with a constant attribute value. It is not any safer than normal property access.
+    --> tldw_chatbook/Chat/console_trace_service.py:4754:17
+     |
+4752 |             parent.segment_id,
+4753 |             parent.head_id,
+4754 |             str(getattr(admission, "route_identity")),
+     |                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+4755 |             preparation_identity,
+4756 |             ref(bundle),
+     |
+help: Replace `getattr` with attribute access
+     |
+4753 |             parent.head_id,
+     -             str(getattr(admission, "route_identity")),
+4754 +             str(admission.route_identity),
+4755 |             preparation_identity,
+     |
+
+TRY004 Prefer `TypeError` exception for invalid type
+    --> tldw_chatbook/Chat/console_trace_service.py:5088:13
+     |
+5086 |         )
+5087 |         if not isinstance(continuation_values, tuple):
+5088 |             raise ValueError("surface_values_unavailable")
+     |             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+5089 |         domain_values = {
+5090 |             "messages_payload": (
+     |
+
+SIM102 Use a single `if` statement instead of nested `if` statements
+   --> tldw_chatbook/DB/console_prompt_mixins.py:198:5
+    |
+196 |           ).fetchone()[0]
+197 |       )
+198 | /     if "mixin_attempt_id" in metadata or "mixin_snapshot_schema_version" in metadata:
+199 | |         if (batch.retry_of_attempt_id is None
+200 | |                 or metadata.get("mixin_attempt_id") != batch.retry_of_attempt_id
+201 | |                 or type(metadata.get("mixin_snapshot_schema_version")) is not int
+202 | |                 or metadata["mixin_snapshot_schema_version"] != 1):
+    | |___________________________________________________________________^
+203 |               raise MixinSnapshotUnavailableError("mixin_anchor_attempt_conflict")
+204 |       checkpoint = cursor.execute(
+    |
+help: Combine `if` statements using `and`
+
+Found 106 errors.
+[*] 62 fixable with the `--fix` option (15 hidden fixes can be enabled with the `--unsafe-fixes` option).

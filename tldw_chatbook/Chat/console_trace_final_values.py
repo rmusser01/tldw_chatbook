@@ -248,6 +248,7 @@ class CompletedToolTurnWitness:
     assistant_revision_id: str | None
     user_revision_id: str
     source_revision_id: str | None = None
+    replacement_attempt_id: str | None = field(default=None, kw_only=True)
     # None preserves the tool/source-only transition. Zero explicitly renews a
     # project turn whose next request no longer contains project context.
     project_context_count: int | None = field(default=None, kw_only=True)
@@ -275,6 +276,13 @@ class CompletedToolTurnWitness:
             self.user_revision_id,
         ):
             SemanticRevisionRef(identity)
+        if self.replacement_attempt_id is not None and (
+            type(self.replacement_attempt_id) is not str
+            or not self.replacement_attempt_id
+            or self.source_revision_id is None
+            or self.assistant_revision_id is None
+        ):
+            raise ValueError("completed_turn_replacement_attempt")
         if self.source_revision_id is not None:
             SemanticRevisionRef(self.source_revision_id)
         if self.assistant_revision_id is not None:

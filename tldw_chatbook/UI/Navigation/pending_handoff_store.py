@@ -17,7 +17,8 @@ from ...Chat.chat_handoff_models import ChatHandoffPayload
 from ...Chat.console_chat_models import ConsoleFleetCompletionTarget
 from ...Chat.console_live_work import ConsoleLiveWorkLaunch
 from ...Chat.provider_readiness import provider_config_key
-from ...Prompt_Management.prompt_variables import PromptVariableApplication
+from ...Prompt_Management.prompt_variables import APPLICATION_TTL_SECONDS, PromptVariableApplication
+from ...Chat.console_prompt_mixins import MixinSourceRef
 from .audio_cpp_model_handoff import (
     AudioCppModelLibraryRequest,
     AudioCppModelLibraryResult,
@@ -114,6 +115,37 @@ class HandoffChannel(StrEnum):
     AUDIO_CPP_MODEL_LIBRARY_REQUEST = "audio_cpp_model_library_request"
     AUDIO_CPP_MODEL_LIBRARY_RESULT = "audio_cpp_model_library_result"
     CONVERSATION_SETTINGS_RETURN = "conversation_settings_return"
+
+
+@dataclass(frozen=True, slots=True)
+class ConsoleMixinEnableRequest:
+    """Body-free, exact-origin intent; shares Prompt one-shot/expiry ownership."""
+
+    source: MixinSourceRef
+    target_session_id: str
+    target_incarnation_id: str
+    preference_revision: int
+    source_fences: tuple[object, object, object] = field(repr=False)
+    created_monotonic: float = field(default_factory=time.monotonic)
+
+    def __post_init__(self) -> None:
+        if type(self.source_fences) is not tuple or len(self.source_fences) != 3 or any(item is None for item in self.source_fences):
+            raise ValueError("mixin_invalid_source_fences")
+        if type(self.source) is not MixinSourceRef:
+            raise ValueError("mixin_invalid_reference")
+        for value in (self.target_session_id, self.target_incarnation_id):
+            if type(value) is not str or not value.strip() or value != value.strip():
+                raise ValueError("mixin_invalid_target")
+        if type(self.preference_revision) is not int or self.preference_revision < 0:
+            raise ValueError("mixin_invalid_revision")
+        if type(self.created_monotonic) not in (int, float) or not math.isfinite(
+            self.created_monotonic
+        ):
+            raise ValueError("mixin_invalid_expiry")
+
+    def is_expired(self, *, now_monotonic: float) -> bool:
+        """Use the existing Prompt application TTL."""
+        return now_monotonic >= self.created_monotonic + APPLICATION_TTL_SECONDS
 
 
 class HandoffValueError(ValueError):
@@ -533,7 +565,7 @@ class PendingHandoffStore:
 
     def release_prompt_claim(
         self,
-        claim: HandoffClaim[PromptVariableApplication],
+        claim: HandoffClaim[PromptVariableApplication | ConsoleMixinEnableRequest],
     ) -> HandoffClaimStatus | None:
         """Atomically retry or expire one exact Prompt claim.
 
@@ -604,7 +636,7 @@ class PendingHandoffStore:
         self._slot_for(channel)
         return channel
 
-    def _prompt_is_unexpired(self, value: PromptVariableApplication) -> bool:
+    def _prompt_is_unexpired(self, value: PromptVariableApplication | ConsoleMixinEnableRequest) -> bool:
         try:
             now = self._monotonic_now()
         except HandoffValueError:
@@ -669,6 +701,8 @@ class PendingHandoffStore:
                 raise ValueError("invalid Console launch")
             return copied
         if channel is HandoffChannel.CONSOLE_PROMPT_INSERT:
+            if type(value) is ConsoleMixinEnableRequest:
+                return ConsoleMixinEnableRequest(value.source, value.target_session_id, value.target_incarnation_id, value.preference_revision, value.source_fences, value.created_monotonic)
             if not isinstance(value, PromptVariableApplication):
                 raise TypeError("Console prompt handoff must be typed")
             return PromptVariableApplication(

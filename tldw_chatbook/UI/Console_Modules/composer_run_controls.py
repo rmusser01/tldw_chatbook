@@ -762,7 +762,22 @@ def composer_menu_state(screen: Any) -> dict[str, Any]:
     save_enables_capture, next_send_capture = (
         _save_chat_capture(screen) if ephemeral else (None, None)
     )
+    store = getattr(screen, "_console_chat_store", None)
+    session = (
+        next(
+            (item for item in store.sessions() if item.id == store.active_session_id),
+            None,
+        )
+        if store is not None
+        else None
+    )
+    preferences = (
+        session.prompt_mixin_preferences.preferences if session is not None else None
+    )
     return {
+        "mixin_count": sum(row.enabled for row in preferences.entries)
+        if preferences is not None
+        else None,
         "attachment_kind": screen._console_pending_attachment_kind(),
         "ephemeral": ephemeral,
         "save_enables_capture": save_enables_capture,

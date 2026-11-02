@@ -427,3 +427,31 @@ async def test_server_prompt_service_hard_stops_denied_ui_policy_decision():
 
     assert exc.value.reason_code == "server_unreachable"
     assert client.calls == []
+
+
+@pytest.mark.asyncio
+async def test_server_adapter_refuses_conditional_update_without_client_contract():
+    from tldw_chatbook.Prompt_Management.prompt_source_capabilities import (
+        PromptCapabilityError,
+    )
+
+    client = FakePromptClient()
+    service = ServerPromptService(client=client)
+    with pytest.raises(PromptCapabilityError, match="conditional update"):
+        await service.update_prompt("uuid", name="Changed", expected_version=2)
+    assert client.calls == []
+
+
+@pytest.mark.asyncio
+async def test_server_adapter_preserves_nested_request_version_precondition():
+    from tldw_chatbook.Prompt_Management.prompt_source_capabilities import (
+        PromptCapabilityError,
+    )
+
+    client = FakePromptClient()
+    service = ServerPromptService(client=client)
+    with pytest.raises(PromptCapabilityError, match="conditional update"):
+        await service.update_prompt(
+            "uuid", request_data={"name": "Changed", "expected_version": 2}
+        )
+    assert client.calls == []

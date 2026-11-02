@@ -1,6 +1,11 @@
 from unittest.mock import Mock, patch
 
+import pytest
+
 from tldw_chatbook.Chat.Chat_Functions import chat_api_call
+
+# Native adapters read the collection-admitted configuration participant.
+pytestmark = pytest.mark.bootstrap_profile
 
 
 def _spy_histograms(monkeypatch):
@@ -189,3 +194,30 @@ def test_anthropic_cache_metrics_explicit_null_coerced_to_zero(monkeypatch):
         )
     assert calls["anthropic_api_cache_read_input_tokens"] == 0
     assert calls["anthropic_api_cache_creation_input_tokens"] == 0
+
+
+@pytest.mark.parametrize("read_tokens,write_tokens", [(0, 0), (0, 2048), (2048, 0)])
+def test_clean_history_markers_do_not_fabricate_cache_usage(
+    monkeypatch, read_tokens, write_tokens
+):
+    from Tests.Chat.test_anthropic_caching_degrade import _ok_response
+    from Tests.Chat.test_console_prompt_mixin_caching import _kwargs, _prepare
+
+    calls = _spy_histograms(monkeypatch)
+    response = _ok_response()
+    response.json.return_value["usage"].update(
+        cache_read_input_tokens=read_tokens,
+        cache_creation_input_tokens=write_tokens,
+    )
+    with (
+        patch("requests.Session.post", return_value=response) as post,
+        patch(
+            "tldw_chatbook.LLM_Calls.LLM_API_Calls.get_cli_setting",
+            side_effect=lambda s, k, d=None: d,
+        ),
+    ):
+        result = chat_api_call(**_kwargs(_prepare()))
+    assert "cache_control" in post.call_args.kwargs["json"]["messages"][1]["content"][0]
+    assert result["choices"][0]["message"]["content"] == "ok"
+    assert calls["anthropic_api_cache_read_input_tokens"] == read_tokens
+    assert calls["anthropic_api_cache_creation_input_tokens"] == write_tokens

@@ -1,0 +1,18 @@
+Tests/Backup_Recovery/test_prompt_mixin_restore.py:3:1: I001 [*] Import block is un-sorted or un-formatted
+Tests/Backup_Recovery/test_prompt_mixin_restore.py:10:51: PLC0414 Import alias does not rename original package
+Tests/Backup_Recovery/test_prompt_mixin_restore.py:18:5: I001 [*] Import block is un-sorted or un-formatted
+Tests/Backup_Recovery/test_prompt_mixin_restore.py:18:49: F401 [*] `tldw_chatbook.DB.private_sqlite.copy_private_sqlite` imported but unused
+Tests/Backup_Recovery/test_prompt_mixin_restore.py:37:5: SIM117 Use a single `with` statement with multiple contexts instead of nested `with` statements
+Tests/Backup_Recovery/test_prompt_mixin_restore.py:48:5: I001 [*] Import block is un-sorted or un-formatted
+Tests/Chat/test_console_prompt_mixin_values.py:3:1: I001 [*] Import block is un-sorted or un-formatted
+Tests/DB/test_console_prompt_mixins.py:3:1: I001 [*] Import block is un-sorted or un-formatted
+Tests/DB/test_console_prompt_mixins.py:6:18: F401 [*] `uuid.uuid4` imported but unused
+Tests/DB/test_console_prompt_mixins.py:10:51: PLC0414 Import alias does not rename original package
+Tests/DB/test_console_prompt_mixins.py:143:5: I001 [*] Import block is un-sorted or un-formatted
+Tests/DB/test_console_prompt_mixins.py:193:5: I001 [*] Import block is un-sorted or un-formatted
+Tests/DB/test_console_prompt_mixins.py:216:5: I001 [*] Import block is un-sorted or un-formatted
+Tests/DB/test_console_prompt_mixins.py:293:5: I001 [*] Import block is un-sorted or un-formatted
+tldw_chatbook/Chat/console_prompt_mixins.py:3:1: I001 [*] Import block is un-sorted or un-formatted
+tldw_chatbook/DB/console_prompt_mixins.py:3:1: I001 [*] Import block is un-sorted or un-formatted
+Found 16 errors.
+[*] 13 fixable with the `--fix` option (2 hidden fixes can be enabled with the `--unsafe-fixes` option).

@@ -1,0 +1,134 @@
+2026-11-01 19:35:59 [INFO    ] root:555 - Private rotating file logging installed at level INFO.
+2026-11-01 19:35:59 [INFO    ] tldw_chatbook.diagnostics.logging:275 - event=persistent_sink_installed component=logging status=ok
+2026-11-01 19:35:59 [INFO    ] root:1003 - Standard Logging: Final Root logger level is: INFO
+2026-11-01 19:35:59 [INFO    ] root:1012 - Logging setup complete.
+2026-11-01 19:35:59 [INFO    ] root:1013 - --- _setup_logging END ---
+2026-11-01 19:35:59 [INFO    ] root:77 - Early logging initialization complete
+2026-11-01 19:35:59 [INFO    ] tldw_chatbook.app_entry:651 - Early logging initialization complete (loguru)
+2026-11-01 19:35:59 [INFO    ] tldw_chatbook.app_entry:651 - Terminal emoji support detected: True
+2026-11-01 19:35:59 [INFO    ] tldw_chatbook.app_entry:651 - Using brain: 🧠
+2026-11-01 19:35:59 [INFO    ] tldw_chatbook.app_entry:651 - ------------------------------
+2026-11-01 19:35:59 [INFO    ] tldw_chatbook.Utils.terminal_utils:651 - Image render protocol selected: sixel
+2026-11-01 19:35:59 [INFO    ] tldw_chatbook.app:651 - Loaded app_config - strip_thinking_tags: True
+2026-11-01 19:35:59 [INFO    ] tldw_chatbook.app:651 - Unified ChaChaNotes DB file path: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/mixins-task9-live-otdkzk5l/live/data/rp_review/tldw_chatbook_ChaChaNotes.db
+2026-11-01 19:35:59 [INFO    ] root:1102 - Initializing Database object for path: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/mixins-task9-live-otdkzk5l/live/data/rp_review/tldw_chatbook_media_v2.db [Client ID: tldw_cli_local_instance_v1]
+2026-11-01 19:35:59 [INFO    ] tldw_chatbook.Prompt_Management.Prompts_Interop:651 - Initializing Prompts Interop Library. DB Path: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/mixins-task9-live-otdkzk5l/live/data/rp_review/tldw_chatbook_prompts.db, Client ID: tldw_tui_client_v1
+2026-11-01 19:35:59 [INFO    ] tldw_chatbook.app:651 - Notes for user 'rp_review' will use the unified DB: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/mixins-task9-live-otdkzk5l/live/data/rp_review/tldw_chatbook_ChaChaNotes.db
+2026-11-01 19:35:59 [INFO    ] tldw_chatbook.app:651 - Successfully retrieved providers_models. Count: 61. Keys: ['OpenAI', 'Anthropic', 'Cohere', 'DeepSeek', 'Groq', 'Google', 'HuggingFace', 'MistralAI', 'Moonshot', 'OpenRouter', 'QwenCloud', 'ZAI', 'Databricks', 'Together', 'Fireworks', 'Cerebras', 'SambaNova', 'NVIDIA', 'DeepInfra', 'Nebius', 'Novita', 'MiniMax', 'MiMo', 'TokenHub', 'BytePlus', 'StepFun', 'Vercel', 'ZenMux', 'Kilo', 'SiliconFlow', 'Baseten', 'GMI', 'OllamaCloud', 'Upstage', 'Arcee', 'Qianfan', 'Nous', 'Venice', 'Meta', 'Azure', 'WandB', 'Cloudflare', 'OpenCodeZen', 'CommandCode', 'Llama_cpp', 'koboldcpp', 'Oobabooga', 'Ollama', 'vLLM', 'Custom', 'Custom_2', 'TabbyAPI', 'Aphrodite', 'local-llm', 'local_llamacpp', 'local_llamafile', 'local_ollama', 'local_vllm', 'local_onnx', 'local_transformers', 'local_mlx_lm']
+2026-11-01 19:35:59 [INFO    ] tldw_chatbook.DB.Prompts_DB:651 - Initializing PromptsDatabase object for path: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/mixins-task9-live-otdkzk5l/live/data/rp_review/tldw_chatbook_prompts.db [Client ID: tldw_tui_client_v1]
+2026-11-01 19:35:59 [INFO    ] tldw_chatbook.config:651 - Lazy-initializing ChaChaNotes_DB at: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/mixins-task9-live-otdkzk5l/live/data/rp_review/tldw_chatbook_ChaChaNotes.db
+2026-11-01 19:35:59 [INFO    ] tldw_chatbook.app:651 - Parallel init task 'providers_models' completed in 0.002s
+2026-11-01 19:35:59 [INFO    ] tldw_chatbook.DB.ChaChaNotes_DB:651 - Initializing CharactersRAGDB db_sha256=b550da2c1c49 [Client ID: tldw_cli_local_instance_v1]
+2026-11-01 19:35:59 [INFO    ] tldw_chatbook.DB.Prompts_DB:651 - Checking DB schema. Current: 6, Code supports: 6
+2026-11-01 19:35:59 [INFO    ] tldw_chatbook.Prompt_Management.Prompts_Interop:651 - Prompts Interop Library initialized successfully.
+2026-11-01 19:35:59 [INFO    ] tldw_chatbook.app:651 - Prompts Interop Service initialized with DB: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/mixins-task9-live-otdkzk5l/live/data/rp_review/tldw_chatbook_prompts.db
+2026-11-01 19:35:59 [INFO    ] tldw_chatbook.app:651 - Parallel init task 'prompts_service' completed in 0.064s
+2026-11-01 19:35:59 [INFO    ] root:2232 - Checking DB schema. Current version: 9. Code supports: 9
+2026-11-01 19:35:59 [INFO    ] tldw_chatbook.app:651 - Media_DB_v2 initialized successfully for client 'tldw_cli_local_instance_v1' at /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/mixins-task9-live-otdkzk5l/live/data/rp_review/tldw_chatbook_media_v2.db
+2026-11-01 19:35:59 [INFO    ] tldw_chatbook.RAG_Search.ingestion_indexing:651 - RAG lifecycle-indexing hooks installed on media DB
+2026-11-01 19:35:59 [INFO    ] tldw_chatbook.DB.ChaChaNotes_DB:651 - Checking DB schema 'rag_char_chat_schema'. Current version: 82. Code supports: 82
+2026-11-01 19:35:59 [INFO    ] tldw_chatbook.DB.Client_Media_DB_v2:651 - Distinct media types loaded (result_count=%s, include_deleted=%s, include_trash=%s).
+2026-11-01 19:35:59 [INFO    ] tldw_chatbook.app:651 - Pre-fetched 1 media types for UI.
+2026-11-01 19:35:59 [INFO    ] tldw_chatbook.app:651 - Parallel init task 'media_db' completed in 0.067s
+2026-11-01 19:35:59 [INFO    ] tldw_chatbook.config:651 - ChaChaNotes_DB lazy-initialized successfully at /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/mixins-task9-live-otdkzk5l/live/data/rp_review/tldw_chatbook_ChaChaNotes.db
+2026-11-01 19:35:59 [INFO    ] tldw_chatbook.Notes.Notes_Library:102 - NotesInteropService: Verified base directory: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/mixins-task9-live-otdkzk5l/live/data/rp_review
+2026-11-01 19:35:59 [INFO    ] tldw_chatbook.Notes.Notes_Library:116 - NotesInteropService initialized with unified DB template: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/mixins-task9-live-otdkzk5l/live/data/rp_review/tldw_chatbook_ChaChaNotes.db
+2026-11-01 19:35:59 [INFO    ] tldw_chatbook.app:651 - NotesInteropService successfully initialized for user 'rp_review'.
+2026-11-01 19:35:59 [INFO    ] tldw_chatbook.app:651 - Parallel init task 'notes_service' completed in 0.074s
+2026-11-01 19:35:59 [INFO    ] root:1415 - App __init__: Determined initial tab value: chat
+2026-11-01 19:35:59 [INFO    ] tldw_chatbook.DB.base_db:651 - LibraryCollectionsDB initialized with path: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/mixins-task9-live-otdkzk5l/live/data/rp_review/tldw_chatbook_library_collections.db [Client: tldw_cli_local_instance_v1]
+2026-11-01 19:35:59 [INFO    ] tldw_chatbook.DB.base_db:651 - WorkspaceDB initialized with path: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/mixins-task9-live-otdkzk5l/live/data/rp_review/tldw_chatbook_workspaces.db [Client: tldw_cli_local_instance_v1]
+2026-11-01 19:35:59 [INFO    ] tldw_chatbook.DB.base_db:651 - SubscriptionsDB initialized with path: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/mixins-task9-live-otdkzk5l/live/data/rp_review/tldw_chatbook_subscriptions.db [Client: tldw_cli_local_instance_v1]
+2026-11-01 19:35:59 [INFO    ] tldw_chatbook.DB.base_db:651 - ClientNotificationsDB initialized with path: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/mixins-task9-live-otdkzk5l/live/data/rp_review/tldw_chatbook_notifications.db [Client: tldw_cli_local_instance_v1]
+2026-11-01 19:35:59 [INFO    ] tldw_chatbook.DB.base_db:651 - EventStateRepository initialized with path: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/mixins-task9-live-otdkzk5l/live/data/rp_review/tldw_chatbook_event_state.db [Client: tldw_cli_local_instance_v1]
+2026-11-01 19:35:59 [INFO    ] tldw_chatbook.DB.base_db:651 - SyncStateRepository initialized with path: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/mixins-task9-live-otdkzk5l/live/data/rp_review/tldw_chatbook_sync_state.db [Client: tldw_cli_local_instance_v1]
+2026-11-01 19:36:00 [INFO    ] tldw_chatbook.DB.base_db:651 - ScheduledTasksDB initialized with path: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/mixins-task9-live-otdkzk5l/live/data/rp_review/tldw_chatbook_scheduled_tasks.db [Client: default]
+2026-11-01 19:36:00 [INFO    ] root:1514 - Assigned prompts_interop.get_db_instance() to self.prompts_db
+2026-11-01 19:36:00 [INFO    ] root:1539 - Assigned lazy-loaded chachanotes_db to self.chachanotes_db as fallback.
+2026-11-01 19:36:00 [INFO    ] tldw_chatbook.DB.Evals_DB:651 - EvalsDB initialized with path: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/mixins-task9-live-otdkzk5l/live/data/rp_review/evals.db
+2026-11-01 19:36:00 [INFO    ] tldw_chatbook.Evals.task_loader:651 - TaskLoader initialized
+2026-11-01 19:36:00 [INFO    ] tldw_chatbook.app:651 - Worker handler registry initialized with all handlers
+2026-11-01 19:36:00 [INFO    ] tldw_chatbook.app:651 - === STARTUP TIMING SUMMARY ===
+2026-11-01 19:36:00 [INFO    ] tldw_chatbook.app:651 - Total initialization time: 0.546 seconds
+2026-11-01 19:36:00 [INFO    ] tldw_chatbook.app:651 -   basic_init: 0.039s (7.1%)
+2026-11-01 19:36:00 [INFO    ] tldw_chatbook.app:651 -   attribute_init: 0.000s (0.0%)
+2026-11-01 19:36:00 [INFO    ] tldw_chatbook.app:651 -   parallel_init: 0.074s (13.6%)
+2026-11-01 19:36:00 [INFO    ] tldw_chatbook.app:651 -     - notes_service: 0.074s (99.4% of parallel_init)
+2026-11-01 19:36:00 [INFO    ] tldw_chatbook.app:651 -     - media_db: 0.067s (90.4% of parallel_init)
+2026-11-01 19:36:00 [INFO    ] tldw_chatbook.app:651 -     - prompts_service: 0.064s (86.3% of parallel_init)
+2026-11-01 19:36:00 [INFO    ] tldw_chatbook.app:651 -     - providers_models: 0.002s (2.2% of parallel_init)
+2026-11-01 19:36:00 [INFO    ] tldw_chatbook.app:651 - ==============================
+2026-11-01 19:36:00 [INFO    ] root:2320 - Splash screen enabled: True
+2026-11-01 19:36:00 [INFO    ] root:2333 - Creating splash screen - duration: 7.0, card: random
+2026-11-01 19:36:00 [INFO    ] tldw_chatbook.Widgets.splash_screen:651 - Randomly selected splash card: tetris
+2026-11-01 19:36:00 [INFO    ] root:2348 - Splash screen yielded, returning early from compose
+2026-11-01 19:36:00 [INFO    ] tldw_chatbook.Widgets.splash_screen:651 - Splash screen mounted - duration: 7.0s, card: tetris
+2026-11-01 19:36:00 [INFO    ] tldw_chatbook.Widgets.splash_screen:651 - Starting splash screen - type: animated, card: tetris
+2026-11-01 19:36:00 [INFO    ] tldw_chatbook.Utils.Splash_Screens:651 - Loaded 87 effect modules, 87 effects registered
+2026-11-01 19:36:00 [INFO    ] tldw_chatbook.Widgets.splash_screen:651 - Splash screen auto-close timer set for 7.0s
+2026-11-01 19:36:00 [INFO    ] tldw_chatbook.diagnostics.app:275 - event=app_started component=app
+2026-11-01 19:36:00 [INFO    ] tldw_chatbook.app:651 - on_mount completed in 0.001 seconds
+2026-11-01 19:36:00 [INFO    ] tldw_chatbook.DB.base_db:651 - LibraryIngestJobsDB initialized with path: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/mixins-task9-live-otdkzk5l/live/data/rp_review/tldw_chatbook_library_ingest_jobs.db [Client: default]
+2026-11-01 19:36:07 [INFO    ] tldw_chatbook.Widgets.splash_screen:651 - Splash screen close requested
+2026-11-01 19:36:07 [INFO    ] tldw_chatbook.Widgets.splash_screen:651 - Splash screen closing
+2026-11-01 19:36:07 [INFO    ] tldw_chatbook.Widgets.splash_screen:651 - Splash screen Closed message posted
+2026-11-01 19:36:07 [INFO    ] tldw_chatbook.Utils.optional_deps:651 - ✅ Web server dependencies found. Textual-serve is available.
+2026-11-01 19:36:07 [INFO    ] tldw_chatbook.DB.base_db:651 - AgentRunsDB initialized with path: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/mixins-task9-live-otdkzk5l/live/data/rp_review/agent_runs.db [Client: default]
+2026-11-01 19:36:07 [INFO    ] tldw_chatbook.model_capabilities:1098 - No capability information found for openai/gpt-4.1-mini, using defaults
+2026-11-01 19:36:08 [INFO    ] tldw_chatbook.UI.Navigation.base_app_screen:651 - Screen chat mounted
+2026-11-01 19:36:08 [INFO    ] tldw_chatbook.app:651 - Screen navigation: Pushed initial ChatScreen (target=chat)
+2026-11-01 19:36:08 [INFO    ] tldw_chatbook.app:651 - Persistent logging handler set up for screen navigation
+2026-11-01 19:36:08 [INFO    ] tldw_chatbook.DB.ChaChaNotes_DB:651 - Found 0 active conversations (limit 1000, offset 0).
+2026-11-01 19:36:08 [INFO    ] tldw_chatbook.app:651 - App _post_mount_setup: Binding Select widgets and populating dynamic content...
+2026-11-01 19:36:08 [INFO    ] tldw_chatbook.app:651 - _post_mount_setup completed in 0.000 seconds
+2026-11-01 19:36:08 [INFO    ] tldw_chatbook.app:651 - App _post_mount_setup: Post-mount setup completed.
+2026-11-01 19:36:08 [INFO    ] tldw_chatbook.app:651 - UI loading completed in 8.321 seconds
+2026-11-01 19:36:08 [INFO    ] tldw_chatbook.app:651 - === APPLICATION STARTUP COMPLETE ===
+2026-11-01 19:36:08 [INFO    ] tldw_chatbook.app:651 - Total startup time: 9.067 seconds
+2026-11-01 19:36:08 [INFO    ] tldw_chatbook.app:651 -   - Backend init: 0.746s
+2026-11-01 19:36:08 [INFO    ] tldw_chatbook.app:651 -   - UI composition: 8.321s
+2026-11-01 19:36:08 [INFO    ] tldw_chatbook.app:651 -   - Post-mount setup: 0.001s
+2026-11-01 19:36:08 [INFO    ] tldw_chatbook.app:651 - ===================================
+2026-11-01 19:36:08 [INFO    ] tldw_chatbook.app_lifecycle:651 - Scheduling media cleanup after startup idle delay
+2026-11-01 19:36:08 [INFO    ] tldw_chatbook.app_lifecycle:651 - Scheduled media cleanup every 24 hours
+2026-11-01 19:36:08 [WARNING ] tldw_chatbook.TTS.audio_stitch:651 - pydub not available. Audio stitching (tldw_chatbook.TTS.audio_stitch) will be unavailable until it is installed.
+2026-11-01 19:36:08 [INFO    ] tldw_chatbook.diagnostics.dictation:275 - event=speech_stack_available component=dictation model=base provider=faster-whisper status=ok
+2026-11-01 19:36:08 [INFO    ] tldw_chatbook.app_startup:651 - AppFooterStatus widget instance acquired.
+2026-11-01 19:36:08 [INFO    ] tldw_chatbook.Utils.db_status_manager:651 - Started periodic DB size updates every 120 seconds
+2026-11-01 19:36:08 [INFO    ] tldw_chatbook.app_startup:651 - DB size update timer started for the shell status line (interval: 2 minutes).
+2026-11-01 19:36:09 [INFO    ] tldw_chatbook.app_speech:651 - Initializing TTS service...
+2026-11-01 19:36:09 [INFO    ] tldw_chatbook.Event_Handlers.TTS_Events.tts_events:651 - TTS service initialized successfully
+2026-11-01 19:36:09 [INFO    ] tldw_chatbook.app_speech:651 - TTS service initialized successfully
+2026-11-01 19:36:09 [INFO    ] tldw_chatbook.app_speech:651 - Initializing S/TT/S service...
+2026-11-01 19:36:09 [INFO    ] tldw_chatbook.Event_Handlers.STTS_Events.stts_events:651 - S/TT/S service initialized successfully
+2026-11-01 19:36:09 [INFO    ] tldw_chatbook.app_speech:651 - S/TT/S service initialized successfully
+2026-11-01 19:36:09 [INFO    ] tldw_chatbook.Scheduling.scheduler.loop:651 - Scheduler starting: 7 handler(s) registered (automation_definition, briefing_job, dream_track_check, dreams_cycle, guardian_trends, reminder, watchlist_job), poll interval 30s, 0 task(s) queued
+2026-11-01 19:36:09 [INFO    ] tldw_chatbook.diagnostics.scheduling:275 - event=scheduler_configured component=scheduling item_count=7 status=ok
+2026-11-01 19:36:09 [INFO    ] tldw_chatbook.Utils.db_status_manager:651 - DB sizes: Prompts: 180.0 KB | Chats/Notes: 4.6 MB | Media: 404.0 KB
+2026-11-01 19:36:13 [INFO    ] tldw_chatbook.app_lifecycle:651 - No media items eligible for cleanup
+2026-11-01 19:37:13 [INFO    ] tldw_chatbook.DB.base_db:651 - AgentRunsDB initialized with path: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/mixins-task9-live-otdkzk5l/live/data/rp_review/agent_runs.db [Client: default]
+2026-11-01 19:37:13 [INFO    ] tldw_chatbook.DB.ChaChaNotes_DB:651 - Deleted 0 sync_log entries older than 2026-08-04T03:37:13.879Z from db_sha256=b550da2c1c49.
+2026-11-01 19:37:13 [INFO    ] tldw_chatbook.DB.Client_Media_DB_v2:651 - Deleted 0 sync log entries older than 2026-08-04T03:37:13.879Z from DB '/private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/mixins-task9-live-otdkzk5l/live/data/rp_review/tldw_chatbook_media_v2.db'.
+2026-11-01 19:38:08 [INFO    ] tldw_chatbook.Utils.db_status_manager:651 - DB sizes: Prompts: 180.0 KB | Chats/Notes: 4.6 MB | Media: 436.0 KB
+2026-11-01 19:39:40 [INFO    ] tldw_chatbook.UI.Screens.chat_screen:651 - ChatScreen on_button_pressed called with button: console-workspace-conversation-1
+2026-11-01 19:40:02 [INFO    ] tldw_chatbook.UI.Screens.chat_screen:651 - ChatScreen on_button_pressed called with button: console-composer-menu
+2026-11-01 19:40:39 [ERROR   ] tldw_chatbook.DB.Prompts_DB:651 - PromptsDatabase.transaction: rolling back category=ValueError
+2026-11-01 19:40:55 [INFO    ] tldw_chatbook.RAG_Search.config_profiles:651 - Loaded 12 built-in profiles
+2026-11-01 19:40:55 [ERROR   ] tldw_chatbook.DB.Prompts_DB:651 - PromptsDatabase.transaction: rolling back category=ValueError
+2026-11-01 19:40:55 [INFO    ] tldw_chatbook.Chat.console_chat_controller:651 - Console mix-in preview unavailable; refresh or disable unavailable selections
+2026-11-01 19:42:08 [INFO    ] tldw_chatbook.Utils.db_status_manager:651 - DB sizes: Prompts: 212.0 KB | Chats/Notes: 4.6 MB | Media: 436.0 KB
+2026-11-01 19:42:29 [INFO    ] tldw_chatbook.app_lifecycle:651 - Application quit initiated
+2026-11-01 19:42:29 [INFO    ] tldw_chatbook.config:651 - Attempting to load CLI config from: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/mixins-task9-live-otdkzk5l/live/config.toml
+2026-11-01 19:42:29 [INFO    ] tldw_chatbook.config:651 - Successfully loaded and merged CLI config from /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/mixins-task9-live-otdkzk5l/live/config.toml
+2026-11-01 19:42:29 [INFO    ] tldw_chatbook.config:651 - Determined ACTUAL_PROJECT_ROOT for general paths: ~/.codex/worktrees/prompt-mix-ins/tldw_chatbook/tldw_chatbook
+2026-11-01 19:42:29 [INFO    ] tldw_chatbook.config:651 - Determined APP_COMPONENT_ROOT for config files: ~/.codex/worktrees/prompt-mix-ins/tldw_chatbook/tldw_chatbook
+2026-11-01 19:42:29 [INFO    ] tldw_chatbook.Chat.console_runtime:651 - Console trace compatibility totals: normalized_write=0 normalized_read=0 legacy_read=0 fallback_read=0 incomplete=0
+2026-11-01 19:42:29 [INFO    ] tldw_chatbook.UI.Navigation.base_app_screen:651 - Screen chat unmounted
+2026-11-01 19:42:29 [INFO    ] root:1023 - --- App Unmounting ---
+2026-11-01 19:42:29 [INFO    ] tldw_chatbook.app_lifecycle:651 - Local MCP client sessions disconnected
+2026-11-01 19:42:29 [INFO    ] tldw_chatbook.app_lifecycle:651 - Artifact share stopped (if running)
+2026-11-01 19:42:29 [INFO    ] tldw_chatbook.app_lifecycle:651 - Media cleanup timer stopped
+2026-11-01 19:42:29 [INFO    ] tldw_chatbook.app_lifecycle:651 - Server context provider cached client closed
+2026-11-01 19:42:29 [INFO    ] tldw_chatbook.app_lifecycle:651 - TTS resources cleaned up properly
+2026-11-01 19:42:29 [INFO    ] tldw_chatbook.Utils.db_status_manager:651 - Stopped periodic DB size updates
+2026-11-01 19:42:29 [INFO    ] tldw_chatbook.app_lifecycle:651 - DB size update timer stopped during unmount.

@@ -1,0 +1,2 @@
+ruff failed
+  Cause: Unknown rule selector `F831` in `select` from the CLI

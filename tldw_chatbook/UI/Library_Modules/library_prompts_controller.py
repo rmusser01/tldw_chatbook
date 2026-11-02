@@ -364,6 +364,7 @@ from ...Library.library_prompts_state import (
     build_prompt_editor_state,
     classify_prompt_save_error,
     prepare_prompt_artifact_save,
+    prepare_mixin_artifact_save,
     prompt_basic_unavailable_reason,
     prompt_editor_meta_line,
     require_artifact_save_supported,
@@ -375,6 +376,8 @@ from ...Library.library_shell_state import (
 )
 from ...Prompt_Management.prompt_artifact_codec import deserialize_definition
 from ...Prompt_Management.prompt_artifact_models import ArtifactType
+from ...Widgets.Prompts.prompt_mixin_editor import PromptMixinEditor
+from textual.widgets import Select
 from ...Prompt_Management.prompt_batch_models import (
     PromptBatchDeleteResult,
     PromptBatchRestoreResult,
@@ -869,6 +872,7 @@ class LibraryPromptsController:
             return PromptBrowseScope(
                 query=query,
                 collection_id=raw.get("collection_id"),
+                artifact_type=raw.get("artifact_type"),
                 sort_by=raw.get("sort_by", "last_modified"),
                 sort_order=raw.get("sort_order", "desc"),
                 page=page,
@@ -950,6 +954,7 @@ class LibraryPromptsController:
             "sort_mode": "name" if display_scope.sort_by == "name" else "newest",
             "filter_value": requested_scope.query,
             "browse_result": controller.visible_result,
+            "browse_loading": controller.result.status == "loading",
             "pager": controller.pager,
             "mode": "list",
             "editor_state": None,
@@ -1557,6 +1562,121 @@ class LibraryPromptsController:
             group="library_prompt_memberships_apply",
         )
 
+    def handle_mixin_changed(self, event: PromptMixinEditor.Changed) -> None:
+        event.stop()
+        if (
+            not self._library_prompt_editor_armed
+            or self._library_prompts_mutation_in_flight
+        ):
+            return
+        editor = self.query_one(PromptMixinEditor)
+        draft = editor.read_draft()
+        prior = self._library_prompt_mixin_draft
+        state = build_prompt_editor_state(self._library_prompt_detail or {})
+        if prior is None:
+            definition = state.mixin_definition
+            prior = (
+                state.name,
+                definition.body if definition else "",
+                definition.placement if definition else "before",
+            )
+        if draft == prior:
+            return
+        self._library_prompt_mixin_draft = draft
+        self._library_prompt_dirty = True
+        self._update_library_prompt_meta_static()
+        self._set_library_prompt_discard_enabled(True)
+
+    async def handle_new_mixin(self, event: Button.Pressed) -> None:
+        event.stop()
+        if (
+            self._library_prompts_mutation_in_flight
+            or self._library_prompt_browse_controller.result.status == "loading"
+            or not await self._flush_library_prompt_save()
+        ):
+            return
+        self._enter_library_prompt_create_editor()
+        self._library_prompt_detail = {"artifact_type": "mixin"}
+        self._library_prompt_block_state = None
+        self._library_prompt_mixin_draft = ("", "", "before")
+        _sync_library_canvas(self, "prompts", then=self._arm_library_prompt_editor)
+
+    def handle_type_filter(self, event: Select.Changed) -> None:
+        if (
+            event.value not in {"all", "prompt", "recipe", "mixin"}
+            or self._library_prompts_mutation_in_flight
+        ):
+            return
+        if getattr(event.select, "_library_type_value", event.value) == event.value:
+            return
+        event.select._library_type_value = event.value
+        controller = self._library_prompt_browse_controller
+        value = None if event.value == "all" else event.value
+        if controller.scope.artifact_type == value:
+            return
+        self._stop_library_prompts_search_debounce()
+        self._request_library_prompts_browse(
+            dataclasses.replace(controller.scope, artifact_type=value, page=1),
+            focus_identity="library-prompts-type-filter",
+        )
+
+    def enable_mixin_in_console(self) -> None:
+        from ...Chat.console_prompt_mixins import MixinSourceRef
+        from ..Navigation.pending_handoff_store import (
+            ConsoleMixinEnableRequest,
+            HandoffChannel,
+        )
+
+        if (
+            self._library_prompts_mutation_in_flight
+            or self._library_prompt_dirty
+            or self._library_prompt_conflict_snapshot is not None
+        ):
+            return
+        state = self._current_library_prompt_editor_state()
+        if state.mixin_definition is None or self._selected_prompt_id is None:
+            return
+        app = self.app_instance
+        target_getter = getattr(app, "console_prompt_target_projection", None)
+        target = target_getter() if callable(target_getter) else None
+        if (
+            target is None
+            or target.target_incarnation_id is None
+            or target.preference_revision is None
+        ):
+            app.notify(
+                "Open Console once, then retry Enable in current chat.", severity="warning"
+            )
+            return
+        detail = self._library_prompt_detail or {}
+        try:
+            identity = app.prompt_scope_service.mixin_source_identity(mode=state.source)
+            captured = self._library_prompt_mixin_source_identity
+            if (
+                captured is None
+                or identity[0] != captured[0]
+                or any(a is not b for a, b in zip(identity[1:], captured[1:]))
+            ):
+                raise ValueError("mixin_source_changed")
+            source = MixinSourceRef(identity[0], state.source, detail.get("uuid"))
+            request = ConsoleMixinEnableRequest(
+                source,
+                target.target_session_id,
+                target.target_incarnation_id,
+                target.preference_revision,
+                (app.prompt_scope_service, *identity[1:]),
+            )
+        except (ValueError, AttributeError):
+            app.notify(
+                "This source cannot enable mix-ins. Choose a local Library source.",
+                severity="warning",
+            )
+            return
+        app.pending_handoffs.stage(HandoffChannel.CONSOLE_PROMPT_INSERT, request)
+        from ..Navigation.main_navigation import NavigateToScreen
+
+        self._screen.post_message(NavigateToScreen("chat"))
+
     @on(Input.Changed, "#library-prompts-filter")
     def handle_library_prompts_filter_changed(self, event: Input.Changed) -> None:
         """Queue the service-backed Prompt search after a short debounce."""
@@ -1772,6 +1892,8 @@ class LibraryPromptsController:
             base = build_prompt_editor_state(
                 detail, capabilities=self._library_prompt_capabilities
             )
+        if base.artifact_type == "mixin" and self._library_prompt_mixin_draft is not None:
+            return dataclasses.replace(base, mixin_draft=self._library_prompt_mixin_draft)
         block_state = getattr(self, "_library_prompt_block_state", None)
         if block_state is None:
             return base
@@ -1788,6 +1910,12 @@ class LibraryPromptsController:
 
     def _library_prompt_can_update_original(self) -> bool:
         """Return whether the captured source can be conditionally replaced."""
+        editor = self._current_library_prompt_editor_state()
+        if editor.artifact_type == "mixin" and (editor.mixin_definition is not None or editor.mixin_draft is not None):
+            return (self._selected_prompt_id is not None and type(self._library_prompt_version) is int
+                    and self._library_prompt_capabilities.conditional_update
+                    and "mixin" in self._library_prompt_capabilities.artifact_types
+                    and (3, "text_mixin") in self._library_prompt_capabilities.structured_kinds)
         state = self._library_prompt_block_state
         if (
             state is None
@@ -1956,6 +2084,10 @@ class LibraryPromptsController:
                 retryable=True,
                 entry_origin=entry_origin,
             )
+        try:
+            requested_identity = service.mixin_source_identity(mode="local")
+        except (AttributeError, ValueError):
+            requested_identity = None
         failed = False
         try:
             detail = await self._run_library_service_call(
@@ -1971,6 +2103,13 @@ class LibraryPromptsController:
             )
             detail = None
             failed = True
+        if isinstance(detail, Mapping) and detail.get("artifact_type") == "mixin":
+            try:
+                current_identity = service.mixin_source_identity(mode="local")
+                if requested_identity is None or getattr(self.app_instance, "prompt_scope_service", None) is not service or current_identity[0] != requested_identity[0] or any(a is not b for a, b in zip(current_identity[1:], requested_identity[1:])):
+                    raise ValueError("mixin_source_changed")
+            except (AttributeError, ValueError):
+                return self._apply_library_prompt_detail_failure(copy="Prompt source changed. Reopen this mix-in.", retryable=True, entry_origin=entry_origin)
         if expected_history_scope is not None:
             state = self._library_prompt_history_controller.state
             if not (
@@ -2106,6 +2245,11 @@ class LibraryPromptsController:
         if type(prompt_id) is int:
             self._library_prompt_loaded_id = prompt_id
             self._selected_prompt_id = prompt_id
+        self._library_prompt_mixin_draft = None
+        try:
+            self._library_prompt_mixin_source_identity = self.app_instance.prompt_scope_service.mixin_source_identity(mode=editor_state.source) if editor_state.mixin_definition is not None else None
+        except (ValueError, AttributeError):
+            self._library_prompt_mixin_source_identity = None
         self._library_prompt_block_state = editor_state.block_editor_state
         self._library_prompt_detached_structured = False
         self._library_prompt_original_name = editor_state.name
@@ -2441,6 +2585,11 @@ class LibraryPromptsController:
             self._library_prompt_detail,
             capabilities=self._library_prompt_capabilities,
         )
+        self._library_prompt_mixin_draft = None
+        try:
+            self._library_prompt_mixin_source_identity = self.app_instance.prompt_scope_service.mixin_source_identity(mode=editor_state.source) if editor_state.mixin_definition is not None else None
+        except (ValueError, AttributeError):
+            self._library_prompt_mixin_source_identity = None
         self._library_prompt_block_state = editor_state.block_editor_state
         self._library_prompt_detached_structured = False
         self._library_prompt_original_name = ""
@@ -2741,6 +2890,12 @@ class LibraryPromptsController:
             keywords_text)`` read from the live widgets, or ``None`` if the
             editor isn't mounted.
         """
+        mixins = self.query(PromptMixinEditor)
+        if mixins:
+            editor = mixins.first()
+            return (editor.read_name(), self.query_one("#library-prompt-author", Input).value,
+                    self.query_one("#library-prompt-details", Input).value, "",
+                    editor.read_draft()[1], self.query_one("#library-prompt-keywords", Input).value)
         try:
             name = self.query_one("#library-prompt-name", Input).value
             author = self.query_one("#library-prompt-author", Input).value
@@ -2780,6 +2935,18 @@ class LibraryPromptsController:
         detail = self._library_prompt_detail
         if not isinstance(detail, Mapping):
             return False
+        mixins = self.query(PromptMixinEditor)
+        if mixins:
+            editor = mixins.first()
+            state = build_prompt_editor_state(detail)
+            expected = self._library_prompt_mixin_draft
+            if expected is None:
+                definition = state.mixin_definition
+                expected = (state.name, definition.body if definition else "", definition.placement if definition else "before")
+            return (editor.read_draft() == expected
+                    and self.query_one("#library-prompt-author", Input).value == state.author
+                    and self.query_one("#library-prompt-details", Input).value == state.details
+                    and self.query_one("#library-prompt-keywords", Input).value == state.keywords_csv)
         try:
             name = self.query_one("#library-prompt-name", Input).value
             author = self.query_one("#library-prompt-author", Input).value
@@ -2975,7 +3142,7 @@ class LibraryPromptsController:
             artifact_type = (
                 self._library_prompt_block_state.artifact_type
                 if self._library_prompt_block_state is not None
-                else "prompt"
+                else self._current_library_prompt_editor_state().artifact_type
             )
             outer_save.label = f"Save {artifact_type}"
             outer_save.disabled = False
@@ -3115,14 +3282,33 @@ class LibraryPromptsController:
                 "Name is required; enter a Prompt name."
             )
             try:
-                self.query_one("#library-prompt-name", Input).focus()
+                self.query_one("#mixin-name" if self.query(PromptMixinEditor) else "#library-prompt-name", Input).focus()
             except (NoMatches, QueryError):
                 pass
             return
 
         block_state = getattr(self, "_library_prompt_block_state", None)
         prepared_state: PromptBlockEditorState | None = None
-        if block_state is not None:
+        submitted_mixin_draft = None
+        artifact_type = self._current_library_prompt_editor_state().artifact_type
+        if artifact_type == "mixin":
+            mixin_editor = self.query_one(PromptMixinEditor)
+            submitted_mixin_draft = mixin_editor.read_draft()
+            if not mixin_editor.read_draft()[1].strip():
+                self._report_library_mixin_instructions_required()
+                return
+            try:
+                definition = mixin_editor.read_definition()
+                draft, save_fields = prepare_mixin_artifact_save(definition, request_fields={
+                    "name": name, "author": author, "details": details, "keywords": keywords,
+                    "expected_version": self._library_prompt_version if not is_create else None,
+                })
+                require_artifact_save_supported(draft, self._library_prompt_capabilities,
+                    update_original=not is_create, expected_version=self._library_prompt_version if not is_create else None)
+            except ValueError as exc:
+                self._update_library_prompt_status_static(str(exc))
+                return
+        elif block_state is not None:
             artifact_type = target_artifact_type or block_state.artifact_type
             try:
                 draft, save_fields, prepared_state = prepare_prompt_artifact_save(
@@ -3179,6 +3365,26 @@ class LibraryPromptsController:
             }
 
         service = getattr(self.app_instance, "prompt_scope_service", None)
+        mixin_identity = None
+        if artifact_type == "mixin":
+            try:
+                mixin_identity = service.mixin_source_identity(mode="local")
+                original = self._library_prompt_mixin_source_identity
+                if not is_create and (original is None or mixin_identity[0] != original[0] or any(a is not b for a, b in zip(mixin_identity[1:], original[1:]))):
+                    raise ValueError("mixin_source_changed")
+            except (ValueError, AttributeError):
+                self._update_library_prompt_status_static("Prompt source changed. Reopen this mix-in before saving.")
+                return
+        def source_current():
+            if mixin_identity is None:
+                return True
+            if getattr(self.app_instance, "prompt_scope_service", None) is not service:
+                return False
+            try:
+                now = service.mixin_source_identity(mode="local")
+                return now[0] == mixin_identity[0] and all(a is b for a, b in zip(now[1:], mixin_identity[1:]))
+            except (ValueError, AttributeError):
+                return False
         get_prompt = getattr(service, "get_prompt", None)
         save_prompt = getattr(service, "save_prompt", None)
         if not callable(get_prompt) or not callable(save_prompt):
@@ -3265,6 +3471,9 @@ class LibraryPromptsController:
                 )
                 return
 
+        if not source_current():
+            self._update_library_prompt_status_static("Prompt source changed. Reopen this mix-in before saving.")
+            return
         try:
             result = await self._run_library_service_call(
                 save_prompt,
@@ -3311,6 +3520,9 @@ class LibraryPromptsController:
         ):
             return
 
+        if not source_current():
+            self._update_library_prompt_status_static("Prompt source changed. Reopen this mix-in to check the save result.")
+            return
         result_id = (
             result.get("local_id")
             if isinstance(result, Mapping)
@@ -3336,6 +3548,7 @@ class LibraryPromptsController:
             self, result, prompt_id=prompt_id, is_create=is_create,
             submitted_fields=fields, submitted_state=block_state,
             prepared_state=prepared_state, save_fields=save_fields,
+            submitted_mixin_draft=submitted_mixin_draft,
         )
         # The broader local-source snapshot (rail badge / list ordering) is
         # deliberately NOT refreshed here -- it would recompose the whole
@@ -3464,7 +3677,7 @@ class LibraryPromptsController:
         if (
             self._library_prompts_mutation_in_flight
             or self._library_prompt_write_worker_is_active()
-            or not self._library_prompt_dirty
+            or (not self._library_prompt_dirty and not (self._selected_prompt_id is None and self._current_library_prompt_editor_state().artifact_type == "mixin"))
         ):
             return
         prompt_id = self._selected_prompt_id
@@ -3677,6 +3890,14 @@ class LibraryPromptsController:
             "Prompt copied to clipboard as markdown!"
         )
 
+    def _report_library_mixin_instructions_required(self) -> None:
+        """Keep invalid raw instructions in place at every copy/save boundary."""
+        message = "Instructions are required; enter your mix-in text."
+        self._update_library_prompt_status_static(message)
+        for banner in self.query("#library-prompt-conflict-copy"):
+            banner.update(f"This item changed elsewhere. {message}")
+        self.query_one("#mixin-body", TextArea).focus()
+
     def _library_prompt_artifact_fields(self) -> dict[str, Any]:
         """Return export/copy metadata for the live Prompt working copy.
 
@@ -3686,6 +3907,9 @@ class LibraryPromptsController:
         Legacy lane records stay in the established plain-Markdown form.
         """
         editor_state = self._current_library_prompt_editor_state()
+        if editor_state.artifact_type == "mixin" and (editor_state.mixin_definition is not None or editor_state.mixin_draft is not None):
+            definition = self.query_one(PromptMixinEditor).read_definition()
+            return prepare_mixin_artifact_save(definition, request_fields={})[1]
         block_state = self._library_prompt_block_state
         if block_state is not None and (
             editor_state.definition_state == "supported_v2"
@@ -3754,6 +3978,8 @@ class LibraryPromptsController:
             return None
         if not artifact_fields:
             return {}
+        if artifact_fields.get("artifact_type") == "mixin":
+            return artifact_fields
 
         artifact_type = self._library_prompt_action_artifact_type()
         definition = deserialize_definition(artifact_fields.get("prompt_definition"))
@@ -3840,9 +4066,11 @@ class LibraryPromptsController:
                 return "prompt"
             if raw_type == "recipe":
                 return "recipe"
+            if raw_type == "mixin":
+                return "mixin"
             return None
         artifact_type = self._current_library_prompt_editor_state().artifact_type
-        if artifact_type not in {"prompt", "recipe"}:
+        if artifact_type not in {"prompt", "recipe", "mixin"}:
             return None
         return artifact_type
 
@@ -3888,7 +4116,7 @@ class LibraryPromptsController:
         block_state = self._library_prompt_block_state
         if (
             not self._library_prompt_detached_structured
-            and editor_state.definition_state not in {"legacy", "supported_v2"}
+            and editor_state.definition_state not in {"legacy", "supported_v2", "supported_v3"}
         ):
             notify = getattr(self.app_instance, "notify", None)
             if callable(notify):
@@ -3902,7 +4130,11 @@ class LibraryPromptsController:
             editor_state.definition_state == "supported_v2"
             or self._library_prompt_detached_structured
         )
-        artifact_fields: dict[str, Any] = {}
+        try:
+            artifact_fields: dict[str, Any] = self._library_prompt_artifact_fields() if editor_state.artifact_type == "mixin" else {}
+        except ValueError:
+            self._report_library_mixin_instructions_required()
+            return
         if detached_structured and block_state is not None:
             try:
                 _draft, artifact_fields, block_state = prepare_prompt_artifact_save(
@@ -3930,6 +4162,8 @@ class LibraryPromptsController:
             **artifact_fields,
         }
         self._detach_library_prompt_working_copy(detached_detail)
+        if editor_state.artifact_type == "mixin":
+            self._library_prompt_mixin_draft = None
         self._library_prompt_block_state = block_state
         self._library_prompt_detached_structured = detached_structured
         self._library_prompt_status = ""
@@ -4981,7 +5215,12 @@ class LibraryPromptsController:
             return
         name, author, details, system_prompt, user_prompt, keywords_text = fields
         block_state = self._library_prompt_block_state or snapshot.block_editor_state
-        artifact_type = block_state.artifact_type
+        artifact_type = snapshot.artifact_type if block_state is None else block_state.artifact_type
+        try:
+            artifact_fields = self._library_prompt_artifact_fields() if artifact_type == "mixin" else {}
+        except ValueError:
+            self._report_library_mixin_instructions_required()
+            return
         detached_detail = {
             "name": name,
             "author": author,
@@ -4990,6 +5229,7 @@ class LibraryPromptsController:
             "user_prompt": user_prompt,
             "keywords": keywords_text,
             "artifact_type": artifact_type,
+            **artifact_fields,
         }
         self._detach_library_prompt_working_copy(detached_detail)
         self._library_prompt_block_state = block_state

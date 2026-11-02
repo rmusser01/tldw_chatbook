@@ -1,0 +1,84 @@
+FFFFFFFFFF.                                                              [100%]
+=================================== FAILURES ===================================
+_ test_temporary_nested_fork_owns_retry_chain_after_close_and_promotion[False-False] _
+Tests/Chat/test_console_prompt_mixin_forks.py:66: in test_temporary_nested_fork_owns_retry_chain_after_close_and_promotion
+    assert result.status == "recorded" and result.snapshot == batch.snapshot
+E   AssertionError: assert ('unavailable' == 'recorded'
+E     
+E     - recorded
+E     + unavailable)
+_ test_temporary_nested_fork_owns_retry_chain_after_close_and_promotion[False-True] _
+Tests/Chat/test_console_prompt_mixin_forks.py:66: in test_temporary_nested_fork_owns_retry_chain_after_close_and_promotion
+    assert result.status == "recorded" and result.snapshot == batch.snapshot
+E   AssertionError: assert ('unavailable' == 'recorded'
+E     
+E     - recorded
+E     + unavailable)
+_ test_temporary_nested_fork_owns_retry_chain_after_close_and_promotion[True-False] _
+Tests/Chat/test_console_prompt_mixin_forks.py:66: in test_temporary_nested_fork_owns_retry_chain_after_close_and_promotion
+    assert result.status == "recorded" and result.snapshot == batch.snapshot
+E   AssertionError: assert ('unavailable' == 'recorded'
+E     
+E     - recorded
+E     + unavailable)
+_ test_temporary_nested_fork_owns_retry_chain_after_close_and_promotion[True-True] _
+Tests/Chat/test_console_prompt_mixin_forks.py:66: in test_temporary_nested_fork_owns_retry_chain_after_close_and_promotion
+    assert result.status == "recorded" and result.snapshot == batch.snapshot
+E   AssertionError: assert ('unavailable' == 'recorded'
+E     
+E     - recorded
+E     + unavailable)
+__________ test_durable_fork_immediate_publication_and_original_retry __________
+Tests/Chat/test_console_prompt_mixin_forks.py:87: in test_durable_fork_immediate_publication_and_original_retry
+    snapshot = fork(h.store, first.assistant_message_id, "durable-fork", durable=True)
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+Tests/Chat/test_console_prompt_mixin_forks.py:22: in fork
+    return store.stage_fork_snapshot(store.issue_fork_fence(assistant_id), title="Fork", fork_session_id=target,
+                                     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+tldw_chatbook/Chat/console_chat_store.py:7738: in issue_fork_fence
+    return self._issue_fork_fence(
+tldw_chatbook/Chat/console_chat_store.py:7752: in _issue_fork_fence
+    raise ValueError(eligibility.reason)
+E   ValueError: This partial response has no content to fork. Fork from the User message "Question" instead.
+_ test_durable_to_temporary_fork_preserves_legacy_and_unavailable_markers[marker0] _
+Tests/Chat/test_console_prompt_mixin_forks.py:135: in test_durable_to_temporary_fork_preserves_legacy_and_unavailable_markers
+    assert result.status == ("unavailable" if marker else "legacy")
+E   AssertionError: assert 'unavailable' == 'legacy'
+E     
+E     - legacy
+E     + unavailable
+_ test_durable_to_temporary_fork_preserves_legacy_and_unavailable_markers[marker1] _
+Tests/Chat/test_console_prompt_mixin_forks.py:126: in test_durable_to_temporary_fork_preserves_legacy_and_unavailable_markers
+    assert copied.mixin_usage_count == (None if marker else 0)
+E   AssertionError: assert 0 == None
+E    +  where 0 = ConsoleChatMessage(role=<ConsoleMessageRole.ASSISTANT: 'assistant'>, content='Failed', id='8ff1137c-e813-4004-af5d-e00...ion=None, generation_projection_quarantine_reason=None, video_metadata=None, live_activity='', live_activity_action='').mixin_usage_count
+_ test_durable_to_temporary_fork_preserves_legacy_and_unavailable_markers[marker2] _
+Tests/Chat/test_console_prompt_mixin_forks.py:126: in test_durable_to_temporary_fork_preserves_legacy_and_unavailable_markers
+    assert copied.mixin_usage_count == (None if marker else 0)
+E   AssertionError: assert 0 == None
+E    +  where 0 = ConsoleChatMessage(role=<ConsoleMessageRole.ASSISTANT: 'assistant'>, content='Failed', id='d1309662-1fc8-4117-a6f3-2be...ion=None, generation_projection_quarantine_reason=None, video_metadata=None, live_activity='', live_activity_action='').mixin_usage_count
+_ test_durable_to_temporary_fork_preserves_legacy_and_unavailable_markers[marker3] _
+Tests/Chat/test_console_prompt_mixin_forks.py:126: in test_durable_to_temporary_fork_preserves_legacy_and_unavailable_markers
+    assert copied.mixin_usage_count == (None if marker else 0)
+E   AssertionError: assert 0 == None
+E    +  where 0 = ConsoleChatMessage(role=<ConsoleMessageRole.ASSISTANT: 'assistant'>, content='Failed', id='3c98730b-64bf-4667-9aad-74a...ion=None, generation_projection_quarantine_reason=None, video_metadata=None, live_activity='', live_activity_action='').mixin_usage_count
+_ test_durable_to_temporary_fork_preserves_legacy_and_unavailable_markers[marker4] _
+Tests/Chat/test_console_prompt_mixin_forks.py:126: in test_durable_to_temporary_fork_preserves_legacy_and_unavailable_markers
+    assert copied.mixin_usage_count == (None if marker else 0)
+E   AssertionError: assert 0 == None
+E    +  where 0 = ConsoleChatMessage(role=<ConsoleMessageRole.ASSISTANT: 'assistant'>, content='Failed', id='9e19ae66-ad94-4f12-a5d4-25c...ion=None, generation_projection_quarantine_reason=None, video_metadata=None, live_activity='', live_activity_action='').mixin_usage_count
+============================= slowest 25 durations =============================
+
+(25 durations < 1s hidden.)
+=========================== short test summary info ============================
+FAILED Tests/Chat/test_console_prompt_mixin_forks.py::test_temporary_nested_fork_owns_retry_chain_after_close_and_promotion[False-False]
+FAILED Tests/Chat/test_console_prompt_mixin_forks.py::test_temporary_nested_fork_owns_retry_chain_after_close_and_promotion[False-True]
+FAILED Tests/Chat/test_console_prompt_mixin_forks.py::test_temporary_nested_fork_owns_retry_chain_after_close_and_promotion[True-False]
+FAILED Tests/Chat/test_console_prompt_mixin_forks.py::test_temporary_nested_fork_owns_retry_chain_after_close_and_promotion[True-True]
+FAILED Tests/Chat/test_console_prompt_mixin_forks.py::test_durable_fork_immediate_publication_and_original_retry
+FAILED Tests/Chat/test_console_prompt_mixin_forks.py::test_durable_to_temporary_fork_preserves_legacy_and_unavailable_markers[marker0]
+FAILED Tests/Chat/test_console_prompt_mixin_forks.py::test_durable_to_temporary_fork_preserves_legacy_and_unavailable_markers[marker1]
+FAILED Tests/Chat/test_console_prompt_mixin_forks.py::test_durable_to_temporary_fork_preserves_legacy_and_unavailable_markers[marker2]
+FAILED Tests/Chat/test_console_prompt_mixin_forks.py::test_durable_to_temporary_fork_preserves_legacy_and_unavailable_markers[marker3]
+FAILED Tests/Chat/test_console_prompt_mixin_forks.py::test_durable_to_temporary_fork_preserves_legacy_and_unavailable_markers[marker4]
+10 failed, 1 passed in 5.05s

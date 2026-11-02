@@ -1,0 +1,142 @@
+[
+  {
+    "cell": null,
+    "code": "I001",
+    "end_location": {
+      "column": 2,
+      "row": 23
+    },
+    "filename": "/Users/macbook-dev/.codex/worktrees/prompt-mix-ins/tldw_chatbook/tldw_chatbook/Chat/chat_persistence_service.py",
+    "fix": {
+      "applicability": "safe",
+      "edits": [
+        {
+          "content": "import base64\nimport json\nimport sqlite3\nimport threading\nimport time\nfrom collections.abc import Iterator, Sequence\nfrom contextlib import contextmanager, nullcontext\nfrom dataclasses import asdict, dataclass, replace\nfrom datetime import datetime\nfrom types import MappingProxyType\nfrom typing import (\n    TYPE_CHECKING,\n    Any,\n    Callable,\n    Dict,\n    List,\n    Mapping,\n    Optional,\n    Sequence,\n    Tuple,\n    cast,\n)\nfrom uuid import UUID\n\n",
+          "end_location": {
+            "column": 1,
+            "row": 25
+          },
+          "location": {
+            "column": 1,
+            "row": 1
+          }
+        }
+      ],
+      "message": "Organize imports"
+    },
+    "location": {
+      "column": 1,
+      "row": 1
+    },
+    "message": "Import block is un-sorted or un-formatted",
+    "name": "unsorted-imports",
+    "noqa_row": 1,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/unsorted-imports"
+  },
+  {
+    "cell": null,
+    "code": "I001",
+    "end_location": {
+      "column": 85,
+      "row": 84
+    },
+    "filename": "/Users/macbook-dev/.codex/worktrees/prompt-mix-ins/tldw_chatbook/tldw_chatbook/Chat/chat_persistence_service.py",
+    "fix": {
+      "applicability": "safe",
+      "edits": [
+        {
+          "content": "from loguru import logger as _logger\n\nfrom tldw_chatbook.Chat.attachment_core import MAX_ATTACHMENT_BYTES\nfrom tldw_chatbook.Chat.citation_trace_models import SealedCitationWrite\nfrom tldw_chatbook.Chat.citation_trace_repository import (\n    CitationPersistenceUnavailable,\n    CitationTraceRepository,\n)\nfrom tldw_chatbook.Chat.console_chat_fork import (\n    CONSOLE_FORK_VIDEO_TOMBSTONE_CONTENT,\n    ConsoleChatForkSnapshot,\n    encode_console_fork_message_metadata,\n    fingerprint_console_fork_selected_image,\n    validate_console_fork_image_payload,\n)\nfrom tldw_chatbook.Chat.console_chat_models import CONSOLE_GLOBAL_WORKSPACE_ID\nfrom tldw_chatbook.Chat.console_context_policy import ConsoleContextPolicyOverrides\nfrom tldw_chatbook.Chat.console_context_repository import (\n    ConsoleContextRepository,\n    ContextPolicyReadResult,\n    ContextPolicyWriteResult,\n    ContextPolicyWriteStatus,\n)\nfrom tldw_chatbook.Chat.console_dispatch_checkpoint import (\n    ConsoleDispatchCheckpoint,\n    ConsoleDurableTurnAcceptance,\n)\nfrom tldw_chatbook.Chat.console_dispatch_repository import ConsoleDispatchRepository\nfrom tldw_chatbook.Chat.console_generation_settings_metadata import (\n    ConsoleGenerationSettingsReadResult,\n    ConsoleGenerationSettingsReadStatus,\n    ConsoleGenerationSettingsSnapshot,\n    ConsoleGenerationSettingsWriteResult,\n    ConsoleGenerationSettingsWriteStatus,\n    merge_console_generation_settings,\n    parse_console_generation_settings,\n    snapshot_from_session_settings,\n    strict_json_metadata_object,\n)\nfrom tldw_chatbook.Chat.console_library_policy import (\n    ConsoleLibraryPolicyCandidate,\n    ConsoleLibraryPolicySnapshot,\n    ConsoleLibraryPolicyWriteStatus,\n)\nfrom tldw_chatbook.Chat.console_library_policy_repository import (\n    ConsoleLibraryPolicyRepository,\n)\nfrom tldw_chatbook.Chat.console_semantic_revision import SemanticRevisionCoordinator\nfrom tldw_chatbook.Chat.console_trace_repository import (\n    ConsoleTraceRepository,\n    TraceForkBoundary,\n)\nfrom tldw_chatbook.Chat.console_transaction_contribution import (\n    ConsoleExactNativeIdTransactionContribution,\n    ConsolePromotionTransactionContribution,\n    _scoped_console_transaction_writer,\n)\n\n",
+          "end_location": {
+            "column": 1,
+            "row": 85
+          },
+          "location": {
+            "column": 1,
+            "row": 28
+          }
+        }
+      ],
+      "message": "Organize imports"
+    },
+    "location": {
+      "column": 1,
+      "row": 28
+    },
+    "message": "Import block is un-sorted or un-formatted",
+    "name": "unsorted-imports",
+    "noqa_row": 28,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/unsorted-imports"
+  },
+  {
+    "cell": null,
+    "code": "I001",
+    "end_location": {
+      "column": 6,
+      "row": 92
+    },
+    "filename": "/Users/macbook-dev/.codex/worktrees/prompt-mix-ins/tldw_chatbook/tldw_chatbook/Chat/chat_persistence_service.py",
+    "fix": {
+      "applicability": "safe",
+      "edits": [
+        {
+          "content": "    from tldw_chatbook.Chat.console_voice_promotion import (\n        CompletedVoicePairCommit,\n        ResolvedVoicePromotionDestination,\n        VoicePromotionContext,\n        VoicePromotionIdentitySet,\n    )\n    from tldw_chatbook.Chat.response_rules.store import ResponseRuleStore\n",
+          "end_location": {
+            "column": 1,
+            "row": 93
+          },
+          "location": {
+            "column": 1,
+            "row": 86
+          }
+        }
+      ],
+      "message": "Organize imports"
+    },
+    "location": {
+      "column": 5,
+      "row": 86
+    },
+    "message": "Import block is un-sorted or un-formatted",
+    "name": "unsorted-imports",
+    "noqa_row": 86,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/unsorted-imports"
+  },
+  {
+    "cell": null,
+    "code": "I001",
+    "end_location": {
+      "column": 92,
+      "row": 2072
+    },
+    "filename": "/Users/macbook-dev/.codex/worktrees/prompt-mix-ins/tldw_chatbook/tldw_chatbook/Chat/chat_persistence_service.py",
+    "fix": {
+      "applicability": "safe",
+      "edits": [
+        {
+          "content": "                from tldw_chatbook.DB.console_prompt_mixins import (\n                    copy_conversation_mixins,\n                )\n",
+          "end_location": {
+            "column": 1,
+            "row": 2073
+          },
+          "location": {
+            "column": 1,
+            "row": 2072
+          }
+        }
+      ],
+      "message": "Organize imports"
+    },
+    "location": {
+      "column": 17,
+      "row": 2072
+    },
+    "message": "Import block is un-sorted or un-formatted",
+    "name": "unsorted-imports",
+    "noqa_row": 2072,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/unsorted-imports"
+  }
+]

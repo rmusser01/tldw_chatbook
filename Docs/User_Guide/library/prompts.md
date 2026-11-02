@@ -2,7 +2,7 @@
 
 ## What this screen is for
 
-The Prompts canvas stores Prompts and Recipes with a name, description,
+The Prompts canvas stores Prompts, Recipes, and literal Mix-ins with a name, description,
 keywords, author, and reusable System/User blocks. A Prompt can go directly to
 Console; a Recipe first becomes an unsaved Prompt copy for review. You can also
 apply saved Prompts from Console with `/prompt` and `/system`. For the rail,
@@ -15,6 +15,26 @@ Press **Ctrl+3** to open Library, then click **Prompts** in the rail's
 "Browse" section (the row shows a live count). **Ctrl+P** →
 "Tab Navigation: Switch to Library" works too. To jump straight into writing one, click
 **New prompt** under the rail's "Create" section.
+
+## Literal Mix-ins
+
+Choose **New mix-in** in the existing Prompts list. Enter a Name and one
+literal Instructions body, then choose **Before** or **After** and save.
+Braces, section headings and whitespace stay literal; there is no variable form.
+The type selector filters **All types**, **Prompts**, **Recipes**, or **Mix-ins**
+and keeps the filtered count and pagination together with search and collection.
+
+For a saved, clean mix-in, **Enable in current chat** adds it to the current
+Console chat's choices. An existing choice is enabled in place. This changes
+future sends; it leaves the composer and System untouched. If no exact Console
+target is available, open Console once and retry. Changed chats, preferences or
+sources refuse the handoff. Sources without revision-qualified mix-in reads
+cannot enable mix-ins; the current server source does not support those reads.
+
+Editing a mix-in uses the same explicit save, version-conflict, Reload,
+Save as new, Discard changes and dirty Escape guards as other Library items.
+Library edits affect future sends; running and queued sends keep their captured
+instructions. Markdown/Chatbook export retains the literal definition.
 
 ## Layout tour
 
@@ -188,6 +208,28 @@ The outcome line reports, for example, "2 imported · 1 skipped
 A prompt whose name already exists is always **skipped** — imports never
 overwrite or rename. A bad path shows "Could not find that file or
 folder."
+
+### Portable mix-in definitions
+
+Mix-ins retain their distinct type when exported or imported. Chatbook archives
+use Prompt record version 2 for mix-ins; existing Prompt and Recipe records stay
+at version 1. The definition preserves its exact stored JSON, literal body and
+Before/After placement. Imports create library content without enabling it in a
+chat or restoring chat selections.
+
+Mix-in Markdown uses a separate `# Chatbook mix-in` envelope containing one
+fenced JSON record. Keep this framing intact: unlike the classic Prompt sections,
+it preserves leading/trailing whitespace, braces and literal section headings.
+Malformed or unsupported records are refused before writing; they never become
+ordinary Prompts through a compatibility fallback. Older section-based readers
+cannot import this envelope as a Prompt.
+
+Server support is explicit. The source must advertise both the mix-in artifact
+type and schema 3 `text_mixin` kind for supported writes. This client's server
+API cannot yet provide coherent UUID/revision-qualified capture, so server
+mix-in capture remains unavailable even when CRUD is advertised. It never reads
+a similarly named local record. Required conditional updates are refused when
+the server mutation API cannot honor their version precondition.
 
 ### Bulk export with Chatbooks
 
@@ -629,3 +671,7 @@ app passed 170×48 dark and 80×24 light through paging, preview, Cancel and
 restore, with normal exit 0 and read-only persistence checks. See the
 [verification record](../../superpowers/qa/2026-09-15-prompt-history/README.md).
 No full repository sweep was run.*
+
+### Saved instructions and chat history
+
+Removing a chat selection leaves the Library record intact. Deleting or editing a Library mix-in does not erase a conversation's original operational Retry snapshot. Those exact bodies are conversation content, retained independently of diagnostic exchange capture, included in conversation backups, and deleted with their owning conversation. Copies/forks can inspect inherited receipts but start without active selections. No cross-device selection or Retry-record sync protocol is provided.

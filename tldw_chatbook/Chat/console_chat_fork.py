@@ -7,7 +7,7 @@ import json
 import math
 import warnings
 from collections.abc import Callable, Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from io import BytesIO
 from typing import TYPE_CHECKING, Literal
 
@@ -57,6 +57,8 @@ from tldw_chatbook.Utils.input_validation import (
     escape_markup,
     validate_console_fork_title,
 )
+
+from tldw_chatbook.Chat.console_prompt_mixins import MixinForkState
 
 if TYPE_CHECKING:
     from tldw_chatbook.Chat.console_trace_repository import TraceForkBoundary
@@ -131,9 +133,20 @@ def parse_console_fork_message_metadata(
         decoded = json.loads(raw)
     except (TypeError, json.JSONDecodeError):
         return None
-    if not isinstance(decoded, dict) or set(decoded) != {
-        CONSOLE_FORK_MESSAGE_METADATA_KEY
-    }:
+    if not isinstance(decoded, dict):
+        return None
+    envelope_keys = {CONSOLE_FORK_MESSAGE_METADATA_KEY}
+    marker_keys = {"mixin_attempt_id", "mixin_snapshot_schema_version"}
+    if set(decoded) == envelope_keys | marker_keys:
+        # These body-free facts describe retained history, never execution authority.
+        if (
+            type(decoded["mixin_attempt_id"]) is not str
+            or not decoded["mixin_attempt_id"]
+            or type(decoded["mixin_snapshot_schema_version"]) is not int
+            or decoded["mixin_snapshot_schema_version"] != 1
+        ):
+            return None
+    elif set(decoded) != envelope_keys:
         return None
     payload = decoded[CONSOLE_FORK_MESSAGE_METADATA_KEY]
     if not isinstance(payload, dict):
@@ -227,6 +240,7 @@ class ConsoleForkFence:
     lineage: tuple[ConsoleForkLineageFence, ...]
     image_selections: tuple[ConsoleForkImageSelectionFence, ...]
     trace_boundary: TraceForkBoundary | None = None
+    prompt_mixin_history: MixinForkState | None = field(default=None, repr=False)
 
 
 @dataclass(frozen=True, slots=True)
@@ -352,6 +366,7 @@ class ConsoleChatForkSnapshot:
     configuration: ConsoleForkConfigurationSnapshot
     citation_links: tuple[ConsoleForkCitationLink, ...]
     trace_boundary: TraceForkBoundary | None = None
+    prompt_mixin_history: MixinForkState | None = field(default=None, repr=False)
 
 
 def normalize_fork_title(title: str) -> str:

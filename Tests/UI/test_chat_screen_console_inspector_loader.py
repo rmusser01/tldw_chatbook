@@ -372,6 +372,7 @@ async def test_corrupt_blob_diagnostic_omits_traceback_and_blob_bytes() -> None:
 def test_inspector_push_captures_immutable_revision_target() -> None:
     session = SimpleNamespace(
         id="session-at-open",
+        incarnation_id="incarnation-at-open",
         persisted_conversation_id="conversation-at-open",
         title="Original title",
     )

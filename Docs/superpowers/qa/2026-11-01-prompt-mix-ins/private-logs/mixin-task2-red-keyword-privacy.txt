@@ -1,0 +1,156 @@
+F                                                                        [100%]
+=================================== FAILURES ===================================
+_ test_mixin_archive_roundtrip_never_logs_literal_body_even_when_reused_as_keyword _
+Tests/Chatbooks/test_chatbook_prompt_round_trip.py:773: in test_mixin_archive_roundtrip_never_logs_literal_body_even_when_reused_as_keyword
+    assert body not in ''.join(messages)
+E   AssertionError: assert 'task38537_l...ust_not_leak' not in 'ChatbookCre... 2/2 items\n'
+E     
+E     'task38537_literal_body_must_not_leak' is contained here:
+E        keyword 'task38537_literal_body_must_not_leak' UUID 1e967c92-fcab-44f6-b28d-c6408670546c
+E     ?           ++++++++++++++++++++++++++++++++++++
+E       Keywords updated prompt 1. Added: 1, Removed: 0.
+E       Committed transaction.
+E       ChatbookImporter._import_prompts: Prompt imported item=item-000001 category=success...
+E     
+E     ...Full output truncated (7 lines hidden), use '-vv' to show
+---------------------------- Captured stderr setup -----------------------------
+2026-11-01 12:31:07.285 | DEBUG    | tldw_chatbook.Utils.optional_deps:check_dependency:642 - ✅ huggingface_hub dependency found. Feature 'huggingface_hub' is enabled.
+2026-11-01 12:31:07.322 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:52 - PyAudio not available. Install with: pip install pyaudio
+2026-11-01 12:31:07.361 | INFO     | tldw_chatbook.Audio.recording_service:<module>:58 - Sounddevice backend available
+2026-11-01 12:31:07.362 | INFO     | tldw_chatbook.Audio.recording_service:<module>:73 - WebRTC VAD available for voice activity detection
+----------------------------- Captured stderr call -----------------------------
+2026-11-01 12:31:07.364 | INFO     | tldw_chatbook.DB.Prompts_DB:__init__:405 - Initializing PromptsDatabase object for path: /private/tmp/mixin-task2-red-keyword-privacy/test_mixin_archive_roundtrip_n0/mixin-source.db [Client ID: mixin-export]
+2026-11-01 12:31:07.430 | DEBUG    | tldw_chatbook.DB.Prompts_DB:_get_thread_connection:557 - Opened/Reopened SQLite connection to /private/tmp/mixin-task2-red-keyword-privacy/test_mixin_archive_roundtrip_n0/mixin-source.db [Client: mixin-export, Thread: MainThread]
+2026-11-01 12:31:07.430 | INFO     | tldw_chatbook.DB.Prompts_DB:_initialize_schema:1135 - Checking DB schema. Current: 0, Code supports: 6
+2026-11-01 12:31:07.430 | INFO     | tldw_chatbook.DB.Prompts_DB:_initialize_schema:1170 - Applying migration: Initial prompts schema (v0 -> v1)
+2026-11-01 12:31:07.430 | INFO     | tldw_chatbook.DB.Prompts_DB:_apply_schema_v1:823 - Applying initial schema (Version 1) to DB: /private/tmp/mixin-task2-red-keyword-privacy/test_mixin_archive_roundtrip_n0/mixin-source.db...
+2026-11-01 12:31:07.434 | DEBUG    | tldw_chatbook.DB.Prompts_DB:transaction:744 - Started transaction.
+2026-11-01 12:31:07.434 | DEBUG    | tldw_chatbook.DB.Prompts_DB:_apply_schema_v1:834 - [Schema V1] Applying Core Schema + Version Update...
+2026-11-01 12:31:07.435 | DEBUG    | tldw_chatbook.DB.Prompts_DB:_apply_schema_v1:836 - [Schema V1] Core Schema script (incl. version update) executed.
+2026-11-01 12:31:07.435 | DEBUG    | tldw_chatbook.DB.Prompts_DB:_apply_schema_v1:860 - [Schema V1] Prompts table structure validated.
+2026-11-01 12:31:07.436 | DEBUG    | tldw_chatbook.DB.Prompts_DB:transaction:748 - Committed transaction.
+2026-11-01 12:31:07.436 | INFO     | tldw_chatbook.DB.Prompts_DB:_apply_schema_v1:869 - [Schema V1] Core Schema V1 applied and committed for DB: /private/tmp/mixin-task2-red-keyword-privacy/test_mixin_archive_roundtrip_n0/mixin-source.db.
+2026-11-01 12:31:07.436 | DEBUG    | tldw_chatbook.DB.Prompts_DB:_apply_schema_v1:873 - [Schema V1] Applying FTS Tables...
+2026-11-01 12:31:07.436 | INFO     | tldw_chatbook.DB.Prompts_DB:_apply_schema_v1:876 - [Schema V1] FTS Tables created successfully.
+2026-11-01 12:31:07.436 | INFO     | tldw_chatbook.DB.Prompts_DB:_initialize_schema:1170 - Applying migration: Add structured prompt metadata columns (v1 -> v2)
+2026-11-01 12:31:07.436 | INFO     | tldw_chatbook.DB.Prompts_DB:_apply_migration_v1_to_v2:887 - Applying prompts migration from version 1 to 2 for DB: /private/tmp/mixin-task2-red-keyword-privacy/test_mixin_archive_roundtrip_n0/mixin-source.db...
+2026-11-01 12:31:07.440 | DEBUG    | tldw_chatbook.DB.Prompts_DB:transaction:744 - Started transaction.
+2026-11-01 12:31:07.440 | DEBUG    | tldw_chatbook.DB.Prompts_DB:transaction:748 - Committed transaction.
+2026-11-01 12:31:07.440 | INFO     | tldw_chatbook.DB.Prompts_DB:_apply_migration_v1_to_v2:923 - Prompts migration to version 2 applied successfully for DB: /private/tmp/mixin-task2-red-keyword-privacy/test_mixin_archive_roundtrip_n0/mixin-source.db.
+2026-11-01 12:31:07.440 | INFO     | tldw_chatbook.DB.Prompts_DB:_initialize_schema:1170 - Applying migration: Add prompt artifact type (v2 -> v3)
+2026-11-01 12:31:07.440 | INFO     | tldw_chatbook.DB.Prompts_DB:_apply_migration_v2_to_v3:934 - Applying prompts migration from version 2 to 3 for DB: /private/tmp/mixin-task2-red-keyword-privacy/test_mixin_archive_roundtrip_n0/mixin-source.db...
+2026-11-01 12:31:07.444 | DEBUG    | tldw_chatbook.DB.Prompts_DB:transaction:744 - Started transaction.
+2026-11-01 12:31:07.445 | DEBUG    | tldw_chatbook.DB.Prompts_DB:transaction:748 - Committed transaction.
+2026-11-01 12:31:07.445 | INFO     | tldw_chatbook.DB.Prompts_DB:_initialize_schema:1170 - Applying migration: Add retained Prompt history index (v3 -> v4)
+2026-11-01 12:31:07.445 | INFO     | tldw_chatbook.DB.Prompts_DB:_apply_migration_v3_to_v4:969 - Applying prompts migration from version 3 to 4 for DB: /private/tmp/mixin-task2-red-keyword-privacy/test_mixin_archive_roundtrip_n0/mixin-source.db...
+2026-11-01 12:31:07.448 | DEBUG    | tldw_chatbook.DB.Prompts_DB:transaction:744 - Started transaction.
+2026-11-01 12:31:07.448 | DEBUG    | tldw_chatbook.DB.Prompts_DB:transaction:748 - Committed transaction.
+2026-11-01 12:31:07.448 | INFO     | tldw_chatbook.DB.Prompts_DB:_initialize_schema:1170 - Applying migration: Add local Console Prompt Draft Shelf (v4 -> v5)
+2026-11-01 12:31:07.448 | INFO     | tldw_chatbook.DB.Prompts_DB:_apply_migration_v4_to_v5:1033 - Applying prompts migration from version 4 to 5.
+2026-11-01 12:31:07.452 | DEBUG    | tldw_chatbook.DB.Prompts_DB:transaction:744 - Started transaction.
+2026-11-01 12:31:07.452 | DEBUG    | tldw_chatbook.DB.Prompts_DB:transaction:748 - Committed transaction.
+2026-11-01 12:31:07.452 | INFO     | tldw_chatbook.DB.Prompts_DB:_initialize_schema:1170 - Applying migration: Add literal mix-in artifact type (v5 -> v6)
+2026-11-01 12:31:07.455 | DEBUG    | tldw_chatbook.DB.Prompts_DB:transaction:744 - Started transaction.
+2026-11-01 12:31:07.457 | DEBUG    | tldw_chatbook.DB.Prompts_DB:transaction:748 - Committed transaction.
+2026-11-01 12:31:07.457 | DEBUG    | tldw_chatbook.DB.Prompts_DB:_initialize_schema:1184 - Verified FTS tables exist after migrations.
+2026-11-01 12:31:07.457 | INFO     | tldw_chatbook.DB.Prompts_DB:_initialize_schema:1190 - Database schema initialized/migrated to version 6.
+2026-11-01 12:31:07.457 | DEBUG    | tldw_chatbook.DB.Prompts_DB:__init__:457 - PromptsDatabase initialization completed successfully for /private/tmp/mixin-task2-red-keyword-privacy/test_mixin_archive_roundtrip_n0/mixin-source.db
+2026-11-01 12:31:07.461 | DEBUG    | tldw_chatbook.DB.Prompts_DB:transaction:744 - Started transaction.
+2026-11-01 12:31:07.461 | INFO     | tldw_chatbook.DB.keyword_store:add_keyword_full:205 - Adding new keyword 'task38537_literal_body_must_not_leak' UUID fbbb9add-185c-44af-8af7-408a2c78cf5e
+2026-11-01 12:31:07.461 | DEBUG    | tldw_chatbook.DB.keyword_store:update_keywords_for_entity:544 - Keywords updated prompt 1. Added: 1, Removed: 0.
+2026-11-01 12:31:07.462 | DEBUG    | tldw_chatbook.DB.Prompts_DB:transaction:748 - Committed transaction.
+2026-11-01 12:31:07.465 | DEBUG    | tldw_chatbook.DB.Prompts_DB:transaction:744 - Started transaction.
+2026-11-01 12:31:07.465 | DEBUG    | tldw_chatbook.DB.keyword_store:add_keyword_full:200 - Keyword 'task38537_literal_body_must_not_leak' already active.
+2026-11-01 12:31:07.465 | DEBUG    | tldw_chatbook.DB.keyword_store:update_keywords_for_entity:544 - Keywords updated prompt 2. Added: 1, Removed: 0.
+2026-11-01 12:31:07.465 | DEBUG    | tldw_chatbook.DB.Prompts_DB:transaction:748 - Committed transaction.
+2026-11-01 12:31:07.499 | INFO     | tldw_chatbook.Chatbooks.chatbook_creator:__init__:194 - ChatbookCreator.__init__: Initializing with db_paths={'Prompts': '/private/tmp/mixin-task2-red-keyword-privacy/test_mixin_archive_roundtrip_n0/mixin-source.db'}
+2026-11-01 12:31:07.508 | INFO     | tldw_chatbook.Chatbooks.chatbook_creator:__init__:199 - ChatbookCreator.__init__: Creating temp directory at /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/tldw_test_config_08uxvm12/home/.local/share/tldw_cli/default_user/temp/chatbooks
+2026-11-01 12:31:07.511 | INFO     | tldw_chatbook.Chatbooks.chatbook_creator:__init__:243 - ChatbookCreator.__init__: Initialization complete
+2026-11-01 12:31:07.521 | INFO     | tldw_chatbook.Chatbooks.chatbook_creator:create_chatbook:316 - ChatbookCreator.create_chatbook: Starting creation of 'Mix-in backup'
+2026-11-01 12:31:07.521 | INFO     | tldw_chatbook.Chatbooks.chatbook_creator:create_chatbook:317 - ChatbookCreator.create_chatbook: Options - include_media=False, media_quality=thumbnail, include_embeddings=False, auto_include_dependencies=True
+2026-11-01 12:31:07.521 | INFO     | tldw_chatbook.Chatbooks.chatbook_creator:create_chatbook:320 - ChatbookCreator.create_chatbook: Content selections - [('prompt', 2)]
+2026-11-01 12:31:07.521 | INFO     | tldw_chatbook.Chatbooks.chatbook_creator:create_chatbook:335 - ChatbookCreator.create_chatbook: Tracking 0 explicitly selected characters
+2026-11-01 12:31:07.521 | INFO     | tldw_chatbook.Chatbooks.chatbook_creator:create_chatbook:344 - ChatbookCreator.create_chatbook: Working directory created at /private/tmp/mixin-task2-red-keyword-privacy/test_mixin_archive_roundtrip_n0/creator/chatbook_20261101_123107_0pr41_8y
+2026-11-01 12:31:07.521 | INFO     | tldw_chatbook.Chatbooks.chatbook_creator:create_chatbook:349 - ChatbookCreator.create_chatbook: Initializing manifest
+2026-11-01 12:31:07.522 | INFO     | tldw_chatbook.Chatbooks.chatbook_creator:create_chatbook:361 - ChatbookCreator.create_chatbook: Manifest created - version ChatbookVersion.V2, media=False, embeddings=False
+2026-11-01 12:31:07.522 | INFO     | tldw_chatbook.Chatbooks.chatbook_creator:create_chatbook:369 - ChatbookCreator.create_chatbook: Processing content types
+2026-11-01 12:31:07.522 | INFO     | tldw_chatbook.Chatbooks.chatbook_creator:create_chatbook:420 - ChatbookCreator.create_chatbook: Collecting 2 prompts
+2026-11-01 12:31:07.522 | INFO     | tldw_chatbook.DB.Prompts_DB:__init__:405 - Initializing PromptsDatabase object for path: /private/tmp/mixin-task2-red-keyword-privacy/test_mixin_archive_roundtrip_n0/mixin-source.db [Client ID: chatbook_creator]
+2026-11-01 12:31:07.560 | DEBUG    | tldw_chatbook.DB.Prompts_DB:_get_thread_connection:557 - Opened/Reopened SQLite connection to /private/tmp/mixin-task2-red-keyword-privacy/test_mixin_archive_roundtrip_n0/mixin-source.db [Client: chatbook_creator, Thread: MainThread]
+2026-11-01 12:31:07.561 | INFO     | tldw_chatbook.DB.Prompts_DB:_initialize_schema:1135 - Checking DB schema. Current: 6, Code supports: 6
+2026-11-01 12:31:07.561 | DEBUG    | tldw_chatbook.DB.Prompts_DB:_initialize_schema:1140 - Database schema is up to date.
+2026-11-01 12:31:07.561 | DEBUG    | tldw_chatbook.DB.Prompts_DB:_initialize_schema:1144 - Verified FTS tables exist.
+2026-11-01 12:31:07.561 | DEBUG    | tldw_chatbook.DB.Prompts_DB:__init__:457 - PromptsDatabase initialization completed successfully for /private/tmp/mixin-task2-red-keyword-privacy/test_mixin_archive_roundtrip_n0/mixin-source.db
+2026-11-01 12:31:07.565 | DEBUG    | tldw_chatbook.DB.Prompts_DB:transaction:744 - Started transaction.
+2026-11-01 12:31:07.565 | DEBUG    | tldw_chatbook.DB.Prompts_DB:transaction:748 - Committed transaction.
+2026-11-01 12:31:07.569 | DEBUG    | tldw_chatbook.DB.Prompts_DB:transaction:744 - Started transaction.
+2026-11-01 12:31:07.569 | DEBUG    | tldw_chatbook.DB.Prompts_DB:transaction:748 - Committed transaction.
+2026-11-01 12:31:07.570 | DEBUG    | tldw_chatbook.DB.Prompts_DB:close_connection:583 - Closed connection for thread MainThread.
+2026-11-01 12:31:07.570 | INFO     | tldw_chatbook.Chatbooks.chatbook_creator:create_chatbook:442 - ChatbookCreator.create_chatbook: Discovering relationships
+2026-11-01 12:31:07.570 | INFO     | tldw_chatbook.Chatbooks.chatbook_creator:create_chatbook:452 - ChatbookCreator.create_chatbook: Final stats - conversations=0, notes=0, characters=0, media=0, prompts=2, kept_briefings=0
+2026-11-01 12:31:07.570 | INFO     | tldw_chatbook.Chatbooks.chatbook_creator:create_chatbook:506 - ChatbookCreator.create_chatbook: Writing manifest to /private/tmp/mixin-task2-red-keyword-privacy/test_mixin_archive_roundtrip_n0/creator/chatbook_20261101_123107_0pr41_8y/manifest.json
+2026-11-01 12:31:07.570 | INFO     | tldw_chatbook.Chatbooks.chatbook_creator:create_chatbook:513 - ChatbookCreator.create_chatbook: Creating README
+2026-11-01 12:31:07.570 | INFO     | tldw_chatbook.Chatbooks.chatbook_creator:create_chatbook:520 - ChatbookCreator.create_chatbook: Creating ZIP archive at /private/tmp/mixin-task2-red-keyword-privacy/test_mixin_archive_roundtrip_n0/mixins.zip
+2026-11-01 12:31:07.571 | INFO     | tldw_chatbook.Chatbooks.chatbook_creator:create_chatbook:560 - ChatbookCreator.create_chatbook: Archive size: 1686 bytes
+2026-11-01 12:31:07.571 | INFO     | tldw_chatbook.Chatbooks.chatbook_creator:create_chatbook:586 - ChatbookCreator.create_chatbook: Success - Chatbook created successfully at /private/tmp/mixin-task2-red-keyword-privacy/test_mixin_archive_roundtrip_n0/mixins.zip
+2026-11-01 12:31:07.611 | INFO     | tldw_chatbook.Chatbooks.chatbook_importer:import_chatbook:1118 - ChatbookImporter.import_chatbook: Starting import of /private/tmp/mixin-task2-red-keyword-privacy/test_mixin_archive_roundtrip_n0/mixins.zip
+2026-11-01 12:31:07.611 | INFO     | tldw_chatbook.Chatbooks.chatbook_importer:import_chatbook:1121 - ChatbookImporter.import_chatbook: Options - conflict_resolution=ConflictResolution.ASK, prefix_imported=False, import_media=True
+2026-11-01 12:31:07.611 | INFO     | tldw_chatbook.Chatbooks.chatbook_importer:import_chatbook:1124 - Importing chatbook from /private/tmp/mixin-task2-red-keyword-privacy/test_mixin_archive_roundtrip_n0/mixins.zip
+2026-11-01 12:31:07.628 | INFO     | tldw_chatbook.Chatbooks.chatbook_importer:import_chatbook:1143 - ChatbookImporter.import_chatbook: Looking for manifest at /private/tmp/mixin-task2-red-keyword-privacy/test_mixin_archive_roundtrip_n0/importer/import_yd9qeypb/manifest.json
+2026-11-01 12:31:07.628 | INFO     | tldw_chatbook.Chatbooks.chatbook_importer:import_chatbook:1154 - ChatbookImporter.import_chatbook: Loaded manifest with 0 content types
+2026-11-01 12:31:07.628 | INFO     | tldw_chatbook.Chatbooks.chatbook_importer:import_chatbook:1158 - ChatbookImporter.import_chatbook: Manifest - version ChatbookVersion.V2, 0 conversations, 0 notes, 0 characters, 0 media
+2026-11-01 12:31:07.628 | INFO     | tldw_chatbook.DB.Prompts_DB:__init__:405 - Initializing PromptsDatabase object for path: /private/tmp/mixin-task2-red-keyword-privacy/test_mixin_archive_roundtrip_n0/mixin-destination.db [Client ID: chatbook_importer]
+2026-11-01 12:31:07.661 | DEBUG    | tldw_chatbook.DB.Prompts_DB:_get_thread_connection:557 - Opened/Reopened SQLite connection to /private/tmp/mixin-task2-red-keyword-privacy/test_mixin_archive_roundtrip_n0/mixin-destination.db [Client: chatbook_importer, Thread: MainThread]
+2026-11-01 12:31:07.661 | INFO     | tldw_chatbook.DB.Prompts_DB:_initialize_schema:1135 - Checking DB schema. Current: 0, Code supports: 6
+2026-11-01 12:31:07.661 | INFO     | tldw_chatbook.DB.Prompts_DB:_initialize_schema:1170 - Applying migration: Initial prompts schema (v0 -> v1)
+2026-11-01 12:31:07.661 | INFO     | tldw_chatbook.DB.Prompts_DB:_apply_schema_v1:823 - Applying initial schema (Version 1) to DB: /private/tmp/mixin-task2-red-keyword-privacy/test_mixin_archive_roundtrip_n0/mixin-destination.db...
+2026-11-01 12:31:07.665 | DEBUG    | tldw_chatbook.DB.Prompts_DB:transaction:744 - Started transaction.
+2026-11-01 12:31:07.665 | DEBUG    | tldw_chatbook.DB.Prompts_DB:_apply_schema_v1:834 - [Schema V1] Applying Core Schema + Version Update...
+2026-11-01 12:31:07.666 | DEBUG    | tldw_chatbook.DB.Prompts_DB:_apply_schema_v1:836 - [Schema V1] Core Schema script (incl. version update) executed.
+2026-11-01 12:31:07.666 | DEBUG    | tldw_chatbook.DB.Prompts_DB:_apply_schema_v1:860 - [Schema V1] Prompts table structure validated.
+2026-11-01 12:31:07.666 | DEBUG    | tldw_chatbook.DB.Prompts_DB:transaction:748 - Committed transaction.
+2026-11-01 12:31:07.666 | INFO     | tldw_chatbook.DB.Prompts_DB:_apply_schema_v1:869 - [Schema V1] Core Schema V1 applied and committed for DB: /private/tmp/mixin-task2-red-keyword-privacy/test_mixin_archive_roundtrip_n0/mixin-destination.db.
+2026-11-01 12:31:07.666 | DEBUG    | tldw_chatbook.DB.Prompts_DB:_apply_schema_v1:873 - [Schema V1] Applying FTS Tables...
+2026-11-01 12:31:07.667 | INFO     | tldw_chatbook.DB.Prompts_DB:_apply_schema_v1:876 - [Schema V1] FTS Tables created successfully.
+2026-11-01 12:31:07.667 | INFO     | tldw_chatbook.DB.Prompts_DB:_initialize_schema:1170 - Applying migration: Add structured prompt metadata columns (v1 -> v2)
+2026-11-01 12:31:07.667 | INFO     | tldw_chatbook.DB.Prompts_DB:_apply_migration_v1_to_v2:887 - Applying prompts migration from version 1 to 2 for DB: /private/tmp/mixin-task2-red-keyword-privacy/test_mixin_archive_roundtrip_n0/mixin-destination.db...
+2026-11-01 12:31:07.670 | DEBUG    | tldw_chatbook.DB.Prompts_DB:transaction:744 - Started transaction.
+2026-11-01 12:31:07.671 | DEBUG    | tldw_chatbook.DB.Prompts_DB:transaction:748 - Committed transaction.
+2026-11-01 12:31:07.671 | INFO     | tldw_chatbook.DB.Prompts_DB:_apply_migration_v1_to_v2:923 - Prompts migration to version 2 applied successfully for DB: /private/tmp/mixin-task2-red-keyword-privacy/test_mixin_archive_roundtrip_n0/mixin-destination.db.
+2026-11-01 12:31:07.671 | INFO     | tldw_chatbook.DB.Prompts_DB:_initialize_schema:1170 - Applying migration: Add prompt artifact type (v2 -> v3)
+2026-11-01 12:31:07.671 | INFO     | tldw_chatbook.DB.Prompts_DB:_apply_migration_v2_to_v3:934 - Applying prompts migration from version 2 to 3 for DB: /private/tmp/mixin-task2-red-keyword-privacy/test_mixin_archive_roundtrip_n0/mixin-destination.db...
+2026-11-01 12:31:07.674 | DEBUG    | tldw_chatbook.DB.Prompts_DB:transaction:744 - Started transaction.
+2026-11-01 12:31:07.674 | DEBUG    | tldw_chatbook.DB.Prompts_DB:transaction:748 - Committed transaction.
+2026-11-01 12:31:07.674 | INFO     | tldw_chatbook.DB.Prompts_DB:_initialize_schema:1170 - Applying migration: Add retained Prompt history index (v3 -> v4)
+2026-11-01 12:31:07.674 | INFO     | tldw_chatbook.DB.Prompts_DB:_apply_migration_v3_to_v4:969 - Applying prompts migration from version 3 to 4 for DB: /private/tmp/mixin-task2-red-keyword-privacy/test_mixin_archive_roundtrip_n0/mixin-destination.db...
+2026-11-01 12:31:07.677 | DEBUG    | tldw_chatbook.DB.Prompts_DB:transaction:744 - Started transaction.
+2026-11-01 12:31:07.678 | DEBUG    | tldw_chatbook.DB.Prompts_DB:transaction:748 - Committed transaction.
+2026-11-01 12:31:07.678 | INFO     | tldw_chatbook.DB.Prompts_DB:_initialize_schema:1170 - Applying migration: Add local Console Prompt Draft Shelf (v4 -> v5)
+2026-11-01 12:31:07.678 | INFO     | tldw_chatbook.DB.Prompts_DB:_apply_migration_v4_to_v5:1033 - Applying prompts migration from version 4 to 5.
+2026-11-01 12:31:07.681 | DEBUG    | tldw_chatbook.DB.Prompts_DB:transaction:744 - Started transaction.
+2026-11-01 12:31:07.681 | DEBUG    | tldw_chatbook.DB.Prompts_DB:transaction:748 - Committed transaction.
+2026-11-01 12:31:07.681 | INFO     | tldw_chatbook.DB.Prompts_DB:_initialize_schema:1170 - Applying migration: Add literal mix-in artifact type (v5 -> v6)
+2026-11-01 12:31:07.711 | DEBUG    | tldw_chatbook.DB.Prompts_DB:transaction:744 - Started transaction.
+2026-11-01 12:31:07.713 | DEBUG    | tldw_chatbook.DB.Prompts_DB:transaction:748 - Committed transaction.
+2026-11-01 12:31:07.713 | DEBUG    | tldw_chatbook.DB.Prompts_DB:_initialize_schema:1184 - Verified FTS tables exist after migrations.
+2026-11-01 12:31:07.713 | INFO     | tldw_chatbook.DB.Prompts_DB:_initialize_schema:1190 - Database schema initialized/migrated to version 6.
+2026-11-01 12:31:07.713 | DEBUG    | tldw_chatbook.DB.Prompts_DB:__init__:457 - PromptsDatabase initialization completed successfully for /private/tmp/mixin-task2-red-keyword-privacy/test_mixin_archive_roundtrip_n0/mixin-destination.db
+2026-11-01 12:31:07.716 | DEBUG    | tldw_chatbook.DB.Prompts_DB:transaction:744 - Started transaction.
+2026-11-01 12:31:07.717 | INFO     | tldw_chatbook.DB.keyword_store:add_keyword_full:205 - Adding new keyword 'task38537_literal_body_must_not_leak' UUID 1e967c92-fcab-44f6-b28d-c6408670546c
+2026-11-01 12:31:07.717 | DEBUG    | tldw_chatbook.DB.keyword_store:update_keywords_for_entity:544 - Keywords updated prompt 1. Added: 1, Removed: 0.
+2026-11-01 12:31:07.717 | DEBUG    | tldw_chatbook.DB.Prompts_DB:transaction:748 - Committed transaction.
+2026-11-01 12:31:07.717 | DEBUG    | tldw_chatbook.Chatbooks.chatbook_importer:_import_prompts:2978 - ChatbookImporter._import_prompts: Prompt imported item=item-000001 category=success
+2026-11-01 12:31:07.718 | DEBUG    | tldw_chatbook.DB.Prompts_DB:transaction:744 - Started transaction.
+2026-11-01 12:31:07.718 | DEBUG    | tldw_chatbook.DB.keyword_store:add_keyword_full:200 - Keyword 'task38537_literal_body_must_not_leak' already active.
+2026-11-01 12:31:07.718 | DEBUG    | tldw_chatbook.DB.keyword_store:update_keywords_for_entity:544 - Keywords updated prompt 2. Added: 1, Removed: 0.
+2026-11-01 12:31:07.718 | DEBUG    | tldw_chatbook.DB.Prompts_DB:transaction:748 - Committed transaction.
+2026-11-01 12:31:07.718 | DEBUG    | tldw_chatbook.Chatbooks.chatbook_importer:_import_prompts:2978 - ChatbookImporter._import_prompts: Prompt imported item=item-000002 category=success
+2026-11-01 12:31:07.719 | DEBUG    | tldw_chatbook.DB.Prompts_DB:close_connection:583 - Closed connection for thread MainThread.
+2026-11-01 12:31:07.719 | INFO     | tldw_chatbook.Chatbooks.chatbook_importer:import_chatbook:1338 - Successfully imported 2/2 items
+2026-11-01 12:31:07.721 | DEBUG    | tldw_chatbook.DB.Prompts_DB:close_connection:583 - Closed connection for thread MainThread.
+============================= slowest 25 durations =============================
+
+(3 durations < 1s hidden.)
+=========================== short test summary info ============================
+FAILED Tests/Chatbooks/test_chatbook_prompt_round_trip.py::test_mixin_archive_roundtrip_never_logs_literal_body_even_when_reused_as_keyword
+1 failed in 0.70s

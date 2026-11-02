@@ -10927,6 +10927,24 @@ ConsoleConversationActionMenu { width: $ds-conversation-menu-width; }
     ConsoleGoalHistory .goal-dialog-actions { height: $ds-control-height; }
     ConsoleGoalHistory .goal-dialog-action { width: $ds-width-fill; min-width: $ds-size-10; }
 
+
+ConsolePromptMixinsView {
+    width: $ds-width-full;
+    height: $ds-height-fill;
+    min-height: $ds-size-0;
+}
+ConsolePromptMixinsView Static { height: auto; }
+#console-mixins-scroll { height: $ds-height-fill; min-height: $ds-size-0; }
+.console-mixin-row { height: auto; margin-bottom: $ds-space-stack; }
+.console-mixins-actions { height: auto; min-height: $ds-control-height-compact; }
+.console-mixins-actions Button { min-width: $ds-size-0; width: auto; height: $ds-control-height-compact; min-height: $ds-control-height-compact; }
+ConsolePromptMixinsView .section-title { text-align: left; margin: $ds-space-stack $ds-space-0 $ds-space-0 $ds-space-0; }
+.console-mixin-row Checkbox { height: $ds-control-height-compact; min-height: $ds-control-height-compact; border: none; padding: $ds-space-0; }
+#console-mixins-library { width: $ds-height-fill; }
+#console-mixins-status { color: $ds-status-warning; }
+ConsolePromptsModal.-narrow .console-mixins-actions { layout: grid; grid-size: 2; grid-columns: 1fr 1fr; grid-rows: auto; }
+ConsolePromptsModal.-narrow .console-mixins-actions Button { width: $ds-width-full; }
+
 /* ===== MODULE: features/_console_response_rules.tcss ===== */
 
 ResponseRulesModal {

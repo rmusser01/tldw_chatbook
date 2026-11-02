@@ -8,13 +8,20 @@ and ``STRUCTURE``), so a Library prompt exported via
 ``render_prompt_markdown`` and re-imported via that parser round-trips its
 name/system prompt/user prompt (and author/details/keywords, modulo the
 parser's own empty-string-vs-``None`` normalization -- see the docstring
-below) unchanged. No Textual/DB imports -- this module only renders text.
+below) unchanged. Mix-ins use a distinct single-line JSON envelope to preserve
+literal content and refuse legacy Prompt interpretation. No Textual/DB imports
+-- this module only renders text.
 """
 
 from __future__ import annotations
 
 import json
 from typing import Any, Mapping
+
+from .prompt_chatbook_record import (
+    MIXIN_MARKDOWN_HEADER,
+    encode_chatbook_prompt_record,
+)
 
 __all__ = ["render_prompt_markdown"]
 
@@ -81,7 +88,8 @@ def render_prompt_markdown(detail: Mapping[str, Any]) -> str:
             comma-separated string; missing/``None`` fields render blank.
 
     Returns:
-        Markdown text using the ``### TITLE ###`` / ``### AUTHOR ###`` /
+        Mix-ins use a distinct ``# Chatbook mix-in`` fenced portable record.
+        Other artifacts use the ``### TITLE ###`` / ``### AUTHOR ###`` /
         ``### SYSTEM ###`` / ``### USER ###`` / ``### KEYWORDS ###`` section
         grammar ``parse_markdown_prompts_from_content`` parses. Structured
         records with a JSON-object definition append canonical
@@ -105,6 +113,10 @@ def render_prompt_markdown(detail: Mapping[str, Any]) -> str:
         Regression coverage for empty sections and multiline content lives
         in ``Tests/Library/test_prompt_export_roundtrip.py``.
     """
+    if detail.get("artifact_type") == "mixin":
+        record = encode_chatbook_prompt_record(detail)
+        serialized = json.dumps(record, sort_keys=True, separators=(",", ":"))
+        return f"{MIXIN_MARKDOWN_HEADER}\n\n```json\n{serialized}\n```\n"
     name = _text(detail.get("name")).strip() or "Untitled prompt"
     details = _text(detail.get("details"))
     author = _text(detail.get("author"))

@@ -362,6 +362,9 @@ def _configuration_session_identity(session):
         session.ephemeral,
         session.identity_revision,
         session.generation_settings_revision,
+        session.prompt_mixin_preferences.preferences.revision
+        if session.prompt_mixin_preferences.preferences is not None
+        else None,
         session.settings,
     )
 
@@ -942,15 +945,7 @@ async def capture_console_turn_configuration_owned(
         raise RecoveryRequired("console_capture_source_not_ready")
     session = next(item for item in store.sessions() if item.id == session_id)
     refs = _source_references(app, store, creator, session, _unused_trust=unused_trust)
-    identity = (
-        session.incarnation_id,
-        session.conversation_binding_revision,
-        session.workspace_id,
-        session.ephemeral,
-        session.identity_revision,
-        session.generation_settings_revision,
-        session.settings,
-    )
+    identity = _configuration_session_identity(session)
     config_identity = config.current_config_identity()
     runtime = getattr(creator, "_hooks_v2_runtime", None)
     runtime_store = getattr(runtime, "_chat_store", None)
@@ -995,16 +990,7 @@ async def capture_console_turn_configuration_owned(
                     or session_id in runtime._admission_fenced_sessions
                 )
             )
-            or (
-                session.incarnation_id,
-                session.conversation_binding_revision,
-                session.workspace_id,
-                session.ephemeral,
-                session.identity_revision,
-                session.generation_settings_revision,
-                session.settings,
-            )
-            != identity
+            or _configuration_session_identity(session) != identity
         ):
             raise RecoveryRequired("console_snapshot_owner_changed")
         fresh = _source_references(

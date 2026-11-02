@@ -33,6 +33,8 @@ from tldw_chatbook.Chat.console_prompt_queue import (
 )
 from tldw_chatbook.Chat.console_turn_context import ConsoleTurnCustodyRequest
 
+from .console_prompt_mixins import MixinAttemptSnapshot
+
 if TYPE_CHECKING:
     from tldw_chatbook.Agents.agent_models import RunBudget
     from tldw_chatbook.Agents.hooks_v2.continuations import (
@@ -454,6 +456,7 @@ class ConsolePromptQueueCoordinator:
         )
         next_request = replace(
             request,
+            configuration=replace(request.configuration, prompt_mixins=MixinAttemptSnapshot()),
             turn_id=str(uuid4()),
             draft=str(text),
             attachment_ids=(),
@@ -849,6 +852,7 @@ class ConsolePromptQueueCoordinator:
             configuration=(
                 replace(
                     parent_request.configuration,
+                    prompt_mixins=MixinAttemptSnapshot(),
                     tool_configuration={
                         **parent_request.configuration.tool_configuration,
                         "agent_run_budget_maximum": budget,
@@ -856,7 +860,7 @@ class ConsolePromptQueueCoordinator:
                     },
                 )
                 if budget is not None
-                else parent_request.configuration
+                else replace(parent_request.configuration, prompt_mixins=MixinAttemptSnapshot())
             ),
         )
         admitted = self.registry.admit(

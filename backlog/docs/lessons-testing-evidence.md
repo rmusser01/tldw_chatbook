@@ -24199,3 +24199,41 @@ registry and ownership predicate and passed in r-b3daab7d. This was proven
 source-inherited by exact dev-file comparison, not by a baseline execution.
 Normalize machine-readable relative keys at the producer; keep native FIFO
 coverage explicitly unavailable when os.mkfifo does not exist.
+
+## TASK-38537: Follow portable content through shared logging helpers
+
+The Mix-in archive regression used the same literal-body sentinel as a valid
+keyword. The real export/import round trip preserved the record but exposed the
+body in `KeywordStore.add_keyword_full` creation/reuse logs, downstream of the
+already sanitized Chatbook wrapper. The shared write sinks now emit fixed
+metadata/categories. A wrapper-only log assertion would have missed this leak;
+privacy evidence must include the real downstream storage helpers and accepted
+metadata carrying the same sensitive text.
+
+## Qualify soft-delete followed by hard purge against another live FTS owner (TASK-38538, 2026-11-01)
+
+While qualifying conversation-owned prompt mix-ins, two conversations titled
+`Mix-ins` exposed a pre-existing failure: soft-delete the first, purge it through
+`CanvasRepository.hard_purge_conversation`, then soft-delete the second. The final
+operation raised `sqlite3.DatabaseError: database disk image is malformed` on an
+exact archive of BASE `1e5b0c74a7b33000f09c96af635f086d9f3d1ea7`, without any mix-in
+changes. `conversations_au` had already removed the first FTS posting, but
+`conversations_ad` removed it again regardless of `old.deleted`.
+
+The v82 migration guards that hard-delete trigger with `old.deleted = 0`; tests
+now exercise the combined native lifecycle, the surviving same-title search and
+FTS integrity. Do not substitute separate fresh-owner deletion tests for this
+journey. Preserve historical schema catalogs when fixing a current trigger;
+qualify each retained catalog's migration to the corrected current catalog.
+
+## Shared temporary task prefixes do not prove evidence ownership (TASK-38544, 2026-11-01)
+
+Prompt mix-in QA initially copied 46 unrelated files because other work used the
+same task-number prefixes in a shared temporary directory. A provenance audit
+caught this before commit. Only the exact hash-verified copies were reversibly
+moved into the ignored workspace; original files remained untouched. Preserve
+evidence from explicit same-plan references or a known private fixture root,
+not a broad `taskN` filename match. Keep any ownership audit private, exclude
+unrelated contents from published QA, and regenerate/verify the final Git blob
+manifest after correcting the artifact set.
+

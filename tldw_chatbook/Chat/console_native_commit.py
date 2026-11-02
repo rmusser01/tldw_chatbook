@@ -625,6 +625,7 @@ async def _controller_accept_durable_turn(
     committed_context_epoch: int,
     custody_acceptance_hook: Callable[[], None] | None,
     hook_context: str = "",
+    _require_mixin_current: Callable[[], None] | None = None,
     chat_start_authorization: AgentChatStartAuthorization | None = None,
 ) -> ConsoleSubmitResult:
     """Commit one durable owner, then enter its idempotent effect chain."""
@@ -682,6 +683,20 @@ async def _controller_accept_durable_turn(
     )
     if continuation_gate is not None:
         contributions = (*contributions, continuation_gate)
+    from .console_prompt_mixin_service import MixinAttemptContribution
+    from .console_prompt_mixins import MixinAttemptWrite
+
+    contributions = (
+        *contributions,
+        MixinAttemptContribution(
+            MixinAttemptWrite(
+                preparation.attempt_id,
+                owner_ids.user_message_id,
+                owner_ids.assistant_message_id,
+                turn_context.prompt_mixins,
+            )
+        ),
+    )
     acceptance = _source_controller.ConsoleDurableTurnAcceptance(
         conversation_id=identity.conversation_id,
         user_message_id=owner_ids.user_message_id,
@@ -756,6 +771,8 @@ async def _controller_accept_durable_turn(
             return _source_controller.ConsoleSubmitResult(
                 False, False, "Draft custody is unconfirmed.", session_id=session.id
             )
+        if _require_mixin_current is not None:
+            _require_mixin_current()
         record_send_stage("durable_commit")
         try:
             # TASK-22205: the ~10-statement BEGIN IMMEDIATE turn commit runs

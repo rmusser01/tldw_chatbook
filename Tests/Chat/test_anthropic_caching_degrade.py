@@ -399,3 +399,52 @@ def test_openai_cache_key_skipped_for_custom_base_url(mock_session):
     assert "prompt_cache_key" not in posted["json"], (
         "custom endpoints must not receive prompt_cache_key"
     )
+
+
+@pytest.mark.bootstrap_profile
+@pytest.mark.parametrize("ttl", ["5m", "1h"])
+def test_cache_degrade_preserves_mixin_instructions_at_real_adapter_boundary(ttl):
+    from Tests.Chat.test_console_prompt_mixin_caching import _kwargs, _prepare
+
+    request = _prepare("{style}")
+    bad = _bad_response('{"error":{"message":"cache_control TTL is unsupported"}}')
+    with (
+        patch("requests.Session.post", side_effect=[bad, _ok_response()]) as post,
+        patch(
+            "tldw_chatbook.LLM_Calls.LLM_API_Calls.get_cli_setting",
+            side_effect=lambda s, k, d=None: ttl if k == "cache_ttl" else d,
+        ),
+    ):
+        chat_api_call(**_kwargs(request))
+    assert post.call_count == 2
+    first, retry = [call.kwargs["json"] for call in post.call_args_list]
+    assert "cache_control" in first["messages"][1]["content"][0]
+    assert retry == _without_cache_control(first)
+    assert retry["messages"][-1]["content"][0]["text"] == "{style}\n\nnew"
+    assert retry["messages"][0]["content"][0]["text"] == "older"
+    if ttl == "1h":
+        assert first["messages"][1]["content"][0]["cache_control"]["ttl"] == "1h"
+        assert (
+            "extended-cache-ttl"
+            in post.call_args_list[0].kwargs["headers"]["anthropic-beta"]
+        )
+        assert "anthropic-beta" not in post.call_args_list[1].kwargs["headers"]
+
+
+def test_cache_degrade_does_not_change_mixin_instructions():
+    messages = [
+        {
+            "role": "user",
+            "content": [
+                {
+                    "type": "text",
+                    "text": "older",
+                    "cache_control": {"type": "ephemeral"},
+                }
+            ],
+        },
+        {"role": "user", "content": [{"type": "text", "text": "{style}\n\nnew"}]},
+    ]
+    stripped = _without_cache_control(messages)
+    assert stripped[-1]["content"][0]["text"] == "{style}\n\nnew"
+    assert stripped[0]["content"][0]["text"] == "older"

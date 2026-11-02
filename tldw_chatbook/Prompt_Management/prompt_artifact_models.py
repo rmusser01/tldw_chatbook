@@ -2,13 +2,19 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any, Literal, Mapping
 
 
-ArtifactType = Literal["prompt", "recipe"]
+ArtifactType = Literal["prompt", "recipe", "mixin"]
 ArtifactDefinitionState = Literal[
-    "legacy", "supported_v2", "foreign_v1", "unsupported", "malformed", "mismatched"
+    "legacy",
+    "supported_v2",
+    "supported_v3",
+    "foreign_v1",
+    "unsupported",
+    "malformed",
+    "mismatched",
 ]
 BlockSyntax = Literal["freeform", "markdown", "xml"]
 
@@ -87,6 +93,29 @@ class BlockArtifactDefinition:
 
 
 @dataclass(frozen=True)
+class LiteralMixinDefinition:
+    """A literal instruction with an explicit placement."""
+
+    body: str = field(repr=False)
+    placement: Literal["before", "after"]
+    kind: Literal["text_mixin"] = "text_mixin"
+    schema_version: Literal[3] = 3
+
+    def __post_init__(self) -> None:
+        if type(self.body) is not str or not self.body.strip():
+            raise ValueError("Mix-in body must be a non-empty string.")
+        if type(self.placement) is not str or self.placement not in ("before", "after"):
+            raise ValueError("Invalid mix-in placement.")
+        if (
+            type(self.kind) is not str
+            or self.kind != "text_mixin"
+            or type(self.schema_version) is not int
+            or self.schema_version != 3
+        ):
+            raise ValueError("Invalid mix-in kind or schema version.")
+
+
+@dataclass(frozen=True)
 class LegacyLaneOrigin:
     """Original legacy bytes and a stable fingerprint for one lane."""
 
@@ -109,7 +138,7 @@ class DecodedPromptArtifact:
 
     state: ArtifactDefinitionState
     artifact_type: ArtifactType
-    definition: BlockArtifactDefinition | None
+    definition: BlockArtifactDefinition | LiteralMixinDefinition | None
     raw_definition: Mapping[str, Any] | None
     compiled_system: str
     compiled_user: str

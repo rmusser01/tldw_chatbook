@@ -30,6 +30,8 @@ import httpx
 from loguru import logger
 from rich.markup import escape as escape_markup
 
+from tldw_chatbook.Metrics.metrics_logger import log_counter
+
 from tldw_chatbook.Chat.Chat_Deps import (
     ChatAPIError,
     project_provider_error,
@@ -7978,6 +7980,17 @@ class ConsoleProviderGateway:
             ),
             "prompt_caching": resolution.prompt_caching,
         }
+        if request.semantic.clean_history_message_index is not None:
+            if (
+                resolution.execution_key == "anthropic"
+                and request.cache_boundary is not None
+            ):
+                kwargs["console_cache_boundary"] = request.cache_boundary
+            else:
+                log_counter(
+                    "console_clean_history_cache_unavailable",
+                    labels={"reason": "adapter_capability_or_mapping"},
+                )
         local = supports_local_reasoning(
             resolution.execution_key or resolution.provider, resolution.model or ""
         )

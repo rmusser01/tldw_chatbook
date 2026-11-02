@@ -10,6 +10,7 @@ from .prompt_artifact_models import (
     ArtifactType,
     BlockArtifactDefinition,
     DecodedPromptArtifact,
+    LiteralMixinDefinition,
     PromptBlock,
     PromptLane,
 )
@@ -36,7 +37,7 @@ def deserialize_definition(value: Any) -> Mapping[str, Any] | None:
 
 def _artifact_type(record: Mapping[str, Any]) -> ArtifactType:
     raw_artifact_type = str(record.get("artifact_type") or "prompt")
-    if raw_artifact_type not in {"prompt", "recipe"}:
+    if raw_artifact_type not in {"prompt", "recipe", "mixin"}:
         raise ValueError(f"Unsupported artifact_type: {raw_artifact_type!r}")
     return cast(ArtifactType, raw_artifact_type)
 
@@ -168,9 +169,60 @@ def decode_console_v2(
     )
 
 
+def decode_literal_mixin_v3(
+    record: Mapping[str, Any], *, raw: Mapping[str, Any] | None
+) -> DecodedPromptArtifact:
+    """Decode the closed literal mix-in shape without interpreting its body."""
+    artifact_type: ArtifactType = "mixin"
+    if record.get("prompt_format") != "structured":
+        return _decoded(
+            state="mismatched", record=record, artifact_type=artifact_type, raw=raw
+        )
+    if not _is_schema_version(record.get("prompt_schema_version"), 3):
+        return _decoded(
+            state="unsupported", record=record, artifact_type=artifact_type, raw=raw
+        )
+    if raw is None:
+        return _decoded(
+            state="malformed", record=record, artifact_type=artifact_type, raw=raw
+        )
+    if (
+        type(raw.get("kind")) is not str
+        or raw.get("kind") != "text_mixin"
+        or not _is_schema_version(raw.get("schema_version"), 3)
+    ):
+        return _decoded(
+            state="mismatched", record=record, artifact_type=artifact_type, raw=raw
+        )
+    try:
+        if set(raw) != {"kind", "schema_version", "body", "placement"}:
+            raise ValueError("Invalid mix-in fields.")
+        definition = LiteralMixinDefinition(
+            body=raw["body"], placement=raw["placement"]
+        )
+    except (KeyError, TypeError, ValueError):
+        return _decoded(
+            state="malformed", record=record, artifact_type=artifact_type, raw=raw
+        )
+    system, user = _compatibility_text(record)
+    return DecodedPromptArtifact(
+        state="supported_v3",
+        artifact_type=artifact_type,
+        definition=definition,
+        raw_definition=raw,
+        compiled_system="",
+        compiled_user=definition.body,
+        compatibility_stale=(system, user) != ("", definition.body),
+    )
+
+
 def decode_prompt_artifact(record: Mapping[str, Any]) -> DecodedPromptArtifact:
     """Classify a prompt record without allowing one schema to impersonate another."""
     artifact_type = _artifact_type(record)
+    if artifact_type == "mixin":
+        return decode_literal_mixin_v3(
+            record, raw=deserialize_definition(record.get("prompt_definition"))
+        )
     if str(record.get("prompt_format") or "legacy") == "legacy":
         system, user = _compatibility_text(record)
         return DecodedPromptArtifact(

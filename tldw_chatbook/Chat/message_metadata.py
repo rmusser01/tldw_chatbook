@@ -418,6 +418,8 @@ class MessageMetadata:
     canvas_cards: tuple[CanvasCardMetadata, ...] = ()
     terminal_receipt_id: str = ""
     root_fork: bool = False
+    mixin_attempt_id: str | None = None
+    mixin_snapshot_schema_version: int | None = None
 
     def __post_init__(self) -> None:
         if (self.origin == MESSAGE_ORIGIN_AGENT_CHAT_START) != isinstance(
@@ -459,6 +461,17 @@ class MessageMetadata:
                 )
         elif self.template_source:
             raise ValueError("template_source requires a recognized template_kind")
+        if (self.mixin_attempt_id is None) != (
+            self.mixin_snapshot_schema_version is None
+        ):
+            raise ValueError("mixin_metadata_pair_required")
+        if self.mixin_attempt_id is not None and (
+            type(self.mixin_attempt_id) is not str
+            or not self.mixin_attempt_id
+            or type(self.mixin_snapshot_schema_version) is not int
+            or self.mixin_snapshot_schema_version != 1
+        ):
+            raise ValueError("mixin_metadata_invalid")
         if self.terminal_receipt_id:
             try:
                 ConversationLocalMarksService.validate_terminal_receipt_id(
@@ -494,6 +507,9 @@ class MessageMetadata:
             del payload["root_fork"]
         if self.agent_chat_start is None:
             del payload["agent_chat_start"]
+        if self.mixin_attempt_id is None:
+            del payload["mixin_attempt_id"]
+            del payload["mixin_snapshot_schema_version"]
         return json.dumps(payload, sort_keys=True)
 
     def remap_canvas_origins(self, message_ids: Mapping[str, str]) -> "MessageMetadata":
@@ -582,6 +598,8 @@ class MessageMetadata:
                     data.get("terminal_receipt_id")
                 ),
                 root_fork=_as_bool(data.get("root_fork")),
+                mixin_attempt_id=data.get("mixin_attempt_id"),
+                mixin_snapshot_schema_version=data.get("mixin_snapshot_schema_version"),
             )
         except ValueError:
             # Direct construction remains strict. Stored data is an untrusted

@@ -194,3 +194,59 @@ async def test_llama_status_poll_keeps_same_copy_and_paints_verified_connection(
         )
         assert not view.query_one("#llamacpp-use-console", Button).disabled
         assert "llamacpp-connection-status" in calls
+
+
+@pytest.mark.asyncio
+async def test_mixin_save_recovery_is_hidden_when_healthy_and_exact_when_failed():
+    from Tests.UI.test_console_rail_progress_timer import _ProgressRailHost
+    from tldw_chatbook.Chat.console_chat_store import (
+        ConsoleSettingsComponent,
+        ConsoleSettingsPersistenceFailure,
+    )
+    from tldw_chatbook.Chat.console_prompt_mixins import MixinPreferences
+    from tldw_chatbook.Chat.console_settings_defaults import (
+        ConsoleDefaultDurabilityState,
+    )
+    from tldw_chatbook.UI.Console_Modules.left_rail import ConsoleLeftRail
+
+    host = _ProgressRailHost()
+    component = ConsoleSettingsComponent.PROMPT_MIXINS
+    failure = ConsoleSettingsPersistenceFailure(
+        component,
+        7,
+        "saved-origin",
+        3,
+        None,
+        mixin_preferences=MixinPreferences(revision=7),
+    )
+    async with host.run_test(size=(120, 45)):
+        rail = host.query_one(ConsoleLeftRail)
+        row = rail.query_one("#console-mixin-recovery-row")
+        retry = rail.query_one("#console-retry-prompt-mixins", Button)
+        rail.sync_model_recovery(
+            session_id="origin-a",
+            failures={},
+            default_state=ConsoleDefaultDurabilityState(),
+        )
+        assert not row.display and retry.disabled
+        rail.sync_model_recovery(
+            session_id="origin-a",
+            failures={component: failure},
+            default_state=ConsoleDefaultDurabilityState(),
+        )
+        assert row.display and not retry.disabled
+        assert retry.console_settings_session_id == "origin-a"
+        assert retry.console_settings_revision == 7
+        rail.sync_model_recovery(
+            session_id="origin-b",
+            failures={component: replace(failure, revision=8)},
+            default_state=ConsoleDefaultDurabilityState(),
+        )
+        assert retry.console_settings_session_id == "origin-b"
+        assert retry.console_settings_revision == 8
+        rail.sync_model_recovery(
+            session_id="origin-b",
+            failures={},
+            default_state=ConsoleDefaultDurabilityState(),
+        )
+        assert not row.display and retry.disabled

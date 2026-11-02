@@ -34,6 +34,13 @@ from tldw_chatbook.Chat.citation_trace_repository import (
     CitationTraceRepository,
 )
 from tldw_chatbook.Chat.console_context_policy import ConsoleContextPolicyOverrides
+from tldw_chatbook.Chat.console_prompt_mixins import (
+    MixinAttemptWrite,
+    MixinForkState,
+    MixinPreferenceRead,
+    MixinPreferences,
+    MixinReplayRead,
+)
 from tldw_chatbook.Chat.console_chat_fork import (
     CONSOLE_FORK_VIDEO_TOMBSTONE_CONTENT,
     ConsoleChatForkSnapshot,
@@ -181,6 +188,8 @@ _VOICE_PROMOTION_FORBIDDEN_MESSAGE_LOCATORS = frozenset(
         ("canvas_revisions", "origin_message_id"),
         ("console_dispatch_checkpoints", "assistant_message_id"),
         ("console_dispatch_checkpoints", "user_message_id"),
+        ("console_prompt_mixin_attempts", "user_message_id"),
+        ("console_prompt_mixin_attempts", "assistant_message_id"),
         ("console_hook_continuation_receipts", "assistant_message_id"),
         ("console_hook_continuation_receipts", "parent_assistant_message_id"),
         ("fleet_progress_messages", "message_id"),
@@ -1232,6 +1241,117 @@ class ChatPersistenceService:
         """Return local sparse context-policy overrides for one conversation."""
         return self.context_repository.load_policy(conversation_id)
 
+    def get_conversation_mixin_preferences(
+        self, conversation_id: str
+    ) -> "MixinPreferenceRead":
+        """Read chat-local selection state through the existing DB owner."""
+        from tldw_chatbook.DB.console_prompt_mixins import read_preferences
+
+        with operation_owned_connection(self.db), self.db.transaction() as cursor:
+            return read_preferences(cursor, conversation_id)
+
+    def save_conversation_mixin_preferences(
+        self, *, conversation_id: str, expected_revision: int, value: "MixinPreferences"
+    ) -> "MixinPreferences":
+        """CAS one preference component in its native owned transaction."""
+        from tldw_chatbook.DB.console_prompt_mixins import save_preferences
+
+        with operation_owned_connection(self.db), self.db.transaction() as cursor:
+            return save_preferences(
+                cursor, conversation_id, expected_revision=expected_revision, value=value
+            )
+
+    def save_conversation_mixin_attempt(
+        self,
+        conversation_id: str,
+        *,
+        batch: MixinAttemptWrite,
+        native_message_ids: Mapping[str, str],
+        pending_assistant: tuple[str | None, str | None] | None = None,
+    ) -> None:
+        """Persist an exact replay attempt and its marker before provider entry."""
+        from .console_prompt_mixin_service import MixinAttemptContribution
+        from .console_transaction_contribution import _scoped_console_transaction_writer
+
+        with operation_owned_connection(self.db), self.db.transaction() as cursor:
+            if pending_assistant is not None:
+                parent_id, metadata_json = pending_assistant
+                if (
+                    native_message_ids.get(batch.assistant_message_id)
+                    != batch.assistant_message_id
+                ):
+                    raise ValueError("mixin_pending_anchor_conflict")
+                self.create_message(
+                    conversation_id=conversation_id,
+                    sender="assistant",
+                    content="",
+                    message_id=batch.assistant_message_id,
+                    parent_message_id=parent_id,
+                    metadata_json=metadata_json,
+                    assistant_generation_state="accepted",
+                )
+            with _scoped_console_transaction_writer(cursor, conversation_id) as writer:
+                MixinAttemptContribution(batch).write_exact(
+                    writer=writer,
+                    conversation_id=conversation_id,
+                    native_message_ids=native_message_ids,
+                )
+
+    def get_conversation_mixin_fork_state(
+        self, conversation_id: str, *, message_ids: Mapping[str, str]
+    ) -> MixinForkState:
+        """Capture historical fork ownership in one native read transaction."""
+        from tldw_chatbook.DB.console_prompt_mixins import read_fork_state
+
+        with operation_owned_connection(self.db), self.db.transaction() as cursor:
+            return read_fork_state(cursor, conversation_id, message_ids)
+
+    def get_conversation_mixin_attempt(
+        self,
+        conversation_id: str,
+        *,
+        assistant_message_id: str,
+        attempt_id: str | None = None,
+    ) -> "MixinReplayRead":
+        """Classify raw durable markers before returning an exact anchored replay."""
+        from tldw_chatbook.DB.console_prompt_mixins import read_attempt
+        from tldw_chatbook.Utils.input_validation import strict_json_loads
+
+        with operation_owned_connection(self.db), self.db.transaction() as cursor:
+            message = cursor.execute(
+                "SELECT metadata_json FROM messages WHERE conversation_id=? AND id=? AND lower(sender)='assistant' AND deleted=0",
+                (conversation_id, assistant_message_id),
+            ).fetchone()
+            if message is None:
+                return MixinReplayRead("unavailable", None)
+            try:
+                metadata = strict_json_loads(message[0]) if message[0] else {}
+            except (ValueError, TypeError, RecursionError):
+                return MixinReplayRead("unavailable", None)
+            if type(metadata) is not dict:
+                return MixinReplayRead("unavailable", None)
+            linked = cursor.execute(
+                "SELECT attempt_id FROM console_prompt_mixin_attempts WHERE conversation_id=? AND assistant_message_id=?",
+                (conversation_id, assistant_message_id),
+            ).fetchall()
+            if not (
+                {"mixin_attempt_id", "mixin_snapshot_schema_version"} & metadata.keys()
+            ):
+                return MixinReplayRead(
+                    "unavailable" if linked or attempt_id is not None else "legacy", None
+                )
+            marked_id = metadata.get("mixin_attempt_id")
+            if (
+                type(metadata.get("mixin_snapshot_schema_version")) is not int
+                or metadata["mixin_snapshot_schema_version"] != 1
+                or type(marked_id) is not str
+                or not marked_id
+                or (attempt_id is not None and attempt_id != marked_id)
+                or not any(row[0] == marked_id for row in linked)
+            ):
+                return MixinReplayRead("unavailable", None)
+            return read_attempt(cursor, conversation_id, attempt_id=marked_id)
+
     def get_conversation_generation_settings(
         self, conversation_id: str
     ) -> ConsoleGenerationSettingsReadResult:
@@ -2075,6 +2195,48 @@ class ChatPersistenceService:
                 )
                 if persisted_id != message.persisted_message_id:
                     raise RuntimeError("Persistence returned an unexpected message id.")
+            if snapshot.source_conversation_id is not None:
+                from tldw_chatbook.DB.console_prompt_mixins import (
+                    copy_conversation_mixins,
+                )
+
+                if snapshot.prompt_mixin_history is not None:
+                    from tldw_chatbook.DB.console_prompt_mixins import read_fork_state
+
+                    current_history = read_fork_state(
+                        cursor,
+                        snapshot.source_conversation_id,
+                        {
+                            message.source_persisted_message_id: message.native_message_id
+                            for message in snapshot.messages
+                            if message.source_persisted_message_id is not None
+                        },
+                    )
+                    if current_history != snapshot.prompt_mixin_history:
+                        raise ValueError("Console fork source changed.")
+                copy_conversation_mixins(
+                    cursor,
+                    source_conversation_id=snapshot.source_conversation_id,
+                    destination_conversation_id=target_id,
+                    message_ids={
+                        message.source_persisted_message_id: message.persisted_message_id
+                        for message in snapshot.messages
+                        if message.source_persisted_message_id is not None
+                        and message.persisted_message_id is not None
+                    },
+                )
+            elif snapshot.prompt_mixin_history is not None:
+                from tldw_chatbook.DB.console_prompt_mixins import write_fork_state
+
+                write_fork_state(
+                    cursor,
+                    target_id,
+                    state=snapshot.prompt_mixin_history,
+                    message_ids={
+                        row.native_message_id: row.persisted_message_id
+                        for row in snapshot.messages
+                    },
+                )
             self._link_console_fork_citations(cursor, snapshot)
             policy_result = self.console_library_policy_repository.insert(
                 target_id,
@@ -3574,6 +3736,15 @@ class ChatPersistenceService:
                 terminal_outcome=terminal_outcome,
                 mark_type=terminal_mark_type,
             )
+            if terminal_outcome == "complete":
+                from tldw_chatbook.DB.console_prompt_mixins import seal_attempt_result
+
+                seal_attempt_result(
+                    cursor,
+                    conversation_id=conversation_id,
+                    assistant_message_id=message_id,
+                    metadata_json=metadata_json,
+                )
             message_ids = MappingProxyType(
                 {
                     native_message_id: message_id,

@@ -38,6 +38,9 @@ def _identifier(item: Mapping[str, Any]) -> str:
 class ConsolePromptsBrowse(Vertical):
     """Render Prompt rows and emit source/search/pagination intent only."""
 
+    class MixinsRequested(Message):
+        """Open chat mix-in controls in this Workbench."""
+
     class ImproveRequested(Message):
         """Open model-assisted prompt choices."""
 
@@ -76,9 +79,11 @@ class ConsolePromptsBrowse(Vertical):
         improve_unavailable_reason: str = "",
         can_configure_provider: bool = False,
         manual_improve_available: bool = False,
+        mixin_count: int | None = None,
         **kwargs: Any,
     ) -> None:
         super().__init__(**kwargs)
+        self._mixin_count = mixin_count
         self._source = source
         self._query = query
         self._page = page
@@ -90,6 +95,12 @@ class ConsolePromptsBrowse(Vertical):
         self._highlighted_index = -1
 
     def compose(self) -> ComposeResult:
+        yield Button(
+            f"Mix-ins · {self._mixin_count} enabled"
+            if self._mixin_count is not None
+            else "Mix-ins",
+            id="console-prompts-mixins",
+        )
         improve = Button(
             "Improve My Prompt",
             id="console-prompts-improve",
@@ -207,7 +218,11 @@ class ConsolePromptsBrowse(Vertical):
                     if has_user
                     else "No compiled lanes"
                 )
-                metadata = f"{artifact_type} · {source} · {lanes}"
+                metadata = (
+                    f"{artifact_type} · {source}"
+                    if artifact_type == "Mixin"
+                    else f"{artifact_type} · {source} · {lanes}"
+                )
                 if updated:
                     metadata += f" · Updated {updated}"
                 label.append(str(item.get("name") or "Untitled Prompt"), style="bold")
@@ -252,7 +267,7 @@ class ConsolePromptsBrowse(Vertical):
             else:
                 self.show_status(
                     f"{result.total_items} item{'s' if result.total_items != 1 else ''} "
-                    f"in {result.source.title()} · Prompt and Recipe types are labeled below."
+                    f"in {result.source.title()} · Prompt, Recipe and Mix-in types are labeled below."
                 )
         elif query.strip():
             self.show_status(
@@ -281,7 +296,10 @@ class ConsolePromptsBrowse(Vertical):
         button_id = event.button.id or ""
         if not button_id.startswith("console-prompts-"):
             return
-        if button_id == "console-prompts-improve":
+        if button_id == "console-prompts-mixins":
+            event.stop()
+            self.post_message(self.MixinsRequested())
+        elif button_id == "console-prompts-improve":
             event.stop()
             self.post_message(self.ImproveRequested())
         elif button_id == "console-prompts-configure-provider":

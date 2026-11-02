@@ -38,6 +38,7 @@ class ConsoleReceivedTurnClaim:
     _binding_revision: int = field(repr=False)
     _ephemeral: bool = field(repr=False)
     _sealed: bool = field(default=False, repr=False)
+    _mixin_revision: int | None = field(default=None, repr=False)
     draft_revision: int | None = None
     _draft_transfer_revision: int | None = field(default=None, repr=False)
 
@@ -70,6 +71,15 @@ def _received_turn_is_current_locked(
         _received_turn_matches_session_locked(store, claim)
         and store._preparations_by_session.get(claim.session_id) is claim
         and not claim._sealed
+        and (
+            store._sessions[
+                claim.session_id
+            ].prompt_mixin_preferences.preferences.revision
+            if store._sessions[claim.session_id].prompt_mixin_preferences.preferences
+            is not None
+            else None
+        )
+        == claim._mixin_revision
     )
 
 
@@ -133,6 +143,11 @@ class ConsoleReceivedTurnAdmissionMixin:
                 _session_incarnation=session.incarnation_id,
                 _binding_revision=session.conversation_binding_revision,
                 _ephemeral=session.ephemeral,
+                _mixin_revision=(
+                    session.prompt_mixin_preferences.preferences.revision
+                    if session.prompt_mixin_preferences.preferences is not None
+                    else None
+                ),
             )
             self._preparations_by_session[session_id] = claim
             return claim

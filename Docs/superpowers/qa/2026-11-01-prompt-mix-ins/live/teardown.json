@@ -1,0 +1,11 @@
+{
+  "app": "Ctrl+Q normal shutdown; process exited and isolated tmux server absent. Exit code not captured by detached tmux.",
+  "terminated_auxiliary_pids": [
+    67356,
+    84452
+  ],
+  "app_pid": 68263,
+  "final_process_check": "",
+  "resources": "App log confirms chat/library unmount, MCP sessions disconnected, cached provider client closed, timers stopped. OS process exit retires DB descriptors. No per-connection instrumentation added.",
+  "caveat": "Shutdown logs caught console_browser_source_changed from a retiring browser read; retained without unrelated repair."
+}

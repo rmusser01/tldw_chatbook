@@ -1,0 +1,78 @@
+...........................F......F..................................... [ 15%]
+........................................................................ [ 30%]
+........................................................................ [ 45%]
+........................................................................ [ 60%]
+........................................F............................... [ 75%]
+........................................................................ [ 90%]
+.......................F.......................                          [100%]
+=================================== FAILURES ===================================
+_ test_fork_public_record_fields_are_exact[ConsoleForkFence-expected_fields3] __
+Tests/Chat/test_console_chat_fork.py:965: in test_fork_public_record_fields_are_exact
+    assert tuple(field.name for field in fields(record_type)) == expected_fields
+E   AssertionError: assert ('source_sess...e_title', ...) == ('source_sess...e_title', ...)
+E     
+E     Left contains one more item: 'prompt_mixin_history'
+E     Use -v to get more diff
+_ test_fork_public_record_fields_are_exact[ConsoleChatForkSnapshot-expected_fields10] _
+Tests/Chat/test_console_chat_fork.py:965: in test_fork_public_record_fields_are_exact
+    assert tuple(field.name for field in fields(record_type)) == expected_fields
+E   AssertionError: assert ('fork_sessio...version', ...) == ('fork_sessio...version', ...)
+E     
+E     Left contains one more item: 'prompt_mixin_history'
+E     Use -v to get more diff
+_______ test_promotion_persists_sparse_context_policy_inside_the_bundle ________
+Tests/Chat/test_console_chat_store_atomic_promotion.py:439: in test_promotion_persists_sparse_context_policy_inside_the_bundle
+    conversation_id = store.promote_ephemeral_session(session.id)
+                      ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+tldw_chatbook/Chat/console_chat_store.py:324: in transitioned
+    return method(self, session_id, *args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+tldw_chatbook/Chat/console_chat_store.py:19275: in promote_ephemeral_session
+    return self._promote_ephemeral_session_atomically(
+tldw_chatbook/Chat/console_chat_store.py:19662: in _promote_ephemeral_session_atomically
+    self._flush_context_policy_on_first_persist(session)
+Tests/Chat/test_console_chat_store_atomic_promotion.py:434: in <lambda>
+    lambda *_args, **_kwargs: (_ for _ in ()).throw(
+Tests/Chat/test_console_chat_store_atomic_promotion.py:434: in <genexpr>
+    lambda *_args, **_kwargs: (_ for _ in ()).throw(
+E   AssertionError: postcommit context-policy write
+______ test_held_save_preserves_newer_raw_editor_draft_and_can_save_again ______
+Tests/UI/test_console_prompt_mixins.py:650: in test_held_save_preserves_newer_raw_editor_draft_and_can_save_again
+    editor.query_one("#mixin-placement", Select).value = "after"
+    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../../../Documents/GitHub/tldw_chatbook/.venv/lib/python3.12/site-packages/textual/reactive.py:374: in __set__
+    self._set(obj, value)
+../../../../Documents/GitHub/tldw_chatbook/.venv/lib/python3.12/site-packages/textual/reactive.py:355: in _set
+    self._check_watchers(obj, name, current_value)
+../../../../Documents/GitHub/tldw_chatbook/.venv/lib/python3.12/site-packages/textual/reactive.py:392: in _check_watchers
+    invoke_watcher(obj, private_watch_function, old_value, value)
+../../../../Documents/GitHub/tldw_chatbook/.venv/lib/python3.12/site-packages/textual/reactive.py:114: in invoke_watcher
+    watch_result = cast(WatchCallbackNewValueType, watch_function)(value)
+                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../../../Documents/GitHub/tldw_chatbook/.venv/lib/python3.12/site-packages/textual/widgets/_select.py:615: in _watch_value
+    select_current.update(prompt)
+../../../../Documents/GitHub/tldw_chatbook/.venv/lib/python3.12/site-packages/textual/widgets/_select.py:256: in update
+    self.query_one("#label", Static).update(
+    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../../../Documents/GitHub/tldw_chatbook/.venv/lib/python3.12/site-packages/textual/dom.py:1505: in query_one
+    raise NoMatches(f"No nodes match {query_selector!r} on {base_node!r}")
+E   textual.css.query.NoMatches: No nodes match '#label' on SelectCurrent(classes='-has-value')
+=============================== warnings summary ===============================
+Tests/Chatbooks/test_chatbook_prompt_round_trip.py::test_prompt_export_failure_is_atomic_bounded_and_private[write]
+  /Users/macbook-dev/.codex/worktrees/prompt-mix-ins/tldw_chatbook/Tests/conftest.py:706: UserWarning: open file descriptors grew by 761 over the test session (start=14, end=775, limit=200) — possible fd leak; bisect with TLDW_TEST_GC_EVERY=1 and mark offending tests @pytest.mark.requires_cleanup
+    warnings.warn(message, UserWarning, stacklevel=0)
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+============================= slowest 25 durations =============================
+6.17s call     Tests/UI/test_console_prompt_mixins.py::test_real_console_prompts_action_retains_browse_and_controls_runtime[size0]
+5.70s call     Tests/UI/test_console_prompt_mixins.py::test_real_console_prompts_action_retains_browse_and_controls_runtime[size1]
+5.46s call     Tests/UI/test_console_prompt_mixins.py::test_real_console_prompts_action_retains_browse_and_controls_runtime[size2]
+2.20s call     Tests/UI/test_console_prompt_mixins.py::test_mounted_selection_order_toggles_reopen_and_origin_fence
+
+(21 durations < 1s hidden.)
+=========================== short test summary info ============================
+FAILED Tests/Chat/test_console_chat_fork.py::test_fork_public_record_fields_are_exact[ConsoleForkFence-expected_fields3]
+FAILED Tests/Chat/test_console_chat_fork.py::test_fork_public_record_fields_are_exact[ConsoleChatForkSnapshot-expected_fields10]
+FAILED Tests/Chat/test_console_chat_store_atomic_promotion.py::test_promotion_persists_sparse_context_policy_inside_the_bundle
+FAILED Tests/UI/test_console_prompt_mixins.py::test_held_save_preserves_newer_raw_editor_draft_and_can_save_again
+4 failed, 475 passed, 1 warning in 168.16s (0:02:48)

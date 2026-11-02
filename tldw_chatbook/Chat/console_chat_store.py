@@ -32,6 +32,15 @@ from uuid import uuid4
 
 from loguru import logger
 
+from tldw_chatbook.Chat.console_prompt_mixins import (
+    MixinAttemptWrite,
+    MixinForkAttempt,
+    MixinForkState,
+    MixinPreferenceRead,
+    MixinPreferences,
+    MixinPreferenceConflictError,
+    decode_mixin_preferences,
+)
 from tldw_chatbook.Chat.console_received_intent import (
     ConsoleReceivedIntentInputMixin,
     _replace_session_draft_locked,
@@ -1310,6 +1319,7 @@ class ConsoleSettingsComponent(str, Enum):
 
     GENERATION_SETTINGS = "generation_settings"
     CONTEXT_POLICY = "context_policy"
+    PROMPT_MIXINS = "prompt_mixins"
 
 
 class ConsoleSettingsPolicyFailureLabel(str, Enum):
@@ -1330,8 +1340,16 @@ class ConsoleSettingsPersistenceFailure:
     policy_failure_label: ConsoleSettingsPolicyFailureLabel | None
     generation_snapshot: ConsoleGenerationSettingsSnapshot | None = None
     context_policy_overrides: ConsoleContextPolicyOverrides | None = None
+    mixin_preferences: MixinPreferences | None = field(default=None, repr=False)
 
     def __post_init__(self) -> None:
+        if self.component is ConsoleSettingsComponent.PROMPT_MIXINS:
+            if (self.mixin_preferences is None or self.generation_snapshot is not None
+                    or self.context_policy_overrides is not None or self.policy_failure_label is not None):
+                raise ValueError("Invalid mix-in persistence failure.")
+            return
+        if self.mixin_preferences is not None:
+            raise ValueError("Failure value does not match its component.")
         generation = self.generation_snapshot is not None
         context = self.context_policy_overrides is not None
         if generation == context:
@@ -1394,6 +1412,9 @@ class _ConsoleSettingsPersistenceLifecycle:
         default_factory=dict
     )
     context_bases: dict[str, int | None] = field(default_factory=dict)
+    mixin_bases: dict[str, int] = field(default_factory=dict)
+    mixin_values: dict[str, MixinPreferences] = field(default_factory=dict, repr=False)
+    mixin_save_task: asyncio.Task | None = None
 
 
 def _utc_now_iso() -> str:
@@ -1432,6 +1453,14 @@ class ConsoleChatSession:
         default_factory=lambda: str(uuid4()), init=False, repr=False, compare=False
     )
     settings: ConsoleSessionSettings | None = None
+    prompt_mixin_preferences: MixinPreferenceRead = field(
+        default_factory=lambda: decode_mixin_preferences(None), repr=False
+    )
+    prompt_mixin_durable_revision: int = 0
+    prompt_mixin_history: MixinForkState | None = field(default=None, repr=False)
+    prompt_mixin_attempts: dict[str, MixinAttemptWrite] = field(
+        default_factory=dict, repr=False
+    )
     generation_settings_revision: int = 0
     context_policy_revision: int = 0
     staged_context_policy_failure_label: ConsoleSettingsPolicyFailureLabel | None = None
@@ -3211,6 +3240,13 @@ class ConsoleChatStore(ConsoleReceivedTurnAdmissionMixin, ConsoleReceivedIntentI
                 self._pending_workspace_projections[session.id] = (
                     session.persisted_conversation_id
                 )
+            mixin_reader = getattr(self.persistence, "get_conversation_mixin_preferences", None)
+            if prepared_data is not None and prepared_data.mixin_preferences is not None:
+                session.prompt_mixin_preferences = prepared_data.mixin_preferences
+            elif callable(mixin_reader):
+                session.prompt_mixin_preferences = mixin_reader(str(persisted_conversation_id))
+            prefs = session.prompt_mixin_preferences.preferences
+            session.prompt_mixin_durable_revision = prefs.revision if prefs is not None else 0
             self._restore_speech_preferences(session)
             self._resolve_context_policy_on_resume(session.id)
             restored_nodes = self._hydrate_provider_continuations_from_persistence(
@@ -3222,6 +3258,32 @@ class ConsoleChatStore(ConsoleReceivedTurnAdmissionMixin, ConsoleReceivedIntentI
                 if prepared_data is not None
                 else _HYDRATION_NOT_PREPARED,
             )
+            for node in restored_nodes:
+                node.mixin_usage_count = None
+                if prepared_data is not None:
+                    node.mixin_usage_count = prepared_data.mixin_usage_counts.get(
+                        node.persisted_message_id
+                    )
+                elif node.role is ConsoleMessageRole.ASSISTANT:
+                    reader = getattr(
+                        self.persistence, "get_conversation_mixin_attempt", None
+                    )
+                    if callable(reader) and node.persisted_message_id is not None:
+                        try:
+                            replay = reader(
+                                str(persisted_conversation_id),
+                                assistant_message_id=node.persisted_message_id,
+                            )
+                            node.mixin_usage_count = (
+                                len(replay.snapshot.items)
+                                if replay.status == "recorded"
+                                and replay.snapshot is not None
+                                else 0
+                                if replay.status == "legacy"
+                                else None
+                            )
+                        except Exception:  # noqa: BLE001 - unreadable records stay unqualified.
+                            node.mixin_usage_count = None
             self._ingest_full_tree(
                 session.id,
                 restored_nodes,
@@ -7101,6 +7163,8 @@ class ConsoleChatStore(ConsoleReceivedTurnAdmissionMixin, ConsoleReceivedIntentI
                 stale_components=frozenset(ConsoleSettingsComponent),
             )
         components: set[ConsoleSettingsComponent] = set()
+        if session.prompt_mixin_preferences.preferences is not None and session.prompt_mixin_preferences.preferences.revision:
+            components.add(ConsoleSettingsComponent.PROMPT_MIXINS)
         lifecycle = self._settings_persistence_lifecycles.setdefault(
             session_id,
             _ConsoleSettingsPersistenceLifecycle(),
@@ -7495,6 +7559,62 @@ class ConsoleChatStore(ConsoleReceivedTurnAdmissionMixin, ConsoleReceivedIntentI
         )
         return active_leaf_id
 
+    def _fork_mixin_history(self, session_id, prefix):
+        session = self._sessions[session_id]
+        nodes = self._nodes_by_session[session_id]
+        if session.persisted_conversation_id is not None:
+            reader = getattr(
+                self.persistence, "get_conversation_mixin_fork_state", None
+            )
+            if callable(reader):
+                return reader(
+                    session.persisted_conversation_id,
+                    message_ids={
+                        nodes[key].persisted_message_id: key
+                        for key in prefix
+                        if nodes[key].persisted_message_id is not None
+                    },
+                )
+            if not getattr(self.persistence, "console_process_local_only", False):
+                raise ValueError("Console fork mix-in history is unavailable.")
+        inherited = session.prompt_mixin_history or MixinForkState()
+        attempts = {row.attempt_id: row for row in inherited.attempts}
+        attempts.update(
+            {
+                row.attempt_id: MixinForkAttempt(
+                    row.attempt_id,
+                    row.user_message_id,
+                    row.assistant_message_id,
+                    row.retry_of_attempt_id,
+                    row.snapshot,
+                )
+                for row in session.prompt_mixin_attempts.values()
+            }
+        )
+        markers = []
+        for key in prefix:
+            message = nodes[key]
+            if message.role is not ConsoleMessageRole.ASSISTANT:
+                continue
+            metadata = message.metadata
+            marker = (
+                json.dumps(
+                    {
+                        "mixin_attempt_id": metadata.mixin_attempt_id,
+                        "mixin_snapshot_schema_version": metadata.mixin_snapshot_schema_version,
+                    },
+                    sort_keys=True,
+                )
+                if metadata is not None and metadata.mixin_attempt_id is not None
+                else dict(inherited.markers).get(key, "{}")
+                if message.mixin_replay_status == "unavailable"
+                else "{}"
+            )
+            markers.append((key, marker))
+        return MixinForkState(tuple(attempts.values()), tuple(markers)).remap(
+            {key: key for key in prefix}
+        )
+
     def _fork_lineage(
         self, session_id: str, prefix: Sequence[str], *, durable: bool
     ) -> tuple[ConsoleForkLineageFence, ...]:
@@ -7726,6 +7846,7 @@ class ConsoleChatStore(ConsoleReceivedTurnAdmissionMixin, ConsoleReceivedIntentI
             lineage=lineage,
             image_selections=selections,
             trace_boundary=trace_boundary,
+            prompt_mixin_history=self._fork_mixin_history(session.id, prefix),
         )
 
     def validate_fork_fence(
@@ -7797,6 +7918,10 @@ class ConsoleChatStore(ConsoleReceivedTurnAdmissionMixin, ConsoleReceivedIntentI
                     validate_destination=durability != "temporary",
                 )
                 != fence.source_configuration_fingerprint
+            ):
+                return False
+            if fence.prompt_mixin_history != self._fork_mixin_history(
+                session.id, prefix
             ):
                 return False
             current_lineage = self._fork_lineage(session.id, prefix, durable=durable)
@@ -7955,6 +8080,11 @@ class ConsoleChatStore(ConsoleReceivedTurnAdmissionMixin, ConsoleReceivedIntentI
             configuration=configuration,
             citation_links=citation_links,
             trace_boundary=fence.trace_boundary,
+            prompt_mixin_history=(
+                fence.prompt_mixin_history.remap(native_ids)
+                if fence.prompt_mixin_history is not None
+                else None
+            ),
         )
         candidate_matches_fence = console_fork_candidate_matches_fence(
             candidate.messages,
@@ -8384,6 +8514,32 @@ class ConsoleChatStore(ConsoleReceivedTurnAdmissionMixin, ConsoleReceivedIntentI
             expected_parent = projected.native_message_id
             expected_persisted_parent = projected.persisted_message_id
 
+        history = snapshot.prompt_mixin_history
+        if history is not None:
+            if type(history) is not MixinForkState:
+                raise ValueError("Console fork mix-in history is invalid.")
+            owned_ids = {row.id for row in built_messages}
+            if any(key not in owned_ids for key, _ in history.markers) or any(
+                anchor is not None and anchor not in owned_ids
+                for row in history.attempts
+                for anchor in (row.user_message_id, row.assistant_message_id)
+            ):
+                raise ValueError("Console fork mix-in ownership is invalid.")
+            for message in built_messages:
+                if message.role is not ConsoleMessageRole.ASSISTANT:
+                    continue
+                replay = history.replay(message.id)
+                message.mixin_replay_status = replay.status
+                message.mixin_usage_count = (
+                    len(replay.snapshot.items)
+                    if replay.snapshot is not None
+                    else 0
+                    if replay.status == "legacy"
+                    else None
+                )
+                raw = dict(history.markers).get(message.id)
+                message.metadata = MessageMetadata.from_json(raw) if raw else None
+
         configuration = snapshot.configuration
         holder = SessionScopeHolder()
         holder.set(configuration.rag_scope)
@@ -8422,6 +8578,7 @@ class ConsoleChatStore(ConsoleReceivedTurnAdmissionMixin, ConsoleReceivedIntentI
             project_instruction_state=configuration.project_instruction_state,
             thinking_history_policy=configuration.thinking_history_policy,
             ephemeral=not snapshot.durable,
+            prompt_mixin_history=history,
             fork_projection=True,
             fork_trace_boundary=(
                 snapshot.trace_boundary if not snapshot.durable else None
@@ -8537,6 +8694,9 @@ class ConsoleChatStore(ConsoleReceivedTurnAdmissionMixin, ConsoleReceivedIntentI
                 session.settings_persistence_failures.clear()
                 session.generation_durable_snapshot = None
                 session.context_policy_durable_revision = None
+                session.prompt_mixin_preferences = decode_mixin_preferences(None)
+                session.prompt_mixin_durable_revision = 0
+                session.prompt_mixin_attempts.clear()
                 lifecycle = self._settings_persistence_lifecycles.get(session_id)
                 if lifecycle is not None:
                     lifecycle.component_revisions.clear()
@@ -8808,6 +8968,149 @@ class ConsoleChatStore(ConsoleReceivedTurnAdmissionMixin, ConsoleReceivedIntentI
         )
         return session, True
 
+    def publish_prompt_mixin_attempt(
+        self, session_id: str, batch: MixinAttemptWrite
+    ) -> None:
+        """Publish a confirmed attempt without repeating its durable transaction."""
+        with self._generation_owner_scope(batch.assistant_message_id):
+            session = self._sessions[session_id]
+            message = self._message_or_raise(batch.assistant_message_id)
+            if self.session_id_for_message(message.id) != session_id:
+                raise ValueError("mixin_attempt_owner_changed")
+            if session.ephemeral or session.persisted_conversation_id is None:
+                session.prompt_mixin_attempts[batch.attempt_id] = batch
+            elif message.persisted_message_id is None:
+                message.persisted_message_id = message.id
+                message.parent_message_id = self.durable_parent_for_message(message.id)
+                message.provider_continuation_message_version = 1
+                self._pending_persistence_message_ids.discard(message.id)
+            message.mixin_usage_count = len(batch.snapshot.items)
+            message.mixin_replay_status = "recorded"
+            message.metadata = replace(
+                message.metadata or MessageMetadata(),
+                mixin_attempt_id=batch.attempt_id,
+                mixin_snapshot_schema_version=1,
+            )
+
+    def replace_prompt_mixin_preferences(
+        self,
+        session_id: str,
+        *,
+        expected_revision: int,
+        value: MixinPreferences,
+        _origin=None,
+    ) -> MixinPreferences:
+        """Apply one owner-thread selection CAS and keep its current save status."""
+        with self._preparation_lock:
+            session = self._session_or_raise(session_id)
+            current = session.prompt_mixin_preferences.preferences
+            if _origin is not None and (
+                _origin[0]() is not session
+                or _origin[1] != session.incarnation_id
+                or _origin[2] != session.conversation_binding_revision
+            ):
+                raise MixinPreferenceConflictError("mixin_session_changed")
+            if (
+                type(value) is not MixinPreferences
+                or type(expected_revision) is not int
+                or current is None
+                or current.revision != expected_revision
+            ):
+                raise MixinPreferenceConflictError("mixin_preference_conflict")
+            updated = replace(value, revision=current.revision + 1)
+            session.prompt_mixin_preferences = MixinPreferenceRead(
+                "supported", updated, None
+            )
+            session.settings_persistence_failures.pop(
+                ConsoleSettingsComponent.PROMPT_MIXINS, None
+            )
+            session.has_user_work = True
+        return updated
+
+    def schedule_prompt_mixin_preferences_save(
+        self, session_id: str, *, owner=None, lease=None
+    ) -> None:
+        """Retain an exact-origin save in the existing settings lifecycle."""
+        session = self._session_or_raise(session_id)
+        if session.ephemeral or session.persisted_conversation_id is None:
+            if lease is not None:
+                lease.release()
+            return
+        if owner is None:
+            preferences = session.prompt_mixin_preferences.preferences
+            if preferences is not None:
+                session.settings_persistence_failures[
+                    ConsoleSettingsComponent.PROMPT_MIXINS
+                ] = ConsoleSettingsPersistenceFailure(
+                    ConsoleSettingsComponent.PROMPT_MIXINS,
+                    preferences.revision,
+                    session.persisted_conversation_id,
+                    session.conversation_binding_revision,
+                    None,
+                    mixin_preferences=preferences,
+                )
+            return
+        lifecycle = self._settings_persistence_lifecycles.setdefault(
+            session_id, _ConsoleSettingsPersistenceLifecycle()
+        )
+        if lifecycle.mixin_save_task is not None and not lifecycle.mixin_save_task.done():
+            if lease is not None:
+                lease.release()
+            return
+        lease = lease or owner.try_acquire()
+        if lease is None:
+            return
+        task = owner.launch(
+            lease,
+            self.persist_prompt_mixin_preferences(
+                session_id,
+                _session=session,
+                _origin=(
+                    session.incarnation_id,
+                    session.persisted_conversation_id,
+                    session.conversation_binding_revision,
+                ),
+            ),
+            name=f"console-mixin-preferences-{session_id}",
+        )
+        lifecycle.mixin_save_task = task
+        lifecycle.tasks.add(task)
+        task.add_done_callback(lifecycle.tasks.discard)
+
+    async def persist_prompt_mixin_preferences(
+        self, session_id: str, *, _session=None, _origin=None
+    ) -> ConsoleSettingsPersistenceOutcome:
+        """Join the existing bounded per-session settings drain."""
+        session = self._sessions.get(session_id)
+        if (
+            session is None
+            or (_session is not None and session is not _session)
+            or (
+                _origin is not None
+                and _origin
+                != (
+                    session.incarnation_id,
+                    session.persisted_conversation_id,
+                    session.conversation_binding_revision,
+                )
+            )
+        ):
+            return ConsoleSettingsPersistenceOutcome(
+                session_id=session_id,
+                stale_components=frozenset({ConsoleSettingsComponent.PROMPT_MIXINS}),
+            )
+        return await self._join_console_settings_persistence_drain(
+            session_id=session_id,
+            persisted_conversation_id=session.persisted_conversation_id,
+            conversation_binding_revision=session.conversation_binding_revision,
+            generation_revision=session.generation_settings_revision,
+            context_policy_revision=session.context_policy_revision,
+            generation_snapshot=None,
+            context_policy_overrides=None,
+            policy_failure_label=ConsoleSettingsPolicyFailureLabel.CONTEXT_SETTINGS,
+            components=frozenset({ConsoleSettingsComponent.PROMPT_MIXINS}),
+        )
+
     async def persist_console_settings_commit_serialized(
         self,
         commit: ConsoleSettingsLiveCommit,
@@ -8835,7 +9138,7 @@ class ConsoleChatStore(ConsoleReceivedTurnAdmissionMixin, ConsoleReceivedIntentI
             generation_snapshot=snapshot_from_session_settings(commit.settings),
             context_policy_overrides=commit.context_policy_overrides,
             policy_failure_label=policy_failure_label,
-            components=frozenset(ConsoleSettingsComponent),
+            components=frozenset({ConsoleSettingsComponent.GENERATION_SETTINGS, ConsoleSettingsComponent.CONTEXT_POLICY}),
         )
 
     @staticmethod
@@ -8853,6 +9156,7 @@ class ConsoleChatStore(ConsoleReceivedTurnAdmissionMixin, ConsoleReceivedIntentI
         session_id: str,
         component: ConsoleSettingsComponent,
         revision: int,
+        _expected_failure: ConsoleSettingsPersistenceFailure | None = None,
     ) -> bool:
         """Retry one still-current failed component without advancing revisions."""
         if not isinstance(component, ConsoleSettingsComponent):
@@ -8863,6 +9167,16 @@ class ConsoleChatStore(ConsoleReceivedTurnAdmissionMixin, ConsoleReceivedIntentI
             if session is not None
             else None
         )
+        if component is ConsoleSettingsComponent.PROMPT_MIXINS:
+            if _expected_failure is not None and failure is not _expected_failure:
+                return False
+            preferences = session.prompt_mixin_preferences.preferences if session is not None else None
+            if (failure is None or preferences is None or preferences.revision != revision
+                    or failure.revision != revision or session.persisted_conversation_id != failure.persisted_conversation_id
+                    or session.conversation_binding_revision != failure.conversation_binding_revision):
+                return False
+            outcome = await self.persist_prompt_mixin_preferences(session_id)
+            return component in outcome.written_components
         current_revision = (
             session.generation_settings_revision
             if session is not None
@@ -9087,6 +9401,7 @@ class ConsoleChatStore(ConsoleReceivedTurnAdmissionMixin, ConsoleReceivedIntentI
         )
         persisted_revisions = dict(lifecycle.component_revisions)
         failed_revisions: dict[ConsoleSettingsComponent, int] = {}
+        mixin_failed_value = None
 
         while True:
             current = self._sessions.get(session_id)
@@ -9300,6 +9615,64 @@ class ConsoleChatStore(ConsoleReceivedTurnAdmissionMixin, ConsoleReceivedIntentI
                     else:
                         stale.add(context)
 
+            mixins = ConsoleSettingsComponent.PROMPT_MIXINS
+            current = self._sessions.get(session_id)
+            if (
+                mixins in requested
+                and mixins not in excluded
+                and self._console_settings_drain_identity_matches(session_id, current, drain)
+            ):
+                prefs = current.prompt_mixin_preferences.preferences
+                if prefs is None:
+                    excluded.add(mixins)
+                    stale.add(mixins)
+                elif lifecycle.mixin_values.get(conversation_id) == prefs:
+                    written.add(mixins)
+                elif mixin_failed_value == prefs and failed_revisions.get(mixins) == prefs.revision:
+                    failed.add(mixins)
+                else:
+                    revision = prefs.revision
+                    base = lifecycle.mixin_bases.get(
+                        conversation_id, current.prompt_mixin_durable_revision
+                    )
+                    try:
+                        result = await asyncio.to_thread(
+                            self.persistence.save_conversation_mixin_preferences,
+                            conversation_id=conversation_id,
+                            expected_revision=base,
+                            value=prefs,
+                        )
+                        if type(result) is not MixinPreferences:
+                            raise ValueError("mixin_preference_save_failed")
+                    except Exception:  # noqa: BLE001 - failed persistence retains exact retry state.
+                        result = None
+                    current = self._sessions.get(session_id)
+                    same = self._console_settings_drain_identity_matches(session_id, current, drain)
+                    if result is not None:
+                        lifecycle.mixin_bases[conversation_id] = result.revision
+                        lifecycle.mixin_values[conversation_id] = prefs
+                        persisted_revisions[mixins] = revision
+                        if same and current.prompt_mixin_preferences.preferences == prefs:
+                            current.prompt_mixin_durable_revision = result.revision
+                            lifecycle.component_revisions[mixins] = revision
+                            current.settings_persistence_failures.pop(mixins, None)
+                            written.add(mixins)
+                            failed.discard(mixins)
+                    elif same and current.prompt_mixin_preferences.preferences == prefs:
+                        current.settings_persistence_failures[mixins] = (
+                            ConsoleSettingsPersistenceFailure(
+                                mixins,
+                                revision,
+                                conversation_id,
+                                current.conversation_binding_revision,
+                                None,
+                                mixin_preferences=prefs,
+                            )
+                        )
+                        failed_revisions[mixins] = revision
+                        mixin_failed_value = prefs
+                        failed.add(mixins)
+                        written.discard(mixins)
             current = self._sessions.get(session_id)
             if not self._console_settings_drain_identity_matches(
                 session_id,
@@ -9314,9 +9687,16 @@ class ConsoleChatStore(ConsoleReceivedTurnAdmissionMixin, ConsoleReceivedIntentI
                 revision = (
                     current.generation_settings_revision
                     if component is ConsoleSettingsComponent.GENERATION_SETTINGS
+                    else current.prompt_mixin_preferences.preferences.revision
+                    if component is ConsoleSettingsComponent.PROMPT_MIXINS
                     else current.context_policy_revision
                 )
-                if (
+                if component is ConsoleSettingsComponent.PROMPT_MIXINS:
+                    prefs = current.prompt_mixin_preferences.preferences
+                    if lifecycle.mixin_values.get(conversation_id) != prefs and mixin_failed_value != prefs:
+                        converged = False
+                        break
+                elif (
                     persisted_revisions.get(component) != revision
                     and failed_revisions.get(component) != revision
                 ):
@@ -17316,7 +17696,10 @@ class ConsoleChatStore(ConsoleReceivedTurnAdmissionMixin, ConsoleReceivedIntentI
         message = self._message_or_raise(message_id)
         if message.role is not ConsoleMessageRole.ASSISTANT:
             raise ValueError("Only assistant messages can be retried.")
-        if message.status != "failed":
+        if (
+            message.status != "failed"
+            and message.assistant_generation_state != "failed"
+        ):
             raise ValueError(
                 f"Only failed messages can be retried, not {message.status}."
             )
@@ -17434,6 +17817,8 @@ class ConsoleChatStore(ConsoleReceivedTurnAdmissionMixin, ConsoleReceivedIntentI
                 message.provider_continuation_actions_enabled
             ),
             assistant_generation_state=message.assistant_generation_state,
+            mixin_usage_count=message.mixin_usage_count,
+            mixin_replay_status=message.mixin_replay_status,
         )
 
     def _generation_owner_candidate(
@@ -17929,6 +18314,8 @@ class ConsoleChatStore(ConsoleReceivedTurnAdmissionMixin, ConsoleReceivedIntentI
         message.thinking_actions_enabled = variant.thinking_actions_enabled
         message.usage = variant.usage
         message.metadata = variant.metadata
+        message.mixin_usage_count = variant.mixin_usage_count
+        message.mixin_replay_status = variant.mixin_replay_status
         message.provider_continuation = variant.provider_continuation
         message.provider_continuation_warning = variant.provider_continuation_warning
         message.provider_continuation_remote = variant.provider_continuation_remote
@@ -19003,6 +19390,29 @@ class ConsoleChatStore(ConsoleReceivedTurnAdmissionMixin, ConsoleReceivedIntentI
         excluded_transient_message_id: str | None = None,
     ) -> str:
         """Stage the promotable transcript and publish after commit only."""
+        from .console_prompt_mixin_service import (
+            MixinAttemptContribution,
+            MixinHistoryContribution,
+        )
+
+        contributions = (
+            *contributions,
+            *(
+                (MixinHistoryContribution(session.prompt_mixin_history),)
+                if session.prompt_mixin_history is not None
+                else ()
+            ),
+            *(
+                MixinAttemptContribution(batch)
+                for batch in session.prompt_mixin_attempts.values()
+            ),
+        )
+        mixin_preferences = session.prompt_mixin_preferences.preferences
+        if mixin_preferences is None:
+            raise MixinPreferenceConflictError("mixin_preferences_unavailable")
+        if mixin_preferences.revision or mixin_preferences.entries:
+            from .console_prompt_mixin_service import MixinPreferenceContribution
+            contributions = (*contributions, MixinPreferenceContribution(mixin_preferences))
         if self.persistence is None:
             raise RuntimeError("Console persistence is unavailable.")
         session_id = session.id
@@ -19105,14 +19515,39 @@ class ConsoleChatStore(ConsoleReceivedTurnAdmissionMixin, ConsoleReceivedIntentI
                     raise ValueError("Console video metadata shape is invalid.")
                 create_kwargs["metadata_json"] = message.video_metadata.to_json()
             elif fork_metadata_json is not None:
-                if message.metadata is not None and not message.metadata.is_empty:
+                if (
+                    message.metadata is not None
+                    and not replace(
+                        message.metadata,
+                        mixin_attempt_id=None,
+                        mixin_snapshot_schema_version=None,
+                    ).is_empty
+                ):
                     raise ValueError("Console message metadata shape is invalid.")
                 create_kwargs["metadata_json"] = fork_metadata_json
             elif message.metadata is not None and not message.metadata.is_empty:
                 remapped_metadata = message.metadata.remap_canvas_origins(
                     staged_message_ids
                 )
-                create_kwargs["metadata_json"] = remapped_metadata.to_json()
+                # Promotion writes retained attempts in order. Their contribution
+                # publishes the newest marker only after every predecessor exists.
+                persisted_metadata = remapped_metadata
+                if (
+                    remapped_metadata.mixin_snapshot_schema_version == 1
+                    and (
+                        batch := session.prompt_mixin_attempts.get(
+                            remapped_metadata.mixin_attempt_id
+                        )
+                    )
+                    is not None
+                    and batch.assistant_message_id == message.id
+                ):
+                    persisted_metadata = replace(
+                        remapped_metadata,
+                        mixin_attempt_id=None,
+                        mixin_snapshot_schema_version=None,
+                    )
+                create_kwargs["metadata_json"] = persisted_metadata.to_json()
                 remapped_message_metadata[message.id] = remapped_metadata
             prepared_messages.append(
                 {"native_id": message.id, "create_kwargs": create_kwargs}
@@ -19240,6 +19675,7 @@ class ConsoleChatStore(ConsoleReceivedTurnAdmissionMixin, ConsoleReceivedIntentI
                 raise RuntimeError("Temporary chat identity changed during save.")
             session.ephemeral = False
             self.publish_committed_identity(session_id, identity)
+            session.prompt_mixin_durable_revision = mixin_preferences.revision
             if staged_generation_snapshot is not None:
                 session.generation_durable_snapshot = staged_generation_snapshot
             session.library_policy_holder.snapshot = committed_policy

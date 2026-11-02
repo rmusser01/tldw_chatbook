@@ -131,3 +131,26 @@ class TestPromptChatbookSchemas:
         assert request.async_mode is False
         assert request.import_media is False
         assert request.import_embeddings is False
+
+
+def test_all_server_prompt_schemas_preserve_mixin_identity():
+    definition = {
+        "kind": "text_mixin",
+        "schema_version": 3,
+        "body": "\n{style}\n",
+        "placement": "after",
+    }
+    fields = {
+        "name": "Literal",
+        "artifact_type": "mixin",
+        "prompt_format": "structured",
+        "prompt_schema_version": 3,
+        "prompt_definition": definition,
+    }
+    for schema in (PromptCreateRequest, PromptPreviewRequest, PromptResponse):
+        assert schema(**fields).prompt_definition == definition
+    assert (
+        PromptBriefResponse(name="Literal", artifact_type="mixin").artifact_type
+        == "mixin"
+    )
+    assert PromptVersionResponse(version=1, **fields).prompt_definition == definition

@@ -51,6 +51,7 @@ from textual.widgets import (
     Markdown,
     OptionList,
     SelectionList,
+    Select,
     Static,
     Switch,
     TextArea,
@@ -1539,7 +1540,7 @@ class LibraryScreen(BaseAppScreen):
         WorkbenchPaneTarget("library-canvas", ("library-prompts-filter",)),
         WorkbenchPaneTarget(
             "library-prompt-work-pane",
-            ("library-prompt-name", "library-prompt-detail-retry"),
+            ("library-prompt-name", "mixin-name", "library-prompt-detail-retry"),
         ),
     )
     _SKILLS_WORKBENCH_FOCUS_TARGETS = (
@@ -10455,6 +10456,7 @@ class LibraryScreen(BaseAppScreen):
             scope = {
                 "query": prompt_scope.query,
                 "collection_id": prompt_scope.collection_id,
+                **({"artifact_type": prompt_scope.artifact_type} if prompt_scope.artifact_type is not None else {}),
                 "sort_by": prompt_scope.sort_by,
                 "sort_order": prompt_scope.sort_order,
                 "page": prompt_scope.page,
@@ -10552,18 +10554,13 @@ class LibraryScreen(BaseAppScreen):
                     "page": normalized.page,
                 }
             elif row_id == LIBRARY_ROW_BROWSE_PROMPTS:
-                if set(raw_scope) != {
-                    "query",
-                    "collection_id",
-                    "sort_by",
-                    "sort_order",
-                    "page",
-                }:
+                if set(raw_scope) not in ({"query", "collection_id", "sort_by", "sort_order", "page"}, {"query", "collection_id", "sort_by", "sort_order", "page", "artifact_type"}):
                     return None
                 normalized_prompt = PromptBrowseScope(**raw_scope)
                 scope = {
                     "query": normalized_prompt.query,
                     "collection_id": normalized_prompt.collection_id,
+                    **({"artifact_type": normalized_prompt.artifact_type} if normalized_prompt.artifact_type is not None else {}),
                     "sort_by": normalized_prompt.sort_by,
                     "sort_order": normalized_prompt.sort_order,
                     "page": normalized_prompt.page,
@@ -25724,13 +25721,13 @@ class LibraryScreen(BaseAppScreen):
 
     @on(Button.Pressed, "#library-prompts-empty-clear-filter")
     def handle_library_prompts_empty_clear_filter(self, event: Button.Pressed) -> None:
-        """Clear only the Prompt query and return to page one."""
+        """Clear the Prompt query/type filters and return to page one."""
         event.stop()
         if self._prompts_state.mutation_in_flight:
             return
         scope = self._library_prompt_browse_controller.scope
         self._request_library_prompts_browse(
-            dataclasses.replace(scope, query="", page=1),
+            dataclasses.replace(scope, query="", artifact_type=None, page=1),
             focus_identity="library-prompts-empty-clear-filter",
         )
 
@@ -28282,6 +28279,25 @@ class LibraryScreen(BaseAppScreen):
     def _enter_library_prompt_create_editor(self) -> None:
         return self._prompts_controller._enter_library_prompt_create_editor()
 
+    async def on_prompt_mixin_editor_save_requested(self, event) -> None:
+        event.stop()
+        self.run_worker(self._prompts_controller._await_library_prompt_save_call(self._prompts_controller._save_library_prompt()), exclusive=True, group="library_prompt_save")
+
+    async def on_prompt_mixin_editor_cancel_requested(self, event) -> None:
+        event.stop()
+        self._prompts_controller.handle_library_prompt_discard(event)
+
+    def on_prompt_mixin_editor_changed(self, event) -> None:
+        self._prompts_controller.handle_mixin_changed(event)
+
+    @on(Button.Pressed, "#library-prompts-new-mixin")
+    async def handle_new_mixin(self, event) -> None:
+        await self._prompts_controller.handle_new_mixin(event)
+
+    @on(Select.Changed, "#library-prompts-type-filter")
+    def handle_prompt_type_filter(self, event) -> None:
+        self._prompts_controller.handle_type_filter(event)
+
     def _reset_library_prompt_editor_state(self) -> None:
         """Clear all in-canvas Library prompt editor/save state.
 
@@ -28300,6 +28316,8 @@ class LibraryScreen(BaseAppScreen):
         self._prompts_state.status = ""
         self._prompts_state.conflict_snapshot = None
         self._prompts_state.block_state = None
+        self._prompts_state.mixin_draft = None
+        self._prompts_state.mixin_source_identity = None
         self._prompts_state.detached_structured = False
         self._prompts_state.include_starter_content = False
         self._clear_library_prompt_delete_pending()
@@ -28612,6 +28630,9 @@ class LibraryScreen(BaseAppScreen):
         if self._prompts_state.view != "editor":
             return
         editor_state = self._current_library_prompt_editor_state()
+        if editor_state.artifact_type == "mixin":
+            self._prompts_controller.enable_mixin_in_console()
+            return
         block_state = editor_state.block_editor_state
         if (
             editor_state.definition_state not in {"legacy", "supported_v2"}

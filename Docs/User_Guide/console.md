@@ -1703,3 +1703,10 @@ partly committed initial build. Results say partial until the build is complete;
 stale file content is still withheld. Included-folder choices compare without
 case distinctions, consistently during scan and search. **Check status** preserves
 unsaved processing choices; **Enable** or **Apply choices** saves them.
+## Prompt mix-ins
+
+Open the composer **Menu → Prompts**, then **Mix-ins**. Add saved Library mix-ins, toggle their checkboxes, and use Move up/down within each Before/After group. Tab moves focus; Space toggles a checkbox and Enter activates a button. Preview next send shows the exact literal instructions around the current draft. A mix-in cannot send an empty draft or grant tools, file access, rendering, or image-generation permission. SVG/HTML instructions remain text unless an existing authorized renderer/tool is explicitly used.
+
+Library edits affect future sends. Queued/running sends keep their captured bodies; **Retry with original mix-ins** repeats the original attempt even after edits or toggling off. **Regenerate**, edit-and-resend and explicit Continue use current choices. If an original snapshot is unavailable, exact Retry is refused; regenerate explicitly with current choices. Turning off prevents explicit future injection; previous assistant replies remain normal context.
+
+Reopening a saved chat restores its selected references, flags and order. New/copy/fork chats start with none selected, although inherited original receipts remain inspectable. Exact operational bodies are stored with the conversation even with diagnostic exchange capture off and follow conversation backup/deletion lifetimes. See [Library mix-ins](library/prompts.md#literal-mix-ins) for creation and portability.

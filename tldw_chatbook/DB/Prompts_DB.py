@@ -138,7 +138,7 @@ class PromptNameConflictError(ConflictError):
 
 # --- Database Class ---
 class PromptsDatabase:
-    _CURRENT_SCHEMA_VERSION = 5
+    _CURRENT_SCHEMA_VERSION = 6
     _PROMPT_HISTORY_INDEX_NAME = "idx_sync_log_prompt_history"
     _PROMPT_HISTORY_INDEX_COLUMNS = (
         ("entity", False),
@@ -812,6 +812,11 @@ class PromptsDatabase:
             "function": "_apply_migration_v4_to_v5",
             "description": "Add local Console Prompt Draft Shelf",
         },
+        5: {
+            "to_version": 6,
+            "function": "_apply_migration_v5_to_v6",
+            "description": "Add literal mix-in artifact type",
+        },
     }
 
     def _apply_schema_v1(self, conn: sqlite3.Connection):
@@ -1090,6 +1095,38 @@ class PromptsDatabase:
             )
             raise DatabaseError(f"Migration v4->v5 failed: {e}") from e
 
+    def _apply_migration_v5_to_v6(self, conn: sqlite3.Connection):
+        """Rebuild the artifact constraint in a single checked transaction."""
+        sql = (
+            Path(__file__).parent / "migrations" / "prompts_literal_mixins.sql"
+        ).read_text(encoding="utf-8")
+        if conn.in_transaction:
+            raise SchemaError("Mix-in migration requires its own transaction.")
+        foreign_keys = conn.execute("PRAGMA foreign_keys").fetchone()[0]
+        conn.execute("PRAGMA foreign_keys = OFF")
+        try:
+            with self.transaction():
+                objects = conn.execute(
+                    "SELECT sql FROM sqlite_master WHERE tbl_name = 'Prompts' "
+                    "AND type IN ('index', 'trigger') AND sql IS NOT NULL ORDER BY type, name"
+                ).fetchall()
+                statement = ""
+                for line in sql.splitlines(keepends=True):
+                    statement += line
+                    if sqlite3.complete_statement(statement):
+                        conn.execute(statement)
+                        statement = ""
+                if statement.strip():
+                    raise SchemaError("Incomplete mix-in migration statement.")
+                for row in objects:
+                    conn.execute(row[0])
+                if conn.execute("PRAGMA foreign_key_check").fetchone() is not None:
+                    raise SchemaError(
+                        "Foreign key check failed after mix-in migration."
+                    )
+        finally:
+            conn.execute(f"PRAGMA foreign_keys = {int(foreign_keys)}")
+
     def _initialize_schema(self):
         conn = self.get_connection()
         try:
@@ -1196,8 +1233,9 @@ class PromptsDatabase:
         if not isinstance(artifact_type, str) or artifact_type not in {
             "prompt",
             "recipe",
+            "mixin",
         }:
-            raise InputError("artifact_type must be either 'prompt' or 'recipe'.")
+            raise InputError("artifact_type must be 'prompt', 'recipe', or 'mixin'.")
         return artifact_type
 
     @staticmethod
@@ -2766,6 +2804,46 @@ class PromptsDatabase:
         ):
             raise DatabaseError("Failed to read Prompt export snapshot.") from None
 
+    def fetch_mixin_snapshot(
+        self, record_uuids: tuple[str, ...]
+    ) -> tuple[dict[str, Any], ...]:
+        """Read exact active mix-ins and versions under one SQLite snapshot."""
+        from ..Prompt_Management.prompt_artifact_codec import decode_prompt_artifact
+
+        if not isinstance(record_uuids, tuple) or any(
+            not isinstance(value, str) or not value for value in record_uuids
+        ):
+            raise ValueError("Mix-in UUIDs must be a tuple of non-empty strings.")
+        if len(set(record_uuids)) != len(record_uuids):
+            raise ValueError("Mix-in UUIDs must be unique.")
+        rows_by_uuid: dict[str, dict[str, Any]] = {}
+        with self.transaction() as conn:
+            batch_size = min(900, conn.getlimit(sqlite3.SQLITE_LIMIT_VARIABLE_NUMBER))
+            if batch_size < 1:
+                raise ValueError("SQLite cannot bind mix-in UUIDs.")
+            for start in range(0, len(record_uuids), batch_size):
+                batch = record_uuids[start : start + batch_size]
+                placeholders = ", ".join("?" for _ in batch)
+                rows = conn.execute(
+                    f"SELECT uuid, version, name, artifact_type, prompt_format, prompt_schema_version, "
+                    f"prompt_definition, system_prompt, user_prompt FROM Prompts "
+                    f"WHERE deleted = 0 AND uuid IN ({placeholders})",
+                    batch,
+                ).fetchall()
+                for row in rows:
+                    record = dict(row)
+                    decoded = decode_prompt_artifact(record)
+                    if (
+                        decoded.state != "supported_v3"
+                        or decoded.artifact_type != "mixin"
+                    ):
+                        raise ValueError("Requested mix-in is unsupported.")
+                    record["prompt_definition"] = dict(decoded.raw_definition)
+                    rows_by_uuid[record["uuid"]] = record
+            if len(rows_by_uuid) != len(record_uuids):
+                raise ValueError("Requested mix-in is missing or deleted.")
+            return tuple(rows_by_uuid[value] for value in record_uuids)
+
     def get_prompt_by_id(
         self, prompt_id: int, include_deleted: bool = False
     ) -> Optional[Dict]:
@@ -2890,7 +2968,11 @@ class PromptsDatabase:
             raise DatabaseError(f"Failed fetch prompt by name: {e}") from e
 
     def list_prompts(
-        self, page: int = 1, per_page: int = 10, include_deleted: bool = False
+        self,
+        page: int = 1,
+        per_page: int = 10,
+        include_deleted: bool = False,
+        artifact_type: str | None = None,
     ) -> Tuple[List[Dict], int, int, int]:
         start_time = time.time()
 
@@ -2901,13 +2983,15 @@ class PromptsDatabase:
         offset = (page - 1) * per_page
 
         include_deleted_flag = 1 if include_deleted else 0
+        if artifact_type is not None:
+            self._normalize_artifact_type(artifact_type)
 
         try:
             with self.transaction() as conn:
                 cursor = conn.cursor()
                 cursor.execute(
-                    "SELECT COUNT(*) FROM Prompts WHERE ? = 1 OR deleted = 0",
-                    (include_deleted_flag,),
+                    "SELECT COUNT(*) FROM Prompts WHERE (? = 1 OR deleted = 0) AND (? IS NULL OR artifact_type = ?)",
+                    (include_deleted_flag, artifact_type, artifact_type),
                 )
                 total_items = cursor.fetchone()[0]
 
@@ -2925,10 +3009,19 @@ class PromptsDatabase:
                                 CASE WHEN length(trim(coalesce(user_prompt, ''))) > 0 THEN 1 ELSE 0 END
                                     AS has_user_prompt
                                 FROM Prompts
-                                WHERE ? = 1 OR deleted = 0
+                                WHERE (? = 1 OR deleted = 0) AND (? IS NULL OR artifact_type = ?)
                                 ORDER BY last_modified DESC, id DESC
                                 LIMIT ? OFFSET ?"""
-                    cursor.execute(query, (include_deleted_flag, per_page, offset))
+                    cursor.execute(
+                        query,
+                        (
+                            include_deleted_flag,
+                            artifact_type,
+                            artifact_type,
+                            per_page,
+                            offset,
+                        ),
+                    )
                     results_data = [dict(row) for row in cursor.fetchall()]
 
             total_pages = ceil(total_items / per_page) if total_items > 0 else 0
@@ -2988,6 +3081,7 @@ class PromptsDatabase:
         sort_order: str = "desc",
         page: int = 1,
         page_size: int = 50,
+        artifact_type: str | None = None,
     ) -> tuple[list[dict], int, int, int]:
         """Browse one exact, stable page of active local Prompts and Recipes.
 
@@ -3039,6 +3133,10 @@ class PromptsDatabase:
         join_sql = ""
         conditions = ["p.deleted = 0"]
         params: list[Any] = []
+        if artifact_type is not None:
+            self._normalize_artifact_type(artifact_type)
+            conditions.append("p.artifact_type = ?")
+            params.append(artifact_type)
         if collection_id is not None:
             join_sql = (
                 "JOIN LocalPromptCollectionItems AS pci ON pci.prompt_id = p.id "
@@ -3470,6 +3568,7 @@ class PromptsDatabase:
         results_per_page: int = 20,
         include_deleted: bool = False,
         fts_match_query: Optional[str] = None,
+        artifact_type: str | None = None,
     ) -> Tuple[List[Dict[str, Any]], int]:
         """Searches prompts using FTS.
 
@@ -3526,6 +3625,10 @@ class PromptsDatabase:
         conditions = []
         params = []
 
+        if artifact_type is not None:
+            self._normalize_artifact_type(artifact_type)
+            conditions.append("p.artifact_type = ?")
+            params.append(artifact_type)
         if not include_deleted:
             conditions.append("p.deleted = 0")
 

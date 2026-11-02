@@ -15,6 +15,8 @@ from typing import Any, Literal, Mapping, Sequence
 
 from loguru import logger
 
+from .console_prompt_mixins import MixinAttemptSnapshot
+
 from tldw_chatbook.Chat.console_chat_models import (
     ConsoleProviderSelection,
     ConsoleStagedSource,
@@ -346,6 +348,7 @@ class ConsoleTurnConfigurationSnapshot:
         default=None,
         repr=False,
     )
+    prompt_mixins: MixinAttemptSnapshot = field(default_factory=MixinAttemptSnapshot, repr=False)
     prompt_transform_inputs: Mapping[str, Any] = field(
         default_factory=lambda: MappingProxyType({}),
         repr=False,
@@ -394,6 +397,8 @@ class ConsoleTurnConfigurationSnapshot:
             self.mcp_tool_maximum is not None or self.mcp_definition_maximum
         ):
             raise ValueError("composition mode requires an unresolved MCP maximum")
+        if type(self.prompt_mixins) is not MixinAttemptSnapshot:
+            raise TypeError("prompt_mixins must be MixinAttemptSnapshot")
         object.__setattr__(self, "session_id", str(self.session_id))
         object.__setattr__(
             self,
@@ -493,6 +498,7 @@ class ConsoleTurnConfigurationSnapshot:
         library_scope_maximum: ConsoleLibraryItemScopeSnapshot | None = None,
         project_authority: ConsoleProjectAuthoritySnapshot | None = None,
         character_authority: ConsoleCharacterAuthoritySnapshot | None = None,
+        prompt_mixins: MixinAttemptSnapshot | None = None,
         prompt_transform_inputs: Mapping[str, Any] | None = None,
         skill_context_maximum: Mapping[str, Any] | None = None,
         mcp_tool_maximum: Sequence[object] | None = None,
@@ -519,6 +525,7 @@ class ConsoleTurnConfigurationSnapshot:
             library_scope_maximum=library_scope_maximum,
             project_authority=project_authority,
             character_authority=character_authority,
+            prompt_mixins=prompt_mixins if prompt_mixins is not None else MixinAttemptSnapshot(),
             prompt_transform_inputs=prompt_transform_inputs or {},
             skill_context_maximum=skill_context_maximum or {},
             mcp_tool_maximum=(
@@ -585,6 +592,7 @@ def _detached_configuration(
         library_scope_maximum=configuration.library_scope_maximum,
         project_authority=configuration.project_authority,
         character_authority=configuration.character_authority,
+        prompt_mixins=configuration.prompt_mixins,
         prompt_transform_inputs=configuration.prompt_transform_inputs,
         skill_context_maximum=configuration.skill_context_maximum,
         mcp_tool_maximum=configuration.mcp_tool_maximum,
@@ -749,6 +757,11 @@ class ConsoleTurnExecutionContext:
     def character_authority(self) -> ConsoleCharacterAuthoritySnapshot | None:
         """Return the character/emote identity maximum frozen at handoff."""
         return self.configuration.character_authority
+
+    @property
+    def prompt_mixins(self) -> MixinAttemptSnapshot:
+        """Return exact instructions frozen during this attempt's admission."""
+        return self.configuration.prompt_mixins
 
     @property
     def prompt_transform_inputs(self) -> Mapping[str, object]:

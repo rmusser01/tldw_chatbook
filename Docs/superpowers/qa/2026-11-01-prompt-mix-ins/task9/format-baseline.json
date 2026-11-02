@@ -1,0 +1,22 @@
+{
+  "tldw_chatbook/Chat/console_chat_models.py": {
+    "base": {
+      "returncode": 0,
+      "output": ""
+    },
+    "current": {
+      "returncode": 0,
+      "output": ""
+    }
+  },
+  "tldw_chatbook/Chat/console_chat_store.py": {
+    "base": {
+      "returncode": 1,
+      "output": ""
+    },
+    "current": {
+      "returncode": 1,
+      "output": ""
+    }
+  }
+}

@@ -1,0 +1,105 @@
+{
+  "base": "b69e9114626e21292104240cc70e912485a90c54",
+  "files": {
+    "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/verify_evidence.py": {
+      "base_count": 1,
+      "current_count": 1,
+      "introduced": []
+    },
+    "Tests/Chat/test_console_chat_fork.py": {
+      "base_count": 12,
+      "current_count": 12,
+      "introduced": []
+    },
+    "Tests/Chat/test_console_prompt_mixin_journey.py": {
+      "base_count": 0,
+      "current_count": 0,
+      "introduced": []
+    },
+    "Tests/Chat/test_console_prompt_mixin_retry.py": {
+      "base_count": 0,
+      "current_count": 0,
+      "introduced": []
+    },
+    "Tests/Chatbooks/test_chatbook_prompt_round_trip.py": {
+      "base_count": 1,
+      "current_count": 1,
+      "introduced": []
+    },
+    "Tests/DB/test_console_prompt_mixins.py": {
+      "base_count": 0,
+      "current_count": 0,
+      "introduced": []
+    },
+    "Tests/UI/test_console_prompt_mixins.py": {
+      "base_count": 0,
+      "current_count": 0,
+      "introduced": []
+    },
+    "tldw_chatbook/Chat/chat_persistence_service.py": {
+      "base_count": 65,
+      "current_count": 65,
+      "introduced": []
+    },
+    "tldw_chatbook/Chat/console_chat_controller.py": {
+      "base_count": 180,
+      "current_count": 180,
+      "introduced": []
+    },
+    "tldw_chatbook/Chat/console_chat_fork.py": {
+      "base_count": 2,
+      "current_count": 2,
+      "introduced": []
+    },
+    "tldw_chatbook/Chat/console_chat_models.py": {
+      "base_count": 28,
+      "current_count": 28,
+      "introduced": []
+    },
+    "tldw_chatbook/Chat/console_chat_store.py": {
+      "base_count": 114,
+      "current_count": 114,
+      "introduced": []
+    },
+    "tldw_chatbook/Chat/console_message_actions.py": {
+      "base_count": 6,
+      "current_count": 6,
+      "introduced": []
+    },
+    "tldw_chatbook/Chat/console_prompt_mixin_service.py": {
+      "base_count": 0,
+      "current_count": 0,
+      "introduced": []
+    },
+    "tldw_chatbook/Chat/console_prompt_mixins.py": {
+      "base_count": 0,
+      "current_count": 0,
+      "introduced": []
+    },
+    "tldw_chatbook/Chat/console_transaction_contribution.py": {
+      "base_count": 3,
+      "current_count": 3,
+      "introduced": []
+    },
+    "tldw_chatbook/Chat/console_turn_resend.py": {
+      "base_count": 1,
+      "current_count": 1,
+      "introduced": []
+    },
+    "tldw_chatbook/DB/console_prompt_mixins.py": {
+      "base_count": 0,
+      "current_count": 0,
+      "introduced": []
+    },
+    "tldw_chatbook/Widgets/Console/console_prompts_modal.py": {
+      "base_count": 14,
+      "current_count": 14,
+      "introduced": []
+    },
+    "Tests/Chat/test_console_prompt_mixin_forks.py": {
+      "base_count": 0,
+      "current_count": 0,
+      "introduced": []
+    }
+  }
+}

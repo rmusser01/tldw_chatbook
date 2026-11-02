@@ -3,11 +3,14 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import inspect
 import sqlite3
 from collections.abc import Mapping, Sequence
 from enum import Enum
 from typing import TYPE_CHECKING, Any, Optional
+from uuid import uuid4
+from weakref import WeakKeyDictionary
 
 from ..DB.Prompts_DB import ConflictError, PromptsDatabase
 from ..Library.library_content_evidence import LibraryContentEvidence
@@ -20,16 +23,16 @@ from ..Utils.input_validation import validate_prompt_draft_shelf_content
 
 if TYPE_CHECKING:
     from ..tldw_api import PromptCreateRequest, TLDWAPIClient
+from . import (
+    PROMPT_DRAFT_SHELF_CAPACITY,
+    PROMPT_DRAFT_SHELF_MAX_PAGE_SIZE,
+)
 from .prompt_artifact_codec import deserialize_definition
 from .prompt_batch_models import (
     PromptBatchDeleteResult,
     PromptBatchRestoreResult,
     PromptBatchTarget,
     validate_prompt_batch_targets,
-)
-from . import (
-    PROMPT_DRAFT_SHELF_CAPACITY,
-    PROMPT_DRAFT_SHELF_MAX_PAGE_SIZE,
 )
 from .prompt_normalizers import (
     normalize_prompt_collection_list,
@@ -47,6 +50,7 @@ from .prompt_source_capabilities import (
     PromptSourceCapabilities,
     local_prompt_capabilities,
     normalize_server_prompt_capabilities,
+    prepare_local_mixin_payload,
     validate_console_artifact_payload,
     validate_prompt_request_size,
 )
@@ -288,6 +292,8 @@ class ServerPromptService:
     async def update_prompt(
         self, prompt_identifier: str | int, payload: dict[str, Any]
     ) -> Any:
+        if payload.get("expected_version") is not None:
+            raise PromptCapabilityError("server", "conditional update")
         return await self._require_client().update_prompt(
             prompt_identifier,
             _prompt_create_request_from_payload(payload),
@@ -769,12 +775,14 @@ class LocalPromptService:
         page: int = 1,
         per_page: int = 10,
         include_deleted: bool = False,
+        artifact_type: str | None = None,
         **_kwargs: Any,
     ) -> Any:
         return self.prompt_db.list_prompts(
             page=page,
             per_page=per_page,
             include_deleted=include_deleted,
+            **({"artifact_type": artifact_type} if artifact_type is not None else {}),
         )
 
     def browse_prompts(
@@ -786,6 +794,7 @@ class LocalPromptService:
         sort_order: str = "desc",
         page: int = 1,
         page_size: int = 50,
+        artifact_type: str | None = None,
     ) -> Any:
         """Delegate one exact browse page to the local database.
 
@@ -807,9 +816,10 @@ class LocalPromptService:
             sort_order=sort_order,
             page=page,
             page_size=page_size,
+            **({"artifact_type": artifact_type} if artifact_type is not None else {}),
         )
 
-    def count_prompts(self, *, include_deleted: bool = False, **_kwargs: Any) -> int:
+    def count_prompts(self, *, include_deleted: bool = False, artifact_type: str | None = None, **_kwargs: Any) -> int:
         """Count local prompts without fetching a full page.
 
         Mirrors ``list_prompts`` above: fetches a single row
@@ -830,9 +840,15 @@ class LocalPromptService:
                 page=1,
                 per_page=1,
                 include_deleted=include_deleted,
+                **({"artifact_type": artifact_type} if artifact_type is not None else {}),
             )
         )
         return total_items
+
+    def read_mixin_records(
+        self, record_uuids: tuple[str, ...]
+    ) -> tuple[dict[str, Any], ...]:
+        return self.prompt_db.fetch_mixin_snapshot(record_uuids)
 
     def get_prompt(
         self, prompt_identifier: str | int, *, include_deleted: bool = False
@@ -852,6 +868,7 @@ class LocalPromptService:
         limit: int = 10,
         include_deleted: bool = False,
         fts_match_query: Optional[str] = None,
+        artifact_type: str | None = None,
         **_kwargs: Any,
     ) -> Any:
         """Search local prompts via the prompts FTS index.
@@ -888,10 +905,12 @@ class LocalPromptService:
             results_per_page=max(1, int(limit)),
             include_deleted=include_deleted,
             **fts_kwargs,
+            **({"artifact_type": artifact_type} if artifact_type is not None else {}),
         )
         return results
 
     def create_prompt(self, payload: dict[str, Any]) -> Any:
+        payload = prepare_local_mixin_payload(payload)
         prompt_id, prompt_uuid, _message = self.prompt_db.add_prompt(
             name=payload.get("name"),
             author=payload.get("author"),
@@ -914,6 +933,7 @@ class LocalPromptService:
         existing = self.get_prompt(prompt_identifier, include_deleted=True)
         if not existing:
             raise ValueError(f"Prompt '{prompt_identifier}' not found.")
+        payload = prepare_local_mixin_payload(payload, existing=existing)
 
         if hasattr(self.prompt_db, "update_prompt_by_id"):
             expected_version = payload.get("expected_version")
@@ -1489,6 +1509,7 @@ class PromptScopeService:
         self.server_service = server_service
         self.policy_enforcer = policy_enforcer
         self._server_capabilities_cache: PromptSourceCapabilities | None = None
+        self._mixin_memory_authorities: WeakKeyDictionary = WeakKeyDictionary()
 
     def _normalize_mode(self, mode: PromptBackend | str | None) -> PromptBackend:
         if mode is None:
@@ -1647,8 +1668,11 @@ class PromptScopeService:
         include_deleted: bool = False,
         sort_by: str = "last_modified",
         sort_order: str = "desc",
+        artifact_type: str | None = None,
     ) -> dict[str, Any]:
         normalized_mode = self._normalize_mode(mode)
+        if artifact_type is not None and normalized_mode != PromptBackend.LOCAL:
+            raise PromptCapabilityError(normalized_mode.value, "artifact type filtering")
         self._enforce_policy(self._action_id(normalized_mode, "list"))
         service = self._service_for_mode(normalized_mode)
         response = await self._maybe_await(
@@ -1658,6 +1682,7 @@ class PromptScopeService:
                 include_deleted=include_deleted,
                 sort_by=sort_by,
                 sort_order=sort_order,
+                **({"artifact_type": artifact_type} if artifact_type is not None else {}),
             )
         )
         return self._normalize_prompt_list(
@@ -1672,6 +1697,7 @@ class PromptScopeService:
         collection_id: int | None = None,
         sort_by: str = "last_modified",
         sort_order: str = "desc",
+        artifact_type: str | None = None,
         page: int = 1,
         page_size: int = 50,
     ) -> dict[str, Any]:
@@ -1732,6 +1758,7 @@ class PromptScopeService:
                 collection_id=collection_id,
                 sort_by=sort_by,
                 sort_order=sort_order,
+                **({"artifact_type": artifact_type} if artifact_type is not None else {}),
                 page=page,
                 page_size=page_size,
             )
@@ -1743,7 +1770,7 @@ class PromptScopeService:
             per_page=page_size,
         )
 
-    async def count_prompts(self, *, mode: PromptBackend | str = "local") -> int:
+    async def count_prompts(self, *, mode: PromptBackend | str = "local", artifact_type: str | None = None) -> int:
         """Count prompts in the given backend without fetching a full page.
 
         Mirrors ``NotesScopeService.count_notes``: reuses the existing
@@ -1773,7 +1800,7 @@ class PromptScopeService:
         service = self._service_for_mode(normalized_mode)
 
         def count_local_prompts() -> Any:
-            result = service.count_prompts()
+            result = service.count_prompts(**({"artifact_type": artifact_type} if artifact_type is not None else {}))
             return asyncio.run(result) if inspect.isawaitable(result) else result
 
         from tldw_chatbook.Backup_Recovery.participants import run_finite_local_worker
@@ -1844,9 +1871,12 @@ class PromptScopeService:
         limit: int = 10,
         include_deleted: bool = False,
         fts_match_query: Optional[str] = None,
+        artifact_type: str | None = None,
     ) -> list[dict[str, Any]]:
         """Search one source, using paginated server listing for an empty query."""
         normalized_mode = self._normalize_mode(mode)
+        if artifact_type is not None and normalized_mode != PromptBackend.LOCAL:
+            raise PromptCapabilityError(normalized_mode.value, "artifact type filtering")
         if normalized_mode == PromptBackend.SERVER and not query.strip():
             page = await self.list_prompts(
                 mode=normalized_mode,
@@ -1887,12 +1917,64 @@ class PromptScopeService:
                 limit=limit,
                 include_deleted=include_deleted,
                 **local_kwargs,
+                **({"artifact_type": artifact_type} if artifact_type is not None else {}),
             )
         )
         return [
             self._normalize_prompt_record(item, backend=normalized_mode.value)
             for item in response or ()
         ]
+
+    def mixin_source_identity(
+        self, *, mode: PromptBackend | str
+    ) -> tuple[str, object, object]:
+        """Return a credential-free authority and exact source replacement fences.
+
+        File authorities survive reopen; memory authorities have process lifetime.
+        No credential-bearing server endpoint participates in this identity.
+        """
+        normalized = self._normalize_mode(mode)
+        if normalized != PromptBackend.LOCAL:
+            raise PromptCapabilityError(normalized.value, "mix-in snapshot reads")
+        service = self._service_for_mode(normalized)
+        database = service.prompt_db
+        if database.is_memory_db:
+            key = self._mixin_memory_authorities.get(database)
+            if key is None:
+                key = f"local-memory:{uuid4()}"
+                self._mixin_memory_authorities[database] = key
+        else:
+            key = (
+                "local:" + hashlib.sha256(str(database.db_path).encode("utf-8")).hexdigest()
+            )
+        return key, service, database
+
+    async def read_mixin_records(
+        self, *, mode: PromptBackend | str, record_uuids: tuple[str, ...], _native_runner=None
+    ) -> tuple[dict[str, Any], ...]:
+        """Read exact active mix-ins only through a revision-qualified source."""
+        normalized_mode = self._normalize_mode(mode)
+        self._enforce_policy(self._action_id(normalized_mode, "detail"))
+        if normalized_mode != PromptBackend.LOCAL:
+            # Current client APIs do not advertise coherent UUID/revision reads.
+            raise PromptCapabilityError(
+                normalized_mode.value, "revision-qualified mix-in snapshot reads"
+            )
+        capabilities = await self.get_capabilities(mode=normalized_mode)
+        if (
+            not capabilities.mixin_snapshot_reads
+            or "mixin" not in capabilities.artifact_types
+            or (3, "text_mixin") not in capabilities.structured_kinds
+        ):
+            raise PromptCapabilityError(normalized_mode.value, "mix-in snapshot reads")
+        service = self._service_for_mode(normalized_mode)
+        from functools import partial
+
+        from tldw_chatbook.Backup_Recovery.participants import run_finite_local_worker
+        callback = partial(run_finite_local_worker, service.read_mixin_records, record_uuids)
+        if _native_runner is not None:
+            return await _native_runner(callback)
+        return await asyncio.to_thread(callback)
 
     async def get_prompt(
         self,
@@ -1930,6 +2012,12 @@ class PromptScopeService:
         action = "update" if prompt_identifier not in (None, "") else "create"
         self._enforce_policy(self._action_id(normalized_mode, action))
         service = self._service_for_mode(normalized_mode)
+        if (
+            action == "update"
+            and normalized_mode == PromptBackend.SERVER
+            and expected_version is not None
+        ):
+            raise PromptCapabilityError(normalized_mode.value, "conditional update")
         payload = _payload_from_fields(
             name=name,
             author=author,
@@ -1942,6 +2030,27 @@ class PromptScopeService:
             prompt_definition=prompt_definition,
             artifact_type=artifact_type,
         )
+        if (
+            action == "update"
+            and normalized_mode == PromptBackend.LOCAL
+            and payload.get("artifact_type") == "mixin"
+            and "prompt_definition" not in payload
+        ):
+            current = await self._maybe_await(
+                service.get_prompt(prompt_identifier, include_deleted=True)
+            )
+            if (
+                not isinstance(current, Mapping)
+                or current.get("artifact_type") != "mixin"
+            ):
+                raise ValueError("The requested mix-in is unavailable.")
+            for field in (
+                "prompt_format",
+                "prompt_schema_version",
+                "prompt_definition",
+            ):
+                payload.setdefault(field, current.get(field))
+            payload["expected_version"] = expected_version if expected_version is not None else current["version"]
         raw_definition = deserialize_definition(payload.get("prompt_definition"))
         definition_kind = (
             raw_definition.get("kind") if raw_definition is not None else None
@@ -1950,7 +2059,9 @@ class PromptScopeService:
             raw_definition.get("schema_version") if raw_definition is not None else None
         )
         is_console_v2_candidate = (
-            (
+            payload.get("artifact_type") == "mixin"
+            or definition_kind == "text_mixin"
+            or (
                 type(payload.get("prompt_schema_version")) is int
                 and payload.get("prompt_schema_version") == 2
             )

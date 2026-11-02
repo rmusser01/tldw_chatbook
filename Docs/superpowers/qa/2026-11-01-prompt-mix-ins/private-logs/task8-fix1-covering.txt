@@ -1,0 +1,473 @@
+..............F..F.                                                      [100%]
+=================================== FAILURES ===================================
+___ test_held_completion_cannot_publish_into_new_workbench_mode[False-save] ____
+
+fut = <coroutine object Event.wait at 0x1225c5e00>, timeout = 5
+
+    async def wait_for(fut, timeout):
+        """Wait for the single Future or coroutine to complete, with timeout.
+    
+        Coroutine will be wrapped in Task.
+    
+        Returns result of the Future or coroutine.  When a timeout occurs,
+        it cancels the task and raises TimeoutError.  To avoid the task
+        cancellation, wrap it in shield().
+    
+        If the wait is cancelled, the task is also cancelled.
+    
+        If the task suppresses the cancellation and returns a value instead,
+        that value is returned.
+    
+        This function is a coroutine.
+        """
+        # The special case for timeout <= 0 is for the following case:
+        #
+        # async def test_waitfor():
+        #     func_started = False
+        #
+        #     async def func():
+        #         nonlocal func_started
+        #         func_started = True
+        #
+        #     try:
+        #         await asyncio.wait_for(func(), 0)
+        #     except asyncio.TimeoutError:
+        #         assert not func_started
+        #     else:
+        #         assert False
+        #
+        # asyncio.run(test_waitfor())
+    
+    
+        if timeout is not None and timeout <= 0:
+            fut = ensure_future(fut)
+    
+            if fut.done():
+                return fut.result()
+    
+            await _cancel_and_wait(fut)
+            try:
+                return fut.result()
+            except exceptions.CancelledError as exc:
+                raise TimeoutError from exc
+    
+        async with timeouts.timeout(timeout):
+>           return await fut
+                   ^^^^^^^^^
+
+../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/tasks.py:520: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = <asyncio.locks.Event object at 0x121f318e0 [unset]>
+
+    async def wait(self):
+        """Block until the internal flag is true.
+    
+        If the internal flag is true on entry, return True
+        immediately.  Otherwise, block until another coroutine calls
+        set() to set the flag to true, then return True.
+        """
+        if self._value:
+            return True
+    
+        fut = self._get_loop().create_future()
+        self._waiters.append(fut)
+        try:
+>           await fut
+E           asyncio.exceptions.CancelledError
+
+../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/locks.py:212: CancelledError
+
+The above exception was the direct cause of the following exception:
+
+runtime = (<tldw_chatbook.DB.Prompts_DB.PromptsDatabase object at 0x121def5c0>, <tldw_chatbook.Prompt_Management.prompt_scope_se...ct at 0x121cf6e40>), <tldw_chatbook.Chat.console_prompt_mixin_service.ConsolePromptMixinService object at 0x121cf7c50>)
+operation = 'save', failed = False
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize('operation', ['inspect', 'save', 'preview'])
+    @pytest.mark.parametrize('failed', [False, True])
+    async def test_held_completion_cannot_publish_into_new_workbench_mode(runtime, operation, failed):
+        import asyncio
+        from textual.widgets import TextArea
+        from tldw_chatbook.Widgets.Console.console_prompt_mixins_view import ConsolePromptMixinsView
+        from tldw_chatbook.Widgets.Console.console_prompts_browse import ConsolePromptsBrowse
+        from tldw_chatbook.Widgets.Prompts.prompt_mixin_editor import PromptMixinEditor
+    
+        _, scope, _, _, _, _ = runtime
+        await seed(scope)
+        app = WorkbenchHarness(runtime)
+        async with app.run_test(size=(100, 30)) as pilot:
+            app.pilot = pilot
+            await ready(app)
+            await add(app, 'Style')
+            if operation == 'save':
+                app.modal.query_one('#console-mixin-inspect-0', Button).press()
+                await _wait_for_condition(pilot, lambda: bool(app.modal.query(PromptMixinEditor)), message='Editor did not mount')
+                app.modal.query_one('#mixin-body', TextArea).load_text('Explicitly saved edit')
+            entered, release = asyncio.Event(), asyncio.Event()
+            original = getattr(app.flow, operation)
+            async def held(*args, **kwargs):
+                result = await original(*args, **kwargs)
+                entered.set()
+                await asyncio.wait_for(release.wait(), 5)
+                if failed:
+                    raise ValueError('injected delayed completion failure')
+                return result
+            setattr(app.flow, operation, held)
+            view = app.modal.query_one(ConsolePromptMixinsView)
+            pending = (app.modal._save_mixin_editor() if operation == 'save' else
+                app.modal._preview_mixins() if operation == 'preview' else
+                app.modal._apply_mixin_intent(view.intent('inspect', view.projection.preferences.entries[0].source)))
+            worker = app.modal.run_worker(pending, group='console-mixins')
+            try:
+>               await asyncio.wait_for(entered.wait(), 5)
+
+Tests/UI/test_console_prompt_mixins.py:705: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/tasks.py:519: in wait_for
+    async with timeouts.timeout(timeout):
+               ^^^^^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = <Timeout [expired]>
+exc_type = <class 'asyncio.exceptions.CancelledError'>
+exc_val = CancelledError(), exc_tb = <traceback object at 0x12373e640>
+
+    async def __aexit__(
+        self,
+        exc_type: Optional[Type[BaseException]],
+        exc_val: Optional[BaseException],
+        exc_tb: Optional[TracebackType],
+    ) -> Optional[bool]:
+        assert self._state in (_State.ENTERED, _State.EXPIRING)
+    
+        if self._timeout_handler is not None:
+            self._timeout_handler.cancel()
+            self._timeout_handler = None
+    
+        if self._state is _State.EXPIRING:
+            self._state = _State.EXPIRED
+    
+            if self._task.uncancel() <= self._cancelling and exc_type is exceptions.CancelledError:
+                # Since there are no new cancel requests, we're
+                # handling this.
+>               raise TimeoutError from exc_val
+E               TimeoutError
+
+../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/timeouts.py:115: TimeoutError
+---------------------------- Captured stderr setup -----------------------------
+2026-11-01 17:47:36.515 | INFO     | tldw_chatbook.DB.Prompts_DB:__init__:405 - Initializing PromptsDatabase object for path: /private/tmp/task8-fix1-covering/test_held_completion_cannot_pu1/prompts.db [Client ID: workbench-test]
+2026-11-01 17:47:36.566 | DEBUG    | tldw_chatbook.DB.Prompts_DB:_get_thread_connection:557 - Opened/Reopened SQLite connection to /private/tmp/task8-fix1-covering/test_held_completion_cannot_pu1/prompts.db [Client: workbench-test, Thread: MainThread]
+2026-11-01 17:47:36.567 | INFO     | tldw_chatbook.DB.Prompts_DB:_initialize_schema:1135 - Checking DB schema. Current: 0, Code supports: 6
+2026-11-01 17:47:36.567 | INFO     | tldw_chatbook.DB.Prompts_DB:_initialize_schema:1170 - Applying migration: Initial prompts schema (v0 -> v1)
+2026-11-01 17:47:36.567 | INFO     | tldw_chatbook.DB.Prompts_DB:_apply_schema_v1:823 - Applying initial schema (Version 1) to DB: /private/tmp/task8-fix1-covering/test_held_completion_cannot_pu1/prompts.db...
+2026-11-01 17:47:36.567 | DEBUG    | tldw_chatbook.DB.Prompts_DB:transaction:744 - Started transaction.
+2026-11-01 17:47:36.567 | DEBUG    | tldw_chatbook.DB.Prompts_DB:_apply_schema_v1:834 - [Schema V1] Applying Core Schema + Version Update...
+2026-11-01 17:47:36.569 | DEBUG    | tldw_chatbook.DB.Prompts_DB:_apply_schema_v1:836 - [Schema V1] Core Schema script (incl. version update) executed.
+2026-11-01 17:47:36.569 | DEBUG    | tldw_chatbook.DB.Prompts_DB:_apply_schema_v1:860 - [Schema V1] Prompts table structure validated.
+2026-11-01 17:47:36.569 | DEBUG    | tldw_chatbook.DB.Prompts_DB:transaction:748 - Committed transaction.
+2026-11-01 17:47:36.569 | INFO     | tldw_chatbook.DB.Prompts_DB:_apply_schema_v1:869 - [Schema V1] Core Schema V1 applied and committed for DB: /private/tmp/task8-fix1-covering/test_held_completion_cannot_pu1/prompts.db.
+2026-11-01 17:47:36.569 | DEBUG    | tldw_chatbook.DB.Prompts_DB:_apply_schema_v1:873 - [Schema V1] Applying FTS Tables...
+2026-11-01 17:47:36.570 | INFO     | tldw_chatbook.DB.Prompts_DB:_apply_schema_v1:876 - [Schema V1] FTS Tables created successfully.
+2026-11-01 17:47:36.570 | INFO     | tldw_chatbook.DB.Prompts_DB:_initialize_schema:1170 - Applying migration: Add structured prompt metadata columns (v1 -> v2)
+2026-11-01 17:47:36.570 | INFO     | tldw_chatbook.DB.Prompts_DB:_apply_migration_v1_to_v2:887 - Applying prompts migration from version 1 to 2 for DB: /private/tmp/task8-fix1-covering/test_held_completion_cannot_pu1/prompts.db...
+2026-11-01 17:47:36.570 | DEBUG    | tldw_chatbook.DB.Prompts_DB:transaction:744 - Started transaction.
+2026-11-01 17:47:36.571 | DEBUG    | tldw_chatbook.DB.Prompts_DB:transaction:748 - Committed transaction.
+2026-11-01 17:47:36.571 | INFO     | tldw_chatbook.DB.Prompts_DB:_apply_migration_v1_to_v2:923 - Prompts migration to version 2 applied successfully for DB: /private/tmp/task8-fix1-covering/test_held_completion_cannot_pu1/prompts.db.
+2026-11-01 17:47:36.571 | INFO     | tldw_chatbook.DB.Prompts_DB:_initialize_schema:1170 - Applying migration: Add prompt artifact type (v2 -> v3)
+2026-11-01 17:47:36.571 | INFO     | tldw_chatbook.DB.Prompts_DB:_apply_migration_v2_to_v3:934 - Applying prompts migration from version 2 to 3 for DB: /private/tmp/task8-fix1-covering/test_held_completion_cannot_pu1/prompts.db...
+2026-11-01 17:47:36.572 | DEBUG    | tldw_chatbook.DB.Prompts_DB:transaction:744 - Started transaction.
+2026-11-01 17:47:36.572 | DEBUG    | tldw_chatbook.DB.Prompts_DB:transaction:748 - Committed transaction.
+2026-11-01 17:47:36.572 | INFO     | tldw_chatbook.DB.Prompts_DB:_initialize_schema:1170 - Applying migration: Add retained Prompt history index (v3 -> v4)
+2026-11-01 17:47:36.572 | INFO     | tldw_chatbook.DB.Prompts_DB:_apply_migration_v3_to_v4:969 - Applying prompts migration from version 3 to 4 for DB: /private/tmp/task8-fix1-covering/test_held_completion_cannot_pu1/prompts.db...
+2026-11-01 17:47:36.573 | DEBUG    | tldw_chatbook.DB.Prompts_DB:transaction:744 - Started transaction.
+2026-11-01 17:47:36.573 | DEBUG    | tldw_chatbook.DB.Prompts_DB:transaction:748 - Committed transaction.
+2026-11-01 17:47:36.573 | INFO     | tldw_chatbook.DB.Prompts_DB:_initialize_schema:1170 - Applying migration: Add local Console Prompt Draft Shelf (v4 -> v5)
+2026-11-01 17:47:36.573 | INFO     | tldw_chatbook.DB.Prompts_DB:_apply_migration_v4_to_v5:1033 - Applying prompts migration from version 4 to 5.
+2026-11-01 17:47:36.574 | DEBUG    | tldw_chatbook.DB.Prompts_DB:transaction:744 - Started transaction.
+2026-11-01 17:47:36.574 | DEBUG    | tldw_chatbook.DB.Prompts_DB:transaction:748 - Committed transaction.
+2026-11-01 17:47:36.574 | INFO     | tldw_chatbook.DB.Prompts_DB:_initialize_schema:1170 - Applying migration: Add literal mix-in artifact type (v5 -> v6)
+2026-11-01 17:47:36.575 | DEBUG    | tldw_chatbook.DB.Prompts_DB:transaction:744 - Started transaction.
+2026-11-01 17:47:36.576 | DEBUG    | tldw_chatbook.DB.Prompts_DB:transaction:748 - Committed transaction.
+2026-11-01 17:47:36.576 | DEBUG    | tldw_chatbook.DB.Prompts_DB:_initialize_schema:1184 - Verified FTS tables exist after migrations.
+2026-11-01 17:47:36.576 | INFO     | tldw_chatbook.DB.Prompts_DB:_initialize_schema:1190 - Database schema initialized/migrated to version 6.
+2026-11-01 17:47:36.576 | DEBUG    | tldw_chatbook.DB.Prompts_DB:__init__:457 - PromptsDatabase initialization completed successfully for /private/tmp/task8-fix1-covering/test_held_completion_cannot_pu1/prompts.db
+----------------------------- Captured stderr call -----------------------------
+2026-11-01 17:47:36.580 | DEBUG    | tldw_chatbook.DB.Prompts_DB:transaction:744 - Started transaction.
+2026-11-01 17:47:36.580 | DEBUG    | tldw_chatbook.DB.Prompts_DB:transaction:748 - Committed transaction.
+2026-11-01 17:47:36.580 | DEBUG    | tldw_chatbook.DB.Prompts_DB:execute_query:663 - Executing Query: SELECT * FROM Prompts WHERE uuid = ?... Params: (031e2c6b-6a19-4e34-828c-d3598fb28519)
+2026-11-01 17:47:36.580 | DEBUG    | tldw_chatbook.DB.Prompts_DB:execute_query:663 - Executing Query: SELECT k.keyword FROM PromptKeywordsTable k
+                                             JOIN PromptKeywordLinks pkl ON k.id = pkl.keyword_id
+                   WHERE pkl.prompt_id = ? ORDER BY k.keyw... Params: (1)
+2026-11-01 17:47:36.581 | DEBUG    | tldw_chatbook.DB.Prompts_DB:transaction:744 - Started transaction.
+2026-11-01 17:47:36.581 | DEBUG    | tldw_chatbook.DB.Prompts_DB:transaction:748 - Committed transaction.
+2026-11-01 17:47:36.581 | DEBUG    | tldw_chatbook.DB.Prompts_DB:execute_query:663 - Executing Query: SELECT * FROM Prompts WHERE uuid = ?... Params: (31dba6de-d7dd-43f6-ba1b-fadf9ef6b311)
+2026-11-01 17:47:36.581 | DEBUG    | tldw_chatbook.DB.Prompts_DB:execute_query:663 - Executing Query: SELECT k.keyword FROM PromptKeywordsTable k
+                                             JOIN PromptKeywordLinks pkl ON k.id = pkl.keyword_id
+                   WHERE pkl.prompt_id = ? ORDER BY k.keyw... Params: (2)
+2026-11-01 17:47:36.582 | DEBUG    | tldw_chatbook.DB.Prompts_DB:transaction:744 - Started transaction.
+2026-11-01 17:47:36.582 | DEBUG    | tldw_chatbook.DB.Prompts_DB:transaction:748 - Committed transaction.
+2026-11-01 17:47:36.582 | DEBUG    | tldw_chatbook.DB.Prompts_DB:execute_query:663 - Executing Query: SELECT * FROM Prompts WHERE uuid = ?... Params: (5a38501f-1cb0-4ee6-8706-abcc16f7f024)
+2026-11-01 17:47:36.582 | DEBUG    | tldw_chatbook.DB.Prompts_DB:execute_query:663 - Executing Query: SELECT k.keyword FROM PromptKeywordsTable k
+                                             JOIN PromptKeywordLinks pkl ON k.id = pkl.keyword_id
+                   WHERE pkl.prompt_id = ? ORDER BY k.keyw... Params: (3)
+2026-11-01 17:47:36.633 | DEBUG    | tldw_chatbook.DB.Prompts_DB:transaction:744 - Started transaction.
+2026-11-01 17:47:36.633 | DEBUG    | tldw_chatbook.DB.Prompts_DB:transaction:748 - Committed transaction.
+2026-11-01 17:47:36.830 | DEBUG    | tldw_chatbook.DB.Prompts_DB:_get_thread_connection:557 - Opened/Reopened SQLite connection to /private/tmp/task8-fix1-covering/test_held_completion_cannot_pu1/prompts.db [Client: workbench-test, Thread: asyncio_0]
+2026-11-01 17:47:36.830 | DEBUG    | tldw_chatbook.DB.Prompts_DB:transaction:744 - Started transaction.
+2026-11-01 17:47:36.830 | DEBUG    | tldw_chatbook.DB.Prompts_DB:transaction:748 - Committed transaction.
+2026-11-01 17:47:36.830 | DEBUG    | tldw_chatbook.DB.Prompts_DB:close_connection:583 - Closed connection for thread asyncio_0.
+2026-11-01 17:47:36.831 | DEBUG    | tldw_chatbook.DB.Prompts_DB:transaction:744 - Started transaction.
+2026-11-01 17:47:36.832 | DEBUG    | tldw_chatbook.DB.Prompts_DB:transaction:748 - Committed transaction.
+2026-11-01 17:47:36.871 | DEBUG    | tldw_chatbook.DB.Prompts_DB:_get_thread_connection:557 - Opened/Reopened SQLite connection to /private/tmp/task8-fix1-covering/test_held_completion_cannot_pu1/prompts.db [Client: workbench-test, Thread: asyncio_0]
+2026-11-01 17:47:36.871 | DEBUG    | tldw_chatbook.DB.Prompts_DB:transaction:744 - Started transaction.
+2026-11-01 17:47:36.871 | DEBUG    | tldw_chatbook.DB.Prompts_DB:transaction:748 - Committed transaction.
+2026-11-01 17:47:36.871 | DEBUG    | tldw_chatbook.DB.Prompts_DB:close_connection:583 - Closed connection for thread asyncio_0.
+2026-11-01 17:47:37.037 | DEBUG    | tldw_chatbook.DB.Prompts_DB:_get_thread_connection:557 - Opened/Reopened SQLite connection to /private/tmp/task8-fix1-covering/test_held_completion_cannot_pu1/prompts.db [Client: workbench-test, Thread: asyncio_0]
+2026-11-01 17:47:37.037 | DEBUG    | tldw_chatbook.DB.Prompts_DB:transaction:744 - Started transaction.
+2026-11-01 17:47:37.038 | DEBUG    | tldw_chatbook.DB.Prompts_DB:transaction:748 - Committed transaction.
+2026-11-01 17:47:37.038 | DEBUG    | tldw_chatbook.DB.Prompts_DB:close_connection:583 - Closed connection for thread asyncio_0.
+--------------------------- Captured stderr teardown ---------------------------
+2026-11-01 17:47:42.154 | DEBUG    | tldw_chatbook.DB.Prompts_DB:close_connection:583 - Closed connection for thread MainThread.
+____ test_held_completion_cannot_publish_into_new_workbench_mode[True-save] ____
+
+fut = <coroutine object Event.wait at 0x124972880>, timeout = 5
+
+    async def wait_for(fut, timeout):
+        """Wait for the single Future or coroutine to complete, with timeout.
+    
+        Coroutine will be wrapped in Task.
+    
+        Returns result of the Future or coroutine.  When a timeout occurs,
+        it cancels the task and raises TimeoutError.  To avoid the task
+        cancellation, wrap it in shield().
+    
+        If the wait is cancelled, the task is also cancelled.
+    
+        If the task suppresses the cancellation and returns a value instead,
+        that value is returned.
+    
+        This function is a coroutine.
+        """
+        # The special case for timeout <= 0 is for the following case:
+        #
+        # async def test_waitfor():
+        #     func_started = False
+        #
+        #     async def func():
+        #         nonlocal func_started
+        #         func_started = True
+        #
+        #     try:
+        #         await asyncio.wait_for(func(), 0)
+        #     except asyncio.TimeoutError:
+        #         assert not func_started
+        #     else:
+        #         assert False
+        #
+        # asyncio.run(test_waitfor())
+    
+    
+        if timeout is not None and timeout <= 0:
+            fut = ensure_future(fut)
+    
+            if fut.done():
+                return fut.result()
+    
+            await _cancel_and_wait(fut)
+            try:
+                return fut.result()
+            except exceptions.CancelledError as exc:
+                raise TimeoutError from exc
+    
+        async with timeouts.timeout(timeout):
+>           return await fut
+                   ^^^^^^^^^
+
+../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/tasks.py:520: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = <asyncio.locks.Event object at 0x124b3cce0 [unset]>
+
+    async def wait(self):
+        """Block until the internal flag is true.
+    
+        If the internal flag is true on entry, return True
+        immediately.  Otherwise, block until another coroutine calls
+        set() to set the flag to true, then return True.
+        """
+        if self._value:
+            return True
+    
+        fut = self._get_loop().create_future()
+        self._waiters.append(fut)
+        try:
+>           await fut
+E           asyncio.exceptions.CancelledError
+
+../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/locks.py:212: CancelledError
+
+The above exception was the direct cause of the following exception:
+
+runtime = (<tldw_chatbook.DB.Prompts_DB.PromptsDatabase object at 0x122d64680>, <tldw_chatbook.Prompt_Management.prompt_scope_se...ct at 0x121deeed0>), <tldw_chatbook.Chat.console_prompt_mixin_service.ConsolePromptMixinService object at 0x121deec90>)
+operation = 'save', failed = True
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize('operation', ['inspect', 'save', 'preview'])
+    @pytest.mark.parametrize('failed', [False, True])
+    async def test_held_completion_cannot_publish_into_new_workbench_mode(runtime, operation, failed):
+        import asyncio
+        from textual.widgets import TextArea
+        from tldw_chatbook.Widgets.Console.console_prompt_mixins_view import ConsolePromptMixinsView
+        from tldw_chatbook.Widgets.Console.console_prompts_browse import ConsolePromptsBrowse
+        from tldw_chatbook.Widgets.Prompts.prompt_mixin_editor import PromptMixinEditor
+    
+        _, scope, _, _, _, _ = runtime
+        await seed(scope)
+        app = WorkbenchHarness(runtime)
+        async with app.run_test(size=(100, 30)) as pilot:
+            app.pilot = pilot
+            await ready(app)
+            await add(app, 'Style')
+            if operation == 'save':
+                app.modal.query_one('#console-mixin-inspect-0', Button).press()
+                await _wait_for_condition(pilot, lambda: bool(app.modal.query(PromptMixinEditor)), message='Editor did not mount')
+                app.modal.query_one('#mixin-body', TextArea).load_text('Explicitly saved edit')
+            entered, release = asyncio.Event(), asyncio.Event()
+            original = getattr(app.flow, operation)
+            async def held(*args, **kwargs):
+                result = await original(*args, **kwargs)
+                entered.set()
+                await asyncio.wait_for(release.wait(), 5)
+                if failed:
+                    raise ValueError('injected delayed completion failure')
+                return result
+            setattr(app.flow, operation, held)
+            view = app.modal.query_one(ConsolePromptMixinsView)
+            pending = (app.modal._save_mixin_editor() if operation == 'save' else
+                app.modal._preview_mixins() if operation == 'preview' else
+                app.modal._apply_mixin_intent(view.intent('inspect', view.projection.preferences.entries[0].source)))
+            worker = app.modal.run_worker(pending, group='console-mixins')
+            try:
+>               await asyncio.wait_for(entered.wait(), 5)
+
+Tests/UI/test_console_prompt_mixins.py:705: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/tasks.py:519: in wait_for
+    async with timeouts.timeout(timeout):
+               ^^^^^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = <Timeout [expired]>
+exc_type = <class 'asyncio.exceptions.CancelledError'>
+exc_val = CancelledError(), exc_tb = <traceback object at 0x123aa5b00>
+
+    async def __aexit__(
+        self,
+        exc_type: Optional[Type[BaseException]],
+        exc_val: Optional[BaseException],
+        exc_tb: Optional[TracebackType],
+    ) -> Optional[bool]:
+        assert self._state in (_State.ENTERED, _State.EXPIRING)
+    
+        if self._timeout_handler is not None:
+            self._timeout_handler.cancel()
+            self._timeout_handler = None
+    
+        if self._state is _State.EXPIRING:
+            self._state = _State.EXPIRED
+    
+            if self._task.uncancel() <= self._cancelling and exc_type is exceptions.CancelledError:
+                # Since there are no new cancel requests, we're
+                # handling this.
+>               raise TimeoutError from exc_val
+E               TimeoutError
+
+../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/timeouts.py:115: TimeoutError
+---------------------------- Captured stderr setup -----------------------------
+2026-11-01 17:47:43.667 | INFO     | tldw_chatbook.DB.Prompts_DB:__init__:405 - Initializing PromptsDatabase object for path: /private/tmp/task8-fix1-covering/test_held_completion_cannot_pu4/prompts.db [Client ID: workbench-test]
+2026-11-01 17:47:43.713 | DEBUG    | tldw_chatbook.DB.Prompts_DB:_get_thread_connection:557 - Opened/Reopened SQLite connection to /private/tmp/task8-fix1-covering/test_held_completion_cannot_pu4/prompts.db [Client: workbench-test, Thread: MainThread]
+2026-11-01 17:47:43.713 | INFO     | tldw_chatbook.DB.Prompts_DB:_initialize_schema:1135 - Checking DB schema. Current: 0, Code supports: 6
+2026-11-01 17:47:43.713 | INFO     | tldw_chatbook.DB.Prompts_DB:_initialize_schema:1170 - Applying migration: Initial prompts schema (v0 -> v1)
+2026-11-01 17:47:43.713 | INFO     | tldw_chatbook.DB.Prompts_DB:_apply_schema_v1:823 - Applying initial schema (Version 1) to DB: /private/tmp/task8-fix1-covering/test_held_completion_cannot_pu4/prompts.db...
+2026-11-01 17:47:43.714 | DEBUG    | tldw_chatbook.DB.Prompts_DB:transaction:744 - Started transaction.
+2026-11-01 17:47:43.714 | DEBUG    | tldw_chatbook.DB.Prompts_DB:_apply_schema_v1:834 - [Schema V1] Applying Core Schema + Version Update...
+2026-11-01 17:47:43.715 | DEBUG    | tldw_chatbook.DB.Prompts_DB:_apply_schema_v1:836 - [Schema V1] Core Schema script (incl. version update) executed.
+2026-11-01 17:47:43.715 | DEBUG    | tldw_chatbook.DB.Prompts_DB:_apply_schema_v1:860 - [Schema V1] Prompts table structure validated.
+2026-11-01 17:47:43.715 | DEBUG    | tldw_chatbook.DB.Prompts_DB:transaction:748 - Committed transaction.
+2026-11-01 17:47:43.715 | INFO     | tldw_chatbook.DB.Prompts_DB:_apply_schema_v1:869 - [Schema V1] Core Schema V1 applied and committed for DB: /private/tmp/task8-fix1-covering/test_held_completion_cannot_pu4/prompts.db.
+2026-11-01 17:47:43.715 | DEBUG    | tldw_chatbook.DB.Prompts_DB:_apply_schema_v1:873 - [Schema V1] Applying FTS Tables...
+2026-11-01 17:47:43.716 | INFO     | tldw_chatbook.DB.Prompts_DB:_apply_schema_v1:876 - [Schema V1] FTS Tables created successfully.
+2026-11-01 17:47:43.716 | INFO     | tldw_chatbook.DB.Prompts_DB:_initialize_schema:1170 - Applying migration: Add structured prompt metadata columns (v1 -> v2)
+2026-11-01 17:47:43.716 | INFO     | tldw_chatbook.DB.Prompts_DB:_apply_migration_v1_to_v2:887 - Applying prompts migration from version 1 to 2 for DB: /private/tmp/task8-fix1-covering/test_held_completion_cannot_pu4/prompts.db...
+2026-11-01 17:47:43.717 | DEBUG    | tldw_chatbook.DB.Prompts_DB:transaction:744 - Started transaction.
+2026-11-01 17:47:43.718 | DEBUG    | tldw_chatbook.DB.Prompts_DB:transaction:748 - Committed transaction.
+2026-11-01 17:47:43.718 | INFO     | tldw_chatbook.DB.Prompts_DB:_apply_migration_v1_to_v2:923 - Prompts migration to version 2 applied successfully for DB: /private/tmp/task8-fix1-covering/test_held_completion_cannot_pu4/prompts.db.
+2026-11-01 17:47:43.718 | INFO     | tldw_chatbook.DB.Prompts_DB:_initialize_schema:1170 - Applying migration: Add prompt artifact type (v2 -> v3)
+2026-11-01 17:47:43.718 | INFO     | tldw_chatbook.DB.Prompts_DB:_apply_migration_v2_to_v3:934 - Applying prompts migration from version 2 to 3 for DB: /private/tmp/task8-fix1-covering/test_held_completion_cannot_pu4/prompts.db...
+2026-11-01 17:47:43.719 | DEBUG    | tldw_chatbook.DB.Prompts_DB:transaction:744 - Started transaction.
+2026-11-01 17:47:43.720 | DEBUG    | tldw_chatbook.DB.Prompts_DB:transaction:748 - Committed transaction.
+2026-11-01 17:47:43.720 | INFO     | tldw_chatbook.DB.Prompts_DB:_initialize_schema:1170 - Applying migration: Add retained Prompt history index (v3 -> v4)
+2026-11-01 17:47:43.720 | INFO     | tldw_chatbook.DB.Prompts_DB:_apply_migration_v3_to_v4:969 - Applying prompts migration from version 3 to 4 for DB: /private/tmp/task8-fix1-covering/test_held_completion_cannot_pu4/prompts.db...
+2026-11-01 17:47:43.720 | DEBUG    | tldw_chatbook.DB.Prompts_DB:transaction:744 - Started transaction.
+2026-11-01 17:47:43.721 | DEBUG    | tldw_chatbook.DB.Prompts_DB:transaction:748 - Committed transaction.
+2026-11-01 17:47:43.721 | INFO     | tldw_chatbook.DB.Prompts_DB:_initialize_schema:1170 - Applying migration: Add local Console Prompt Draft Shelf (v4 -> v5)
+2026-11-01 17:47:43.721 | INFO     | tldw_chatbook.DB.Prompts_DB:_apply_migration_v4_to_v5:1033 - Applying prompts migration from version 4 to 5.
+2026-11-01 17:47:43.721 | DEBUG    | tldw_chatbook.DB.Prompts_DB:transaction:744 - Started transaction.
+2026-11-01 17:47:43.721 | DEBUG    | tldw_chatbook.DB.Prompts_DB:transaction:748 - Committed transaction.
+2026-11-01 17:47:43.721 | INFO     | tldw_chatbook.DB.Prompts_DB:_initialize_schema:1170 - Applying migration: Add literal mix-in artifact type (v5 -> v6)
+2026-11-01 17:47:43.721 | DEBUG    | tldw_chatbook.DB.Prompts_DB:transaction:744 - Started transaction.
+2026-11-01 17:47:43.723 | DEBUG    | tldw_chatbook.DB.Prompts_DB:transaction:748 - Committed transaction.
+2026-11-01 17:47:43.723 | DEBUG    | tldw_chatbook.DB.Prompts_DB:_initialize_schema:1184 - Verified FTS tables exist after migrations.
+2026-11-01 17:47:43.723 | INFO     | tldw_chatbook.DB.Prompts_DB:_initialize_schema:1190 - Database schema initialized/migrated to version 6.
+2026-11-01 17:47:43.723 | DEBUG    | tldw_chatbook.DB.Prompts_DB:__init__:457 - PromptsDatabase initialization completed successfully for /private/tmp/task8-fix1-covering/test_held_completion_cannot_pu4/prompts.db
+----------------------------- Captured stderr call -----------------------------
+2026-11-01 17:47:43.725 | DEBUG    | tldw_chatbook.DB.Prompts_DB:transaction:744 - Started transaction.
+2026-11-01 17:47:43.726 | DEBUG    | tldw_chatbook.DB.Prompts_DB:transaction:748 - Committed transaction.
+2026-11-01 17:47:43.726 | DEBUG    | tldw_chatbook.DB.Prompts_DB:execute_query:663 - Executing Query: SELECT * FROM Prompts WHERE uuid = ?... Params: (159e526d-17d0-4632-8b86-a7b168b46854)
+2026-11-01 17:47:43.726 | DEBUG    | tldw_chatbook.DB.Prompts_DB:execute_query:663 - Executing Query: SELECT k.keyword FROM PromptKeywordsTable k
+                                             JOIN PromptKeywordLinks pkl ON k.id = pkl.keyword_id
+                   WHERE pkl.prompt_id = ? ORDER BY k.keyw... Params: (1)
+2026-11-01 17:47:43.726 | DEBUG    | tldw_chatbook.DB.Prompts_DB:transaction:744 - Started transaction.
+2026-11-01 17:47:43.727 | DEBUG    | tldw_chatbook.DB.Prompts_DB:transaction:748 - Committed transaction.
+2026-11-01 17:47:43.727 | DEBUG    | tldw_chatbook.DB.Prompts_DB:execute_query:663 - Executing Query: SELECT * FROM Prompts WHERE uuid = ?... Params: (5820df5d-ae0d-4c31-9dbd-eeee7d1b8b6e)
+2026-11-01 17:47:43.727 | DEBUG    | tldw_chatbook.DB.Prompts_DB:execute_query:663 - Executing Query: SELECT k.keyword FROM PromptKeywordsTable k
+                                             JOIN PromptKeywordLinks pkl ON k.id = pkl.keyword_id
+                   WHERE pkl.prompt_id = ? ORDER BY k.keyw... Params: (2)
+2026-11-01 17:47:43.727 | DEBUG    | tldw_chatbook.DB.Prompts_DB:transaction:744 - Started transaction.
+2026-11-01 17:47:43.728 | DEBUG    | tldw_chatbook.DB.Prompts_DB:transaction:748 - Committed transaction.
+2026-11-01 17:47:43.728 | DEBUG    | tldw_chatbook.DB.Prompts_DB:execute_query:663 - Executing Query: SELECT * FROM Prompts WHERE uuid = ?... Params: (4698ab5d-f432-4a1c-9933-d87682711fc9)
+2026-11-01 17:47:43.728 | DEBUG    | tldw_chatbook.DB.Prompts_DB:execute_query:663 - Executing Query: SELECT k.keyword FROM PromptKeywordsTable k
+                                             JOIN PromptKeywordLinks pkl ON k.id = pkl.keyword_id
+                   WHERE pkl.prompt_id = ? ORDER BY k.keyw... Params: (3)
+2026-11-01 17:47:43.769 | DEBUG    | tldw_chatbook.DB.Prompts_DB:transaction:744 - Started transaction.
+2026-11-01 17:47:43.770 | DEBUG    | tldw_chatbook.DB.Prompts_DB:transaction:748 - Committed transaction.
+2026-11-01 17:47:43.913 | DEBUG    | tldw_chatbook.DB.Prompts_DB:_get_thread_connection:557 - Opened/Reopened SQLite connection to /private/tmp/task8-fix1-covering/test_held_completion_cannot_pu4/prompts.db [Client: workbench-test, Thread: asyncio_0]
+2026-11-01 17:47:43.914 | DEBUG    | tldw_chatbook.DB.Prompts_DB:transaction:744 - Started transaction.
+2026-11-01 17:47:43.914 | DEBUG    | tldw_chatbook.DB.Prompts_DB:transaction:748 - Committed transaction.
+2026-11-01 17:47:43.914 | DEBUG    | tldw_chatbook.DB.Prompts_DB:close_connection:583 - Closed connection for thread asyncio_0.
+2026-11-01 17:47:43.915 | DEBUG    | tldw_chatbook.DB.Prompts_DB:transaction:744 - Started transaction.
+2026-11-01 17:47:43.916 | DEBUG    | tldw_chatbook.DB.Prompts_DB:transaction:748 - Committed transaction.
+2026-11-01 17:47:43.959 | DEBUG    | tldw_chatbook.DB.Prompts_DB:_get_thread_connection:557 - Opened/Reopened SQLite connection to /private/tmp/task8-fix1-covering/test_held_completion_cannot_pu4/prompts.db [Client: workbench-test, Thread: asyncio_0]
+2026-11-01 17:47:43.959 | DEBUG    | tldw_chatbook.DB.Prompts_DB:transaction:744 - Started transaction.
+2026-11-01 17:47:43.960 | DEBUG    | tldw_chatbook.DB.Prompts_DB:transaction:748 - Committed transaction.
+2026-11-01 17:47:43.960 | DEBUG    | tldw_chatbook.DB.Prompts_DB:close_connection:583 - Closed connection for thread asyncio_0.
+2026-11-01 17:47:44.075 | DEBUG    | tldw_chatbook.DB.Prompts_DB:_get_thread_connection:557 - Opened/Reopened SQLite connection to /private/tmp/task8-fix1-covering/test_held_completion_cannot_pu4/prompts.db [Client: workbench-test, Thread: asyncio_0]
+2026-11-01 17:47:44.075 | DEBUG    | tldw_chatbook.DB.Prompts_DB:transaction:744 - Started transaction.
+2026-11-01 17:47:44.076 | DEBUG    | tldw_chatbook.DB.Prompts_DB:transaction:748 - Committed transaction.
+2026-11-01 17:47:44.076 | DEBUG    | tldw_chatbook.DB.Prompts_DB:close_connection:583 - Closed connection for thread asyncio_0.
+--------------------------- Captured stderr teardown ---------------------------
+2026-11-01 17:47:49.120 | DEBUG    | tldw_chatbook.DB.Prompts_DB:close_connection:583 - Closed connection for thread MainThread.
+============================= slowest 25 durations =============================
+5.60s call     Tests/UI/test_console_prompt_mixins.py::test_real_console_prompts_action_retains_browse_and_controls_runtime[size1]
+5.49s call     Tests/UI/test_console_prompt_mixins.py::test_held_completion_cannot_publish_into_new_workbench_mode[False-save]
+5.39s call     Tests/UI/test_console_prompt_mixins.py::test_real_console_prompts_action_retains_browse_and_controls_runtime[size0]
+5.38s call     Tests/UI/test_console_prompt_mixins.py::test_held_completion_cannot_publish_into_new_workbench_mode[True-save]
+4.45s call     Tests/UI/test_console_prompt_mixins.py::test_real_console_prompts_action_retains_browse_and_controls_runtime[size2]
+2.05s call     Tests/UI/test_console_prompt_mixins.py::test_mounted_selection_order_toggles_reopen_and_origin_fence
+
+(19 durations < 1s hidden.)
+=========================== short test summary info ============================
+FAILED Tests/UI/test_console_prompt_mixins.py::test_held_completion_cannot_publish_into_new_workbench_mode[False-save]
+FAILED Tests/UI/test_console_prompt_mixins.py::test_held_completion_cannot_publish_into_new_workbench_mode[True-save]
+2 failed, 17 passed in 39.97s

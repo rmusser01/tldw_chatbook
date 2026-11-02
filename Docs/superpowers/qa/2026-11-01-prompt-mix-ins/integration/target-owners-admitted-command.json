@@ -1,0 +1,26 @@
+{
+  "argv": [
+    "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python",
+    "-m",
+    "pytest",
+    "Tests/Chat/test_console_chat_store_atomic_promotion.py::test_promotion_persists_sparse_context_policy_inside_the_bundle",
+    "Tests/Chat/test_console_trace_current_turn_transforms.py::test_next_send_after_failed_transformed_call[error]",
+    "Tests/Chat/test_console_trace_current_turn_transforms.py::test_next_send_after_failed_transformed_call[stopped]",
+    "Tests/Chat/test_console_regenerate_branching.py::test_regenerate_stream_failure_retains_failed_sibling_and_restores_anchor",
+    "Tests/Chat/test_console_regenerate_branching.py::test_regenerate_mid_conversation_failure_restores_selected_anchor_not_former_tail",
+    "Tests/Chat/test_console_regenerate_branching.py::test_regenerate_persists_new_sibling_when_store_has_persistence",
+    "Tests/Chat/test_console_edit_resend.py::test_edit_and_resend_forks_user_sibling_and_streams_reply",
+    "Tests/Chat/test_console_edit_resend.py::test_edit_and_resend_skill_refusal_leaves_no_pending_node",
+    "Tests/Chat/test_console_edit_resend.py::test_edit_and_resend_carries_anchor_attachments",
+    "-p",
+    "native_admission",
+    "-q",
+    "--tb=short",
+    "--show-capture=no",
+    "-p",
+    "no:cacheprovider",
+    "--basetemp=/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/prompt-mixins-pr-d18dfic_/test-target-owners-admitted"
+  ],
+  "cwd": "/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/prompt-mixins-pr-d18dfic_/target-dev",
+  "PYTHONPATH": "/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/prompt-mixins-pr-d18dfic_"
+}

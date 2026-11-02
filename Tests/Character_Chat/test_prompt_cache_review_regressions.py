@@ -530,3 +530,29 @@ def test_recursively_activated_equal_lore_is_injected_once():
         "A castle has a dragon",
         "A dragon lore fact",
     ]
+
+
+@pytest.mark.bootstrap_profile
+def test_warm_character_prompt_cache_cannot_reintroduce_a_disabled_mixin(db, inject):
+    from Tests.Chat.test_console_prompt_mixin_caching import _prepare, _send
+
+    conversation = db.add_conversation({"title": "Cache boundary"})
+    character = db.add_character_card(
+        {"name": "Cache boundary", "extensions": _extensions("CHARACTER_CONTEXT")}
+    )
+    card = db.get_character_card_by_id(character)
+    typed = "castle"
+    current = inject(db, conversation, card)
+    assert current == inject(db, conversation, card)  # Warm the native cache.
+    assert "CHARACTER_CONTEXT" in current
+    history = [
+        {"role": "user", "content": typed},
+        {"role": "assistant", "content": "reply"},
+    ]
+    on = _send(_prepare("MIXIN_SENTINEL", content=current, history=history))
+    off = _send(_prepare("", content=inject(db, conversation, card), history=history))
+    assert "MIXIN_SENTINEL" in str(on)
+    assert "MIXIN_SENTINEL" not in str(off)
+    assert on["messages"][0]["content"][0]["text"] == typed
+    assert off["messages"][0]["content"][0]["text"] == typed
+    assert off["messages"][-1]["content"][0]["text"] == current

@@ -3556,6 +3556,34 @@ class ConsoleTraceService:
         if allow_failed or complete_assistant_id is not None:
             try:
                 metadata = json.loads(raw_metadata or "{}")
+                if (
+                    type(metadata) is dict
+                    and "mixin_snapshot_schema_version" in metadata
+                ):
+                    from tldw_chatbook.DB.console_prompt_mixins import read_attempt
+
+                    attempt_id = metadata.get("mixin_attempt_id")
+                    anchors = cursor.execute(
+                        "SELECT user_message_id,assistant_message_id FROM console_prompt_mixin_attempts WHERE conversation_id=? AND attempt_id=?",
+                        (conversation_id, attempt_id),
+                    ).fetchone()
+                    if (
+                        type(metadata["mixin_snapshot_schema_version"]) is not int
+                        or metadata["mixin_snapshot_schema_version"] != 1
+                        or anchors is None
+                        or tuple(anchors) != (previous_turn_id, assistant_id)
+                        or read_attempt(
+                            cursor, conversation_id, attempt_id=attempt_id
+                        ).status
+                        != "recorded"
+                    ):
+                        return None
+                    metadata = {
+                        key: value
+                        for key, value in metadata.items()
+                        if key
+                        not in {"mixin_attempt_id", "mixin_snapshot_schema_version"}
+                    }
             except (TypeError, ValueError, RecursionError):
                 return None
             # This narrow recovery carries plain saved messages only. Canvas,
@@ -3681,6 +3709,124 @@ class ConsoleTraceService:
             seen.add(revision.source_message_id)
             next_turn_id = revision.source_message_id
         return None, ()
+
+    def operational_replacement_attempt(
+        self,
+        cursor: sqlite3.Cursor,
+        *,
+        conversation_id: str,
+        source_user_id: str,
+        current_user_id: str,
+        assistant_revision_id: str,
+        origin_call_id: str,
+    ) -> str | None:
+        """Prove a selected clean response from its exact accepted operational attempt."""
+        from tldw_chatbook.DB.console_prompt_mixins import read_attempt
+        from tldw_chatbook.Utils.input_validation import strict_json_loads
+
+        revision = self.repository.get_semantic_revision(cursor, assistant_revision_id)
+        if (
+            revision is None
+            or revision.normalized_role != "assistant"
+            or revision.source_conversation_id != conversation_id
+            or revision.live_message_id != revision.source_message_id
+        ):
+            return None
+        row = cursor.execute(
+            "SELECT response.metadata_json FROM messages response "
+            "JOIN messages current ON current.parent_message_id=response.id "
+            "JOIN messages source ON source.id=response.parent_message_id "
+            "WHERE response.id=? AND response.conversation_id=? AND response.deleted=0 "
+            "AND response.role='assistant' AND response.assistant_generation_state='complete' "
+            "AND current.id=? AND current.conversation_id=response.conversation_id "
+            "AND current.role='user' AND current.deleted=0 "
+            "AND source.id=? AND source.conversation_id=response.conversation_id "
+            "AND source.role='user' AND source.deleted=0 "
+            "AND NOT EXISTS(SELECT 1 FROM console_dispatch_checkpoints c "
+            "WHERE c.conversation_id=response.conversation_id AND c.user_message_id=source.id) "
+            "AND ?=(SELECT revision_id FROM console_trace_semantic_revisions "
+            "WHERE live_message_id=response.id ORDER BY revision_sequence DESC LIMIT 1)",
+            (
+                revision.source_message_id,
+                conversation_id,
+                current_user_id,
+                source_user_id,
+                assistant_revision_id,
+            ),
+        ).fetchone()
+        if row is None:
+            return None
+        try:
+            metadata = strict_json_loads(row[0])
+            if (
+                type(metadata) is not dict
+                or type(metadata.get("mixin_snapshot_schema_version")) is not int
+                or metadata["mixin_snapshot_schema_version"] != 1
+                or type(metadata.get("mixin_attempt_id")) is not str
+            ):
+                return None
+            attempt_id = metadata["mixin_attempt_id"]
+            anchors = cursor.execute(
+                "SELECT user_message_id,assistant_message_id,replaces_attempt_id,result_revision_id FROM console_prompt_mixin_attempts a "
+                "WHERE conversation_id=? AND attempt_id=? AND NOT EXISTS("
+                "SELECT 1 FROM console_prompt_mixin_attempts successor "
+                "WHERE successor.conversation_id=a.conversation_id "
+                "AND successor.assistant_message_id=a.assistant_message_id "
+                "AND successor.retry_of_attempt_id=a.attempt_id)",
+                (conversation_id, attempt_id),
+            ).fetchone()
+            if (
+                anchors is None
+                or tuple(anchors[:2]) != (source_user_id, revision.source_message_id)
+                or anchors[2] is None
+                or anchors[3] != assistant_revision_id
+                or read_attempt(cursor, conversation_id, attempt_id=attempt_id).status
+                != "recorded"
+            ):
+                return None
+            # An actual accepted replacement must lead to this exact traced call.
+            # Each hop is bounded, immutable, and independently readable.
+            seen = {attempt_id}
+            predecessor = anchors[2]
+            for _ in range(MAX_SURFACE_REPLACEMENT_SPAN):
+                if predecessor in seen:
+                    return None
+                seen.add(predecessor)
+                prior = cursor.execute(
+                    "SELECT user_message_id,replaces_attempt_id,trace_call_id FROM console_prompt_mixin_attempts "
+                    "WHERE conversation_id=? AND attempt_id=?",
+                    (conversation_id, predecessor),
+                ).fetchone()
+                if (
+                    prior is None
+                    or prior[0] != source_user_id
+                    or read_attempt(
+                        cursor, conversation_id, attempt_id=predecessor
+                    ).status
+                    != "recorded"
+                ):
+                    return None
+                if prior[2] == origin_call_id:
+                    call = self.repository.get_call(cursor, origin_call_id)
+                    owner = (
+                        None
+                        if call is None
+                        else self.repository.get_owner(cursor, call.owner_id)
+                    )
+                    if (
+                        call is not None
+                        and call.turn_id == source_user_id
+                        and owner is not None
+                        and owner.conversation_id == conversation_id
+                    ):
+                        return attempt_id
+                    return None
+                predecessor = prior[1]
+                if predecessor is None:
+                    return None
+            return None
+        except (ValueError, TypeError, RecursionError):
+            return None
 
     def _validate_completed_tool_turn(
         self,

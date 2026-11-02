@@ -433,3 +433,204 @@ def test_non_console_structure_falls_back_to_a_legacy_prompt(
     assert imported["prompt_definition"] is None
     assert imported["system_prompt"] == "compiled system"
     assert imported["user_prompt"] == "compiled user"
+
+
+def _mixin_detail():
+    body = "\n{style}\n### TITLE ###\nsecret\n```\n"
+    return {
+        "name": "Literal\n### TITLE ###\nname",
+        "author": None,
+        "details": None,
+        "system_prompt": "",
+        "user_prompt": body,
+        "keywords": [],
+        "artifact_type": "mixin",
+        "prompt_format": "structured",
+        "prompt_schema_version": 3,
+        "prompt_definition": json.dumps(
+            {
+                "kind": "text_mixin",
+                "schema_version": 3,
+                "body": body,
+                "placement": "before",
+            }
+        ),
+    }
+
+
+def test_mixin_markdown_exact_roundtrip_and_frozen_legacy_reader_refusal():
+    detail = _mixin_detail()
+    markdown = render_prompt_markdown(detail)
+    assert markdown.startswith("# Chatbook mix-in\n\n```json\n")
+    assert len(markdown.splitlines()) == 5
+    assert _legacy_reader_sections(markdown) == {}
+    assert parse_markdown_prompts_from_content(markdown) == [detail]
+
+
+@pytest.mark.parametrize(
+    "mutation", ["bad-json", "future", "trailing-legacy", "missing-fence"]
+)
+def test_mixin_markdown_malformed_refuses_without_fallback_or_body_logs(mutation):
+    from loguru import logger
+
+    from tldw_chatbook.Prompt_Management.prompt_chatbook_record import (
+        PromptChatbookRecordError,
+    )
+
+    markdown = render_prompt_markdown(_mixin_detail())
+    if mutation == "bad-json":
+        markdown = "# Chatbook mix-in\n\n```json\nsecret invalid\n```\n"
+    elif mutation == "future":
+        record = json.loads(markdown.splitlines()[3])
+        record["record_version"] = 999
+        markdown = "# Chatbook mix-in\n\n```json\n" + json.dumps(record) + "\n```\n"
+    elif mutation == "trailing-legacy":
+        markdown += "### TITLE ###\nsecret\n### USER ###\nsecret\n"
+    else:
+        markdown = markdown.rsplit("```", 1)[0]
+    messages = []
+    sink = logger.add(lambda message: messages.append(str(message)))
+    try:
+        with pytest.raises(PromptChatbookRecordError) as error:
+            parse_markdown_prompts_from_content(markdown)
+    finally:
+        logger.remove(sink)
+    assert "secret" not in str(error.value)
+    assert "secret" not in "".join(messages)
+
+
+def test_mixin_markdown_old_section_metadata_cannot_flatten_to_prompt():
+    from tldw_chatbook.Prompt_Management.prompt_chatbook_record import (
+        PromptChatbookRecordError,
+    )
+
+    with pytest.raises(PromptChatbookRecordError):
+        parse_markdown_prompts_from_content(
+            _markdown_with_structure(
+                '{"kind":"text_mixin","schema_version":3,"body":"secret","placement":"before"}',
+                artifact_type="mixin",
+            )
+        )
+
+
+def test_mixin_markdown_import_failure_does_not_log_body_or_exception(
+    tmp_path, monkeypatch
+):
+    from loguru import logger
+
+    import tldw_chatbook.Prompt_Management.Prompts_Interop as interop
+
+    file = tmp_path / "mixin.md"
+    file.write_text(render_prompt_markdown(_mixin_detail()))
+    monkeypatch.setattr(interop, "is_initialized", lambda: True)
+
+    def fail(**kwargs):
+        raise ValueError("secret instruction body")
+
+    monkeypatch.setattr(interop, "add_or_update_prompt_interop", fail)
+    messages = []
+    sink = logger.add(lambda message: messages.append(str(message)))
+    try:
+        results = interop.import_prompts_from_files(file, base_directory=str(tmp_path))
+    finally:
+        logger.remove(sink)
+    assert results[0]["status"] == "failure"
+    assert "secret" not in results[0]["message"]
+    assert "secret" not in "".join(messages)
+
+
+def test_mixin_markdown_deeply_nested_json_refuses_with_bounded_error():
+    from tldw_chatbook.Prompt_Management.prompt_chatbook_record import (
+        PromptChatbookRecordError,
+    )
+
+    nested = '{"secret":' * 10000 + "0" + "}" * 10000
+    with pytest.raises(PromptChatbookRecordError):
+        parse_markdown_prompts_from_content(
+            "# Chatbook mix-in\n\n```json\n" + nested + "\n```\n"
+        )
+
+
+def _bom_mixin_markdown(mutation):
+    detail = _mixin_detail()
+    body = "\ufeffbom_literal_body_must_not_leak\n{style}\n### TITLE ###\n"
+    detail["name"] = "BOM literal"
+    detail["user_prompt"] = body
+    detail["prompt_definition"] = json.dumps(
+        {"kind": "text_mixin", "schema_version": 3, "body": body, "placement": "before"}
+    )
+    markdown = render_prompt_markdown(detail)
+    if mutation == "bad-json":
+        markdown = "# Chatbook mix-in\n\n```json\nbom_literal_body_must_not_leak invalid\n```\n"
+    elif mutation == "missing-fence":
+        markdown = markdown.rsplit("```", 1)[0]
+    elif mutation == "trailing-legacy":
+        markdown += "### TITLE ###\nUnexpected legacy Prompt\n### USER ###\nbom_literal_body_must_not_leak\n"
+    return "\ufeff" + markdown, detail
+
+
+@pytest.mark.parametrize(
+    "mutation", ["valid", "bad-json", "missing-fence", "trailing-legacy"]
+)
+def test_bom_mixin_markdown_never_falls_back_or_logs_literal_data(mutation):
+    from loguru import logger
+
+    from tldw_chatbook.Prompt_Management.prompt_chatbook_record import (
+        PromptChatbookRecordError,
+    )
+
+    markdown, detail = _bom_mixin_markdown(mutation)
+    messages = []
+    sink = logger.add(lambda message: messages.append(str(message)))
+    try:
+        if mutation == "valid":
+            assert parse_markdown_prompts_from_content(markdown) == [detail]
+            assert _legacy_reader_sections(markdown) == {}
+        else:
+            with pytest.raises(PromptChatbookRecordError) as error:
+                parse_markdown_prompts_from_content(markdown)
+            assert str(error.value) == "Invalid Chatbook Prompt record."
+    finally:
+        logger.remove(sink)
+    assert "bom_literal_body_must_not_leak" not in "".join(messages)
+    assert "Content snippet:" not in "".join(messages)
+    assert "Parsed custom MD/TXT prompt:" not in "".join(messages)
+
+
+@pytest.mark.parametrize(
+    "mutation", ["valid", "bad-json", "missing-fence", "trailing-legacy"]
+)
+def test_bom_mixin_utf8_file_import_preserves_or_refuses_before_mutation(
+    tmp_path, mutation
+):
+    from loguru import logger
+
+    import tldw_chatbook.Prompt_Management.Prompts_Interop as interop
+
+    markdown, detail = _bom_mixin_markdown(mutation)
+    file = tmp_path / "bom-mixin.md"
+    file.write_text(markdown, encoding="utf-8")
+    assert file.read_bytes().startswith(b"\xef\xbb\xbf")
+    interop.initialize_interop(tmp_path / "bom.db", client_id="bom-import")
+    messages = []
+    sink = logger.add(lambda message: messages.append(str(message)))
+    try:
+        results = interop.import_prompts_from_files(file, base_directory=str(tmp_path))
+        if mutation == "valid":
+            assert len(results) == 1 and results[0]["status"] == "success"
+            restored = interop.get_prompt_by_uuid(results[0]["prompt_uuid"])
+            for field in ("artifact_type", "user_prompt", "prompt_definition"):
+                assert restored[field] == detail[field]
+        else:
+            assert len(results) == 1 and results[0]["status"] == "failure"
+            assert (
+                results[0]["message"]
+                == "Parsing error: Invalid Chatbook Prompt record."
+            )
+            assert interop.get_db_instance().get_all_active_prompt_ids() == []
+    finally:
+        logger.remove(sink)
+        interop.shutdown_interop()
+    assert "bom_literal_body_must_not_leak" not in "".join(messages)
+    assert "Content snippet:" not in "".join(messages)
+    assert "Parsed custom MD/TXT prompt:" not in "".join(messages)

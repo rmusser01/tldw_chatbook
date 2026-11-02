@@ -1,0 +1,6 @@
+.                                                                        [100%]
+============================= slowest 25 durations =============================
+3.61s call     Tests/UI/test_library_prompt_mixins.py::test_library_mixin_save_ack_preserves_newer_literal_draft
+
+(2 durations < 1s hidden.)
+1 passed in 5.81s

@@ -1,0 +1,17 @@
+{
+  "Tests/LLM_Calls/test_summarization_diagnostic_privacy.py": {
+    "d83ca84cdbd8cb934ba747bcb7a2179b934904ed": "0f9a52dac046bde63920aa04fda81f0bb962f588",
+    "cb4131210904f4ac4005f638eb90cc4585364a73": "0f9a52dac046bde63920aa04fda81f0bb962f588",
+    "3c77bbbdd701052bb778eaf1bc09fea7b838c8ae": "0f9a52dac046bde63920aa04fda81f0bb962f588"
+  },
+  "Tests/fixtures/summarization_diagnostic_review.json": {
+    "d83ca84cdbd8cb934ba747bcb7a2179b934904ed": "87703c7646a99ba156529716672a20ac2425f8c3",
+    "cb4131210904f4ac4005f638eb90cc4585364a73": "87703c7646a99ba156529716672a20ac2425f8c3",
+    "3c77bbbdd701052bb778eaf1bc09fea7b838c8ae": "87703c7646a99ba156529716672a20ac2425f8c3"
+  },
+  "Docs/security/production-diagnostic-inventory.json": {
+    "d83ca84cdbd8cb934ba747bcb7a2179b934904ed": "480dc64d53ce9047d45b66f32929941d4dac3851",
+    "cb4131210904f4ac4005f638eb90cc4585364a73": "480dc64d53ce9047d45b66f32929941d4dac3851",
+    "3c77bbbdd701052bb778eaf1bc09fea7b838c8ae": "480dc64d53ce9047d45b66f32929941d4dac3851"
+  }
+}

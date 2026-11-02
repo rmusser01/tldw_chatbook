@@ -1,0 +1,15 @@
+.........................................................                [100%]
+============================= slowest 25 durations =============================
+4.25s call     Tests/UI/test_css_bundle_sync_guard.py::test_committed_bundle_reproduces_from_sources
+3.12s call     Tests/UI/test_library_prompt_mixins.py::test_library_mixin_save_ack_preserves_newer_literal_draft
+2.30s call     Tests/UI/test_css_bundle_sync_guard.py::test_generated_widget_and_screen_sheets_have_no_trailing_whitespace
+2.26s call     Tests/UI/test_css_bundle_sync_guard.py::test_generated_widget_and_screen_sheets_end_with_one_newline
+2.22s call     Tests/UI/test_css_bundle_sync_guard.py::test_drifted_modules_ignores_the_generated_timestamp
+2.19s call     Tests/UI/test_css_bundle_sync_guard.py::test_drifted_modules_names_the_changed_module
+1.81s call     Tests/Chat/test_console_prompt_mixin_journey.py::test_local_queue_retry_current_regenerate_reopen[True]
+1.67s call     Tests/Chat/test_console_prompt_mixin_journey.py::test_local_queue_retry_current_regenerate_reopen[False]
+1.15s call     Tests/Chat/test_console_prompt_mixin_retry.py::test_retry_original_regenerate_current_and_clean_history[True]
+1.03s call     Tests/Chat/test_console_prompt_mixin_retry.py::test_retry_original_regenerate_current_and_clean_history[False]
+
+(15 durations < 1s hidden.)
+57 passed in 47.63s

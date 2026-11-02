@@ -1,0 +1,61 @@
+E                                                                        [100%]
+==================================== ERRORS ====================================
+_ ERROR at setup of test_mounted_selection_order_toggles_reopen_and_origin_fence _
+
+    @pytest.fixture
+    def runtime():
+        database = PromptsDatabase(':memory:', client_id='workbench-test')
+>       scope = PromptScopeService(local_service=LocalPromptService(database))
+                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E       TypeError: PromptScopeService.__init__() missing 1 required positional argument: 'server_service'
+
+Tests/UI/test_console_prompt_mixins.py:22: TypeError
+---------------------------- Captured stderr setup -----------------------------
+2026-11-01 16:54:00.849 | DEBUG    | tldw_chatbook.Utils.optional_deps:check_dependency:642 - ✅ huggingface_hub dependency found. Feature 'huggingface_hub' is enabled.
+2026-11-01 16:54:00.863 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:52 - PyAudio not available. Install with: pip install pyaudio
+2026-11-01 16:54:00.911 | INFO     | tldw_chatbook.Audio.recording_service:<module>:58 - Sounddevice backend available
+2026-11-01 16:54:00.913 | INFO     | tldw_chatbook.Audio.recording_service:<module>:73 - WebRTC VAD available for voice activity detection
+2026-11-01 16:54:00.962 | WARNING  | tldw_chatbook.Prompt_Management.Prompts_Interop:<module>:53 - python-frontmatter not installed. Markdown import will not be available.
+2026-11-01 16:54:01.124 | INFO     | tldw_chatbook.Evals.task_loader:<module>:36 - HuggingFace evaluation datasets are unavailable. Install with: pip install datasets
+2026-11-01 16:54:01.189 | INFO     | tldw_chatbook.DB.Prompts_DB:__init__:405 - Initializing PromptsDatabase object for path: :memory: [Client ID: workbench-test]
+2026-11-01 16:54:01.190 | DEBUG    | tldw_chatbook.DB.Prompts_DB:_get_thread_connection:557 - Opened/Reopened SQLite connection to :memory: [Client: workbench-test, Thread: MainThread]
+2026-11-01 16:54:01.190 | INFO     | tldw_chatbook.DB.Prompts_DB:_initialize_schema:1135 - Checking DB schema. Current: 0, Code supports: 6
+2026-11-01 16:54:01.190 | INFO     | tldw_chatbook.DB.Prompts_DB:_initialize_schema:1170 - Applying migration: Initial prompts schema (v0 -> v1)
+2026-11-01 16:54:01.190 | INFO     | tldw_chatbook.DB.Prompts_DB:_apply_schema_v1:823 - Applying initial schema (Version 1) to DB: :memory:...
+2026-11-01 16:54:01.190 | DEBUG    | tldw_chatbook.DB.Prompts_DB:transaction:744 - Started transaction.
+2026-11-01 16:54:01.190 | DEBUG    | tldw_chatbook.DB.Prompts_DB:_apply_schema_v1:834 - [Schema V1] Applying Core Schema + Version Update...
+2026-11-01 16:54:01.190 | DEBUG    | tldw_chatbook.DB.Prompts_DB:_apply_schema_v1:836 - [Schema V1] Core Schema script (incl. version update) executed.
+2026-11-01 16:54:01.191 | DEBUG    | tldw_chatbook.DB.Prompts_DB:_apply_schema_v1:860 - [Schema V1] Prompts table structure validated.
+2026-11-01 16:54:01.191 | DEBUG    | tldw_chatbook.DB.Prompts_DB:transaction:748 - Committed transaction.
+2026-11-01 16:54:01.191 | INFO     | tldw_chatbook.DB.Prompts_DB:_apply_schema_v1:869 - [Schema V1] Core Schema V1 applied and committed for DB: :memory:.
+2026-11-01 16:54:01.191 | DEBUG    | tldw_chatbook.DB.Prompts_DB:_apply_schema_v1:873 - [Schema V1] Applying FTS Tables...
+2026-11-01 16:54:01.191 | INFO     | tldw_chatbook.DB.Prompts_DB:_apply_schema_v1:876 - [Schema V1] FTS Tables created successfully.
+2026-11-01 16:54:01.191 | INFO     | tldw_chatbook.DB.Prompts_DB:_initialize_schema:1170 - Applying migration: Add structured prompt metadata columns (v1 -> v2)
+2026-11-01 16:54:01.191 | INFO     | tldw_chatbook.DB.Prompts_DB:_apply_migration_v1_to_v2:887 - Applying prompts migration from version 1 to 2 for DB: :memory:...
+2026-11-01 16:54:01.191 | DEBUG    | tldw_chatbook.DB.Prompts_DB:transaction:744 - Started transaction.
+2026-11-01 16:54:01.192 | DEBUG    | tldw_chatbook.DB.Prompts_DB:transaction:748 - Committed transaction.
+2026-11-01 16:54:01.192 | INFO     | tldw_chatbook.DB.Prompts_DB:_apply_migration_v1_to_v2:923 - Prompts migration to version 2 applied successfully for DB: :memory:.
+2026-11-01 16:54:01.192 | INFO     | tldw_chatbook.DB.Prompts_DB:_initialize_schema:1170 - Applying migration: Add prompt artifact type (v2 -> v3)
+2026-11-01 16:54:01.192 | INFO     | tldw_chatbook.DB.Prompts_DB:_apply_migration_v2_to_v3:934 - Applying prompts migration from version 2 to 3 for DB: :memory:...
+2026-11-01 16:54:01.192 | DEBUG    | tldw_chatbook.DB.Prompts_DB:transaction:744 - Started transaction.
+2026-11-01 16:54:01.192 | DEBUG    | tldw_chatbook.DB.Prompts_DB:transaction:748 - Committed transaction.
+2026-11-01 16:54:01.192 | INFO     | tldw_chatbook.DB.Prompts_DB:_initialize_schema:1170 - Applying migration: Add retained Prompt history index (v3 -> v4)
+2026-11-01 16:54:01.192 | INFO     | tldw_chatbook.DB.Prompts_DB:_apply_migration_v3_to_v4:969 - Applying prompts migration from version 3 to 4 for DB: :memory:...
+2026-11-01 16:54:01.192 | DEBUG    | tldw_chatbook.DB.Prompts_DB:transaction:744 - Started transaction.
+2026-11-01 16:54:01.192 | DEBUG    | tldw_chatbook.DB.Prompts_DB:transaction:748 - Committed transaction.
+2026-11-01 16:54:01.192 | INFO     | tldw_chatbook.DB.Prompts_DB:_initialize_schema:1170 - Applying migration: Add local Console Prompt Draft Shelf (v4 -> v5)
+2026-11-01 16:54:01.192 | INFO     | tldw_chatbook.DB.Prompts_DB:_apply_migration_v4_to_v5:1033 - Applying prompts migration from version 4 to 5.
+2026-11-01 16:54:01.192 | DEBUG    | tldw_chatbook.DB.Prompts_DB:transaction:744 - Started transaction.
+2026-11-01 16:54:01.192 | DEBUG    | tldw_chatbook.DB.Prompts_DB:transaction:748 - Committed transaction.
+2026-11-01 16:54:01.192 | INFO     | tldw_chatbook.DB.Prompts_DB:_initialize_schema:1170 - Applying migration: Add literal mix-in artifact type (v5 -> v6)
+2026-11-01 16:54:01.192 | DEBUG    | tldw_chatbook.DB.Prompts_DB:transaction:744 - Started transaction.
+2026-11-01 16:54:01.193 | DEBUG    | tldw_chatbook.DB.Prompts_DB:transaction:748 - Committed transaction.
+2026-11-01 16:54:01.193 | DEBUG    | tldw_chatbook.DB.Prompts_DB:_initialize_schema:1184 - Verified FTS tables exist after migrations.
+2026-11-01 16:54:01.193 | INFO     | tldw_chatbook.DB.Prompts_DB:_initialize_schema:1190 - Database schema initialized/migrated to version 6.
+2026-11-01 16:54:01.193 | DEBUG    | tldw_chatbook.DB.Prompts_DB:__init__:457 - PromptsDatabase initialization completed successfully for :memory:
+============================= slowest 25 durations =============================
+
+(2 durations < 1s hidden.)
+=========================== short test summary info ============================
+ERROR Tests/UI/test_console_prompt_mixins.py::test_mounted_selection_order_toggles_reopen_and_origin_fence
+1 error in 1.05s

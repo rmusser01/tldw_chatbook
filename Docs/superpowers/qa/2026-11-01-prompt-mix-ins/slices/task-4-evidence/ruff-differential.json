@@ -1,0 +1,140 @@
+[
+  {
+    "file": "Tests/Chat/test_console_first_send_atomicity.py",
+    "base": 5,
+    "current": 5,
+    "introduced": []
+  },
+  {
+    "file": "Tests/Chat/test_console_received_intent_transitions.py",
+    "base": 0,
+    "current": 0,
+    "introduced": []
+  },
+  {
+    "file": "Tests/Chat/test_console_settings_apply_store.py",
+    "base": 0,
+    "current": 0,
+    "introduced": []
+  },
+  {
+    "file": "Tests/UI/test_polling_recovery_status_updates.py",
+    "base": 0,
+    "current": 0,
+    "introduced": []
+  },
+  {
+    "file": "tldw_chatbook/Chat/chat_persistence_service.py",
+    "base": 65,
+    "current": 65,
+    "introduced": []
+  },
+  {
+    "file": "tldw_chatbook/Chat/console_chat_controller.py",
+    "base": 180,
+    "current": 180,
+    "introduced": []
+  },
+  {
+    "file": "tldw_chatbook/Chat/console_chat_store.py",
+    "base": 114,
+    "current": 114,
+    "introduced": []
+  },
+  {
+    "file": "tldw_chatbook/Chat/console_configuration_capture.py",
+    "base": 0,
+    "current": 0,
+    "introduced": []
+  },
+  {
+    "file": "tldw_chatbook/Chat/console_configuration_preparation.py",
+    "base": 0,
+    "current": 0,
+    "introduced": []
+  },
+  {
+    "file": "tldw_chatbook/Chat/console_conversation_hydration.py",
+    "base": 5,
+    "current": 5,
+    "introduced": []
+  },
+  {
+    "file": "tldw_chatbook/Chat/console_prompt_mixin_service.py",
+    "base": 0,
+    "current": 0,
+    "introduced": []
+  },
+  {
+    "file": "tldw_chatbook/Chat/console_prompt_mixins.py",
+    "base": 0,
+    "current": 0,
+    "introduced": []
+  },
+  {
+    "file": "tldw_chatbook/Chat/console_prompt_queue.py",
+    "base": 2,
+    "current": 2,
+    "introduced": []
+  },
+  {
+    "file": "tldw_chatbook/Chat/console_prompt_queue_coordinator.py",
+    "base": 8,
+    "current": 8,
+    "introduced": []
+  },
+  {
+    "file": "tldw_chatbook/Chat/console_received_dispatch.py",
+    "base": 0,
+    "current": 0,
+    "introduced": []
+  },
+  {
+    "file": "tldw_chatbook/Chat/console_received_intent.py",
+    "base": 0,
+    "current": 0,
+    "introduced": []
+  },
+  {
+    "file": "tldw_chatbook/Chat/console_received_turn.py",
+    "base": 0,
+    "current": 0,
+    "introduced": []
+  },
+  {
+    "file": "tldw_chatbook/Chat/console_turn_context.py",
+    "base": 4,
+    "current": 4,
+    "introduced": []
+  },
+  {
+    "file": "tldw_chatbook/Prompt_Management/prompt_scope_service.py",
+    "base": 43,
+    "current": 42,
+    "introduced": []
+  },
+  {
+    "file": "tldw_chatbook/UI/Console_Modules/left_rail.py",
+    "base": 7,
+    "current": 7,
+    "introduced": []
+  },
+  {
+    "file": "tldw_chatbook/UI/Console_Modules/session.py",
+    "base": 47,
+    "current": 47,
+    "introduced": []
+  },
+  {
+    "file": "tldw_chatbook/UI/Screens/chat_screen.py",
+    "base": 187,
+    "current": 187,
+    "introduced": []
+  },
+  {
+    "file": "Tests/Chat/test_console_prompt_mixin_admission.py",
+    "base": 0,
+    "current": 0,
+    "introduced": []
+  }
+]

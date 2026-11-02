@@ -814,8 +814,28 @@ class ConsoleMessageActionService:
             # user re-sends from the composer instead). Speak and Continue are
             # also absent: a failed response is retried in place rather than
             # read aloud or extended as a new assistant turn.
+            count = message.mixin_usage_count
+            marked = message.metadata is not None and (
+                message.metadata.mixin_snapshot_schema_version is not None
+                or message.metadata.mixin_attempt_id is not None
+            )
+            missing = count is None and (
+                marked
+                or message.persisted_message_id is not None
+                or message.mixin_replay_status == "unavailable"
+            )
+            retry_action = (
+                ("regenerate", "Regenerate with current mix-ins")
+                if missing
+                else (
+                    "retry",
+                    "Retry with original mix-ins"
+                    if count is not None and count > 0
+                    else "Retry",
+                )
+            )
             completed_actions = [
-                ("retry", "Retry") if action_id == "regenerate" else (action_id, label)
+                retry_action if action_id == "regenerate" else (action_id, label)
                 for action_id, label in completed_actions
                 if action_id not in {"speak", "continue"}
             ]

@@ -1,0 +1,43 @@
+FFFFFF                                                                   [100%]
+=================================== FAILURES ===================================
+___ test_current_choice_replay_refuses_source_rebind[resolution-regenerate] ____
+Tests/Chat/test_console_prompt_mixin_retry.py:1404: in test_current_choice_replay_refuses_source_rebind
+    assert not result.accepted
+E   AssertionError: assert not True
+E    +  where True = ConsoleSubmitResult(accepted=True, should_clear_draft=True, visible_copy='answer', session_closed=False, session_id=No...=None, queue_entry_id=None, committed_context_epoch=None, preparation_id=None, provider_started=False, queue_notice='').accepted
+______ test_current_choice_replay_refuses_source_rebind[resolution-edit] _______
+Tests/Chat/test_console_prompt_mixin_retry.py:1404: in test_current_choice_replay_refuses_source_rebind
+    assert not result.accepted
+E   AssertionError: assert not True
+E    +  where True = ConsoleSubmitResult(accepted=True, should_clear_draft=True, visible_copy='answer', session_closed=False, session_id=No...=None, queue_entry_id=None, committed_context_epoch=None, preparation_id=None, provider_started=False, queue_notice='').accepted
+____ test_current_choice_replay_refuses_source_rebind[resolution-continue] _____
+Tests/Chat/test_console_prompt_mixin_retry.py:1404: in test_current_choice_replay_refuses_source_rebind
+    assert not result.accepted
+E   AssertionError: assert not True
+E    +  where True = ConsoleSubmitResult(accepted=True, should_clear_draft=True, visible_copy='answer', session_closed=False, session_id=No...=None, queue_entry_id=None, committed_context_epoch=None, preparation_id=None, provider_started=False, queue_notice='').accepted
+____ test_current_choice_replay_refuses_source_rebind[transform-regenerate] ____
+Tests/Chat/test_console_prompt_mixin_retry.py:1404: in test_current_choice_replay_refuses_source_rebind
+    assert not result.accepted
+E   AssertionError: assert not True
+E    +  where True = ConsoleSubmitResult(accepted=True, should_clear_draft=True, visible_copy='answer', session_closed=False, session_id=No...=None, queue_entry_id=None, committed_context_epoch=None, preparation_id=None, provider_started=False, queue_notice='').accepted
+_______ test_current_choice_replay_refuses_source_rebind[transform-edit] _______
+Tests/Chat/test_console_prompt_mixin_retry.py:1404: in test_current_choice_replay_refuses_source_rebind
+    assert not result.accepted
+E   AssertionError: assert not True
+E    +  where True = ConsoleSubmitResult(accepted=True, should_clear_draft=True, visible_copy='answer', session_closed=False, session_id=No...=None, queue_entry_id=None, committed_context_epoch=None, preparation_id=None, provider_started=False, queue_notice='').accepted
+_____ test_current_choice_replay_refuses_source_rebind[transform-continue] _____
+Tests/Chat/test_console_prompt_mixin_retry.py:1404: in test_current_choice_replay_refuses_source_rebind
+    assert not result.accepted
+E   AssertionError: assert not True
+E    +  where True = ConsoleSubmitResult(accepted=True, should_clear_draft=True, visible_copy='answer', session_closed=False, session_id=No...=None, queue_entry_id=None, committed_context_epoch=None, preparation_id=None, provider_started=False, queue_notice='').accepted
+============================= slowest 25 durations =============================
+
+(18 durations < 1s hidden.)
+=========================== short test summary info ============================
+FAILED Tests/Chat/test_console_prompt_mixin_retry.py::test_current_choice_replay_refuses_source_rebind[resolution-regenerate]
+FAILED Tests/Chat/test_console_prompt_mixin_retry.py::test_current_choice_replay_refuses_source_rebind[resolution-edit]
+FAILED Tests/Chat/test_console_prompt_mixin_retry.py::test_current_choice_replay_refuses_source_rebind[resolution-continue]
+FAILED Tests/Chat/test_console_prompt_mixin_retry.py::test_current_choice_replay_refuses_source_rebind[transform-regenerate]
+FAILED Tests/Chat/test_console_prompt_mixin_retry.py::test_current_choice_replay_refuses_source_rebind[transform-edit]
+FAILED Tests/Chat/test_console_prompt_mixin_retry.py::test_current_choice_replay_refuses_source_rebind[transform-continue]
+6 failed in 6.19s

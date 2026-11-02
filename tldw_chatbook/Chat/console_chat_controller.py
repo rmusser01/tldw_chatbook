@@ -3057,6 +3057,9 @@ class _PreparedSendContinuation:
     preserve_composer: bool = False
     invocation_source: str | None = field(default=None, repr=False)
     reference_offsets: tuple[tuple[int, int], ...] = field(default=(), repr=False)
+    prompt_mixin_capture: tuple[Any, Any, Callable[[], None]] | None = field(
+        default=None, repr=False
+    )
 
 
 @dataclass(frozen=True, slots=True)
@@ -6263,10 +6266,21 @@ class ConsoleChatController:
                 self.prompt_queue_registry.snapshot(session_id),
                 detail=validation_error,
             )
+        captured_mixins = None
+        mixin_current = None
+        if configuration is None:
+            mixin_service = self.prompt_mixin_service()
+            revision = mixin_service.preferences(session_id).revision
+            mixin_current = mixin_service._capture_currentness(session_id, expected_revision=revision)
+            captured_mixins = await mixin_service.capture(
+                session_id, expected_revision=revision
+            )
         from .console_hook_preparation import bind_hook_preparation_session
 
         with bind_hook_preparation_session(self, session_id):
             reason = await self.hook_admission_reason()
+        if mixin_current is not None:
+            mixin_current()
         if reason is not None:
             return PromptQueueMutationResult(
                 QueueMutationStatus.INVALID,
@@ -6274,7 +6288,10 @@ class ConsoleChatController:
                 detail=reason,
             )
         if configuration is None:
-            configuration = self.resolve_turn_configuration_snapshot(session_id)
+            configuration = replace(
+                self.resolve_turn_configuration_snapshot(session_id),
+                prompt_mixins=captured_mixins,
+            )
         if not isinstance(configuration, ConsoleTurnConfigurationSnapshot):
             raise TypeError("Queue configuration must be an immutable turn snapshot.")
         if configuration.session_id != session_id:
@@ -6296,6 +6313,8 @@ class ConsoleChatController:
             one_shot_prefill=one_shot_prefill,
             one_shot_prefill_revision=one_shot_prefill_revision,
         )
+        if mixin_current is not None:
+            mixin_current()
         result = self.prompt_queue_coordinator.admit(
             session_id,
             text=clean_text,
@@ -7788,6 +7807,29 @@ class ConsoleChatController:
         continuation = self._prepared_send_continuations.get(preparation_id)
         if preparation is None or continuation is None:
             return self._prepared_action_refusal(preparation)
+        def mixins_current():
+            capture = continuation.prompt_mixin_capture
+            if capture is None or preparation_id in self._durable_postcommit_continuations:
+                return True
+            from .console_prompt_mixins import (
+                MixinPreferenceConflictError,
+                MixinSourceChangedError,
+            )
+
+            try:
+                capture[2]()
+            except (MixinPreferenceConflictError, MixinSourceChangedError):
+                if preparation.transient_user_message_id is not None:
+                    self._mark_transient_echo_blocked(preparation.transient_user_message_id)
+                if preparation.state is ConsoleTurnPreparationState.COMMITTING:
+                    self._rollback_committing_preparation(preparation_id)
+                else:
+                    self._abandon_preparation(preparation_id)
+                return False
+            return True
+
+        if not mixins_current():
+            return self._prepared_action_refusal(None, "Mix-in preparation changed; draft kept.")
         selection = preparation.execution_context.configuration.provider_selection
         # TASK-33621.20: a durably committed send keeps its own pause; a pre-commit
         # Cancel would orphan its rows (DESTINATION_CHANGED re-pause, below).
@@ -7803,6 +7845,8 @@ class ConsoleChatController:
                 self._preparation_by_id(preparation_id),
                 "Prepared destination could not be verified.",
             )
+        if not mixins_current():
+            return self._prepared_action_refusal(None, "Mix-in preparation changed; draft kept.")
         block_copy = self._prepared_continuation_block_copy(
             resolution, preparation.execution_context.resolved_destination
         )
@@ -9325,6 +9369,10 @@ class ConsoleChatController:
     ) -> ConsoleSubmitResult:
         """Fence one complete submit lifecycle for close and shutdown."""
         from .console_automatic_submission import resolve_automatic_authorization
+        from .console_prompt_mixins import (
+            MixinPreferenceConflictError,
+            MixinSourceChangedError,
+        )
 
         coordinator, wake_authorization = resolve_automatic_authorization(
             self, origin, session_id, wake_authorization, goal_authorization
@@ -9342,10 +9390,35 @@ class ConsoleChatController:
             return ConsoleSubmitResult(False, False, "Console is shutting down.")
         from .console_hook_preparation import bind_hook_preparation_session
 
+        mixin_service = None
+        pending = self._prepared_send_continuations.get(_resume_preparation_id)
+        mixin_capture = pending.prompt_mixin_capture if pending is not None else None
+        if (configuration is None and owner_key and origin is ConsoleSubmissionOrigin.MANUAL
+                and _resume_preparation_id is None and _operation is None):
+            mixin_service = self.prompt_mixin_service()
+            witness = self.store.session_input_snapshot(owner_key)
+            mixin_revision = mixin_service.preferences(owner_key).revision
+            mixin_current = mixin_service._capture_currentness(owner_key, expected_revision=mixin_revision)
+            mixins = await mixin_service.capture(owner_key, expected_revision=mixin_revision)
+            mixin_capture = (mixins, witness, mixin_current)
         with bind_hook_preparation_session(self, owner_key):
             reason, hook_read = await self._submission_hook_admission(
                 owner_key, _hook_read
             )
+        if mixin_capture is not None:
+            try:
+                mixin_capture[2]()
+            except (MixinPreferenceConflictError, MixinSourceChangedError):
+                if pending is not None:
+                    preparation = self._preparation_by_id(pending.preparation_id)
+                    if preparation is not None:
+                        if preparation.transient_user_message_id is not None:
+                            self._mark_transient_echo_blocked(preparation.transient_user_message_id)
+                        if preparation.state is ConsoleTurnPreparationState.COMMITTING:
+                            self._rollback_committing_preparation(preparation.preparation_id)
+                        else:
+                            self._abandon_preparation(preparation.preparation_id)
+                raise
         if reason is not None:
             if (
                 origin
@@ -9403,6 +9476,7 @@ class ConsoleChatController:
                 _resume_preparation_id=_resume_preparation_id,
                 _resume_resolution=_resume_resolution,
                 _hook_read=hook_read,
+                _prompt_mixin_capture=mixin_capture,
             )
         try:
             if _operation is not None:
@@ -9428,7 +9502,24 @@ class ConsoleChatController:
                 _resume_preparation_id=_resume_preparation_id,
                 _resume_resolution=_resume_resolution,
                 _hook_read=hook_read,
+                _prompt_mixin_capture=mixin_capture,
             )
+        except (MixinPreferenceConflictError, MixinSourceChangedError):
+            if mixin_capture is not None:
+                witness = mixin_capture[1]
+                if self.store is witness._store_ref() and self.store._sessions.get(owner_key) is witness._session_ref():
+                    with self._active_submit_tasks_lock:
+                        preparation_id = self._active_submit_preparations.get(active_task)
+                    if preparation_id is not None:
+                        preparation = self._preparation_by_id(preparation_id)
+                        if preparation is not None and preparation.transient_user_message_id is not None:
+                            self._mark_transient_echo_blocked(preparation.transient_user_message_id)
+                        if preparation is not None and preparation.state is ConsoleTurnPreparationState.COMMITTING:
+                            self._rollback_committing_preparation(preparation_id)
+                        else:
+                            self._abandon_preparation(preparation_id)
+                    self._set_run_state(ConsoleRunState.blocked("Mix-in preparation changed; draft kept."), session_id=owner_key)
+            raise
         except asyncio.CancelledError:
             bound_owner_key = self._submit_task_session(active_task) or owner_key
             if not self._shutdown_requested.is_set():
@@ -9510,6 +9601,7 @@ class ConsoleChatController:
         _resume_preparation_id: str | None = None,
         _resume_resolution: Any | None = None,
         _hook_read: Any = None,
+        _prompt_mixin_capture: tuple[Any, Any, Callable[[], None]] | None = None,
     ) -> ConsoleSubmitResult:
         """Submit work, explicitly identifying a wake's proven preflight refusal."""
         from .console_automatic_submission import resolve_automatic_authorization
@@ -9543,6 +9635,7 @@ class ConsoleChatController:
                     _resume_preparation_id=_resume_preparation_id,
                     _resume_resolution=_resume_resolution,
                     _hook_read=_hook_read,
+                    _prompt_mixin_capture=_prompt_mixin_capture,
                 )
         except BaseException as exc:
             # A wake may stop while preparation is still awaiting a helper,
@@ -9646,6 +9739,7 @@ class ConsoleChatController:
         _resume_preparation_id: str | None = None,
         _resume_resolution: Any | None = None,
         _hook_read: Any = None,
+        _prompt_mixin_capture: tuple[Any, Any, Callable[[], None]] | None = None,
     ) -> ConsoleSubmitResult:
         """Submit a composer draft through native Console validation and provider resolution.
 
@@ -9948,6 +10042,17 @@ class ConsoleChatController:
             if configuration is not None
             else self.resolve_turn_configuration_snapshot(session.id)
         )
+        if _prompt_mixin_capture is not None:
+            mixins, witness, mixin_current = _prompt_mixin_capture
+            mixin_current()
+            preferences = session.prompt_mixin_preferences.preferences
+            if (session is not witness._session_ref() or session.incarnation_id != witness.incarnation_id
+                    or session.conversation_binding_revision != witness.conversation_binding_revision
+                    or preferences is None or witness.prompt_mixin_preferences is None
+                    or preferences.revision != witness.prompt_mixin_preferences.revision):
+                from .console_prompt_mixins import MixinPreferenceConflictError
+                raise MixinPreferenceConflictError("mixin_preference_conflict")
+            configuration = replace(configuration, prompt_mixins=mixins)
         from .console_plugin_context import _prepare_native_references
 
         try:
@@ -9998,6 +10103,9 @@ class ConsoleChatController:
                 session.id,
                 "Plugin model constraints are unavailable; review and retry.",
             )
+        if origin.automatic:
+            from .console_prompt_mixins import MixinAttemptSnapshot
+            configuration = replace(configuration, prompt_mixins=MixinAttemptSnapshot())
         turn_selection = configuration.provider_selection
         if has_pending_attachment:
             vision_model = configuration.effective_model
@@ -10023,6 +10131,8 @@ class ConsoleChatController:
             chat_start_authorization=chat_start_authorization,
             hook_read=_hook_read,
         )
+        if _prompt_mixin_capture is not None:
+            _prompt_mixin_capture[2]()
         if hook_refusal is not None:
             return hook_refusal
         library_authority = (
@@ -10030,6 +10140,8 @@ class ConsoleChatController:
             if resumed_preparation is not None
             else await self._capture_turn_library_authority(session.id, configuration)
         )
+        if _prompt_mixin_capture is not None:
+            _prompt_mixin_capture[2]()
         existing_preparation = self.store.preparation_for_session(session.id)
         if (
             existing_preparation is not None
@@ -10173,6 +10285,21 @@ class ConsoleChatController:
                 else None
             )
         )
+        def require_mixin_current():
+            if _prompt_mixin_capture is None:
+                return
+            from .console_prompt_mixins import (
+                MixinPreferenceConflictError,
+                MixinSourceChangedError,
+            )
+
+            try:
+                _prompt_mixin_capture[2]()
+            except (MixinPreferenceConflictError, MixinSourceChangedError):
+                if echoed_user is not None and self.store is _prompt_mixin_capture[1]._store_ref():
+                    self._mark_transient_echo_blocked(echoed_user.id)
+                raise
+
         if reference_records:
             # TASK-27021 / 26020 AC#6 (placement per Qodo #7, PR #2313): the
             # audit row is written adjacent to the raw user echo and
@@ -10201,6 +10328,7 @@ class ConsoleChatController:
                 if resumed_preparation is not None
                 else await self._resolve_for_send_bounded(turn_selection)
             )
+            require_mixin_current()
         except BaseException as exc:
             # A readiness probe that raises or is cancelled AFTER the optimistic
             # USER echo must still fail that row — otherwise a never-sent USER
@@ -10551,6 +10679,7 @@ class ConsoleChatController:
                     invocation_source=clean_draft,
                     reference_offsets=reference_offsets,
                     preserve_composer=preserve_composer,
+                    prompt_mixin_capture=_prompt_mixin_capture,
                     attachments=tuple(pendings),
                     prefill=frozen_prefill,
                     prefill_from_one_shot=frozen_prefill_from_one_shot,
@@ -11046,6 +11175,15 @@ class ConsoleChatController:
                 *provider_messages,
                 {"role": ConsoleMessageRole.USER.value, "content": hook_context},
             ]
+        if echoed_user is not None and turn_context.prompt_mixins.items:
+            from .console_prepared_request import compose_current_mixin_messages
+
+            provider_messages = compose_current_mixin_messages(
+                provider_messages,
+                turn_context.prompt_mixins,
+                user_message_id=echoed_user.id,
+                attempt_id=turn_context.library_authority.attempt_id,
+            )
         if _request_fingerprint(provider_messages) != early_request or skill_bindings:
             # Skills, retrieved evidence or hook context grew the request
             # after the early check (Qodo #1 on PR #3003): check again before
@@ -11065,6 +11203,7 @@ class ConsoleChatController:
             )
             if stop is not None:
                 return stop
+        require_mixin_current()
         if preparation is not None:
             current_preparation = self._preparation_by_id(preparation.preparation_id)
             if current_preparation is None or (
@@ -11114,6 +11253,7 @@ class ConsoleChatController:
                 custody_acceptance_hook=custody_acceptance_hook,
                 hook_context=hook_context,
                 chat_start_authorization=chat_start_authorization,
+                **({"_require_mixin_current": require_mixin_current} if _prompt_mixin_capture is not None else {}),
             )
         # TASK-1364: record the accepted send to the shared prompt history.
         # Same placement rule as the accepted-hook above: only a send that is
@@ -11177,6 +11317,7 @@ class ConsoleChatController:
                     origin=origin,
                     queue_entry_id=queue_entry_id,
                 )
+        require_mixin_current()
         continuation_gate = self.prompt_queue_coordinator.continuation_contribution(
             session.id, queue_entry_id
         )
@@ -11736,6 +11877,8 @@ class ConsoleChatController:
     ) -> PreparedConsoleRequest | None:
         """Freeze one Capture-On request from the admitted durable inputs."""
 
+        from .console_prepared_request import MIXIN_ATTEMPT_KEY
+
         if preparation.capture_mode is ConsoleTraceCaptureMode.CAPTURE_OFF:
             return None
         persistence = self.store.persistence
@@ -11755,6 +11898,7 @@ class ConsoleChatController:
                 for key, value in row.items()
                 if key
                 not in {
+                    MIXIN_ATTEMPT_KEY,
                     NATIVE_MESSAGE_ID_KEY,
                     PERSISTED_MESSAGE_ID_KEY,
                     PERSISTED_CONVERSATION_ID_KEY,
@@ -11782,7 +11926,13 @@ class ConsoleChatController:
             if transformed and (
                 owner_id != echoed_user_id
                 or source is None
-                or not self._is_current_user_text_transform(source, visible)
+                or not (
+                    self._is_current_user_text_transform(source, visible)
+                    or (
+                        row.get(MIXIN_ATTEMPT_KEY) == preparation.attempt_id
+                        and self._is_current_user_mixin_transform(source, visible)
+                    )
+                )
             ):
                 continue
             if owner_id == echoed_user_id:
@@ -11977,10 +12127,17 @@ class ConsoleChatController:
         saved_by_position = dict(zip(saved_positions, saved, strict=True))
         for position in transformed_positions:
             saved_by_position[position] = DerivedTraceProvenance(
-                TraceTransformKind.CURRENT_TURN_TEXT,
+                (
+                    TraceTransformKind.PROMPT_MIXINS
+                    if MIXIN_ATTEMPT_KEY in provider_messages[position]
+                    else TraceTransformKind.CURRENT_TURN_TEXT
+                ),
                 inputs=(saved_by_position[position],),
                 artifact=ProviderArtifactTraceProvenance(
-                    TraceProvenanceSource.ACTIVE_REQUEST, policy
+                    TraceProvenanceSource.PROMPT_MIXINS
+                    if MIXIN_ATTEMPT_KEY in provider_messages[position]
+                    else TraceProvenanceSource.ACTIVE_REQUEST,
+                    policy,
                 ),
             )
         sources = unsaved_row_sources(visible_messages)  # TASK-33621.2: system rows
@@ -11989,6 +12146,9 @@ class ConsoleChatController:
             or ProviderArtifactTraceProvenance(sources[index], policy)
             for index in range(len(visible_messages))
         )
+        for position, row in enumerate(provider_messages):
+            if MIXIN_ATTEMPT_KEY in row:
+                visible_messages[position][MIXIN_ATTEMPT_KEY] = row[MIXIN_ATTEMPT_KEY]
         return build_console_request_for_preparation(
             preparation,
             visible_messages,
@@ -12007,6 +12167,34 @@ class ConsoleChatController:
     _is_current_user_text_transform = staticmethod(_is_current_user_text_transform)
 
     _reseal_archive_followup_trace_request = _reseal_archive_followup_trace_request
+
+    @staticmethod
+    def _is_current_user_mixin_transform(source, visible):
+        """Permit added literal text blocks around the unchanged multipart envelope."""
+        before, after = source.get("content"), visible.get("content")
+        if (
+            source.get("role") != "user"
+            or type(before) is not list
+            or type(after) is not list
+        ):
+            return False
+        if {k: v for k, v in source.items() if k != "content"} != {
+            k: v for k, v in visible.items() if k != "content"
+        }:
+            return False
+        for start in range(len(after) - len(before) + 1):
+            if ConsoleChatController._is_current_user_text_transform(
+                source, {**visible, "content": after[start : start + len(before)]}
+            ) and all(
+                type(part) is dict
+                and set(part) == {"type", "text"}
+                and part["type"] == "text"
+                and type(part["text"]) is str
+                for part in [*after[:start], *after[start + len(before) :]]
+            ):
+                return True
+        return False
+
 
     @staticmethod
     def _provider_messages_with_prefill(
@@ -12222,12 +12410,13 @@ class ConsoleChatController:
         committed_context_epoch: int,
         custody_acceptance_hook: Callable[[], None] | None,
         hook_context: str = "",
+        _require_mixin_current: Callable[[], None] | None = None,
         chat_start_authorization: AgentChatStartAuthorization | None = None,
     ) -> ConsoleSubmitResult:
         """Commit one durable owner, then enter its idempotent effect chain."""
         from .console_native_commit import _controller_accept_durable_turn
 
-        return await _controller_accept_durable_turn(self, session=session, preparation=preparation, preparation_outcome=preparation_outcome, prepared_continuation=prepared_continuation, echoed_user=echoed_user, staged_title=staged_title, staged_attachments=staged_attachments, resolution=resolution, provider_messages=provider_messages, trace_source_messages=trace_source_messages, prefill=prefill, prefill_from_one_shot=prefill_from_one_shot, one_shot_prefill_revision=one_shot_prefill_revision, skill_bindings=skill_bindings, skill_bundle_block=skill_bundle_block, citation_repair_contract=citation_repair_contract, terminal_citation_finalizer=terminal_citation_finalizer, turn_context=turn_context, origin=origin, queue_entry_id=queue_entry_id, committed_context_epoch=committed_context_epoch, custody_acceptance_hook=custody_acceptance_hook, hook_context=hook_context, chat_start_authorization=chat_start_authorization)
+        return await _controller_accept_durable_turn(self, session=session, preparation=preparation, preparation_outcome=preparation_outcome, prepared_continuation=prepared_continuation, echoed_user=echoed_user, staged_title=staged_title, staged_attachments=staged_attachments, resolution=resolution, provider_messages=provider_messages, trace_source_messages=trace_source_messages, prefill=prefill, prefill_from_one_shot=prefill_from_one_shot, one_shot_prefill_revision=one_shot_prefill_revision, skill_bindings=skill_bindings, skill_bundle_block=skill_bundle_block, citation_repair_contract=citation_repair_contract, terminal_citation_finalizer=terminal_citation_finalizer, turn_context=turn_context, origin=origin, queue_entry_id=queue_entry_id, committed_context_epoch=committed_context_epoch, custody_acceptance_hook=custody_acceptance_hook, hook_context=hook_context, chat_start_authorization=chat_start_authorization, _require_mixin_current=_require_mixin_current)
 
     def _postcommit_stopped_by_close(
         self,
@@ -18489,7 +18678,10 @@ class ConsoleChatController:
                 ConsoleRunState.blocked(visible_copy), session_id=session_id
             )
             return ConsoleSubmitResult(False, False, visible_copy)
-        if message.status != "failed":
+        if (
+            message.status != "failed"
+            and message.assistant_generation_state != "failed"
+        ):
             return self._block(session_id, "Only failed messages can be retried.")
 
         from .console_turn_resend import _replay_message
@@ -18497,10 +18689,11 @@ class ConsoleChatController:
         return await _replay_message(
             self,
             message_id,
-            lambda resolution, context, rows: self._retry_message_body(
+            lambda resolution, context, rows, current: self._retry_message_body(
                 message_id, resolution, context, rows
             ),
             queue_authorization=queue_authorization,
+            original_assistant_id=message_id,
         )
 
     async def _retry_message_body(
@@ -18523,7 +18716,9 @@ class ConsoleChatController:
             annotate_ids=True,
             turn_context=turn_context,
         )
-        self._ensure_user_continuation_instruction(provider_messages)
+        mixin_anchor_id = self._ensure_user_continuation_instruction(
+            provider_messages, attempt_id=turn_context.library_authority.attempt_id
+        )
         (
             provider_messages,
             refuse,
@@ -18556,6 +18751,7 @@ class ConsoleChatController:
         prefill = self._pinned_prefill_for_session(session_id)
         return await self._stream_assistant_response(
             route=ConsoleRequestRoute.RETRY,
+            mixin_anchor_id=mixin_anchor_id,
             resolution=resolution,
             provider_messages=provider_messages,
             assistant_message_id=message_id,
@@ -18678,8 +18874,13 @@ class ConsoleChatController:
         return await _replay_message(
             self,
             message_id,
-            lambda resolution, context, rows: self._continue_from_message_body(
-                message_id, resolution, context, rows, resend=resend
+            lambda resolution, context, rows, current: self._continue_from_message_body(
+                message_id,
+                resolution,
+                context,
+                rows,
+                resend=resend,
+                mixin_current=current,
             ),
             prompt=(
                 CONSOLE_CONTINUE_INSTRUCTION
@@ -18689,7 +18890,15 @@ class ConsoleChatController:
         )
 
     async def _continue_from_message_body(
-        self, message_id, resolution, turn_context, hook_rows, *, resend=False
+        self,
+        message_id,
+        resolution,
+        turn_context,
+        hook_rows,
+        *,
+        resend=False,
+        mixin_retry_of_attempt_id=None,
+        mixin_current=None,
     ):
         session_id = turn_context.session_id
         if (
@@ -18708,7 +18917,9 @@ class ConsoleChatController:
             annotate_ids=True,
             turn_context=turn_context,
         )
-        self._ensure_user_continuation_instruction(provider_messages)
+        mixin_anchor_id = self._ensure_user_continuation_instruction(
+            provider_messages, attempt_id=turn_context.library_authority.attempt_id
+        )
         if not self._has_user_turn(provider_messages):
             return self._block(
                 session_id,
@@ -18721,6 +18932,8 @@ class ConsoleChatController:
             skill_bindings,
             skill_bundle_block,
         ) = await self._apply_skill_substitution(provider_messages, turn_context)
+        if refusal := self._current_mixin_refusal(session_id, mixin_current):
+            return refusal
         if refuse is not None:
             return self._block(session_id, refuse)
         for note in skill_notes:
@@ -18743,6 +18956,8 @@ class ConsoleChatController:
             turn_skill_bindings=skill_bindings,
         ):
             return refusal  # TASK-33621.4: before commit, never Failed
+        if refusal := self._current_mixin_refusal(session_id, mixin_current):
+            return refusal
         assistant = self.store.append_message(
             session_id,
             role=ConsoleMessageRole.ASSISTANT,
@@ -18751,6 +18966,9 @@ class ConsoleChatController:
         )
         return await self._stream_assistant_response(
             route=ConsoleRequestRoute.CONTINUE,
+            mixin_anchor_id=mixin_anchor_id,
+            mixin_retry_of_attempt_id=mixin_retry_of_attempt_id,
+            mixin_replaces_attempt_id=mixin_retry_of_attempt_id if resend else None,
             resolution=resolution,
             provider_messages=provider_messages,
             assistant_message_id=assistant.id,
@@ -18838,10 +19056,32 @@ class ConsoleChatController:
             ConsoleRunState(ConsoleRunStatus.VALIDATING, "Validating provider."),
             session_id=session_id,
         )
+        from .console_prompt_mixins import (
+            MixinPreferenceConflictError,
+            MixinSnapshotUnavailableError,
+            MixinSourceChangedError,
+        )
+
+        try:
+            configuration, mixin_current = await self._current_mixin_configuration(
+                session_id
+            )
+        except (
+            MixinSnapshotUnavailableError,
+            MixinPreferenceConflictError,
+            MixinSourceChangedError,
+        ):
+            return self._block(
+                session_id, "Mix-ins are unavailable; response was not regenerated."
+            )
         (
             resolution,
             turn_context,
-        ) = await self._capture_and_resolve_turn_execution_context(session_id)
+        ) = await self._capture_and_resolve_turn_execution_context(
+            session_id, configuration
+        )
+        if refusal := self._current_mixin_refusal(session_id, mixin_current):
+            return refusal
         if not getattr(resolution, "ready", False):
             visible_copy = self._blocked_visible_copy(
                 getattr(resolution, "visible_copy", "")
@@ -18855,13 +19095,28 @@ class ConsoleChatController:
         if thinking_block is not None:
             return thinking_block
 
+        # Current-choice recovery does not require the original Retry snapshot.
+        # Only a readable exact original may grant replacement witness lineage.
+        mixin_replaces_attempt_id = None
+        if message.metadata is not None and message.metadata.mixin_attempt_id:
+            try:
+                await self.prompt_mixin_service().retry_snapshot(
+                    session_id, assistant_message_id=message_id
+                )
+            except MixinSnapshotUnavailableError:
+                pass
+            else:
+                mixin_replaces_attempt_id = message.metadata.mixin_attempt_id
+
         provider_messages = self._provider_messages_for_session(
             session_id,
             before_message_id=message_id,
             annotate_ids=True,
             turn_context=turn_context,
         )
-        self._ensure_user_continuation_instruction(provider_messages)
+        mixin_anchor_id = self._ensure_user_continuation_instruction(
+            provider_messages, attempt_id=turn_context.library_authority.attempt_id
+        )
         if not self._has_user_turn(provider_messages):
             return self._block(
                 session_id,
@@ -18874,6 +19129,8 @@ class ConsoleChatController:
             skill_bindings,
             skill_bundle_block,
         ) = await self._apply_skill_substitution(provider_messages, turn_context)
+        if refusal := self._current_mixin_refusal(session_id, mixin_current):
+            return refusal
         if refuse is not None:
             return self._block(session_id, refuse)
         for note in skill_notes:
@@ -18895,6 +19152,8 @@ class ConsoleChatController:
             turn_skill_bindings=skill_bindings,
         ):
             return refusal  # TASK-33621.4: before the sibling, never Failed
+        if refusal := self._current_mixin_refusal(session_id, mixin_current):
+            return refusal
         prefill = self._pinned_prefill_for_session(session_id)
         self.clear_original_attempt(message_id)
         new_message = self.store.create_sibling(
@@ -18908,6 +19167,8 @@ class ConsoleChatController:
         }
         result = await self._stream_assistant_response(
             route=ConsoleRequestRoute.REGENERATE,
+            mixin_anchor_id=mixin_anchor_id,
+            mixin_replaces_attempt_id=mixin_replaces_attempt_id,
             resolution=resolution,
             provider_messages=provider_messages,
             assistant_message_id=new_message.id,
@@ -19890,7 +20151,24 @@ class ConsoleChatController:
         clean_content, validation_error = self._validated_draft(new_content)
         if validation_error is not None:
             return self._block(session_id, validation_error)
-        configuration = self.resolve_turn_configuration_snapshot(session_id)
+        from .console_prompt_mixins import (
+            MixinPreferenceConflictError,
+            MixinSnapshotUnavailableError,
+            MixinSourceChangedError,
+        )
+
+        try:
+            configuration, mixin_current = await self._current_mixin_configuration(
+                session_id
+            )
+        except (
+            MixinSnapshotUnavailableError,
+            MixinPreferenceConflictError,
+            MixinSourceChangedError,
+        ):
+            return self._block(
+                session_id, "Mix-ins are unavailable; edited draft kept."
+            )
         turn_selection = configuration.provider_selection
 
         # task-573: the resend carries the anchor's attachments, so the same
@@ -19920,6 +20198,8 @@ class ConsoleChatController:
             session_id,
             configuration,
         )
+        if refusal := self._current_mixin_refusal(session_id, mixin_current):
+            return refusal
         if not getattr(resolution, "ready", False):
             visible_copy = self._blocked_visible_copy(
                 getattr(resolution, "visible_copy", "")
@@ -19961,7 +20241,9 @@ class ConsoleChatController:
                 turn_context=turn_context,
             )
         )
-        self._ensure_user_continuation_instruction(provider_messages)
+        mixin_anchor_id = self._ensure_user_continuation_instruction(
+            provider_messages, attempt_id=turn_context.library_authority.attempt_id
+        )
         (
             provider_messages,
             refuse,
@@ -19969,6 +20251,8 @@ class ConsoleChatController:
             skill_bindings,
             skill_bundle_block,
         ) = await self._apply_skill_substitution(provider_messages, turn_context)
+        if refusal := self._current_mixin_refusal(session_id, mixin_current):
+            return refusal
         if refuse is not None:
             return self._block(session_id, refuse)
         for note in skill_notes:
@@ -19990,6 +20274,8 @@ class ConsoleChatController:
             turn_skill_bindings=skill_bindings,
         ):
             return refusal  # TASK-33621.4: before the sibling, never Failed
+        if refusal := self._current_mixin_refusal(session_id, mixin_current):
+            return refusal
         prefill = self._pinned_prefill_for_session(session_id)
 
         # Every transform succeeded: now (and only now) fork the edited USER
@@ -20022,6 +20308,13 @@ class ConsoleChatController:
                 else None
             ),
         )
+        synthetic_id = ancestors[-1].id
+        provider_messages = [
+            {**row, NATIVE_MESSAGE_ID_KEY: edited_message.id}
+            if row.get(NATIVE_MESSAGE_ID_KEY) == synthetic_id
+            else row
+            for row in provider_messages
+        ]
         assistant = self.store.append_message(
             session_id,
             role=ConsoleMessageRole.ASSISTANT,
@@ -20030,6 +20323,7 @@ class ConsoleChatController:
         )
         return await self._stream_assistant_response(
             route=ConsoleRequestRoute.EDIT,
+            mixin_anchor_id=mixin_anchor_id,
             resolution=resolution,
             provider_messages=provider_messages,
             assistant_message_id=assistant.id,
@@ -20094,6 +20388,12 @@ class ConsoleChatController:
         provider_messages: list[dict[str, Any]] = []
 
         try:
+            service = self.prompt_mixin_service()
+            mixins = await service.capture(
+                session_id,
+                expected_revision=service.preferences(session_id).revision,
+                publish_facts=False,
+            )
             # Build the next-send payload as submit_draft would, but do not persist.
             # task-548: annotate native ids so the boundary-summary compaction
             # below can anchor by identity, exactly like the real dispatch path
@@ -20120,6 +20420,8 @@ class ConsoleChatController:
                     session_id=session_id,
                     turn_context=turn_context,
                 )
+                synthetic_anchor = "preview:" + session_id
+                synthetic_user[-1][NATIVE_MESSAGE_ID_KEY] = synthetic_anchor
                 provider_messages.extend(synthetic_user)
 
             prefill, prefill_from_one_shot = self._resolve_submit_prefill(session_id)
@@ -20151,6 +20453,16 @@ class ConsoleChatController:
             provider_messages = await self._apply_chat_dictionaries(
                 provider_messages, session_id
             )
+
+            if synthetic_turn_added:
+                from .console_prepared_request import compose_current_mixin_messages
+
+                provider_messages = compose_current_mixin_messages(
+                    provider_messages,
+                    mixins,
+                    user_message_id=synthetic_anchor,
+                    attempt_id=synthetic_anchor,
+                )
 
             # Project the same typed effective memory used by dispatch. Memory
             # stays separately app-owned until provider serialization.
@@ -20196,6 +20508,7 @@ class ConsoleChatController:
                         for key, value in row.items()
                         if key
                         not in {
+                            "_tldw_mixin_attempt",
                             NATIVE_MESSAGE_ID_KEY,
                             PERSISTED_MESSAGE_ID_KEY,
                             PERSISTED_CONVERSATION_ID_KEY,
@@ -20211,6 +20524,7 @@ class ConsoleChatController:
                     for key, value in row.items()
                     if key
                     not in {
+                        "_tldw_mixin_attempt",
                         NATIVE_MESSAGE_ID_KEY,
                         PERSISTED_MESSAGE_ID_KEY,
                         PERSISTED_CONVERSATION_ID_KEY,
@@ -20304,6 +20618,14 @@ class ConsoleChatController:
                 "system": redacted_system,
                 "staged_sources": staged_sources_list,
                 "tools": tools_info,
+                "mix_ins": [
+                    {
+                        "name": item.name,
+                        "placement": item.definition.placement,
+                        "version": item.record_version,
+                    }
+                    for item in mixins.items
+                ],
             }
             if prefill:
                 # Text mirrors the redacted trailing assistant turn so the
@@ -20344,15 +20666,34 @@ class ConsoleChatController:
         except Exception as exc:
             if not preview_current():
                 return ConsoleContextSnapshot(current_messages=[], next_send_payload={})
-            logger.exception(
-                "Failed to build context snapshot: session_id={session_id} "
-                "draft_length={draft_length} attachments={attachments_count} "
-                "staged_sources={staged_sources_count}",
-                session_id=session_id,
-                draft_length=len(draft),
-                attachments_count=len(tuple(attachments or ())),
-                staged_sources_count=len(tuple(staged_sources or ())),
+            from .console_prompt_mixins import (
+                MixinPreferenceConflictError,
+                MixinSnapshotUnavailableError,
+                MixinSourceChangedError,
             )
+
+            expected_mixin_failure = isinstance(
+                exc,
+                (
+                    MixinPreferenceConflictError,
+                    MixinSnapshotUnavailableError,
+                    MixinSourceChangedError,
+                ),
+            )
+            if expected_mixin_failure:
+                logger.info(
+                    "Console mix-in preview unavailable; refresh or disable unavailable selections"
+                )
+            else:
+                logger.exception(
+                    "Failed to build context snapshot: session_id={session_id} "
+                    "draft_length={draft_length} attachments={attachments_count} "
+                    "staged_sources={staged_sources_count}",
+                    session_id=session_id,
+                    draft_length=len(draft),
+                    attachments_count=len(tuple(attachments or ())),
+                    staged_sources_count=len(tuple(staged_sources or ())),
+                )
             # Preserve whatever was assembled before the failure so the viewer
             # still sees the transcript-derived payload and effective system
             # prompt rather than an empty placeholder. A failure inside the
@@ -20386,9 +20727,17 @@ class ConsoleChatController:
                     "tools": {
                         "native_schemas": [],
                         "mcp_note": None,
-                        "preview_note": "Preview unavailable due to an internal error.",
+                        "preview_note": (
+                            "Mix-ins unavailable. Disable or remove unavailable selections, or refresh and retry Preview."
+                            if expected_mixin_failure
+                            else "Preview unavailable due to an internal error."
+                        ),
                     },
-                    "error": f"Failed to build context snapshot: {exc}",
+                    "error": (
+                        "Mix-ins unavailable; draft kept."
+                        if expected_mixin_failure
+                        else f"Failed to build context snapshot: {exc}"
+                    ),
                 },
                 personal_context_snapshot=_empty_profile_context_snapshot(),
             )
@@ -21305,6 +21654,20 @@ class ConsoleChatController:
             ),
         }
 
+    def prompt_mixin_service(self):
+        """Compose the selection owner from this runtime's existing app services."""
+        from .console_prompt_mixin_service import ConsolePromptMixinService
+
+        return ConsolePromptMixinService(
+            store=self.store,
+            prompt_scope_service=getattr(self.app, "prompt_scope_service", None),
+            persistence=self.store.persistence,
+            preparation_owner=self,
+            settings_durability_owner=getattr(
+                self.app, "console_settings_durability_owner", None
+            ),
+        )
+
     async def capture_turn_configuration_snapshot(
         self,
         session_id: str,
@@ -21604,6 +21967,36 @@ class ConsoleChatController:
             resolved_destination=self._resolved_destination_for_context(resolution),
         )
 
+    async def _current_mixin_configuration(self, session_id):
+        service = self.prompt_mixin_service()
+        revision = service.preferences(session_id).revision
+        current = service._capture_currentness(session_id, expected_revision=revision)
+        snapshot = await service.capture(session_id, expected_revision=revision)
+        current()
+        return replace(
+            self.resolve_turn_configuration_snapshot(session_id), prompt_mixins=snapshot
+        ), current
+
+    def _current_mixin_refusal(self, session_id, current):
+        from .console_prompt_mixins import (
+            MixinPreferenceConflictError,
+            MixinSnapshotUnavailableError,
+            MixinSourceChangedError,
+        )
+
+        try:
+            if current is not None:
+                current()
+        except (
+            MixinPreferenceConflictError,
+            MixinSnapshotUnavailableError,
+            MixinSourceChangedError,
+        ):
+            return self._block(
+                session_id, "Mix-in source or choices changed; try again. Draft kept."
+            )
+        return None
+
     async def _capture_and_resolve_turn_execution_context(
         self,
         session_id: str,
@@ -21653,17 +22046,24 @@ class ConsoleChatController:
     @staticmethod
     def _ensure_user_continuation_instruction(
         provider_messages: list[dict[str, Any]],
-    ) -> None:
+        *,
+        attempt_id: str,
+    ) -> str | None:
+        """Append and identify the synthetic current turn for every replay route."""
         if (
             provider_messages
             and provider_messages[-1].get("role") == ConsoleMessageRole.ASSISTANT.value
         ):
+            anchor_id = "continue:" + attempt_id
             provider_messages.append(
                 {
                     "role": ConsoleMessageRole.USER.value,
                     "content": CONSOLE_CONTINUE_INSTRUCTION,
+                    NATIVE_MESSAGE_ID_KEY: anchor_id,
                 }
             )
+            return anchor_id
+        return None
 
     @staticmethod
     def _has_user_turn(provider_messages: list[dict[str, Any]]) -> bool:
@@ -24421,6 +24821,9 @@ class ConsoleChatController:
         trace_request: PreparedConsoleRequest | None = None,
         propagate_trace_call_persistence_errors: bool = False,
         trusted_profile_user_message_id: str | None = None,
+        mixin_anchor_id: str | None = None,
+        mixin_retry_of_attempt_id: str | None = None,
+        mixin_replaces_attempt_id: str | None = None,
         work_origin: WorkOrigin = WorkOrigin.MANUAL,
         work_chain_id: str | None = None,
         compaction_ask_bypassed: bool = False,
@@ -24471,6 +24874,9 @@ class ConsoleChatController:
                         propagate_trace_call_persistence_errors
                     ),
                     trusted_profile_user_message_id=trusted_profile_user_message_id,
+                    mixin_anchor_id=mixin_anchor_id,
+                    mixin_retry_of_attempt_id=mixin_retry_of_attempt_id,
+                    mixin_replaces_attempt_id=mixin_replaces_attempt_id,
                     compaction_ask_bypassed=compaction_ask_bypassed,
                 )
         finally:
@@ -24513,6 +24919,9 @@ class ConsoleChatController:
         trace_request: PreparedConsoleRequest | None = None,
         propagate_trace_call_persistence_errors: bool = False,
         trusted_profile_user_message_id: str | None = None,
+        mixin_anchor_id: str | None = None,
+        mixin_retry_of_attempt_id: str | None = None,
+        mixin_replaces_attempt_id: str | None = None,
         work_origin: WorkOrigin = WorkOrigin.MANUAL,
         work_chain_id: str | None = None,
         compaction_ask_bypassed: bool = False,
@@ -24557,6 +24966,67 @@ class ConsoleChatController:
         # not the controller's active session) so a session switch racing
         # this send can't flip which branch a still-in-flight message uses.
         force_plain = owner is not None and owner.assistant_kind == "character"
+        from .console_prepared_request import compose_current_mixin_messages
+        from .console_prompt_mixins import (
+            MixinAttemptWrite,
+            MixinSnapshotUnavailableError,
+        )
+
+        # The transcript owner supplies the anchor, never a tool/hook role=user row.
+        transcript = self.store.messages_for_session(owner_id)
+        assistant_position = next(
+            i for i, row in enumerate(transcript) if row.id == assistant_message_id
+        )
+        current_user = next(
+            (
+                row
+                for row in reversed(transcript[:assistant_position])
+                if row.role is ConsoleMessageRole.USER
+            ),
+            None,
+        )
+        if current_user is not None:
+            attempt_id = turn_context.library_authority.attempt_id
+            assistant_row = self.store.get_message(assistant_message_id)
+            previous = (
+                assistant_row.metadata.mixin_attempt_id
+                if assistant_row.metadata is not None
+                else None
+            )
+            batch = MixinAttemptWrite(
+                attempt_id,
+                current_user.id,
+                assistant_message_id,
+                turn_context.prompt_mixins,
+                mixin_retry_of_attempt_id
+                or (previous if previous != attempt_id else None),
+                replaces_attempt_id=(
+                    mixin_replaces_attempt_id
+                    or (
+                        previous
+                        if route is ConsoleRequestRoute.RETRY and previous != attempt_id
+                        else None
+                    )
+                ),
+            )
+            try:
+                provider_messages = compose_current_mixin_messages(
+                    provider_messages,
+                    turn_context.prompt_mixins,
+                    user_message_id=(
+                        mixin_anchor_id
+                        or trusted_profile_user_message_id
+                        or current_user.id
+                    ),
+                    attempt_id=attempt_id,
+                )
+                await self.prompt_mixin_service().accept_attempt(owner_id, batch)
+            except MixinSnapshotUnavailableError:
+                return self._block_context_preflight(
+                    session_id=owner_id,
+                    assistant_message_id=assistant_message_id,
+                    visible_copy="Mix-in attempt could not be saved; response was not sent.",
+                )
         # Cost-ticker PR3: record this send's payload-fingerprint baseline at
         # the single dispatch choke point covering BOTH the direct-provider
         # and agent paths (they branch further down). Two boundaries are

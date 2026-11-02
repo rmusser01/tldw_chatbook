@@ -1,0 +1,12 @@
+{
+  "tldw_chatbook/Chat/console_chat_fork.py": {
+    "base": 2,
+    "current": 2,
+    "introduced": []
+  },
+  "tldw_chatbook/DB/recovery_core_schema.py": {
+    "base": 1,
+    "current": 1,
+    "introduced": []
+  }
+}

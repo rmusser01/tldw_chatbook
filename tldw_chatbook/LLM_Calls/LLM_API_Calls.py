@@ -27,7 +27,7 @@ import json
 import time
 from collections.abc import Mapping
 from copy import deepcopy
-from typing import List, Any, Optional, Tuple, Dict, Union
+from typing import TYPE_CHECKING, List, Any, Optional, Tuple, Dict, Union
 from urllib.parse import urlparse
 
 #
@@ -92,6 +92,10 @@ from tldw_chatbook.Utils.sensitive_llm_logging import (
     safe_llm_request_payload_summary,
     safe_llm_url_host,
 )
+
+if TYPE_CHECKING:
+    from tldw_chatbook.Chat.console_prepared_request import ConsoleCacheBoundary
+
 #
 #######################################################################################################################
 # Provider Parameter Support Documentation
@@ -1531,6 +1535,8 @@ def chat_with_anthropic(
     # tool_choice is usually implicit with tools or controlled differently.
     custom_prompt_arg: Optional[str] = None,  # Legacy
     api_base_url: Optional[str] = None,
+    *,
+    console_cache_boundary: "ConsoleCacheBoundary | None" = None,
 ):
     """Call the Anthropic Messages API (streaming or non-streaming).
 
@@ -1559,6 +1565,8 @@ def chat_with_anthropic(
             supports it (translated to a thinking token budget).
         thinking_budget_tokens: Explicit extended-thinking token budget;
             takes precedence over ``thinking_effort`` when both are set.
+        console_cache_boundary: Private clean-history boundary from the prepared
+            Console request. Stale or lossy conversions omit this optional marker.
         prompt_caching: Opt-in for the PER-TURN message ``cache_control``
             breakpoint. Only multi-turn callers (the Console gateway) should
             pass True: the breakpoint bills the whole conversation prefix at
@@ -1669,9 +1677,27 @@ def chat_with_anthropic(
     anthropic_messages = []
     from tldw_chatbook.Chat.console_project_instructions import EPHEMERAL_ORIGIN_KEY
 
-    for msg in input_data:
+    history_end: tuple[int, int] | None = None
+    boundary_index = None
+    if console_cache_boundary is not None:
+        from tldw_chatbook.Chat.console_prepared_request import ConsoleCacheBoundary
+
+        if isinstance(
+            console_cache_boundary, ConsoleCacheBoundary
+        ) and console_cache_boundary.matches(input_data):
+            boundary_index = console_cache_boundary.clean_history_message_index
+
+    def record_history_end(source_index: int) -> None:
+        nonlocal history_end
+        if source_index == boundary_index and anthropic_messages:
+            blocks = anthropic_messages[-1]["content"]
+            if blocks and (blocks[-1].get("type") != "text" or blocks[-1].get("text")):
+                history_end = (len(anthropic_messages) - 1, len(blocks) - 1)
+
+    for source_index, msg in enumerate(input_data):
         role = msg.get("role")
         content = msg.get("content")
+        source_end_preserved = True
         if role == "tool":
             # OpenAI tool-result convention -> Anthropic tool_result block.
             # Consecutive tool results coalesce into ONE user turn: they all
@@ -1695,6 +1721,7 @@ def chat_with_anthropic(
                 last["content"].append(block)
             else:
                 anthropic_messages.append({"role": "user", "content": [block]})
+            record_history_end(source_index)
             continue
         if role == "user" and msg.get(EPHEMERAL_ORIGIN_KEY) == "project_instructions":
             text_block = {"type": "text", "text": str(content or "")}
@@ -1711,6 +1738,7 @@ def chat_with_anthropic(
                 last["content"].append(text_block)
             else:
                 anthropic_messages.append({"role": "user", "content": [text_block]})
+            record_history_end(source_index)
             continue
         if role == "assistant" and msg.get("tool_calls"):
             # OpenAI assistant tool_calls echo -> Anthropic tool_use blocks
@@ -1767,9 +1795,12 @@ def chat_with_anthropic(
                             blocks.append({"type": "text", "text": part["text"]})
                 blocks.extend(tool_use_blocks)
                 anthropic_messages.append({"role": "assistant", "content": blocks})
+                if len(tool_use_blocks) == len(msg["tool_calls"]):
+                    record_history_end(source_index)
                 continue
             # else: no valid tool_use blocks survived the guards above —
             # fall through to the plain user/assistant content handling.
+            source_end_preserved = False
         if role not in ["user", "assistant"]:
             logger.warning(f"Anthropic: Skipping message with unsupported role: {role}")
             continue
@@ -1804,6 +1835,11 @@ def chat_with_anthropic(
             anthropic_messages.append(
                 {"role": role, "content": anthropic_content_parts}
             )
+            # Discarded source tails cannot authorize an earlier cache end.
+            if source_end_preserved and (
+                isinstance(content, str) or len(anthropic_content_parts) == len(content)
+            ):
+                record_history_end(source_index)
 
     if not any(m["role"] == "user" for m in anthropic_messages):
         # TASK-32369: a local check -- nothing was sent, so no HTTP status.
@@ -1913,7 +1949,8 @@ def chat_with_anthropic(
         # of the final message so the WHOLE conversation prefix becomes a
         # reusable cache entry next turn -- the task-323 system/tools
         # breakpoints alone never cache message history. Budget:
-        # system(1) + last-tool(1) + this(1) = 3 of the 4 allowed.
+        # system(1) + last-tool(1) + this(1) = 3 of the 4 allowed;
+        # a verified clean-history end may use the remaining slot.
         #
         # OPT-IN (`prompt_caching`), unlike the two breakpoints above: this
         # one bills the entire conversation prefix at the 1.25x write
@@ -1929,6 +1966,31 @@ def chat_with_anthropic(
             **last_content[-1],
             "cache_control": _cache_control_marker(current_model),
         }
+
+    if console_cache_boundary is not None and caching_active and prompt_caching:
+
+        def breakpoint_count(value: Any) -> int:
+            if isinstance(value, dict):
+                return int("cache_control" in value) + sum(
+                    breakpoint_count(v) for v in value.values()
+                )
+            if isinstance(value, list):
+                return sum(breakpoint_count(v) for v in value)
+            return 0
+
+        # Preserve existing system/tool/active markers; history uses only a free slot.
+        if history_end is not None and breakpoint_count(data) < 4:
+            message_index, block_index = history_end
+            blocks = anthropic_messages[message_index]["content"]
+            blocks[block_index] = {
+                **blocks[block_index],
+                "cache_control": _cache_control_marker(current_model),
+            }
+        else:
+            log_counter(
+                "anthropic_clean_history_cache_unavailable",
+                labels={"reason": "mapping_or_budget"},
+            )
 
     # TASK-26014: the 1h tier is a beta opt-in -- add the header iff a 1h
     # marker actually made it into the payload (never on the 5m default).

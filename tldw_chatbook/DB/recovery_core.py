@@ -482,12 +482,15 @@ class _CoreAdapter:
             CHACHANOTES_V83_SCHEMAS,
             CHACHANOTES_V84_SCHEMAS,
             CHACHANOTES_V85_SCHEMAS,
+            CHACHANOTES_V86_SCHEMAS,
+            CHACHANOTES_MIXINS_V85_TO_V86_SQL,
             CHACHANOTES_ARCHIVE_V84_TO_V85_SQL,
             COLLECTIONS_V4_SCHEMA,
             COLLECTIONS_V4_TO_V5_SQL,
             COLLECTIONS_V5_SCHEMAS,
             CORE_SCHEMAS,
             PROMPTS_V4_SCHEMA,
+            PROMPTS_V5_SCHEMA,
             PROMPTS_V4_TO_V5_SQL,
         )
 
@@ -523,8 +526,9 @@ class _CoreAdapter:
             schemas += tuple((82, schema) for schema in CHACHANOTES_V82_SCHEMAS)
             schemas += tuple((83, schema) for schema in CHACHANOTES_V83_SCHEMAS)
             schemas += tuple((84, schema) for schema in CHACHANOTES_V84_SCHEMAS)
-            schemas += tuple((85, schema) for schema in CHACHANOTES_V85_SCHEMAS[2:])
-            versions += (84, 83, 82, 81, 80, 79, 78, 77, 76, 75)
+            schemas += tuple((85, schema) for schema in CHACHANOTES_V85_SCHEMAS)
+            schemas += tuple((86, schema) for schema in CHACHANOTES_V86_SCHEMAS[2:])
+            versions += (85, 84, 83, 82, 81, 80, 79, 78, 77, 76, 75)
             migrations = (
                 (76, 77, CHACHANOTES_NATIVE_V76_TO_V77_SQL),
                 (77, 78, CHACHANOTES_FLEET_V77_TO_V78_SQL),
@@ -535,6 +539,7 @@ class _CoreAdapter:
                 (82, 83, CHACHANOTES_PORTRAIT_V82_TO_V83_SQL),
                 (83, 84, CHACHANOTES_REGIONS_V83_TO_V84_SQL),
                 (84, 85, CHACHANOTES_ARCHIVE_V84_TO_V85_SQL),
+                (85, 86, CHACHANOTES_MIXINS_V85_TO_V86_SQL),
             )
         elif self.owner_id == "db.library_collections":
             versions = (5, 4)
@@ -542,9 +547,32 @@ class _CoreAdapter:
             schemas += ((4, COLLECTIONS_V4_SCHEMA),)
             migrations = ((4, 5, COLLECTIONS_V4_TO_V5_SQL),)
         elif self.owner_id == "db.prompts.primary":
-            schemas += ((4, PROMPTS_V4_SCHEMA),)
-            versions += (4,)
-            migrations = ((4, 5, PROMPTS_V4_TO_V5_SQL),)
+            schemas += ((4, PROMPTS_V4_SCHEMA), (5, PROMPTS_V5_SCHEMA))
+            versions += (4, 5)
+            migration = (
+                Path(__file__).parent / "migrations" / "prompts_literal_mixins.sql"
+            )
+            statements = []
+            pending = ""
+            for line in migration.read_text(encoding="utf-8").splitlines(keepends=True):
+                pending += line
+                if sqlite3.complete_statement(pending):
+                    statements.append(pending)
+                    pending = ""
+            if pending.strip():
+                raise ValueError("incomplete_installed_migration")
+            statements.extend(
+                item
+                for item in PROMPTS_V5_SCHEMA
+                if item.startswith(
+                    (
+                        "CREATE INDEX idx_prompts_",
+                        "CREATE UNIQUE INDEX idx_prompts_",
+                        "CREATE TRIGGER prompts_validate_sync_update",
+                    )
+                )
+            )
+            migrations = ((4, 5, PROMPTS_V4_TO_V5_SQL), (5, 6, tuple(statements)))
         return SchemaPolicy(self.owner_id, versions, schemas, migrations)
 
 

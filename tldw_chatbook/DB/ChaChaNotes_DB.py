@@ -820,7 +820,7 @@ class CharactersRAGDB:
     """
 
     _CURRENT_SCHEMA_VERSION = (
-        85  # Local archive chronology after portrait regions (ADR-166).
+        86  # ADR-286 conversation-owned operational prompt mix-ins.
     )
     _SCHEMA_NAME = "rag_char_chat_schema"  # Used for the db_schema_version table
     _ALLOWED_CONVERSATION_STATES = ("in-progress", "resolved", "backlog", "non-viable")
@@ -8180,6 +8180,26 @@ DELETE FROM keywords
                 f"{type(exc).__name__}"
             ) from exc
 
+    def _migrate_from_v85_to_v86(self, conn: sqlite3.Connection) -> None:
+        """Install conversation-owned operational prompt mix-in records."""
+        self._require_migration_entry_version(conn, 85, "V85→V86")
+        path = Path(__file__).parent / "migrations" / "chachanotes_prompt_mixins.sql"
+        try:
+            with self.transaction() as cursor:
+                self._execute_migration_statements(
+                    cursor, path.read_text(encoding="utf-8"), "V85→V86"
+                )
+                updated = cursor.execute(
+                    "UPDATE db_schema_version SET version=86 WHERE schema_name=? AND version=85",
+                    (self._SCHEMA_NAME,),
+                )
+                if updated.rowcount != 1:
+                    raise SchemaError("V85→V86 version update failed")
+        except (OSError, sqlite3.Error, CharactersRAGDBError, SchemaError) as exc:
+            raise SchemaError(
+                f"Migration V85→V86 failed: {type(exc).__name__}"
+            ) from exc
+
     def _migrate_from_v84_to_v85(self, conn: sqlite3.Connection) -> None:
         """Add local archive chronology while retaining shared sync events."""
         self._require_migration_entry_version(conn, 84, "V84→V85")
@@ -8737,6 +8757,7 @@ DELETE FROM keywords
                     82: self._migrate_from_v82_to_v83,
                     83: self._migrate_from_v83_to_v84,
                     84: self._migrate_from_v84_to_v85,
+                    85: self._migrate_from_v85_to_v86,
                 }
 
                 if current_db_version == 0:

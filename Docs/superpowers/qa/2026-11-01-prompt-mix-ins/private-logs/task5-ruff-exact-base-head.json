@@ -1,0 +1,146 @@
+{
+  "base": "19dc3dbb43e5e623d77efc91741b4c49835295fe",
+  "head": "a125761794b4e4450b00e089711a221d27e08bea",
+  "config": "/Users/macbook-dev/.codex/worktrees/prompt-mix-ins/tldw_chatbook/pyproject.toml",
+  "paths": [
+    "Tests/Chat/test_console_edit_resend.py",
+    "Tests/Chat/test_console_prompt_mixin_admission.py",
+    "Tests/Chat/test_console_prompt_mixin_composition.py",
+    "Tests/Chat/test_console_prompt_mixin_retry.py",
+    "Tests/Chat/test_console_regenerate_branching.py",
+    "Tests/Chat/test_console_trace_current_turn_transforms.py",
+    "Tests/DB/test_console_prompt_mixins.py",
+    "tldw_chatbook/Chat/chat_persistence_service.py",
+    "tldw_chatbook/Chat/console_chat_controller.py",
+    "tldw_chatbook/Chat/console_chat_store.py",
+    "tldw_chatbook/Chat/console_native_commit.py",
+    "tldw_chatbook/Chat/console_prepared_request.py",
+    "tldw_chatbook/Chat/console_prompt_mixin_service.py",
+    "tldw_chatbook/Chat/console_prompt_mixins.py",
+    "tldw_chatbook/Chat/console_trace_final_values.py",
+    "tldw_chatbook/Chat/console_trace_provenance.py",
+    "tldw_chatbook/Chat/console_trace_runtime.py",
+    "tldw_chatbook/Chat/console_trace_service.py",
+    "tldw_chatbook/Chat/console_turn_resend.py",
+    "tldw_chatbook/DB/console_prompt_mixins.py",
+    "tldw_chatbook/DB/recovery_core_schema.py"
+  ],
+  "base_total": 448,
+  "head_total": 449,
+  "introduced": [
+    {
+      "file": "tldw_chatbook/DB/console_prompt_mixins.py",
+      "code": "SIM102",
+      "message": "Use a single `if` statement instead of nested `if` statements",
+      "count": 1
+    }
+  ],
+  "removed": [],
+  "per_file": [
+    {
+      "file": "Tests/Chat/test_console_edit_resend.py",
+      "base": 6,
+      "head": 6
+    },
+    {
+      "file": "Tests/Chat/test_console_prompt_mixin_admission.py",
+      "base": 0,
+      "head": 0
+    },
+    {
+      "file": "Tests/Chat/test_console_prompt_mixin_composition.py",
+      "base": 0,
+      "head": 0
+    },
+    {
+      "file": "Tests/Chat/test_console_prompt_mixin_retry.py",
+      "base": 0,
+      "head": 0
+    },
+    {
+      "file": "Tests/Chat/test_console_regenerate_branching.py",
+      "base": 2,
+      "head": 2
+    },
+    {
+      "file": "Tests/Chat/test_console_trace_current_turn_transforms.py",
+      "base": 0,
+      "head": 0
+    },
+    {
+      "file": "Tests/DB/test_console_prompt_mixins.py",
+      "base": 0,
+      "head": 0
+    },
+    {
+      "file": "tldw_chatbook/Chat/chat_persistence_service.py",
+      "base": 65,
+      "head": 65
+    },
+    {
+      "file": "tldw_chatbook/Chat/console_chat_controller.py",
+      "base": 180,
+      "head": 180
+    },
+    {
+      "file": "tldw_chatbook/Chat/console_chat_store.py",
+      "base": 114,
+      "head": 114
+    },
+    {
+      "file": "tldw_chatbook/Chat/console_native_commit.py",
+      "base": 2,
+      "head": 2
+    },
+    {
+      "file": "tldw_chatbook/Chat/console_prepared_request.py",
+      "base": 0,
+      "head": 0
+    },
+    {
+      "file": "tldw_chatbook/Chat/console_prompt_mixin_service.py",
+      "base": 0,
+      "head": 0
+    },
+    {
+      "file": "tldw_chatbook/Chat/console_prompt_mixins.py",
+      "base": 0,
+      "head": 0
+    },
+    {
+      "file": "tldw_chatbook/Chat/console_trace_final_values.py",
+      "base": 35,
+      "head": 35
+    },
+    {
+      "file": "tldw_chatbook/Chat/console_trace_provenance.py",
+      "base": 7,
+      "head": 7
+    },
+    {
+      "file": "tldw_chatbook/Chat/console_trace_runtime.py",
+      "base": 2,
+      "head": 2
+    },
+    {
+      "file": "tldw_chatbook/Chat/console_trace_service.py",
+      "base": 33,
+      "head": 33
+    },
+    {
+      "file": "tldw_chatbook/Chat/console_turn_resend.py",
+      "base": 1,
+      "head": 1
+    },
+    {
+      "file": "tldw_chatbook/DB/console_prompt_mixins.py",
+      "base": 0,
+      "head": 1
+    },
+    {
+      "file": "tldw_chatbook/DB/recovery_core_schema.py",
+      "base": 1,
+      "head": 1
+    }
+  ]
+}

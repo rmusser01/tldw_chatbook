@@ -1,0 +1,13 @@
+..FFFFF...FF.......                                                      [100%]
+============================= slowest 25 durations =============================
+
+(25 durations < 1s hidden.)
+=========================== short test summary info ============================
+FAILED Tests/Chatbooks/test_chatbook_prompt_round_trip.py::test_prompt_export_failure_is_atomic_bounded_and_private[missing]
+FAILED Tests/Chatbooks/test_chatbook_prompt_round_trip.py::test_prompt_export_failure_is_atomic_bounded_and_private[database_init]
+FAILED Tests/Chatbooks/test_chatbook_prompt_round_trip.py::test_prompt_export_failure_is_atomic_bounded_and_private[database]
+FAILED Tests/Chatbooks/test_chatbook_prompt_round_trip.py::test_prompt_export_failure_is_atomic_bounded_and_private[encode]
+FAILED Tests/Chatbooks/test_chatbook_prompt_round_trip.py::test_prompt_export_failure_is_atomic_bounded_and_private[write]
+FAILED Tests/Chatbooks/test_chatbook_prompt_round_trip.py::test_prompt_import_reusing_keyword_does_not_log_archive_value
+FAILED Tests/Chatbooks/test_chatbook_prompt_round_trip.py::test_prompt_keyword_failures_log_only_fixed_category
+7 failed, 12 passed in 2.68s

@@ -143,6 +143,7 @@ from ..Console_Modules.left_rail import (
     CONSOLE_DISMISS_DEFAULT_REFRESH_ID,
     CONSOLE_REFRESH_RUNNING_APP_ID,
     CONSOLE_RETRY_CONTEXT_SETTINGS_ID,
+    CONSOLE_RETRY_PROMPT_MIXINS_ID,
     CONSOLE_RETRY_DEFAULT_SAVE_ID,
     CONSOLE_RETRY_GENERATION_SETTINGS_ID,
     ConsoleLeftRail,
@@ -5912,6 +5913,7 @@ class ChatScreen(BaseAppScreen):
 
     @on(Button.Pressed, f"#{CONSOLE_RETRY_GENERATION_SETTINGS_ID}")
     @on(Button.Pressed, f"#{CONSOLE_RETRY_CONTEXT_SETTINGS_ID}")
+    @on(Button.Pressed, f"#{CONSOLE_RETRY_PROMPT_MIXINS_ID}")
     async def on_console_settings_component_retry(
         self,
         event: Button.Pressed,
@@ -5926,6 +5928,8 @@ class ChatScreen(BaseAppScreen):
         component = (
             ConsoleSettingsComponent.GENERATION_SETTINGS
             if event.button.id == CONSOLE_RETRY_GENERATION_SETTINGS_ID
+            else ConsoleSettingsComponent.PROMPT_MIXINS
+            if event.button.id == CONSOLE_RETRY_PROMPT_MIXINS_ID
             else ConsoleSettingsComponent.CONTEXT_POLICY
         )
         owner = ChatScreen._console_settings_durability_owner(self)
@@ -5938,6 +5942,8 @@ class ChatScreen(BaseAppScreen):
                 session_id=session_id,
                 component=component,
                 revision=revision,
+                **({"_expected_failure": getattr(event.button, "console_settings_failure", None)}
+                   if component is ConsoleSettingsComponent.PROMPT_MIXINS else {}),
             ),
             name=f"console-settings-retry-{session_id}-{component.value}-{revision}",
         )
@@ -11125,7 +11131,12 @@ class ChatScreen(BaseAppScreen):
             state = self._context_spend._console_context_control_state_for_session(captured_session_id)
             return state.safe_input_ceiling_tokens, state.response_max_tokens
 
+        from ..Console_Modules.inspector_data import build_mixin_snapshot_loader
+
         inspector = ConsoleConversationInspector(
+            mixin_snapshot_loader=build_mixin_snapshot_loader(
+                controller, captured_session_id, target_is_current
+            ),
             context_budget_provider=context_budget,
             conversation_title=captured_session.title
             if captured_session is not None

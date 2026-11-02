@@ -1580,3 +1580,44 @@ async def test_context_and_exchange_lists_wrap_rather_than_clip_their_labels(
     else:
         assert painted.count("claude-haiku-4-5") == 2, painted
         assert painted.count("capture: Safe") == 2, painted
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("original", ["used", "empty", "unavailable"])
+async def test_explicit_turn_inspection_uses_operational_mixins_without_trace(original):
+    from textual.widgets import TextArea
+
+    from Tests.DB.test_console_prompt_mixins import attempt
+    from tldw_chatbook.Chat.console_prompt_mixins import MixinSnapshotUnavailableError
+
+    calls = []
+
+    async def original_snapshot(message_id):
+        calls.append(message_id)
+        if original == "unavailable":
+            raise MixinSnapshotUnavailableError("mixin_retry_unavailable")
+        return attempt(empty=original == "empty").snapshot
+
+    app = InspectorHarness(
+        **_default_kwargs(
+            initial_tab=TAB_EXCHANGE, mixin_snapshot_loader=original_snapshot
+        )
+    )
+    async with app.run_test(size=(100, 30)) as pilot:
+        await pilot.pause()
+        modal = app.screen
+        assert calls == []
+        pane_id = "console-inspector-exchange-detail"
+        modal._trace_selections[pane_id] = "turn:0"
+        await modal._show_trace_detail(pane_id, "turn:0")
+        text = modal.query_one(f"#{pane_id}").query_one(TextArea).text
+        assert calls == ["n1"]
+        if original == "used":
+            assert "PRIVATE BODY\n" in text and "PRIVATE NAME" in text
+        elif original == "empty":
+            assert "None used for this attempt." in text
+        else:
+            assert (
+                "Original mix-ins unavailable" in text
+                and "Regenerate uses current choices" in text
+            )

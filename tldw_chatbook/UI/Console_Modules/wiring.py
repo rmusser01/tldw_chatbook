@@ -2787,6 +2787,7 @@ def build_console_controllers(
         app_instance=screen.app_instance,
         composer_accessor=lambda: screen._console_composer_or_none(),
         chat_store_accessor=lambda: screen._ensure_console_chat_store(),
+        prompt_mixin_service_accessor=lambda: screen._ensure_console_chat_controller().prompt_mixin_service(),
         # Session <-> prompts seam (design spec: "a named callable
         # between them; design it deliberately, never a back-door
         # through the screen"). `self._session` was constructed above;

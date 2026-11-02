@@ -48,6 +48,7 @@ RUNTIME_READ_RE = re.compile(r'"migrations"\s*/\s*"([^"\n]+\.sql)"')
 RUNTIME_READER_MODULES = (
     "ChaChaNotes_DB.py",
     "Workspace_DB.py",
+    "Prompts_DB.py",
     "Library_Collections_DB.py",
     "Subscriptions_DB.py",
     "private_sqlite_helper_entry.py",
