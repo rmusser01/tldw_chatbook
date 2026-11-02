@@ -47,10 +47,10 @@ def test_expired_setup_closes_native_handle_and_recovers(tmp_path, monkeypatch):
         allocated.append(conn)
         return conn
 
-    def pause(conn):
+    def pause(conn, **kwargs):
         entered.set()
         assert release.wait(5)
-        return original_lineage(conn)
+        return original_lineage(conn, **kwargs)
 
     monkeypatch.setattr(BaseDB, "_get_connection", capture)
     monkeypatch.setattr(db, "_validate_schema_lineage", pause)
@@ -102,5 +102,100 @@ def test_revival_retains_closed_object_until_close_all(tmp_path):
             old.execute("SELECT 1")
         db.close_all()
         assert old not in db._opened
+    finally:
+        db.close_all()
+
+
+def test_lineage_second_read_uses_remaining_deadline_and_closes_on_lock(
+    tmp_path, monkeypatch, record_property
+):
+    import sqlite3
+    import threading
+
+    from tldw_chatbook.DB.base_db import BaseDB
+
+    path = tmp_path / "lineage-lock.sqlite"
+    db = DreamsDB(path, "deadline")
+    db.close_all()
+    locker = sqlite3.connect(path, check_same_thread=False)
+    locker.execute("PRAGMA journal_mode = DELETE").fetchall()
+    entered = threading.Event()
+    release = threading.Event()
+    allocated = []
+    observed_timeout = []
+    outcome = []
+    original_open = BaseDB._get_connection
+
+    def capture(*args, **kwargs):
+        conn = original_open(*args, **kwargs)
+        allocated.append(conn)
+        execute = conn.execute
+
+        def gate(sql, *params, **options):
+            if sql.startswith("SELECT sql FROM sqlite_schema"):
+                rows = execute(sql, *params, **options).fetchall()
+                entered.set()
+                assert release.wait(5)
+                return rows
+            if sql == "SELECT version FROM schema_version":
+                observed_timeout.append(execute("PRAGMA busy_timeout").fetchone()[0])
+            return execute(sql, *params, **options)
+
+        monkeypatch.setattr(conn, "execute", gate)
+        return conn
+
+    monkeypatch.setattr(BaseDB, "_get_connection", capture)
+    deadline = time.monotonic() + 1.5
+
+    def acquire():
+        try:
+            db._held_connection(operation_deadline=deadline)
+        except BaseException as exc:
+            outcome.append(exc)
+        outcome.append(getattr(db._thread_local, "conn", None))
+
+    worker = threading.Thread(target=acquire)
+    worker.start()
+    try:
+        assert entered.wait(5)
+        locker.execute("BEGIN EXCLUSIVE")
+        while time.monotonic() < deadline - 0.25:
+            threading.Event().wait(min(0.01, deadline - 0.25 - time.monotonic()))
+        released_at = time.monotonic()
+        release.set()
+        worker.join(5)
+        elapsed = time.monotonic() - released_at
+        assert not worker.is_alive()
+        record_property("pr3336_second_read_busy_ms", observed_timeout[0])
+        record_property("pr3336_lock_wait_seconds", round(elapsed, 4))
+        assert isinstance(outcome[0], TimeoutError), repr(outcome[0])
+        assert observed_timeout and observed_timeout[0] <= 250
+        assert outcome[1] is None
+        assert len(allocated) == 1
+        with pytest.raises(sqlite3.ProgrammingError, match="closed database"):
+            allocated[0].execute("SELECT 1")
+        locker.rollback()
+        monkeypatch.setattr(BaseDB, "_get_connection", original_open)
+        with db.connection(operation_deadline=time.monotonic() + 5) as conn:
+            assert conn.execute("SELECT 42").fetchone()[0] == 42
+        record_property("pr3336_native_close_no_cache_recovery", "verified")
+    finally:
+        release.set()
+        locker.rollback()
+        locker.close()
+        worker.join(5)
+        db.close_all()
+
+
+def test_deadline_preserves_missing_schema_refusal(tmp_path):
+    from tldw_chatbook.DB.Dreams_DB import DreamsSchemaError
+
+    db = DreamsDB(tmp_path / "missing-version.sqlite", "deadline")
+    try:
+        with db.connection() as conn:
+            conn.execute("DROP TABLE schema_version")
+        db.close()
+        with pytest.raises(DreamsSchemaError, match="schema_version_missing"):
+            db._held_connection(operation_deadline=time.monotonic() + 5)
     finally:
         db.close_all()

@@ -323,14 +323,12 @@ class DreamsDB(SQLiteStoreKernel, BaseDB):
                 lambda: int(time.monotonic() >= operation_deadline), 100
             )
         try:
-            if operation_deadline is not None:
-                remaining = operation_deadline - time.monotonic()
-                if remaining <= 0:
-                    raise TimeoutError("Dreams connection budget exhausted")
-                conn.execute(
-                    f"PRAGMA busy_timeout = {max(0, int(remaining * 1000))}"
-                ).fetchall()
-            self._validate_schema_lineage(conn)
+            if operation_deadline is None:
+                self._validate_schema_lineage(conn)
+            else:
+                self._validate_schema_lineage(
+                    conn, operation_deadline=operation_deadline
+                )
             execute("PRAGMA foreign_keys = ON")
             if not self.is_memory_db:
                 self._enable_wal(conn, operation_deadline=operation_deadline)
@@ -431,25 +429,58 @@ class DreamsDB(SQLiteStoreKernel, BaseDB):
         self._thread_local = threading.local()
 
     @staticmethod
-    def _validate_schema_lineage(conn: sqlite3.Connection) -> int:
+    def _validate_schema_lineage(
+        conn: sqlite3.Connection, *, operation_deadline: float | None = None
+    ) -> int:
         """Recognize complete historical catalogs before any schema write."""
         from .dreams_schema import DREAMS_SCHEMAS
 
-        catalog = tuple(" ".join(row[0].split()) for row in conn.execute(
-            "SELECT sql FROM sqlite_schema WHERE sql IS NOT NULL ORDER BY type,name"))
+        def refresh_budget() -> None:
+            if operation_deadline is not None:
+                remaining = operation_deadline - time.monotonic()
+                if remaining <= 0:
+                    raise TimeoutError("Dreams connection budget exhausted")
+                conn.execute(
+                    f"PRAGMA busy_timeout = {max(0, int(remaining * 1000))}"
+                ).fetchall()
+
+        refresh_budget()
+        catalog = tuple(
+            " ".join(row[0].split())
+            for row in conn.execute(
+                "SELECT sql FROM sqlite_schema WHERE sql IS NOT NULL ORDER BY type,name"
+            )
+        )
         if not catalog:
             return 0
         try:
-            versions = [row[0] for row in conn.execute("SELECT version FROM schema_version")]
+            refresh_budget()
+            versions = [
+                row[0] for row in conn.execute("SELECT version FROM schema_version")
+            ]
+        except sqlite3.OperationalError as exc:
+            if operation_deadline is not None and (
+                time.monotonic() >= operation_deadline
+                or any(
+                    word in str(exc).lower() for word in ("locked", "busy", "interrupt")
+                )
+            ):
+                raise
+            raise DreamsSchemaError("schema_version_missing") from exc
         except sqlite3.Error as exc:
             raise DreamsSchemaError("schema_version_missing") from exc
-        if not versions or any(type(version) is not int or version < 1 for version in versions):
+        if not versions or any(
+            type(version) is not int or version < 1 for version in versions
+        ):
             raise DreamsSchemaError("schema_version_invalid")
         version = max(versions)
         if version > DreamsDB._CURRENT_SCHEMA_VERSION:
             raise DreamsSchemaError("schema_too_new")
-        if not any(version == known and catalog == tuple(" ".join(sql.split()) for sql in schema)
-                   for known, schema in DREAMS_SCHEMAS):
+        if not any(
+            version == known
+            and catalog == tuple(" ".join(sql.split()) for sql in schema)
+            for known, schema in DREAMS_SCHEMAS
+        ):
             raise DreamsSchemaError("schema_lineage_mismatch")
         return version
 
