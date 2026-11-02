@@ -16,7 +16,9 @@ class StaleTerminalAttachment(RuntimeError):
 class TerminalAttachment:
     """One generation of terminal input and output; never owns the child."""
 
-    def __init__(self, host: ServedConsoleHost, browser_session_id: str, *, on_detach=None) -> None:
+    def __init__(
+        self, host: ServedConsoleHost, browser_session_id: str, *, on_detach=None
+    ) -> None:
         self.host = host
         self._on_detach = on_detach
         self.browser_session_id = browser_session_id
@@ -104,7 +106,9 @@ class ServedConsoleHost:
                 raise RuntimeError("Console host is closed")
             if self._attachment is not None:
                 await self._attachment.detach()
-            attachment = TerminalAttachment(self, browser_session_id, on_detach=on_detach)
+            attachment = TerminalAttachment(
+                self, browser_session_id, on_detach=on_detach
+            )
             self._attachment = attachment
             try:
                 await self.service.send_meta(

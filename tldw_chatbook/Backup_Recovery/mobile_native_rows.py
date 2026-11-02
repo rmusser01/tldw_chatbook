@@ -704,8 +704,12 @@ _ROW_MATCHES = {
 }
 
 
-_ROW_INSERTS["workspace_binding_authority"] = "INSERT INTO workspace_binding_authority (binding_id,revision) VALUES (:binding_id,:revision)"
-_ROW_MATCHES["workspace_binding_authority"] = "SELECT count(*) FROM workspace_binding_authority WHERE binding_id IS :binding_id COLLATE BINARY AND typeof(binding_id)=typeof(:binding_id) AND revision IS :revision AND typeof(revision)=typeof(:revision)"
+_ROW_INSERTS["workspace_binding_authority"] = (
+    "INSERT INTO workspace_binding_authority (binding_id,revision) VALUES (:binding_id,:revision)"
+)
+_ROW_MATCHES["workspace_binding_authority"] = (
+    "SELECT count(*) FROM workspace_binding_authority WHERE binding_id IS :binding_id COLLATE BINARY AND typeof(binding_id)=typeof(:binding_id) AND revision IS :revision AND typeof(revision)=typeof(:revision)"
+)
 
 
 def _verify_row(connection, row, values):
@@ -752,7 +756,10 @@ def _prepare_rows(plan, budget):
                         edges[index].add(candidate)
     # A live binding's native INSERT derives witness1 before its exact source
     # revision is restored. Tombstones have no live-row dependency.
-    bindings = {rows[i][1]["binding_id"]: i for i in by_table.get("workspace_runtime_bindings", ())}
+    bindings = {
+        rows[i][1]["binding_id"]: i
+        for i in by_table.get("workspace_runtime_bindings", ())
+    }
     budget.container(len(bindings) * 3)
     for index in by_table.get("workspace_binding_authority", ()):
         parent = bindings.get(rows[index][1]["binding_id"])
@@ -928,19 +935,34 @@ def _insert_row(connection, row, values, detach=False):
         if updated.rowcount != 1:
             raise ValueError("mobile_native_row_lifecycle_changed")
     elif row.table == "workspace_binding_authority":
-        live = connection.execute("SELECT 1 FROM workspace_runtime_bindings WHERE binding_id=:binding_id", values).fetchone()
+        live = connection.execute(
+            "SELECT 1 FROM workspace_runtime_bindings WHERE binding_id=:binding_id",
+            values,
+        ).fetchone()
         if live is None:
             # The fixed INSERT must fail if any incumbent tombstone exists.
             connection.execute(_ROW_INSERTS[row.table], values)
         else:
-            result = connection.execute("UPDATE workspace_binding_authority SET revision=:revision WHERE binding_id=:binding_id AND revision=1", values)
+            result = connection.execute(
+                "UPDATE workspace_binding_authority SET revision=:revision WHERE binding_id=:binding_id AND revision=1",
+                values,
+            )
             if result.rowcount != 1:
                 raise ValueError("mobile_native_binding_witness_changed")
     elif row.table == "workspace_runtime_bindings":
-        if connection.execute("SELECT 1 FROM workspace_binding_authority WHERE binding_id=:binding_id", values).fetchone() is not None:
+        if (
+            connection.execute(
+                "SELECT 1 FROM workspace_binding_authority WHERE binding_id=:binding_id",
+                values,
+            ).fetchone()
+            is not None
+        ):
             raise ValueError("mobile_native_binding_witness_occupied")
         connection.execute(_ROW_INSERTS[row.table], values)
-        witness = connection.execute("SELECT revision FROM workspace_binding_authority WHERE binding_id=:binding_id", values).fetchone()
+        witness = connection.execute(
+            "SELECT revision FROM workspace_binding_authority WHERE binding_id=:binding_id",
+            values,
+        ).fetchone()
         if witness is None or type(witness[0]) is not int or witness[0] != 1:
             raise ValueError("mobile_native_binding_witness_changed")
     elif row.table == "conversation_dictionary_attachments":

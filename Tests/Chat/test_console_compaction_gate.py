@@ -128,11 +128,12 @@ class _CardlessController:
     def _set_draft(self, _session_id: str, text: str) -> None:
         self.draft = text
 
-    def _abandon_preparation(self, preparation_id: str) -> None:
+    def _abandon_preparation(self, preparation_id: str, *, restore_draft=True) -> None:
         # Like store.cancel_preparation for a manual origin: the cancelled
         # send's text replaces the composer draft.
         self.abandoned.append(preparation_id)
-        self.draft = "buddy reply text"
+        if restore_draft:
+            self.draft = "buddy reply text"
 
     def _block(self, session_id: str, copy: str):
         self.blocked.append((session_id, copy))
@@ -250,3 +251,50 @@ def test_below_the_trigger_an_unprepared_send_goes_on_untouched() -> None:
         is None
     )
     assert controller.deleted == [] and controller.blocked == []
+
+
+@pytest.mark.bootstrap_profile
+@pytest.mark.parametrize("draft", ("", "desktop draft", "phone text"))
+@pytest.mark.parametrize("late_edit", (False, True))
+def test_native_cardless_phone_cancel_preserves_both_composers_and_revisions(
+    draft, late_edit
+):
+    from Tests.Chat.test_console_received_intent_inputs import _received_preparation
+    from tldw_chatbook.Chat.console_chat_controller import ConsoleChatController
+    from tldw_chatbook.Chat.console_chat_store import ConsoleChatStore
+
+    store = ConsoleChatStore()
+    phone = store.create_session(session_id="phone-target", ephemeral=True)
+    desktop = store.create_session(session_id="desktop-active", ephemeral=True)
+    controller = ConsoleChatController(store=store, provider_gateway=SimpleNamespace())
+    try:
+        store.set_session_draft(phone.id, draft)
+        store.set_session_draft(desktop.id, "unrelated desktop sentinel")
+        preparation = _received_preparation(phone, draft="phone text")
+        assert store.begin_preparation(preparation) is preparation
+        if late_edit:
+            store.set_session_draft(phone.id, draft + " late edit")
+            phone.settings_revision += 1
+        before = tuple((s.id, s.draft, s.draft_revision) for s in store.sessions())
+        result = refuse_without_card(
+            controller,
+            preparation,
+            _HOLD,
+            origin=ConsoleSubmissionOrigin.MANUAL,
+            queue_entry_id=None,
+            preserve_composer=True,
+        )
+        assert not result.accepted and not result.provider_started
+        assert store.preparation_for_session(phone.id) is None
+        assert (
+            tuple((s.id, s.draft, s.draft_revision) for s in store.sessions()) == before
+        )
+        assert store.active_session_id == desktop.id
+        assert all(
+            row.role.value == "system" and row.persisted_message_id is None
+            for row in store.all_messages_for_session(phone.id)
+        )
+    finally:
+        for session in store.sessions():
+            store.close_session(session.id)
+        store.end_app_runtime()

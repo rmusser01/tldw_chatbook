@@ -3139,10 +3139,21 @@ class ConsoleRuntime:
             record.session_id == session_id for record in self._turn_custody.values()
         )
 
-    def _release_custody(self, turn_id: str) -> None:
-        """Drop the runtime's final references to an accepted turn."""
+    def _release_custody(
+        self, turn_id: str, *, user_proof_transferred: bool = False
+    ) -> None:
+        """Release turn inputs, preserving provenance already owned by the queue."""
         record = self._turn_custody.pop(turn_id, None)
         if record is not None:
+            if self._archive_recovery is not None and not user_proof_transferred:
+                if record.received_intent is not None:
+                    self._archive_recovery.release_user_proof(
+                        record.received_intent.recovery_user_origin
+                    )
+                if record.request is not None:
+                    self._archive_recovery.release_user_proof(
+                        record.request.recovery_user_origin
+                    )
             if (record.store is not None and record.received_claim is not None) and (
                 record.store.release_received_turn(record.received_claim)
             ):
@@ -3158,10 +3169,6 @@ class ConsoleRuntime:
                 else:
                     reservations.pop(record.archive_conversation_id, None)
                 record.archive_conversation_id = None
-            if self._archive_recovery is not None and record.request is not None:
-                self._archive_recovery.release_user_proof(
-                    record.request.recovery_user_origin
-                )
             record.request = None
             record.inputs.attachments = ()
             record.inputs.staged_evidence_revision = None
@@ -3770,6 +3777,7 @@ class ConsoleRuntime:
         if record is not None and record.task is not task:
             record = None
         accepted = False
+        user_proof_transferred = False
         receipt_state = "outcome_unknown"
         receipt_native_id = turn_id
         try:
@@ -3777,6 +3785,7 @@ class ConsoleRuntime:
             from .console_prompt_queue import PromptQueueMutationResult
 
             if isinstance(result, PromptQueueMutationResult) and result.applied:
+                user_proof_transferred = True
                 receipt_state = "queued"
                 receipt_native_id = result.entry_id or turn_id
             elif bool(getattr(result, "accepted", False)):
@@ -3835,7 +3844,9 @@ class ConsoleRuntime:
                     if receipt_state == "outcome_unknown"
                     else None,
                 )
-                self._release_custody(record.turn_id)
+                self._release_custody(
+                    record.turn_id, user_proof_transferred=user_proof_transferred
+                )
             if terminal_callback is not None:
                 try:
                     terminal_callback(accepted)
@@ -4837,9 +4848,8 @@ class ConsoleRuntime:
             db_path = getattr(db, "db_path", None) if db is not None else None
             if not db_path or str(db_path) == ":memory:":
                 return None
-            from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
-
             from tldw_chatbook.config import preflight_selected_console_stores
+            from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
 
             workspace_db = getattr(self._app, "local_workspace_db", None)
             preflight_selected_console_stores(

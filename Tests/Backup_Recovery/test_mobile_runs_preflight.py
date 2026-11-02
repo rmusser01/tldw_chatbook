@@ -184,7 +184,10 @@ def test_actual_runs_preflight_preserves_operational_facts_and_native_history(
         canonical_receipt = dict(zip(columns, values[0], strict=True))
         assert canonical_receipt["command_id"] == "command-same"
         assert canonical_receipt["state"] == "pending"
-        assert canonical_receipt["issued_ns"] == 10 and canonical_receipt["expires_ns"] == 20
+        assert (
+            canonical_receipt["issued_ns"] == 10
+            and canonical_receipt["expires_ns"] == 20
+        )
         columns, values = reads.page(
             "canonical", "runs", "automatic_work_runtime_owner"
         )
@@ -213,7 +216,9 @@ def test_actual_runs_preflight_preserves_operational_facts_and_native_history(
                 b.table == "agents.history" and b.reason == reason
                 for b in plan.blockers
             )
-        assert not any(d.table == "console_command_receipts" for d in plan.pending_duties)
+        assert not any(
+            d.table == "console_command_receipts" for d in plan.pending_duties
+        )
         with pytest.raises(ValueError, match="pending"):
             replace(plan, pending_duties=()).require_complete()
         with pytest.raises(ValueError, match="pending"):
@@ -365,9 +370,14 @@ def test_native_run_projection_requires_all_of_its_retained_steps(
             and p.owner_association is None
             for p in plan.history_observations
         )
-        assert not any(h.table == "console_command_receipts" for h in plan.operational_history)
+        assert not any(
+            h.table == "console_command_receipts" for h in plan.operational_history
+        )
         columns, values = reads.page("canonical", "runs", "console_command_receipts")
-        assert dict(zip(columns, values[0], strict=True))["command_id"] == "lost-child-command"
+        assert (
+            dict(zip(columns, values[0], strict=True))["command_id"]
+            == "lost-child-command"
+        )
         assert any(
             b.reason == "native_history_run_dependency_blocked" for b in plan.blockers
         )
@@ -378,7 +388,9 @@ def test_native_run_projection_requires_all_of_its_retained_steps(
             or (d.table, d.original) in accepted
             for d in plan.pending_duties
         )
-        assert not any(d.table == "console_command_receipts" for d in plan.pending_duties)
+        assert not any(
+            d.table == "console_command_receipts" for d in plan.pending_duties
+        )
         assert any(not d.original and d.table == "*" for d in plan.pending_duties)
 
 

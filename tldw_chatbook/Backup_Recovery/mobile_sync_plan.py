@@ -491,9 +491,13 @@ def _plan_sync(reads, *, _read_budget=None):
                     entity,
                     identity,
                     target["id"],
-                    current_version if disposition == "replace_native_create_with_shared_frontier" else version,
+                    current_version
+                    if disposition == "replace_native_create_with_shared_frontier"
+                    else version,
                     "delete" if deleted else "create",
-                    current["timestamp"] if disposition == "replace_native_create_with_shared_frontier" else target["last_modified"],
+                    current["timestamp"]
+                    if disposition == "replace_native_create_with_shared_frontier"
+                    else target["last_modified"],
                     current["client_id"]
                     if entity == "world_book_entries"
                     else target["client_id"],

@@ -285,22 +285,51 @@ def test_grant_refuses_foreign_repository_path_factory_thread_and_stale_config(
                 ("db.chachanotes.read", stores.workspace_path, {}),
                 ("db.agent_runs.read", stores.workspace_path, {}),
                 ("db.workspaces.preflight", stores.chat_path, {}),
-                ("db.workspaces.preflight", stores.workspace_path, {"factory": ForeignFactory}),
-                ("db.workspaces.preflight", stores.workspace_path, {"read_only": False}),
+                (
+                    "db.workspaces.preflight",
+                    stores.workspace_path,
+                    {"factory": ForeignFactory},
+                ),
+                (
+                    "db.workspaces.preflight",
+                    stores.workspace_path,
+                    {"read_only": False},
+                ),
                 ("db.workspaces.preflight", stores.workspace_path, {"read_only": 1}),
-                ("db.workspaces.preflight", stores.workspace_path, {"must_exist": False}),
+                (
+                    "db.workspaces.preflight",
+                    stores.workspace_path,
+                    {"must_exist": False},
+                ),
                 ("db.workspaces.preflight", stores.workspace_path, {"must_exist": 1}),
                 ("db.workspaces.preflight", stores.workspace_path, {"immutable": True}),
             ):
-                with pytest.raises(bootstrap.RecoveryRequired, match="mobile_connection_scope_invalid"):
-                    connect_private_sqlite(wrong_role, selected, **{
-                        "read_only": True, "must_exist": True, "immutable": False, **options,
-                    })
+                with pytest.raises(
+                    bootstrap.RecoveryRequired, match="mobile_connection_scope_invalid"
+                ):
+                    connect_private_sqlite(
+                        wrong_role,
+                        selected,
+                        **{
+                            "read_only": True,
+                            "must_exist": True,
+                            "immutable": False,
+                            **options,
+                        },
+                    )
             metadata = connect_private_sqlite(
-                "db.workspaces.preflight", stores.workspace_path,
-                read_only=True, must_exist=True, immutable=False,
+                "db.workspaces.preflight",
+                stores.workspace_path,
+                read_only=True,
+                must_exist=True,
+                immutable=False,
             )
-            assert metadata.execute("SELECT MAX(version) FROM schema_version").fetchone()[0] == 11
+            assert (
+                metadata.execute("SELECT MAX(version) FROM schema_version").fetchone()[
+                    0
+                ]
+                == 11
+            )
             metadata.close()
             with pytest.raises(sqlite3.ProgrammingError, match="closed database"):
                 metadata.execute("SELECT 1")
@@ -319,7 +348,9 @@ def test_grant_refuses_foreign_repository_path_factory_thread_and_stale_config(
             original = config.read_text()
             config.write_text(original + "\n# changed\n")
             try:
-                with pytest.raises(bootstrap.RecoveryRequired, match="mobile_selector_review_changed"):
+                with pytest.raises(
+                    bootstrap.RecoveryRequired, match="mobile_selector_review_changed"
+                ):
                     database._held_connection()
             finally:
                 config.write_text(original)

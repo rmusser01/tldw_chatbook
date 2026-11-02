@@ -918,7 +918,10 @@ def _consolidate(captured, *, password, cancel):
                 if row.table in _HOLDS:
                     kind, column = _HOLDS[row.table]
                     holds["runs"].append((kind, values[column]))
-                elif row.table in {"workspace_runtime_bindings", "workspace_binding_authority"}:
+                elif row.table in {
+                    "workspace_runtime_bindings",
+                    "workspace_binding_authority",
+                }:
                     held = ("binding", values["binding_id"])
                     if held not in holds["workspaces"]:
                         holds["workspaces"].append(held)
@@ -1125,10 +1128,20 @@ def _consolidate(captured, *, password, cancel):
                 _verify_sync(connection, sync)
             else:
                 expected = holds[family]
-                if family == "workspaces" and ("legacy", "workspaces", 8) in native_input[1]:
+                if (
+                    family == "workspaces"
+                    and ("legacy", "workspaces", 8) in native_input[1]
+                ):
                     for _kind, binding_id in expected:
-                        witness = connection.execute("SELECT revision FROM workspace_binding_authority WHERE binding_id=?", (binding_id,)).fetchone()
-                        if witness is None or type(witness[0]) is not int or witness[0] != 1:
+                        witness = connection.execute(
+                            "SELECT revision FROM workspace_binding_authority WHERE binding_id=?",
+                            (binding_id,),
+                        ).fetchone()
+                        if (
+                            witness is None
+                            or type(witness[0]) is not int
+                            or witness[0] != 1
+                        ):
                             raise ValueError("mobile_native_binding_witness_changed")
                 if connection.execute(
                     "SELECT count(*) FROM mobile_import_authority_holds WHERE operation_id=?",

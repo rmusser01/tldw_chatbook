@@ -494,13 +494,27 @@ def _plan_identities(reads):
                 )
             if domain.name == "binding":
                 budget = reads.read_budget
-                witnesses = _rows(reads, purpose, "workspaces", "workspace_binding_authority", _read_budget=budget)
+                witnesses = _rows(
+                    reads,
+                    purpose,
+                    "workspaces",
+                    "workspace_binding_authority",
+                    _read_budget=budget,
+                )
                 budget.container((len(rows) + len(witnesses)) * 8)
-                if any(type(r["revision"]) is not int or not 1 <= r["revision"] <= 2**63 - 1 for r in witnesses):
+                if any(
+                    type(r["revision"]) is not int
+                    or not 1 <= r["revision"] <= 2**63 - 1
+                    for r in witnesses
+                ):
                     raise ValueError("mobile_binding_witness_invalid")
                 existing = {r[domain.column] for r in rows}
                 witnessed = {r["binding_id"] for r in witnesses}
-                if (purpose, "workspaces", 8) not in reads.versions and not existing <= witnessed:
+                if (
+                    purpose,
+                    "workspaces",
+                    8,
+                ) not in reads.versions and not existing <= witnessed:
                     raise ValueError("mobile_binding_witness_missing")
                 rows += tuple({domain.column: value} for value in witnessed - existing)
             if domain.name == "world_book_entry":
@@ -512,10 +526,14 @@ def _plan_identities(reads):
                     )
                 )
             partitions.append(rows)
-        reservations.extend(_reserve(
-            domain, *partitions, fingerprint,
-            _read_budget=reads.read_budget if domain.name == "binding" else None,
-        ))
+        reservations.extend(
+            _reserve(
+                domain,
+                *partitions,
+                fingerprint,
+                _read_budget=reads.read_budget if domain.name == "binding" else None,
+            )
+        )
     for domain, table in (
         ("memory_sequence", "console_conversation_memory_selections"),
         ("fleet_sequence", "fleet_progress_messages"),

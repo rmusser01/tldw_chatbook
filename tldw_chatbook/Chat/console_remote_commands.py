@@ -201,10 +201,17 @@ class ConsoleRemoteCommands:
                 else None
             ),
         )
-        controller._interrupt_host.retain_decision_target(session.id)
-        return self.runtime.accept_received_intent(
-            intent, _configuration_preparation=preparation
-        )
+        recovery = self.runtime.ensure_archive_recovery()
+        proof = recovery.issue_user_proof(session.id)
+        intent = replace(intent, recovery_user_origin=proof)
+        try:
+            controller._interrupt_host.retain_decision_target(session.id)
+            return self.runtime.accept_received_intent(
+                intent, _configuration_preparation=preparation
+            )
+        except BaseException:
+            recovery.release_user_proof(proof)
+            raise
 
     async def execute(
         self,
