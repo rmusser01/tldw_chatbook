@@ -7,7 +7,7 @@ This document describes the Console (`chat` destination): the screen layout, the
 | Layer | File | Key symbols |
 | --- | --- | --- |
 | Screen (view) | `UI/Screens/chat_screen.py` | `ChatScreen`, `compose_content()`, `_build_console_center()`, the 0.2 s transcript sync timer |
-| Runtime holder | `Chat/console_runtime.py` | `ConsoleRuntime` — app-owned, idempotent `ensure_*` factories for store/controller/bridge/hooks; outlives every `ChatScreen` |
+| Runtime holder | `Chat/console_runtime.py` | `ConsoleRuntime` — app-owned, idempotent `ensure_*` factories for store/controller/bridge/hooks; outlives every `ChatScreen`; per-session `_staged_evidence` map with shared revision/identity release fence |
 | Received input/admission | `Chat/console_received_intent.py`, `console_received_turn.py`, `console_received_dispatch.py` | Detached input revisions, atomic session claim/promotion, runtime-owned received Send task |
 | Checked configuration | `Chat/console_configuration_capture.py`, `console_configuration_preparation.py` | Current source-owned configuration capture and finite checked preparation before claim promotion |
 | Finite native work | `Chat/console_preparation_reads.py`, `console_native_commit.py` | Exact callback/handle custody through cancellation, retained save outcomes and terminal settlement |
@@ -190,6 +190,30 @@ until activation settles (TASK-35310).
 
 ## Send lifecycle (dataflow)
 
+Runtime staging belongs to an exact session. `_on_active_session_changed`
+synchronously adopts any cold None-keyed launch at the first actual non-None
+activation, before controller/project/review observers; an existing keyed state
+wins and retires the unowned cold state. Reads never assign ownership and
+adoption preserves the shared revision. Captured acceptance records a display-only
+`evidence_source_count` on the exact assistant before both evidence leases release.
+`console_sent_source_count` retains its compatibility name: repair-contract
+ordinals supply the captured count; the existing prompted estimate is the fallback.
+Reply and Run receipts say **attached**, including postacceptance refusal. This
+count proves neither source authorization nor physical provider contact; the
+gateway's actual outcome owner remains the sole yes/no/unknown contact projection.
+Retry and both restore paths clear only this ephemeral count; durable canonical
+citation payloads and recorded retrieval-link criteria keep their own owners.
+A subsequent admission clears only that session's receipt.
+
+Attach, release and session switch project current state through the runtime view
+hook; display failures cannot cost a turn its captured evidence. Immediately after
+normal `finalize_session_close(ticket)` return, runtime retires only that exact
+session's staged state, before release fences and cancellation redelivery. A None
+return may mean the last session successfully closed. Voice timeout, stale close
+revision or unfinished native/preparation work cannot discard staging. Activation
+pruning remains defensive cleanup. View attachment alone does not prove that an
+Inspect viewport is mounted; the dropped-swap replay remains TASK-33620.7.2.
+
 1. The stock composer enters `UI/Console_Modules/composer_run_controls.py::_dispatch_console_draft_send`. `wiring.receive_console_visible_intent` captures detached selection and authored input revisions, then calls `ConsoleRuntime.accept_received_intent`, which claims the existing per-session slot before checked configuration preparation. Receipt grants no execution or durable acceptance. The view can show Preparing while the runtime owns the task; repeated presses cannot acquire a second claim.
 2. The runtime checks the captured store/session/incarnation/binding and draft, attachment, prefill and settings revisions. Checked preparation then promotes that exact claim atomically into the existing controller submission, with no release/reacquire gap. `submit_draft` fences shutdown/capture-quiescence, registers the submit task, and appends an optimistic user echo with `persist=False`; a blocked send leaves no durable row. Custom/legacy complete-request entry retains its original fallback and callback affinity.
 3. If the origin is manual, the controller fires the `UserPromptSubmit` hook (see [console-run-hooks.md](./console-run-hooks.md)). A blocking hook refuses the send (run state `BLOCKED`, hook-origin SYSTEM row); captured stdout becomes a persisted hook-context row.
@@ -283,6 +307,7 @@ Notable keys: `workspace_root` (compatibility-only for Console file authority �
 ## Boundaries
 
 - **Screen** — layout, widgets, focus, the repaint tick, card mounting and disposable received-input feedback. The accepted sole stock unpromoted manual Preparing path can narrow presentation only with exact receipt/source/visit and completed-FULL witnesses; changed/custom/queued/background paths retain FULL work and trailing FULL replay. General polling remains Proposed (ADR-231). Never owns accepted agent work.
+- **Runtime staging** — process-local session launch/count receipt and shared revision/identity release fence; no citation persistence or provider-delivery authority. Successful exact-session close retires content without touching canonical citations.
 - **Runtime and received input owners** — one existing per-session admission slot, immutable captured inputs, checked preparation, atomic promotion and retained cancellation outcomes. Views hold no execution authority.
 - **Controller** — the send lifecycle: origin semantics, hooks fire sites, approvals bridging, run-state map (single writer), retry/recovery, queue acceptance.
 - **Store** — session/message state (thread-safe; written from both the UI loop and the bridge worker), the fork/branch tree, draft custody, and the `ConsoleChatPersistence` Protocol seam (`console_chat_store.py:822`) that the store's session/message persistence is written against. `Chat/` as a whole does import the DB layer: 42 files under `Chat/` import `tldw_chatbook.DB` (checked at `2b296e60b3`), among them `console_chat_store.py:290` (`InputError`, `TrajectoryRowWrite`), `chat_persistence_service.py:118`, `chat_conversation_service.py:17` and `Chat_Functions.py:50`. The Protocol keeps the store's *persistence calls* swappable; it is not an import boundary.

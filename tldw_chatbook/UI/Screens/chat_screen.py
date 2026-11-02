@@ -378,8 +378,8 @@ from ...Chat.console_display_state import (
     build_console_staged_evidence_strip_state,
     coerce_non_negative_int,
     console_image_blocker,
-    console_prompted_source_count,
     console_send_gate_setup_copy,
+    console_sent_source_count,
     console_setup_blocked_reason,
     console_setup_blocker,
     console_staged_source_count,
@@ -7137,13 +7137,14 @@ class ChatScreen(BaseAppScreen):
         self._pending_conversation_settings_return_target = None
         self._conversation_settings_return_restore_in_progress = False
         self._pending_console_launch_auto_open_inspector = False
-        # PR-4/task-1: source count of the evidence the LAST send consumed,
-        # kept only until the next thing happens (a new send, new staging, or
-        # an un-stage). It drives the strip's one-send "Evidence sent with
-        # this message" line, which is the only round-trip confirmation an
-        # unpersisted session gets -- the transcript's "Sources (N)" row
-        # needs a persisted conversation. Deliberately NOT a timer: a timed
-        # clear races the strip's own recompose.
+        # PR-4/task-1 + TASK-33620.7: the last accepted capture's source
+        # count (or prompted estimate) is a per-chat ConsoleRuntime receipt,
+        # kept until that chat admits its next turn or replaces its staging.
+        # Inspect says "attached to the last message"; the reply carries
+        # "Sources (N) · attached to this turn"; the strip is for NEXT send.
+        # This receipt is independent of provider contact.
+        # Deliberately NOT a timer: a timed clear races the surfaces' own
+        # recompose.
         # TASK-259: dedupe guard for the scheduled inspector-rail card swap
         # (rapid searching->staged staging would otherwise remove+remount
         # the card once per stage; each swap re-reads the current context).
@@ -9412,11 +9413,11 @@ class ChatScreen(BaseAppScreen):
         launch: ConsoleLiveWorkLaunch,
         result: Any,
     ) -> int:
-        """Return how many sources this send actually put in front of the model.
+        """Return the accepted capture count or its prompted estimate.
 
-        The "Evidence sent with this message" line is a claim about what
-        reached the provider, so it must never report the staged total: the
-        capture prompts only available, locally-owned references.
+        The reply's "Sources (N)" line and Inspect's attached-source receipt
+        describe acceptance independently of provider contact. The captured
+        entry count can differ from the total staged references.
 
         Preference order:
 
@@ -9432,19 +9433,13 @@ class ChatScreen(BaseAppScreen):
             result: The capture's ``LocalRagContextResult``.
 
         Returns:
-            The number of evidence entries carried into the prompt.
+            The captured entry count or existing pre-authority estimate,
+            never proof of exact wire content or provider contact.
         """
-        ordinals = getattr(
-            getattr(result, "citation_repair_contract", None),
-            "allowed_ordinals",
-            None,
-        )
-        if isinstance(ordinals, tuple) and ordinals:
-            return len(ordinals)
-        return console_prompted_source_count(launch)
+        return console_sent_source_count(launch, result)
 
     def _clear_console_evidence_sent_notice(self) -> None:
-        """Drop the one-send "evidence sent" line and refresh only the strip."""
+        """Drop the last send's source receipt and refresh only the strip."""
         if self._console_evidence_sent_notice is None:
             return
         self._console_evidence_sent_notice = None
@@ -14552,10 +14547,7 @@ class ChatScreen(BaseAppScreen):
         pending_launch: Optional[ConsoleLiveWorkLaunch],
     ) -> ConsoleStagedEvidenceStripState:
         """Build the composer-level staged-evidence strip state."""
-        return build_console_staged_evidence_strip_state(
-            pending_launch,
-            sent_source_count=self._console_evidence_sent_notice,
-        )
+        return build_console_staged_evidence_strip_state(pending_launch)
 
     def _sync_console_staged_evidence_strip(self) -> None:
         """Refresh the mounted staged-evidence strip from the launch context."""
@@ -14580,13 +14572,12 @@ class ChatScreen(BaseAppScreen):
         would advertise a granularity the send path does not have.
         """
         event.stop()
-        # M4 (final review): resync BEFORE the early return so a strip that
-        # is still showing stale staged rows -- because the context field
-        # was already cleared from under it elsewhere (e.g. a send's
-        # consume-on-send clear) without a matching surface sync -- heals
-        # on click instead of dead-ending as a silent no-op.
-        self._sync_console_staged_evidence_strip()
         if self._pending_console_launch_context is None:
+            # Nothing is staged, so the strip is stale (a redraw that never
+            # reached this view): heal every staged-evidence surface, not
+            # only the strip (M4; TASK-33620.7), instead of a silent no-op.
+            if not self._sync_console_pending_launch_surfaces():
+                self.refresh(recompose=True)
             return
         self._pending_console_launch_context = None
         self._pending_console_launch_auto_open_inspector = False
@@ -14621,6 +14612,8 @@ class ChatScreen(BaseAppScreen):
                 )
             except QueryError:
                 return
+            if not local_section.viewport.is_attached:
+                return  # Still mounting: compose built the current card.
             for selector in (
                 f"#{PENDING_LAUNCH_CARD_ID}",
                 f"#{SOURCE_READINESS_CARD_ID}",
@@ -16993,6 +16986,7 @@ class ChatScreen(BaseAppScreen):
                     _thinking_signature(getattr(message, "thinking", None)),
                     variant_signature,
                     getattr(message, "citation_presentation", None),
+                    getattr(message, "evidence_source_count", None),
                     getattr(message, "activity_presentation", None),
                     getattr(message, "raw_cli_presentation", None),
                 )

@@ -12394,6 +12394,16 @@ class ConsoleChatStore(ConsoleReceivedTurnAdmissionMixin, ConsoleReceivedIntentI
         message.citation_presentation = presentation
         return self._snapshot(message)
 
+    def set_evidence_source_count(
+        self, message_id: str, count: int | None
+    ) -> ConsoleChatMessage:
+        """Record a reply's accepted captured source count (session-only)."""
+        if count is not None and (type(count) is not int or count < 1):  # noqa: E721 -- exact int excludes bool/subclasses
+            raise ValueError("count must be a positive int or None")
+        message = self._message_or_raise(message_id)
+        message.evidence_source_count = count
+        return self._snapshot(message)
+
     def set_message_feedback(
         self,
         message_id: str,
@@ -17321,6 +17331,7 @@ class ConsoleChatStore(ConsoleReceivedTurnAdmissionMixin, ConsoleReceivedIntentI
         message.thinking_warning = None
         message.thinking_actions_enabled = True
         message.status = "pending"
+        message.evidence_source_count = None  # a retry never resends evidence
         self._begin_new_terminal_attempt(message)
         if (
             message.metadata is not None
@@ -21844,6 +21855,7 @@ class ConsoleChatStore(ConsoleReceivedTurnAdmissionMixin, ConsoleReceivedIntentI
             restored = replace(
                 message,
                 citation_presentation=None,
+                evidence_source_count=None,
                 activity_presentation=None,
                 raw_cli_presentation=None,
             )
@@ -21906,6 +21918,7 @@ class ConsoleChatStore(ConsoleReceivedTurnAdmissionMixin, ConsoleReceivedIntentI
                 if node.persisted_message_id in owner_ids
                 else node.id,
                 citation_presentation=None,
+                evidence_source_count=None,
                 activity_presentation=None,
                 raw_cli_presentation=None,
             )
