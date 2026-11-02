@@ -7,7 +7,7 @@
 **Spec:** TASK36949.1, existing ADR228 and ADR126; detailed preparation `.superpowers/preparations/pr3341/repair-plan.md` and source review `C:/Users/GDesktop-1/.codex/worktrees/pr3298-resync/pr3341-initial-review.md`. Exact refreshed source and immutable integration base are bound by the selection ledger.
 
 ADR required: no
-ADR path: existing backlog/decisions ADR228 and ADR126 (resolve exact paths)
+ADR path: existing [ADR-228](../../../backlog/decisions/228-sqlite-store-kernel.md) and [ADR-126](../../../backlog/decisions/126-complete-local-backup-and-recovery.md)
 Reason: Public accessor and caller migration preserve established transaction/admission ownership.
 
 ## Global constraints
