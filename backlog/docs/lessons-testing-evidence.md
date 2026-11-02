@@ -24246,3 +24246,18 @@ The successive accepted mix-in placement regression initially failed only after 
 ## A worker can switch an in-memory SQLite owner (PR3346)
 
 **Incident, 2026-11-02.** After a successful native turn commit, dozens of mounted Console tests emptied the draft but never reached the provider. The actual receipt save raised `no such table: messages`: its new unconditional worker path opened a thread-local `:memory:` connection with no schema. The existing native commit already handled this distinction. Keeping the real receipt callback on the memory owner's loop restored the original send, Stop, bridge and recovery journeys; file-backed writes still use the owned worker. Empty and nonempty real-SQLite receipt regressions fail before the fix and pass after it. Diagnose the refused durable operation before changing a UI wait budget.
+
+
+## Release test-owned transport barriers before disposing their owner (PR3346)
+
+**Incident, 2026-11-02.** Hosted UI shard 28 timed out in a response-rule case,
+then remained in teardown until the job was cancelled. The triggering hosted
+precondition did not reproduce locally. A separate bounded injection of an early
+assertion proved a cleanup defect: the scripted HTTP transport remained at
+`helper_release.wait`, while runtime disposal awaited physical helper retirement.
+Three async samples stayed there for 7.3 seconds; releasing the test event at 8 seconds
+allowed disposal and preserved the exact original assertion. The fixture now
+releases its helper and primary barriers before normal disposal, with native
+failure-retirement controls. Keep the unreproduced trigger separate from the
+proven cleanup defect; do not extend timeouts or relax cancellation ownership to
+make an unreleased test barrier disappear.

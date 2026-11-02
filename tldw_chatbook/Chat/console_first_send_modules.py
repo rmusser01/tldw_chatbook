@@ -115,6 +115,7 @@ FIRST_SEND_MODULES: tuple[str, ...] = (
     "tldw_chatbook.Chat.response_rules.resolution",
     "tldw_chatbook.Chat.response_rules.chat_state",
     "tldw_chatbook.UI.Console_Modules.response_rules",
+    "tldw_chatbook.app_served",
     "textual_serve",
     "tldw_chatbook.Web_Server.served_relay_publisher",
     "tldw_chatbook.Guardian.settings",
@@ -126,7 +127,6 @@ FIRST_SEND_MODULES: tuple[str, ...] = (
     "tldw_chatbook.Tools.character_tool_service",
     "tldw_chatbook.Tools.git_tool_impls",
     "tldw_chatbook.Tools.web_tool_impls",
-    "tldw_chatbook.Web_Scraping.deep_search_citations",
     "tldw_chatbook.Agents.ask_user_questions",
     "tldw_chatbook.Agents.fs_read_ledger",
     "tldw_chatbook.Chat.conversation_archive_actions",
@@ -142,6 +142,7 @@ FIRST_SEND_MODULES: tuple[str, ...] = (
     # modules leaves first: imported whole, native_authority was one step of
     # 63-70 ms CPU that a navigation could not park (TASK-33620.15.18).
     "webencodings",
+    "six",
     "html5lib",
     "tinycss2",
     "multidict",

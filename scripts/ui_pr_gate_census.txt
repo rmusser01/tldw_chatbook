@@ -1952,3 +1952,8 @@ Tests/UI/test_console_projection_restyles.py
 # (plus the quiet-gap file's three send-start cases, moved here). Eleven cases,
 # about 26 s locally at load 6; appended at the tail, so no slot moves.
 Tests/UI/test_console_send_start_window.py
+
+# PR3346: reviewed cleanup, failure-diagnostic and extraction identity controls.
+Tests/UI/test_console_response_rules.py::test_fixture_failure_retires_held_transport
+Tests/UI/test_library_note_links_readiness_diagnostics.py
+Tests/UI/test_roleplay_extraction_identity.py

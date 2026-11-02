@@ -139,6 +139,43 @@ async def test_actual_stop_after_generation_cancels_rule_check(tmp_path):
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("transport", ["primary", "helper"])
+async def test_fixture_failure_retires_held_transport(tmp_path, transport):
+    """A setup failure preserves its assertion and retires the actual HTTP task."""
+
+    class ObservedRelease(asyncio.Event):
+        task = None
+
+        async def wait(self):
+            self.task = asyncio.current_task()
+            return await super().wait()
+
+    entered, release = asyncio.Event(), ObservedRelease()
+    failure = AssertionError("response-rule setup failed before its release block")
+    async with asyncio.timeout(10):
+        with pytest.raises(AssertionError) as caught:
+            async with mounted_rules_console(tmp_path) as case:
+                if transport == "helper":
+                    seed_answer(case)
+                    case.helper_entered, case.helper_release = entered, release
+                    draft = "/omfg Include evidence in the answer"
+                else:
+                    case.primary_entered, case.primary_release = entered, release
+                    draft = "Explain another result"
+                case.composer.load_draft(draft)
+                case.console.query_one("#console-send-message", Button).press()
+                async with asyncio.timeout(5):
+                    await entered.wait()
+                assert release.task is not None and not release.task.done()
+                assert not release.is_set()
+                raise failure
+        assert caught.value is failure
+        assert release.is_set()
+        assert release.task.done()
+        assert case.rules.helpers.unsettled_count == 0
+
+
+@pytest.mark.asyncio
 async def test_workspace_command_opens_same_manager_in_registered_scope(tmp_path):
     async with mounted_rules_console(tmp_path) as case:
         workspace = case.app.workspace_registry_service.create_workspace(

@@ -24,10 +24,11 @@ import threading
 import time
 import zipfile
 from collections import deque
+from collections.abc import Mapping
 from html.parser import HTMLParser
 from io import BytesIO
 from pathlib import PurePosixPath
-from typing import NamedTuple, Optional
+from typing import Any, NamedTuple, Optional
 from urllib.parse import urljoin, urlsplit
 from urllib.robotparser import RobotFileParser
 
@@ -37,9 +38,14 @@ from pydantic import BaseModel, ConfigDict, StrictStr, ValidationError
 
 from .local_tool_impls import LocalToolError
 from ..Utils.tls_trust import build_httpx_client
-from ..Web_Scraping.deep_search_citations import (
-    summarize_for_footer as deep_search_citations_footer,
-)
+
+
+def deep_search_citations_footer(verification: Mapping[str, Any] | None) -> str:
+    """Load citation formatting when a deep-search result actually needs it."""
+    from ..Web_Scraping.deep_search_citations import summarize_for_footer
+
+    return summarize_for_footer(verification)
+
 
 # XXE hardening for attacker-controlled sitemap XML (mirrors
 # tldw_chatbook/Subscriptions/security.py's pattern): defusedxml is an

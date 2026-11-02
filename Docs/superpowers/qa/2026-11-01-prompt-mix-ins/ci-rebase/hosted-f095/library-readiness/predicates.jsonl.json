@@ -1,0 +1,4 @@
+{
+  "sha256": "ddaf6c5cfa7d6f7bad557bb10bb8a47432b9267f95edf71ae250cab1e9ac9cc3",
+  "raw_text": "{\"monotonic\": 1864658.827739041, \"result\": true, \"loaded\": true, \"lookup_error_type\": null, \"rendered_generation\": 1, \"state_generation\": 1, \"entry_dirty\": false, \"canvas_error\": false, \"row_count\": 1, \"parent_active\": true, \"row_mounted\": true, \"row_display\": true, \"row_disabled\": false, \"screen_current\": true, \"route\": null, \"parents\": [[\"Vertical\", \"library-rail-section-body-browse\", true, true], [\"LibraryRail\", \"library-rail\", true, true], [\"Horizontal\", \"library-shell-grid\", true, true], [\"Container\", \"screen-content\", true, true], [\"LibraryScreen\", null, true, true], [\"TldwCli\", null, true, \"app-method\"]]}\n"
+}

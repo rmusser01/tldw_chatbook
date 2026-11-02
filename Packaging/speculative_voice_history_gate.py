@@ -82,11 +82,11 @@ def completed_pair_locator_inventory() -> dict[str, Any]:
 
 def _locator_distribution() -> list[dict[str, Any]]:
     # Columns of one table share a physical row, so they share a count. Giving
-    # the two checkpoint columns 49 observations and the other 22 locators 41
+    # the two checkpoint columns 44 observations and the other 24 locators 38
     # yields exactly 1,000 locator observations. A new locator changes the sum:
     # re-split it here and re-pin the count in its test.
     baseline = {
-        locator: 49 if locator[0] == _CHECKPOINT_TABLE else 41
+        locator: 44 if locator[0] == _CHECKPOINT_TABLE else 38
         for locator in _forbidden_locators()
     }
     if sum(baseline.values()) != BASELINE_LOCATOR_ROWS:

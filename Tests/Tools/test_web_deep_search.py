@@ -77,6 +77,18 @@ def test_deep_search_happy_path(deep_env):
     assert "Confidence: 0.78" in out and "Engine: google" in out
 
 
+def test_deep_search_footer_reads_current_tool_global(deep_env, monkeypatch):
+    seen = []
+
+    def current_footer(verification):
+        seen.append(verification)
+        return "current footer"
+
+    monkeypatch.setattr(web_tool_impls, "deep_search_citations_footer", current_footer)
+    assert "current footer" in web_deep_search("what is love")
+    assert seen == [None]
+
+
 def test_deep_search_no_synthesis_llm_fails_before_spend(deep_env, monkeypatch):
     calls = {"n": 0}
     monkeypatch.setattr(

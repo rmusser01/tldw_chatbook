@@ -1,0 +1,4 @@
+{
+  "sha256": "3d0a55c2fcc267263902f67e03b4b1313d92ad0f387129dbb90675fb09e07dda",
+  "raw_text": "ruff check --no-cache Tests/UI/test_console_send_ready_attachment.py: All checks passed (exit0)\nruff format --check --no-cache Tests/UI/test_console_send_ready_attachment.py: already formatted (exit0)\ngit diff --check -- Tests/UI/test_console_send_ready_attachment.py: clean (exit0)\n"
+}

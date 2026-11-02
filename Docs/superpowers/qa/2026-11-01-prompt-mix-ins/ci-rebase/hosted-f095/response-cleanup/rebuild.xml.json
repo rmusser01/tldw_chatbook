@@ -1,0 +1,4 @@
+{
+  "sha256": "e0fd2351b761d8f2fdd8a9a64e0b00f6446e6f5543f0c9925bd79772c239f634",
+  "raw_text": "<?xml version=\"1.0\" encoding=\"utf-8\"?><testsuites name=\"pytest tests\"><testsuite name=\"pytest\" errors=\"0\" failures=\"0\" skipped=\"0\" tests=\"1\" time=\"5.958\" timestamp=\"2026-11-02T08:24:12.784622-08:00\" hostname=\"Roberts-MacBook-Pro-2.local\"><testcase classname=\"Tests.UI.test_console_response_rules\" name=\"test_rule_phase_events_project_only_the_mounted_current_session[rebuild]\" time=\"4.088\" /></testsuite></testsuites>"
+}

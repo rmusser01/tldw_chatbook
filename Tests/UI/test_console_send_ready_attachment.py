@@ -19,6 +19,10 @@ Send is one whose press sends.
 
 from __future__ import annotations
 
+import asyncio
+import threading
+import time
+
 import pytest
 from textual.widgets import Button
 
@@ -102,6 +106,17 @@ async def _ready_console(host, pilot, monkeypatch):
     return console, composer, send, store, session_id
 
 
+async def _sync_controls(console, pilot, *, timeout: float = 4.0) -> None:
+    """Wait for a checked projection, including its existing deferred replay."""
+    deadline = time.monotonic() + timeout
+    while not console._sync_console_control_bar():
+        assert time.monotonic() < deadline, (
+            "Console control projection did not complete"
+        )
+        await pilot.pause(0.01)
+    await pilot.pause()
+
+
 @pytest.mark.asyncio
 async def test_a_staged_attachment_gets_the_same_send_readiness_from_either_sync_site(
     monkeypatch,
@@ -178,8 +193,7 @@ async def test_the_workbench_send_action_agrees_with_the_composer_send(monkeypat
         for name, fields, sendable in _STAGED_KINDS:
             store.clear_pending_attachments(session_id)
             assert store.add_pending_attachment(session_id, _attachment(name, fields))
-            console._sync_console_control_bar()
-            await pilot.pause()
+            await _sync_controls(console, pilot)
             assert (workbench_send.disabled, send.disabled) == (
                 not sendable,
                 not sendable,
@@ -196,8 +210,7 @@ async def test_the_workbench_send_action_agrees_with_the_composer_send(monkeypat
         store.clear_pending_attachments(session_id)
         image = _attachment("photo.png", _STAGED_KINDS[0][1])
         assert store.add_pending_attachment(session_id, image)
-        console._sync_console_control_bar()
-        await pilot.pause()
+        await _sync_controls(console, pilot)
         assert (workbench_send.disabled, send.disabled) == (True, True)
 
 
@@ -266,3 +279,58 @@ async def test_a_ready_send_with_only_an_image_staged_sends_the_image(monkeypatc
         assert [p["image_url"]["url"] for p in parts if p["type"] == "image_url"] == [
             "data:image/png;base64,iVBORw=="
         ]
+
+
+@pytest.mark.asyncio
+async def test_attachment_readiness_waits_for_checked_config_projection(monkeypatch):
+    """A real config reader holds the projection; releasing it permits replay."""
+    _app, host = _ready_host()
+    async with host.run_test(size=(140, 42)) as pilot:
+        console, composer, send, store, session_id = await _ready_console(
+            host, pilot, monkeypatch
+        )
+        composer.load_draft("describe this")
+        await _sync_controls(console, pilot)
+        workbench_send = console.query_one("#workbench-action-send", Button)
+        assert (workbench_send.disabled, send.disabled) == (False, False)
+        entered, release = threading.Event(), threading.Event()
+
+        def hold_config():
+            with config_module._settings_rebuild_lock():
+                entered.set()
+                release.wait(5.0)
+
+        holder = threading.Thread(target=hold_config)
+        holder.start()
+        try:
+            assert await asyncio.to_thread(entered.wait, 1.0)
+            # Existing checked display proofs expire after one real second.
+            # The native refresh cannot publish a replacement under this lock.
+            await asyncio.sleep(1.05)
+            monkeypatch.setattr(
+                attachment_core,
+                "vision_block_reason",
+                lambda *_a, **_k: "Console send blocked: no image support",
+            )
+            assert store.add_pending_attachment(
+                session_id, _attachment("photo.png", _STAGED_KINDS[0][1])
+            )
+            assert console._sync_console_control_bar() is False
+            with pytest.raises(AssertionError, match="projection did not complete"):
+                await _sync_controls(console, pilot, timeout=0.05)
+            assert not release.is_set()
+            assert (workbench_send.disabled, send.disabled) == (False, False)
+        finally:
+            release.set()
+            await asyncio.to_thread(holder.join, 1.0)
+        assert not holder.is_alive()
+        # Only the already-requested production replay may publish this state.
+        deadline = time.monotonic() + 4.0
+        while (workbench_send.disabled, send.disabled) != (True, True):
+            assert time.monotonic() < deadline, (
+                "Deferred control replay did not complete"
+            )
+            await pilot.pause(0.01)
+        assert (workbench_send.disabled, send.disabled) == (True, True)
+        assert await console._send_console_message_from_visible_action() is False
+        assert len(store.pending_attachments(session_id)) == 1

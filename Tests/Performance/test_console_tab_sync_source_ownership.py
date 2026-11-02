@@ -499,9 +499,12 @@ async def replay_keeps_drain_owned():
 async def cold_full_schedules_its_pending_replay():
     from contextlib import nullcontext
 
+    from tldw_chatbook.UI.Console_Modules.attach_visit import ConsoleAttachVisit
+
     owner = make_screen()
     owner._console_sync_in_progress = False
-    owner._current_console_attach_visit = lambda: object()
+    visit = ConsoleAttachVisit(object(), owner, 1, 1, True)
+    owner._current_console_attach_visit = lambda: visit
     owner._record_ui_worker_started = owner._record_ui_worker_finished = lambda *_: None
     owner._message = SimpleNamespace(reconcile_console_speech_context=lambda: None)
     owner._image = SimpleNamespace(
@@ -510,6 +513,15 @@ async def cold_full_schedules_its_pending_replay():
     )
     owner._sync_console_chat_core_state = lambda: None
     owner._session._sync_console_session_draft = lambda: None
+    temporary_chip_calls = []
+
+    def sync_temporary_chip():
+        # TASK-37840 refreshes capture state after the tab publication await.
+        assert owner.surface.calls
+        assert owner._console_session_tabs_sync_calls == 0
+        temporary_chip_calls.append(True)
+
+    owner._sync_console_temporary_chip = sync_temporary_chip
 
     async def settled():
         return None
@@ -532,6 +544,7 @@ async def cold_full_schedules_its_pending_replay():
     retries = []
     owner._request_console_control_bar_sync = lambda **kwargs: retries.append(kwargs)
     assert await owner._sync_native_console_chat_ui() is False
+    assert temporary_chip_calls == [True]
     assert owner._console_control_bar_replay_whole_sync
     assert retries == [{"delayed": True}]
 

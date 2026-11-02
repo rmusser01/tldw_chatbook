@@ -27,6 +27,7 @@ from __future__ import annotations
 
 import ast
 import importlib.util
+import inspect
 import json
 import os
 import subprocess
@@ -41,29 +42,58 @@ pytestmark = pytest.mark.bootstrap_profile
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 
-_WARMUP_SCRIPT = """
+
+def _import_warmup_modules(names):
+    """Keep import failures strict except the declared web extra's absence."""
+    missing = []
+    for name in names:
+        try:
+            __import__(name)
+        except ModuleNotFoundError as error:
+            # pyproject's [web] extra and optional_deps' web feature own this
+            # optional root. A missing dependency *inside* it is still an error.
+            if name != "textual_serve" or error.name != name:
+                raise
+            missing.append(name)
+    return missing
+
+
+_WARMUP_SCRIPT = (
+    inspect.getsource(_import_warmup_modules)
+    + """
 import json
 import sys
+
+if sys.argv[1] == "optional-missing":
+    assert "textual_serve" not in sys.modules
+    class MissingTextualServe:
+        def find_spec(self, fullname, path=None, target=None):
+            if fullname == "textual_serve":
+                raise ModuleNotFoundError("test optional root absent", name=fullname)
+            return None
+    sys.meta_path.insert(0, MissingTextualServe())
 
 import tldw_chatbook.app  # noqa: F401  (the boot closure)
 import tldw_chatbook.UI.Screens.chat_screen  # noqa: F401  (the initial route)
 from tldw_chatbook.Chat.console_first_send_modules import FIRST_SEND_MODULES
 
 before = set(sys.modules)
-for name in FIRST_SEND_MODULES:
-    __import__(name)
+missing = _import_warmup_modules(FIRST_SEND_MODULES)
 added = {}
 for name in sorted(set(sys.modules) - before):
     module = sys.modules[name]
     path = getattr(module, "__file__", None)
     if name.startswith("tldw_chatbook") and path and path.endswith(".py"):
         added[name] = {"file": path, "package": bool(getattr(module, "__path__", None))}
-print("WARMUP_JSON:" + json.dumps({"listed": list(FIRST_SEND_MODULES), "added": added}))
+print("WARMUP_JSON:" + json.dumps({
+    "listed": list(FIRST_SEND_MODULES), "added": added, "optional_missing": missing,
+}))
 """
+)
 
 
-@pytest.fixture(scope="module")
-def warm_up_modules(tmp_path_factory) -> dict:
+@pytest.fixture(scope="module", params=["environment", "optional-missing"])
+def warm_up_modules(tmp_path_factory, request) -> dict:
     """The tldw modules the warm-up imports beyond UI-ready, with their files."""
     tmp_path = tmp_path_factory.mktemp("first_send_cycles")
     home, data, config_dir = (tmp_path / n for n in ("home", "data", "config"))
@@ -81,7 +111,7 @@ def warm_up_modules(tmp_path_factory) -> dict:
     env.pop("PYTEST_CURRENT_TEST", None)
     env.pop("TLDW_CONFIG_PATH", None)
     result = subprocess.run(
-        [sys.executable, "-c", _WARMUP_SCRIPT],
+        [sys.executable, "-c", _WARMUP_SCRIPT, request.param],
         cwd=REPO_ROOT,
         env=env,
         text=True,
@@ -91,7 +121,48 @@ def warm_up_modules(tmp_path_factory) -> dict:
     )
     assert result.returncode == 0, result.stderr[-4000:]
     line = next(x for x in result.stdout.splitlines() if x.startswith("WARMUP_JSON:"))
-    return json.loads(line[len("WARMUP_JSON:") :])
+    result = json.loads(line[len("WARMUP_JSON:") :])
+    assert "textual_serve" in result["listed"]
+    assert result["optional_missing"] in ([], ["textual_serve"])
+    if request.param == "optional-missing":
+        assert result["optional_missing"] == ["textual_serve"]
+    return result
+
+
+def test_missing_optional_root_does_not_omit_following_imports(monkeypatch):
+    calls = []
+
+    def import_module(name):
+        calls.append(name)
+        if name == "textual_serve":
+            raise ModuleNotFoundError(name=name)
+
+    monkeypatch.setattr("builtins.__import__", import_module)
+    assert _import_warmup_modules(["textual_serve", "required_after"]) == [
+        "textual_serve"
+    ]
+    assert calls == ["textual_serve", "required_after"]
+
+
+@pytest.mark.parametrize(
+    "requested,error",
+    [
+        ("required", ModuleNotFoundError(name="required")),
+        ("textual_serve", ModuleNotFoundError(name="transitive_dependency")),
+        ("textual_serve.child", ModuleNotFoundError(name="textual_serve.child")),
+        ("textual_serve", ImportError("broken installed package")),
+        ("textual_serve", RuntimeError("import lock failure")),
+    ],
+)
+def test_other_warmup_import_failures_remain_fatal(monkeypatch, requested, error):
+    def import_module(name):
+        assert name == requested
+        raise error
+
+    monkeypatch.setattr("builtins.__import__", import_module)
+    with pytest.raises(type(error)) as caught:
+        _import_warmup_modules([requested])
+    assert caught.value is error
 
 
 def _is_type_checking(test: ast.expr) -> bool:

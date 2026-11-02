@@ -93,7 +93,8 @@ LIVE_FIRST_SEND_IMPORTS = (
     "Tools.character_tool_service",
     "Tools.git_tool_impls",
     "Tools.web_tool_impls",
-    "Web_Scraping.deep_search_citations",
+    # Deep-search citation formatting now loads at actual tool-result use;
+    # constructing the send's tool catalog does not need it.
     "Agents.ask_user_questions",
     "Agents.fs_read_ledger",
     "Chat.conversation_archive_actions",
@@ -381,6 +382,25 @@ def test_every_live_first_send_import_is_listed():
         if f"tldw_chatbook.{name}" not in FIRST_SEND_MODULES
     ]
     assert not missing, missing
+
+
+def test_html_parser_dependencies_have_their_own_ordered_steps():
+    from tldw_chatbook.Chat.console_first_send_modules import FIRST_SEND_MODULES
+
+    assert FIRST_SEND_MODULES.index("six") < FIRST_SEND_MODULES.index("html5lib")
+    assert FIRST_SEND_MODULES.index("webencodings") < FIRST_SEND_MODULES.index("html5lib")
+
+
+@private_profile_test
+def test_web_tool_catalog_import_keeps_deep_search_footer_cold(request):
+    from tldw_chatbook.Tools import web_tool_impls
+
+    name = "tldw_chatbook.Web_Scraping.deep_search_citations"
+    assert name not in sys.modules
+    assert web_tool_impls.deep_search_citations_footer(
+        {"markers_total": 2, "markers_resolved": 1, "unknown_marker_ids": [9]}
+    ) == "Citations: 1/2 resolved (1 unknown)"
+    assert name in sys.modules
 
 
 class _PassApp:

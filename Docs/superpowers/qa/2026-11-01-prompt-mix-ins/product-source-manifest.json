@@ -77,6 +77,11 @@
       "git_blob": "40014dbcc5fcc5693489993b5b92f482cee7a99f",
       "bytes": 27139
     },
+    "Packaging/speculative_voice_history_gate.py": {
+      "sha256": "f46c7be363dbc92bfe0944815e4d2c957c955461c14648b358658ae6e39db176",
+      "git_blob": "ee28d61a20cb30b6ff74f4cb14a0d326fccf46d8",
+      "bytes": 20750
+    },
     "Tests/Architecture/agent_runtime_import_footprint.txt": {
       "sha256": "8d2ce2943e6e5a47bd907548007f94b01f9a1f301f61774a576f587afa8902fb",
       "git_blob": "018d9a1b135d940cfbcfda388fe5d9fa7e00069a",
@@ -297,6 +302,16 @@
       "git_blob": "3bc4762b98bef7c2b518591d9601825d3840e0a8",
       "bytes": 20463
     },
+    "Tests/Performance/test_console_tab_sync_source_ownership.py": {
+      "sha256": "0539d72e72677fb60738fd89229da26754c85014f50165f3b48f4840314b84f8",
+      "git_blob": "d828252271f6bc309cf0c5083f36904c0c8fb7bc",
+      "bytes": 21614
+    },
+    "Tests/Performance/test_speculative_voice_latency.py": {
+      "sha256": "26d598cecb97fece6313916ebc7d554bf8aed456bee88d3b55e8f5e2e33fe48e",
+      "git_blob": "52c2c929e683fdb51bb018558fd17844e5227f90",
+      "bytes": 3545
+    },
     "Tests/Performance/test_textual_css_fastpath.py": {
       "sha256": "d806c94161c4a23ca54cc9acdcd6b2504dad2ec63c97ca16c7cf3b12e4cc49aa",
       "git_blob": "b80f8fa22e8aeb9302fb661de8cc9807568b745b",
@@ -367,6 +382,11 @@
       "git_blob": "55a77dd0217b89fddfa3625f6c557d15868885e3",
       "bytes": 17933
     },
+    "Tests/Tools/test_web_deep_search.py": {
+      "sha256": "03cfadb36de4a18878438a6bf147672665393a1b0ea0c724e007fe7ca1150dc8",
+      "git_blob": "02ce61feae5e3ae62c8e6904b8a59e6cdc22ee2e",
+      "bytes": 38528
+    },
     "Tests/UI/Library_Modules/test_library_notes_sync_attention_listener.py": {
       "sha256": "cf93f2da6aa616db8640c7a20af6041cf521e7d7e5632687cac687ed39de2e2a",
       "git_blob": "af24a145c69f4b3b63aade97f7c369efa657cd7a",
@@ -377,10 +397,20 @@
       "git_blob": "def5fabc7b2521d3e2960b4d231d006968f6c6f0",
       "bytes": 16264
     },
+    "Tests/UI/library_note_links_support.py": {
+      "sha256": "27fc9262e89732e2fc93bf4564d2159a8f7da6502875ff1418e7a72d3a9a532c",
+      "git_blob": "4ad5252bde9024dcd75de5e290104d3d48ab2b44",
+      "bytes": 17488
+    },
     "Tests/UI/modal_wide_tier_registry.py": {
       "sha256": "593b12eb4269ee507cdb40a674b7941c4495f0cee31667cb4e4b2047ba0d76e5",
       "git_blob": "09c1cb99faf357d01fa8abe3a0edf486a67d166e",
       "bytes": 23170
+    },
+    "Tests/UI/response_rules_fixtures.py": {
+      "sha256": "98272ace16c4b897d713911a826b2745f669dc2351ef88aebf31d2adfdf95e40",
+      "git_blob": "1e6ad2903152c57d22ef75f3a377fee63b7842df",
+      "bytes": 9761
     },
     "Tests/UI/test_app_instance_warning.py": {
       "sha256": "1d1f3a3e1640b977821f80db0d590b3e332bce4c6ed0a3fa3e5bd95f85b81500",
@@ -417,10 +447,15 @@
       "git_blob": "519380e9fe975c4c895595666db14ccf3dfd2029",
       "bytes": 9456
     },
+    "Tests/UI/test_console_first_send_import_cycles.py": {
+      "sha256": "51e0fe80324f61303d40b7f9d37999ce216acb0eb6fc02688f14647a6f2a0a78",
+      "git_blob": "4803b4f3f7bf2bb0ef30d22e562cdddd07e871e4",
+      "bytes": 13173
+    },
     "Tests/UI/test_console_first_send_preimport.py": {
-      "sha256": "db0c3639d46269c519b2b4cc0091f17f23a3f9d1e9232e7b36e70dcdf144618d",
-      "git_blob": "3a7fa4d294b17a74c470c889c926a03a537b9fdb",
-      "bytes": 41695
+      "sha256": "431d6b37ea0d30e582ff46c3d464f2cbad6650d435c05d57fa9e11848f6bfdc0",
+      "git_blob": "be2f03d307d660af9f508aade2fa6ef5dfa323bc",
+      "bytes": 42571
     },
     "Tests/UI/test_console_idle_heap_refreeze.py": {
       "sha256": "9c161611a38dcd7d5ece437d9aeb8e7b22b4377b932cf406bd9decf798eeffdb",
@@ -462,6 +497,11 @@
       "git_blob": "3881bea523a07daae6ae0bc0e1ffa08928be82ac",
       "bytes": 7790
     },
+    "Tests/UI/test_console_response_rules.py": {
+      "sha256": "1bfd03dd30ed0e57085fd1183f3f32f3c7bae24ffc9591facb735b900486a4bf",
+      "git_blob": "a1f190fa8134f0c8a74015295cc75300802cc733",
+      "bytes": 47778
+    },
     "Tests/UI/test_console_runtime_ownership.py": {
       "sha256": "be3421be597431d5ce8684e99763ae1714b90413e4ce11fe81760faf4db5019a",
       "git_blob": "a024b772b22ffd9628b67f8a4934653938264d89",
@@ -471,6 +511,11 @@
       "sha256": "4d52eea1baf2553da55790bf40907fd48a08bd52a20f4f49b1aa23f7346481ef",
       "git_blob": "c42c1dd047691a55e88f03f76da3046a69adc6e6",
       "bytes": 15374
+    },
+    "Tests/UI/test_console_send_ready_attachment.py": {
+      "sha256": "95d9e09eace05edb39a13dcfebcb54090bfa75319438399b6bde47cb15acc781",
+      "git_blob": "ef4a6dbd77b2214f7a7076af8781043a4bc81934",
+      "bytes": 14035
     },
     "Tests/UI/test_console_session_tab_close.py": {
       "sha256": "e5a77ba9200ad9d3dde1e9105dccad72894421daa951aa4da3511c1cdedd3e87",
@@ -491,6 +536,11 @@
       "sha256": "5033e6d493d63c972bf7e79eaa3370d5e9c5b68220b9c3398552ecd8cea8b85c",
       "git_blob": "5f696bb982f41e7c2a8a7ccc76bc2754930d8422",
       "bytes": 21323
+    },
+    "Tests/UI/test_library_note_links_readiness_diagnostics.py": {
+      "sha256": "546fe8e103474859902128bccca92e0d040d55b089a51385492a455b51a558b9",
+      "git_blob": "690c48622c525011e81d702ad1058b5b1bb76e68",
+      "bytes": 2162
     },
     "Tests/UI/test_library_notes_move_never_false_conflicts.py": {
       "sha256": "f0125822979e1d44dcd4eda41f16305e2b51def20632f738bb5d84726990b8b3",
@@ -573,9 +623,9 @@
       "bytes": 376813
     },
     "backlog/docs/lessons-testing-evidence.md": {
-      "sha256": "f260276c7d90500a0ff1159baa42700c1678fc9e273df32e335504cfcbd64fac",
-      "git_blob": "61219dced202d02fedfd2bf8861d322fb7f6a9c0",
-      "bytes": 1656026
+      "sha256": "869229a3d47e8ad30a365f15d66bb8a5ec3376e15d4fc4fd532cd6fc25fffa08",
+      "git_blob": "c1db92803aa14792581dbc0dfa98d2b6eeca6f25",
+      "bytes": 1656946
     },
     "backlog/tasks/task-38534 - Design-prompt-mix-ins-for-Console-sends.md": {
       "sha256": "c3eb8b840aa0a1079fb2d108dc754cd0b18f6a9c4251c2a4a5c0bda1a37cd637",
@@ -628,9 +678,14 @@
       "bytes": 6141
     },
     "backlog/tasks/task-38544 - Qualify-the-integrated-prompt-mix-in-lifecycle-and-document-delivery.md": {
-      "sha256": "e1cf98591c7377cecbbef54e103c0811846703be8ea4ff4ebd8fc73802b28098",
-      "git_blob": "acb9ef2276c8a9e677e8d8a5bb25991deefc19db",
-      "bytes": 30888
+      "sha256": "bdb1ff29c89b98bb90e60ee57ff624d15a64f51111d60145b4c6ec73dca45490",
+      "git_blob": "b98c7a9025e0df34b33c2d33c74214dd69335ef7",
+      "bytes": 35000
+    },
+    "scripts/check_ui_pr_gate_census.py": {
+      "sha256": "fc7fee3cab2b04d70f7f9fd5965d5b28f3416673dcfa224efd598f4324630697",
+      "git_blob": "9dfc408a093bb414bbcb0f772dfe6315df942730",
+      "bytes": 74149
     },
     "scripts/index_plan_pin_census.tsv": {
       "sha256": "d3ed18bf7bd7246b8e92c7ab95ed159b5151668294f1fb58fd99c99b90be9c16",
@@ -641,6 +696,11 @@
       "sha256": "5b31265c237e49d1e3606f76d397cc79c3c849eb274c4f8142255f40bcfebca4",
       "git_blob": "e02bf63fa0e91ad19d2df99a015990686f499997",
       "bytes": 42386
+    },
+    "scripts/ui_pr_gate_census.txt": {
+      "sha256": "3d963234e60fc89df67bccca97653a704156bec2606c50127706c437effb6489",
+      "git_blob": "5023a423efe508102178185fee81ebf2968d8fc0",
+      "bytes": 181228
     },
     "tldw_chatbook/Agents/agent_service.py": {
       "sha256": "c5e1afbf7c48dd5f7be1fb40183a5d8bba16b9c886d60ccc6bfc8691843da616",
@@ -738,9 +798,9 @@
       "bytes": 123081
     },
     "tldw_chatbook/Chat/console_first_send_modules.py": {
-      "sha256": "4ff9ce26f3a083f2844c1b55c1cca0997de77f7c2a470fae944bd23f9926091c",
-      "git_blob": "43f62ee43fc761214b0bc8a9c4174ad1659e6359",
-      "bytes": 12468
+      "sha256": "ac715afaaaa95fe17861c4be03cedf4b930dde95c00324ca2fedaeff3f5e17f2",
+      "git_blob": "94e001f65a91dd5db4efc9f5e9694bb61a4c107a",
+      "bytes": 12455
     },
     "tldw_chatbook/Chat/console_memory_banner.py": {
       "sha256": "94bc28d17d40adda977eaad7393061b9c1baf775df48958460262669684ebb56",
@@ -1036,6 +1096,11 @@
       "sha256": "178be15a5fd3f4b7498fad1c7a7232cff00b6150ceb7eb0b3a4dda300fffa3b0",
       "git_blob": "a110db692e88e404771b291f1e32da6abac8dda8",
       "bytes": 12516
+    },
+    "tldw_chatbook/Tools/web_tool_impls.py": {
+      "sha256": "32c1e6dbcafd5e7aa49b4b627206ce745b23cdcf71138cf4b936eb1798c6e754",
+      "git_blob": "c495b4b290c027d3d7b69d7af0125eb5d3c63230",
+      "bytes": 129542
     },
     "tldw_chatbook/UI/CCP_Modules/ccp_persona_handler.py": {
       "sha256": "5a352e97e0691d65f23f29e36d5fe53f782f4f410668e5d1927b7302d954758e",
