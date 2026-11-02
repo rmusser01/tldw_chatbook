@@ -1321,6 +1321,11 @@ class RemoteWorkspaceTransport:
             raise ValueError(
                 f"python must be a bare interpreter name: {python!r}"
             )
+        from tldw_chatbook.Chat.console_ssh_custody import current_ssh_call
+
+        native = current_ssh_call()
+        if native is not None:
+            native.check()
         _bundle, compressed, bootstrap = _bundle_payload()
         # Spec ("Transport & executor"): each call logs the bundle hash
         # for audit — one debug line at spawn, endpoint label + stamp
@@ -1354,9 +1359,6 @@ class RemoteWorkspaceTransport:
                     f"ssh could not be run: {exc}",
                 ),
             )
-        from tldw_chatbook.Chat.console_ssh_custody import current_ssh_call
-
-        native = current_ssh_call()
         if native is not None:
             native.request.issued = True
         stderr_capture = _BoundedCapture(_STDERR_CAPTURE_CAP)
@@ -1595,9 +1597,13 @@ _NATIVE_MASTER_METHODS = {
         "_dir_names",
     )
 }
+_NATIVE_TRANSPORT_MANAGER = RemoteWorkspaceTransport.master_manager
 _NATIVE_TRANSPORT_FUNCTIONS = {
     name: globals()[name]
     for name in (
+        "_bundle_payload",
+        "_remote_command",
+        "build_ssh_argv",
         "_feed_stdin",
         "_drain_stderr",
         "_watch_exchange",

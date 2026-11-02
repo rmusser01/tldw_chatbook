@@ -96,6 +96,9 @@ class _RemoteSource:
         self.transport_grace = (
             self.cfg.transport.grace_seconds if self.cfg is not None else None
         )
+        self.transport_manager = (
+            self.cfg.transport._manager if self.cfg is not None else None
+        )
         self.executor_values = tuple(
             getattr(self.executor, k, None)
             for k in (
@@ -156,6 +159,10 @@ class _RemoteSource:
             != self.executor_values
             or not _original_methods(self.executor, executor._NATIVE_SSH_METHODS)
             or type(self.cfg.transport) is not transport.RemoteWorkspaceTransport
+            or self.cfg.transport._manager is not self.transport_manager
+            or self.transport_manager is not self.cfg.masters
+            or type(self.cfg.transport).master_manager
+            is not transport._NATIVE_TRANSPORT_MANAGER
             or not _original_methods(
                 self.cfg.transport, transport._NATIVE_TRANSPORT_METHODS
             )
@@ -176,6 +183,12 @@ class _RemoteSource:
             or sessions.get_session_registry is not sessions._NATIVE_REGISTRY_GET
         ):
             raise RuntimeError("original SSH session registry changed")
+        if self.registry is not None:
+            from tldw_chatbook.Tools import remote_session_worker as session
+
+            for name, original in session._NATIVE_SESSION_FUNCTIONS.items():
+                if getattr(session, name) is not original:
+                    raise RuntimeError("original SSH session request callback changed")
         for name, original in executor._NATIVE_SSH_FUNCTIONS.items():
             if getattr(executor, name) is not original:
                 raise RuntimeError("original SSH request callback changed")
@@ -297,14 +310,18 @@ class _ModelSshCall:
             self.request = previous
 
     def response(self, request, result):
-        from tldw_chatbook.Tools.workspace_tool_protocol import WorkspaceToolResponse
+        from tldw_chatbook.Tools.remote_workspace_executor import _parse_worker_output
+        from tldw_chatbook.Tools.workspace_tool_executor import (
+            WorkspaceToolExecutionError,
+        )
 
+        self.check()
         if result.response is not None:
             try:
-                request.terminal = WorkspaceToolResponse.from_bytes(
+                request.terminal = _parse_worker_output(
                     result.response, expected_operation_id=request.operation_id
                 )
-            except ValueError:
+            except WorkspaceToolExecutionError:
                 pass  # Preserve the executor's existing protocol-error rendering.
 
     def retire_process(self, proc, threads):

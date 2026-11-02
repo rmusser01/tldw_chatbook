@@ -290,6 +290,11 @@ class RemoteSessionWorker:
         Raises:
             SessionStartError: With ``transport`` set per the failure class.
         """
+        from tldw_chatbook.Chat.console_ssh_custody import current_ssh_call
+
+        native = current_ssh_call()
+        if native is not None:
+            native.check()
         artifact, compressed, _bootstrap = _bundle_payload()
         loader = loader_payload()
         manager = self._transport.master_manager
@@ -937,5 +942,17 @@ _NATIVE_SESSION_METHODS = {
         "_abandon_start",
         "_kill",
         "_kill_and_reap",
+    )
+}
+
+_NATIVE_SESSION_FUNCTIONS = {
+    name: globals()[name]
+    for name in (
+        "_bundle_payload",
+        "_remote_command",
+        "build_ssh_argv",
+        "loader_payload",
+        "bootstrap_source",
+        "expected_bundle_stamp",
     )
 }

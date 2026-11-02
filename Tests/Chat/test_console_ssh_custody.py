@@ -342,6 +342,71 @@ async def test_changed_original_provider_callback_refuses_after_enqueue(
     assert "original SSH" in str(h.gateway.payloads[-1])
 
 
+@pytest.mark.parametrize("shared", [False, True], ids=["one_shot", "session"])
+@pytest.mark.parametrize(
+    "replacement", ["manager", "_bundle_payload", "_remote_command"]
+)
+async def test_changed_receiving_ssh_source_refuses_after_enqueue(
+    ssh_console, monkeypatch, shared, replacement
+):
+    from tldw_chatbook.Tools import remote_session_worker as session
+    from tldw_chatbook.Tools import remote_workspace_transport as transport
+
+    h, invoked = ssh_console, []
+    registry = enable_sessions(h, monkeypatch) if shared else None
+    peer_entered = h.root / "replacement-peer-entered"
+    replacement_peer = h.root / "replacement-ssh"
+    replacement_peer.write_text(
+        h.fake.bin.read_text().replace("\n", '\ntouch "$SSH_REPLACEMENT_ENTERED"\n', 1)
+    )
+    replacement_peer.chmod(0o700)
+    monkeypatch.setenv("SSH_REPLACEMENT_ENTERED", str(peer_entered))
+    start = threading.Thread.start
+    original_builders = []
+
+    def altered(*args, **kwargs):
+        invoked.append(True)
+        return original_builders[-1](*args, **kwargs)
+
+    def replace_before_start(thread):
+        if thread.name == "tool-fs_read":
+            (service,) = h.rig.controller._agent_bridge._fleet_services.values()
+            provider = service.registry.resolve_owner_for_name("fs_read")[1]
+            authority = next(
+                a
+                for a in provider._admitted_roots.values()
+                if a.alias.startswith("ssh-")
+            )
+            if replacement == "manager":
+                monkeypatch.setattr(
+                    authority.workspace_executor._inner._ssh.transport,
+                    "_manager",
+                    transport.SshMasterManager(
+                        ssh_bin=str(replacement_peer), enabled=False
+                    ),
+                )
+            else:
+                original_builders.append(
+                    getattr(session if shared else transport, replacement)
+                )
+                monkeypatch.setattr(
+                    session if shared else transport, replacement, altered
+                )
+        return start(thread)
+
+    monkeypatch.setattr(threading.Thread, "start", replace_before_start)
+    try:
+        assert (await h.submit()).accepted
+        assert not invoked and not peer_entered.exists()
+        assert not h.fake.call_invocations()
+        assert h.case.runtime.execution_capacity.snapshot().tool_workers == 0
+        assert "original SSH" in str(h.gateway.payloads[-1])
+        assert h.finishes and all(live for _, _, live in h.finishes)
+    finally:
+        if registry is not None:
+            registry.close_all()
+
+
 def install_control_peer(h, monkeypatch, *, checks=True):
     """Actual Unix control server: check succeeds only after a socket exchange."""
     peer = h.root / "control-peer.py"
@@ -480,7 +545,16 @@ async def test_destination_helper_waits_for_its_original_process_group(
     assert h.finishes and all(live for _, _, live in h.finishes)
 
 
-@pytest.mark.parametrize("mode", ["cleanup_false", "no_terminal", "ambiguous_master"])
+@pytest.mark.parametrize(
+    "mode",
+    [
+        "cleanup_false",
+        "no_terminal",
+        "ambiguous_master",
+        "admission_one_shot",
+        "admission_session",
+    ],
+)
 async def test_unknown_peer_proof_keeps_original_model_worker_and_storage(
     ssh_console, monkeypatch, mode
 ):
@@ -520,18 +594,61 @@ async def test_unknown_peer_proof_keeps_original_model_worker_and_storage(
 
     if mode == "ambiguous_master":
         install_control_peer(h, monkeypatch, checks=False)
+    elif mode == "admission_session":
+        enable_sessions(h, monkeypatch)
+        relay = h.root / "admission-session-relay.py"
+        relay.write_text("""import json, os, struct, subprocess, sys, threading
+child = subprocess.Popen(["sh", "-c", sys.argv[1]], stdin=subprocess.PIPE, stdout=subprocess.PIPE)
+def upload():
+    try:
+        while data := os.read(0, 65536):
+            child.stdin.write(data)
+            child.stdin.flush()
+    except BrokenPipeError: pass
+    finally: child.stdin.close()
+threading.Thread(target=upload, daemon=True).start()
+while True:
+    line = child.stdout.readline()
+    if not line: sys.exit(child.wait())
+    sys.stdout.buffer.write(line); sys.stdout.buffer.flush()
+    if b"READY " in line: break
+header, admitted = struct.Struct(">IIB"), {}
+while raw := child.stdout.read(header.size):
+    length, request, kind = header.unpack(raw)
+    body = child.stdout.read(length)
+    if kind == 16:
+        frame = json.loads(body)
+        if frame["outcome"] == "admitted": admitted[request] = body
+        elif request in admitted:
+            body = admitted[request]
+            raw = header.pack(len(body), request, kind)
+    sys.stdout.buffer.write(raw + body); sys.stdout.buffer.flush()
+sys.exit(child.wait())
+""")
+        h.fake.bin.write_text(
+            h.fake.bin.read_text().replace(
+                'exec sh -c "$remote_cmd"',
+                'exec "$SSH_RELAY_PYTHON" "$SSH_TERMINAL_RELAY" "$remote_cmd"',
+            )
+        )
+        monkeypatch.setenv("SSH_RELAY_PYTHON", sys.executable)
+        monkeypatch.setenv("SSH_TERMINAL_RELAY", str(relay))
     else:
         relay = h.root / "terminal-relay.py"
         relay.write_text("""import json, os, sys
+admitted = None
 for line in sys.stdin.buffer:
     start = line.find(b"{")
     if start < 0:
         sys.stdout.buffer.write(line)
         continue
     frame = json.loads(line[start:])
+    if frame["outcome"] == "admitted": admitted = frame
     if frame["outcome"] != "admitted":
         if os.environ["TASK8_SSH_UNPROVEN_MODE"] == "no_terminal": continue
-        frame["cleanup_proven"] = False
+        if os.environ["TASK8_SSH_UNPROVEN_MODE"] == "admission_one_shot":
+            if admitted is not None: frame = admitted
+        else: frame["cleanup_proven"] = False
     sys.stdout.buffer.write(line[:start] + json.dumps(frame).encode() + b"\\n")
     sys.stdout.buffer.flush()
 """)
@@ -557,8 +674,15 @@ for line in sys.stdin.buffer:
         return wait(event, timeout)
 
     monkeypatch.setattr(threading.Event, "wait", observe_retention)
-    h.submit()
-    await until(lambda: bool(waiting))
+    task = h.submit()
+    await until(lambda: bool(waiting) or task.done())
+    assert waiting, [
+        (r.operation_id, r.local_returned, r.terminal.outcome, r.proven)
+        for call in h.native_returns
+        if call is not None
+        for r in call.requests
+        if r.terminal is not None
+    ]
     native, storage, worker = waiting[0]
     assert worker.is_alive() and native.operation.owner._cleanup_unproven
     assert storage.live and not native.finished and not h.finishes
@@ -572,6 +696,13 @@ for line in sys.stdin.buffer:
         )
     elif mode == "no_terminal":
         assert native.requests[0].terminal is None
+    elif mode in {"admission_one_shot", "admission_session"}:
+        assert [json.loads(r.wire)["operation"] for r in native.requests] == [
+            "ping",
+            "fs_read",
+        ]
+        assert native.requests[0].proven
+        assert native.requests[1].terminal is None
     else:
         assert native.master_launches and not native.master_launches[0].proven
         assert not h.manager._native_acceptances
