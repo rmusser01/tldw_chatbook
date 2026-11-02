@@ -45,6 +45,7 @@ def mobile_surface_gate(monkeypatch):
 @pytest.fixture
 async def shared_mobile_case(tmp_path, monkeypatch):
     """Real native App/runtime + authenticated control child; recording lifecycle."""
+    import asyncio
     import os
     import tempfile
 
@@ -134,6 +135,8 @@ async def shared_mobile_case(tmp_path, monkeypatch):
         host=None,
         storage_identity="canonical-admitted",
         trap_armed=True,
+        control_start_gate=None,
+        control_start_task=None,
     )
 
     class NativeAppService:
@@ -155,9 +158,19 @@ async def shared_mobile_case(tmp_path, monkeypatch):
                 ),
             )
             app.served_canvas_control = self.child
-            await self.child.start()
+            if case.control_start_gate is None:
+                await self.child.start()
+            else:
+                # Match textual-serve: process start returns before control auth.
+                async def connect():
+                    await case.control_start_gate.wait()
+                    await self.child.start()
+
+                case.control_start_task = asyncio.create_task(connect())
 
         async def stop(self):
+            if case.control_start_task is not None:
+                await case.control_start_task
             await dispose_console_runtime(app)
             await self.child.aclose()
 
@@ -1135,3 +1148,179 @@ async def test_saved_listing_is_bounded_metadata_only_without_start_or_writer(
         assert len({row["id"] for body in responses for row in body["items"]}) == 4
     assert opened and case.host_start_count == 0
     assert case.app.console_runtime.chat_store is None
+
+
+@pytest.mark.bootstrap_profile
+@pytest.mark.loopback_network
+@pytest.mark.asyncio
+async def test_cold_bootstrap_waits_for_real_delayed_native_control(shared_mobile_case):
+    import asyncio
+    import time
+
+    case = shared_mobile_case
+    gate = case.control_start_gate = asyncio.Event()
+
+    async def release_after_old_connection_deadline():
+        while case.control_start_task is None:
+            await asyncio.sleep(0)
+        await asyncio.sleep(5.2)
+        gate.set()
+
+    release = asyncio.create_task(release_after_old_connection_deadline())
+    started = time.monotonic()
+    try:
+        host = await asyncio.wait_for(case.service.bootstrap_host(), timeout=25)
+        assert time.monotonic() - started >= 5.2
+        assert host == case.broker.console_identity(case.host.service.app_service_id)
+        assert case.app.console_runtime._agent_runs_db is not None
+        case.app.console_runtime._agent_runs_db._require_execution_owner()
+        assert case.host_start_count == 1
+        assert case.app.console_runtime.chat_store is None
+        payload = {"workspace_id": "global"}
+        ticket = await case.service.issue_command_ticket("create", host, payload)
+        receipt = await case.service.submit_command(ticket["ticket"], payload)
+        assert receipt.state == "applied"
+        assert len(case.app.console_runtime.chat_store.sessions()) == 1
+        assert case.host_start_count == 1 and case.mobile_db_opens == []
+    finally:
+        gate.set()
+        await release
+        if case.control_start_task is not None:
+            await case.control_start_task
+
+
+@pytest.mark.bootstrap_profile
+@pytest.mark.loopback_network
+@pytest.mark.asyncio
+@pytest.mark.parametrize("start,minimum", [(True, 20), (False, 5)])
+async def test_unconnected_native_owner_has_bounded_start_and_discovery_waits(
+    shared_mobile_case, start, minimum
+):
+    import asyncio
+    import time
+
+    from tldw_chatbook.Canvas.control_protocol import ControlProtocolError
+
+    case = shared_mobile_case
+    gate = case.control_start_gate = asyncio.Event()
+    await case.hosts.get_or_start(case.storage_identity)
+    started = time.monotonic()
+    try:
+        operation = case.service.bootstrap_host() if start else case.service.snapshot()
+        with pytest.raises(
+            ControlProtocolError, match="^connection_deadline_exceeded$"
+        ):
+            await asyncio.wait_for(operation, timeout=minimum + 5)
+        assert time.monotonic() - started >= minimum
+        assert case.host_start_count == 1
+        assert case.app.console_runtime._agent_runs_db is None
+        assert case.app.console_runtime.chat_store is None
+    finally:
+        gate.set()
+        await case.control_start_task
+
+
+@pytest.mark.bootstrap_profile
+@pytest.mark.loopback_network
+@pytest.mark.asyncio
+@pytest.mark.parametrize("stage", ["connection", "snapshot"])
+@pytest.mark.parametrize("change", ["shutdown", "closed", "registry", "generation"])
+async def test_bootstrap_refuses_owner_change_across_native_await(
+    shared_mobile_case, monkeypatch, stage, change
+):
+    import asyncio
+
+    from tldw_chatbook.Web_Server.mobile_service import MobileOwnerUnavailable
+
+    case = shared_mobile_case
+    runtime = case.app.console_runtime
+    original_start = None
+    entered, release = asyncio.Event(), asyncio.Event()
+    if stage == "connection":
+        original = case.broker.wait_connected
+
+        async def paused(*args, **kwargs):
+            result = await original(*args, **kwargs)
+            entered.set()
+            await release.wait()
+            return result
+
+        monkeypatch.setattr(case.broker, "wait_connected", paused)
+    else:
+        original = case.service.snapshot
+
+        async def paused(*args, **kwargs):
+            result = await original(*args, **kwargs)
+            assert result["execution_admitted"] is True
+            entered.set()
+            await release.wait()
+            return result
+
+        monkeypatch.setattr(case.service, "snapshot", paused)
+    bootstrap = asyncio.create_task(case.service.bootstrap_host())
+    try:
+        await asyncio.wait_for(entered.wait(), timeout=5)
+        host = case.host
+        if change == "shutdown":
+            await case.service.shutdown()
+        elif change == "closed":
+            await host.aclose()
+        elif change == "registry":
+            # A distinct registry object cannot inherit the old native proof.
+            replacement = SimpleNamespace(
+                _closed=False, service=SimpleNamespace(app_service_id="successor")
+            )
+            original_start = case.hosts._starts[case.storage_identity]
+            successor = asyncio.get_running_loop().create_future()
+            successor.set_result(replacement)
+            case.hosts._starts[case.storage_identity] = successor
+        else:
+            case.broker.issue_child(host.service.app_service_id)
+        release.set()
+        with pytest.raises(MobileOwnerUnavailable, match="^console_unavailable$"):
+            await asyncio.wait_for(bootstrap, timeout=5)
+        assert case.host_start_count == 1
+        assert runtime.chat_store is None
+        if change == "closed":
+            assert case.app.console_runtime is None
+        assert case.mobile_db_opens == []
+    finally:
+        if original_start is not None:
+            case.hosts._starts[case.storage_identity] = original_start
+        release.set()
+        await asyncio.gather(bootstrap, return_exceptions=True)
+
+
+@pytest.mark.bootstrap_profile
+@pytest.mark.loopback_network
+@pytest.mark.asyncio
+async def test_cancelled_cold_request_retains_same_native_child(shared_mobile_case):
+    import asyncio
+
+    case = shared_mobile_case
+    gate = case.control_start_gate = asyncio.Event()
+    bootstrap = asyncio.create_task(case.service.bootstrap_host())
+    try:
+        while case.control_start_task is None:
+            await asyncio.sleep(0)
+        host = case.host
+        bootstrap.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await bootstrap
+        assert case.hosts.get_existing(case.storage_identity) is host
+        assert not host._closed and case.host_start_count == 1
+        gate.set()
+        await case.control_start_task
+        snapshot = await case.service.snapshot()
+        assert snapshot["execution_admitted"] is True
+        assert (
+            snapshot["console_id"]
+            == case.broker.console_identity(host.service.app_service_id).console_id
+        )
+        assert case.host_start_count == 1
+        assert case.app.console_runtime.chat_store is None
+    finally:
+        gate.set()
+        await asyncio.gather(bootstrap, return_exceptions=True)
+        if case.control_start_task is not None:
+            await case.control_start_task
