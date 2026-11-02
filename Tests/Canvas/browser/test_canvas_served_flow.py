@@ -644,9 +644,24 @@ async def test_actual_child_control_refusal_retires_terminal(
 @pytest.mark.parametrize("diagrams", [False, True])
 @pytest.mark.parametrize("interleaving", [False, True], ids=["normal", "read-publication"])
 async def test_actual_chatbook_console_finalizes_canvas_create_and_update(
-    tmp_path: Path, monkeypatch, candidate_snapshot, diagrams, interleaving
+    tmp_path: Path, monkeypatch, candidate_snapshot, diagrams, interleaving, request
 ) -> None:
     """Run deterministic provider tool cycles through an actual TldwCli child."""
+    from tldw_chatbook import config as config_module
+
+    original_full_tools = config_module.get_cli_setting(
+        "tools", "full_agent_tools_enabled", False
+    )
+
+    def restore_full_tools():
+        assert config_module.save_setting_to_cli_config(
+            "tools", "full_agent_tools_enabled", original_full_tools
+        )
+
+    request.addfinalizer(restore_full_tools)
+    assert config_module.save_setting_to_cli_config(
+        "tools", "full_agent_tools_enabled", True
+    )
 
     access_token = secrets.token_urlsafe(24)
     if diagrams:
@@ -948,29 +963,54 @@ async def test_actual_chatbook_console_finalizes_canvas_create_and_update(
                 stack.server, page, port=stack.port
             )
             old_url = await page.locator("#served-canvas-frame").get_attribute("src")
+            original_attachment = stack.server._served_browser_attachments[browser_id]
+            original_host = original_attachment.host
+            original_process = original_host.service._process
+            assert original_host.service.app_service_id == child_id
+            assert original_host.current_attachment is original_attachment
+            assert original_process is not None
             await stack.server._canvas_control_broker.revoke_child(child_id)
             await page.goto("about:blank")
             for _ in range(300):
-                if browser_id not in stack.server._served_browser_children:
+                assert original_host.service._process is original_process
+                if (
+                    browser_id not in stack.server._served_browser_children
+                    and original_host._closed
+                    and original_process.returncode is not None
+                ):
                     break
                 await asyncio.sleep(0.05)
             assert browser_id not in stack.server._served_browser_children
+            assert original_host._closed and original_process.returncode is not None
             await page.goto(stack.origin)
             await expect(page.locator("#terminal.-connected")).to_be_visible(
                 timeout=15_000
             )
-            replacement = await _live_child_for_page(
+            replacement_scope = await _live_terminal_scope_id(
                 stack.server, page, port=stack.port
             )
-            assert replacement != child_id
-            await stack.server._canvas_control_broker.wait_connected(
-                replacement, timeout=15
-            )
+            async with asyncio.timeout(15):
+                while (
+                    replacement := stack.server._served_browser_children.get(
+                        replacement_scope
+                    )
+                ) is None:
+                    await asyncio.sleep(0.01)
+                assert replacement != child_id
+                await stack.server._canvas_control_broker.wait_connected(
+                    replacement, timeout=15
+                )
             assert (
                 stack.server._canvas_control_broker._children[replacement].generation
                 != original_control_generation
             )
-            await terminal_observer(page).wait_for_text("Composer", timeout_ms=45_000)
+            async with asyncio.timeout(45):
+                await terminal_observer(page).wait_for_text(
+                    "Composer", timeout_ms=45_000
+                )
+                await expect(page.locator("#terminal")).to_have_attribute(
+                    "aria-busy", "false", timeout=45_000
+                )
             await page.locator("#terminal .xterm-helper-textarea").focus()
             await page.locator("#terminal .xterm-helper-textarea").press("F10")
             loaded_ack = tmp_path / "test_data" / "canvas-live-saved-loaded"
@@ -2344,7 +2384,7 @@ async def test_two_real_browser_profiles_stay_isolated_when_one_child_disconnect
 
 
 @pytest.mark.loopback_network
-async def test_terminal_control_loss_retires_native_runtime_before_exit():
+async def test_terminal_control_loss_fences_native_controller_before_ordinary_exit():
     from tldw_chatbook.app_served import _watch_served_control
 
     broker = CanvasControlBroker(
@@ -2356,19 +2396,19 @@ async def test_terminal_control_loss_retires_native_runtime_before_exit():
         runtime_snapshot_id=runtime_snapshot_id(load_profile_snapshot()),
     )
     await child.start()
-    entered, release = asyncio.Event(), asyncio.Event()
     operations = []
 
     class Runtime:
         view = None
+        _chat_controller = SimpleNamespace(
+            begin_shutdown=lambda: operations.append("controller-fenced")
+        )
 
         async def dispose(self):
-            operations.append("dispose")
-            entered.set()
-            await release.wait()
+            raise AssertionError("full app shutdown owns physical runtime retirement")
 
     async def shutdown():
-        operations.append("native-shutdown")
+        raise AssertionError("control loss must request full ordinary app shutdown")
 
     app = SimpleNamespace(
         served_canvas_control=child,
@@ -2380,15 +2420,10 @@ async def test_terminal_control_loss_retires_native_runtime_before_exit():
     watcher = asyncio.create_task(_watch_served_control(app))
     try:
         await broker.aclose()
-        await asyncio.wait_for(entered.wait(), 2)
-        assert operations == ["admission-closed", "dispose"]
-        assert app._shutting_down
-        assert not watcher.done()
-        release.set()
         await asyncio.wait_for(watcher, 2)
-        assert operations == ["admission-closed", "dispose", "native-shutdown", "exit"]
+        assert app._shutting_down
+        assert operations == ["admission-closed", "controller-fenced", "exit"]
     finally:
-        release.set()
         watcher.cancel()
         await asyncio.gather(watcher, return_exceptions=True)
         await child.aclose()
