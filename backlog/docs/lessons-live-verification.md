@@ -87,6 +87,7 @@ live app is scattered across a large heap, so each object is a cache miss.
 **What to do.** Time collector calls (`get_freeze_count`, `get_objects`,
 `collect`) inside the running app before relying on a micro-benchmark's figure,
 and prefer counts that touch only the unfrozen generations.
+
 ## At high load, the 4 ms samples of a slow, low-CPU callback show where the thread waited, not what cost (TASK-33620.15.21, 2026-10-30)
 
 **Incident.** TASK-33620.15.8 was filed from 4 ms samples taken at load 78-109.
