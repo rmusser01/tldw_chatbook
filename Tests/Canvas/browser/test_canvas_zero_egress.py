@@ -1551,6 +1551,7 @@ async def test_canonical_adversarial_corpus_stays_in_native_product_route(
         selected_canvas_id=None,
         selected_revision_id=None,
         run_id="native-adversarial-bootstrap",
+        ephemeral=True,
     )
     controller = ConsoleCanvasController()
     controller.activate_session(session_id)
@@ -1609,6 +1610,7 @@ async def test_canonical_adversarial_corpus_stays_in_native_product_route(
                     selected_canvas_id=None,
                     selected_revision_id=None,
                     run_id=f"native-adversarial-{index}",
+                    ephemeral=True,
                 )
                 recorder.begin_load()
                 try:

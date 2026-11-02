@@ -41,6 +41,7 @@ def _scope(session_id: str) -> CanvasScope:
         selected_canvas_id=None,
         selected_revision_id=None,
         run_id="interaction-1",
+        ephemeral=True,
     )
 
 
@@ -105,6 +106,7 @@ def _branch_scope(
         selected_canvas_id=canvas_id,
         selected_revision_id=revision_id,
         run_id=run_id,
+        ephemeral=True,
     )
 
 
@@ -375,10 +377,10 @@ def test_store_branch_transition_invalidates_unreachable_canvas_until_reopened()
     store = ConsoleChatStore(
         canvas_promotion_participant=controller,
         canvas_turn_controller=controller,
-        on_canvas_context_changed=lambda session_id: authority_holder.get(
-            "authority"
-        )
-        and authority_holder["authority"].sync_live_context(session_id),
+        on_canvas_context_changed=lambda session_id: (
+            authority_holder.get("authority")
+            and authority_holder["authority"].sync_live_context(session_id)
+        ),
     )
     session = store.create_session(ephemeral=True)
     store.append_message(
@@ -398,6 +400,9 @@ def test_store_branch_transition_invalidates_unreachable_canvas_until_reopened()
             selected_canvas_id=None,
             selected_revision_id=None,
             run_id="branch-transition",
+            ephemeral=next(
+                item.ephemeral for item in store.sessions() if item.id == requested
+            ),
         )
 
     invalidated = []
@@ -649,6 +654,7 @@ def test_durable_parsed_block_identity_survives_real_store_hydration(tmp_path):
                 selected_canvas_id=None,
                 selected_revision_id=None,
                 run_id="hydrated-import",
+                ephemeral=session.ephemeral,
             )
 
         first_store, first_session, first_assistant = hydrate()
@@ -770,6 +776,7 @@ def test_temporary_rename_and_selection_survive_atomic_promotion_and_restart(
                 selected_canvas_id=None,
                 selected_revision_id=None,
                 run_id="user-import",
+                ephemeral=session.ephemeral,
             )
         }
         authority = NativeConsoleCanvasAuthority(
@@ -834,6 +841,7 @@ def test_temporary_rename_and_selection_survive_atomic_promotion_and_restart(
             conversation_id=conversation_id,
             active_message_ids=(persisted_message_id,),
             run_id="next-promoted-run",
+            ephemeral=session.ephemeral,
         )
         authority.sync_live_context(session.id)
         next_scope = controller.capture_selected_scope(scopes[session.id])
@@ -865,6 +873,7 @@ def test_temporary_rename_and_selection_survive_atomic_promotion_and_restart(
             selected_canvas_id=created.canvas_id,
             selected_revision_id=renamed.scope.revision_id,
             run_id="after-restart",
+            ephemeral=False,
         )
         restarted = CanvasService(db).read_canvas(restarted_scope, created.canvas_id)
         assert restarted.revision.revision_id == renamed.scope.revision_id
@@ -1610,7 +1619,8 @@ def test_bridge_submit_is_fenced_to_captured_session_branch_and_pinned_view():
     assert drafts == []
 
 
-def test_bridge_effect_revalidates_after_switch_during_settlement():
+@pytest.mark.parametrize("change", ["branch", "classification"])
+def test_bridge_effect_revalidates_after_switch_during_settlement(change):
     scope = _branch_scope(
         "bridge-race",
         "bridge-race",
@@ -1649,8 +1659,10 @@ def test_bridge_effect_revalidates_after_switch_during_settlement():
 
     class SwitchDuringSettlement:
         def try_settle(self, callback):
-            current["scope"] = replace(
-                scope, active_message_ids=("root", "right")
+            current["scope"] = (
+                replace(scope, ephemeral=False)
+                if change == "classification"
+                else replace(scope, active_message_ids=("root", "right"))
             )
             callback()
             return True
