@@ -14,22 +14,21 @@ from tldw_chatbook.DB.base_db import operation_owned_connection
 from tldw_chatbook.Utils.filesystem_identity import capture_directory_chain
 from tldw_chatbook.Workspaces.worktree_activity import WorktreeFootprint
 
-_current_snapshot: ContextVar[_SnapshotSource | None] = ContextVar(
-    "native_change_review_snapshot", default=None
+_current_snapshot: ContextVar[_SnapshotSource | _InitializationSource | None] = (
+    ContextVar("native_change_review_snapshot", default=None)
 )
 
 
-def native_snapshot_source() -> _SnapshotSource | None:
+def native_snapshot_source() -> _SnapshotSource | _InitializationSource | None:
     """Return only the original source active on this physical callback thread."""
     return _current_snapshot.get()
 
 
-class _NativeSnapshotIssuer:
-    """One runtime's issuer; execution stays in the existing coordinator."""
+class _NativeReviewResources:
+    """Pin the original runtime resources without invoking cold getters."""
 
     def __init__(self, runtime):
         self.runtime = runtime
-        self.coordinator = None
         self._capacity = runtime._execution_capacity
         self._activity = runtime._worktree_activity
 
@@ -48,6 +47,14 @@ class _NativeSnapshotIssuer:
         elif self.runtime._worktree_activity is not self._activity:
             raise ValueError("native change-review activity changed")
         return self._activity
+
+
+class _NativeSnapshotIssuer(_NativeReviewResources):
+    """One runtime's issuer; execution stays in the existing coordinator."""
+
+    def __init__(self, runtime):
+        super().__init__(runtime)
+        self.coordinator = None
 
     def capture(
         self,
@@ -192,7 +199,13 @@ class _SnapshotSource:
                 }:
                     return None, "capacity"
                 raise
-            return _SnapshotTicket(self, self.owner, operation, None), ""
+            return _SnapshotTicket(
+                self,
+                self.owner,
+                operation,
+                None,
+                publish=self.issuer.coordinator._publish,
+            ), ""
         with activity.prelaunch(footprint=WorktreeFootprint(opaque=True)) as claim:
             if claim is None:
                 return None, "activity"
@@ -212,15 +225,17 @@ class _SnapshotSource:
                 operation.finish()
                 owner.finish_root()
                 raise
-            return _SnapshotTicket(self, owner, operation, claim), ""
+            return _SnapshotTicket(
+                self, owner, operation, claim, publish=self.issuer.coordinator._publish
+            ), ""
 
 
 class _SnapshotTicket:
     """Original operation survives both actual callback and handoff return."""
 
-    def __init__(self, source, owner, operation, claim):
+    def __init__(self, source, owner, operation, claim, *, publish=None):
         self.source, self.owner = source, owner
-        self.publish = source.issuer.coordinator._publish
+        self.publish = publish
         self.operation, self.claim = operation, claim
         self._lock = Lock()
         self.retired = Event()
@@ -239,3 +254,170 @@ class _SnapshotTicket:
             self.owner.finish_root()
         self.operation.finish()
         self.retired.set()
+
+
+class _NativeInitializationIssuer(_NativeReviewResources):
+    """Original consent feature source; never impersonates a Chat or bridge."""
+
+    def __init__(self, runtime, service, registry):
+        super().__init__(runtime)
+        self.app, self.service, self.registry = runtime._app, service, registry
+        self.database = registry.db
+        self.database_path = Path(registry.db.db_path)
+        self.initializer = service._initialize_root
+        self.capability_reader = service._capability_reader
+
+    def check(self):
+        if (
+            self.runtime._app is not self.app
+            or self.app.console_runtime is not self.runtime
+            or self.runtime._change_review_consent_service is not self.service
+            or self.app.change_review_consent_service is not self.service
+            or self.app.workspace_registry_service is not self.registry
+            or self.registry.db is not self.database
+            or Path(self.database.db_path) != self.database_path
+            or self.registry._change_review_binding_owner is not self.service
+            or self.service._registry is not self.registry
+            or self.service._native is not self
+            or self.service._initialize_root is not self.initializer
+            or self.service._capability_reader is not self.capability_reader
+        ):
+            raise ValueError("native initialization source changed")
+
+    def capture(self, work):
+        from tldw_chatbook.Backup_Recovery import bootstrap, profile_paths
+        from tldw_chatbook.Backup_Recovery.activation import execution_scope
+        from tldw_chatbook.config import load_settings
+        from tldw_chatbook.Workspaces.change_tracking import ShadowRepoService
+
+        self.check()
+        if self.runtime._disposed:
+            raise ValueError("native initialization is closed")
+        if self._capacity is None:
+            self._capacity = self.runtime._execution_capacity
+        if self._activity is None:
+            self._activity = self.runtime._worktree_activity
+        selector = bootstrap.effective_config_path()
+        with execution_scope(("config",), selector) as allowed:
+            if not allowed:
+                raise ValueError("native initialization source unavailable")
+            data = profile_paths.user_data_dir(load_settings())
+        # Explicit metadata selection avoids get_user_data_dir's mkdir/hardening.
+        shadow = ShadowRepoService(data_dir=data / "change_review")
+        chain = capture_directory_chain(Path(work.root))
+        if str(chain.canonical_root) != work.root:
+            raise ValueError("native initialization root changed")
+        return _InitializationSource(
+            self,
+            work,
+            selector,
+            data,
+            shadow,
+            chain,
+            self.initializer,
+            shadow._git,
+        )
+
+
+@dataclass(frozen=True)
+class _InitializationSource:
+    issuer: _NativeInitializationIssuer
+    work: object
+    selector: Path
+    data: Path
+    shadow: object
+    chain: object
+    initializer: object
+    git_executable: str | None
+
+    def check(self):
+        from tldw_chatbook.Backup_Recovery import bootstrap
+
+        self.issuer.check()
+        if bootstrap.effective_config_path() != self.selector:
+            raise ValueError("native initialization profile changed")
+        if (
+            self.shadow._data_dir != self.data / "change_review"
+            or self.shadow._git != self.git_executable
+        ):
+            raise ValueError("native initialization shadow selection changed")
+        if capture_directory_chain(self.chain.canonical_root) != self.chain:
+            raise ValueError("native initialization root changed")
+
+    def validate_root(self, root):
+        self.check()
+        canonical = Path(root).resolve(strict=True)
+        if not canonical.is_relative_to(self.chain.canonical_root):
+            raise ValueError("native initialization root outside admission")
+        return canonical
+
+    @contextmanager
+    def storage_scope(self):
+        from tldw_chatbook.Backup_Recovery.activation import execution_scope
+
+        self.check()
+        with ExitStack() as stack:
+            for owner, path in (
+                ("config", self.selector),
+                ("db.workspaces", self.issuer.database_path),
+                ("workspaces.change_tracking", self.shadow._data_dir),
+            ):
+                if not stack.enter_context(execution_scope((owner,), path)):
+                    raise ValueError("native initialization storage unavailable")
+            stack.enter_context(operation_owned_connection(self.issuer.database))
+            self.check()
+            yield
+
+    def admit(self):
+        with self.storage_scope():
+            self.check()
+            if self.issuer.runtime._disposed or not self.issuer.service._work_current(
+                self.work
+            ):
+                raise ValueError("native initialization admission changed")
+            capacity, activity = self.issuer.capacity, self.issuer.activity
+            with activity.prelaunch(footprint=WorktreeFootprint(opaque=True)) as claim:
+                if claim is None:
+                    raise CapacityRefused("initialization_activity_busy")
+                owner = capacity.begin_execution(
+                    origin=self.work.origin, conversation_id=""
+                )
+                try:
+                    operation = owner.reserve_tool()
+                except BaseException:
+                    owner.finish_root()
+                    raise
+                try:
+                    claim.bind_owner(owner)
+                except BaseException:
+                    operation.finish()
+                    owner.finish_root()
+                    raise
+                return _SnapshotTicket(self, owner, operation, claim)
+
+    @contextmanager
+    def activate(self, owner):
+        with self.storage_scope(), owner.activate():
+            token = _current_snapshot.set(self)
+            try:
+                yield
+            finally:
+                _current_snapshot.reset(token)
+
+    def initialize(self):
+        from tldw_chatbook.Backup_Recovery import profile_paths
+        from tldw_chatbook.config import get_user_data_dir, load_settings
+        from tldw_chatbook.Workspaces.change_review_consent import (
+            _default_root_initializer,
+        )
+
+        self.check()
+        if profile_paths.user_data_dir(load_settings()) != self.data:
+            raise ValueError("native initialization storage selection changed")
+        if get_user_data_dir() != self.data:
+            raise ValueError("native initialization secured storage changed")
+        self.check()
+        if self.initializer is _default_root_initializer:
+            self.initializer(self.work.root, shadow_service=self.shadow)
+        else:
+            self.initializer(self.work.root)

@@ -1134,6 +1134,8 @@ class ConsoleRuntime:
         self._receipt_owner_thread_id = get_ident()
         self._activity_hydration_task: asyncio.Task[int] | None = None
         self._change_review_coordinator: Any | None = None
+        self._change_review_consent_service: Any | None = None
+        self._change_review_initialization_cleanup_task: Any | None = None
         self._chat_controller: Any | None = None
         self._canvas_controller: Any | None = None
         self._canvas_gateway: Any | None = None
@@ -2046,6 +2048,38 @@ class ConsoleRuntime:
             RuntimeError: A disposed runtime has no existing capacity.
         """
         return self._get_execution_capacity()
+
+    def bind_change_review_consent_service(self, service: Any) -> None:
+        """Attach the original non-Chat feature without loading native resources."""
+        from tldw_chatbook.Workspaces.change_review_ownership import (
+            _NativeInitializationIssuer,
+        )
+
+        if self._disposed or self._change_review_consent_service is not None:
+            raise RuntimeError(
+                "Change Review initialization owner already bound or closed"
+            )
+        self._change_review_consent_service = service
+        service._native_expected = True
+        service._native = _NativeInitializationIssuer(self, service, service._registry)
+
+    async def _drain_change_review_initialization(self) -> bool:
+        service = self._change_review_consent_service
+        if service is None:
+            return False
+        service.begin_close()
+        if self._change_review_initialization_cleanup_task is None:
+            self._change_review_initialization_cleanup_task = asyncio.create_task(
+                asyncio.to_thread(service.wait_closed),
+                name="change-review-init-cleanup",
+            )
+        cancelled = False
+        while True:
+            try:
+                await asyncio.shield(self._change_review_initialization_cleanup_task)
+                return cancelled
+            except asyncio.CancelledError:
+                cancelled = True
 
     def _get_execution_capacity(self) -> RuntimeCapacity:
         with self._execution_capacity_lock:
@@ -6497,6 +6531,7 @@ class ConsoleRuntime:
             )
         finally:
             cancelled = False
+            cancelled |= await self._drain_change_review_initialization()
             if recovery_owner is not None:
                 cancelled |= await recovery_owner.drain_recovery()
             if controller is not None:
@@ -6519,6 +6554,8 @@ class ConsoleRuntime:
         """Run the existing teardown once under its original shared deadline."""
         loop = asyncio.get_running_loop()
         deadline = loop.time() + max(0.0, float(timeout_seconds))
+        if self._change_review_consent_service is not None:
+            self._change_review_consent_service.begin_close()
         if self._rule_helper_pool is not None:
             self._rule_helper_pool.close_admission()
 

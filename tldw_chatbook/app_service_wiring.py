@@ -2204,6 +2204,9 @@ class ServiceWiringMixin(
             self.workspace_registry_service.attach_change_review_consent_service(
                 self.change_review_consent_service
             )
+            self.console_runtime.bind_change_review_consent_service(
+                self.change_review_consent_service
+            )
         except Exception:
             logger.opt(exception=True).warning(
                 "Local workspace registry service unavailable during app wiring",

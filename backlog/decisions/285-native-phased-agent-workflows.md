@@ -148,8 +148,36 @@ This is coordination of known native work, not an OS sandbox against external
 processes editing configuration. Standalone legacy tracker behavior is unchanged.
 Capture-capable ordinary tree admission and phase wave/window integration belong
 to Task 8D2; capture-enabled workflow preparation remains refused until then.
-Consent's separate `_initialize_root` / `initialize_shadow_root` snapshot is also
-outside this qualification and requires native ownership/helper qualification in D2.
+Consent's separate `_initialize_root` / `initialize_shadow_root` snapshot uses
+the original feature source and native qualification described below.
+
+### Consent initializer ownership (Task 8D2A)
+
+The app-owned consent initializer uses its existing bounded queue and workers,
+with a separate original feature source: configuration, registry/database,
+binding, consent revision/generation, initializer and shadow storage. Source
+capture uses the existing metadata-only data-path selector; only the admitted
+worker verifies and secures that same path, refusing profile or selector drift.
+Native dispatch takes finite opaque activity and one actual tool operation from the
+original RuntimeCapacity; empty conversation metadata denotes a non-Chat feature,
+without a model, child or AgentRun. The same qualified Git boundary and finite
+worker/handoff retirement apply; D1's Chat-source checks remain strict.
+
+Settings enable/retry is manual; lazy configuration and binding observers are
+automatic and preserve reserved manual capacity. Busy admission produces existing
+failed/retry readiness. Concurrent opaque initializers may require Settings retry;
+there is no new waiting queue or polling retry. Source reads/callbacks and native
+admission run outside the consent bookkeeping lock. Shutdown seals/discards
+unstarted work before capacity closes, retains already admitted callbacks and
+original readiness/discard storage until actual return, and never treats a
+bounded join as drain. READY requires current original consent/binding and a
+successful initializer; failed or stale outcomes are not capture success.
+
+This dependency stage preserves lazy initialization but does not establish early
+ordinary-tree admission. The next ordinary producer must pass its exact covering
+opaque claim and reserve initializer operations before enqueue and parent finish;
+independent reacquisition behind that tree would self-conflict. Ordinary hooks,
+references, child lifetimes and workflow phase/window integration remain pending.
 
 This is a substantive extension to admission and shared-worktree coordination,
 not merely a plan prompt. Existing captured authority, physical retirement and

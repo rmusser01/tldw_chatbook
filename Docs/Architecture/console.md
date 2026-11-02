@@ -286,10 +286,22 @@ helper-capable entry, and suppresses hooks,
 signing, fsmonitor, automatic GC/maintenance and external diff/textconv per command.
 Global ignores and old history/restore semantics remain intact. Source mismatch
 cannot fall back to standalone legacy capture. This qualification covers the
-coordinated Console path; the separately owned consent initializer and D2's
-ordinary/phase admission integration are not implemented by this slice.
+coordinated Console path and the app-owned consent initializer. The initializer
+uses its existing bounded workers, a separate original configuration/registry/
+binding source, finite opaque activity and one native tool operation through
+actual readiness or discard return. Settings enable/retry is manual; lazy and
+binding-triggered preparation is automatic. Busy work remains failed with an
+explicit Settings retry. Shutdown seals ingress before capacity closes and
+retains admitted workers/storage through physical return, even after a bounded
+join or cancelled waiter. Configuration selection is metadata-only until an
+admitted worker verifies and secures that same selected data path.
 
-Issuer construction is metadata-only. Its first pending admission resolves the
+Task 8D2's ordinary/phase admission remains incomplete. Its ordinary producer
+must borrow the original covering opaque claim and reserve each initializer hold
+before enqueue and parent finish; independent feature admission cannot be carried
+unchanged into an already-owned ordinary tree.
+
+D1 snapshot issuer construction is metadata-only. Its first pending admission resolves the
 same lazy runtime capacity under captured activation on the existing publisher,
 then subscribes before reserving; publisher close removes those subscriptions.
 Never-admitted discover/B/E/survivor jobs retain UNADMITTED and send one transient

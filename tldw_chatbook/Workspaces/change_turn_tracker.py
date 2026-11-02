@@ -641,7 +641,9 @@ class ChangeTurnTracker:
         return out
 
 
-def initialize_shadow_root(root: Path | str) -> None:
+def initialize_shadow_root(
+    root: Path | str, *, service: ShadowRepoService | None = None
+) -> None:
     """Synchronously create one root's initial shadow snapshot.
 
     Background ownership belongs to :class:`ChangeReviewConsentService`;
@@ -650,12 +652,13 @@ def initialize_shadow_root(root: Path | str) -> None:
 
     Args:
         root: Canonical workspace folder root.
+        service: Original native shadow storage selection, when admitted.
 
     Raises:
         ChangeTrackingError: If shadow Git is unavailable.
         Exception: If repository initialization or snapshotting fails.
     """
-    service = ShadowRepoService()
+    service = service if service is not None else ShadowRepoService()
     if not service.available:
         raise ChangeTrackingError("Change Review shadow Git is unavailable.")
     service.repo_for_root(root).snapshot("root registered")

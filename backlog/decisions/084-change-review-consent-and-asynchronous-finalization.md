@@ -29,8 +29,9 @@ revision in one transaction. Each successful write receives a distinct
 revision even if the clock is frozen, so a disable/re-enable ABA cannot satisfy
 an old compare-and-set.
 
-One app-owned consent service serializes local turn admission, toggle commit
-and readiness publication, and initializer completion per workspace. A turn
+One app-owned consent service uses memory-only workspace revision fences around
+local admission, toggle commit and initializer readiness publication. Registry,
+capability and durable CAS calls run outside its bookkeeping lock. A turn
 admitted before a disable commit may finish; every admission after that commit
 is untracked. An initializer may publish `ready` only if the workspace still
 has the exact enabled revision it captured. Enabled roots initialize in the
@@ -92,9 +93,28 @@ Configuration discovery stays private; global ignore/privacy rules, existing
 history/restore and user Git configuration remain unchanged. Known native opaque
 coordination does not isolate external OS configuration edits. The standalone
 legacy tracker keeps its existing behavior. Consent's separate root initializer
-still requires native ownership/helper qualification in Task 8D2.
+uses the original feature source and native qualification described next.
 
-Native issuer construction does not initialize capacity settings; first actual
+Task 8D2A supplies that initializer dependency through the existing two-worker
+queue. Its separate original feature source captures actual configuration,
+registry, binding, consent revision/generation, callback and shadow storage.
+Each dispatched initializer takes finite opaque activity and one native tool
+operation, retaining both through actual initializer and readiness/discard return.
+It creates no Chat or AgentRun. Source reads, callbacks and native admission stay
+outside the consent bookkeeping lock. A failed or stale result never publishes
+READY; an unsuccessful observational handoff is distinct from workflow success.
+
+Explicit Settings enable/retry uses manual capacity; lazy configuration and
+binding observers use automatic capacity. Busy work uses existing failed/busy
+readiness and Settings retry, including contention between opaque initializers.
+Closing seals/discards unstarted work before runtime capacity closes and retains
+original worker/storage custody through real completion; bounded joins remain
+advisory. Chat still never waits for root preparation. The next ordinary-tree
+producer must borrow its original covering opaque claim and reserve the finite
+initializer hold before enqueue and parent finish, without reacquiring activity
+behind itself. This stage does not implement ordinary or workflow phase admission.
+
+D1 snapshot issuer construction does not initialize capacity settings; first actual
 admission resolves the same runtime ledger on the retained publisher callback.
 Late no-effect admission refusal is UNADMITTED, including discover/B. It delivers
 a once-only transient marker to the original store/session/assistant without a

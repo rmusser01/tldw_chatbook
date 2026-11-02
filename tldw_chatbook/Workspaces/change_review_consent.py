@@ -2,13 +2,17 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+import time
+from collections.abc import Callable
+from copy import deepcopy
+from dataclasses import dataclass, field, replace
 from enum import Enum
 from queue import Empty, Full, Queue
 from threading import RLock, Thread
-import time
-from typing import Callable, Protocol
+from typing import Protocol
 
+from tldw_chatbook.Agents.execution_capacity import CapacityRefused, WorkOrigin
+from tldw_chatbook.DB.base_db import operation_owned_connection
 from tldw_chatbook.Workspaces.models import RuntimeBindingStatus
 
 
@@ -112,6 +116,10 @@ class _InitializationWork:
     alias: str
     revision: str
     generation: int
+    binding: object
+    origin: WorkOrigin
+    token: object = field(default_factory=object)
+    source: object = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -120,6 +128,7 @@ class _ReadinessEntry:
     revision: str
     state: RootReadinessState
     reason: str = ""
+    work_token: object = None
 
 
 def _default_capability_reader() -> ChangeReviewCapability:
@@ -128,16 +137,17 @@ def _default_capability_reader() -> ChangeReviewCapability:
     return read_change_review_capability()
 
 
-def _default_root_initializer(root: str) -> None:
+def _default_root_initializer(root: str, *, shadow_service=None) -> None:
     from tldw_chatbook.Workspaces.change_turn_tracker import initialize_shadow_root
 
-    initialize_shadow_root(root)
+    initialize_shadow_root(root, service=shadow_service)
 
 
 class ChangeReviewConsentService:
     """Own consent linearization and bounded root initialization.
 
-    Admission, toggles, and initializer completion all linearize on one lock.
+    Memory-only fences linearize admission, toggles and readiness publication.
+    Registry reads, durable CAS and callbacks run outside the bookkeeping lock.
     Filesystem initialization runs on a fixed daemon pool so a slow root never
     creates an unbounded thread population or blocks chat admission.
     """
@@ -168,9 +178,11 @@ class ChangeReviewConsentService:
         self._queue: Queue[_InitializationWork] = Queue(maxsize=queue_capacity)
         self._readiness: dict[tuple[str, str], _ReadinessEntry] = {}
         self._generation = 0
-        # Moves whenever an in-app change may alter what ``admit_turn``
-        # answers; see ``admission_revision``.
         self._admission_revision = 0
+        self._epochs: dict[str, int] = {}
+        self._toggling: set[str] = set()
+        self._native = None
+        self._native_expected = False
         self._disposed = False
         self._workers = tuple(
             Thread(
@@ -200,119 +212,156 @@ class ChangeReviewConsentService:
         """
         return self._admission_revision
 
-    def admit_turn(self, workspace_id: str) -> ChangeReviewAdmission:
-        """Capture ready roots without waiting for filesystem initialization."""
+
+    def _observe(self, workspace_id):
         with self._lock:
-            if self._disposed:
-                return ChangeReviewAdmission()
+            if self._disposed or workspace_id in self._toggling:
+                return None
+            stamp = (self._generation, self._epochs.get(workspace_id, 0))
+        with operation_owned_connection(getattr(self._registry, "db", None)):
             capability = self._capability_reader()
             consent = self._registry.read_change_review_consent(workspace_id)
+            bindings = (
+                tuple(
+                    deepcopy(binding)
+                    for binding in self._current_bindings(workspace_id)
+                )
+                if capability.state is ChangeReviewState.ENABLED
+                and consent.state is ChangeReviewState.ENABLED
+                else ()
+            )
+        return stamp, capability, consent, bindings
+
+    def _observation_current(self, workspace_id, stamp):
+        return (
+            not self._disposed
+            and workspace_id not in self._toggling
+            and stamp == (self._generation, self._epochs.get(workspace_id, 0))
+        )
+
+    def admit_turn(self, workspace_id: str) -> ChangeReviewAdmission:
+        """Return current ready roots, scheduling missing roots without waiting."""
+        return self._admit(workspace_id, origin=WorkOrigin.AUTOMATIC)
+
+    def _admit(self, workspace_id, *, origin, retry=False):
+        observed = self._observe(workspace_id)
+        if observed is None:
+            return 0 if retry else ChangeReviewAdmission()
+        stamp, capability, consent, bindings = observed
+        pending = []
+        with self._lock:
             if (
-                capability.state is not ChangeReviewState.ENABLED
+                not self._observation_current(workspace_id, stamp)
+                or capability.state is not ChangeReviewState.ENABLED
                 or consent.state is not ChangeReviewState.ENABLED
             ):
+                return 0 if retry else ChangeReviewAdmission()
+            for binding in bindings:
+                key = (workspace_id, binding.locator)
+                entry = self._readiness.get(key)
+                missing = entry is None or entry.revision != consent.revision
+                if (
+                    retry and not missing and entry.state is RootReadinessState.FAILED
+                ) or (not retry and missing):
+                    work = _InitializationWork(
+                        workspace_id,
+                        binding.locator,
+                        binding.binding_id,
+                        consent.revision,
+                        self._generation,
+                        binding,
+                        origin,
+                    )
+                    if entry is not None and entry.state is RootReadinessState.READY:
+                        self._admission_revision += 1
+                    self._readiness[key] = _ReadinessEntry(
+                        work.alias,
+                        work.revision,
+                        RootReadinessState.PREPARING,
+                        self._PREPARING_REASON,
+                        work.token,
+                    )
+                    pending.append(work)
+        scheduled = sum(self._schedule(work) for work in pending)
+        if retry:
+            return scheduled
+        with self._lock:
+            if not self._observation_current(workspace_id, stamp):
                 return ChangeReviewAdmission()
-            return self._admit_enabled_locked(workspace_id, consent)
+            ready, aliases, skipped = [], [], []
+            for binding in bindings:
+                entry = self._readiness.get((workspace_id, binding.locator))
+                if entry is None or entry.revision != consent.revision:
+                    continue
+                if entry.state is RootReadinessState.READY:
+                    ready.append(binding.locator)
+                    aliases.append(binding.binding_id)
+                else:
+                    skipped.append(SkippedReviewRoot(binding.binding_id, entry.reason))
+            return ChangeReviewAdmission(tuple(ready), tuple(skipped), tuple(aliases))
 
     def status(self, workspace_id: str) -> ChangeReviewStatus:
-        """Return a revision-consistent alias-only Settings projection.
-
-        Args:
-            workspace_id: Workspace whose consent and root readiness to inspect.
-
-        Returns:
-            The capability, consent, and alias-only readiness captured under one
-            service lock.
-        """
+        """Read alias-only readiness without holding the lock across source reads."""
+        observed = self._observe(workspace_id)
+        if observed is None:
+            return ChangeReviewStatus(
+                ChangeReviewCapability(ChangeReviewState.UNAVAILABLE),
+                ChangeReviewConsent(ChangeReviewState.UNAVAILABLE),
+            )
+        stamp, capability, consent, bindings = observed
         with self._lock:
-            capability = self._capability_reader()
-            consent = self._registry.read_change_review_consent(workspace_id)
-            roots: list[RootReadiness] = []
-            if (
-                not self._disposed
-                and capability.state is ChangeReviewState.ENABLED
-                and consent.state is ChangeReviewState.ENABLED
-            ):
-                for binding in self._current_bindings(workspace_id):
-                    # Folder bindings are canonicalized at registry admission and
-                    # READY bindings are rechecked for symlink/resolve drift.
-                    root = binding.locator
-                    entry = self._readiness.get((workspace_id, root))
+            roots = []
+            if self._observation_current(workspace_id, stamp):
+                for binding in bindings:
+                    entry = self._readiness.get((workspace_id, binding.locator))
                     if entry is not None and entry.revision == consent.revision:
                         roots.append(
-                            RootReadiness(
-                                alias=binding.binding_id,
-                                state=entry.state,
-                                reason=entry.reason,
-                            )
+                            RootReadiness(binding.binding_id, entry.state, entry.reason)
                         )
             return ChangeReviewStatus(capability, consent, tuple(roots))
 
     def toggle(
-        self,
-        workspace_id: str,
-        *,
-        expected: ChangeReviewConsent,
-        enabled: bool,
+        self, workspace_id: str, *, expected: ChangeReviewConsent, enabled: bool
     ) -> ChangeReviewConsent:
-        """CAS-toggle consent while preserving admission linearization."""
+        """Fence stale reads while the original registry performs its durable CAS."""
         with self._lock:
             if self._disposed:
                 raise RuntimeError("Change Review service is shut down")
-            capability = self._capability_reader()
-            if capability.state is not ChangeReviewState.ENABLED:
-                raise RuntimeError("Change Review capability is unavailable")
-            committed = self._registry.compare_and_set_change_review_consent(
-                workspace_id,
-                expected=expected,
-                enabled=enabled,
-            )
-            self._discard_workspace_readiness_locked(workspace_id)
-            self._admission_revision += 1
-            if enabled:
-                self._admit_enabled_locked(workspace_id, committed)
-            return committed
+            if workspace_id in self._toggling:
+                raise ChangeReviewStateConflict("Change Review consent is changing")
+            self._toggling.add(workspace_id)
+            self._epochs[workspace_id] = self._epochs.get(workspace_id, 0) + 1
+        try:
+            with operation_owned_connection(getattr(self._registry, "db", None)):
+                capability = self._capability_reader()
+                if capability.state is not ChangeReviewState.ENABLED:
+                    raise RuntimeError("Change Review capability is unavailable")
+                committed = self._registry.compare_and_set_change_review_consent(
+                    workspace_id,
+                    expected=expected,
+                    enabled=enabled,
+                )
+            with self._lock:
+                self._discard_workspace_readiness_locked(workspace_id)
+                self._admission_revision += 1
+        finally:
+            with self._lock:
+                self._toggling.discard(workspace_id)
+                self._epochs[workspace_id] += 1
+        if enabled:
+            self._admit(workspace_id, origin=WorkOrigin.MANUAL)
+        return committed
 
     def binding_added(self, workspace_id: str, binding: _FolderBinding) -> None:
-        """Best-effort readiness scheduling after a durable binding add."""
-        del binding
+        """Schedule automatic preparation after the original durable binding add."""
         self.admit_turn(workspace_id)
 
     def retry_failed_roots(self, workspace_id: str) -> int:
-        """Retry currently failed roots once, returning the scheduled count."""
-        with self._lock:
-            if self._disposed:
-                return 0
-            capability = self._capability_reader()
-            consent = self._registry.read_change_review_consent(workspace_id)
-            if (
-                capability.state is not ChangeReviewState.ENABLED
-                or consent.state is not ChangeReviewState.ENABLED
-            ):
-                return 0
-            scheduled = 0
-            for binding in self._current_bindings(workspace_id):
-                root = binding.locator
-                key = (workspace_id, root)
-                entry = self._readiness.get(key)
-                if (
-                    entry is None
-                    or entry.revision != consent.revision
-                    or entry.state is not RootReadinessState.FAILED
-                ):
-                    continue
-                if self._schedule_locked(
-                    workspace_id,
-                    root,
-                    binding.binding_id,
-                    consent.revision,
-                ):
-                    scheduled += 1
-            return scheduled
+        """Retry unsuccessful roots once using the explicit Settings cause."""
+        return self._admit(workspace_id, origin=WorkOrigin.MANUAL, retry=True)
 
-    def shutdown(self, *, timeout: float = 1.0) -> None:
-        """Cancel queued work and join workers until one shared deadline."""
-        deadline = time.monotonic() + max(0.0, timeout)
+    def begin_close(self) -> None:
+        """Seal ingress and conclusively discard queued, never-started work."""
         with self._lock:
             if not self._disposed:
                 self._disposed = True
@@ -326,45 +375,24 @@ class ChangeReviewConsentService:
                     break
                 else:
                     self._queue.task_done()
-        workers = self._workers if self._workers_started else ()
-        for worker in workers:
+
+    def shutdown(self, *, timeout: float = 1.0) -> None:
+        """Seal ingress and bounded-join; returning does not prove physical drain."""
+        self.begin_close()
+        deadline = time.monotonic() + max(0.0, timeout)
+        for worker in self._workers:
             remaining = deadline - time.monotonic()
             if remaining <= 0:
                 break
-            worker.join(remaining)
+            if worker.ident is not None:
+                worker.join(remaining)
 
-    def _admit_enabled_locked(
-        self,
-        workspace_id: str,
-        consent: ChangeReviewConsent,
-    ) -> ChangeReviewAdmission:
-        ready: list[str] = []
-        ready_aliases: list[str] = []
-        skipped: list[SkippedReviewRoot] = []
-        for binding in self._current_bindings(workspace_id):
-            root = binding.locator
-            key = (workspace_id, root)
-            entry = self._readiness.get(key)
-            if entry is None or entry.revision != consent.revision:
-                self._schedule_locked(
-                    workspace_id,
-                    root,
-                    binding.binding_id,
-                    consent.revision,
-                )
-                entry = self._readiness[key]
-            if entry.state is RootReadinessState.READY:
-                ready.append(root)
-                ready_aliases.append(binding.binding_id)
-            else:
-                skipped.append(
-                    SkippedReviewRoot(alias=binding.binding_id, reason=entry.reason)
-                )
-        return ChangeReviewAdmission(
-            ready_roots=tuple(ready),
-            skipped_roots=tuple(skipped),
-            ready_aliases=tuple(ready_aliases),
-        )
+    def wait_closed(self) -> None:
+        """Wait for actual callback, readiness handoff and worker retirement."""
+        self.begin_close()
+        for worker in self._workers:
+            if worker.ident is not None:
+                worker.join()
 
     def _current_bindings(self, workspace_id: str) -> tuple[_FolderBinding, ...]:
         return tuple(
@@ -373,44 +401,52 @@ class ChangeReviewConsentService:
             if binding.status is RuntimeBindingStatus.READY
         )
 
-    def _schedule_locked(
-        self,
-        workspace_id: str,
-        root: str,
-        alias: str,
-        revision: str,
-    ) -> bool:
-        if not self._workers_started:
-            for worker in self._workers:
-                worker.start()
-            self._workers_started = True
-        previous = self._readiness.get((workspace_id, root))
-        if previous is not None and previous.state is RootReadinessState.READY:
-            self._admission_revision += 1  # a ready root goes back to preparing
-        work = _InitializationWork(
-            workspace_id=workspace_id,
-            root=root,
-            alias=alias,
-            revision=revision,
-            generation=self._generation,
+    def _pending(self, work):
+        current = self._readiness.get((work.workspace_id, work.root))
+        return (
+            not self._disposed
+            and work.generation == self._generation
+            and current is not None
+            and current.work_token is work.token
+            and current.state is RootReadinessState.PREPARING
         )
+
+    def _schedule(self, work):
         try:
-            self._queue.put_nowait(work)
-        except Full:
-            self._readiness[(workspace_id, root)] = _ReadinessEntry(
-                alias=alias,
-                revision=revision,
-                state=RootReadinessState.FAILED,
-                reason=self._QUEUE_FULL_REASON,
-            )
+            if self._native_expected:
+                if self._native is None:
+                    raise ValueError("native initialization source unavailable")
+                work = replace(work, source=self._native.capture(work))
+            with self._lock:
+                if not self._pending(work):
+                    return False
+                if not self._workers_started:
+                    for worker in self._workers:
+                        worker.start()
+                    self._workers_started = True
+                self._queue.put_nowait(work)
+            return True
+        except Exception as error:  # noqa: BLE001 -- scheduling failure becomes failed readiness
+            self._fail(work, busy=isinstance(error, (Full, CapacityRefused)))
             return False
-        self._readiness[(workspace_id, root)] = _ReadinessEntry(
-            alias=alias,
-            revision=revision,
-            state=RootReadinessState.PREPARING,
-            reason=self._PREPARING_REASON,
-        )
-        return True
+
+    def _work_current(self, work):
+        with self._lock:
+            if not self._pending(work):
+                return False
+        observed = self._observe(work.workspace_id)
+        if observed is None:
+            return False
+        stamp, capability, consent, bindings = observed
+        with self._lock:
+            return (
+                self._pending(work)
+                and self._observation_current(work.workspace_id, stamp)
+                and capability.state is ChangeReviewState.ENABLED
+                and consent.state is ChangeReviewState.ENABLED
+                and consent.revision == work.revision
+                and work.binding in bindings
+            )
 
     def _worker_loop(self) -> None:
         while True:
@@ -421,56 +457,73 @@ class ChangeReviewConsentService:
                 work = self._queue.get(timeout=0.05)
             except Empty:
                 continue
-            error: Exception | None = None
+            ticket = None
             try:
-                self._initialize_root(work.root)
-            except Exception as exc:  # noqa: BLE001 -- failure is readiness state
-                error = exc
+                if work.source is not None:
+                    ticket = work.source.admit()
+                    with work.source.activate(ticket.owner):
+                        self._run_work(work)
+                elif self._native_expected:
+                    raise ValueError("native initialization source unavailable")
+                else:
+                    with operation_owned_connection(
+                        getattr(self._registry, "db", None)
+                    ):
+                        self._run_work(work)
+            except Exception as error:  # noqa: BLE001 -- one failed job must not kill the bounded worker
+                self._fail(work, busy=isinstance(error, CapacityRefused))
             finally:
+                if ticket is not None:
+                    ticket.returned(worker=True, handoff=True)
                 self._queue.task_done()
-            self._complete(work, error)
 
-    def _complete(
-        self,
-        work: _InitializationWork,
-        error: Exception | None,
-    ) -> None:
-        with self._lock:
-            if self._disposed or work.generation != self._generation:
-                return
-            consent = self._registry.read_change_review_consent(work.workspace_id)
-            if (
-                consent.state is not ChangeReviewState.ENABLED
-                or consent.revision != work.revision
-            ):
-                key = (work.workspace_id, work.root)
-                current = self._readiness.get(key)
-                if current is not None and current.revision == work.revision:
-                    self._readiness.pop(key, None)
-                    self._admission_revision += 1
-                return
-            current = self._readiness.get((work.workspace_id, work.root))
-            if (
-                current is None
-                or current.revision != work.revision
-                or current.state is not RootReadinessState.PREPARING
-            ):
-                return
-            if error is None:
-                replacement = _ReadinessEntry(
-                    alias=work.alias,
-                    revision=work.revision,
-                    state=RootReadinessState.READY,
-                )
+    def _run_work(self, work):
+        error = None
+        try:
+            if not self._work_current(work):
+                raise ValueError("initialization consent changed")
+            if work.source is None:
+                self._initialize_root(work.root)
             else:
-                replacement = _ReadinessEntry(
-                    alias=work.alias,
-                    revision=work.revision,
-                    state=RootReadinessState.FAILED,
-                    reason=self._FAILED_REASON,
-                )
-            self._readiness[(work.workspace_id, work.root)] = replacement
+                work.source.initialize()
+        except Exception as caught:  # noqa: BLE001 -- preserve initializer failure for its handoff
+            error = caught
+        if work.source is not None:
+            try:
+                work.source.check()
+            except Exception as caught:  # noqa: BLE001 -- changed authority cannot publish READY
+                error = caught
+        self._complete(work, error)
+
+    def _complete(self, work, error):
+        if not self._work_current(work):
+            self._fail(work)
+            return
+        with self._lock:
+            if not self._pending(work):
+                return
+            if work.workspace_id in self._toggling:
+                error = ValueError("initialization consent changed")
             self._admission_revision += 1
+            self._readiness[(work.workspace_id, work.root)] = _ReadinessEntry(
+                work.alias,
+                work.revision,
+                RootReadinessState.READY
+                if error is None
+                else RootReadinessState.FAILED,
+                "" if error is None else self._FAILED_REASON,
+            )
+
+    def _fail(self, work, *, busy=False):
+        with self._lock:
+            if self._pending(work):
+                self._admission_revision += 1
+                self._readiness[(work.workspace_id, work.root)] = _ReadinessEntry(
+                    work.alias,
+                    work.revision,
+                    RootReadinessState.FAILED,
+                    self._QUEUE_FULL_REASON if busy else self._FAILED_REASON,
+                )
 
     def _discard_workspace_readiness_locked(self, workspace_id: str) -> None:
         for key in tuple(self._readiness):

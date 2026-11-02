@@ -806,6 +806,9 @@ class LifecycleMixin:
         await self._shutdown_raw_cli_runtime()
         await self._shutdown_terminal_session_manager()
         await self._shutdown_console_settings_durability()
+        change_review = getattr(self, "change_review_consent_service", None)
+        if change_review is not None:
+            change_review.begin_close()
         await self._shutdown_console_runtime()
         change_review = getattr(self, "change_review_consent_service", None)
         if change_review is not None:
