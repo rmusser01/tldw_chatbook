@@ -14,6 +14,7 @@ idle, on its daemon thread.
 
 from __future__ import annotations
 
+import asyncio
 import builtins
 import contextlib
 import importlib.util
@@ -26,6 +27,8 @@ from collections.abc import Iterator
 from pathlib import Path
 
 import pytest
+
+from Tests.private_profile import private_profile_test
 
 pytestmark = pytest.mark.bootstrap_profile
 
@@ -748,6 +751,8 @@ SEND_FRAMES = frozenset(
         "_start_send",
         "_send_console_message_from_visible_action",
         "_run_custodied_turn",
+        "run_received_intent",
+        "_run_received_intent_bound",
     }
 )
 
@@ -800,6 +805,74 @@ def _recording_send_imports() -> Iterator[dict[str, str]]:
         yield seen
     finally:
         builtins.__import__ = real
+
+
+@contextlib.contextmanager
+def _recording_cold_send_loads() -> Iterator[dict[str, str]]:
+    """Observe successful cold loads on the UI thread under send frames."""
+    seen: dict[str, str] = {}
+    real = importlib._bootstrap._find_and_load
+    main = threading.main_thread()
+
+    def recording(name, import_):
+        cold = (
+            threading.current_thread() is main
+            and name not in sys.modules
+            and _in_send()
+        )
+        if cold:
+            frame = sys._getframe(1)
+            stack = []
+            while frame is not None:
+                stack.append(
+                    f"{frame.f_globals.get('__name__')}:{frame.f_code.co_qualname}"
+                )
+                frame = frame.f_back
+        module = real(name, import_)
+        if cold:
+            seen.setdefault(name, " -> ".join(stack))
+        return module
+
+    importlib._bootstrap._find_and_load = recording
+    try:
+        yield seen
+    finally:
+        importlib._bootstrap._find_and_load = real
+
+
+def test_cold_send_load_recorder_observes_module_scope_external_dependencies(
+    tmp_path, monkeypatch
+):
+    root = "pr3339_recorder_root"
+    package = "pr3339_recorder_external"
+    (tmp_path / f"{root}.py").write_text(
+        f"from {package} import child\n", encoding="utf-8"
+    )
+    (tmp_path / package).mkdir()
+    (tmp_path / package / "__init__.py").write_text("", encoding="utf-8")
+    (tmp_path / package / "child.py").write_text("VALUE = 1\n", encoding="utf-8")
+    monkeypatch.syspath_prepend(str(tmp_path))
+    names = {root, package, f"{package}.child"}
+    assert names.isdisjoint(sys.modules)
+
+    def _start_send(name=root):
+        return importlib.import_module(name)
+
+    real_loader = importlib._bootstrap._find_and_load
+    with _recording_cold_send_loads() as seen:
+        _start_send()
+    assert names <= seen.keys(), seen
+    assert importlib._bootstrap._find_and_load is real_loader
+
+    (tmp_path / "pr3339_recorder_failure.py").write_text(
+        "raise ValueError('loader failure')\n", encoding="utf-8"
+    )
+
+    with pytest.raises(ValueError, match="loader failure"):
+        with _recording_cold_send_loads() as failed:
+            _start_send("pr3339_recorder_failure")
+    assert "pr3339_recorder_failure" not in failed
+    assert importlib._bootstrap._find_and_load is real_loader
 
 
 @pytest.mark.asyncio
@@ -858,7 +931,8 @@ _EVIDENCE = "The Fresnel lens lets a lighthouse beam reach ships far away."
 class _EvidenceLibrary:
     """A started Library whose search finds one note, as the live BM25 run did."""
 
-    def __init__(self) -> None:
+    def __init__(self, note_id: str) -> None:
+        self.note_id = note_id
         self.prewarms = 0
         self.searches = 0
 
@@ -872,10 +946,10 @@ class _EvidenceLibrary:
             "runtime_backend": "local",
             "results": [
                 {
-                    "source_id": "note-1",
+                    "source_id": self.note_id,
                     "chunk_id": "chunk-1",
                     "title": "Lighthouse keeping notes",
-                    "content": _EVIDENCE,
+                    "snippet": _EVIDENCE,
                     "score": 0.9,
                     "source_type": "notes",
                 }
@@ -884,21 +958,19 @@ class _EvidenceLibrary:
 
 
 @pytest.mark.asyncio
+@private_profile_test
 async def test_an_automatic_library_send_loads_only_the_two_library_modules_lazily(
     pass_outcome,
+    request,
+    monkeypatch,
+    tmp_path,
 ):
-    """TASK-33620.15.19: an Automatic send adds exactly the measured pair.
+    """A private provider-direct Automatic send cold-loads only the Library pair.
 
-    Same guard as the harness send above, on a send whose conversation has
-    Auto set to Automatic and whose Library search returns evidence: Library
-    preparation, the bounded search and the evidence bundle run under the
-    send's frames. The controller's function-local imports of
-    ``console_library_preparation`` and ``console_library_search`` are
-    neither warm at UI-ready nor listed, so this send loads them on the UI
-    loop, as the live first send did (0.5-3.6 ms wall). They stay lazy by the
-    owner's 2026-10-31 decision, so they are the only lazy imports allowed
-    here. Red if the path picks up any other unwarmed import, and red if the
-    pair stops being lazy, so the record above is revisited either way.
+    Real preimports run first; a file-backed note passes actual source authority
+    and evidence capture before its text reaches the provider request. The old
+    statement guard remains independent of the all-namespace cold-load guard.
+    Historical timings and the owner decision are documented in the task.
     """
     from Tests.UI.test_console_send_acknowledgement import (
         build,
@@ -913,12 +985,24 @@ async def test_an_automatic_library_send_loads_only_the_two_library_modules_lazi
         ConsoleLibraryPolicyCandidate,
     )
 
+    from tldw_chatbook import config as config_module
+    from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
+
+    private_root = Path(os.environ["TLDW_TEST_CONFIG_ROOT"]).resolve(strict=True)
+    assert config_module.get_cli_config_path().resolve().is_relative_to(private_root)
+    assert config_module.save_setting_to_cli_config("console", "agent_runtime", False)
     ready = _warm_at_ui_ready(pass_outcome)
     covered = _covered_by_the_warm_up()
-    library = _EvidenceLibrary()
-
     host, gateway, _timeline = build()
-    host.app_instance.library_rag_search_service = library
+    app = host.app_instance
+    app.app_config.setdefault("console", {})["agent_runtime"] = False
+    db = CharactersRAGDB(tmp_path / "notes.sqlite", client_id="first-send-imports")
+    request.addfinalizer(db.close_connection)
+    app.chachanotes_db = db
+    app._wire_chat_conversation_services()
+    note_id = db.add_note(title="Lighthouse keeping notes", content=_EVIDENCE)
+    library = _EvidenceLibrary(note_id)
+    app.library_rag_search_service = library
     requests: list[object] = []
     held_stream = gateway.stream_chat
 
@@ -939,12 +1023,43 @@ async def test_an_automatic_library_send_loads_only_the_two_library_modules_lazi
                     assistant_access=ConsoleAssistantLibraryAccess.BLOCKED,
                 ),
             )
-            with _recording_send_imports() as seen:
+            from tldw_chatbook.Chat import console_first_send_modules as warm
+            from tldw_chatbook.MCP import server
+
+            completed = []
+            prime = server.prime_local_manifest_source
+
+            def record_prime():
+                result = prime()
+                completed.append(True)
+                return result
+
+            monkeypatch.setattr(server, "prime_local_manifest_source", record_prime)
+            monkeypatch.setattr(
+                host.app_instance, "_pause_between_preimports", lambda gap: None
+            )
+            await asyncio.to_thread(host.app_instance._preimport_heavy_screens)
+            assert completed == [
+                True
+            ], "first-send preimport did not finish manifest prime"
+            assert (
+                warm.FIRST_SEND_MODULES[-1] in sys.modules
+            ), "last first-send module absent"
+            pair = {f"tldw_chatbook.{name}" for name in LIVE_LIBRARY_FIRST_SEND_IMPORTS}
+            assert pair.isdisjoint(
+                sys.modules
+            ), f"Library modules already resident: {pair & sys.modules.keys()}"
+            assert {
+                "pr3339_cold_dependency_probe",
+                "pr3339_cold_dependency_probe.child",
+            }.isdisjoint(sys.modules)
+            with _recording_send_imports() as seen, _recording_cold_send_loads() as cold:
                 press(host, "enter", "\r")
                 await until(gateway.validation_started.is_set)
                 gateway.validation_release.set()
                 await until(lambda: gateway.stream_calls == 1)
 
+    assert set(cold) == pair, f"unexpected cold UI-thread send loads: {cold}"
     # Non-vacuity: the send searched the Library, found the note and carried it.
     assert (library.prewarms, library.searches) == (1, 1)
     assert len(requests) == 1 and _EVIDENCE in str(requests[0]), requests

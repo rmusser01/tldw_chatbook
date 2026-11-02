@@ -1,5 +1,9 @@
 # Lessons: what counts as evidence a change works
 
+## An Automatic evidence double needs an authorized source (PR3339, 2026-11-02)
+
+The first private cold-import guard returned a fabricated note ID from a Library double with no notes database. Search and prewarm ran, but current canonical capture reauthorized the nonexistent source and the provider received no evidence. A real file-backed note and app-owned conversation services restored the actual authority path. Adding a real DB also enabled the agent dispatcher, which did not reach the provider within the existing bound in that harness; the established provider-direct configuration retained the original route and reached the provider. This qualifies provider-direct only, not agent-runtime behavior.
+
 ## Observe Hub bytes before assuming a completed blob survives (PR3332, 2026-11-01)
 
 The Windows integration's tiny real Hub download completed correctly, but an
