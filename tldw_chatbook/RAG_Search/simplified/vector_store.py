@@ -1457,6 +1457,10 @@ class InMemoryVectorStore:
 
         Returns:
             List of matching ``SearchResult`` objects, most similar first.
+            Scores are on the metric's own scale (TASK-38592), unified with
+            ``ChromaVectorStore``: raw cosine in ``[-1, 1]``,
+            ``1/(1+distance)`` in ``(0, 1]`` for l2, and inner product
+            clamped to ``[0, 1]``.
         """
         with self._lock:
             if "n_results" in kwargs:
@@ -1600,14 +1604,20 @@ class InMemoryVectorStore:
                 if collection_name is None:
                     self._access_order.move_to_end(id_val)
 
-                # Normalize score to [0, 1] range for consistency
-                if self.distance_metric == "cosine":
-                    normalized_score = (score + 1) / 2  # From [-1, 1] to [0, 1]
-                elif self.distance_metric == "l2":
-                    # Convert negative distance to similarity
-                    normalized_score = 1 / (1 + abs(score))
-                else:  # ip
+                # TASK-38592: cosine and l2 similarities from
+                # `_compute_similarity` (and the B3 fast path) are already
+                # on their FINAL scales -- RAW cosine in [-1, 1], matching
+                # ChromaVectorStore's ``1 - distance`` mapping, and
+                # ``1/(1+distance)`` in (0, 1] for l2. The historical
+                # remapping here double-normalized l2 (a perfect match
+                # scored 0.5, and the farther a chunk was the HIGHER it
+                # scored) and rescaled cosine to [0, 1], so the same
+                # score_threshold meant different things per backend. Only
+                # inner product, which is unbounded, still needs clamping.
+                if self.distance_metric == "ip":
                     normalized_score = max(0, min(1, score))  # Clamp to [0, 1]
+                else:  # cosine (raw) and l2 (1/(1+distance))
+                    normalized_score = score
 
                 results.append(
                     SearchResult(
