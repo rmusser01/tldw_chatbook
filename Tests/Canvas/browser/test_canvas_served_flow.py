@@ -2140,6 +2140,7 @@ async def test_mounted_production_authority_renders_and_settles_submit(
             selected_canvas_id=None,
             selected_revision_id=None,
             run_id="served-production-run",
+            ephemeral=False,
         )
 
     authority = NativeConsoleCanvasAuthority(

@@ -1577,11 +1577,13 @@ class ConsoleCanvasController:
             left.conversation_id,
             left.active_message_ids,
             left.run_id,
+            left.ephemeral,
         ) == (
             right.session_id,
             right.conversation_id,
             right.active_message_ids,
             right.run_id,
+            right.ephemeral,
         )
 
     def _require_open(

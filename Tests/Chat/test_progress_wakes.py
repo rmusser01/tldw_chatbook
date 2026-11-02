@@ -216,6 +216,7 @@ async def test_save_keeps_temporary_sources_and_admits_new_saved_chain_progress(
                     selected_canvas_id=None,
                     selected_revision_id=None,
                     run_id=uuid4().hex,
+                    ephemeral=rig[4].ephemeral,
                 )
                 canvas_scopes.append(scope)
                 return scope
