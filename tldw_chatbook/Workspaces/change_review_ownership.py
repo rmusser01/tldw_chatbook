@@ -343,6 +343,8 @@ class _InitializationSource:
             raise ValueError("native initialization shadow selection changed")
         if capture_directory_chain(self.chain.canonical_root) != self.chain:
             raise ValueError("native initialization root changed")
+        # Root observation may block after the first original-source check.
+        self.issuer.check()
 
     def validate_root(self, root):
         self.check()

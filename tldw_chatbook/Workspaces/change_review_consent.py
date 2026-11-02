@@ -488,17 +488,18 @@ class ChangeReviewConsentService:
                 work.source.initialize()
         except Exception as caught:  # noqa: BLE001 -- preserve initializer failure for its handoff
             error = caught
-        if work.source is not None:
-            try:
-                work.source.check()
-            except Exception as caught:  # noqa: BLE001 -- changed authority cannot publish READY
-                error = caught
         self._complete(work, error)
 
     def _complete(self, work, error):
         if not self._work_current(work):
             self._fail(work)
             return
+        # Handoff and consent reads may block; validate at the actual consumer.
+        if work.source is not None:
+            try:
+                work.source.check()
+            except Exception as caught:  # noqa: BLE001 -- changed authority cannot publish READY
+                error = caught
         with self._lock:
             if not self._pending(work):
                 return

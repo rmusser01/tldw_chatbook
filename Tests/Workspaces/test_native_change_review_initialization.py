@@ -631,3 +631,67 @@ def test_raised_completion_failure_retires_once_and_existing_worker_can_retry(
             is RootReadinessState.READY
         )
     )
+
+
+@pytest.mark.parametrize("boundary", ["handoff", "consent_read", "root_identity_read"])
+def test_original_source_replacement_during_readiness_handoff_is_not_ready(
+    native_initializer, monkeypatch, boundary
+):
+    from tldw_chatbook.Workspaces import change_review_ownership
+
+    h = native_initializer
+    entered, release = threading.Event(), threading.Event()
+    local = threading.local()
+    complete = h.service._complete
+    read_consent = h.registry.read_change_review_consent
+    capture_chain = change_review_ownership.capture_directory_chain
+
+    def hold():
+        entered.set()
+        assert release.wait(5)
+
+    def held_complete(work, error):
+        assert error is None
+        local.completing = True
+        try:
+            if boundary == "handoff":
+                hold()
+            return complete(work, error)
+        finally:
+            local.completing = False
+
+    def held_read(workspace_id):
+        observed = read_consent(workspace_id)
+        if boundary == "consent_read" and getattr(local, "completing", False):
+            hold()
+        return observed
+
+    def held_chain(root):
+        observed = capture_chain(root)
+        if boundary == "root_identity_read" and getattr(local, "completing", False):
+            hold()
+        return observed
+
+    monkeypatch.setattr(h.service, "_complete", held_complete)
+    monkeypatch.setattr(h.registry, "read_change_review_consent", held_read)
+    monkeypatch.setattr(change_review_ownership, "capture_directory_chain", held_chain)
+    h.registry.set_change_review_enabled("init-workspace", True)
+    capture_change_review_admission(h.app, "init-workspace")
+    try:
+        assert entered.wait(3), "readiness consumer did not reach its held boundary"
+        assert h.runtime.execution_capacity.snapshot().tool_workers == 1
+        with h.runtime.worktree_activity.prelaunch(
+            footprint=WorktreeFootprint(opaque=True)
+        ) as claim:
+            assert claim is None
+        monkeypatch.setattr(h.app, "workspace_registry_service", object())
+        release.set()
+        wait_until(lambda: h.service._queue.unfinished_tasks == 0)
+        assert h.runtime.execution_capacity.snapshot().executions == ()
+        assert (
+            h.service._readiness[("init-workspace", str(h.root))].state
+            is RootReadinessState.FAILED
+        )
+        assert h.service.admit_turn("init-workspace").ready_roots == ()
+    finally:
+        release.set()
