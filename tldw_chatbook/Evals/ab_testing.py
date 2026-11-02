@@ -102,6 +102,42 @@ class ABTestRunner:
         self.orchestrator = orchestrator
         logger.info("ABTestRunner initialized")
 
+    @staticmethod
+    def _pair_results_by_sample_id(
+        results_a: List[Dict[str, Any]], results_b: List[Dict[str, Any]]
+    ) -> Tuple[List[Tuple[Dict[str, Any], Dict[str, Any]]], Dict[str, int]]:
+        """Pair two runs' stored results by sample id (TASK-38584).
+
+        The two runs execute concurrently (asyncio.gather) and
+        ``get_run_results`` returns rows in insertion (completion) order,
+        so zipping by position compares model B's answer to a different
+        question than model A's. Pair over the intersection of sample ids
+        instead; sort ids for deterministic iteration. eval_results is
+        UNIQUE(run_id, sample_id), so id keys cannot collide within a run.
+
+        Returns:
+            (pairs, stats): pairs of (row_a, row_b) sharing one sample id,
+            and stored/matched/unmatched counts so count mismatches and id
+            mismatches are explicit rather than silently truncated. Rows
+            without a sample id cannot be paired and count as unmatched.
+        """
+        by_id_a = {
+            row["sample_id"]: row for row in results_a if row.get("sample_id")
+        }
+        by_id_b = {
+            row["sample_id"]: row for row in results_b if row.get("sample_id")
+        }
+        matched_ids = sorted(set(by_id_a) & set(by_id_b), key=str)
+        pairs = [(by_id_a[sample_id], by_id_b[sample_id]) for sample_id in matched_ids]
+        stats = {
+            "results_a": len(results_a),
+            "results_b": len(results_b),
+            "matched_pairs": len(pairs),
+            "unmatched_a": len(results_a) - len(pairs),
+            "unmatched_b": len(results_b) - len(pairs),
+        }
+        return pairs, stats
+
     async def run_ab_test(
         self,
         config: ABTestConfig,
@@ -214,7 +250,22 @@ class ABTestRunner:
             # Update result with metrics
             result.model_a_metrics = summary_a.get("metrics", {})
             result.model_b_metrics = summary_b.get("metrics", {})
-            result.sample_size = len(results_a)
+
+            # Pair the stored results by sample id (TASK-38584): the two
+            # runs complete concurrently, so completion order differs and
+            # only shared sample ids are comparable.
+            _, pairing_stats = self._pair_results_by_sample_id(results_a, results_b)
+            if pairing_stats["unmatched_a"] or pairing_stats["unmatched_b"]:
+                logger.warning(
+                    f"A/B stored results do not match by sample id: model A "
+                    f"stored {pairing_stats['results_a']} results, model B "
+                    f"stored {pairing_stats['results_b']}; comparing only "
+                    f"the {pairing_stats['matched_pairs']} matched sample "
+                    f"ids ({pairing_stats['unmatched_a']} unmatched in A, "
+                    f"{pairing_stats['unmatched_b']} unmatched in B)"
+                )
+            result.metadata["pairing"] = pairing_stats
+            result.sample_size = pairing_stats["matched_pairs"]
 
             # Calculate latencies
             if summary_a.get("duration"):
@@ -275,13 +326,14 @@ class ABTestRunner:
     ) -> Dict[str, Dict[str, Any]]:
         """Perform statistical tests on the results."""
         tests = {}
+        pairs, _ = self._pair_results_by_sample_id(results_a, results_b)
 
         for metric in config.metrics_to_compare:
             # Extract metric values
             values_a = []
             values_b = []
 
-            for res_a, res_b in zip(results_a, results_b):
+            for res_a, res_b in pairs:
                 # Get metric value, handle nested structure
                 metric_a = res_a.get("metrics", {}).get(metric)
                 metric_b = res_b.get("metrics", {}).get(metric)
@@ -400,12 +452,13 @@ class ABTestRunner:
     ) -> Dict[str, Tuple[float, float]]:
         """Calculate confidence intervals for the difference in metrics."""
         intervals = {}
+        pairs, _ = self._pair_results_by_sample_id(results_a, results_b)
 
         for metric in metrics:
             values_a = []
             values_b = []
 
-            for res_a, res_b in zip(results_a, results_b):
+            for res_a, res_b in pairs:
                 metric_a = res_a.get("metrics", {}).get(metric)
                 metric_b = res_b.get("metrics", {}).get(metric)
 
@@ -442,8 +495,9 @@ class ABTestRunner:
     ) -> List[Dict[str, Any]]:
         """Merge sample results for detailed analysis."""
         merged = []
+        pairs, _ = self._pair_results_by_sample_id(results_a, results_b)
 
-        for res_a, res_b in zip(results_a, results_b):
+        for res_a, res_b in pairs:
             merged.append(
                 {
                     "sample_id": res_a.get("sample_id"),
