@@ -15605,7 +15605,7 @@ Tests/UI/test_personas_workbench.py:9990:                    "Switch modes and b
 Tests/UI/test_roleplay_item_list_app.py:3100:def _record_escapes(monkeypatch, gate: threading.Event) -> list[bool]:
 Tests/UI/test_roleplay_item_list_app.py:3126:    escapes = _record_escapes(monkeypatch, held.release)
 tldw_chatbook/UI/Screens/personas_screen.py:4573:                    "Dictionaries could not be loaded.\nSwitch modes an
-tldw_chatbook/UI/Screens/personas_screen.py:4673:                    "Lore books could not be loaded.\nSwitch modes and 
+tldw_chatbook/UI/Screens/personas_screen.py:4673:                    "Lore books could not be loaded.\nSwitch modes and
 ---
 tldw_chatbook/UI/Screens/personas_screen.py:4106:                        noun="characters",
 tldw_chatbook/UI/Screens/personas_screen.py:4279:                noun="personas",
@@ -17253,7 +17253,7 @@ Expected:
   - loading: `('character:2...acter:7', ...) == ()` (the old kind's rows stay up);
   - the failed read: `('empty', 'No... to add one.') == ('recovery', ...t be loaded.')`;
   - the leave re-pin: `assert <DOMQuery query='#personas-library-recovery'>` (dev shows the empty copy).
-  
+
   The 4 passes are the four-key re-pins (space instead of Escape) and D9's control (Escape in the box with matches moves focus, as on dev), green before and after, as they must be.
 
 - [ ] **Step 4: Implement the states**

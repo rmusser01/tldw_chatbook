@@ -238,3 +238,10 @@ CSS tightening from 270 to 268 remains.
 
 Integration plan: `Docs/superpowers/plans/2026-11-01-pr3334-backlog-integration.md`.
 The original B2b pre-import limit of 440,410 is historical, not the active cap.
+
+
+PR3334 final-review fix wave: the pane's separate query/tag hint projection
+adds three lines, so its final static measurement is 1,582 against the retained
+1,297 cap (+285). Screen/state remain 17,505/16,859 and 1,322/855. The original
+three numeric test failures remain explicitly WAIVED; this is a refreshed static
+line count, not a new numeric/performance sweep. No cap is changed.

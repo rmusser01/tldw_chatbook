@@ -5225,6 +5225,46 @@ def _server_world(mock_app_instance, *, remote: list[dict], search: list[dict]):
     mock_app_instance.chat_dictionary_scope_service = _dictionary_service()
 
 
+async def test_server_search_marks_hint_follows_query_without_changing_counts(
+    mock_app_instance,
+):
+    remote = [{"id": n, "name": f"Remote {n:03d}"} for n in range(1, 4)]
+    _server_world(mock_app_instance, remote=remote, search=remote[1:])
+    async with open_styled_roleplay("mock", mock_app_instance, size=(220, 55)) as pilot:
+        screen = pilot.app.screen
+        pane = screen.query_one("#personas-library-pane")
+        item_list = screen.query_one(RoleplayItemList)
+        original_ids = visible_item_ids(screen)
+        await _mark_rows(pilot, screen, original_ids[1:])
+        await _search_settled(pilot, screen, "Remote")
+        assert visible_item_ids(screen) == original_ids[1:]
+        assert pane._filtered is False  # Server count semantics stay as before.
+        assert pane._list_total == 2 and "hidden" not in _bar(screen)
+        assert "Clear" in _bar(screen) and "Clear esc" not in _bar(screen)
+        item_list.focus()
+        await pilot.press("escape")
+        await wait_until(
+            pilot,
+            lambda: screen.state.search_query == ""
+            and visible_item_ids(screen) == original_ids,
+            what="the server search cleared",
+        )
+        await settle(pilot)
+        assert len(screen._marked_rows) == 2
+        assert pane._filtered is False and pane._list_total == 3
+        assert "Clear esc" in _bar(screen)
+        await pilot.press("escape")
+        await settle(pilot)
+        assert not screen._marked_rows and not _bar(screen)
+        # Clear remains a marks action even when Escape belongs to the query.
+        await _mark_rows(pilot, screen, original_ids[1:])
+        await _search_settled(pilot, screen, "Remote")
+        assert await pilot.click("#personas-library-marks-clear")
+        await settle(pilot)
+        assert not screen._marked_rows
+        assert screen.state.search_query == "Remote" and pane._list_total == 2
+
+
 async def test_a_server_character_count_at_the_cap_reads_100_plus(
     mock_app_instance, volume_348
 ):

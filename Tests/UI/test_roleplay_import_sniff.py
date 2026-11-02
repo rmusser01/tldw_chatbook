@@ -46,6 +46,46 @@ def test_deciding_card_evidence_after_the_sniff_asks(tmp_path, suffix):
     assert (result.verdict, result.kinds) == ("ask", sniff.TEXT_KINDS)
 
 
+@pytest.mark.parametrize("suffix", [".md", ".txt"])
+@pytest.mark.parametrize("heading", ["Character card", "Travel dossier"])
+def test_a_bracket_heading_before_a_late_card_fence_is_inconclusive(
+    tmp_path, suffix, heading
+):
+    path = tmp_path / f"bracket{suffix}"
+    path.write_bytes(
+        f"[{heading}]\n".encode()
+        + b"ordinary prose\n" * 5000
+        + b"```json\n"
+        + json.dumps(card_v2()).encode()
+        + b"\n```\n"
+    )
+    result = sniff.sniff_import_file(path, max_bytes=CAP)
+    assert (result.verdict, result.kinds) == ("ask", sniff.TEXT_KINDS)
+
+
+@pytest.mark.parametrize("suffix", [".md", ".txt", ".json"])
+def test_complete_bracket_prose_is_still_not_a_card(tmp_path, suffix):
+    path = tmp_path / f"complete{suffix}"
+    path.write_bytes(b"[Travel dossier]\nordinary prose\n")
+    result = sniff.sniff_import_file(path, max_bytes=CAP)
+    assert (result.verdict, result.kinds) == ("not_roleplay", ())
+
+
+@pytest.mark.parametrize("suffix", [".md", ".txt", ".json"])
+@pytest.mark.parametrize(
+    "intro",
+    [b"[1,]\n", b"[true]\n", b"[NaN]\n", b"[broken\n"],
+    ids=["malformed-array", "valid-array", "nan-array", "unclosed-label"],
+)
+def test_json_array_prefixes_do_not_become_inconclusive_headings(
+    tmp_path, suffix, intro
+):
+    path = tmp_path / f"array{suffix}"
+    path.write_bytes(intro + b" " * 70_000)
+    result = sniff.sniff_import_file(path, max_bytes=CAP)
+    assert (result.verdict, result.kinds) == ("not_roleplay", ())
+
+
 @pytest.mark.parametrize("size,verdict", [(65_536, "not_roleplay"), (65_537, "ask")])
 def test_prose_at_the_read_boundary_distinguishes_eof(tmp_path, size, verdict):
     path = tmp_path / "prose.md"

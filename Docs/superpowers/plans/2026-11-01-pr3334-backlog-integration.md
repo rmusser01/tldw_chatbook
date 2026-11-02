@@ -117,3 +117,38 @@ qualified implementation notes. Other named follow-ups remain open. Root owns
 the remaining independent whole-branch review and publication. Exact commands,
 failed/setup attempts, source chronology and final binding live in this plan's
 `.superpowers/sdd/2026-11-01-pr3334-backlog-integration/` evidence workspace.
+
+
+## Final-review fix wave (2026-11-01)
+
+Reviewed head 57083c074081d4cb70a6a048ab64d387babecc63 is not qualified for
+merge: I1 late bracket-led cards, M1 server-search marks hint and M2 two
+historical-plan whitespace lines remain. The initial report and receipts
+remain preserved. The plan assumption that pane `_filtered` means actual
+filter activity is superseded: it also controls server-count presentation.
+
+1. Reopen TASK-33910.47; add causal late bracket-led Markdown/text file
+   controls and a real mounted server search/marks Escape journey.
+2. Distinguish supported readable bracket headings from malformed/deep JSON
+   without increasing reads, caps or parses beyond bounded prefix input.
+3. Project actual published query/tag activity separately for the hint,
+   leaving count/hidden-mark semantics, Clear and Escape handlers unchanged.
+4. Remove the two reported historical-plan trailing spaces; run only causal
+   and directly affected preservation, changed-file static comparison, and
+   exact BASE..FINAL whitespace validation; commit and freeze a new package
+   with full branch and reviewed-head fix ranges for the same reviewer.
+
+ADR required: no. ADR path: N/A. Reason: corrections within existing bounded
+advisory sniff and truthful Escape contracts (ADR-011/031/097/150/161).
+No all-310, theme, workflow, full-suite or unrelated follow-up sweep.
+
+
+Fix-wave outcome: causal RED 5 intended failures/3 controls pass; targeted
+GREEN 65 PASS. The server publication now carries an independent query/tag
+hint projection; the count flag remains unchanged. Late bracket headings
+use the bounded text fallback without promoting JSON array/deep/binary
+refusals. Only the two reported historical-plan whitespace instances were
+removed; full BASE..FINAL whitespace evidence replaces the earlier narrower
+check. Four changed Python files pass lint/format. Current distinct evidence
+is 332 PASS/one native FIFO skip, plus the original three WAIVED numeric
+failures; final pane count is 1,582/1,297. No broader sweep or new ADR.

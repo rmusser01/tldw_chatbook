@@ -275,6 +275,29 @@ def _classify_card_text(text: bytes, *, truncated: bool = False) -> SniffResult:
     return _not_roleplay("no Roleplay format")
 
 
+def _bracket_text_heading(text: bytes) -> bool:
+    """An unquoted human-readable label, rather than a JSON array opener.
+
+    Card text can introduce its later fence with a bracketed heading. JSON
+    punctuation/nesting and valid JSON values do not establish that text form.
+    Both checks use only the already bounded prefix; no further file read.
+    """
+    heading = re.match(rb'\s*\[([^\[\]{}",:\r\n]+)\]', text)
+    if heading is None:
+        return False
+    try:
+        label = heading[1].decode("utf-8").strip()
+    except UnicodeDecodeError:
+        return False
+    if not label or not label[0].isalpha():
+        return False
+    try:
+        from_json(heading[0])
+    except ValueError:
+        return True
+    return False
+
+
 def classify(suffix: str, prefix: bytes, *, truncated: bool = False) -> SniffResult:
     """Decide a file's kind from its extension and its first bytes (pure).
 
@@ -307,7 +330,9 @@ def classify(suffix: str, prefix: bytes, *, truncated: bool = False) -> SniffRes
                 return as_json
             # Preserve malformed/deep JSON refusal while retaining the existing
             # Markdown marker fallback (e.g. dictionary rules after bad JSON).
-            return _classify_markdown(text)
+            return _classify_markdown(
+                text, truncated=truncated and _bracket_text_heading(text)
+            )
         return _classify_markdown(text, truncated=truncated)
     if suffix in JSON_SUFFIXES:
         if truncated and not text.strip():
@@ -320,7 +345,9 @@ def classify(suffix: str, prefix: bytes, *, truncated: bool = False) -> SniffRes
         as_json = _classify_json(text)
         if as_json.verdict != "not_roleplay":
             return as_json
-        return _classify_card_text(text)
+        return _classify_card_text(
+            text, truncated=truncated and _bracket_text_heading(text)
+        )
     return _classify_card_text(text, truncated=truncated)
 
 

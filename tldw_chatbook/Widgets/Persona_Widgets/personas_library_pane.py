@@ -719,6 +719,8 @@ class PersonasLibraryPane(Vertical):
         # tag narrows the list (spec 1.5.1).
         self._list_total: int | None = None
         self._filtered: bool = False
+        # Query/tag activity owns Escape independently of count availability.
+        self._escape_filter_active: bool = False
         # What the toolbar fits (spec 1.5.1): the mode, the sort it names and
         # the fit last applied (None until the pane has a width).
         self._mode = "characters"
@@ -1034,6 +1036,7 @@ class PersonasLibraryPane(Vertical):
         item_list = self.item_list
         visible_rows = () if recovery_copy else rows
         self._filtered = filtered
+        self._escape_filter_active = bool(query or tag)
         self._list_total = (
             None
             if recovery_copy
@@ -1359,7 +1362,7 @@ class PersonasLibraryPane(Vertical):
             # Read from its styles, so it holds before the bar is first shown.
             self.content_size.width - bar.styles.gutter.width,
             can_export=can_export,
-            filtered=self._filtered,
+            filtered=self._escape_filter_active,
         )
         was_shown = bar.display
         if view is None:
