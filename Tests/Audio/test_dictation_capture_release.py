@@ -89,6 +89,7 @@ def _spy_recorder(monkeypatch):
     return built
 
 
+@pytest.mark.bootstrap_profile
 def test_the_recorder_is_unbounded_by_default(monkeypatch):
     """Three non-Console callers rely on this; the new parameter must be opt-in."""
     from tldw_chatbook.Audio.dictation_service_lazy import LazyLiveDictationService
@@ -101,6 +102,7 @@ def test_the_recorder_is_unbounded_by_default(monkeypatch):
     assert built[0].kwargs["on_buffer_limit"] is None
 
 
+@pytest.mark.bootstrap_profile
 def test_a_requested_pcm_bound_reaches_the_recorder(monkeypatch):
     """Without this the Console's bound stops at the service and never lands.
 

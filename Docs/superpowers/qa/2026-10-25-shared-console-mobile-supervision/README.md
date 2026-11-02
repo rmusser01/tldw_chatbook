@@ -1,13 +1,19 @@
 # Shared served Console and mobile qualification
 
-Task reviews and whole-feature review, including their scoped corrections, are
-complete. This packet separates source/unit evidence, actual served-browser
-evidence, and physical phone/VPN qualification. The final code review covers
-the recorded source; physical hardware and VPN checks remain open.
+The current candidate integrates dev `2acbcd42f3e7b07fd122f5f6dc6b22e7385f10c5`.
+Targeted storage and runtime evidence is recorded below; final independent
+integration review and the complete 15-case served-browser UAT are still pending.
+Native size/import ratchets currently fail and are not waived. This is not a
+whole-branch release qualification.
 
-Fresh post-review UAT is **not fully green**:13 passed/1 failed, followed by two
-separate passing retention checks. The original mouse failure remains
-unclassified and TASK-36769/AC1 is open. See the [fresh UAT receipt](uat-2026-11-01.md).
+The original feature UAT was **13 passed / 1 failed**. The mouse failure was later
+traced to a mixed native size/layout test receipt; the two-test R167 correction
+passed its regression and actual retention journey, with no production mouse
+change. R169 Canvas/tab ownership has a separate scoped review closure and
+38-pass transport/security epoch. Those scoped results do not replace final
+integrated UAT. See the [original UAT and later receipts](uat-2026-11-01.md).
+Physical phone/VPN qualification remains open. Earlier sections describe their
+recorded historical source, not the current integrated candidate.
 
 ## Actual served-browser evidence
 
@@ -322,29 +328,41 @@ review retains its stated coverage and CV-01–CV-03 qualifications. Completion
 metadata does not change the tested executable source.
 
 
-## Current-dev integration qualification in progress (2026-11-01)
+## Current-dev integration targeted evidence (2026-11-01)
 
-The integration is based on dev `7b3b2371c3141e6168726102496db1d71181adaf`.
-Historical qualification above does not certify this combined source. Exact
-source-bound logs, failed attempts and manifests are retained in the isolated
-implementation evidence directory `dev-integration-2026-11-01`.
+The normal rebase onto dev `2acbcd42` retained the qualified storage, database and
+backup test bytes exactly. Original unobserved populated public import/rollback
+(epoch94) passed, and a separate unobserved existing-conversation edit (epoch97)
+proved both restoration of the original live row and exact retention of the
+changed full row through native encrypted SafetyCopy acquisition and restricted
+copied-owner readback. Component catalogs alone are not used for this claim.
 
-The current targeted checks establish native background phone Ask refusal with
-empty/different/equal desktop drafts, late edits/settings revisions and both
-streaming selections; a below-threshold non-streaming phone send succeeds.
-Native queued phone and composer controls retain the exact refused request at
-the paused queue head, with no new provider attempt or desktop attachment,
-prefill or staged-evidence transfer. Opaque provenance is single-use and is
-released after refused promotion; the retained queue body does not reauthorize
-archive recovery. Ordinary desktop Compact/send, bypass and Cancel controls,
-all four transformed action gates, exact Stop, command-origin/summary fences and
-qualified desktop forecast controls have separate targeted evidence.
+Fresh current-dev checks cover background and queued phone input, all five Ask
+refusal/draft cases, native source/settings/binding refusal, one-use provenance,
+exact Stop, per-chat staged-evidence lifecycle and typed direct/agent failure
+propagation. Phone trace recovery uses the actual native gateway with only the
+provider adapter controlled: missing requests pause after durable acceptance;
+Retry sends the frozen input once after switching tabs; failed rebuilding stays
+paused; Cancel preserves empty/different/equal/late-edited drafts and revisions.
+Unknown/changed failure markers and continuation substitutions refuse. Existing
+native desktop trace controls remain covered. Whole-stream doubles used by some
+component controls are not substituted for that actual gateway evidence.
 
-The expected-directory safety matcher now refuses file/symlink substitutions
-without reading their payload. Real registered-profile metadata checks preserve
-native custody and retain exclusion after ambiguous native close. Ordinary
-builtin and file SafetyCopy publication controls pass. Complete populated mobile
-public rollback remains under qualification; component catalogs or isolated
-metadata controls are not a substitute for it. The final independent integration
-review and whole 15-case served-browser UAT remain pending. No physical phone,
-external provider, real-profile migration or full-suite result is claimed here.
+Native voice checks cover physical preparation retention after cancellation,
+replacement, cleanup failure, capture handoff, maintenance readiness and late
+result fences, plus bounded owned-artifact progress and unchanged Xet settings.
+No model download, microphone capture or physical-device success is claimed.
+Retained server attachment/disconnect controls preserve the child owner.
+
+Unresolved native ratchets remain explicit: epoch108 measured UI-ready 1,044
+modules against 1,031; four sampled module-size checks failed, and static
+attribution identifies 21 changed modules over their current pins. App import
+683/686 and received-input lazy import checks passed. No limit was raised and
+historical PR waivers do not apply here. Source-bound failures, corrections,
+commands, process births/exits and hashes remain in the isolated
+`dev-integration-2026-11-01` evidence directory, without summing overlapping epochs.
+
+Final independent integration review and the whole 15-case served-browser UAT
+remain pending. Physical phone/VPN, external providers, real-profile migration
+and a full repository test suite remain unverified. Task completion and PR update
+await the remaining gates.

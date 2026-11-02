@@ -25730,3 +25730,14 @@ explicitly; do not claim it changes the existing equal/backdated-carrier policy.
 PR #3529 run43565526841 UI9 failed the near-expiry warm-up test at its immediate render assertion;150 other shard tests passed. The same case passed locally. A controlled real thread holding the storage coordinator immediately after the original warm-up reproduced the assertion: the renderer refused at its nonblocking coordinator acquisition while the proof was only0.05 seconds old. The uninstrumented CI log does not identify its exact refusal predicate, so this is a demonstrated valid interleaving, not proof of the historical branch.
 
 An expiry-only assertion must establish the coordinator-free render precondition. The fixture now verifies that warm-up refreshed the timestamp, takes the coordinator with a30-second acquisition timeout, and retains that real lock only across the synchronous render, releasing it in finally. All production ownership, pause, freshness and contention checks remain. The controlled overlap passes; disabling refresh-ahead still fails the refreshed-timestamp assertion. Do not replace a timing regression with repeated warm/render attempts that could refresh away the defect under test.
+
+### Trace recovery needs one real gateway continuation check
+
+During PR3345 dev integration, the native missing-request tests replaced the
+whole response stream and passed Retry, while the saved-workspace phone case
+(epoch102) rebuilt its request and immediately paused again at the real gateway.
+The controller had passed its pre-reservation failure marker as an owned gateway
+boundary. Epoch109's actual gateway/controlled-adapter continuation passed after
+exact marker consumption; stale/unknown marker controls still refused. Keep a
+real gateway continuation case when testing recovery across that boundary: a
+stream double cannot establish reservation ownership or provider entry.

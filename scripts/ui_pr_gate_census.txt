@@ -2933,3 +2933,6 @@ Tests/UI/test_console_recovered_image_shutdown.py
 Tests/UI/test_console_configuration_worker_feedback.py::test_actual_send_composes_new_input_while_configuration_reader_is_held
 # TASK-34601.1: background and repeated skill reads cannot claim a spoken Send fixture.
 Tests/UI/test_console_send_draft_snapshot.py::test_spoken_send_skill_read_ignores_background_and_repeated_fetches
+
+# Shared mobile integration: real native phone trace Retry/Cancel preservation.
+Tests/UI/test_console_phone_trace_recovery.py
