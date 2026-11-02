@@ -1,0 +1,10 @@
+{
+  "source_sha256": "6b579c6ace596b17a192731d32914a0f6ccd0c6f2e0c1bc91dc39dbf7e73a085",
+  "baseline_lint": [],
+  "baseline_format_exit": 1,
+  "current_lint": [],
+  "current_format_exit": 1,
+  "all_assertions_identical": true,
+  "all_timeout_arguments_identical": true,
+  "added_lint": []
+}

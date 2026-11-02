@@ -24245,6 +24245,12 @@ one retained destination. Source-hash verification caught it before commit.
 Retain original relative directories, reject destination collisions, and verify
 the artifact map against every original hash as well as the final Git bytes.
 
+The later UI18 archive push was rejected because pytest duration node IDs included
+a constructed Stripe-shaped credential fixture. The fixture source was confirmed
+without printing its value. Two retained log copies now redact it explicitly,
+keeping original-log hashes, redacted hashes and fixture provenance; originals
+remain local. Hash fidelity alone does not make a raw test log publishable.
+
 ## A restored resend fixture is not yet a fresh-Send owner (PR3346, 2026-11-01)
 
 The successive accepted mix-in placement regression initially failed only after reopen with `Durable Console Library policy no longer matches acceptance.` Read-only exception monitoring traced the original native transaction refusal: the reused resend helper restored messages/preferences but omitted the production asynchronous Library policy hydration. Calling `hydrate_session_library_policy` before the fresh Send restored the intended owner and proved B/A provider order after real SQLite flush/reopen. Do not label a reopen failure a fixture issue until the actual native refusal is captured, and do not replace a fresh Send with a metadata-only assertion or bypass the policy check.
@@ -24292,3 +24298,14 @@ boundary preserves all source/publication and native-read retirement checks. A
 real-store race test proves no stale read or publication, settled waiters, and a
 successful retry for the current session. Setup before the first await can fail
 too; an async worker's cleanup boundary must cover it.
+
+## Wait for every asynchronous outcome asserted by a timer test (PR3346)
+
+**Incident, 2026-11-02.** The mounted idle-heap test waited for a weak reference
+to die, then immediately asserted that the `first_send_preimport` refreeze had
+run. Hosted CI recorded only `run_settled`. A controlled native ordering reproduced
+the same failure: the earlier real idle timer collected the cycle before the
+requested refreeze's quiet period elapsed. The test now waits for both existing
+outcomes within its original ten-second limit, retaining the real GC, timer,
+custody and exact-reason assertions. Collection by one idle request does not prove
+another request has completed; production scheduling needed no change.

@@ -1,0 +1,23 @@
+{
+  "qualification": "Original raw logs remain local. These two retained log copies intentionally redact the same three synthetic fixture occurrences; all other retained artifact identities are unchanged. No push-protection bypass was used.",
+  "logs": [
+    {
+      "retained": "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/ci-rebase/hosted-f0a/idle-refreeze/hosted-red.log.json",
+      "original_source_sha256": "862ceadaceb37c4a7ec925fbb8ad4c35bc365a79c52cd4564785db393b375615",
+      "redacted_source_sha256": "6cfe17ad5af7099573e6223bdaa3ce72ab326a3919561eaef695e43808b76e72",
+      "occurrences": 3,
+      "fixture_source": "Tests/UI/test_settings_env_var_not_echoed.py:27",
+      "fixture_value_sha256": "ee4479b08afbb2ccd638603268c2fdae2e6751e0e06cba416db0c6543b8f061b",
+      "reason": "Constructed public test fixture appears literally in pytest duration node IDs and triggers push protection."
+    },
+    {
+      "retained": "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/ci-rebase/hosted-f0a/hosted-and-review/mixins-ci-f0a-ui18.log.json",
+      "original_source_sha256": "862ceadaceb37c4a7ec925fbb8ad4c35bc365a79c52cd4564785db393b375615",
+      "redacted_source_sha256": "6cfe17ad5af7099573e6223bdaa3ce72ab326a3919561eaef695e43808b76e72",
+      "occurrences": 3,
+      "fixture_source": "Tests/UI/test_settings_env_var_not_echoed.py:27",
+      "fixture_value_sha256": "ee4479b08afbb2ccd638603268c2fdae2e6751e0e06cba416db0c6543b8f061b",
+      "reason": "Constructed public test fixture appears literally in pytest duration node IDs and triggers push protection."
+    }
+  ]
+}

@@ -458,9 +458,9 @@
       "bytes": 42571
     },
     "Tests/UI/test_console_idle_heap_refreeze.py": {
-      "sha256": "9c161611a38dcd7d5ece437d9aeb8e7b22b4377b932cf406bd9decf798eeffdb",
-      "git_blob": "36fe4dd48a37db3f89fb3f7fcc2231f1a221ef2c",
-      "bytes": 17225
+      "sha256": "6b579c6ace596b17a192731d32914a0f6ccd0c6f2e0c1bc91dc39dbf7e73a085",
+      "git_blob": "d40e53e15ffee9b438fe58b965201ec569ef1adf",
+      "bytes": 17505
     },
     "Tests/UI/test_console_idle_voice_boot.py": {
       "sha256": "158afda6ad19947a6044fa5f0df308ce60ba62a0e509ce6f814a42ac36a27a75",
@@ -633,9 +633,9 @@
       "bytes": 376813
     },
     "backlog/docs/lessons-testing-evidence.md": {
-      "sha256": "a0978832c78d2a59e2d5375acf76260bf456ab97b268240bbb1421852f50747d",
-      "git_blob": "d8412758caa4da2a4cbc89ddc5757f8f155438b1",
-      "bytes": 1658759
+      "sha256": "a801e7078826a8b9e38e74b4acaa53183acaedcb716612c477dabda15ff701c6",
+      "git_blob": "085c86be4f26da9fcadda108427c924d7a274cbc",
+      "bytes": 1659864
     },
     "backlog/tasks/task-38534 - Design-prompt-mix-ins-for-Console-sends.md": {
       "sha256": "c3eb8b840aa0a1079fb2d108dc754cd0b18f6a9c4251c2a4a5c0bda1a37cd637",
@@ -688,9 +688,9 @@
       "bytes": 6141
     },
     "backlog/tasks/task-38544 - Qualify-the-integrated-prompt-mix-in-lifecycle-and-document-delivery.md": {
-      "sha256": "4683a24834d196004f9455efe8eccfa14426b09aa1c411fe983e3011dc820733",
-      "git_blob": "1cb9a24bec98d2013588e4307c9a6d09cb7aeb93",
-      "bytes": 38635
+      "sha256": "e5114f27a280573765a409201040808e2aa87bda232c46e11089758d5da0ebce",
+      "git_blob": "e78fd92fdc9625bd6629dd293af82d2ec097fb28",
+      "bytes": 41254
     },
     "scripts/check_ui_pr_gate_census.py": {
       "sha256": "c187b0019d8e8a6cc172eefb9f708b252b7c5349bab1b01234b004c2833c1496",

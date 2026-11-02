@@ -315,7 +315,13 @@ async def test_mounted_received_custody_blocks_completion_and_idle_timer_reclaim
                 case.host.call_from_thread,
                 case.host.app_instance._finish_first_send_warmup,
             )
-            await until(lambda: reference() is None, timeout=10)
+            # A prior run-settled timer can reclaim the cycle before this
+            # warmup request fires. Observe both outcomes within the same bound.
+            await until(
+                lambda: reference() is None
+                and ("refreeze", "first_send_preimport") in refreezer.actions,
+                timeout=10,
+            )
             assert ("refreeze", "first_send_preimport") in refreezer.actions
     finally:
         gc.unfreeze()

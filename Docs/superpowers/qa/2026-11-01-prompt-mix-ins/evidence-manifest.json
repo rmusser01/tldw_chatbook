@@ -1321,6 +1321,186 @@
       "git_blob": "a5e74199de0ceee4824cfe32466083ca4ffe4555",
       "bytes": 5836
     },
+    "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/ci-rebase/hosted-f0a/artifact-map.json": {
+      "sha256": "06a3e70920d339fe8956eea7d7e819be3ed9e4a5725bf45d98dcd318efbb28b4",
+      "git_blob": "8337a5d3722b6f622eec0c6b5233dc83279c645b",
+      "bytes": 10953
+    },
+    "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/ci-rebase/hosted-f0a/hosted-and-review/mixins-ci-41491553275.json": {
+      "sha256": "f9cea05db60cb215f1eb514dc0562d95c4d21388a68e281039028148cf667016",
+      "git_blob": "ce633835c69d1df1808d79b86cecd14b72550359",
+      "bytes": 5817
+    },
+    "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/ci-rebase/hosted-f0a/hosted-and-review/mixins-ci-41491553304.json": {
+      "sha256": "ab38e9b2e768f84d674bcfe26d6932099db6590c1675dc588239ddd8a2de27a3",
+      "git_blob": "d3ced094e877b85781a76d070f971b9b581b3852",
+      "bytes": 2590
+    },
+    "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/ci-rebase/hosted-f0a/hosted-and-review/mixins-ci-41491553350.json": {
+      "sha256": "96a41d3b0aed9fad2ac80af50f029865e66951c9a6a780736c5dc8d196a46a28",
+      "git_blob": "91009d8c32a77b137476d95917724637a3f393c6",
+      "bytes": 8746
+    },
+    "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/ci-rebase/hosted-f0a/hosted-and-review/mixins-ci-41491553423.json": {
+      "sha256": "1174417cc753ca78f8d88ab84d0ca175f7e3a53db5ce02963848d7e5481355ad",
+      "git_blob": "f2f8bc6525a3743e4db5dd16612e3fc84db4f448",
+      "bytes": 70359
+    },
+    "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/ci-rebase/hosted-f0a/hosted-and-review/mixins-ci-f0a-ui18.log.json": {
+      "sha256": "bc2c10f5439b11c551b0395bb26b042a1deab59b96fba017de5d052bd627f900",
+      "git_blob": "6c1fcff252e58b71e14abe595bdb498551120af0",
+      "bytes": 144710
+    },
+    "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/ci-rebase/hosted-f0a/hosted-and-review/mixins-pr3346-idle-refreeze-review.md": {
+      "sha256": "ad6e08cdc6c787addc2a8afbe2d5f3fff7862913830a98ecb78a767778f4ab9a",
+      "git_blob": "5b912271ad047acb45e89dd509b715de49f13ad9",
+      "bytes": 3478
+    },
+    "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/ci-rebase/hosted-f0a/idle-refreeze/baseline-format.txt.json": {
+      "sha256": "3782f6e89557781598e1494a1d8372b02bc7d3ca54b4d347bd8d803cc5f305cb",
+      "git_blob": "25192337f1d4d76437fe6ce19c5c3784fe1de5ae",
+      "bytes": 650
+    },
+    "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/ci-rebase/hosted-f0a/idle-refreeze/baseline.py": {
+      "sha256": "9c161611a38dcd7d5ece437d9aeb8e7b22b4377b932cf406bd9decf798eeffdb",
+      "git_blob": "36fe4dd48a37db3f89fb3f7fcc2231f1a221ef2c",
+      "bytes": 17225
+    },
+    "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/ci-rebase/hosted-f0a/idle-refreeze/current-format.txt.json": {
+      "sha256": "3a9c35ac641e30b992863b0e40d7bf58d92118690ad8cca9405cd5bc13e212a3",
+      "git_blob": "3af65d695152690c59d0f9c4216105c3eee8e761",
+      "bytes": 1094
+    },
+    "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/ci-rebase/hosted-f0a/idle-refreeze/diff-check.txt.json": {
+      "sha256": "caa590418ce41a328f1ec3e3d208f5aa9392b370dd7937b2b7a0904839b3d6bb",
+      "git_blob": "30847c646b98617d9653edc65c1c078c55cb5b5f",
+      "bytes": 110
+    },
+    "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/ci-rebase/hosted-f0a/idle-refreeze/final-diff.patch.json": {
+      "sha256": "5da7ee1eed609011312e33202e82ef901917ffa9c05d4a8e4ec4853d2b36810b",
+      "git_blob": "4cfb1a1230f5adba027bd6caa4ff7384be1c987d",
+      "bytes": 1129
+    },
+    "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/ci-rebase/hosted-f0a/idle-refreeze/final.py": {
+      "sha256": "6b579c6ace596b17a192731d32914a0f6ccd0c6f2e0c1bc91dc39dbf7e73a085",
+      "git_blob": "d40e53e15ffee9b438fe58b965201ec569ef1adf",
+      "bytes": 17505
+    },
+    "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/ci-rebase/hosted-f0a/idle-refreeze/hosted-red.log.json": {
+      "sha256": "bc2c10f5439b11c551b0395bb26b042a1deab59b96fba017de5d052bd627f900",
+      "git_blob": "6c1fcff252e58b71e14abe595bdb498551120af0",
+      "bytes": 144710
+    },
+    "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/ci-rebase/hosted-f0a/idle-refreeze/ordered-green.json": {
+      "sha256": "f0b8b8b056c696eda2b13b733d3d42e5781eabc4b65e2f61fdae3cb84fa2602e",
+      "git_blob": "ffc8c04b83ba464554cac2c28b963a916b6c6f56",
+      "bytes": 948
+    },
+    "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/ci-rebase/hosted-f0a/idle-refreeze/ordered-green.log.json": {
+      "sha256": "7bce085c7c5607e62c8d0f66d4f5da44a1d23c7ecf5454024590cdfc23e12cac",
+      "git_blob": "f361f187d02bf166c91570e8e64fc3a28fb1e176",
+      "bytes": 566
+    },
+    "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/ci-rebase/hosted-f0a/idle-refreeze/ordered-green.xml.json": {
+      "sha256": "52ba57ca885a84ce0af9e99f7cd5c306435ce77e09c5aaa9ca2c16a578f7c355",
+      "git_blob": "6968599bdbb0dd963b1fb3a25723d2b3cf6e7ade",
+      "bytes": 549
+    },
+    "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/ci-rebase/hosted-f0a/idle-refreeze/ordered-red.json": {
+      "sha256": "33f0e402d28360a61b728c21b63948afaa2986f98a27092fbe965e5152a0ba62",
+      "git_blob": "936da57570896c7168b6b30c976ab8b1c4b01542",
+      "bytes": 945
+    },
+    "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/ci-rebase/hosted-f0a/idle-refreeze/ordered-red.log.json": {
+      "sha256": "c8e64327c201e13b7e19abc20976da031cb16789e1be41a63d7b0b4263ee3e2b",
+      "git_blob": "ec019ab13abd8a94621a1812cd61801a036295cc",
+      "bytes": 34096
+    },
+    "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/ci-rebase/hosted-f0a/idle-refreeze/ordered-red.xml.json": {
+      "sha256": "b6e1b036ab6c540dd1511dc2e4268547b8242d0ff72f328dfb3bb7a31940af59",
+      "git_blob": "7c08878996c5a248c49ce0fd80cb2941f99d8d1d",
+      "bytes": 3661
+    },
+    "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/ci-rebase/hosted-f0a/idle-refreeze/ordinary-green.json": {
+      "sha256": "c79c0fe220fdf034aebb42a3c50683742b3cab4ee1e8acc1b3232592eb7bc986",
+      "git_blob": "38434c6b8cf72826e881ad9f58206be8cae2cc6c",
+      "bytes": 755
+    },
+    "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/ci-rebase/hosted-f0a/idle-refreeze/ordinary-green.log.json": {
+      "sha256": "f0c9a61c0feeaf51936e2ec83dc0bff5a17bb1f142f16f545d3543f733ea0e3f",
+      "git_blob": "6bab6181c6b901f918e2f3f184b6b8cad97ff2d7",
+      "bytes": 567
+    },
+    "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/ci-rebase/hosted-f0a/idle-refreeze/ordinary-green.xml.json": {
+      "sha256": "9cb58297f6a505ad087cc7018ab78313d2d59de2c100384e8811663b7ae8f579",
+      "git_blob": "e075a1b325b5403f8137b0277219943067f39074",
+      "bytes": 549
+    },
+    "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/ci-rebase/hosted-f0a/idle-refreeze/original-probe.py": {
+      "sha256": "f90786c58532b63b19a836b3316acc527b6f69fc5fafe8f76d1f79cd42b63cf6",
+      "git_blob": "31c8c9c48fcff6985756c1a50e7af8fff4c12866",
+      "bytes": 1728
+    },
+    "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/ci-rebase/hosted-f0a/idle-refreeze/original.json": {
+      "sha256": "90379f2799ebd77c79d773793534cfcd1f0a651b57906cb8d487a3e41ee16333",
+      "git_blob": "68ab4c60e7cd3dda96a83e22ff4768baa3bc40cb",
+      "bytes": 921
+    },
+    "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/ci-rebase/hosted-f0a/idle-refreeze/original.log.json": {
+      "sha256": "2c915fcec0e7692b292c618a8459eb58d61dce61253d4c2b6ae5ffd93c86e913",
+      "git_blob": "ea8cf07b4c0b027a96f3b3e2e9fc81a233ece923",
+      "bytes": 563
+    },
+    "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/ci-rebase/hosted-f0a/idle-refreeze/original.xml.json": {
+      "sha256": "1e1637b6bf659812945151b8723a24d568237481e951062c5790d4bf0554eb83",
+      "git_blob": "f15ad26d4fcef5b5784c2950f102e3fe6cd94e76",
+      "bytes": 551
+    },
+    "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/ci-rebase/hosted-f0a/idle-refreeze/probe.py": {
+      "sha256": "01680d00545ffaf767e1436da94ba2b727a55f22f5d11e87f025457e213462a5",
+      "git_blob": "125f82477ebda019c31ef44a0f012a39413676b4",
+      "bytes": 2512
+    },
+    "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/ci-rebase/hosted-f0a/idle-refreeze/report-files.json": {
+      "sha256": "3b02c6ff325d8a8b19c23216aaa5f6de7ba7d3e988b509030561e7612fee1dad",
+      "git_blob": "2d65534b61c203f99c7424c75396299d5818205b",
+      "bytes": 5139
+    },
+    "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/ci-rebase/hosted-f0a/idle-refreeze/report.md": {
+      "sha256": "237572b1a7d59eabf5daea823fb2dc54e70e09e363f24e7ef9a2920e74cc2ecf",
+      "git_blob": "359cb5c60cdabbb73d063e8da925e86a5bb03c38",
+      "bytes": 4638
+    },
+    "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/ci-rebase/hosted-f0a/idle-refreeze/run-unobserved.py": {
+      "sha256": "17bc3f8144f71c699f6e38249029c9cf0b8161b21ac2b9809fd265290b9806f4",
+      "git_blob": "960e8d9cc09a6a3f4396c6cfb2823a28eea8152e",
+      "bytes": 784
+    },
+    "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/ci-rebase/hosted-f0a/idle-refreeze/run.py": {
+      "sha256": "375c4390343f9b637326fcbaa0b69b406146ac580f982341c88f0dcfa7684f5b",
+      "git_blob": "7b49ab99caa524c4ae8336e15f5553d3e414c251",
+      "bytes": 797
+    },
+    "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/ci-rebase/hosted-f0a/idle-refreeze/static-proof.json": {
+      "sha256": "9e1077e32d7794d22358b4a79a6f8fe7755f3b45a10b20dc08fbd5b45ef09452",
+      "git_blob": "a1f073b67e532bf56c752a4daa4c62e34bf7b1cd",
+      "bytes": 291
+    },
+    "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/ci-rebase/hosted-f0a/idle-refreeze/timeline.jsonl.json": {
+      "sha256": "d8f8315ddf783676fb4cd6682c6150a0923897f9d294828eae6ec40f6597b79e",
+      "git_blob": "0db4ce83af3a85607f171b27dbdd1d26d82e0c0a",
+      "bytes": 12671
+    },
+    "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/ci-rebase/hosted-f0a/redaction-proof.json": {
+      "sha256": "9aa0c5bc8de95298476c99a6e06d718ed439fa743ce1032a539b22fb3a0cddda",
+      "git_blob": "0bcc38578a57db75404c5995ee5b7460d6026d3f",
+      "bytes": 1588
+    },
+    "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/ci-rebase/hosted-f0a/summary.md": {
+      "sha256": "e6f4e521d064cd44af5cf6b2b65f086ac7986b1984586868deea2c7732f2d9db",
+      "git_blob": "c7264127a136db40e5a09ca1cc00de1d287f62e1",
+      "bytes": 2988
+    },
     "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/ci-rebase/investigation-context.json": {
       "sha256": "d1b312c59ffbd9dd33d4bb808fd5c4f167a5278c15b5ae620d4a2d828f5419b7",
       "git_blob": "3ed47fb2d77d927bc8b5cfd6663ad6519e1615f8",
@@ -5087,8 +5267,8 @@
       "bytes": 67218
     },
     "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/product-source-manifest.json": {
-      "sha256": "200035507fe716927866d65c983f5c26d9e6bc51ad602ccd9c15450b153ce78d",
-      "git_blob": "e2c807acf3e1561990acc98536aaec0276a87b89",
+      "sha256": "691908232dabb566f7a782d0432aa335183a159c4ed6c97c90a918d203fb7e7b",
+      "git_blob": "5002d9d1db356b51353f0ed2d3dafb9b6994d579",
       "bytes": 72677
     },
     "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/rereview-fixes/controls1.json": {
@@ -6352,9 +6532,9 @@
       "bytes": 141048
     },
     "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/verification.md": {
-      "sha256": "ba40ad8de17083cfc8f5f8e1e179f2fada0394011c1448e3426673fd3fefbb79",
-      "git_blob": "fd2ec8df17cb4a3cda7de7a79030e0a82360c145",
-      "bytes": 24158
+      "sha256": "c8d7ae24014d03964e449e6e99ef55934caff044419d7f43fe99bc8fb2a800ef",
+      "git_blob": "01431b204b2fba9c1e90d94ce6ee88ba23a9783b",
+      "bytes": 24380
     },
     "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/verify_evidence.py": {
       "sha256": "96a565a5f79515602adfaf0020ba416c8b460575884032c2c53af7b31b4e565a",
