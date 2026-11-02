@@ -1131,6 +1131,21 @@ class ChatbookImporter:
             )
             logger.info(f"Importing chatbook from {chatbook_path}")
 
+            # 'merge' has no implementation for any content type; it must
+            # be refused up front, before any item is written, rather than
+            # silently falling through to create (or being rewritten to
+            # rename, as the resolver used to do) -- TASK-38594.
+            if conflict_resolution == ConflictResolution.MERGE:
+                error_msg = (
+                    "Conflict resolution strategy 'merge' is not supported by "
+                    "this importer; re-import with skip, rename or replace."
+                )
+                status.add_error(error_msg)
+                logger.error(
+                    "ChatbookImporter.import_chatbook: {}", error_msg
+                )
+                return False, error_msg
+
             if chatbook_path.suffix != ".zip":
                 error_msg = "Unsupported chatbook format. Only ZIP files are supported."
                 status.add_error(error_msg)
@@ -1526,6 +1541,22 @@ class ChatbookImporter:
                             conv_name = self._generate_unique_name(conv_name, db)
                             logger.debug(
                                 f"ChatbookImporter._import_conversations: Renamed conversation from '{old_name}' to '{conv_name}'"
+                            )
+                        elif resolution == ConflictResolution.REPLACE:
+                            # Replace = retire the conflicting conversation and
+                            # let the import below create its own. Soft delete
+                            # keeps the old conversation recoverable in the
+                            # trash (this DB layer has no hard deletes) while
+                            # guaranteeing exactly one ACTIVE conversation
+                            # holds the title afterwards (TASK-38594; the old
+                            # fall-through created a duplicate-titled one).
+                            db.soft_delete_conversation(
+                                str(existing["id"]),
+                                int(existing["version"]),
+                            )
+                            logger.debug(
+                                "ChatbookImporter._import_conversations: "
+                                f"Soft-deleted conversation {existing['id']} for replacement"
                             )
 
                     # Create conversation
@@ -2727,6 +2758,20 @@ class ChatbookImporter:
                         continue
                     elif resolution == ConflictResolution.RENAME:
                         note_title = self._generate_unique_note_title(note_title, db)
+                    elif resolution == ConflictResolution.REPLACE:
+                        # Update-in-place through the versioned update API:
+                        # the existing note keeps its id and versioning
+                        # semantics, and no duplicate-titled row is created
+                        # (TASK-38594 -- add_note has no title uniqueness,
+                        # so the old fall-through duplicated the note).
+                        db.update_note(
+                            str(existing["id"]),
+                            {"title": note_title, "content": note_content},
+                            expected_version=int(existing["version"]),
+                        )
+                        status.record_success(ContentType.NOTE)
+                        logger.debug(f"Replaced note in place: {note_title}")
+                        continue
 
                 # Create note. Keywords are not a notes-table column: they
                 # are re-linked through the ordinary note keyword write path
@@ -3014,6 +3059,8 @@ class ChatbookImporter:
                         logger.debug(
                             f"ChatbookImporter._import_characters: Renamed character from '{old_name}' to '{char_name}'"
                         )
+                else:
+                    resolution = None
 
                 # Create character with V2 formatted data
                 # Map V2 fields to database fields
@@ -3058,6 +3105,23 @@ class ChatbookImporter:
                         card_data["image"] = base64.b64decode(image, validate=True)
                     except (binascii.Error, ValueError):
                         raise ValueError("Invalid base64 character image") from None
+
+                if existing and resolution == ConflictResolution.REPLACE:
+                    # Replace the existing card through the versioned update
+                    # API. The plain create path used to be reached here and
+                    # died on the unique name constraint (ConflictError ->
+                    # item recorded as failed); update-in-place keeps the
+                    # card's id and bumps its version instead (TASK-38594).
+                    db.update_character_card(
+                        int(existing["id"]),
+                        card_data,
+                        expected_version=int(existing["version"]),
+                    )
+                    status.record_success(ContentType.CHARACTER)
+                    logger.debug(
+                        f"ChatbookImporter._import_characters: Replaced character in place: {char_name}"
+                    )
+                    continue
 
                 new_char_id = db.add_character_card(card_data)
                 logger.debug(

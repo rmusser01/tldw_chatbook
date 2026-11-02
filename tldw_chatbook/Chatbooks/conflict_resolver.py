@@ -6,11 +6,17 @@ Conflict Resolver
 -----------------
 
 Handles conflict resolution when importing content that may already exist.
+
+Supported strategies: ASK (interactive), SKIP, RENAME and REPLACE. MERGE is
+deliberately NOT a supported strategy: it was never implemented anywhere
+(the resolver used to rewrite it to RENAME without a word, and the dead
+``merge_notes`` helper was reachable by no caller), so the resolver now
+rejects it loudly and ``ChatbookImporter.import_chatbook`` refuses the
+strategy up front, before any item is written (TASK-38594).
 """
 
 from enum import Enum
 from typing import Dict, Any, Optional, Callable
-from tldw_chatbook.Utils.timestamps import utc_now_iso
 
 
 _PREVIEW_CHARS = 100
@@ -35,7 +41,21 @@ class ConflictResolution(Enum):
     SKIP = "skip"  # Skip conflicting items
     RENAME = "rename"  # Rename imported items
     REPLACE = "replace"  # Replace existing items
-    MERGE = "merge"  # Merge with existing (where applicable)
+    MERGE = "merge"  # NOT IMPLEMENTED: rejected loudly by the importer
+
+
+def _reject_merge(strategy: ConflictResolution) -> None:
+    """Refuse the never-implemented merge strategy instead of substituting.
+
+    The resolver used to quietly rewrite MERGE to RENAME "for now"; a
+    strategy the user picked that the code does not honour must be an
+    error, never a silent substitute (TASK-38594).
+    """
+    if strategy == ConflictResolution.MERGE:
+        raise ValueError(
+            "Conflict resolution strategy 'merge' is not implemented; "
+            "use skip, rename or replace."
+        )
 
 
 class ConflictResolver:
@@ -66,6 +86,9 @@ class ConflictResolver:
 
         Returns:
             Resolution to apply
+
+        Raises:
+            ValueError: If ``default_resolution`` is MERGE (unimplemented).
         """
         if default_resolution == ConflictResolution.ASK:
             if not self.ask_callback:
@@ -83,11 +106,7 @@ class ConflictResolver:
 
             return self.ask_callback(conflict_info)
 
-        # Apply default resolution
-        if default_resolution == ConflictResolution.MERGE:
-            # Can't really merge conversations - treat as rename
-            return ConflictResolution.RENAME
-
+        _reject_merge(default_resolution)
         return default_resolution
 
     def resolve_note_conflict(
@@ -106,6 +125,9 @@ class ConflictResolver:
 
         Returns:
             Resolution to apply
+
+        Raises:
+            ValueError: If ``default_resolution`` is MERGE (unimplemented).
         """
         if default_resolution == ConflictResolution.ASK:
             if not self.ask_callback:
@@ -123,12 +145,7 @@ class ConflictResolver:
 
             return self.ask_callback(conflict_info)
 
-        # Apply default resolution
-        if default_resolution == ConflictResolution.MERGE:
-            # For notes, merge could mean appending content
-            # But for now, treat as rename
-            return ConflictResolution.RENAME
-
+        _reject_merge(default_resolution)
         return default_resolution
 
     def resolve_character_conflict(
@@ -147,6 +164,9 @@ class ConflictResolver:
 
         Returns:
             Resolution to apply
+
+        Raises:
+            ValueError: If ``default_resolution`` is MERGE (unimplemented).
         """
         if default_resolution == ConflictResolution.ASK:
             if not self.ask_callback:
@@ -163,7 +183,7 @@ class ConflictResolver:
 
             return self.ask_callback(conflict_info)
 
-        # Apply default resolution
+        _reject_merge(default_resolution)
         return default_resolution
 
     def resolve_prompt_conflict(
@@ -182,6 +202,9 @@ class ConflictResolver:
 
         Returns:
             Resolution to apply
+
+        Raises:
+            ValueError: If ``default_resolution`` is MERGE (unimplemented).
         """
         if default_resolution == ConflictResolution.ASK:
             if not self.ask_callback:
@@ -196,43 +219,5 @@ class ConflictResolver:
 
             return self.ask_callback(conflict_info)
 
-        # Apply default resolution
+        _reject_merge(default_resolution)
         return default_resolution
-
-    def merge_notes(
-        self, existing: Dict[str, Any], incoming: Dict[str, Any]
-    ) -> Dict[str, Any]:
-        """
-        Merge two notes together.
-
-        Args:
-            existing: Existing note data
-            incoming: Incoming note data
-
-        Returns:
-            Merged note data
-        """
-        # Simple merge strategy: append content with separator
-        merged = existing.copy()
-
-        # The separator is baked into the user's note content permanently, so
-        # it must be an unambiguous instant, not the merging machine's local
-        # clock (tier-2 review S17 P3).
-        separator = f"\n\n---\n[Imported from chatbook on {utc_now_iso()}]\n\n"
-
-        merged["content"] = (
-            existing.get("content", "") + separator + incoming.get("content", "")
-        )
-        merged["updated_at"] = utc_now_iso()
-
-        # Merge tags
-        existing_tags = (
-            set(existing.get("keywords", "").split(","))
-            if existing.get("keywords")
-            else set()
-        )
-        incoming_tags = set(incoming.get("tags", []))
-        merged_tags = existing_tags.union(incoming_tags)
-        merged["keywords"] = ",".join(sorted(merged_tags))
-
-        return merged
