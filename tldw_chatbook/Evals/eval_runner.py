@@ -1435,6 +1435,10 @@ class BaseEvalRunner(ABC):
         valid_chat_params = {
             "minp",
             "topk",
+            "stop",  # TASK-38587: chat_api_call accepts `stop` and
+            # PROVIDER_PARAM_MAP maps it for every provider; dropping it
+            # here silently discarded stop_sequences (a None value is
+            # harmless — project_chat_handler_kwargs skips None params).
             "query_system_prompt",
             "user_uploaded_images",
             "media_content",
@@ -2075,6 +2079,39 @@ class QuestionAnswerRunner(BaseEvalRunner):
         return "\n".join(prompt_parts)
 
 
+class ChoiceExtractionError(EvaluationError):
+    """Model response matched none of the listed choices (TASK-38587).
+
+    ``_extract_choice`` used to fabricate choice A ("Default to first
+    choice if nothing matches") whenever extraction failed on a verbose
+    reply, biasing accuracy. It now returns a ``None`` sentinel, and the
+    caller raises this typed, non-retryable error so the sample flows into
+    the existing error branch (``metrics={"error": 1.0}`` plus error_info)
+    — the run tally already counts that shape, and accuracy is never
+    computed for the sample.
+    """
+
+    def __init__(self, response: str):
+        snippet = response.strip()[:200]
+        super().__init__(
+            ErrorContext(
+                category=ErrorCategory.VALIDATION,
+                severity=ErrorSeverity.WARNING,
+                message="Could not extract a choice from the model response",
+                details=(
+                    "Response matched none of the listed choices "
+                    f"(response: {snippet!r})"
+                ),
+                suggestion=(
+                    "Use a prompt/format that elicits a choice letter or "
+                    "the exact choice text"
+                ),
+                is_retryable=False,
+                error_code="CHOICE_EXTRACTION_FAILED",
+            )
+        )
+
+
 class ClassificationRunner(BaseEvalRunner):
     """Runner for classification/multiple-choice tasks."""
 
@@ -2133,6 +2170,14 @@ class ClassificationRunner(BaseEvalRunner):
 
             # Extract choice from response
             predicted_choice = self._extract_choice(response, sample.choices)
+
+            # TASK-38587: None means no choice could be extracted. Raise a
+            # typed, non-retryable error so the sample becomes an ERROR
+            # sample (metrics={"error": 1.0}) via the except branch below —
+            # the existing tally counts it, and accuracy is never computed,
+            # so failed extraction cannot masquerade as choice A.
+            if predicted_choice is None:
+                raise ChoiceExtractionError(response)
 
             # Calculate metrics
             metrics = self.calculate_metrics(
@@ -2272,8 +2317,16 @@ class ClassificationRunner(BaseEvalRunner):
 
         return "\n".join(prompt_parts)
 
-    def _extract_choice(self, response: str, choices: List[str]) -> str:
-        """Extract the chosen answer from model response."""
+    def _extract_choice(
+        self, response: str, choices: List[str]
+    ) -> Optional[str]:
+        """Extract the chosen answer from model response.
+
+        Returns None when ``choices`` is non-empty but the response matches
+        none of them (TASK-38587) — previously this fabricated choice A.
+        With no choices configured the stripped response is the free-text
+        prediction and is returned unchanged.
+        """
         if not choices:
             return response.strip()
 
@@ -2302,37 +2355,23 @@ class ClassificationRunner(BaseEvalRunner):
             if choice.lower() in response.lower():
                 return choice
 
-        # Default to first choice if nothing matches
-        return choices[0] if choices else response.strip()
+        # Extraction failed: return the None sentinel instead of
+        # fabricating the first choice (TASK-38587).
+        return None
 
     async def _generate_response(self, prompt: str) -> str:
         """Generate response from LLM for classification."""
         generation_start = time.time()
         try:
-            # Prepare the message payload
-            messages = [{"role": "user", "content": prompt}]
-
-            # Prepare call kwargs
-            call_kwargs = {
-                "input_data": messages,
-                "model": self.model_id,
-                "api_key": self.api_key,
-            }
-
             # Add generation parameters
+            # (TASK-38587: the call_kwargs dict built here was dead —
+            # _call_llm re-derives every parameter itself.)
             config = self.model_config.copy()
             config.update(self.task_config.generation_kwargs)
 
             # For classification, we usually want shorter responses
             config.setdefault("max_tokens", 10)
             config.setdefault("temperature", 0.0)  # More deterministic
-
-            if "temperature" in config or "temp" in config:
-                call_kwargs["temp"] = config.get("temperature", config.get("temp", 0.0))
-            if "max_tokens" in config:
-                call_kwargs["max_tokens"] = config.get("max_tokens", 10)
-            if "top_p" in config or "maxp" in config:
-                call_kwargs["maxp"] = config.get("top_p", config.get("maxp"))
 
             # Call LLM using the unified interface
             response = await self._call_llm(
@@ -2641,32 +2680,15 @@ class GenerationRunner(BaseEvalRunner):
     async def _generate_response(self, prompt: str) -> str:
         """Generate response from LLM for text generation."""
         try:
-            # Prepare the message payload
-            messages = [{"role": "user", "content": prompt}]
-
-            # Prepare call kwargs
-            call_kwargs = {
-                "input_data": messages,
-                "model": self.model_id,
-                "api_key": self.api_key,
-            }
-
             # Add generation parameters
+            # (TASK-38587: the call_kwargs dict built here was dead —
+            # _call_llm re-derives every parameter itself.)
             config = self.model_config.copy()
             config.update(self.task_config.generation_kwargs)
 
             # Set stop sequences if specified
             if self.task_config.stop_sequences:
                 config["stop"] = self.task_config.stop_sequences
-
-            if "temperature" in config or "temp" in config:
-                call_kwargs["temp"] = config.get("temperature", config.get("temp"))
-            if "max_tokens" in config:
-                call_kwargs["max_tokens"] = config.get("max_tokens")
-            if "top_p" in config or "maxp" in config:
-                call_kwargs["maxp"] = config.get("top_p", config.get("maxp"))
-            if "stop" in config:
-                call_kwargs["stop"] = config.get("stop")
 
             # Call LLM using the unified interface
             response = await self._call_llm(
