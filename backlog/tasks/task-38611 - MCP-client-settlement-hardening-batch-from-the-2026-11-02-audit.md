@@ -1,7 +1,7 @@
 ---
 id: TASK-38611
 title: MCP client settlement hardening batch from the 2026-11-02 audit
-status: In Progress
+status: Done
 created_date: 2026-11-02 14:30
 labels:
 - hardening
