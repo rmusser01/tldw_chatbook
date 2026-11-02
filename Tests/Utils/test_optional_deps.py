@@ -624,6 +624,112 @@ def test_book_ingestion_lib_import_handling():
             DEPENDENCIES_AVAILABLE["ebook_processing"] = original_ebook_available
 
 
+def _install_broken_import(monkeypatch, broken_name: str, exc: BaseException) -> None:
+    """Make ``__import__`` raise ``exc`` for ``broken_name`` only.
+
+    Everything else delegates to the real import machinery, so surrounding
+    code keeps working.
+    """
+    import builtins
+
+    real_import = builtins.__import__
+
+    def fake_import(name, *args, **kwargs):
+        if name == broken_name:
+            raise exc
+        return real_import(name, *args, **kwargs)
+
+    monkeypatch.setattr(builtins, "__import__", fake_import)
+
+
+def test_check_dependency_survives_broken_installed_dependency(monkeypatch):
+    """TASK-38597: an installed-but-broken optional (failed native dlopen)
+    must degrade to feature disabled, not crash eager boot."""
+    import tldw_chatbook.Utils.optional_deps as optional_deps
+    from tldw_chatbook.Utils.optional_deps import DEPENDENCIES_AVAILABLE
+
+    test_key = "test_broken_native_dep"
+    monkeypatch.delitem(DEPENDENCIES_AVAILABLE, test_key, raising=False)
+
+    _install_broken_import(
+        monkeypatch,
+        "totally_broken_native_module_for_testing",
+        OSError("dlopen: no suitable image found"),
+    )
+
+    result = optional_deps.check_dependency(
+        "totally_broken_native_module_for_testing", test_key
+    )
+
+    assert result is False
+    assert DEPENDENCIES_AVAILABLE[test_key] is False
+
+
+def test_check_dependency_missing_vs_broken_both_degrade(monkeypatch):
+    """Missing and broken both record unavailable; neither raises."""
+    import tldw_chatbook.Utils.optional_deps as optional_deps
+    from tldw_chatbook.Utils.optional_deps import DEPENDENCIES_AVAILABLE
+
+    monkeypatch.delitem(DEPENDENCIES_AVAILABLE, "test_missing_dep_key", raising=False)
+    monkeypatch.delitem(DEPENDENCIES_AVAILABLE, "test_broken_dep_key", raising=False)
+
+    missing = optional_deps.check_dependency(
+        "nonexistent_module_for_testing", "test_missing_dep_key"
+    )
+    _install_broken_import(
+        monkeypatch,
+        "another_broken_native_module_for_testing",
+        OSError("protobuf mismatch"),
+    )
+    broken = optional_deps.check_dependency(
+        "another_broken_native_module_for_testing", "test_broken_dep_key"
+    )
+
+    assert missing is False
+    assert broken is False
+
+
+def test_eager_initialize_survives_broken_torch(monkeypatch):
+    """TASK-38597: the eager boot path completes even when a checked
+    optional dependency is installed but its import fails with OSError."""
+    import tldw_chatbook.Utils.optional_deps as optional_deps
+    from tldw_chatbook.Utils.optional_deps import DEPENDENCIES_AVAILABLE
+
+    # Initialize runs many group checkers that import heavy real packages;
+    # they are not the crash vector under test -- check_dependency is.
+    for name in (
+        "check_embeddings_rag_deps",
+        "check_websearch_deps",
+        "check_chunker_deps",
+        "check_audio_processing_deps",
+        "check_video_processing_deps",
+        "check_pdf_processing_deps",
+        "check_ebook_processing_deps",
+        "check_ocr_deps",
+        "check_local_llm_deps",
+        "check_tts_deps",
+        "check_stt_deps",
+        "check_image_processing_deps",
+        "check_mcp_deps",
+        "check_subscriptions_deps",
+        "check_web_server_deps",
+    ):
+        monkeypatch.setattr(optional_deps, name, lambda *a, **k: False)
+
+    original = DEPENDENCIES_AVAILABLE.get("torch")
+    _install_broken_import(
+        monkeypatch, "torch", OSError("dlopen: library not loaded")
+    )
+    try:
+        # Before the fix this raised OSError out of check_dependency("torch")
+        optional_deps.initialize_dependency_checks()
+
+        assert DEPENDENCIES_AVAILABLE["torch"] is False
+    finally:
+        if original is not None:
+            DEPENDENCIES_AVAILABLE["torch"] = original
+
+
 if __name__ == "__main__":
     pytest.main([__file__])
 
