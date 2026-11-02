@@ -1,0 +1,41 @@
+{
+  "base": "62a169f906508ed02bd7546ab278d916638d1607",
+  "head": "79e659dcde6f5360edb0070f9d184713bd8584d1",
+  "argv": [
+    "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python",
+    "-m",
+    "pytest",
+    "Tests/UI/test_console_session_tab_close.py::test_session_close_race_geometry_and_fleet_journeys",
+    "-q",
+    "--tb=short",
+    "-p",
+    "no:cacheprovider",
+    "--basetemp=/private/tmp/mixins-ui4-close-current"
+  ],
+  "cwd": "/Users/macbook-dev/.codex/worktrees/prompt-mix-ins/tldw_chatbook",
+  "exit_code": 1,
+  "child_failure_messages": [
+    "assert 'Reopened Progress retry' in 'Couldn\\'t close tab \"Tab 2\": Close cleanup needs recovery. Restart the app before closing this tab.'"
+  ],
+  "comparison": {
+    "Tests/UI/test_console_session_tab_close.py": {
+      "dev_sha256": "642d5b8ce69f6c3fed7e34396258157d0e91532f1e1a4dc23c96aa97a7d1f347",
+      "current_sha256": "642d5b8ce69f6c3fed7e34396258157d0e91532f1e1a4dc23c96aa97a7d1f347",
+      "identical": true
+    },
+    "tldw_chatbook/UI/Console_Modules/loss_inventory.py": {
+      "dev_sha256": "6ead0aea7c659ece9d0c359ac17954fb098cbd15f1d4df1e9e3e7d42c1d6d424",
+      "current_sha256": "6ead0aea7c659ece9d0c359ac17954fb098cbd15f1d4df1e9e3e7d42c1d6d424",
+      "identical": true
+    },
+    "tldw_chatbook/UI/Console_Modules/session.py": {
+      "close_label_methods_identical": true,
+      "names": [
+        "_notify_session_close_failure",
+        "_report_session_close_failure",
+        "_session_close_display_title"
+      ]
+    }
+  },
+  "qualification": "Exact current private-profile runtime failure; dev causality checked by identical entire test and loss-inventory files plus exact close-label methods. No dev runtime run."
+}

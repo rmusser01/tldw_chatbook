@@ -1241,7 +1241,7 @@ SmartContentTree Tree > .selected-node {
     color: $ds-focus-fg;
 }
 
-#setup-provider-choice { max-height: 40vh; }
+#setup-provider-choice { max-height: $ds-setup-provider-list-max-height; }
 .setup-provider-filter { width: $ds-width-fill; }
 .setup-provider-count { width: auto; margin-left: $ds-space-2; }
 .setup-no-server { height: auto; }

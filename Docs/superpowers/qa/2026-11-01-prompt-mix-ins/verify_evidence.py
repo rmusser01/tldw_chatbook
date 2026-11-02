@@ -37,7 +37,7 @@ for manifest, commit in (
         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
     ).returncode == 0
     if not available:
-        print(f"Historical source verification UNAVAILABLE: {commit} ({len(records)} hashes); historical commit object is absent (the port commit belongs to focused history; earlier mixed commits do not).")
+        print(f"Historical source verification UNAVAILABLE: {commit} ({len(records)} hashes); historical commit object is absent (historical objects may be absent after a rebase or shallow checkout).")
         continue
     for path, digest in records.items():
         data = subprocess.check_output(["git", "show", f"{commit}:{path}"], cwd=root)

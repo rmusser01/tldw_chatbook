@@ -275,6 +275,7 @@ $ds-messages-scroll-cap: 50vh;
 
 $ds-note-folder-picker-max-height: 50vh;
 $ds-messages-text-scroll-cap: 40vh;
+$ds-setup-provider-list-max-height: 40vh;
 
 $ds-console-frame: #6f7782;
 
@@ -6087,72 +6088,6 @@ PersonalContextReviewModal .personal-context-review-row Input.personal-context-r
 
 
 
-#console-style-picker-modal {
-    width: $ds-size-76;
-    max-width: $ds-percent-95;
-    height: auto;
-    max-height: $ds-percent-85;
-    border: round $ds-grid-line;
-    background: $ds-surface-panel;
-    padding: $ds-space-1 $ds-space-2;
-}
-
-#console-style-picker-filter {
-    height: $ds-size-3;
-    min-height: $ds-size-3;
-    margin: $ds-space-0 $ds-space-0 $ds-space-1 $ds-space-0;
-    border: tall $ds-grid-line;
-    background: $ds-surface-raised;
-    color: $ds-text-primary;
-}
-
-#console-style-picker-filter:focus {
-    border: tall $ds-input-focus-accent;
-    outline: none;
-    background: $ds-input-focus-bg;
-    color: $ds-text-primary;
-}
-
-#console-style-picker-results {
-    height: auto;
-    max-height: $ds-size-20;
-    min-height: $ds-size-0;
-    overflow-y: auto;
-    overflow-x: hidden;
-    scrollbar-size: 1 1;
-}
-
-.console-style-picker-row {
-    width: $ds-width-full;
-    height: auto;
-    min-height: $ds-size-3;
-    margin: $ds-space-0 $ds-space-0 $ds-space-1 $ds-space-0;
-    border: tall $ds-grid-line;
-    background: $ds-surface-raised;
-    color: $ds-text-primary;
-}
-
-.console-style-picker-row-highlighted {
-    border: tall $ds-action-focus;
-    background: $ds-input-focus-bg;
-    text-style: bold;
-}
-
-#console-style-picker-empty {
-    height: auto;
-    margin: $ds-space-1 $ds-space-0;
-    color: $ds-text-muted;
-}
-
-#console-style-picker-detail {
-    height: auto;
-    margin: $ds-space-1 $ds-space-0 $ds-space-0 $ds-space-0;
-    padding: $ds-space-0 $ds-space-1;
-    border: tall $ds-grid-line;
-    background: $ds-surface-raised;
-    color: $ds-text-muted;
-}
-
 
 .console-dictation-unavailable {
     text-opacity: 60%;
@@ -10314,273 +10249,6 @@ ChatScreen.-focus #console-workbench-header {
     color: $ds-text-muted;
 }
 
-#console-prompts-modal {
-    width: $ds-percent-90;
-    max-width: $ds-size-104;
-    height: $ds-percent-90;
-    max-height: $ds-size-44;
-    min-width: $ds-size-40;
-    min-height: $ds-size-18;
-    border: tall $ds-grid-line;
-    background: $ds-surface-panel;
-    padding: $ds-space-1 $ds-space-2;
-}
-
-#console-prompts-header {
-    width: $ds-width-full;
-    height: auto;
-    min-height: $ds-size-2;
-    border-bottom: solid $ds-grid-line;
-    margin: $ds-space-0 $ds-space-0 $ds-space-1 $ds-space-0;
-}
-
-#console-prompts-title {
-    height: $ds-size-1;
-    color: $ds-text-primary;
-    text-style: bold;
-}
-
-#console-prompts-location,
-#console-prompts-model-status,
-#console-prompts-browse-status {
-    width: $ds-width-full;
-    height: auto;
-    min-height: $ds-size-1;
-    color: $ds-text-muted;
-}
-
-#console-prompts-body,
-#console-prompts-browse {
-    width: $ds-width-full;
-    height: $ds-height-fill;
-    min-height: $ds-size-0;
-}
-
-
-#console-prompts-editor {
-    height: $ds-height-fill;
-    min-height: $ds-size-0;
-}
-
-.console-prompts-primary-action {
-    width: $ds-width-full;
-    height: $ds-size-3;
-    min-height: $ds-size-3;
-    border: none;
-    background: $ds-action-focus;
-    color: $ds-text-primary;
-    text-style: bold;
-}
-
-.console-prompts-primary-action:focus,
-#console-prompts-modal Button:focus {
-    outline: heavy $ds-active-fg;
-}
-
-.console-prompts-primary-action:disabled,
-#console-prompts-modal Button:disabled {
-    background: $surface-darken-1;
-    color: $ds-text-disabled;
-}
-
-#console-prompts-browse-controls {
-    width: $ds-width-full;
-    height: $ds-size-3;
-    min-height: $ds-size-3;
-    margin: $ds-space-1 $ds-space-0 $ds-space-0 $ds-space-0;
-}
-
-#console-prompts-source {
-    width: $ds-size-22;
-    min-width: $ds-size-18;
-    height: $ds-size-3;
-    border: none;
-    border-left: solid $ds-grid-line;
-    background: $surface-darken-1;
-}
-
-#console-prompts-search {
-    width: $ds-width-fill;
-    min-width: $ds-size-12;
-    height: $ds-size-3;
-    border: none;
-    border-left: solid $ds-grid-line;
-    background: $surface-darken-1;
-}
-
-#console-prompts-source:focus,
-#console-prompts-search:focus {
-    border-left: thick $ds-active-fg;
-    background: $ds-focus-bg;
-    text-style: bold;
-}
-
-#console-prompts-retry {
-    width: auto;
-    min-width: $ds-size-8;
-    height: $ds-size-3;
-    border: none;
-    background: $ds-surface-raised;
-}
-
-#console-prompts-results {
-    width: $ds-width-full;
-    height: $ds-height-fill;
-    min-height: $ds-size-4;
-    margin: $ds-space-1 $ds-space-0 $ds-space-0 $ds-space-0;
-    border-top: solid $ds-grid-line;
-    border-bottom: solid $ds-grid-line;
-    overflow-y: auto;
-    overflow-x: hidden;
-    scrollbar-size: 1 1;
-    scrollbar-background: $ds-surface-panel;
-    scrollbar-color: $ds-grid-line;
-    scrollbar-color-active: $ds-action-focus;
-}
-
-#console-prompts-result-list {
-    width: $ds-width-full;
-    height: auto;
-}
-
-.console-prompts-result {
-    width: $ds-width-full;
-    height: auto;
-    min-height: $ds-size-3;
-    border: none;
-    border-bottom: solid $ds-grid-line;
-    background: $ds-surface-panel;
-    color: $ds-text-primary;
-    text-align: left;
-    content-align: left middle;
-}
-
-.console-prompts-result:hover,
-.console-prompts-result:focus {
-    background: $ds-focus-bg;
-}
-
-#console-prompts-pagination,
-#console-prompts-footer {
-    width: $ds-width-full;
-    height: $ds-size-3;
-    min-height: $ds-size-3;
-    align: right middle;
-}
-
-#console-prompts-page {
-    width: $ds-width-fill;
-    min-width: $ds-size-12;
-    height: $ds-size-3;
-    content-align: center middle;
-    color: $ds-text-muted;
-}
-
-#console-prompts-pagination Button,
-#console-prompts-footer Button,
-#console-prompts-improve-mode Button,
-#console-prompts-convert {
-    width: auto;
-    min-width: $ds-size-8;
-    height: $ds-size-3;
-    border: none;
-    background: $ds-surface-raised;
-    color: $ds-text-primary;
-}
-
-#console-prompts-footer {
-    border-top: solid $ds-grid-line;
-}
-
-#console-prompts-dirty-guard {
-    display: none;
-    width: $ds-width-full;
-    height: auto;
-    padding: $ds-space-1;
-    border: round $ds-status-warning;
-    background: $ds-status-warning 10%;
-    color: $ds-text-primary;
-}
-
-#console-prompts-dirty-guard.visible {
-    display: block;
-}
-
-#console-prompts-compatibility {
-    width: $ds-width-full;
-    height: auto;
-    min-height: $ds-size-2;
-    color: $ds-status-warning;
-}
-
-#console-prompts-compat-system,
-#console-prompts-compat-user {
-    width: $ds-width-full;
-    height: $ds-height-fill;
-    min-height: $ds-size-3;
-    border: round $ds-grid-line;
-    background: $surface-darken-1;
-}
-
-#console-prompts-improve-mode,
-#console-prompts-recipe-mode {
-    width: $ds-width-full;
-    height: $ds-height-fill;
-    min-height: $ds-size-0;
-}
-
-#console-prompts-improve-mode Button,
-#console-prompts-recipe-mode Button {
-    width: $ds-width-full;
-    margin: $ds-space-1 $ds-space-0 $ds-space-0 $ds-space-0;
-}
-
-#console-prompts-recipe-outcome-description,
-#console-prompts-recipe-saved-description,
-#console-prompts-recipe-blank-description {
-    width: $ds-width-full;
-    height: auto;
-    padding: $ds-space-0 $ds-space-1;
-    color: $ds-text-muted;
-}
-
-#console-prompts-recipe-save-confirmation-panel {
-    display: none;
-    width: $ds-width-full;
-    height: auto;
-    padding: $ds-space-0 $ds-space-1 $ds-space-1 $ds-space-1;
-    border: round $ds-status-ready;
-    background: $ds-status-ready 8%;
-}
-
-#console-prompts-recipe-save-confirmation {
-    width: $ds-width-full;
-    height: auto;
-    color: $ds-text-primary;
-}
-
-#console-prompts-open-saved-recipe {
-    width: $ds-width-full;
-    height: $ds-size-3;
-}
-
-ConsolePromptsModal.-narrow #console-prompts-modal {
-    width: $ds-percent-96;
-    height: $ds-percent-96;
-    padding: $ds-space-0 $ds-space-1;
-}
-
-ConsolePromptsModal.-narrow #console-prompts-browse-controls {
-    layout: vertical;
-    height: $ds-size-6;
-    min-height: $ds-size-6;
-}
-
-ConsolePromptsModal.-narrow #console-prompts-source,
-ConsolePromptsModal.-narrow #console-prompts-search {
-    width: $ds-width-full;
-}
-
 
 #console-command-popup {
     position: absolute;
@@ -10926,6 +10594,342 @@ ConsoleConversationActionMenu { width: $ds-conversation-menu-width; }
     ConsoleGoalHistory > .goal-dialog-panel { width: $ds-size-76; max-width: $ds-width-full; height: $ds-height-auto; max-height: $ds-percent-90; background: $ds-surface-raised; border: solid $ds-control-edge; padding: $ds-space-inset; }
     ConsoleGoalHistory .goal-dialog-actions { height: $ds-control-height; }
     ConsoleGoalHistory .goal-dialog-action { width: $ds-width-fill; min-width: $ds-size-10; }
+
+/* ===== MODULE: features/_console_prompts.tcss ===== */
+
+
+#console-style-picker-modal {
+    width: $ds-size-76;
+    max-width: $ds-percent-95;
+    height: auto;
+    max-height: $ds-percent-85;
+    border: round $ds-grid-line;
+    background: $ds-surface-panel;
+    padding: $ds-space-1 $ds-space-2;
+}
+
+#console-style-picker-filter {
+    height: $ds-size-3;
+    min-height: $ds-size-3;
+    margin: $ds-space-0 $ds-space-0 $ds-space-1 $ds-space-0;
+    border: tall $ds-grid-line;
+    background: $ds-surface-raised;
+    color: $ds-text-primary;
+}
+
+#console-style-picker-filter:focus {
+    border: tall $ds-input-focus-accent;
+    outline: none;
+    background: $ds-input-focus-bg;
+    color: $ds-text-primary;
+}
+
+#console-style-picker-results {
+    height: auto;
+    max-height: $ds-size-20;
+    min-height: $ds-size-0;
+    overflow-y: auto;
+    overflow-x: hidden;
+    scrollbar-size: 1 1;
+}
+
+.console-style-picker-row {
+    width: $ds-width-full;
+    height: auto;
+    min-height: $ds-size-3;
+    margin: $ds-space-0 $ds-space-0 $ds-space-1 $ds-space-0;
+    border: tall $ds-grid-line;
+    background: $ds-surface-raised;
+    color: $ds-text-primary;
+}
+
+.console-style-picker-row-highlighted {
+    border: tall $ds-action-focus;
+    background: $ds-input-focus-bg;
+    text-style: bold;
+}
+
+#console-style-picker-empty {
+    height: auto;
+    margin: $ds-space-1 $ds-space-0;
+    color: $ds-text-muted;
+}
+
+#console-style-picker-detail {
+    height: auto;
+    margin: $ds-space-1 $ds-space-0 $ds-space-0 $ds-space-0;
+    padding: $ds-space-0 $ds-space-1;
+    border: tall $ds-grid-line;
+    background: $ds-surface-raised;
+    color: $ds-text-muted;
+}
+
+#console-prompts-modal {
+    width: $ds-percent-90;
+    max-width: $ds-size-104;
+    height: $ds-percent-90;
+    max-height: $ds-size-44;
+    min-width: $ds-size-40;
+    min-height: $ds-size-18;
+    border: tall $ds-grid-line;
+    background: $ds-surface-panel;
+    padding: $ds-space-1 $ds-space-2;
+}
+
+#console-prompts-header {
+    width: $ds-width-full;
+    height: auto;
+    min-height: $ds-size-2;
+    border-bottom: solid $ds-grid-line;
+    margin: $ds-space-0 $ds-space-0 $ds-space-1 $ds-space-0;
+}
+
+#console-prompts-title {
+    height: $ds-size-1;
+    color: $ds-text-primary;
+    text-style: bold;
+}
+
+#console-prompts-location,
+#console-prompts-model-status,
+#console-prompts-browse-status {
+    width: $ds-width-full;
+    height: auto;
+    min-height: $ds-size-1;
+    color: $ds-text-muted;
+}
+
+#console-prompts-body,
+#console-prompts-browse {
+    width: $ds-width-full;
+    height: $ds-height-fill;
+    min-height: $ds-size-0;
+}
+
+
+#console-prompts-editor {
+    height: $ds-height-fill;
+    min-height: $ds-size-0;
+}
+
+.console-prompts-primary-action {
+    width: $ds-width-full;
+    height: $ds-size-3;
+    min-height: $ds-size-3;
+    border: none;
+    background: $ds-action-focus;
+    color: $ds-text-primary;
+    text-style: bold;
+}
+
+.console-prompts-primary-action:focus,
+#console-prompts-modal Button:focus {
+    outline: heavy $ds-active-fg;
+}
+
+.console-prompts-primary-action:disabled,
+#console-prompts-modal Button:disabled {
+    background: $surface-darken-1;
+    color: $ds-text-disabled;
+}
+
+#console-prompts-browse-controls {
+    width: $ds-width-full;
+    height: $ds-size-3;
+    min-height: $ds-size-3;
+    margin: $ds-space-1 $ds-space-0 $ds-space-0 $ds-space-0;
+}
+
+#console-prompts-source {
+    width: $ds-size-22;
+    min-width: $ds-size-18;
+    height: $ds-size-3;
+    border: none;
+    border-left: solid $ds-grid-line;
+    background: $surface-darken-1;
+}
+
+#console-prompts-search {
+    width: $ds-width-fill;
+    min-width: $ds-size-12;
+    height: $ds-size-3;
+    border: none;
+    border-left: solid $ds-grid-line;
+    background: $surface-darken-1;
+}
+
+#console-prompts-source:focus,
+#console-prompts-search:focus {
+    border-left: thick $ds-active-fg;
+    background: $ds-focus-bg;
+    text-style: bold;
+}
+
+#console-prompts-retry {
+    width: auto;
+    min-width: $ds-size-8;
+    height: $ds-size-3;
+    border: none;
+    background: $ds-surface-raised;
+}
+
+#console-prompts-results {
+    width: $ds-width-full;
+    height: $ds-height-fill;
+    min-height: $ds-size-4;
+    margin: $ds-space-1 $ds-space-0 $ds-space-0 $ds-space-0;
+    border-top: solid $ds-grid-line;
+    border-bottom: solid $ds-grid-line;
+    overflow-y: auto;
+    overflow-x: hidden;
+    scrollbar-size: 1 1;
+    scrollbar-background: $ds-surface-panel;
+    scrollbar-color: $ds-grid-line;
+    scrollbar-color-active: $ds-action-focus;
+}
+
+#console-prompts-result-list {
+    width: $ds-width-full;
+    height: auto;
+}
+
+.console-prompts-result {
+    width: $ds-width-full;
+    height: auto;
+    min-height: $ds-size-3;
+    border: none;
+    border-bottom: solid $ds-grid-line;
+    background: $ds-surface-panel;
+    color: $ds-text-primary;
+    text-align: left;
+    content-align: left middle;
+}
+
+.console-prompts-result:hover,
+.console-prompts-result:focus {
+    background: $ds-focus-bg;
+}
+
+#console-prompts-pagination,
+#console-prompts-footer {
+    width: $ds-width-full;
+    height: $ds-size-3;
+    min-height: $ds-size-3;
+    align: right middle;
+}
+
+#console-prompts-page {
+    width: $ds-width-fill;
+    min-width: $ds-size-12;
+    height: $ds-size-3;
+    content-align: center middle;
+    color: $ds-text-muted;
+}
+
+#console-prompts-pagination Button,
+#console-prompts-footer Button,
+#console-prompts-improve-mode Button,
+#console-prompts-convert {
+    width: auto;
+    min-width: $ds-size-8;
+    height: $ds-size-3;
+    border: none;
+    background: $ds-surface-raised;
+    color: $ds-text-primary;
+}
+
+#console-prompts-footer {
+    border-top: solid $ds-grid-line;
+}
+
+#console-prompts-dirty-guard {
+    display: none;
+    width: $ds-width-full;
+    height: auto;
+    padding: $ds-space-1;
+    border: round $ds-status-warning;
+    background: $ds-status-warning 10%;
+    color: $ds-text-primary;
+}
+
+#console-prompts-dirty-guard.visible {
+    display: block;
+}
+
+#console-prompts-compatibility {
+    width: $ds-width-full;
+    height: auto;
+    min-height: $ds-size-2;
+    color: $ds-status-warning;
+}
+
+#console-prompts-compat-system,
+#console-prompts-compat-user {
+    width: $ds-width-full;
+    height: $ds-height-fill;
+    min-height: $ds-size-3;
+    border: round $ds-grid-line;
+    background: $surface-darken-1;
+}
+
+#console-prompts-improve-mode,
+#console-prompts-recipe-mode {
+    width: $ds-width-full;
+    height: $ds-height-fill;
+    min-height: $ds-size-0;
+}
+
+#console-prompts-improve-mode Button,
+#console-prompts-recipe-mode Button {
+    width: $ds-width-full;
+    margin: $ds-space-1 $ds-space-0 $ds-space-0 $ds-space-0;
+}
+
+#console-prompts-recipe-outcome-description,
+#console-prompts-recipe-saved-description,
+#console-prompts-recipe-blank-description {
+    width: $ds-width-full;
+    height: auto;
+    padding: $ds-space-0 $ds-space-1;
+    color: $ds-text-muted;
+}
+
+#console-prompts-recipe-save-confirmation-panel {
+    display: none;
+    width: $ds-width-full;
+    height: auto;
+    padding: $ds-space-0 $ds-space-1 $ds-space-1 $ds-space-1;
+    border: round $ds-status-ready;
+    background: $ds-status-ready 8%;
+}
+
+#console-prompts-recipe-save-confirmation {
+    width: $ds-width-full;
+    height: auto;
+    color: $ds-text-primary;
+}
+
+#console-prompts-open-saved-recipe {
+    width: $ds-width-full;
+    height: $ds-size-3;
+}
+
+ConsolePromptsModal.-narrow #console-prompts-modal {
+    width: $ds-percent-96;
+    height: $ds-percent-96;
+    padding: $ds-space-0 $ds-space-1;
+}
+
+ConsolePromptsModal.-narrow #console-prompts-browse-controls {
+    layout: vertical;
+    height: $ds-size-6;
+    min-height: $ds-size-6;
+}
+
+ConsolePromptsModal.-narrow #console-prompts-source,
+ConsolePromptsModal.-narrow #console-prompts-search {
+    width: $ds-width-full;
+}
 
 
 ConsolePromptMixinsView {
@@ -16273,7 +16277,7 @@ SmartContentTree Tree > .selected-node {
     color: $ds-focus-fg;
 }
 
-#setup-provider-choice { max-height: 40vh; }
+#setup-provider-choice { max-height: $ds-setup-provider-list-max-height; }
 .setup-provider-filter { width: $ds-width-fill; }
 .setup-provider-count { width: auto; margin-left: $ds-space-2; }
 .setup-no-server { height: auto; }

@@ -1507,7 +1507,8 @@ async def _verify_progress_close_failure_reconciles_fleet_before_confirmed_retry
                             ),
                         ), "unrecoverable close kept a replacement confirmation open"
                         assert not isinstance(host.screen, ConfirmationDialog)
-                        assert "Progress retry" in notes[-1][0]
+                        assert '"Tab 2"' in notes[-1][0]
+                        assert "Progress retry" not in notes[-1][0]
                         assert "restart" in notes[-1][0].casefold()
                         note_count = len(notes)
                         await _click(pilot, f"#console-close-session-tab-{doomed.id}")
@@ -1532,7 +1533,8 @@ async def _verify_progress_close_failure_reconciles_fleet_before_confirmed_retry
                             ),
                         )
                         assert not isinstance(host.screen, ConfirmationDialog)
-                        assert "Progress retry" in notes[-1][0]
+                        assert '"Tab 2"' in notes[-1][0]
+                        assert "Progress retry" not in notes[-1][0]
                         assert "restart" in notes[-1][0].casefold()
                         assert controller._session_close_generation == generation
                         assert calls == [doomed.id]
@@ -1643,7 +1645,8 @@ async def _verify_progress_close_failure_reconciles_fleet_before_confirmed_retry
                             ),
                         ), "reused ID close kept a replacement confirmation open"
                         assert not isinstance(host.screen, ConfirmationDialog)
-                        assert "Reopened Progress retry" in notes[-1][0]
+                        assert '"Tab 2"' in notes[-1][0]
+                        assert "Reopened Progress retry" not in notes[-1][0]
                         assert "restart" in notes[-1][0].casefold()
                         assert notes[-1][1] == "error"
                         assert controller._session_close_generations == {

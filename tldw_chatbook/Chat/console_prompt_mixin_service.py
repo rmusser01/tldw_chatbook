@@ -589,7 +589,15 @@ class ConsolePromptMixinService:
                     assistant.id: assistant.persisted_message_id or assistant.id,
                 },
             )
-            worker = asyncio.create_task(run_owned_db_call(persistence.db, callback))
+
+            async def save_owned_attempt():
+                # Memory databases have thread-local connections; keep the
+                # receipt on the same owner as the native turn commit.
+                if getattr(persistence.db, "is_memory_db", False):
+                    return callback()
+                return await run_owned_db_call(persistence.db, callback)
+
+            worker = asyncio.create_task(save_owned_attempt())
             cancelled = False
             try:
                 while not worker.done():
@@ -711,8 +719,12 @@ class ConsolePromptMixinService:
         )
         try:
             async with asyncio.timeout(5.0):
+                current()
                 owner = self.preparation_owner
-                if owner is None:
+                if getattr(getattr(persistence, "db", None), "is_memory_db", False):
+                    # Match the native commit/receipt writer's connection owner.
+                    result = callback()
+                elif owner is None:
                     result = await asyncio.to_thread(callback)
                 else:
                     result = await run_preparation_read(

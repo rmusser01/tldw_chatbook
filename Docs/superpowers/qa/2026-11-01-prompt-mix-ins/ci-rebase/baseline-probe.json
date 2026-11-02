@@ -1,0 +1,16 @@
+{
+  "argv": [
+    "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python",
+    "-m",
+    "pytest",
+    "Tests/Performance/test_ui_latency_guardrails.py::test_destination_tour_stays_under_switch_budgets",
+    "-q",
+    "-p",
+    "no:cacheprovider",
+    "--timeout=300",
+    "--basetemp=/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/mixins-ci3346-cizd3tw9/baseline-probe-tmp"
+  ],
+  "cwd": "/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/mixins-ci3346-cizd3tw9/baseline",
+  "exit_code": 0,
+  "elapsed": 87.07986270892434
+}

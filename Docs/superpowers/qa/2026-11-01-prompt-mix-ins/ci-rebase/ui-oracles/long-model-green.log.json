@@ -1,0 +1,4 @@
+{
+  "sha256": "dd6987a760304cef839db3f08952f2179e3b474048b17942fe8a82e09dd3a260",
+  "raw_text": ".                                                                        [100%]\n- generated xml file: /var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/mixins-ci3346-ui-oracles-vjhdgmlk/long-model-green.xml -\n============================= slowest 25 durations =============================\n4.00s call     Tests/UI/test_console_attachment_vision_block.py::test_a_long_model_id_is_ellipsized_and_both_actions_stay_whole_at_80x24\n\n(2 durations < 1s hidden.)\n1 passed in 7.03s\n"
+}

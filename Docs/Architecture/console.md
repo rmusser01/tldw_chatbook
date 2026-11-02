@@ -469,6 +469,7 @@ fork, promotion and terminal metadata writes. The strict fork envelope admits on
 the validated companion marker pair, retaining status, attachment labels and trace
 aliases without authority. Nonobject JSON metadata rewrites normalize to an object
 before restoring the durable marker pair. Current-send composition borrows this seam without activating inherited chat choices.
+Receipt saves keep memory-backed SQLite on its owning loop, as native turn commits do; file-backed saves use the existing owned DB worker and cancellation retirement. The Subscription hybrid recovery catalog composes the frozen schema-86 lineages and requires their exact embedded stamp.
 
 
 `ConsolePromptMixinService` now owns live selection CAS and admission capture.

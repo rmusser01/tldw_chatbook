@@ -543,6 +543,8 @@ def test_lazy_screen_registry_resolves_visible_shell_destinations(request):
         "llm": "LLMScreen",
         "logs": "LogsScreen",
         "settings": "SettingsScreen",
+        "plugins": "PluginsScreen",
+        "kanban": "KanbanBoardScreen",
     }
 
     resolved = {}

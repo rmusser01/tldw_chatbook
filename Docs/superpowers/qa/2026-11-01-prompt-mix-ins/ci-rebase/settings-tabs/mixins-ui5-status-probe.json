@@ -1,0 +1,893 @@
+{
+  "exitstatus": 0,
+  "records": [
+    {
+      "method": "_render_impact_pane_header",
+      "event": "call",
+      "category": "",
+      "active": "overview",
+      "screen": 4650212752,
+      "raw": null,
+      "loaded": "None",
+      "caller": "_compose_impact_pane_region:24040"
+    },
+    {
+      "method": "_render_impact_pane_header",
+      "event": "return",
+      "category": "",
+      "active": "overview",
+      "screen": 4650212752,
+      "raw": null,
+      "loaded": "None"
+    },
+    {
+      "method": "_render_impact_pane_header",
+      "event": "call",
+      "category": "",
+      "active": "overview",
+      "screen": 4650212752,
+      "raw": null,
+      "loaded": "None",
+      "caller": "_compose_impact_pane_region:24040"
+    },
+    {
+      "method": "_render_impact_pane_header",
+      "event": "return",
+      "category": "",
+      "active": "overview",
+      "screen": 4650212752,
+      "raw": null,
+      "loaded": "None"
+    },
+    {
+      "method": "_render_impact_pane_header",
+      "event": "call",
+      "category": "",
+      "active": "overview",
+      "screen": 4650212752,
+      "raw": null,
+      "loaded": "None",
+      "caller": "_compose_impact_pane_region:24040"
+    },
+    {
+      "method": "_render_impact_pane_header",
+      "event": "return",
+      "category": "",
+      "active": "overview",
+      "screen": 4650212752,
+      "raw": null,
+      "loaded": "None"
+    },
+    {
+      "method": "_render_impact_pane_header",
+      "event": "call",
+      "category": "",
+      "active": "overview",
+      "screen": 4650212752,
+      "raw": null,
+      "loaded": "None",
+      "caller": "_compose_impact_pane_region:24040"
+    },
+    {
+      "method": "_render_impact_pane_header",
+      "event": "return",
+      "category": "",
+      "active": "overview",
+      "screen": 4650212752,
+      "raw": null,
+      "loaded": "None"
+    },
+    {
+      "method": "_render_impact_pane_header",
+      "event": "call",
+      "category": "",
+      "active": "overview",
+      "screen": 4650212752,
+      "raw": null,
+      "loaded": "None",
+      "caller": "_compose_impact_pane_region:24040"
+    },
+    {
+      "method": "_render_impact_pane_header",
+      "event": "return",
+      "category": "",
+      "active": "overview",
+      "screen": 4650212752,
+      "raw": null,
+      "loaded": "None"
+    },
+    {
+      "method": "_render_impact_pane_header",
+      "event": "call",
+      "category": "",
+      "active": "overview",
+      "screen": 4650212752,
+      "raw": null,
+      "loaded": "None",
+      "caller": "_compose_impact_pane_region:24040"
+    },
+    {
+      "method": "_render_impact_pane_header",
+      "event": "return",
+      "category": "",
+      "active": "overview",
+      "screen": 4650212752,
+      "raw": null,
+      "loaded": "None"
+    },
+    {
+      "method": "_render_impact_pane_header",
+      "event": "call",
+      "category": "",
+      "active": "overview",
+      "screen": 4650212752,
+      "raw": null,
+      "loaded": "None",
+      "caller": "_compose_impact_pane_region:24040"
+    },
+    {
+      "method": "_render_impact_pane_header",
+      "event": "return",
+      "category": "",
+      "active": "overview",
+      "screen": 4650212752,
+      "raw": null,
+      "loaded": "None"
+    },
+    {
+      "method": "_update_draft_status_widgets",
+      "event": "call",
+      "category": "internal-prompts",
+      "active": "overview",
+      "screen": 4650212752,
+      "raw": null,
+      "loaded": "None",
+      "status": "No unsaved changes",
+      "caller": "_refresh_internal_prompts_customized_widgets:26395"
+    },
+    {
+      "method": "_update_draft_status_widgets",
+      "event": "return",
+      "category": "internal-prompts",
+      "active": "overview",
+      "screen": 4650212752,
+      "raw": null,
+      "loaded": "None",
+      "status": "No unsaved changes"
+    },
+    {
+      "method": "_update_draft_status_widgets",
+      "event": "call",
+      "category": "internal-prompts",
+      "active": "providers-models",
+      "screen": 4650212752,
+      "raw": [
+        false,
+        "10"
+      ],
+      "loaded": "enabled=False keep_count=10",
+      "status": "No unsaved changes",
+      "caller": "_refresh_internal_prompts_customized_widgets:26395"
+    },
+    {
+      "method": "_update_draft_status_widgets",
+      "event": "return",
+      "category": "internal-prompts",
+      "active": "providers-models",
+      "screen": 4650212752,
+      "raw": [
+        false,
+        "10"
+      ],
+      "loaded": "enabled=False keep_count=10",
+      "status": "No unsaved changes"
+    },
+    {
+      "method": "_snapshot_preferences_changed",
+      "event": "call",
+      "category": "",
+      "active": "providers-models",
+      "screen": 4650212752,
+      "raw": [
+        false,
+        "10"
+      ],
+      "loaded": "enabled=False keep_count=10",
+      "caller": "_invoke:56"
+    },
+    {
+      "method": "_update_draft_status_widgets",
+      "event": "call",
+      "category": "providers-models",
+      "active": "providers-models",
+      "screen": 4650212752,
+      "raw": [
+        false,
+        "10"
+      ],
+      "loaded": "enabled=False keep_count=10",
+      "caller": "_snapshot_preferences_changed:9426"
+    },
+    {
+      "method": "_update_draft_status_widgets",
+      "event": "return",
+      "category": "providers-models",
+      "active": "providers-models",
+      "screen": 4650212752,
+      "raw": [
+        false,
+        "10"
+      ],
+      "loaded": "enabled=False keep_count=10"
+    },
+    {
+      "method": "_snapshot_preferences_changed",
+      "event": "return",
+      "category": "",
+      "active": "providers-models",
+      "screen": 4650212752,
+      "raw": [
+        false,
+        "10"
+      ],
+      "loaded": "enabled=False keep_count=10"
+    },
+    {
+      "method": "_render_impact_pane_header",
+      "event": "call",
+      "category": "",
+      "active": "providers-models",
+      "screen": 4650212752,
+      "raw": [
+        false,
+        "10"
+      ],
+      "loaded": "enabled=False keep_count=10",
+      "caller": "_compose_impact_pane_region:24040"
+    },
+    {
+      "method": "_render_impact_pane_header",
+      "event": "return",
+      "category": "",
+      "active": "providers-models",
+      "screen": 4650212752,
+      "raw": [
+        false,
+        "10"
+      ],
+      "loaded": "enabled=False keep_count=10"
+    },
+    {
+      "method": "_render_impact_pane_header",
+      "event": "call",
+      "category": "",
+      "active": "providers-models",
+      "screen": 4650212752,
+      "raw": [
+        false,
+        "10"
+      ],
+      "loaded": "enabled=False keep_count=10",
+      "caller": "_compose_impact_pane_region:24040"
+    },
+    {
+      "method": "_render_impact_pane_header",
+      "event": "return",
+      "category": "",
+      "active": "providers-models",
+      "screen": 4650212752,
+      "raw": [
+        false,
+        "10"
+      ],
+      "loaded": "enabled=False keep_count=10"
+    },
+    {
+      "method": "_render_impact_pane_header",
+      "event": "call",
+      "category": "",
+      "active": "providers-models",
+      "screen": 4650212752,
+      "raw": [
+        false,
+        "10"
+      ],
+      "loaded": "enabled=False keep_count=10",
+      "caller": "_compose_impact_pane_region:24040"
+    },
+    {
+      "method": "_render_impact_pane_header",
+      "event": "return",
+      "category": "",
+      "active": "providers-models",
+      "screen": 4650212752,
+      "raw": [
+        false,
+        "10"
+      ],
+      "loaded": "enabled=False keep_count=10"
+    },
+    {
+      "method": "_render_impact_pane_header",
+      "event": "call",
+      "category": "",
+      "active": "providers-models",
+      "screen": 4650212752,
+      "raw": [
+        false,
+        "10"
+      ],
+      "loaded": "enabled=False keep_count=10",
+      "caller": "_compose_impact_pane_region:24040"
+    },
+    {
+      "method": "_render_impact_pane_header",
+      "event": "return",
+      "category": "",
+      "active": "providers-models",
+      "screen": 4650212752,
+      "raw": [
+        false,
+        "10"
+      ],
+      "loaded": "enabled=False keep_count=10"
+    },
+    {
+      "method": "_render_impact_pane_header",
+      "event": "call",
+      "category": "",
+      "active": "providers-models",
+      "screen": 4650212752,
+      "raw": [
+        false,
+        "10"
+      ],
+      "loaded": "enabled=False keep_count=10",
+      "caller": "_compose_impact_pane_region:24040"
+    },
+    {
+      "method": "_render_impact_pane_header",
+      "event": "return",
+      "category": "",
+      "active": "providers-models",
+      "screen": 4650212752,
+      "raw": [
+        false,
+        "10"
+      ],
+      "loaded": "enabled=False keep_count=10"
+    },
+    {
+      "method": "_render_impact_pane_header",
+      "event": "call",
+      "category": "",
+      "active": "providers-models",
+      "screen": 4650212752,
+      "raw": [
+        false,
+        "10"
+      ],
+      "loaded": "enabled=False keep_count=10",
+      "caller": "_compose_impact_pane_region:24040"
+    },
+    {
+      "method": "_render_impact_pane_header",
+      "event": "return",
+      "category": "",
+      "active": "providers-models",
+      "screen": 4650212752,
+      "raw": [
+        false,
+        "10"
+      ],
+      "loaded": "enabled=False keep_count=10"
+    },
+    {
+      "method": "_render_impact_pane_header",
+      "event": "call",
+      "category": "",
+      "active": "providers-models",
+      "screen": 4650212752,
+      "raw": [
+        false,
+        "10"
+      ],
+      "loaded": "enabled=False keep_count=10",
+      "caller": "_compose_impact_pane_region:24040"
+    },
+    {
+      "method": "_render_impact_pane_header",
+      "event": "return",
+      "category": "",
+      "active": "providers-models",
+      "screen": 4650212752,
+      "raw": [
+        false,
+        "10"
+      ],
+      "loaded": "enabled=False keep_count=10"
+    },
+    {
+      "method": "_render_impact_pane_header",
+      "event": "call",
+      "category": "",
+      "active": "providers-models",
+      "screen": 4650212752,
+      "raw": [
+        false,
+        "10"
+      ],
+      "loaded": "enabled=False keep_count=10",
+      "caller": "_compose_impact_pane_region:24040"
+    },
+    {
+      "method": "_render_impact_pane_header",
+      "event": "return",
+      "category": "",
+      "active": "providers-models",
+      "screen": 4650212752,
+      "raw": [
+        false,
+        "10"
+      ],
+      "loaded": "enabled=False keep_count=10"
+    },
+    {
+      "method": "_render_impact_pane_header",
+      "event": "call",
+      "category": "",
+      "active": "providers-models",
+      "screen": 4650212752,
+      "raw": [
+        false,
+        "10"
+      ],
+      "loaded": "enabled=False keep_count=10",
+      "caller": "_compose_impact_pane_region:24040"
+    },
+    {
+      "method": "_render_impact_pane_header",
+      "event": "return",
+      "category": "",
+      "active": "providers-models",
+      "screen": 4650212752,
+      "raw": [
+        false,
+        "10"
+      ],
+      "loaded": "enabled=False keep_count=10"
+    },
+    {
+      "method": "_render_impact_pane_header",
+      "event": "call",
+      "category": "",
+      "active": "providers-models",
+      "screen": 4650212752,
+      "raw": [
+        false,
+        "10"
+      ],
+      "loaded": "enabled=False keep_count=10",
+      "caller": "_compose_impact_pane_region:24040"
+    },
+    {
+      "method": "_render_impact_pane_header",
+      "event": "return",
+      "category": "",
+      "active": "providers-models",
+      "screen": 4650212752,
+      "raw": [
+        false,
+        "10"
+      ],
+      "loaded": "enabled=False keep_count=10"
+    },
+    {
+      "method": "_snapshot_preferences_changed",
+      "event": "call",
+      "category": "",
+      "active": "providers-models",
+      "screen": 4650212752,
+      "raw": [
+        false,
+        "10"
+      ],
+      "loaded": "enabled=False keep_count=10",
+      "status": "No unsaved changes",
+      "caller": "_invoke:56"
+    },
+    {
+      "method": "_update_draft_status_widgets",
+      "event": "call",
+      "category": "providers-models",
+      "active": "providers-models",
+      "screen": 4650212752,
+      "raw": [
+        false,
+        "11"
+      ],
+      "loaded": "enabled=False keep_count=10",
+      "status": "No unsaved changes",
+      "caller": "_snapshot_preferences_changed:9426"
+    },
+    {
+      "method": "_update_draft_status_widgets",
+      "event": "return",
+      "category": "providers-models",
+      "active": "providers-models",
+      "screen": 4650212752,
+      "raw": [
+        false,
+        "11"
+      ],
+      "loaded": "enabled=False keep_count=10",
+      "status": "Unsaved changes"
+    },
+    {
+      "method": "_snapshot_preferences_changed",
+      "event": "return",
+      "category": "",
+      "active": "providers-models",
+      "screen": 4650212752,
+      "raw": [
+        false,
+        "11"
+      ],
+      "loaded": "enabled=False keep_count=10",
+      "status": "Unsaved changes"
+    },
+    {
+      "method": "restore_snapshot_preferences",
+      "event": "call",
+      "category": "",
+      "active": "providers-models",
+      "screen": 4880787616,
+      "raw": null,
+      "loaded": "None",
+      "caller": "restore_state:4588"
+    },
+    {
+      "method": "restore_snapshot_preferences",
+      "event": "return",
+      "category": "",
+      "active": "providers-models",
+      "screen": 4880787616,
+      "raw": [
+        false,
+        "11"
+      ],
+      "loaded": "enabled=False keep_count=10"
+    },
+    {
+      "method": "_render_impact_pane_header",
+      "event": "call",
+      "category": "",
+      "active": "providers-models",
+      "screen": 4880787616,
+      "raw": [
+        false,
+        "11"
+      ],
+      "loaded": "enabled=False keep_count=10",
+      "caller": "_compose_impact_pane_region:24040"
+    },
+    {
+      "method": "_render_impact_pane_header",
+      "event": "return",
+      "category": "",
+      "active": "providers-models",
+      "screen": 4880787616,
+      "raw": [
+        false,
+        "11"
+      ],
+      "loaded": "enabled=False keep_count=10"
+    },
+    {
+      "method": "_render_impact_pane_header",
+      "event": "call",
+      "category": "",
+      "active": "providers-models",
+      "screen": 4880787616,
+      "raw": [
+        false,
+        "11"
+      ],
+      "loaded": "enabled=False keep_count=10",
+      "caller": "_compose_impact_pane_region:24040"
+    },
+    {
+      "method": "_render_impact_pane_header",
+      "event": "return",
+      "category": "",
+      "active": "providers-models",
+      "screen": 4880787616,
+      "raw": [
+        false,
+        "11"
+      ],
+      "loaded": "enabled=False keep_count=10"
+    },
+    {
+      "method": "_render_impact_pane_header",
+      "event": "call",
+      "category": "",
+      "active": "providers-models",
+      "screen": 4880787616,
+      "raw": [
+        false,
+        "11"
+      ],
+      "loaded": "enabled=False keep_count=10",
+      "caller": "_compose_impact_pane_region:24040"
+    },
+    {
+      "method": "_render_impact_pane_header",
+      "event": "return",
+      "category": "",
+      "active": "providers-models",
+      "screen": 4880787616,
+      "raw": [
+        false,
+        "11"
+      ],
+      "loaded": "enabled=False keep_count=10"
+    },
+    {
+      "method": "_render_impact_pane_header",
+      "event": "call",
+      "category": "",
+      "active": "providers-models",
+      "screen": 4880787616,
+      "raw": [
+        false,
+        "11"
+      ],
+      "loaded": "enabled=False keep_count=10",
+      "caller": "_compose_impact_pane_region:24040"
+    },
+    {
+      "method": "_render_impact_pane_header",
+      "event": "return",
+      "category": "",
+      "active": "providers-models",
+      "screen": 4880787616,
+      "raw": [
+        false,
+        "11"
+      ],
+      "loaded": "enabled=False keep_count=10"
+    },
+    {
+      "method": "_render_impact_pane_header",
+      "event": "call",
+      "category": "",
+      "active": "providers-models",
+      "screen": 4880787616,
+      "raw": [
+        false,
+        "11"
+      ],
+      "loaded": "enabled=False keep_count=10",
+      "caller": "_compose_impact_pane_region:24040"
+    },
+    {
+      "method": "_render_impact_pane_header",
+      "event": "return",
+      "category": "",
+      "active": "providers-models",
+      "screen": 4880787616,
+      "raw": [
+        false,
+        "11"
+      ],
+      "loaded": "enabled=False keep_count=10"
+    },
+    {
+      "method": "_render_impact_pane_header",
+      "event": "call",
+      "category": "",
+      "active": "providers-models",
+      "screen": 4880787616,
+      "raw": [
+        false,
+        "11"
+      ],
+      "loaded": "enabled=False keep_count=10",
+      "caller": "_compose_impact_pane_region:24040"
+    },
+    {
+      "method": "_render_impact_pane_header",
+      "event": "return",
+      "category": "",
+      "active": "providers-models",
+      "screen": 4880787616,
+      "raw": [
+        false,
+        "11"
+      ],
+      "loaded": "enabled=False keep_count=10"
+    },
+    {
+      "method": "_render_impact_pane_header",
+      "event": "call",
+      "category": "",
+      "active": "providers-models",
+      "screen": 4880787616,
+      "raw": [
+        false,
+        "11"
+      ],
+      "loaded": "enabled=False keep_count=10",
+      "caller": "_compose_impact_pane_region:24040"
+    },
+    {
+      "method": "_render_impact_pane_header",
+      "event": "return",
+      "category": "",
+      "active": "providers-models",
+      "screen": 4880787616,
+      "raw": [
+        false,
+        "11"
+      ],
+      "loaded": "enabled=False keep_count=10"
+    },
+    {
+      "method": "_render_impact_pane_header",
+      "event": "call",
+      "category": "",
+      "active": "providers-models",
+      "screen": 4880787616,
+      "raw": [
+        false,
+        "11"
+      ],
+      "loaded": "enabled=False keep_count=10",
+      "caller": "_compose_impact_pane_region:24040"
+    },
+    {
+      "method": "_render_impact_pane_header",
+      "event": "return",
+      "category": "",
+      "active": "providers-models",
+      "screen": 4880787616,
+      "raw": [
+        false,
+        "11"
+      ],
+      "loaded": "enabled=False keep_count=10"
+    },
+    {
+      "method": "_render_impact_pane_header",
+      "event": "call",
+      "category": "",
+      "active": "providers-models",
+      "screen": 4880787616,
+      "raw": [
+        false,
+        "11"
+      ],
+      "loaded": "enabled=False keep_count=10",
+      "caller": "_compose_impact_pane_region:24040"
+    },
+    {
+      "method": "_render_impact_pane_header",
+      "event": "return",
+      "category": "",
+      "active": "providers-models",
+      "screen": 4880787616,
+      "raw": [
+        false,
+        "11"
+      ],
+      "loaded": "enabled=False keep_count=10"
+    },
+    {
+      "method": "_render_impact_pane_header",
+      "event": "call",
+      "category": "",
+      "active": "providers-models",
+      "screen": 4880787616,
+      "raw": [
+        false,
+        "11"
+      ],
+      "loaded": "enabled=False keep_count=10",
+      "caller": "_compose_impact_pane_region:24040"
+    },
+    {
+      "method": "_render_impact_pane_header",
+      "event": "return",
+      "category": "",
+      "active": "providers-models",
+      "screen": 4880787616,
+      "raw": [
+        false,
+        "11"
+      ],
+      "loaded": "enabled=False keep_count=10"
+    },
+    {
+      "method": "_update_draft_status_widgets",
+      "event": "call",
+      "category": "internal-prompts",
+      "active": "providers-models",
+      "screen": 4880787616,
+      "raw": [
+        false,
+        "11"
+      ],
+      "loaded": "enabled=False keep_count=10",
+      "status": "Unsaved changes",
+      "caller": "_refresh_internal_prompts_customized_widgets:26395"
+    },
+    {
+      "method": "_update_draft_status_widgets",
+      "event": "return",
+      "category": "internal-prompts",
+      "active": "providers-models",
+      "screen": 4880787616,
+      "raw": [
+        false,
+        "11"
+      ],
+      "loaded": "enabled=False keep_count=10",
+      "status": "No unsaved changes"
+    },
+    {
+      "method": "_snapshot_preferences_changed",
+      "event": "call",
+      "category": "",
+      "active": "providers-models",
+      "screen": 4880787616,
+      "raw": [
+        false,
+        "11"
+      ],
+      "loaded": "enabled=False keep_count=10",
+      "status": "No unsaved changes",
+      "caller": "_invoke:56"
+    },
+    {
+      "method": "_update_draft_status_widgets",
+      "event": "call",
+      "category": "providers-models",
+      "active": "providers-models",
+      "screen": 4880787616,
+      "raw": [
+        false,
+        "11"
+      ],
+      "loaded": "enabled=False keep_count=10",
+      "status": "No unsaved changes",
+      "caller": "_snapshot_preferences_changed:9426"
+    },
+    {
+      "method": "_update_draft_status_widgets",
+      "event": "return",
+      "category": "providers-models",
+      "active": "providers-models",
+      "screen": 4880787616,
+      "raw": [
+        false,
+        "11"
+      ],
+      "loaded": "enabled=False keep_count=10",
+      "status": "Unsaved changes"
+    },
+    {
+      "method": "_snapshot_preferences_changed",
+      "event": "return",
+      "category": "",
+      "active": "providers-models",
+      "screen": 4880787616,
+      "raw": [
+        false,
+        "11"
+      ],
+      "loaded": "enabled=False keep_count=10",
+      "status": "Unsaved changes"
+    }
+  ]
+}

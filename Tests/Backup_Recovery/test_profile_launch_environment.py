@@ -39,7 +39,8 @@ def test_fresh_profile_keeps_native_snapshot_temp_parent(
 ):
     import tempfile
 
-    private_temp = tmp_path / "private-temp"
+    # The autouse recovery fixture already owns the sibling private-temp directory.
+    private_temp = tmp_path / "native-temp-selection"
     private_temp.mkdir(mode=0o700)
     for name in ("TEMP", "TMP", "TMPDIR"):
         monkeypatch.delenv(name, raising=False)

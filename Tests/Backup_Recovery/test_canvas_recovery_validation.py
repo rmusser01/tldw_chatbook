@@ -162,7 +162,7 @@ def test_all_four_frozen_lineages_remain_accepted_and_migrate(tmp_path, predeces
     _run(tmp_path, "core", "lineages", script=script)
 
 
-@pytest.mark.parametrize("chat_version", (83, 84))
+@pytest.mark.parametrize("chat_version", (83, 84, 86))
 @pytest.mark.parametrize("lineage", range(4))
 @pytest.mark.parametrize("source_index", (False, True))
 def test_current_hybrid_catalog_requires_its_exact_embedded_stamp(
@@ -180,6 +180,7 @@ def test_current_hybrid_catalog_requires_its_exact_embedded_stamp(
     from tldw_chatbook.DB.recovery_core_schema import (
         CHACHANOTES_V83_SCHEMAS,
         CHACHANOTES_V84_SCHEMAS,
+        CHACHANOTES_V86_SCHEMAS,
     )
     from tldw_chatbook.DB.recovery_operations import (
         _SUBSCRIPTIONS_SCHEMA,
@@ -188,9 +189,11 @@ def test_current_hybrid_catalog_requires_its_exact_embedded_stamp(
     )
 
     owner = next(a for a in recovery_adapters() if a.owner_id == "db.subscriptions")
-    primary = {83: CHACHANOTES_V83_SCHEMAS, 84: CHACHANOTES_V84_SCHEMAS}[chat_version][
-        lineage
-    ]
+    primary = {
+        83: CHACHANOTES_V83_SCHEMAS,
+        84: CHACHANOTES_V84_SCHEMAS,
+        86: CHACHANOTES_V86_SCHEMAS,
+    }[chat_version][lineage]
     subscriptions = tuple(_SUBSCRIPTIONS_V2_SOURCE_INDEX_SCHEMA)
     # The historical base is the bare Subscription catalog, never a composed
     # catalog returned by the new v83/v84 admission implementation.

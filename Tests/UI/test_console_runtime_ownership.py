@@ -216,7 +216,20 @@ def test_runtime_owned_custody_tracks_only_lifetime_handles():
         "one_shot_prefill",
         "one_shot_prefill_revision",
         "draft_revision",
+        # Exact input and attachment witnesses for the originating composer.
+        "_pressed_inputs",
+        "_pressed_stash",
+        "_pressed_attachment_generation",
     }
+    private_witnesses = {
+        "_pressed_inputs",
+        "_pressed_stash",
+        "_pressed_attachment_generation",
+    }
+    for request_field in fields(ConsoleTurnCustodyRequest):
+        if request_field.name in private_witnesses:
+            assert request_field.repr is False
+            assert getattr(request, request_field.name) is None
     assert {field.name for field in fields(type(record))} == {
         "turn_id",
         "session_id",

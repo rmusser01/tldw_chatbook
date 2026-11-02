@@ -1,0 +1,4 @@
+{
+  "sha256": "6d64c7e464bc0ba338b11102c8c35f30f301c1ca901e1fb23b3ba79ca822d105",
+  "raw_text": "....                                                                     [100%]\n- generated xml file: /var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/mixins-ci3346-admission-3iqn47ey/fixed-all.xml -\n============================= slowest 25 durations =============================\n28.61s call     Tests/QA/test_project_chat_uat.py::test_project_chat_uat[wrong-family]\n26.96s call     Tests/QA/test_project_chat_uat.py::test_project_chat_uat[compact-recovery]\n26.17s call     Tests/QA/test_project_chat_uat.py::test_project_chat_uat[fenced]\n25.21s call     Tests/QA/test_project_chat_uat.py::test_project_chat_uat[native]\n\n(8 durations < 1s hidden.)\n4 passed in 107.35s (0:01:47)\n"
+}

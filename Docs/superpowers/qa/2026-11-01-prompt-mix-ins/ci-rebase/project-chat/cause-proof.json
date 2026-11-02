@@ -1,0 +1,115 @@
+{
+  "source_head": "79e659dcde6f5360edb0070f9d184713bd8584d1",
+  "target_dev": "62a169f906508ed02bd7546ab278d916638d1607",
+  "ci_log_sha256": "4d134fc256868fc09c61b1a5097041caede906c6ef3531de3e14afa87cab61c5",
+  "files": {
+    "Tests/QA/test_project_chat_uat.py": {
+      "same_as_target": true,
+      "current_sha256": "f808fc1ecbfb78adc7fc1c806bbc5af237a818c190eecea9149d87434e27623e",
+      "baseline_sha256": "f808fc1ecbfb78adc7fc1c806bbc5af237a818c190eecea9149d87434e27623e"
+    },
+    "Tests/uat_project_chat_support.py": {
+      "same_as_target": true,
+      "current_sha256": "7282ec0d3027035993361f7cd60121a1edca208bbf0e0c05f33c0aea47aff257",
+      "baseline_sha256": "7282ec0d3027035993361f7cd60121a1edca208bbf0e0c05f33c0aea47aff257"
+    },
+    "tldw_chatbook/Chat/console_agent_bridge.py": {
+      "same_as_target": true,
+      "current_sha256": "46fabb51c2a987cc6e555d80bd6775398999f9c39adf5880d56e4d892e7129a3",
+      "baseline_sha256": "46fabb51c2a987cc6e555d80bd6775398999f9c39adf5880d56e4d892e7129a3"
+    },
+    "tldw_chatbook/Agents/plain_chat_tool_surface.py": {
+      "same_as_target": true,
+      "current_sha256": "91fce98eda77787183de0425ef96a4d7a45d5a39aa2650f0d88a3e3564d6b99c",
+      "baseline_sha256": "91fce98eda77787183de0425ef96a4d7a45d5a39aa2650f0d88a3e3564d6b99c"
+    },
+    "tldw_chatbook/Tools/workspace_file_roots.py": {
+      "same_as_target": true,
+      "current_sha256": "f42a0001872e54dba8255dc911f971205d8daa03e94f35ea067059dc85bd8345",
+      "baseline_sha256": "f42a0001872e54dba8255dc911f971205d8daa03e94f35ea067059dc85bd8345"
+    }
+  },
+  "runs": {
+    "current": {
+      "receipt": "/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/mixins-ci3346-admission-3iqn47ey/current-artifacts/fenced-d35e55ce/receipt.json",
+      "config": "/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/mixins-ci3346-admission-3iqn47ey/current-tmp/test_project_chat_uat_fenced_0/private-profile-process/profile/config/config.toml",
+      "local_tools_enabled": true,
+      "full_agent_tools_enabled": "ABSENT; production default False",
+      "model_errors": [
+        "AssertionError: expected one advertised project binding, got []",
+        "AssertionError: expected one advertised project binding, got []"
+      ],
+      "phases": [
+        {
+          "name": "configure",
+          "seconds": 0.0
+        },
+        {
+          "name": "startup",
+          "seconds": 1.441
+        },
+        {
+          "name": "app-constructed",
+          "seconds": 3.53
+        },
+        {
+          "name": "create-workspace",
+          "seconds": 5.465
+        },
+        {
+          "name": "new-chat",
+          "seconds": 9.98
+        },
+        {
+          "name": "send",
+          "seconds": 10.749
+        },
+        {
+          "name": "project-instructions",
+          "seconds": 11.424
+        }
+      ],
+      "workspace_note": "Note: This session is NOT running in the default workspace.\nActive workspace: \"UAT project\"\nThis workspace has bound folders, but no fs_*, git_* or virtual_cli tools are available in this run."
+    },
+    "baseline": {
+      "receipt": "/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/mixins-ci3346-admission-3iqn47ey/baseline-artifacts/fenced-e827cdec/receipt.json",
+      "config": "/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/mixins-ci3346-admission-3iqn47ey/baseline-tmp/test_project_chat_uat_fenced_0/private-profile-process/profile/config/config.toml",
+      "local_tools_enabled": true,
+      "full_agent_tools_enabled": "ABSENT; production default False",
+      "model_errors": [
+        "AssertionError: expected one advertised project binding, got []"
+      ],
+      "phases": [
+        {
+          "name": "configure",
+          "seconds": 0.0
+        },
+        {
+          "name": "startup",
+          "seconds": 2.853
+        },
+        {
+          "name": "app-constructed",
+          "seconds": 4.999
+        },
+        {
+          "name": "create-workspace",
+          "seconds": 7.188
+        },
+        {
+          "name": "new-chat",
+          "seconds": 11.336
+        },
+        {
+          "name": "send",
+          "seconds": 11.862
+        },
+        {
+          "name": "project-instructions",
+          "seconds": 12.937
+        }
+      ],
+      "workspace_note": "Note: This session is NOT running in the default workspace.\nActive workspace: \"UAT project\"\nThis workspace has bound folders, but no fs_*, git_* or virtual_cli tools are available in this run."
+    }
+  }
+}

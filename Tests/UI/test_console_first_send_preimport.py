@@ -66,6 +66,9 @@ LIVE_FIRST_SEND_IMPORTS = (
     "Chat.console_visual_transcript",
     "Chat.console_predispatch_block",
     "Chat.console_native_commit",
+    "Chat.console_prompt_mixin_service",
+    "DB.console_prompt_mixins",
+    "Chat.console_pre_provider_stop",
     # Added after that record (TASK-35582): begin_generation_attempt's lazy
     # continuation-binding import, deferred off first paint.
     "Chat.console_continuation_binding",
@@ -730,6 +733,9 @@ def test_the_send_guard_counts_a_module_resident_at_ui_ready_as_warm(pass_outcom
     correct code (1 run in 26, this record).
     """
     warm = _warm_at_ui_ready(pass_outcome)
+    resident_dispatch = "tldw_chatbook.Chat.console_received_dispatch"
+    assert resident_dispatch in pass_outcome["resident"]
+    assert _not_warmed({resident_dispatch: "spend projection"}, warm, set()) == {}
     flake = {
         "tldw_chatbook.UI.Console_Modules.pricing_display": "pricing_snapshot_options"
     }

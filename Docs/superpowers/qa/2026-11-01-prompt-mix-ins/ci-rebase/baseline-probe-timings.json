@@ -1,0 +1,560 @@
+{
+  "package": "/private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/mixins-ci3346-cizd3tw9/baseline/tldw_chatbook/__init__.py",
+  "test": "/private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/mixins-ci3346-cizd3tw9/baseline/Tests/Performance/test_ui_latency_guardrails.py",
+  "css_test_cache": "0",
+  "events": [
+    {
+      "event": "press",
+      "key": "ctrl+1",
+      "seconds": 2.0284350840374827,
+      "screen": "HomeScreen",
+      "css_sources": 25
+    },
+    {
+      "event": "pause",
+      "key": "ctrl+1",
+      "seconds": 1.005095416912809,
+      "screen": "HomeScreen"
+    },
+    {
+      "event": "pause",
+      "key": "ctrl+1",
+      "seconds": 0.2186811249703169,
+      "screen": "HomeScreen"
+    },
+    {
+      "event": "pause",
+      "key": "ctrl+1",
+      "seconds": 0.022338416893035173,
+      "screen": "HomeScreen"
+    },
+    {
+      "event": "pause",
+      "key": "ctrl+1",
+      "seconds": 0.021784665994346142,
+      "screen": "HomeScreen"
+    },
+    {
+      "event": "pause",
+      "key": "ctrl+1",
+      "seconds": 1.011513290926814,
+      "screen": "HomeScreen"
+    },
+    {
+      "event": "pause",
+      "key": "ctrl+1",
+      "seconds": 0.9053221670910716,
+      "screen": "HomeScreen"
+    },
+    {
+      "event": "pause",
+      "key": "ctrl+1",
+      "seconds": 0.02256575017236173,
+      "screen": "HomeScreen"
+    },
+    {
+      "event": "arrival_and_settle",
+      "key": "ctrl+1",
+      "seconds": 3.559478292008862,
+      "at_entry": "HomeScreen",
+      "screen": "HomeScreen"
+    },
+    {
+      "event": "press",
+      "key": "ctrl+2",
+      "seconds": 2.022586958948523,
+      "screen": "ChatScreen",
+      "css_sources": 25
+    },
+    {
+      "event": "pause",
+      "key": "ctrl+2",
+      "seconds": 0.3134955419227481,
+      "screen": "ChatScreen"
+    },
+    {
+      "event": "pause",
+      "key": "ctrl+2",
+      "seconds": 1.0271438339259475,
+      "screen": "ChatScreen"
+    },
+    {
+      "event": "pause",
+      "key": "ctrl+2",
+      "seconds": 0.9348776252008975,
+      "screen": "ChatScreen"
+    },
+    {
+      "event": "pause",
+      "key": "ctrl+2",
+      "seconds": 1.0651944999117404,
+      "screen": "ChatScreen"
+    },
+    {
+      "event": "pause",
+      "key": "ctrl+2",
+      "seconds": 0.8741259169764817,
+      "screen": "ChatScreen"
+    },
+    {
+      "event": "pause",
+      "key": "ctrl+2",
+      "seconds": 1.0338550000451505,
+      "screen": "ChatScreen"
+    },
+    {
+      "event": "pause",
+      "key": "ctrl+2",
+      "seconds": 1.0160580000374466,
+      "screen": "ChatScreen"
+    },
+    {
+      "event": "arrival_and_settle",
+      "key": "ctrl+2",
+      "seconds": 6.6084623341448605,
+      "at_entry": "ChatScreen",
+      "screen": "ChatScreen"
+    },
+    {
+      "event": "css_parse",
+      "key": "ctrl+3",
+      "seconds": 0.06151445908471942
+    },
+    {
+      "event": "press",
+      "key": "ctrl+3",
+      "seconds": 1.2507617499213666,
+      "screen": "LibraryScreen",
+      "css_sources": 26
+    },
+    {
+      "event": "pause",
+      "key": "ctrl+3",
+      "seconds": 0.02155679208226502,
+      "screen": "LibraryScreen"
+    },
+    {
+      "event": "pause",
+      "key": "ctrl+3",
+      "seconds": 0.022160792024806142,
+      "screen": "LibraryScreen"
+    },
+    {
+      "event": "pause",
+      "key": "ctrl+3",
+      "seconds": 1.0216170421335846,
+      "screen": "LibraryScreen"
+    },
+    {
+      "event": "pause",
+      "key": "ctrl+3",
+      "seconds": 0.9941136669367552,
+      "screen": "LibraryScreen"
+    },
+    {
+      "event": "pause",
+      "key": "ctrl+3",
+      "seconds": 1.0119451659265906,
+      "screen": "LibraryScreen"
+    },
+    {
+      "event": "pause",
+      "key": "ctrl+3",
+      "seconds": 0.9257017909549177,
+      "screen": "LibraryScreen"
+    },
+    {
+      "event": "pause",
+      "key": "ctrl+3",
+      "seconds": 1.0188319168519229,
+      "screen": "LibraryScreen"
+    },
+    {
+      "event": "arrival_and_settle",
+      "key": "ctrl+3",
+      "seconds": 5.3603029998485,
+      "at_entry": "LibraryScreen",
+      "screen": "LibraryScreen"
+    },
+    {
+      "event": "css_parse",
+      "key": "ctrl+4",
+      "seconds": 0.004357750061899424
+    },
+    {
+      "event": "css_parse",
+      "key": "ctrl+4",
+      "seconds": 0.0009768339805305004
+    },
+    {
+      "event": "css_parse",
+      "key": "ctrl+4",
+      "seconds": 0.0016184169799089432
+    },
+    {
+      "event": "css_parse",
+      "key": "ctrl+4",
+      "seconds": 0.0013307922054082155
+    },
+    {
+      "event": "css_parse",
+      "key": "ctrl+4",
+      "seconds": 0.0015034580137580633
+    },
+    {
+      "event": "css_parse",
+      "key": "ctrl+4",
+      "seconds": 0.001641583163291216
+    },
+    {
+      "event": "css_parse",
+      "key": "ctrl+4",
+      "seconds": 0.000989499967545271
+    },
+    {
+      "event": "press",
+      "key": "ctrl+4",
+      "seconds": 2.0829860840458423,
+      "screen": "PersonasScreen",
+      "css_sources": 33
+    },
+    {
+      "event": "pause",
+      "key": "ctrl+4",
+      "seconds": 1.024467707844451,
+      "screen": "PersonasScreen"
+    },
+    {
+      "event": "pause",
+      "key": "ctrl+4",
+      "seconds": 0.04765704087913036,
+      "screen": "PersonasScreen"
+    },
+    {
+      "event": "pause",
+      "key": "ctrl+4",
+      "seconds": 1.0232617910951376,
+      "screen": "PersonasScreen"
+    },
+    {
+      "event": "pause",
+      "key": "ctrl+4",
+      "seconds": 1.0081698750145733,
+      "screen": "PersonasScreen"
+    },
+    {
+      "event": "pause",
+      "key": "ctrl+4",
+      "seconds": 1.0178618328645825,
+      "screen": "PersonasScreen"
+    },
+    {
+      "event": "pause",
+      "key": "ctrl+4",
+      "seconds": 0.8289760411716998,
+      "screen": "PersonasScreen"
+    },
+    {
+      "event": "pause",
+      "key": "ctrl+4",
+      "seconds": 1.0181372498627752,
+      "screen": "PersonasScreen"
+    },
+    {
+      "event": "arrival_and_settle",
+      "key": "ctrl+4",
+      "seconds": 6.321387417148799,
+      "at_entry": "PersonasScreen",
+      "screen": "PersonasScreen"
+    },
+    {
+      "event": "css_parse",
+      "key": "ctrl+7",
+      "seconds": 0.0041670838836580515
+    },
+    {
+      "event": "css_parse",
+      "key": "ctrl+7",
+      "seconds": 0.0010905000381171703
+    },
+    {
+      "event": "css_parse",
+      "key": "ctrl+7",
+      "seconds": 0.001061334041878581
+    },
+    {
+      "event": "press",
+      "key": "ctrl+7",
+      "seconds": 2.0719138339627534,
+      "screen": "SchedulesWorkbench",
+      "css_sources": 37
+    },
+    {
+      "event": "pause",
+      "key": "ctrl+7",
+      "seconds": 1.0190453750547022,
+      "screen": "SchedulesWorkbench"
+    },
+    {
+      "event": "pause",
+      "key": "ctrl+7",
+      "seconds": 1.0257702909875661,
+      "screen": "SchedulesWorkbench"
+    },
+    {
+      "event": "pause",
+      "key": "ctrl+7",
+      "seconds": 1.0173555410001427,
+      "screen": "SchedulesWorkbench"
+    },
+    {
+      "event": "pause",
+      "key": "ctrl+7",
+      "seconds": 1.0131123329047114,
+      "screen": "SchedulesWorkbench"
+    },
+    {
+      "event": "pause",
+      "key": "ctrl+7",
+      "seconds": 0.4028918750118464,
+      "screen": "SchedulesWorkbench"
+    },
+    {
+      "event": "pause",
+      "key": "ctrl+7",
+      "seconds": 0.027078708168119192,
+      "screen": "SchedulesWorkbench"
+    },
+    {
+      "event": "pause",
+      "key": "ctrl+7",
+      "seconds": 0.21238312497735023,
+      "screen": "SchedulesWorkbench"
+    },
+    {
+      "event": "arrival_and_settle",
+      "key": "ctrl+7",
+      "seconds": 5.054438249906525,
+      "at_entry": "SchedulesWorkbench",
+      "screen": "SchedulesWorkbench"
+    },
+    {
+      "event": "css_parse",
+      "key": "ctrl+9",
+      "seconds": 0.011857583886012435
+    },
+    {
+      "event": "css_parse",
+      "key": "ctrl+9",
+      "seconds": 0.0011128748301416636
+    },
+    {
+      "event": "css_parse",
+      "key": "ctrl+9",
+      "seconds": 0.002134749898687005
+    },
+    {
+      "event": "css_parse",
+      "key": "ctrl+9",
+      "seconds": 0.0009598331525921822
+    },
+    {
+      "event": "css_parse",
+      "key": "ctrl+9",
+      "seconds": 0.0015115831047296524
+    },
+    {
+      "event": "css_parse",
+      "key": "ctrl+9",
+      "seconds": 0.0011473752092570066
+    },
+    {
+      "event": "css_parse",
+      "key": "ctrl+9",
+      "seconds": 0.0015361669939011335
+    },
+    {
+      "event": "press",
+      "key": "ctrl+9",
+      "seconds": 2.1845333750825375,
+      "screen": "SettingsScreen",
+      "css_sources": 41
+    },
+    {
+      "event": "pause",
+      "key": "ctrl+9",
+      "seconds": 1.0209500000346452,
+      "screen": "SettingsScreen"
+    },
+    {
+      "event": "pause",
+      "key": "ctrl+9",
+      "seconds": 1.0222868749406189,
+      "screen": "SettingsScreen"
+    },
+    {
+      "event": "pause",
+      "key": "ctrl+9",
+      "seconds": 1.0203659168910235,
+      "screen": "SettingsScreen"
+    },
+    {
+      "event": "pause",
+      "key": "ctrl+9",
+      "seconds": 1.0247408330906183,
+      "screen": "SettingsScreen"
+    },
+    {
+      "event": "pause",
+      "key": "ctrl+9",
+      "seconds": 0.04705254198051989,
+      "screen": "SettingsScreen"
+    },
+    {
+      "event": "pause",
+      "key": "ctrl+9",
+      "seconds": 1.0120713750366122,
+      "screen": "SettingsScreen"
+    },
+    {
+      "event": "pause",
+      "key": "ctrl+9",
+      "seconds": 0.9227827920112759,
+      "screen": "SettingsScreen"
+    },
+    {
+      "event": "arrival_and_settle",
+      "key": "ctrl+9",
+      "seconds": 6.4364282079041,
+      "at_entry": "SettingsScreen",
+      "screen": "SettingsScreen"
+    },
+    {
+      "event": "css_parse",
+      "key": "f2",
+      "seconds": 0.002174791879951954
+    },
+    {
+      "event": "css_parse",
+      "key": "f2",
+      "seconds": 0.0010824999772012234
+    },
+    {
+      "event": "css_parse",
+      "key": "f2",
+      "seconds": 0.0011582919396460056
+    },
+    {
+      "event": "press",
+      "key": "f2",
+      "seconds": 1.1680206670425832,
+      "screen": "LLMScreen",
+      "css_sources": 42
+    },
+    {
+      "event": "pause",
+      "key": "f2",
+      "seconds": 0.024697500048205256,
+      "screen": "LLMScreen"
+    },
+    {
+      "event": "pause",
+      "key": "f2",
+      "seconds": 0.024956708075478673,
+      "screen": "LLMScreen"
+    },
+    {
+      "event": "pause",
+      "key": "f2",
+      "seconds": 1.0082953749224544,
+      "screen": "LLMScreen"
+    },
+    {
+      "event": "pause",
+      "key": "f2",
+      "seconds": 1.0273977920878679,
+      "screen": "LLMScreen"
+    },
+    {
+      "event": "pause",
+      "key": "f2",
+      "seconds": 0.7860369579866529,
+      "screen": "LLMScreen"
+    },
+    {
+      "event": "pause",
+      "key": "f2",
+      "seconds": 0.6950095829088241,
+      "screen": "LLMScreen"
+    },
+    {
+      "event": "pause",
+      "key": "f2",
+      "seconds": 0.028620541095733643,
+      "screen": "LLMScreen"
+    },
+    {
+      "event": "arrival_and_settle",
+      "key": "f2",
+      "seconds": 3.925153125077486,
+      "at_entry": "LLMScreen",
+      "screen": "LLMScreen"
+    },
+    {
+      "event": "press",
+      "key": "f4",
+      "seconds": 2.0355885419994593,
+      "screen": "SettingsScreen",
+      "css_sources": 42
+    },
+    {
+      "event": "pause",
+      "key": "f4",
+      "seconds": 1.0091344171669334,
+      "screen": "SettingsScreen"
+    },
+    {
+      "event": "pause",
+      "key": "f4",
+      "seconds": 1.027886874973774,
+      "screen": "SettingsScreen"
+    },
+    {
+      "event": "pause",
+      "key": "f4",
+      "seconds": 1.0255836669821292,
+      "screen": "SettingsScreen"
+    },
+    {
+      "event": "pause",
+      "key": "f4",
+      "seconds": 0.8962798749562353,
+      "screen": "SettingsScreen"
+    },
+    {
+      "event": "pause",
+      "key": "f4",
+      "seconds": 0.027326999930664897,
+      "screen": "SettingsScreen"
+    },
+    {
+      "event": "pause",
+      "key": "f4",
+      "seconds": 0.02569633279927075,
+      "screen": "SettingsScreen"
+    },
+    {
+      "event": "pause",
+      "key": "f4",
+      "seconds": 1.0199166659731418,
+      "screen": "SettingsScreen"
+    },
+    {
+      "event": "arrival_and_settle",
+      "key": "f4",
+      "seconds": 5.35983308381401,
+      "at_entry": "SettingsScreen",
+      "screen": "SettingsScreen"
+    }
+  ]
+}

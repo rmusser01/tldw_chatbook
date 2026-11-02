@@ -320,6 +320,81 @@ def test_private_session_state_preserves_preferences_without_selection_activatio
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("empty", [False, True])
+async def test_memory_database_acceptance_persists_exact_receipt(empty):
+    from tldw_chatbook.Chat.chat_persistence_service import ChatPersistenceService
+    from tldw_chatbook.Chat.console_chat_models import ConsoleMessageRole
+    from tldw_chatbook.Chat.console_prompt_mixin_service import (
+        ConsolePromptMixinService,
+    )
+    from tldw_chatbook.Chat.console_prompt_mixins import MixinAttemptWrite
+    from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
+
+    database = CharactersRAGDB(":memory:", "mixins-memory-acceptance")
+    persistence = ChatPersistenceService(database)
+    store = ConsoleChatStore(persistence=persistence)
+    try:
+        session = store.create_session()
+        conversation = persistence.create_conversation(conversation_title="Memory")
+        store.publish_first_persisted_conversation(session.id, conversation)
+        user = store.append_message(
+            session.id, role=ConsoleMessageRole.USER, content="Question", persist=True
+        )
+        assistant = store.append_message(
+            session.id, role=ConsoleMessageRole.ASSISTANT, content="", persist=True
+        )
+        snapshot = MixinAttemptSnapshot(
+            ()
+            if empty
+            else (
+                MixinSnapshot(A, 1, "A", LiteralMixinDefinition("Literal", "before")),
+            )
+        )
+        batch = MixinAttemptWrite("memory-attempt", user.id, assistant.id, snapshot)
+        service = ConsolePromptMixinService(
+            store=store, prompt_scope_service=None, persistence=persistence
+        )
+
+        await service.accept_attempt(session.id, batch)
+
+        recorded = persistence.get_conversation_mixin_attempt(
+            conversation,
+            assistant_message_id=assistant.persisted_message_id or assistant.id,
+            attempt_id=batch.attempt_id,
+        )
+        assert recorded.status == "recorded"
+        assert recorded.snapshot == snapshot
+        # Durable replay must read the real receipt, never an ephemeral cache.
+        assert session.prompt_mixin_attempts == {}
+        assert (
+            await service.retry_snapshot(session.id, assistant_message_id=assistant.id)
+            == snapshot
+        )
+        with database.transaction() as cursor:
+            cursor.execute(
+                "DELETE FROM console_prompt_mixin_attempts WHERE attempt_id=?",
+                (batch.attempt_id,),
+            )
+        with pytest.raises(
+            MixinSnapshotUnavailableError, match="mixin_retry_unavailable"
+        ):
+            await service.retry_snapshot(session.id, assistant_message_id=assistant.id)
+        assert (
+            store.get_message(assistant.id).metadata.mixin_attempt_id
+            == batch.attempt_id
+        )
+        assert [row.content for row in store.messages_for_session(session.id)] == [
+            "Question",
+            "",
+        ]
+    finally:
+        for session in store.sessions():
+            store.close_session(session.id)
+        store.end_app_runtime()
+        database.close()
+
+
+@pytest.mark.asyncio
 async def test_native_preferences_save_and_reopen_are_chat_local(tmp_path):
     from tldw_chatbook.Chat.chat_persistence_service import ChatPersistenceService
     from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB

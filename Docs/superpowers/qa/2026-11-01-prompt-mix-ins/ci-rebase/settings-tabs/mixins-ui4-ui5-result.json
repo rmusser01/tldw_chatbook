@@ -1,0 +1,75 @@
+{
+  "base": "79e659dcde6f5360edb0070f9d184713bd8584d1",
+  "diff": "/private/tmp/mixins-ui4-ui5-fix.diff",
+  "sources": {
+    "Tests/UI/test_console_session_tab_close.py": "e5a77ba9200ad9d3dde1e9105dccad72894421daa951aa4da3511c1cdedd3e87",
+    "Tests/UI/test_console_setup_card_keyboard.py": "a0c98c44d40ad7a06c63806c4ac57249260f368e41dcc0760230fe28ee4d7693",
+    "Tests/UI/test_app_quit_under_modal.py": "871cde2190148bab035b81edad85eacd253e700ab72f3d03fad0e8edc698b412",
+    "tldw_chatbook/UI/Screens/settings_screen.py": "dec0a83ac50b7e174f45b248d7e41661b5ce9b65816ea87f93f32f70700575fe"
+  },
+  "runs": [
+    {
+      "argv": [
+        "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python",
+        "-m",
+        "pytest",
+        "Tests/UI/test_console_session_tab_close.py::test_session_close_race_geometry_and_fleet_journeys",
+        "Tests/UI/test_console_session_tab_close.py::test_session_close_pending_journeys",
+        "-q",
+        "--tb=short",
+        "-p",
+        "no:cacheprovider",
+        "--basetemp=/private/tmp/mixins-ui4-close-green"
+      ],
+      "cwd": "/Users/macbook-dev/.codex/worktrees/prompt-mix-ins/tldw_chatbook",
+      "log": "/private/tmp/mixins-ui4-close-green.log",
+      "result": "2 passed in81.00s"
+    },
+    {
+      "argv": [
+        "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python",
+        "-m",
+        "pytest",
+        "Tests/UI/test_app_quit_under_modal.py::test_inactive_prompt_refresh_keeps_provider_snapshot_dirty_status",
+        "-q",
+        "--tb=short",
+        "-p",
+        "no:cacheprovider",
+        "--basetemp=/private/tmp/mixins-ui5-status-red"
+      ],
+      "cwd": "/Users/macbook-dev/.codex/worktrees/prompt-mix-ins/tldw_chatbook",
+      "log": "/private/tmp/mixins-ui5-status-red.log",
+      "result": "1 failed,2 syntax warnings in14.53s; intended post-refresh dirty-status assertion"
+    },
+    {
+      "argv": [
+        "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python",
+        "-m",
+        "pytest",
+        "Tests/UI/test_app_quit_under_modal.py::test_inactive_prompt_refresh_keeps_provider_snapshot_dirty_status",
+        "Tests/UI/test_app_quit_under_modal.py::test_a_snapshot_preference_edit_is_kept_and_asked_about_from_console",
+        "Tests/UI/test_console_setup_card_keyboard.py::test_a_guidance_sync_keeps_focus_on_the_action_tab_reached",
+        "Tests/UI/test_console_setup_card_keyboard.py::test_tab_and_shift_tab_cycle_every_card_action_with_the_focus_cue",
+        "-q",
+        "--tb=short",
+        "-p",
+        "no:cacheprovider",
+        "--basetemp=/private/tmp/mixins-ui5-status-keyboard-green"
+      ],
+      "cwd": "/Users/macbook-dev/.codex/worktrees/prompt-mix-ins/tldw_chatbook",
+      "log": "/private/tmp/mixins-ui5-status-keyboard-green.log",
+      "result": "5 passed,2 syntax warnings in32.47s"
+    }
+  ],
+  "lint": "/private/tmp/mixins-ui4-ui5-ruff-comparison.json",
+  "scope": "Three stale label assertions, current keyboard third stop, active-only shared Settings status/banner, one mounted regression. No commits/push/task/manifest edits. Original quit test unchanged.",
+  "warnings": "Two unchanged train_journey.py invalid escape SyntaxWarnings, present in red and final green.",
+  "rootcause": [
+    "/private/tmp/mixins-ui4-close-rootcause.json",
+    "/private/tmp/mixins-ui5-rootcause.json",
+    "/private/tmp/mixins_ui5_status_probe.py",
+    "/private/tmp/mixins-ui5-status-probe.json",
+    "/private/tmp/mixins-ui5-status-probe.log",
+    "/private/tmp/mixins-ui5-focus-snapshot-current.log"
+  ]
+}

@@ -1,7 +1,7 @@
 ---
 id: TASK-38544
 title: Qualify the integrated prompt mix-in lifecycle and document delivery
-status: Done
+status: In Progress
 created_date: 2026-11-01 19:30
 dependencies:
 - TASK-38541
@@ -17,7 +17,7 @@ documentation:
 - backlog/decisions/286-console-prompt-mix-ins.md
 assignee:
 - '@codex'
-updated_date: 2026-11-02 05:42
+updated_date: 2026-11-02 06:18
 ---
 
 ## Description
@@ -42,6 +42,8 @@ Establish that the complete mix-in workflow behaves as approved across real Cons
 - [x] #12 An accepted toggle that completes after the editor becomes dirty still displays authoritative enabled state and preserves the newer raw draft.
 - [x] #13 Successive accepted placement observations append each newly moved mix-in to its new group end across sends and durable reopen; refusals remain provisional and stale layout intents are rejected without invalidating accepted execution.
 - [x] #14 Delayed Prompt and Recipe artifact opens cannot publish captured targets or replace newer mode/source/dirty editor state after navigation or unmount; actual event-route confirmations remain responsive.
+- [ ] #15 PR3346 rebases onto latest dev without unrelated history; targeted CI recovery-selector tests retain their native temp/provider-isolation assertions without colliding with autouse fixture directories; any UI latency changes are justified by measured causality and the existing budget is preserved.
+- [ ] #16 CI regressions in shared UI and project-chat owners are diagnosed with exact failing nodes; any confirmed fixes preserve directory authority, cleanup recovery, dispatch behavior and design-token governance without weakening assertions or time budgets.
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -61,6 +63,11 @@ Include hosted preflight corrections: inspect changed diagnostic statements befo
 I1 acceptance timing follow-up: reproduce a held toggle whose editor becomes dirty before apply completes; reconcile accepted checkbox state before the existing dirty-preserving refresh returns. Run the exact mounted node and prior I1 controls; keep scope limited to this successful-action edge.
 Clarify accepted facts versus layout: publish only last-used versions at acceptance; retain observed name/placement/order updates in Workbench project/save owners, which advance the intent revision. Add a source-witness and stale-layout intent control; reconcile enabled count with row controls when a dirty editor prevents remount.
 Scoped re-review R1/R2: reproduce successive Before-to-After observations and held ArtifactSelected manual-target callbacks. Publish accepted layout observations through existing preferences with revision advancement and acceptance-aware source witnesses, preserving newer user choices, refused preparation and frozen replay. Fence Prompt/Recipe callback target publication and editor continuation by exact navigation/detail ownership. Add native/durable reopen/CAS/refusal and mounted navigation/source/unmount controls, run covering checks and FIX_BASE1a58f0af lint, preserve re-review report and qualified manifests, commit locally. ADR required: no new ADR. ADR path: backlog/decisions/286-console-prompt-mix-ins.md. Reason: restore approved append-to-group and UI ownership contracts at existing owners.
+CI follow-up: inspect failed GitHub job logs and preserve paired latency evidence; rebase onto current dev with a verified local backup and explicit force-with-lease publication; repair the native TEMP/TMP/TMPDIR fixture namespace collision with a distinct owned directory and verify all five launch environment cases; run affected guards and existing mix-in controls, qualify rebased source/manifests and monitor fresh hosted checks without Qodo. ADR required: no. ADR path: backlog/decisions/286-console-prompt-mix-ins.md (existing feature); no new ADR for the test-only directory fix. Reason: existing behavior and security boundaries are unchanged.
+Additional completed CI failures: investigate the exact project-chat fenced, paste-send and tab-close recovery nodes; repair the inherited setup-provider max-height literal through the existing token language and rebuilt CSS; record root causes and targeted RED/GREEN evidence before publishing the rebased fixes.
+CSS ceiling repair follows ADR-150/161: move the existing style-picker, Prompt Workbench and Mix-ins selector vocabulary unchanged into one adjacent bundled Console prompts sheet; retain all selectors/declarations and verify rule identity, size floor, token governance, generated bundle and affected mounted controls. Add a setup-provider viewport token with the existing 40vh value. No new ADR or visual behavior change.
+Remaining CI inventory checks: classify each newly uncovered modal against existing wide-tier policy (full viewport or compact single-input exclusions only, individually documented); verify reverse coverage remains strict. Diagnose remaining navigation/preimport/copy expectations against actual owners before fixing them. Routine bug/inventory fixes use existing ADR-150/161 and Console privacy/readiness decisions; no new architecture.
+P0 hybrid recovery repair: schema86 is already the approved mix-in schema, but the Subscription hybrid structural catalog ends at85. Extend only its existing immutable embedded-schema composition and exact stamp mapping to86; keep strict structural matching, read-only authorizer and corruption/forged-stamp refusal. Extend the existing wrong-stamp regression through86 and run the seven reported hybrid cases plus catalog controls. Existing ADR286 applies; no new schema or authority policy.
 <!-- SECTION:PLAN:END -->
 
 ## Implementation Notes

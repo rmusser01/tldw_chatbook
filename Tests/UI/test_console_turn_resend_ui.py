@@ -51,7 +51,7 @@ USER = ConsoleMessageRole.USER
 ASSISTANT = ConsoleMessageRole.ASSISTANT
 
 
-def _broken_turn() -> list[ConsoleChatMessage]:
+def _broken_turn(*, mixin_usage_count: int | None = 0) -> list[ConsoleChatMessage]:
     return [
         ConsoleChatMessage(
             role=USER, content="hello", id="u1", persisted_message_id="p-u1"
@@ -63,18 +63,22 @@ def _broken_turn() -> list[ConsoleChatMessage]:
             status="failed",
             persisted_message_id="p-a1",
             assistant_generation_state="failed",
+            # Presentation from a verified empty receipt, or unavailable below.
+            # This projection is never operational Retry authority.
+            mixin_usage_count=mixin_usage_count,
         ),
     ]
 
 
 class _BrokenTurnHarness(ConsolidatedCSSApp):
-    def __init__(self) -> None:
+    def __init__(self, *, mixin_usage_count: int | None = 0) -> None:
         super().__init__()
+        self.mixin_usage_count = mixin_usage_count
         self.pressed: list[str] = []
 
     def compose(self) -> ComposeResult:
         transcript = ConsoleTranscript(id="console-native-transcript")
-        transcript.set_messages(_broken_turn())
+        transcript.set_messages(_broken_turn(mixin_usage_count=self.mixin_usage_count))
         yield transcript
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
@@ -122,14 +126,17 @@ async def test_resend_is_hidden_while_a_run_is_live():
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
-    ("message_id", "pressed"),
+    ("message_id", "pressed", "mixin_usage_count"),
     [
-        ("u1", "console-message-action-resend-u1"),
-        ("a1", "console-message-action-retry-a1"),
+        ("u1", "console-message-action-resend-u1", 0),
+        ("a1", "console-message-action-retry-a1", 0),
+        ("a1", "console-message-action-regenerate-a1", None),
     ],
 )
-async def test_r_presses_the_rows_resend_or_retry(message_id, pressed):
-    app = _BrokenTurnHarness()
+async def test_r_presses_the_rows_resend_or_retry(
+    message_id, pressed, mixin_usage_count
+):
+    app = _BrokenTurnHarness(mixin_usage_count=mixin_usage_count)
 
     async with app.run_test(size=(211, 44)) as pilot:
         transcript = app.query_one(ConsoleTranscript)
