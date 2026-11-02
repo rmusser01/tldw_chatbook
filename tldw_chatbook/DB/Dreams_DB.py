@@ -276,7 +276,9 @@ class DreamsDB(SQLiteStoreKernel, BaseDB):
     # Connection handling (SQLiteStoreKernel, ADR-228)
     # ------------------------------------------------------------------
 
-    def _open_connection(self) -> sqlite3.Connection:
+    def _open_connection(
+        self, *, operation_deadline: float | None = None
+    ) -> sqlite3.Connection:
         """Open through BaseDB's db.base path with cross-thread close support.
 
         ``check_same_thread=False`` (as before): each thread still USES only
@@ -284,9 +286,13 @@ class DreamsDB(SQLiteStoreKernel, BaseDB):
         ``close_all`` closing them (ADR-228 provenance + the kernel's
         ``_on_connection_opened`` hook registering into ``_opened``).
         """
-        return BaseDB._get_connection(self, check_same_thread=False)
+        return BaseDB._get_connection(
+            self, operation_deadline=operation_deadline, check_same_thread=False
+        )
 
-    def _configure_connection(self, conn: sqlite3.Connection) -> sqlite3.Connection:
+    def _configure_connection(
+        self, conn: sqlite3.Connection, *, operation_deadline: float | None = None
+    ) -> sqlite3.Connection:
         """Dreams per-connection policy (kernel wraps registration/gating).
 
         Refuse unknown stores before WAL changes their header/journal
@@ -300,27 +306,83 @@ class DreamsDB(SQLiteStoreKernel, BaseDB):
         rather than cache it — the kernel's configure-failure wrapper
         closes on the raised RecoveryRequired.
         """
+
+        def execute(sql: str) -> None:
+            if operation_deadline is not None:
+                remaining = operation_deadline - time.monotonic()
+                if remaining <= 0:
+                    raise TimeoutError("Dreams connection budget exhausted")
+                conn.execute(
+                    f"PRAGMA busy_timeout = {max(0, int(remaining * 1000))}"
+                ).fetchall()
+            conn.execute(sql).fetchall()
+
         _core_access(self)
-        self._validate_schema_lineage(conn)
-        conn.execute("PRAGMA foreign_keys = ON")
-        if not self.is_memory_db:
-            self._enable_wal(conn)
-        conn.execute("PRAGMA synchronous = NORMAL")
-        conn.isolation_level = None
-        _core_access(self)
+        if operation_deadline is not None:
+            conn.set_progress_handler(
+                lambda: int(time.monotonic() >= operation_deadline), 100
+            )
+        try:
+            if operation_deadline is not None:
+                remaining = operation_deadline - time.monotonic()
+                if remaining <= 0:
+                    raise TimeoutError("Dreams connection budget exhausted")
+                conn.execute(
+                    f"PRAGMA busy_timeout = {max(0, int(remaining * 1000))}"
+                ).fetchall()
+            self._validate_schema_lineage(conn)
+            execute("PRAGMA foreign_keys = ON")
+            if not self.is_memory_db:
+                self._enable_wal(conn, operation_deadline=operation_deadline)
+            execute("PRAGMA synchronous = NORMAL")
+            conn.isolation_level = None
+            _core_access(self)
+            if (
+                operation_deadline is not None
+                and time.monotonic() >= operation_deadline
+            ):
+                raise TimeoutError("Dreams connection budget exhausted")
+        except sqlite3.OperationalError as exc:
+            if operation_deadline is not None and (
+                time.monotonic() >= operation_deadline
+                or any(
+                    word in str(exc).lower() for word in ("locked", "busy", "interrupt")
+                )
+            ):
+                raise TimeoutError("Dreams connection setup timed out") from exc
+            raise
+        finally:
+            if operation_deadline is not None:
+                conn.set_progress_handler(None, 0)
+                conn.execute("PRAGMA busy_timeout = 5000").fetchall()
         return conn
 
-    def _enable_wal(self, conn: sqlite3.Connection) -> None:
+    def _enable_wal(
+        self, conn: sqlite3.Connection, *, operation_deadline: float | None = None
+    ) -> None:
         """Enable WAL despite a concurrent opener briefly holding the file."""
         deadline = time.monotonic() + self._WAL_SETUP_TIMEOUT_SECONDS
+        if operation_deadline is not None:
+            deadline = min(deadline, operation_deadline)
         while True:
+            remaining = deadline - time.monotonic()
+            if (
+                remaining <= 0
+                and operation_deadline is not None
+                and deadline == operation_deadline
+            ):
+                raise TimeoutError("Dreams connection budget exhausted")
+            if operation_deadline is not None:
+                conn.execute(
+                    f"PRAGMA busy_timeout = {max(0, int(remaining * 1000))}"
+                ).fetchall()
             try:
-                conn.execute("PRAGMA journal_mode = WAL")
+                conn.execute("PRAGMA journal_mode = WAL").fetchall()
                 return
             except sqlite3.OperationalError as exc:
                 if "locked" not in str(exc).lower() or time.monotonic() >= deadline:
                     raise
-                time.sleep(0.01)
+                time.sleep(min(0.01, max(0, deadline - time.monotonic())))
 
     def _on_connection_opened(self, conn: sqlite3.Connection) -> None:
         """Register into the cross-thread close_all registry (strong refs
