@@ -1,0 +1,46 @@
+1:  d9fa27b716 ! 1:  4b0de23d89 feat: add literal chat prompt mix-ins on current dev
+    @@ backlog/docs/lessons-live-verification.md: send carried by its request body (`--
+     +**2026-11-01.** The new Library type filter recorded `Select.value` before mount as its initial choice. Textual still returned `Select.NULL`; mounting the retained All-types page then emitted a change that superseded the user's pending Mix-ins request. Retain the requested constructor choice itself when distinguishing mount events. The real-DB production-style regression now verifies 22 filtered mix-ins stay on a 20-row first page and a two-row second page.
+     
+      ## backlog/docs/lessons-testing-evidence.md ##
+    -@@ backlog/docs/lessons-testing-evidence.md: by `_ui_ready` (the Console controller, `chat_screen.py`, the widgets it
+    - mounts), run `Tests/Performance/test_ui_ready_module_census.py` yourself; it
+    - takes about 15 seconds. Its failure names the new residents. A green preflight
+    - says nothing about this census.
+    +@@ backlog/docs/lessons-testing-evidence.md: registry and ownership predicate and passed in r-b3daab7d. This was proven
+    + source-inherited by exact dev-file comparison, not by a baseline execution.
+    + Normalize machine-readable relative keys at the producer; keep native FIFO
+    + coverage explicitly unavailable when os.mkfifo does not exist.
+    ++
+     +## TASK-38537: Follow portable content through shared logging helpers
+     +
+     +The Mix-in archive regression used the same literal-body sentinel as a valid
+    @@ backlog/docs/lessons-testing-evidence.md: by `_ui_ready` (the Console controller
+     +not a broad `taskN` filename match. Keep any ownership audit private, exclude
+     +unrelated contents from published QA, and regenerate/verify the final Git blob
+     +manifest after correcting the artifact set.
+    ++
+     
+      ## backlog/tasks/task-38534 - Design-prompt-mix-ins-for-Console-sends.md (new) ##
+     @@
+2:  41b75fd12c = 2:  ec2217ceba docs: record current-dev and fresh-clone mix-in qualification
+3:  b94fe2e3a8 = 3:  bb9f41db05 fix: reconcile mix-in controls and publish usage only after acceptance
+4:  9657665e13 = 4:  d3e33857dc fix: preserve mix-in layout revisions and dirty-editor projections
+5:  d1a1e45bb1 ! 5:  3dfcd887e0 fix(console): retain accepted mix-in order and fence artifact opens
+    @@ backlog/decisions/286-console-prompt-mix-ins.md: The focused publication port ta
+     +Source capture and Preview only build provisional immutable snapshots. Accepted manual input publishes last-used revision at native acceptance (or ephemeral acceptance); queue input publishes these facts when custody admission succeeds. Current-choice Regenerate, Edit and Continue publish after their operational receipt is accepted. Original Retry and queue drain never refresh current-choice facts. Publication reads no source, skips unavailable preferences and never re-adds removed selections. Current-capture witnesses authorize accepted placement/order observations only while their captured preference revision remains current; a changed layout advances that revision and rejects stale Workbench intents. Workbench project/save retain name presentation and explicit layout CAS. Used-version-only facts do not advance the intent revision. Current received input commits its draft before publishing accepted layout; accepted execution no longer applies pre-acceptance input-currentness checks. Frozen Retry, queued drain and externally supplied configurations have no current-layout observation authority; queue current observations publish once at admission. A newer user intent wins over delayed layout publication. A placement already used by the accepted revision is not labeled updated since last send. Refused hooks, provider resolution and preparation preserve all choice facts.
+     
+      ## backlog/docs/lessons-testing-evidence.md ##
+    -@@ backlog/docs/lessons-testing-evidence.md: evidence from explicit same-plan references or a known private fixture root,
+    - not a broad `taskN` filename match. Keep any ownership audit private, exclude
+    +@@ backlog/docs/lessons-testing-evidence.md: not a broad `taskN` filename match. Keep any ownership audit private, exclude
+      unrelated contents from published QA, and regenerate/verify the final Git blob
+      manifest after correcting the artifact set.
+    -+
+    + 
+     +## A restored resend fixture is not yet a fresh-Send owner (PR3346, 2026-11-01)
+     +
+     +The successive accepted mix-in placement regression initially failed only after reopen with `Durable Console Library policy no longer matches acceptance.` Read-only exception monitoring traced the original native transaction refusal: the reused resend helper restored messages/preferences but omitted the production asynchronous Library policy hydration. Calling `hydrate_session_library_policy` before the fresh Send restored the intended owner and proved B/A provider order after real SQLite flush/reopen. Do not label a reopen failure a fixture issue until the actual native refusal is captured, and do not replace a fresh Send with a metadata-only assertion or bypass the policy check.
+6:  c2fba0a6c6 = 6:  0f1236a089 docs(qa): qualify scoped fixes in an independent shallow clone
+7:  79e659dcde = 7:  ac4bf6ffc2 docs: record independent prompt mix-in PR approval
+8:  a09ecd115a = 8:  bc97a08102 fix(console): repair CI receipt ownership and recovery integration

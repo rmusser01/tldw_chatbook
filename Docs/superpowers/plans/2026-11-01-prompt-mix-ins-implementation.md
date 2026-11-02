@@ -16,7 +16,7 @@
 
 **Baseline:** Design commit `13ded5544d`; source mapping inspected against the working checkout with HEAD `78e297e889`. Unrelated staged work is not a committed prerequisite. Prompts schema 5 and ChaChaNotes schema 81 were inspected; other work has staged later ChaChaNotes migrations. Allocate actual migration versions at execution, after checking integrated code, all refs and active worktrees. The descriptive SQL paths below deliberately reserve no numeric version.
 
-**Status:** Implemented on dev with schema86/Prompts6. Fresh PR3346 review and both scoped correction reviews are complete; all findings are closed. TASK-38544 is reopened for the authorized rebase onto dev 62a169f906 and CI repairs. Feature reviews remain closed; the PR remains draft and hosted outcomes are tracked separately.
+**Status:** Implemented on dev with schema86/Prompts6. Fresh PR3346 review and both scoped correction reviews are complete; all findings are closed. TASK-38544 is reopened for the authorized rebase onto dev 3412c2b6a3 and CI repairs. Feature reviews remain closed; the PR remains draft and hosted outcomes are tracked separately.
 
 ```text
 ADR required: no

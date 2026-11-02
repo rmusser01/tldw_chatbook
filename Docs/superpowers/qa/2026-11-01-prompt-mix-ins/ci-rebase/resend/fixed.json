@@ -1,0 +1,22 @@
+{
+  "argv": [
+    "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python",
+    "-m",
+    "pytest",
+    "Tests/UI/test_console_turn_resend_ui.py::test_r_presses_the_rows_resend_or_retry",
+    "Tests/UI/test_console_turn_resend_ui.py::test_console_resend_click_re_runs_a_failed_turn_in_place",
+    "Tests/UI/test_console_turn_resend_ui.py::test_resend_poll_survives_initial_hook_admission_read",
+    "Tests/UI/test_console_turn_resend_ui.py::test_transcript_resend_retains_failed_rows_until_connection_is_ready",
+    "Tests/UI/test_library_notes_move_never_false_conflicts.py::test_new_note_keeps_focus_after_a_targeted_notes_refresh",
+    "Tests/Chat/test_console_prompt_mixin_admission.py",
+    "-q",
+    "-p",
+    "no:cacheprovider",
+    "--timeout=300",
+    "--basetemp=/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/mixins-ci3346-ui18-idymhtpd/fixed-tmp",
+    "--junitxml=/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/mixins-ci3346-ui18-idymhtpd/fixed.xml"
+  ],
+  "cwd": "/Users/macbook-dev/.codex/worktrees/prompt-mix-ins/tldw_chatbook",
+  "exit_code": 0,
+  "elapsed": 48.85603183298372
+}

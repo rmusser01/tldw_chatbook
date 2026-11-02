@@ -210,5 +210,41 @@
   "/private/tmp/mixins-admission1-static-comparison.json": {
     "retained": "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/ci-rebase/runtime/mixins-admission1-static-comparison.json",
     "source_sha256": "abca205fcd24b826697a0310ab58c560751b487d70ff8ec5b656d7e4968b6437"
+  },
+  "/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/mixins-ci3346-ui18-idymhtpd/ci-investigation.md": {
+    "retained": "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/ci-rebase/resend/ci-investigation.md",
+    "source_sha256": "2e69299b1c315422efaeacca532da6948a1e680e1cbeb28f8a8fbd5f48b76ff6"
+  },
+  "/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/mixins-ci3346-ui18-idymhtpd/current.json": {
+    "retained": "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/ci-rebase/resend/current.json",
+    "source_sha256": "3c398a21d8e32c75503ad0262a8a624999011a69efbe83e4e679c740c94982f5"
+  },
+  "/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/mixins-ci3346-ui18-idymhtpd/current.log": {
+    "retained": "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/ci-rebase/resend/current.log.json",
+    "source_sha256": "deb94ecdb8f7686b940ddd811b6fb0cb98a387570e76cd7587537b32d2bacdb0"
+  },
+  "/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/mixins-ci3346-ui18-idymhtpd/receipt-read-observations.jsonl": {
+    "retained": "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/ci-rebase/resend/receipt-read-observations.jsonl",
+    "source_sha256": "34ad1b7f44a51d96417bc860988bd5eb954509f0df761d529670d1b55e8d4843"
+  },
+  "/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/mixins-ci3346-ui18-idymhtpd/memory-read-red.json": {
+    "retained": "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/ci-rebase/resend/memory-read-red.json",
+    "source_sha256": "caf27c43c0e74573d5d6649e5c9d5cbebe2b640e1c3a87a0555a87410aace660"
+  },
+  "/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/mixins-ci3346-ui18-idymhtpd/memory-read-red.log": {
+    "retained": "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/ci-rebase/resend/memory-read-red.log.json",
+    "source_sha256": "f6309ca03565192503021c11f322b12f167d6b86342c13141a2d4e962f589df6"
+  },
+  "/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/mixins-ci3346-ui18-idymhtpd/fixed.json": {
+    "retained": "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/ci-rebase/resend/fixed.json",
+    "source_sha256": "6fa93e0c1276e818053a07a99cbbd53f13c8d249101f49f9ebb0b9a6fc9a5055"
+  },
+  "/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/mixins-ci3346-ui18-idymhtpd/fixed.log": {
+    "retained": "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/ci-rebase/resend/fixed.log.json",
+    "source_sha256": "088cfc6bc184ada82cc17110b27254b6d74dfb4d68d25e52c6cdc9658d6dfd65"
+  },
+  "/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/mixins-ci3346-ui18-idymhtpd/lint-comparison.json": {
+    "retained": "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/ci-rebase/resend/lint-comparison.json",
+    "source_sha256": "46d4e9ebeb1f10e317ab0f73e345aa419895546688aeaf75dcf8a413af0b71b4"
   }
 }

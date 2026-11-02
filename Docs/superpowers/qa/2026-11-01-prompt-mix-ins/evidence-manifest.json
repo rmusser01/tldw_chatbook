@@ -1,6 +1,446 @@
 {
-  "qualification": "Preserved historical captures, port integration and current PR3346 R1/R2 re-review-fix evidence, including failures and limitations. Current product/Git source checks are strict; unavailable historical objects are explicitly unverified. Excludes only the two current manifests.",
+  "qualification": "Strict current evidence/source Git bytes plus explicitly historical captures; reviewed CI repairs and latest rebase qualification included. Hosted status is separate; historical objects may be unavailable after rewrite or shallow checkout.",
   "files": {
+    "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/ci-rebase/artifact-map.json": {
+      "sha256": "981b41bb4113353a4473e25549c42c52df18ac150c2d8aaa0500ed633a215182",
+      "git_blob": "5fc966c697d60aae701c71cd29cc5b9220b6b92d",
+      "bytes": 17524
+    },
+    "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/ci-rebase/baseline-probe-timings.json": {
+      "sha256": "c6c08bc8b9162110bf3f71bd69b02e27a723da318b7544a592c8050939f8951a",
+      "git_blob": "c722d62a058eb74807203d4c3d13c5076abb0f2d",
+      "bytes": 12254
+    },
+    "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/ci-rebase/baseline-probe.json": {
+      "sha256": "e68864be7b0381bebe5523f377a31b4ae89cfb47d3a29f06afb650fe56ae1d11",
+      "git_blob": "5431dbcb7e01bd842a1678bff75bf9bff46a59c7",
+      "bytes": 539
+    },
+    "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/ci-rebase/baseline-probe.log.json": {
+      "sha256": "7b0b0dd7e6726d3c92bde53b710459edb9a6efe78f9bfab87242f9d83ddebfe5",
+      "git_blob": "2ff8a63d8c5324f536139ef38494b95b57364f85",
+      "bytes": 439
+    },
+    "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/ci-rebase/ci-investigation.md": {
+      "sha256": "a81c17e09eec60c280ef91768b9eabb0253d560298e49f7565702f43d1d015ee",
+      "git_blob": "206a10b659f4640fdf4ed61f56b791af65bf4705",
+      "bytes": 5519
+    },
+    "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/ci-rebase/css/green.json": {
+      "sha256": "95279d8820e5343b8d73d4caada5f4845b937545c3d6422d62a007c6fc7f2bb6",
+      "git_blob": "037a8cb2aed4dcdcd2bdd306c4fcc564f0a4c24c",
+      "bytes": 3671
+    },
+    "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/ci-rebase/css/mixins-ci3346-css-lint.json": {
+      "sha256": "3022abf0c1ce052e768e70722b0c4fc90f59a7ddf47b4329793a08a05eaf02ee",
+      "git_blob": "382411611d0b958b1ba89f8afc5baa15232c07e8",
+      "bytes": 489
+    },
+    "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/ci-rebase/css/red.json": {
+      "sha256": "26f42bf12ac628b8d27f52883617d998d6b4bceb3b3af9f39d16d3b80c05c8c1",
+      "git_blob": "69085cdd09c4b7f50acacd53471e61b9d5d818ff",
+      "bytes": 9607
+    },
+    "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/ci-rebase/css/sheet-red.json": {
+      "sha256": "a467a2872ded14e1b521f82678416492005b2d1b0f9b5a7e0f8f0e933eb5d06b",
+      "git_blob": "87bd9d914a1f92a18a99e48ad1f49243e4dd47f7",
+      "bytes": 9576
+    },
+    "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/ci-rebase/current-plain.json": {
+      "sha256": "eee9710f395484472e26f6b6e07d818a5e9e48446d043c014e6d674c7ba682ec",
+      "git_blob": "aabc89d620b5206818877b5be179fbb04b58e4c1",
+      "bytes": 523
+    },
+    "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/ci-rebase/current-plain.log.json": {
+      "sha256": "52221877c8cd0271058c5677fb898712596a798fddda96cae81f13af6695e09f",
+      "git_blob": "a5ad599e318e496f76d149164f1e57f65147e2b5",
+      "bytes": 429
+    },
+    "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/ci-rebase/current-probe-timings.json": {
+      "sha256": "ebc18859fc0bd968c05f956907cb6b7f068defc8517f1e12d59becc67fdb0745",
+      "git_blob": "9408f53cde68eccf9da1f54679bacfca5bc33295",
+      "bytes": 12272
+    },
+    "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/ci-rebase/current-probe.json": {
+      "sha256": "3d24179c7c9cf868b89d6469bf2012e06de51c1193c0016e294fc8fd9b629333",
+      "git_blob": "72edf3d190d7fa14de6bd38b31828a126d51f7e4",
+      "bytes": 522
+    },
+    "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/ci-rebase/current-probe.log.json": {
+      "sha256": "2b46b482ff744260eab381a3c0004c84fa669427fd905189c6b67e6736379609",
+      "git_blob": "3a295102c63b197051e220d3543b55d97aa40df0",
+      "bytes": 429
+    },
+    "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/ci-rebase/final-dev-controls.json": {
+      "sha256": "b1fd909c036749f5ccf0d79bbf634501617da4cb04593d668a7f3fb48a78f59e",
+      "git_blob": "3b38454d01faf5421e633460fd0d68d28fd8387a",
+      "bytes": 1661
+    },
+    "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/ci-rebase/final-rebase-identity.json": {
+      "sha256": "40b5c030ff7a949f78bf18d750f122a7108f4548f32ec20457f53a1d1c6e48fd",
+      "git_blob": "e620b5a1f7a6e03578b69a666f0102b109e6975c",
+      "bytes": 2293
+    },
+    "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/ci-rebase/investigation-context.json": {
+      "sha256": "d1b312c59ffbd9dd33d4bb808fd5c4f167a5278c15b5ae620d4a2d828f5419b7",
+      "git_blob": "3ed47fb2d77d927bc8b5cfd6663ad6519e1615f8",
+      "bytes": 846
+    },
+    "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/ci-rebase/latency_probe.py": {
+      "sha256": "80e15dcd75833cefadc80c3ec00170e85476a364349e8132217b1379f669ec64",
+      "git_blob": "f3ee91c0eef8e08195bf3033a2381d67fddf2e1b",
+      "bytes": 2912
+    },
+    "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/ci-rebase/latest-range-diff.txt": {
+      "sha256": "45f9cda70369c95689279b41d420c30a85b1c69541f8c0252aba03d76ba24a45",
+      "git_blob": "3e447cbb5e5347d8fe15d82e94a0ab69331a2643",
+      "bytes": 5470
+    },
+    "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/ci-rebase/launch-environment-green.json": {
+      "sha256": "c3c23d88fd867be26ee46f310e0c15ccb5d3b6ccdd181f5915586a1da18a593f",
+      "git_blob": "48c5359a2aa4eaccd8480e638987109f310f178c",
+      "bytes": 695
+    },
+    "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/ci-rebase/launch-environment-red.json": {
+      "sha256": "95421cc0fa163afe040005511c31678131af057d6b48321a3b4d598b137dcfd5",
+      "git_blob": "ae0963782385e96a4ad8d6ef9f53664df974ddee",
+      "bytes": 2929
+    },
+    "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/ci-rebase/modal/green.json": {
+      "sha256": "a8cd347d4fb53e0e6476a4c453f773b71ba43fe2e9eaa334191b5011dc3e6240",
+      "git_blob": "2c6f14b38f3364c4323134ac21c6ced6fad5babf",
+      "bytes": 1962
+    },
+    "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/ci-rebase/modal/red.json": {
+      "sha256": "4381f91d84ef553cab5330862f2afdfbb245e2e3c0ac65bb5cd885d9beff7c60",
+      "git_blob": "3803e05c8597fd34e9cc57e714c9f6930c8f3cbe",
+      "bytes": 19493
+    },
+    "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/ci-rebase/perf-initial.log.json": {
+      "sha256": "fdee1e75ecf9535edda2de9987dacff306a019173b5a55691a213dbe9cd4038a",
+      "git_blob": "bd9ea69940913febfbd80b15571c83591b5b3537",
+      "bytes": 136115
+    },
+    "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/ci-rebase/post-rebase-checks.json": {
+      "sha256": "220e1bd5ab5e66bddc5c45bdc767b7f6bc6914fdf3b6468a367ee2ec6278f1f1",
+      "git_blob": "20b43e70190fbb36cf74fd616eb1fb8470755f0e",
+      "bytes": 1790
+    },
+    "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/ci-rebase/project-chat/baseline.json": {
+      "sha256": "fa4ffd30961a075212c609ac39e8766298ae6a5c15d894cd610af8d495ddca85",
+      "git_blob": "2873442cf8dd5c2b9ca8b84edd93f302fd7a9e0b",
+      "bytes": 510
+    },
+    "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/ci-rebase/project-chat/baseline.log.json": {
+      "sha256": "f1321cb1751aafb84f2ea022e5bb2ffb57ca08c7b9c1cd641dd28e1878126781",
+      "git_blob": "f60ea048275aa9eba94356d8fa7fbf9938bc00a3",
+      "bytes": 50485
+    },
+    "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/ci-rebase/project-chat/cause-proof.json": {
+      "sha256": "b3b0bfbe30855b82997db3e2afdef160fa522a9dc995ebfb359c512526cd4a9e",
+      "git_blob": "217a1da1d9ede95ca2ee5a2aeee21796f74f8bab",
+      "bytes": 4470
+    },
+    "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/ci-rebase/project-chat/ci-investigation.md": {
+      "sha256": "688d00614bafa24ec94a9e3c0225ce0d093fd38d69bac63308e22f6c8e1cc3ac",
+      "git_blob": "e5ead6b0c851d3a4d6d29b7e2eade6feb540c26c",
+      "bytes": 7540
+    },
+    "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/ci-rebase/project-chat/current.json": {
+      "sha256": "7dba3549e9a12773ae1ce680c7ae30524dfc926a1e6a6507b220740de4c5bacb",
+      "git_blob": "c8cd101a60daef6891093b421e5a9d6a72c60d1f",
+      "bytes": 494
+    },
+    "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/ci-rebase/project-chat/current.log.json": {
+      "sha256": "9a28b667b66fe0a2f82298cd00f580066c12633d7bf4289498b565e7ffe53976",
+      "git_blob": "b50bb16a1714ab613eea6926c94cb560f511d3f9",
+      "bytes": 50453
+    },
+    "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/ci-rebase/project-chat/fixed-all.json": {
+      "sha256": "e2d45990a617329a5bd31b8eac6c851c890c8f86744edf1bd72df43afff10af6",
+      "git_blob": "c1b875b323f3f42a9b0082740091b27493e80d90",
+      "bytes": 842
+    },
+    "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/ci-rebase/project-chat/fixed-all.log.json": {
+      "sha256": "2a5106d2386235e802dc38823997342af41dca75ff7fbd921f3100aa031fbc85",
+      "git_blob": "b19bb498bb361837df2eee066b2e95822dbb4d20",
+      "bytes": 790
+    },
+    "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/ci-rebase/project-chat/lint-comparison.json": {
+      "sha256": "4f3ad5077a8249dec141cd2264a1c6f262e578803bd2083356aaf0c3786cb363",
+      "git_blob": "b196d217e08d6f360f4fc5d18bc6b3562ae8532f",
+      "bytes": 4185
+    },
+    "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/ci-rebase/project-chat/validator.json": {
+      "sha256": "063d922ab98cba84fa062d04016bb70bff8d776727f3c56544f924b036ebbf63",
+      "git_blob": "4badda228c1c28513fc68c09804aee051feb437c",
+      "bytes": 495
+    },
+    "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/ci-rebase/range-diff.txt": {
+      "sha256": "820ddea983e50c9610b0139b76ae0b43e08f372cde22e3a40a13fd37b1789731",
+      "git_blob": "c5aec442ce3c53d88f0028519757df46c6fa9293",
+      "bytes": 659
+    },
+    "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/ci-rebase/rebase-product-identity.json": {
+      "sha256": "f4a67417e24c4ab805dacbed93d37c3857aa9e2aa9ec88436037c95deb4ce4c1",
+      "git_blob": "a25e134e3f83dcdee740ce5e9adb91f6a1e9cd40",
+      "bytes": 2557
+    },
+    "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/ci-rebase/report.md": {
+      "sha256": "ac4b949b0ea81516cdae5a679e0efd0f649fcdc11ce7076386427fb886d616a0",
+      "git_blob": "7c8212da934766f2d9ad7f4160d0c464eaead9c8",
+      "bytes": 4309
+    },
+    "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/ci-rebase/resend/ci-investigation.md": {
+      "sha256": "2e69299b1c315422efaeacca532da6948a1e680e1cbeb28f8a8fbd5f48b76ff6",
+      "git_blob": "7ef93e05381472182619901de5207762643cab95",
+      "bytes": 5564
+    },
+    "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/ci-rebase/resend/current.json": {
+      "sha256": "3c398a21d8e32c75503ad0262a8a624999011a69efbe83e4e679c740c94982f5",
+      "git_blob": "f5f37056e0f051c56c9f4501bcb83dad964d2f51",
+      "bytes": 1437
+    },
+    "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/ci-rebase/resend/current.log.json": {
+      "sha256": "eba2225295d767b888b41175b8ca168e3effd8ec0dedc080e88fe0d5c05c0e55",
+      "git_blob": "b91a1edf2a7f000763bb5f989942c57ff4cfca62",
+      "bytes": 177707
+    },
+    "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/ci-rebase/resend/fixed.json": {
+      "sha256": "6fa93e0c1276e818053a07a99cbbd53f13c8d249101f49f9ebb0b9a6fc9a5055",
+      "git_blob": "168425775397750d5a6de94b1428b5d9025abb25",
+      "bytes": 1111
+    },
+    "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/ci-rebase/resend/fixed.log.json": {
+      "sha256": "37c42949f62729b717c799f6ae8a3a4d9aee349a97366d37a167473087da0de1",
+      "git_blob": "c11d6d5280deeff6867bb256aacac8a5b7b89c48",
+      "bytes": 911
+    },
+    "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/ci-rebase/resend/lint-comparison.json": {
+      "sha256": "46d4e9ebeb1f10e317ab0f73e345aa419895546688aeaf75dcf8a413af0b71b4",
+      "git_blob": "eb6a76e709d2ac78973b7e9383e78695e4721396",
+      "bytes": 29480
+    },
+    "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/ci-rebase/resend/memory-read-red.json": {
+      "sha256": "caf27c43c0e74573d5d6649e5c9d5cbebe2b640e1c3a87a0555a87410aace660",
+      "git_blob": "4fa6af4b09630a4ab5d069daa5f82c6ab757fd23",
+      "bytes": 653
+    },
+    "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/ci-rebase/resend/memory-read-red.log.json": {
+      "sha256": "5140e6d5c02011a71e04142ccf65f87be49d4e64c8d565cd6e06a2c4571e617f",
+      "git_blob": "f85bafa222c18696a846a02900b024f75baece41",
+      "bytes": 91300
+    },
+    "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/ci-rebase/resend/receipt-read-observations.jsonl": {
+      "sha256": "34ad1b7f44a51d96417bc860988bd5eb954509f0df761d529670d1b55e8d4843",
+      "git_blob": "94ef5a25ead3b51710d21d3c336c65e727eb21c7",
+      "bytes": 137
+    },
+    "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/ci-rebase/run.py": {
+      "sha256": "272ba919710de96f978b32e4c7658e9ed89393f037b89b4cfc1ee3027b4ba2a4",
+      "git_blob": "38f1fc1a3715b7bb0820597e78a6bd37e94f5baf",
+      "bytes": 792
+    },
+    "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/ci-rebase/runtime-versions.json": {
+      "sha256": "ab86f8d5057af15e36f8055e80843d0c2ad6605aac00fe2a1bb62799d1516809",
+      "git_blob": "39ad7fed18810d7e41571db3b1879e07d0a2f246",
+      "bytes": 115
+    },
+    "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/ci-rebase/runtime/admission1-fix-report.md": {
+      "sha256": "d1c3d2879db6f473ae405f490e60708f976e3ef7fe6a7c5a0645cb4340eea3ce",
+      "git_blob": "9d1d64a965e0e932084f04288a909f805e38dbc0",
+      "bytes": 2571
+    },
+    "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/ci-rebase/runtime/hybrid-recovery-fix-report.md": {
+      "sha256": "9066306b9d89cd781f827897b36082b64585fdfb99d02b8e452a827a0c5539a8",
+      "git_blob": "6d4484f6002cc2baa148ad719cea0d459a06324e",
+      "bytes": 3519
+    },
+    "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/ci-rebase/runtime/mixins-admission1-green.log.json": {
+      "sha256": "57a2850ce7f1308bbe47692d8768f79578081f77301eeeb947765e5cf6395ed7",
+      "git_blob": "c9199a5f8a90ba23c3480f4cf13e1493d65604d2",
+      "bytes": 313
+    },
+    "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/ci-rebase/runtime/mixins-admission1-red.log.json": {
+      "sha256": "bcc41eca24eb7ebc7658fd43d71b1e9ae928a65910b7545c839f46fb7ff6eaa0",
+      "git_blob": "7535192ec6254887f539721a5b791fcfe3eae8e7",
+      "bytes": 1910
+    },
+    "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/ci-rebase/runtime/mixins-admission1-static-comparison.json": {
+      "sha256": "abca205fcd24b826697a0310ab58c560751b487d70ff8ec5b656d7e4968b6437",
+      "git_blob": "c89b8584ff55ad30b1c81552c181a60733a08dca",
+      "bytes": 147
+    },
+    "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/ci-rebase/runtime/mixins-hybrid-green.log.json": {
+      "sha256": "94c370a8d739375637e73c9cc1e46e9c6bcae4829695f244d397ec0b4cbc1b2a",
+      "git_blob": "c65e4c14cb22ed8fc0d2e827e19a8e2b105aa9b7",
+      "bytes": 4043
+    },
+    "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/ci-rebase/runtime/mixins-hybrid-lint-comparison.json": {
+      "sha256": "9b93ab928319d561fe0379c4919751c8305b716659e2fa44d33be81f68dfae1e",
+      "git_blob": "c63b9f062dcaecdd1be893bc4b10f5cc4a075575",
+      "bytes": 222
+    },
+    "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/ci-rebase/runtime/mixins-hybrid-red.log.json": {
+      "sha256": "b0c631d66ec3a1316c7f7ce07033bfce43c0e5bc32ecd755f336a4bb66dabbd6",
+      "git_blob": "4e9e0a5ba730c4b2f7dd80e46b641811ef6e3aba",
+      "bytes": 3220
+    },
+    "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/ci-rebase/runtime/mixins-hybrid-stamp-red.log.json": {
+      "sha256": "75d9d635b7516ac5e036d6475822699be8a51b769d9264af40344291f4decc8b",
+      "git_blob": "308e32de06faa1480fc34ae1dadc0047fc99978c",
+      "bytes": 1702
+    },
+    "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/ci-rebase/runtime/mixins-ui16-cause.log.json": {
+      "sha256": "4c860dcda9cbb6c715816f1f1cd7b904e491772f1ea7f9fcd5ccc9d1cf778590",
+      "git_blob": "517a0a0fd5429d81b347020f295227b59ae5aa82",
+      "bytes": 68476
+    },
+    "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/ci-rebase/runtime/mixins-ui16-dev.log.json": {
+      "sha256": "a236f75e1ceb39f5d35e5b41a22d8aac6e23ea1d49e713cacc41f687ff7e85c0",
+      "git_blob": "d73e257b46e736164bf522426135503fc7e11bc4",
+      "bytes": 70057
+    },
+    "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/ci-rebase/runtime/mixins-ui16-green.log.json": {
+      "sha256": "df65b460e661f82f063832b0e495a21b44d20197ad98e151126c8e277784722b",
+      "git_blob": "7df35f331ed509f75b4ed83f1aefa79285549db0",
+      "bytes": 663
+    },
+    "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/ci-rebase/runtime/mixins-ui6-fix-covering.log.json": {
+      "sha256": "0b6e255285bd9b8551936bfcca065747bdf6990aa1587335e9455168d5fabbd3",
+      "git_blob": "fa89e3f3d3812e4ad005a5ee559faa3a47740fd7",
+      "bytes": 75235
+    },
+    "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/ci-rebase/runtime/mixins-ui6-lint-comparison.json": {
+      "sha256": "9eaf632c670addc3b926a841aaf25edd7d9cb45cc48afac8131339da2a1a396d",
+      "git_blob": "9a2d4a754336a9c169146c49d693eb65109e9b6d",
+      "bytes": 226
+    },
+    "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/ci-rebase/runtime/mixins-ui6-service-green.log.json": {
+      "sha256": "3623a1eb08e74924b94d3241b8a5dc213b0c7f7cfc7d590c4dfa2c3b447560bf",
+      "git_blob": "825490f6afc3cd3e318d2fb6ef3c634a2d0e348a",
+      "bytes": 316
+    },
+    "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/ci-rebase/runtime/mixins-ui6-service-red.log.json": {
+      "sha256": "090ff3a0694fbe600711ec15be21c51d27f577a8cfb46a5a28ff64f71a66e89b",
+      "git_blob": "843297c23e264b2aa34512258d145771914f7179",
+      "bytes": 75715
+    },
+    "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/ci-rebase/runtime/ui16-fix-report.md": {
+      "sha256": "db2c0fa37fac9e7d0d83c26a673a0bc8447dd39856f980bea2ac34d87be7507e",
+      "git_blob": "7b232d53e449c1b26a370b8c612525f354dda20f",
+      "bytes": 4016
+    },
+    "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/ci-rebase/runtime/ui6-fix-report.md": {
+      "sha256": "01fcdb4fb713e778fe2cab2ab83b95e228040fdf6f37c5ba88c4b1d2051c3d51",
+      "git_blob": "9c033356cac5b2647fc806e52a84ddc5b19bdd97",
+      "bytes": 3741
+    },
+    "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/ci-rebase/runtime/ui6-investigation.md": {
+      "sha256": "84765698c3088d0e7dd98f0a935a6be95168c4197cadb58009ada199687f722d",
+      "git_blob": "2e5010f12343fe2bc91da1b61346ff68dbb60fd7",
+      "bytes": 4121
+    },
+    "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/ci-rebase/settings-tabs/mixins-ui4-close-current.log.json": {
+      "sha256": "c3e2b385abe239a03829955a267dde2be72c505e809d70c94ffb0cfa48eb2175",
+      "git_blob": "3c3a09154d6b5d307893eaf1b92c14f0a1c8f896",
+      "bytes": 38831
+    },
+    "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/ci-rebase/settings-tabs/mixins-ui4-close-green.log.json": {
+      "sha256": "6819d81f80cb281e2a79c53abd7ae2bc172d09c70a6324bc5e9f24cbf6dae980",
+      "git_blob": "1438ed3e82ad546d3fc92b3886939117af720f8e",
+      "bytes": 534
+    },
+    "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/ci-rebase/settings-tabs/mixins-ui4-close-rootcause.json": {
+      "sha256": "93d403dcf764f01dde43c14b6f8ea7ea84f517f48a16d128eb841234ddf6033f",
+      "git_blob": "4e806a0f7568f0ff99908d8f352369b48d802703",
+      "bytes": 1723
+    },
+    "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/ci-rebase/settings-tabs/mixins-ui4-ui5-result.json": {
+      "sha256": "df2aad61350ab0941844c5a50ee3a7c3a79531ac45c00df43048de6e67108897",
+      "git_blob": "aa9e0d550ba003ec55945fe224cc6ce535bbf45c",
+      "bytes": 3569
+    },
+    "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/ci-rebase/settings-tabs/mixins-ui4-ui5-ruff-comparison.json": {
+      "sha256": "cf9b15e483cc7267e023b6f152ddb846de1fbe77309d1f396fcc89fae858c457",
+      "git_blob": "7fb37a47a00d5d97a93e640f9455e4cfa6e713a0",
+      "bytes": 600
+    },
+    "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/ci-rebase/settings-tabs/mixins-ui5-rootcause.json": {
+      "sha256": "2294fc9cea2c14ac6952cc4132293c9320b7ee1da7c27c56437e3c161341d72d",
+      "git_blob": "229ea7050c06eb964d53fe0d27ed3e4f1af0e96c",
+      "bytes": 5516
+    },
+    "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/ci-rebase/settings-tabs/mixins-ui5-status-keyboard-green.log.json": {
+      "sha256": "37825ce40c0871b0297f7a2b0f0b455c38c3c7baa5b6c43137a3cb86c45cf391",
+      "git_blob": "ef6216270825681d660e3ac10da95f4635052654",
+      "bytes": 1773
+    },
+    "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/ci-rebase/settings-tabs/mixins-ui5-status-probe.json": {
+      "sha256": "da6c0127665053d98b07f00a54a822166c2c04d1d65371dc74775a15205c0107",
+      "git_blob": "b1ee0b209064c338bbbc5d93ddabd270433e153d",
+      "bytes": 21405
+    },
+    "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/ci-rebase/settings-tabs/mixins-ui5-status-red.log.json": {
+      "sha256": "595e7d4e5bfa10e4897cb2d8b2478af5cd4119e631ea8e4939e0dd79ce6c4ec5",
+      "git_blob": "31c7931971627aebef938b0379ce16f2ddac7c86",
+      "bytes": 141519
+    },
+    "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/ci-rebase/source-comparison.json": {
+      "sha256": "64f0b38b3e50b5d294906f7dc68a5782d78ca1d85a2ff340d295c76cdc28af8b",
+      "git_blob": "712cb0e27cf1145ec6490b1f03a2e0f17aa50b03",
+      "bytes": 2433
+    },
+    "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/ci-rebase/timing-comparison.json": {
+      "sha256": "5284d2b8278445abac1ab41a4ea3cbe0355a471bc86d4c5c222c4aa679ff196e",
+      "git_blob": "b6cbc581d939587d1a9a02e6477a3aef673b1c7f",
+      "bytes": 5085
+    },
+    "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/ci-rebase/ui-oracles/ci-investigation.md": {
+      "sha256": "ead90ebc0ea63f6218054a0af85eb3df9488225dc534c7e3d611159b5ffeff8f",
+      "git_blob": "839e1f5b7cae418be37a7a60b7d33e2a8811afcf",
+      "bytes": 4121
+    },
+    "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/ci-rebase/ui-oracles/green.json": {
+      "sha256": "930e6bc1469753160ccb3d910f957c1fdddd0dcbbf52ad2a6f0052bb7cf25b97",
+      "git_blob": "f9b814604b27e9d50b9bd04f2e210ea2ba23ef23",
+      "bytes": 799
+    },
+    "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/ci-rebase/ui-oracles/green.log.json": {
+      "sha256": "391eb3fc735274ba25c4e72301a0082ee29014e130f7d280e4bd2ad333db487a",
+      "git_blob": "db186bb12453b3f6976cb82c78d62d7f51c6f779",
+      "bytes": 22878
+    },
+    "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/ci-rebase/ui-oracles/lint-comparison.json": {
+      "sha256": "c37ee06bc852b2fcc64ffd8ea12d10311def2c0b31e384b55016e30e3f25021d",
+      "git_blob": "ac4c1c341be0d3e8fff7008752fface2e3c0aa9f",
+      "bytes": 55628
+    },
+    "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/ci-rebase/ui-oracles/long-model-green.json": {
+      "sha256": "5114594fbab9f1bab89adcd6cfeb4fbb04c99a054e6b7ccc724362d61ce61222",
+      "git_blob": "0a662cff0f979fe2cea8aeb842da92d4725f7a63",
+      "bytes": 682
+    },
+    "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/ci-rebase/ui-oracles/long-model-green.log.json": {
+      "sha256": "cb31bcb6ca38f84e0ab784e8bd2b28e058bef8356ab5e6ca47852ed1b03ba257",
+      "git_blob": "fc7ac6c7184cb2452e8a939a8d1a0aa1d118e4c0",
+      "bytes": 580
+    },
+    "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/ci-rebase/ui-oracles/nav-red.json": {
+      "sha256": "18c4d518017da578191f858b15ebde9d1241d14a83844c9d9ea391900b1bb72f",
+      "git_blob": "43887d3159b8f2bdc738e8cb52b59cd38900bbc0",
+      "bytes": 640
+    },
+    "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/ci-rebase/ui-oracles/nav-red.log.json": {
+      "sha256": "86cddb111cf06152877d9d780c2cf44fc626ab6bf282cba3e0fe059cb36c3748",
+      "git_blob": "9e23391791804a98ba101ce3d1fec04088086ee2",
+      "bytes": 20585
+    },
+    "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/ci-rebase/ui-oracles/source-proof.json": {
+      "sha256": "c15c144eb5618f10aeaf1568cf9d1a78a5a17833f90f6d5b1ecd5b5f38adff41",
+      "git_blob": "58a706eb81ad02efbd9f5d53ac09a7abf9ee5678",
+      "bytes": 1858
+    },
     "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/controller-rulings.md": {
       "sha256": "3bdaa61e242e4d778eab5e751b5f0760d15617c57e27fb02d761cef18c6e43e7",
       "git_blob": "808473d5c5bbf33e8fb9c92306bf5ebf0b2a06ff",
@@ -10,6 +450,11 @@
       "sha256": "7a252b1a21deced627c7def3f623d89d2cae9ecda58e0a0250a065a33d0e0f3f",
       "git_blob": "80428602677f2ae5cc5db9f6b6a72e429c7532f7",
       "bytes": 1197
+    },
+    "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/final-fix-report.md": {
+      "sha256": "16244456e7c468d6a1ed1e7893295e47ba70a725365b6d358e2edfb6dacc30a3",
+      "git_blob": "36cb1a9c022ad76263259e0d3be9ecaea6bcd311",
+      "bytes": 16373
     },
     "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/final-fix/live-preview/app.log": {
       "sha256": "8aa4873edf102cca045ee887bd6b494dfdf2cb0142342fa28f3b7ceac5aaff21",
@@ -175,11 +620,6 @@
       "sha256": "a6cfb5ffe024a30fcb87d2ff31b67837a02ab27fd0f2d261b62efde545f6fad4",
       "git_blob": "523259f6371ec3fc2484e81e5b82c855c05e43a0",
       "bytes": 597
-    },
-    "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/final-fix-report.md": {
-      "sha256": "16244456e7c468d6a1ed1e7893295e47ba70a725365b6d358e2edfb6dacc30a3",
-      "git_blob": "36cb1a9c022ad76263259e0d3be9ecaea6bcd311",
-      "bytes": 16373
     },
     "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/historical-reviewed-evidence-manifest.json": {
       "sha256": "7b2cacd1fbf9795101d54fb22011ae80af644c4a139959981e0e83c671c43edc",
@@ -1781,6 +2221,11 @@
       "git_blob": "800da0ab84bc99b018bb0877a4629f0b4d7281d4",
       "bytes": 745
     },
+    "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/rereview-fixes/final-clone-proof.json": {
+      "sha256": "908ac4fac618cda93b48e7eef36d03b87036b083e891d79a1fdbc6c50f391789",
+      "git_blob": "042386cbef50830c06229e3ea6f9dfa86c40e920",
+      "bytes": 2377
+    },
     "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/rereview-fixes/final-controls.json": {
       "sha256": "b148d8e50e5edaeaec7633a466220cb540981206fc56d83551f333bf96696cb5",
       "git_blob": "d70311352c49a0d502a609a4bf337280c0a19e8e",
@@ -1815,6 +2260,11 @@
       "sha256": "9396c30148a71a9bd6cec039f5419a76232bed2805eef26646033bff4f8c94bd",
       "git_blob": "76f753e77df48d8eef1b3dff7a24c9b808bf43b7",
       "bytes": 92573
+    },
+    "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/rereview-fixes/pr-rereview-2.md": {
+      "sha256": "b400e59ccbe20e8c64a34f132364bc439eeaeb2a51c19b221a263882a5a6266b",
+      "git_blob": "86c3ebb117a21b3381d4821d926c1a7b6f9808b7",
+      "bytes": 5673
     },
     "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/rereview-fixes/pr-rereview.md": {
       "sha256": "d37a97549e90d8f24a4e018520d78d98e19edeb5a3d9bbea5ced1875fcd02b03",
@@ -3012,24 +3462,15 @@
       "bytes": 141048
     },
     "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/verification.md": {
-      "sha256": "33fed930070c4864f70838c91f3ff0db4e574b44c6fa0953cbc98715f80a306d",
-      "git_blob": "47f44169437e4aab5f1f4b10d0ad7f0dde450329",
-      "bytes": 23883
+      "sha256": "58a4177c9132b4ee020b837fe844e967308aa465122b9617fdb722ae4b7e1a58",
+      "git_blob": "be311d630d46030155cb73f09620e21fba8eae3b",
+      "bytes": 23852
     },
     "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/verify_evidence.py": {
-      "sha256": "edda0cb05929fb2af22e4f44277df4af3f465512ee7d4eeeea94f9cbccabbd20",
-      "git_blob": "bf05deaf992e4bfec8927d1ecd9e025104758656",
-      "bytes": 2372
-    },
-    "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/rereview-fixes/pr-rereview-2.md": {
-      "sha256": "b400e59ccbe20e8c64a34f132364bc439eeaeb2a51c19b221a263882a5a6266b",
-      "git_blob": "86c3ebb117a21b3381d4821d926c1a7b6f9808b7",
-      "bytes": 5673
-    },
-    "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/rereview-fixes/final-clone-proof.json": {
-      "sha256": "908ac4fac618cda93b48e7eef36d03b87036b083e891d79a1fdbc6c50f391789",
-      "git_blob": "042386cbef50830c06229e3ea6f9dfa86c40e920",
-      "bytes": 2377
+      "sha256": "96a565a5f79515602adfaf0020ba416c8b460575884032c2c53af7b31b4e565a",
+      "git_blob": "0878344431a01b4c2b0b0908610499e5a1b5a8cf",
+      "bytes": 2367
     }
-  }
+  },
+  "target_base": "3412c2b6a3c362cb710cdffdc8293a617e1bdd55"
 }

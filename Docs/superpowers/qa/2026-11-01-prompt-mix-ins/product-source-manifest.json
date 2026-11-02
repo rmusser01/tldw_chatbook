@@ -1,11 +1,11 @@
 {
-  "target_base": "2acbcd42f3e7b07fd122f5f6dc6b22e7385f10c5",
+  "target_base": "3412c2b6a3c362cb710cdffdc8293a617e1bdd55",
   "review_fix_base": "1a58f0af2cbc5129f9c8f01595d67c330a7defda",
   "schema_versions": {
     "chachanotes": 86,
     "prompts": 6
   },
-  "qualification": "Current focused port plus PR3346 R1/R2 scoped re-review fix source and governance bytes. Live captures qualify only their recorded historical commits, not this current candidate.",
+  "qualification": "Current rebased feature and reviewed CI repair source/governance bytes. Historical captures qualify only recorded revisions; current strict byte checks do not imply fresh hosted success.",
   "files": {
     "Docs/Architecture/backup-recovery.md": {
       "sha256": "1f8fe360761c4aeed72c723a48259b070f586bafa37fa8ce1555202f21086472",
@@ -18,9 +18,9 @@
       "bytes": 13212
     },
     "Docs/Architecture/console.md": {
-      "sha256": "21f5ce9dc1e06de2d021e2ed347339971e597eb792148f2681843ff42f68365e",
-      "git_blob": "937b291d9832292c67a296e2277dedaacbc9a6a1",
-      "bytes": 66607
+      "sha256": "6e4a755867d51ed943025289489e44858b38cee79b17e82a318f12da8d32e2ba",
+      "git_blob": "8064d301ba24820c4e8a2927657d5e8dd9e33e7f",
+      "bytes": 66895
     },
     "Docs/Architecture/database-layer.md": {
       "sha256": "df32b4305665ee031a15626e709f0ffd2db9633617e98b9809c634052a09b1a3",
@@ -58,24 +58,34 @@
       "bytes": 39929
     },
     "Docs/security/production-diagnostic-inventory.json": {
-      "sha256": "addfc4bbcd4cbec3a84f89d2d352378a3fd6b166cab7e6a83fdc252c4c95debb",
-      "git_blob": "333832bf6dde4a66e5b96af01186288fd3691ad8",
+      "sha256": "c5636ccf12930d447e440668a2916ce36568ca3b98de5c1a8746a868ca0ec0b0",
+      "git_blob": "e2d638f33d9ab82cdc20234e2714a3270e72831f",
       "bytes": 383428
     },
     "Docs/superpowers/plans/2026-11-01-prompt-mix-ins-implementation.md": {
-      "sha256": "3b258fd16eccb00e197bc0c2175cc14f6adc84403cc56cc3654ea3077f8ae00b",
-      "git_blob": "52146cf63c491618d93d6224eabeddcca7a28d70",
-      "bytes": 67371
+      "sha256": "d22e2f4a796eca9c7821aea1e9b1c0036c7dbc615550b3f570849d92e529b120",
+      "git_blob": "45dff352d7515fabdb96707e2fbd303481839388",
+      "bytes": 67470
     },
     "Docs/superpowers/specs/2026-11-01-prompt-mix-ins-design.md": {
       "sha256": "e848a075a6def2152b8bc3368164134962017b9dddb34178469cc1ce4ed7af82",
       "git_blob": "40014dbcc5fcc5693489993b5b92f482cee7a99f",
       "bytes": 27139
     },
+    "Tests/Backup_Recovery/test_canvas_recovery_validation.py": {
+      "sha256": "d6f04f777cb8e4ed3165c120abcb25ebccdd38001c301b3ce82a238578f03e00",
+      "git_blob": "c2d2b93ac7075835710c3399f327223aa6cdf1f2",
+      "bytes": 11991
+    },
     "Tests/Backup_Recovery/test_core_owners.py": {
       "sha256": "82e5962f8879feae9150b2725b3b5a3518e3e022bb7d4c4e70098e6cd5f3769a",
       "git_blob": "5545dc36bba2a5b8c2f6ae1f619825dec76a35ca",
       "bytes": 46727
+    },
+    "Tests/Backup_Recovery/test_profile_launch_environment.py": {
+      "sha256": "8466a35e9656455e35eccfbc7c32a7d9503c8d60fab870de240584118218a8bb",
+      "git_blob": "3b1a7eecfd93057e12c35bc2e202f98f4223682c",
+      "bytes": 2164
     },
     "Tests/Backup_Recovery/test_prompt_mixin_restore.py": {
       "sha256": "7e865307bac8bfa30f5fef33469cf7e3ce909c182897c748ea3f17d114136c05",
@@ -123,9 +133,9 @@
       "bytes": 46016
     },
     "Tests/Chat/test_console_prompt_mixin_admission.py": {
-      "sha256": "8b4053deec52af1049ba63ac6e1b3ae800e5865e4d75c93e73cc05e96eed3855",
-      "git_blob": "7752e20be9bf5616507653a7ae4111407b4ea77b",
-      "bytes": 44914
+      "sha256": "bca9e16f962b449253edb4facb6814a7b3ffab29c1445cee4fdb3862901ec82e",
+      "git_blob": "766ff2aca53045692ab7cf8e8a915292617c5f08",
+      "bytes": 48007
     },
     "Tests/Chat/test_console_prompt_mixin_caching.py": {
       "sha256": "2f82dd9eac434ade076282dc9bbaa8619558c3f894128392d1fa82bdca6a62d8",
@@ -232,15 +242,35 @@
       "git_blob": "6c084b04ced400d7351f88915de6c4742cab3a73",
       "bytes": 49325
     },
+    "Tests/QA/test_project_chat_uat.py": {
+      "sha256": "fac12a11cf27ef3c2b2b40aa4542ffa73f194bbccf0e5df67607718848457e7a",
+      "git_blob": "f705885560f410ac99ea3cbd60ac69756fcccf95",
+      "bytes": 25144
+    },
     "Tests/State/test_screen_state_store.py": {
       "sha256": "c5d52e587d4b9d0e436170859a692754e546fb166ee437f3206c635fadd4494e",
       "git_blob": "eba8023c2edd9526aefe4ebf3ff0bdab81743a21",
       "bytes": 17924
     },
+    "Tests/UI/modal_wide_tier_registry.py": {
+      "sha256": "593b12eb4269ee507cdb40a674b7941c4495f0cee31667cb4e4b2047ba0d76e5",
+      "git_blob": "09c1cb99faf357d01fa8abe3a0edf486a67d166e",
+      "bytes": 23170
+    },
+    "Tests/UI/test_app_quit_under_modal.py": {
+      "sha256": "871cde2190148bab035b81edad85eacd253e700ab72f3d03fad0e8edc698b412",
+      "git_blob": "567432415e9e8cbb2a865bc339fc385bdc77a793",
+      "bytes": 51494
+    },
     "Tests/UI/test_chat_screen_console_inspector_loader.py": {
       "sha256": "2604b429759ee27e47ed84eb43800df19533d660722b28baefc55082c0691fa0",
       "git_blob": "b0465ae95199960601337884bdedfa3af7621f78",
       "bytes": 17143
+    },
+    "Tests/UI/test_console_attachment_vision_block.py": {
+      "sha256": "9de710f02e55c57d807481cf97aaf5e4c4668a4fa50ba076190e698b21e91485",
+      "git_blob": "ae17ed65939e57807975879284598782aa508d48",
+      "bytes": 18090
     },
     "Tests/UI/test_console_composer_menu.py": {
       "sha256": "96b55ce389a29f9bf14c58231a37c972d14ddd5d071c1ab78ad7f3bbfae1408e",
@@ -251,6 +281,11 @@
       "sha256": "03ac2bef5eb154163803d506aaa62790a9a60dab8039bfbd0773260b07d017ad",
       "git_blob": "8375fc8bd002aeba503f4f10f5ba7e6cfa9a3f2f",
       "bytes": 57927
+    },
+    "Tests/UI/test_console_first_send_preimport.py": {
+      "sha256": "15222d613f4af1a54d5d73190af66fedf57f9d3b0d77a09b739180b745cdec27",
+      "git_blob": "2ee3e0b8c4b2c90c7eef45edbffd05b5a81f0f74",
+      "bytes": 19767
     },
     "Tests/UI/test_console_personal_context_selection_factory.py": {
       "sha256": "e6ffc06b455da7b6c570d0bd7cf4f0d211f6e8f3dc9909213f9ba0dbf0e92ea0",
@@ -272,6 +307,31 @@
       "git_blob": "867c23c21bb54dd45e2ac9b314e5cdbf250b899a",
       "bytes": 130656
     },
+    "Tests/UI/test_console_runtime_ownership.py": {
+      "sha256": "be3421be597431d5ce8684e99763ae1714b90413e4ce11fe81760faf4db5019a",
+      "git_blob": "a024b772b22ffd9628b67f8a4934653938264d89",
+      "bytes": 153405
+    },
+    "Tests/UI/test_console_session_tab_close.py": {
+      "sha256": "e5a77ba9200ad9d3dde1e9105dccad72894421daa951aa4da3511c1cdedd3e87",
+      "git_blob": "0e473b2adb367005eda8dc8a0f6380af61e38428",
+      "bytes": 81281
+    },
+    "Tests/UI/test_console_setup_card_keyboard.py": {
+      "sha256": "a0c98c44d40ad7a06c63806c4ac57249260f368e41dcc0760230fe28ee4d7693",
+      "git_blob": "de24704055ceaa67e2bd35a8076c82dcbb363d05",
+      "bytes": 15128
+    },
+    "Tests/UI/test_console_turn_resend_ui.py": {
+      "sha256": "6aafa9d2e07dea57a8db4c20612ffe91057d4a80eef817e6f02a925fff0c1add",
+      "git_blob": "9bd4ece017b12192ae6c961a6db7fea66c5f50ae",
+      "bytes": 38653
+    },
+    "Tests/UI/test_library_notes_move_never_false_conflicts.py": {
+      "sha256": "f0125822979e1d44dcd4eda41f16305e2b51def20632f738bb5d84726990b8b3",
+      "git_blob": "96c47557ed05f78e2adcdadb757742c669cdb53b",
+      "bytes": 25229
+    },
     "Tests/UI/test_library_prompt_mixins.py": {
       "sha256": "db057bbcb3575d976410ae84c3004b09a343988af616d2781254b8442a8b9784",
       "git_blob": "3b9995f8ed14f57d4e07c4a2e3f7225fba54c95a",
@@ -286,6 +346,11 @@
       "sha256": "b0554d74c819e6d1d30d0a68fb932dcb9684b0c3109534a4ad52f78bd8e52964",
       "git_blob": "a3c9b3e9541f2d495eaf079f75cf5e31ca58c1b7",
       "bytes": 10153
+    },
+    "Tests/UI/test_screen_navigation.py": {
+      "sha256": "dd91827f891556448fdcba269be4325e74bdb04d31d88779277f08e51ebb2f79",
+      "git_blob": "a6e17a851ad606fbac2fd8bb836b284222090ca8",
+      "bytes": 239423
     },
     "Tests/tldw_api/test_prompt_chatbook_schemas.py": {
       "sha256": "f4253acfb8e9af126039ffd578fcc17152d50580a761f996d1f4be412fea7fc1",
@@ -303,14 +368,14 @@
       "bytes": 40405
     },
     "backlog/docs/lessons-live-verification.md": {
-      "sha256": "74f3b634c0f9fc630cbd749e8dbf58108bf25d70da924e6bb932a246f43ec00c",
-      "git_blob": "82f1003ef8f47923c63ea492ddd0071e8b84cbcf",
-      "bytes": 362824
+      "sha256": "ed5f4fc290caffe8b060ee74ce1a2cce15cd80d1007ec49ce42fa9b942757ef5",
+      "git_blob": "aa2a1961a8d787dd72f428df2cbd309a53cc0881",
+      "bytes": 366073
     },
     "backlog/docs/lessons-testing-evidence.md": {
-      "sha256": "cd10062bc603a42f242a94fd817f7d412f867418f6351672dc8f2a49c02e628c",
-      "git_blob": "862cfa15ab8e84ca9db4a491503f03b440df8b37",
-      "bytes": 1649435
+      "sha256": "c4b605602bef611445000a69b1303904a7bc9d018d09e67b67204b464fe90003",
+      "git_blob": "7857aa3121550289a2c00f7c30a9c2529acc1fc4",
+      "bytes": 1653894
     },
     "backlog/tasks/task-38534 - Design-prompt-mix-ins-for-Console-sends.md": {
       "sha256": "c3eb8b840aa0a1079fb2d108dc754cd0b18f6a9c4251c2a4a5c0bda1a37cd637",
@@ -363,9 +428,9 @@
       "bytes": 6141
     },
     "backlog/tasks/task-38544 - Qualify-the-integrated-prompt-mix-in-lifecycle-and-document-delivery.md": {
-      "sha256": "11f6e0a557acfd819787963abcd3684539ba6d8c011cff1c16971bd3dd104d61",
-      "git_blob": "bbec58022ab8275c7cad227da9884682c4d594d8",
-      "bytes": 18809
+      "sha256": "5ad19787f7a72709d5c127b41935c3283618a51fde200d1e0cf0edc1ca621cb3",
+      "git_blob": "7cf5bb5c36fd19c2fa69ef22c8e9dea1cb187216",
+      "bytes": 23098
     },
     "scripts/index_plan_pin_census.tsv": {
       "sha256": "d3ed18bf7bd7246b8e92c7ab95ed159b5151668294f1fb58fd99c99b90be9c16",
@@ -432,6 +497,11 @@
       "git_blob": "818c5ed88bae0e0be676fac24981b3e5cda3aa55",
       "bytes": 87305
     },
+    "tldw_chatbook/Chat/console_first_send_modules.py": {
+      "sha256": "03926063b1fd1c373a8420f950f0c37cbc229eae4f147c887ea79a48b713b006",
+      "git_blob": "329968f55c6970ccab35c737a657f0350e65eb6c",
+      "bytes": 9584
+    },
     "tldw_chatbook/Chat/console_message_actions.py": {
       "sha256": "fe36dd24d33b5c593cf790c423a844817e74af8e67c4c99078bbed3a9978da18",
       "git_blob": "9bcb7be8996f97bd496054059eda212b2484d896",
@@ -448,9 +518,9 @@
       "bytes": 88484
     },
     "tldw_chatbook/Chat/console_prompt_mixin_service.py": {
-      "sha256": "3bf37499daa4a37d6a95871c553a703ee659c960fb38dfa05482303efe44a70e",
-      "git_blob": "abd6b4eb6a28bac812c1f82ca0b1b80f13ec5225",
-      "bytes": 30759
+      "sha256": "40b8b7608e77b9c45d1b460fa8f2893dcc3bbd69d9bdf57f39562a10d7d30325",
+      "git_blob": "7dff7e869be7ff083e575bad1481422b1dd353fb",
+      "bytes": 31340
     },
     "tldw_chatbook/Chat/console_prompt_mixins.py": {
       "sha256": "a9e69c5397e3356cedbe08d7bb655cd64f9b48d4be54629a3d2a3352c9f9d110",
@@ -571,6 +641,11 @@
       "sha256": "a7ef65d59bcf513240b4244111b2a436d5528e814a95df527d72990b7edf1fa3",
       "git_blob": "2d30cda9855645d8469474a712fb01e4daab9673",
       "bytes": 317226
+    },
+    "tldw_chatbook/DB/recovery_operations.py": {
+      "sha256": "7983a3f47b12c41df90bf64c7736008409bf86a3ca569459006b0047bfb8b3ef",
+      "git_blob": "ee24d7e11fcc00f1fb2299415b05050232968514",
+      "bytes": 367091
     },
     "tldw_chatbook/DB/sql_validation.py": {
       "sha256": "5eaed76c4b96dfa513f221c5f37e37138f4ca9d15bb8973e607794405750829c",
@@ -717,6 +792,11 @@
       "git_blob": "7bd171bc9fc4956b07e2c719889a10aec2182312",
       "bytes": 1771255
     },
+    "tldw_chatbook/UI/Screens/settings_screen.py": {
+      "sha256": "dec0a83ac50b7e174f45b248d7e41661b5ce9b65816ea87f93f32f70700575fe",
+      "git_blob": "3622fe4a84e305aa787a805f744a81c12c3b38da",
+      "bytes": 1589012
+    },
     "tldw_chatbook/Widgets/Console/console_composer_menu_modal.py": {
       "sha256": "d1f93f48d1ba0ee8b9352bb4139560e1bfa3b3111ada45ca418533ff01cb72d8",
       "git_blob": "6cc9f58cec88a51a2573ad98029176192f759a6e",
@@ -757,20 +837,96 @@
       "git_blob": "cb34f2756661ac7826ed1ecd7e0de8811cfe37a3",
       "bytes": 3089
     },
+    "tldw_chatbook/css/build_css.py": {
+      "sha256": "e79002512bf238465a8c59106fe3ebea216eb3956cf7d69d3fd2fab140f037fa",
+      "git_blob": "4b501f4d1daae712bd28e3357c0cb07e3ba0ae3a",
+      "bytes": 64112
+    },
+    "tldw_chatbook/css/core/_variables.tcss": {
+      "sha256": "9b413d3b53d16ed015e4d8a07d453bc0917cc6fab5744953d190f76fc006c9be",
+      "git_blob": "1b65129cda8e1e619d90910eaf9909a8fac5f742",
+      "bytes": 23976
+    },
+    "tldw_chatbook/css/features/_console.tcss": {
+      "sha256": "41838c7cf9b169783c592eca59bbf62fd779ee288977ca45af9f06b27b07b024",
+      "git_blob": "901063e486e672fb89a2f9349eded47abe4b9df6",
+      "bytes": 84261
+    },
     "tldw_chatbook/css/features/_console_panels.tcss": {
-      "sha256": "e2862e8dfb2fcc8d4bdc526492de9cc59869a489d165a59cf6ee2ea13e02372c",
-      "git_blob": "689d30f8d2ac439431605a3eb720de23aa2b31a7",
-      "bytes": 80923
+      "sha256": "7e6ac845993fdcf0aa42846d87551be2c711e7a413626c9aa82d5969ac2829e1",
+      "git_blob": "4a6b613af2ebbdf58c4f2421fdd1cf113d1f6b19",
+      "bytes": 73464
+    },
+    "tldw_chatbook/css/features/_console_prompts.tcss": {
+      "sha256": "79dea24e86530b6f226ef2f08d80428edfb226fc42acaae8f8e524c446aaed6b",
+      "git_blob": "f4a239e15f6cc85967a436a5dc9cc3a80e27a019",
+      "bytes": 9136
+    },
+    "tldw_chatbook/css/features/_wizards.tcss": {
+      "sha256": "d4b1e781c7b96914d4c99b72c890fa57d3200837fd63ef6530f233e9febdabde",
+      "git_blob": "db27709aec6276de2a818966178d7b9016a09543",
+      "bytes": 37943
+    },
+    "tldw_chatbook/css/screen_agentic_library.tcss": {
+      "sha256": "ee4e526e86352582e840e414ae5279c137642f26a18884af4a55b18e45186de0",
+      "git_blob": "ebebcb11009fadb750ba39ec15685d039c82a72e",
+      "bytes": 155044
+    },
+    "tldw_chatbook/css/screen_agentic_settings.tcss": {
+      "sha256": "278722e7c45f13934ca8dffbc73aa4d2fb5616146df949c7437a1a7a0c5cf3ff",
+      "git_blob": "00e14d6354b58d6d686969b051b9d12ce1d69d38",
+      "bytes": 71042
+    },
+    "tldw_chatbook/css/screen_feature_evals.tcss": {
+      "sha256": "e27db66a6e48bb4cafdc18dc238fb46b9a1178ac897f3901f4c49844df4214b7",
+      "git_blob": "1db1e826bca079650874af94303e7645bbe3e75f",
+      "bytes": 50156
+    },
+    "tldw_chatbook/css/screen_feature_plugins.tcss": {
+      "sha256": "82dc08a6be40912d99221dcaf5581c30b5193e81fd4aaca20bd4e3454868a17a",
+      "git_blob": "e477e10603f8c3a5e98fa33c7598372586753210",
+      "bytes": 10962
+    },
+    "tldw_chatbook/css/screen_feature_roleplay.tcss": {
+      "sha256": "23a0345b37ab093b0bcb2fbf344a137d258743fc2335e7175462e9443b3f195b",
+      "git_blob": "3a6cba24c274b916d38252abccbaa59d6f4662e3",
+      "bytes": 19414
+    },
+    "tldw_chatbook/css/screen_feature_scheduling.tcss": {
+      "sha256": "d845105220a3c2d3a3ba64464b381cefa2056585f555315f17f7e058a054a69a",
+      "git_blob": "4550a9e9daf570e889becd1996dd7cced4227e0a",
+      "bytes": 18705
+    },
+    "tldw_chatbook/css/screen_feature_watchlists.tcss": {
+      "sha256": "8f5cfe839b66658bb2b21487354ed9ea48cb7773b55d8790d26cbd7397b0af17",
+      "git_blob": "065c74b98ee91a1d7bd4de2f1c6a00a0920e959e",
+      "bytes": 62720
+    },
+    "tldw_chatbook/css/screen_feature_workflows.tcss": {
+      "sha256": "90296748c6810fb7bb9ed8eb9d0365b6c0f8a0085d29dbaaf65416d869d341b7",
+      "git_blob": "39cd165be40294f6aa82c1a18d51c43414dbced7",
+      "bytes": 16409
+    },
+    "tldw_chatbook/css/screen_modal_console_delete_receipt.tcss": {
+      "sha256": "bad54624eb8952a54083533ed075e1bef62b912467669ac87a742112735606ec",
+      "git_blob": "37002c384fd4d5ce95a76ad4ac6b40702ae710ed",
+      "bytes": 9733
+    },
+    "tldw_chatbook/css/screen_modal_file_notes_history.tcss": {
+      "sha256": "7338b1ca5f8caef29156c5040ac97ff7e4dd49c000dab6d8eb5eca914b783cf6",
+      "git_blob": "1eb2a227e3e3703660ac9c1fe38ffefcdf9f8fc0",
+      "bytes": 10786
     },
     "tldw_chatbook/css/tldw_cli_modular.tcss": {
-      "sha256": "e8e856c3b61ef03e0237013d2080de4ef2013f83be710c3ff225c1fb16460343",
-      "git_blob": "6a5284780601861c2c76fde0590d7ef2299e2616",
-      "bytes": 425664
+      "sha256": "3f34da4b18892f4fc2d1de350ee8746cd4cf8f0850dd1191432e6b6822434f5d",
+      "git_blob": "f0737c935ffcdce33a879b410f2bbf303ea3b4a2",
+      "bytes": 425795
     },
     "tldw_chatbook/tldw_api/prompt_chatbook_schemas.py": {
       "sha256": "a7dd41a1f6cfd2a32833e7e1672fa02b2966ddeea3a9652b506eb766768cd8a3",
       "git_blob": "9437159957047ac83452fba4518d9fc775064975",
       "bytes": 7933
     }
-  }
+  },
+  "ci_fix_base": "79e659dcde6f5360edb0070f9d184713bd8584d1"
 }
