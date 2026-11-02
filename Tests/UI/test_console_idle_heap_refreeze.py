@@ -16,6 +16,8 @@ collector calls.
 from __future__ import annotations
 
 import asyncio
+import gc
+import weakref
 from types import SimpleNamespace
 
 import pytest
@@ -103,31 +105,44 @@ async def test_console_refreezes_after_painting_a_conversation_and_after_a_run_s
             await until(lambda: "conversation_painted" in reasons)
 
             held = HeldAdmission(console)
-            timeline.mark("enter")
-            press(host, "enter", "\r")
-            await until(lambda: sending(console))
-            sampler = BusySampler(console)
-            # Before acceptance: only the send's own flight marks it.
-            await until(held.entered.is_set)
-            busy_in_admission = console_transcript._console_heap_busy(console)
-            console_transcript.request_console_heap_refreeze(console, "admission_probe")
-            await asyncio.sleep(0.3)  # well past the quiet period
-            held.release.set()
-            # Accepted, provider not yet called: the turn's custody marks it.
-            await until(gateway.validation_started.is_set)
-            busy_mid_send = console_transcript._console_heap_busy(console)
-            console_transcript.request_console_heap_refreeze(console, "mid_send_probe")
-            await asyncio.sleep(0.3)
-            gateway.validation_release.set()
-            await until(lambda: gateway.stream_calls == 1)
-            sampler.stop()
-            await until(lambda: REPLY in "\n".join(_painted_lines(host)))
-            await until(lambda: "run_settled" in reasons, timeout=20)
-            idle_after_the_run = console_transcript._console_heap_busy(console)
+            sampler = None
+            try:
+                timeline.mark("enter")
+                press(host, "enter", "\r")
+                await until(lambda: sending(console))
+                sampler = BusySampler(console)
+                # Before acceptance: only the send's own flight marks it.
+                await until(held.entered.is_set)
+                busy_in_admission = console_transcript._console_heap_busy(console)
+                console_transcript.request_console_heap_refreeze(
+                    console, "admission_probe"
+                )
+                await asyncio.sleep(0.3)  # well past the quiet period
+                held.release.set()
+                # Accepted, provider not yet called: the turn's custody marks it.
+                await until(gateway.validation_started.is_set)
+                busy_mid_send = console_transcript._console_heap_busy(console)
+                console_transcript.request_console_heap_refreeze(
+                    console, "mid_send_probe"
+                )
+                await asyncio.sleep(0.3)
+                gateway.validation_release.set()
+                await until(lambda: gateway.stream_calls == 1)
+                sampler.stop()
+                await until(lambda: REPLY in "\n".join(_painted_lines(host)))
+                await until(lambda: "run_settled" in reasons, timeout=20)
+                idle_after_the_run = console_transcript._console_heap_busy(console)
 
-            await host.push_screen(Screen())
-            await pilot.pause()
-            busy_under_another_screen = console_transcript._console_heap_busy(console)
+                await host.push_screen(Screen())
+                await pilot.pause()
+                busy_under_another_screen = console_transcript._console_heap_busy(
+                    console
+                )
+            finally:
+                held.release.set()
+                gateway.validation_release.set()
+                if sampler is not None:
+                    sampler.stop()
 
     assert busy_in_admission, "a send being admitted did not hold the re-freeze off"
     assert busy_mid_send, "an accepted send did not hold the re-freeze off"
@@ -196,6 +211,117 @@ def _polling(screen: BusyScreen) -> None:
 
 def _live_before_the_poll(screen: BusyScreen) -> None:
     screen.poll_needed = True
+
+
+@pytest.mark.parametrize("owner", ["admitted", "lock", "custody", "shutdown"])
+async def test_global_foreground_owners_hold_idle_maintenance_before_controller(owner):
+    """Navigation admission/lock and early runtime custody are independent owners."""
+    from tldw_chatbook.app import TldwCli
+    from tldw_chatbook.app_navigation import NavigationMixin
+    from tldw_chatbook.Chat.console_runtime import ConsoleRuntime
+
+    class Host(NavigationMixin):
+        _screen_navigation_in_progress = TldwCli._screen_navigation_in_progress
+
+    screen = BusyScreen()
+    app = Host()
+    app.screen = screen
+    app.console_runtime = ConsoleRuntime(app, canvas_enabled_reader=lambda: False)
+    screen.app = app
+    assert not console_transcript._console_heap_busy(screen)
+    if owner == "admitted":
+        # Real admission queues behind a lock owned by another operation.
+        await app._screen_navigation_lock().acquire()
+        message = SimpleNamespace(
+            target_ownership_committed=False, report_completion=lambda _: None
+        )
+        task = asyncio.create_task(app._run_admitted_screen_navigation(message))
+        await asyncio.sleep(0)
+        assert app._screen_navigation_calls
+        app._screen_navigation_lock().release()
+        # The call remains admitted until its task's finally runs, even now
+        # that the FIFO lock reads free.
+        assert not app._screen_navigation_in_progress()
+    elif owner == "lock":
+        await app._screen_navigation_lock().acquire()
+    elif owner == "custody":
+        app.console_runtime._register_custody(
+            None, received_intent=SimpleNamespace(turn_id="early", session_id="other")
+        )
+        assert app.console_runtime._chat_controller is None
+    else:
+        app._shutting_down = True
+    try:
+        assert console_transcript._console_heap_busy(screen), owner
+    finally:
+        if owner == "admitted":
+            task.cancel()
+            await asyncio.gather(task, return_exceptions=True)
+        elif owner == "lock":
+            app._screen_navigation_lock().release()
+        elif owner == "custody":
+            app.console_runtime._release_custody("early")
+        await app.console_runtime.dispose()
+
+
+async def test_mounted_received_custody_blocks_completion_and_idle_timer_reclaims(
+    monkeypatch,
+):
+    """A real received read owns the loop; the later real timer collects cycles."""
+    from Tests.UI.test_console_received_intent_feedback import (
+        _held_received_record,
+        _received_console_case,
+        _send,
+    )
+    from tldw_chatbook.Chat import console_first_send_modules as warm
+
+    class Cycle:
+        pass
+
+    gc.unfreeze()
+    try:
+        async with _received_console_case(monkeypatch, "warmup-idle") as case:
+            refreezer = IdleHeapRefreezer(
+                quiet_seconds=0.05,
+                compaction_quiet_seconds=0.1,
+                enabled=lambda: True,
+                min_growth=10_000_000,
+            )
+            monkeypatch.setattr(ui_responsiveness, "_HEAP_REFREEZER", refreezer)
+            _send(case, "enter")
+            record = await _held_received_record(case)
+            assert record.request is None and record.task is not None
+            await asyncio.to_thread(
+                case.host.call_from_thread,
+                warm._request_idle_heap_refreeze,
+                case.host.app_instance,
+            )
+            await asyncio.sleep(0.15)
+            assert (
+                not refreezer.actions
+            ), "maintenance ran during actual received custody"
+            case.probe.release.set()
+            await until(lambda: not case.runtime.has_custodied_turns(), timeout=20)
+            await until(
+                lambda: not console_transcript._console_heap_busy(case.console),
+                timeout=20,
+            )
+            cycle = Cycle()
+            cycle.self = cycle
+            reference = weakref.ref(cycle)
+            gc.collect(2)
+            del cycle
+            # No explicit collect after retirement: the mounted Console's
+            # actual timer and real IdleHeapRefreezer must reclaim it.
+            await asyncio.to_thread(
+                case.host.call_from_thread,
+                warm._request_idle_heap_refreeze,
+                case.host.app_instance,
+            )
+            await until(lambda: reference() is None, timeout=10)
+            assert ("refreeze", "first_send_preimport") in refreezer.actions
+    finally:
+        gc.unfreeze()
 
 
 @pytest.mark.parametrize(
@@ -322,6 +448,6 @@ def test_a_new_chat_gaining_its_conversation_id_is_not_a_switch(
 
     screen.conversation = "c2"  # a real switch in the same tab
     console_transcript.note_console_conversation_painted(screen)
-    assert refreezer.compaction_due(), (
-        "the rows frozen while the new chat was shown were left stranded"
-    )
+    assert (
+        refreezer.compaction_due()
+    ), "the rows frozen while the new chat was shown were left stranded"

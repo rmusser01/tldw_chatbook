@@ -161,7 +161,14 @@ class ConsoleChangeReviewProjection:
 
     async def _prepare_current(self) -> bool:
         selected = self._selection()
-        runtime, coordinator, bridge, _unused_database, conversation_id, _unused_revision = selected
+        (
+            runtime,
+            coordinator,
+            bridge,
+            _unused_database,
+            conversation_id,
+            _unused_revision,
+        ) = selected
         if conversation_id is None:
             self._prepared_stock = False
             return True
@@ -506,6 +513,17 @@ def _console_heap_busy(screen: Any) -> bool:
     from tldw_chatbook.UI.Screens.chat_screen import _console_screen_is_torn_down
 
     if _console_screen_is_torn_down(screen) or screen.app.screen is not screen:
+        return True
+    app = screen.app
+    if getattr(app, "_shutting_down", False) or getattr(
+        app, "_screen_navigation_calls", None
+    ):
+        return True
+    navigating = getattr(app, "_screen_navigation_in_progress", None)
+    if navigating is not None and navigating():
+        return True
+    runtime = getattr(app, "console_runtime", None)
+    if runtime is not None and runtime.has_custodied_turns():
         return True
     flight = getattr(screen, "_console_send_flight", None)
     if flight is not None and (flight.tasks or flight.deferred is not None):
