@@ -352,6 +352,26 @@ Start and Resume must reuse this gate before billable work when those consumers
 land. ADR required: no new ADR; ADR285/148 record this compatibility boundary.
 Policy simulation tests are not live Windows physical-cleanup evidence.
 
+D2B2a (root-approved pre-engine producer split) owns the actual original plugin
+hook preparation before an engine/lifecycle exists: captured preparation source
+and selected immutable maximum, existing PluginService admission callbacks,
+original NativeHooks acceptance/discard, and cancellation-safe close drain.
+Capture/pin first-use native resources without construction I/O; acquire one
+opaque finite owner and one operation for this sequential existing worker request
+before publication. Bind trusted submission origin explicitly, seal before
+capacity closure, and retain original storage/host scopes until actual return.
+Preserve PluginRuntimeOwner's independent infrastructure lifetime, current
+permissions, qualified-platform policy, and the no-plugin no-effect path.
+Verify real PluginService/SQLite with held admission and host publication,
+cancellation/replacement/revocation/close, no-target and reserved capacity cases;
+then targeted affected consumers, final-byte/static/preservation and exact commit.
+ADR required: no new ADR. ADR paths: backlog/decisions/285-native-phased-agent-workflows.md
+and backlog/decisions/163-expanded-console-hook-runtime.md.
+Reason: complete the approved finite preparation producer using existing owners.
+D2B2b remains mandatory for planned/individual/notify/lifecycle/command/MCP nested
+events, host effects and pre-close SessionEnd. Parent AC and workflow capture,
+planning, coordinator entry and ordinary covering-tree borrowing remain open.
+
 - [ ] **1. Build failing integration journeys around real native owners.** In `Tests/Chat/workflow_rig.py`, provide `build_workflow_rig(tmp_path, monkeypatch, provider) -> WorkflowRig`, using existing isolated store/controller/gateway fixture construction and the Task 1 request factory. Its fields are `workflow`, `service`, `coordinator`, `controller`, `store`, `gateway`; methods are `wait_for_status(status, *, timeout=5)`, `close()`, `provider_release()` and `wait_for_provider_entry()`. Native owners must positively drain in cleanup. The test provider addresses roles/task IDs independently so concurrent agents cannot consume each other's scripted replies.
 - [ ] **2. Run red:** `.venv/bin/python -m pytest -q Tests/Chat/test_console_workflow_dispatch.py Tests/Chat/test_console_workflow_scheduling.py Tests/Chat/test_workflow_activity_admission.py Tests/Chat/test_workflow_settlement_delivery.py`.
 - [ ] **3. Admit read-only planning through typed custody and native per-session acceptance before billable preparation.** Persist the exact chosen existing chat and binding; an unsaved chat uses the current persistence owner before execution, not a second provisioning store. Plan review/approval validates exact control revision, target, inputs and remaining limits; repeated command IDs reuse receipts. Snapshot provider/preset/fallback choices and inherit current project-instruction/permission narrowing for each task.

@@ -162,6 +162,9 @@ class _HookPreparationSource:
     context_provider: Any = field(repr=False)
 
 def capture_hook_preparation_source(self, session_id, permissions):
+    native = self._native_plugin_hook_preparation
+    if native is not None:
+        native.pin_resources()
     store, controller, app = self._chat_store, self._chat_controller, self._app
     session = (
         next((row for row in store.sessions() if row.id == session_id), None)
@@ -199,16 +202,14 @@ def require_hook_preparation_source(self, source):
     try:
         self._raise_if_disposed_or_session_fenced(source.session_id)
     except RuntimeError as error:
-        # TASK-38751: a close fence or disposal that lands mid-check voids it.
         raise HookCheckOwnerChanged(str(error)) from error
-    session = (
-        next(
-            (row for row in source.store.sessions() if row.id == source.session_id),
-            None,
-        )
-        if source.store is not None
-        else None
-    )
+    if not hook_preparation_source_current(self, source):
+        raise HookCheckOwnerChanged("Console hook preparation owner changed.")
+
+
+def hook_preparation_source_current(self, source):
+    """Original direct-reference fence, safe at actual worker queue publication."""
+    session = source.store._sessions.get(source.session_id) if source.store else None
     reader = getattr(source.controller, "_hook_authority_values", None)
     same_reader = reader is source.authority_reader or (
         inspect.ismethod(reader)
@@ -216,8 +217,10 @@ def require_hook_preparation_source(self, source):
         and reader.__self__ is source.authority_reader.__self__
         and reader.__func__ is source.authority_reader.__func__
     )
-    if (
-        self._app is not source.app
+    return not (
+        self._disposed
+        or source.session_id in self._admission_fenced_sessions
+        or self._app is not source.app
         or self._chat_store is not source.store
         or self._chat_controller is not source.controller
         or self._hook_permissions is not source.permissions
@@ -254,8 +257,7 @@ def require_hook_preparation_source(self, source):
                 )
             )
         )
-    ):
-        raise HookCheckOwnerChanged("Console hook preparation owner changed.")
+    )
 
 
 async def read_hook_preparation(self, callback, source):

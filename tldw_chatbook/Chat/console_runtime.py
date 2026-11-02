@@ -1184,6 +1184,15 @@ class ConsoleRuntime:
         self._run_hooks_lock = RLock()
         self._hook_permissions: HookPermissions | None = None
         self._preparation_reads: set[Any] = set()
+        from .console_plugin_hook_preparation import NativePluginHookPreparation
+        from .console_workflow_runs import native_workflow_qualified
+
+        self._native_plugin_hook_preparation_required = native_workflow_qualified()
+        self._native_plugin_hook_preparation = (
+            NativePluginHookPreparation(self)
+            if self._native_plugin_hook_preparation_required
+            else None
+        )
         # V2 sessions share the app loop and budgets, including viewless work.
         self._hooks_v2_budget_owner: Any = None
         self._hooks_v2_engines: dict[str, Any] = {}
@@ -4200,207 +4209,219 @@ class ConsoleRuntime:
         native = (
             getattr(engine, "native_plugins", None) if configuration is None else None
         )
-        if configuration is not None:
-            maximum = configuration.skill_context_maximum
-            if maximum.get("_plugin_requirement_ceiling") or any(
-                row.get("plugin_owned") for row in maximum.get("available_skills", ())
-            ):
-                local = getattr(
-                    self._chat_controller._skills_service, "local_service", None
-                )
-                service = getattr(local, "plugin_service", None)
-                if service is None:
-                    raise PermissionError("plugin_hook_authority_unavailable")
-                native = await service.hook_configuration(
-                    maximum,
-                    scratch_manager=self._scratch_spaces,
-                    scratch_snapshot=self._scratch_spaces.snapshot(session_id),
-                )
-                self._require_hook_preparation_source(source)
-        signature = (
-            configured,
-            targets,
-            native.signature if native is not None else None,
-        )
-        engine = self.get_hooks_v2(session_id)
-        previous = self._hooks_v2_configured.get(session_id)
-        if (
-            review.ready
-            and not configured.v2_handlers
-            and not configured.v2_invalid_admissions
-            and (native is None or not native.definitions)
-            and engine is None
-            and session_id not in self._hooks_v2_engines
-            and session_id not in self._hooks_v2_lifecycles
-            and session_id not in self._hooks_v2_configured
-        ):
-            self._require_hook_preparation_source(source)
-            return None
-        context_key = await self._read_hook_preparation(
-            functools.partial(self._hooks_v2_context_key, session_id), source
-        )
-        self._require_hook_preparation_source(source)
-        self._raise_if_disposed_or_session_fenced(session_id)
-        owner = self._hooks_v2_lifecycles.get(session_id)
-        context_changed = owner is not None and owner.context_key != context_key
-        if context_changed and native is not None and configuration is None:
-            raise PermissionError("plugin_hook_workspace_admission_required")
-        if (
-            test_only
-            and engine is not None
-            and (
-                previous != signature
-                or context_changed
-                or owner is None
-                or not owner.live
-                or owner.turn_scope is not None
+        plugin_request = None
+        async with contextlib.AsyncExitStack() as preparation_handoff:
+            if configuration is not None:
+                maximum = configuration.skill_context_maximum
+                if maximum.get("_plugin_requirement_ceiling") or any(
+                    row.get("plugin_owned") for row in maximum.get("available_skills", ())
+                ):
+                    local = getattr(
+                        self._chat_controller._skills_service, "local_service", None
+                    )
+                    service = getattr(local, "plugin_service", None)
+                    if service is None:
+                        raise PermissionError("plugin_hook_authority_unavailable")
+                    if self._native_plugin_hook_preparation_required:
+                        preparation = self._native_plugin_hook_preparation
+                        if preparation is None:
+                            raise RuntimeError("Native plugin hook preparation unavailable.")
+                        native, plugin_request = await preparation_handoff.enter_async_context(
+                            preparation.capture(source, service, configuration, review)
+                        )
+                    else:
+                        native = await service.hook_configuration(
+                            maximum,
+                            scratch_manager=self._scratch_spaces,
+                            scratch_snapshot=self._scratch_spaces.snapshot(session_id),
+                        )
+                    self._require_hook_preparation_source(source)
+            signature = (
+                configured,
+                targets,
+                native.signature if native is not None else None,
             )
-        ):
-            raise PermissionError("plugin_test_requires_compatible_idle_hook_session")
-        if (previous is not None and previous != signature) or context_changed:
-            # The controller owns a reversible validation slot at this point.
-            owner = self._hooks_v2_lifecycles.get(session_id)
-            if owner is not None and getattr(owner, "turn_scope", None) is not None:
-                raise RuntimeError("hook replacement requires idle session")
-            await self.close_hooks_v2(session_id)
-            self._require_hook_preparation_source(source)
-            if self._hooks_v2_lifecycles.get(session_id) is owner:
-                self._hooks_v2_lifecycles.pop(session_id, None)
-            if context_changed and previous is None and engine is not None:
-                # Host-injected definitions retain their authority resolver.
-                engine = self.ensure_hooks_v2(
-                    session_id,
-                    engine.definitions,
-                    engine.authority_check,
-                    enabled=engine.enabled,
-                    invalid_admissions=engine.invalid_admissions,
-                    process_owner=engine.processes.owner,
-                    process_owner_for=engine._process_owner_for,
-                    environment=engine._environment,
-                    host_environment=engine._host_environment,
-                    command_launch=engine._command_launch,
-                    dependency_required=engine._dependency_required,
-                    event_projector=engine._event_projector,
-                    launch_guard=engine.processes._launch_guard,
-                    effect_authority_check=engine._effect_authority_check,
-                )
-            else:
-                engine = None
-            reason = "configuration_changed"
-        if engine is None:
-            if not review.ready:
-                raise RuntimeError("Review enabled hooks before execution.")
+            engine = self.get_hooks_v2(session_id)
+            previous = self._hooks_v2_configured.get(session_id)
             if (
-                not configured.v2_handlers
+                review.ready
+                and not configured.v2_handlers
                 and not configured.v2_invalid_admissions
                 and (native is None or not native.definitions)
+                and engine is None
+                and session_id not in self._hooks_v2_engines
+                and session_id not in self._hooks_v2_lifecycles
+                and session_id not in self._hooks_v2_configured
             ):
+                self._require_hook_preparation_source(source)
                 return None
-            captured = {target.spec.id: target for target in targets}
-
-            def session_end_current(handler, event):
-                owner = getattr(engine, "lifecycle_owner", None)
-                return bool(
-                    self._disposed
-                    and handler.type == "command"
-                    and handler.event == "SessionEnd"
-                    and not handler.effects
-                    and not handler.required
-                    and owner is not None
-                    and self.get_hooks_v2(session_id) is engine
-                    and owner._session_end_current(event)
-                )
-
-            def authority(handler, _event, _stage):
-                if native is not None and handler.id in native.owners:
-                    return (
-                        not self._disposed
-                        and permissions.configuration_current(review)
-                        and native.authority(handler, _event, _stage)
-                        and permissions.configuration_current(review)
-                    )
-                target = captured.get(handler.id)
-                return bool(
-                    target is not None
-                    and (
-                        not self._disposed
-                        and permissions.target_current(target)
-                        or session_end_current(handler, _event)
-                        and permissions._session_end_current(
-                            review, target, lambda: session_end_current(handler, _event)
-                        )
-                    )
-                )
-
-            def effects_current(handler, _event, _stage):
-                if native is not None and handler.id in native.owners:
-                    return (
-                        not self._disposed
-                        and permissions.configuration_current(review)
-                        and native.effects_current(handler, _event, _stage)
-                    )
-                target = captured.get(handler.id)
-                return bool(
-                    target is not None and not self._disposed
-                    and permissions.configuration_current(review)
-                    and permissions.target_current(target, refresh=False)
-                )
-
-            @contextlib.contextmanager
-            def launch_guard(handler, event):
-                if native is not None and handler.id in native.owners:
-                    from tldw_chatbook import config
-
-                    with config.locked_hooks_config_snapshot() as current:
-                        if (
-                            current.section_stamp != review.config.section_stamp
-                            or not effects_current(handler, event, "launch")
-                        ):
-                            raise PermissionError("plugin_hook_authority_changed")
-                        yield
-                else:
-                    target = captured[handler.id]
-                    guard = (
-                        permissions._session_end_launch_guard(
-                            review, target, lambda: session_end_current(handler, event)
-                        )
-                        if session_end_current(handler, event)
-                        else permissions.launch_guard(target, tool_name=None)
-                    )
-                    with guard:
-                        yield
-
-            engine = self.ensure_hooks_v2(
-                session_id,
-                (configured.v2_handlers if configured.enabled else ())
-                + (native.definitions if native is not None else ()),
-                authority,
-                process_owner=native,
-                process_owner_for=native.process_owner if native is not None else None,
-                host_environment=native.host_environment
-                if native is not None
-                else None,
-                event_projector=native.project_event if native is not None else None,
-                command_launch=native.command_launch if native is not None else None,
-                dependency_required=native.dependency_required
-                if native is not None
-                else None,
-                launch_guard=launch_guard,
-                effect_authority_check=effects_current,
-                enabled=configured.enabled or bool(native and native.definitions),
-                invalid_admissions=(
-                    configured.v2_invalid_admissions if configured.enabled else ()
-                ),
+            context_key = await self._read_hook_preparation(
+                functools.partial(self._hooks_v2_context_key, session_id), source
             )
-            if test_only:
-                created = getattr(self, "_plugin_test_created_engines", None)
-                if created is None:
-                    created = self._plugin_test_created_engines = {}
-                created[asyncio.current_task()] = engine
-            if native is not None:
-                native.engine = engine
-                engine.native_plugins = native
-            self._hooks_v2_configured[session_id] = signature
+            self._require_hook_preparation_source(source)
+            self._raise_if_disposed_or_session_fenced(session_id)
+            owner = self._hooks_v2_lifecycles.get(session_id)
+            context_changed = owner is not None and owner.context_key != context_key
+            if context_changed and native is not None and configuration is None:
+                raise PermissionError("plugin_hook_workspace_admission_required")
+            if (
+                test_only
+                and engine is not None
+                and (
+                    previous != signature
+                    or context_changed
+                    or owner is None
+                    or not owner.live
+                    or owner.turn_scope is not None
+                )
+            ):
+                raise PermissionError("plugin_test_requires_compatible_idle_hook_session")
+            if (previous is not None and previous != signature) or context_changed:
+                # The controller owns a reversible validation slot at this point.
+                owner = self._hooks_v2_lifecycles.get(session_id)
+                if owner is not None and getattr(owner, "turn_scope", None) is not None:
+                    raise RuntimeError("hook replacement requires idle session")
+                await self.close_hooks_v2(session_id)
+                self._require_hook_preparation_source(source)
+                if self._hooks_v2_lifecycles.get(session_id) is owner:
+                    self._hooks_v2_lifecycles.pop(session_id, None)
+                if context_changed and previous is None and engine is not None:
+                    # Host-injected definitions retain their authority resolver.
+                    engine = self.ensure_hooks_v2(
+                        session_id,
+                        engine.definitions,
+                        engine.authority_check,
+                        enabled=engine.enabled,
+                        invalid_admissions=engine.invalid_admissions,
+                        process_owner=engine.processes.owner,
+                        process_owner_for=engine._process_owner_for,
+                        environment=engine._environment,
+                        host_environment=engine._host_environment,
+                        command_launch=engine._command_launch,
+                        dependency_required=engine._dependency_required,
+                        event_projector=engine._event_projector,
+                        launch_guard=engine.processes._launch_guard,
+                        effect_authority_check=engine._effect_authority_check,
+                    )
+                else:
+                    engine = None
+                reason = "configuration_changed"
+            if plugin_request is not None:
+                plugin_request.check(service)
+            if engine is None:
+                if not review.ready:
+                    raise RuntimeError("Review enabled hooks before execution.")
+                if (
+                    not configured.v2_handlers
+                    and not configured.v2_invalid_admissions
+                    and (native is None or not native.definitions)
+                ):
+                    return None
+                captured = {target.spec.id: target for target in targets}
+
+                def session_end_current(handler, event):
+                    owner = getattr(engine, "lifecycle_owner", None)
+                    return bool(
+                        self._disposed
+                        and handler.type == "command"
+                        and handler.event == "SessionEnd"
+                        and not handler.effects
+                        and not handler.required
+                        and owner is not None
+                        and self.get_hooks_v2(session_id) is engine
+                        and owner._session_end_current(event)
+                    )
+
+                def authority(handler, _event, _stage):
+                    if native is not None and handler.id in native.owners:
+                        return (
+                            not self._disposed
+                            and permissions.configuration_current(review)
+                            and native.authority(handler, _event, _stage)
+                            and permissions.configuration_current(review)
+                        )
+                    target = captured.get(handler.id)
+                    return bool(
+                        target is not None
+                        and (
+                            not self._disposed
+                            and permissions.target_current(target)
+                            or session_end_current(handler, _event)
+                            and permissions._session_end_current(
+                                review, target, lambda: session_end_current(handler, _event)
+                            )
+                        )
+                    )
+
+                def effects_current(handler, _event, _stage):
+                    if native is not None and handler.id in native.owners:
+                        return (
+                            not self._disposed
+                            and permissions.configuration_current(review)
+                            and native.effects_current(handler, _event, _stage)
+                        )
+                    target = captured.get(handler.id)
+                    return bool(
+                        target is not None and not self._disposed
+                        and permissions.configuration_current(review)
+                        and permissions.target_current(target, refresh=False)
+                    )
+
+                @contextlib.contextmanager
+                def launch_guard(handler, event):
+                    if native is not None and handler.id in native.owners:
+                        from tldw_chatbook import config
+
+                        with config.locked_hooks_config_snapshot() as current:
+                            if (
+                                current.section_stamp != review.config.section_stamp
+                                or not effects_current(handler, event, "launch")
+                            ):
+                                raise PermissionError("plugin_hook_authority_changed")
+                            yield
+                    else:
+                        target = captured[handler.id]
+                        guard = (
+                            permissions._session_end_launch_guard(
+                                review, target, lambda: session_end_current(handler, event)
+                            )
+                            if session_end_current(handler, event)
+                            else permissions.launch_guard(target, tool_name=None)
+                        )
+                        with guard:
+                            yield
+
+                engine = self.ensure_hooks_v2(
+                    session_id,
+                    (configured.v2_handlers if configured.enabled else ())
+                    + (native.definitions if native is not None else ()),
+                    authority,
+                    process_owner=native,
+                    process_owner_for=native.process_owner if native is not None else None,
+                    host_environment=native.host_environment
+                    if native is not None
+                    else None,
+                    event_projector=native.project_event if native is not None else None,
+                    command_launch=native.command_launch if native is not None else None,
+                    dependency_required=native.dependency_required
+                    if native is not None
+                    else None,
+                    launch_guard=launch_guard,
+                    effect_authority_check=effects_current,
+                    enabled=configured.enabled or bool(native and native.definitions),
+                    invalid_admissions=(
+                        configured.v2_invalid_admissions if configured.enabled else ()
+                    ),
+                )
+                if test_only:
+                    created = getattr(self, "_plugin_test_created_engines", None)
+                    if created is None:
+                        created = self._plugin_test_created_engines = {}
+                    created[asyncio.current_task()] = engine
+                if native is not None:
+                    native.engine = engine
+                    engine.native_plugins = native
+                self._hooks_v2_configured[session_id] = signature
         lifecycle = self._hooks_v2_lifecycles.get(session_id)
         if lifecycle is None:
 

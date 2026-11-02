@@ -8,6 +8,15 @@ Companion: [ADR-162](162-managed-agent-plugins.md)
 
 ## Decision
 
+Task 8D2B2a qualification: app-bound plugin hook preparation has its own original
+finite native custody before engine creation. Existing PluginService callbacks
+perform real admission, so they and their exact NativeHooks host handoff must
+return before release even after cancellation or shutdown. The captured selected
+maximum is metadata; it neither grants permission nor substitutes for those
+callbacks. PluginRuntimeOwner keeps its separate persistent infrastructure
+ownership. This preparation-only stage does not qualify planned v2 handler,
+nested MCP, host-effect or SessionEnd custody; those remain Task 8D2B2b.
+
 Extend the shared Console hook runtime with versioned events and structured
 effects, including input proposals, narrowing child constraints, MCP-backed
 handlers and bounded scheduler continuations. Preserve Chatbook's permission

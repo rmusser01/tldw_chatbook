@@ -87,10 +87,35 @@ must reuse it before billable preparation; Task 9 will surface the reason. Polic
 simulation tests do not qualify Windows physical cleanup.
 
 This is Task 8D2B1's legacy-only boundary. V2 planned/MCP/nested/SessionEnd native
-custody remains the mandatory D2B2 integration, and ordinary covering-tree
+custody remains the mandatory D2B2b integration, and ordinary covering-tree
 borrowing must replace independent event admission before outer execution is
 enabled. Workflow capture/planning/coordinator admission remains closed. Runtime
 coordination does not exclude unrelated ordinary orphaned effects across restart.
+
+## Native plugin hook preparation (Task 8D2B2a)
+
+Before an engine exists, `ConsoleRuntime.prepare_hooks_v2()` calls the existing
+`PluginService.hook_configuration()` with the captured selected component maximum.
+Its `component_snapshots()`/`admit()` callbacks perform real plugin admission.
+`console_plugin_hook_preparation.NativePluginHookPreparation` binds the original
+`_HookPreparationSource`, maximum, published plugin snapshots and original service
+infrastructure to one finite opaque activity claim and one non-child tool operation.
+The original validated submission supplies manual/automatic origin; labels do not.
+No selected plugin rows means no native worker or activity acquisition.
+
+The source is rechecked before native reservation, at service queue publication,
+before each actual callback and around the original `NativeHooks` host handoff.
+`PluginService._call()` retains and joins the original service Future through
+repeated cancellation; its return does not retire the persistent PluginRuntimeOwner.
+The existing Console preparation-read observers retain the request through the
+actual native release callback. Runtime/session sealing precedes capacity close;
+their existing drains wait for those callbacks before disposing shared storage.
+The shared `native_workflow_qualified()` predicate preserves the existing ordinary
+path on unqualified platforms; it provides no Windows workflow qualification.
+
+This preparation boundary does not qualify v2 handler, command/MCP, nested causal,
+host-effect or SessionEnd execution. Those remain D2B2b. Outer ordinary-tree
+borrowing and workflow capture/planning/coordinator admission are still pending.
 
 ## Consent layer (ADR-197)
 

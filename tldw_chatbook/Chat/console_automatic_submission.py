@@ -265,17 +265,20 @@ async def prepare_submission_hooks(
             and getattr(hook_runtime.prepare_hooks_v2, "__func__", None)
             is ConsoleRuntime.prepare_hooks_v2 else {})
         try:
-            lifecycle = await hook_runtime.prepare_hooks_v2(
-                session_id,
-                configuration=configuration,
-                reason="resume" if session.persisted_conversation_id else "startup",
-                initiator=(
-                    "manual"
-                    if origin is ConsoleSubmissionOrigin.MANUAL
-                    else "scheduled"
-                ),
-                **shared,
-            )
+            from .console_plugin_hook_preparation import submission_origin
+
+            with submission_origin(controller, session, configuration, origin):
+                lifecycle = await hook_runtime.prepare_hooks_v2(
+                    session_id,
+                    configuration=configuration,
+                    reason="resume" if session.persisted_conversation_id else "startup",
+                    initiator=(
+                        "manual"
+                        if origin is ConsoleSubmissionOrigin.MANUAL
+                        else "scheduled"
+                    ),
+                    **shared,
+                )
             if lifecycle is not None:
                 scope = lifecycle.turn_scope or lifecycle.open_scope()
                 lifecycle.turn_scope = scope

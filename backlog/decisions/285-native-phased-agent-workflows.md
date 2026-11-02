@@ -233,6 +233,27 @@ Future public planning, Start and Resume must use the same qualification before
 billable preparation or acceptance. Task 9 will surface the refusal reason. This
 is a platform capability boundary, not a new user setting or permission grant.
 
+### Native plugin hook preparation qualification (Task 8D2B2a)
+
+Plugin hook configuration is not a pure ceiling read: Console preparation calls
+the existing PluginService admission/storage callbacks before a hook engine or
+lifecycle exists. The original preparation source and worker-published selected
+maximum therefore own a finite opaque native operation before those callbacks
+are queued, through original NativeHooks acceptance or conclusive discard.
+Cancellation of an awaiting Future is not original callback retirement. Runtime
+and session close seal further preparation and retain actual callback and host
+return, including native operation-release callbacks, before storage disposal.
+Origin comes from the original trusted submission, never event/session/run text
+or the absence of automatic context. Empty plugin selections acquire no worker.
+
+This finite request reuses the existing plugin worker and admission policy; its
+completion does not retire or replace PluginRuntimeOwner's persistent storage
+infrastructure. No new journal, queue, executor, poller or permission framework
+is added. The same native platform gate preserves ordinary unqualified behavior.
+Planned v2 handler/MCP/nested/host/SessionEnd ownership remains mandatory D2B2b;
+ordinary-tree borrowing and workflow capture/planning/coordinator stay closed.
+
+
 ## Task 7 producer and storage contracts
 
 Task 7 uses additive AgentRuns schema v27 for immutable required checkpoint
