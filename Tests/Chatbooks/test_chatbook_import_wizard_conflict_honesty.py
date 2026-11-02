@@ -213,6 +213,16 @@ async def _mount_and_scan(
             # `on_show` did not fire for this host; drive the same entry point.
             await step._scan_conflicts()
             await pilot.pause()
+        else:
+            # The scan hops a worker thread (TASK-38595: blocking DB/ZIP
+            # reads must not run on the event loop), so settling it takes
+            # more than one pause -- poll the worker like the failure
+            # suite's `_run_step_to_settlement` does for the import worker.
+            for _ in range(300):
+                if not step.conflict_worker.is_running:
+                    break
+                await pilot.pause()
+            await pilot.pause()
         no_conflicts = step.query_one("#no-conflicts", Static)
         container = step.query_one("#conflict-container")
         lines = [

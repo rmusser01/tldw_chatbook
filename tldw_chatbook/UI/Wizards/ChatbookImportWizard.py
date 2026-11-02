@@ -407,7 +407,13 @@ class PreviewValidationStep(WizardStep):
     def on_show(self) -> None:
         """Load and validate chatbook when entering step."""
         super().on_show()
-        self.run_worker(self._load_and_validate_chatbook())
+        # Exclusive + named group: re-showing this step cancels a preview
+        # still in flight instead of stacking a second one (TASK-38595).
+        self.run_worker(
+            self._load_and_validate_chatbook(),
+            exclusive=True,
+            group="chatbook-preview",
+        )
 
     async def _load_and_validate_chatbook(self) -> None:
         """Load chatbook manifest and validate."""
@@ -421,8 +427,12 @@ class PreviewValidationStep(WizardStep):
 
             importer = ChatbookImporter(db_paths)
 
-            # Preview the chatbook
-            self.manifest, error = importer.preview_chatbook(Path(file_path))
+            # Preview the chatbook. The preview is synchronous work (ZIP
+            # preflight, manifest parse) and must run off the event loop or
+            # the whole TUI freezes until it returns (TASK-38595).
+            self.manifest, error = await asyncio.to_thread(
+                importer.preview_chatbook, Path(file_path)
+            )
 
             if error:
                 self._show_validation_error(error)
@@ -726,7 +736,11 @@ class ConflictResolutionStep(WizardStep):
             return
         try:
             db_paths = get_chatbook_database_paths()
-            findings, error = ChatbookImporter(db_paths).scan_conflicts(Path(file_path))
+            # The scan reads the whole archive and the destination DBs;
+            # keep that off the event loop (TASK-38595).
+            findings, error = await asyncio.to_thread(
+                ChatbookImporter(db_paths).scan_conflicts, Path(file_path)
+            )
         except Exception as e:
             logger.opt(exception=True).error(
                 f"ConflictResolutionStep._scan_conflicts: scan failed: {e}"
@@ -1068,8 +1082,11 @@ class ImportProgressStep(WizardStep):
         super().on_show()
         # Hide back button during import
         self.wizard.can_go_back = False
-        # Start import process
-        self.import_worker = self.run_worker(self._import_chatbook())
+        # Start import process. Exclusive + named group so a re-entry can
+        # never stack a second import on a running one (TASK-38595).
+        self.import_worker = self.run_worker(
+            self._import_chatbook(), exclusive=True, group="chatbook-import"
+        )
 
     async def _import_chatbook(self) -> None:
         """Import the chatbook with progress updates."""
@@ -1271,10 +1288,16 @@ class ImportProgressStep(WizardStep):
                         "status-media", "active", "⟳ Preparing media..."
                     )
 
-            # Perform the actual import
+            # Perform the actual import. Local import is fully synchronous
+            # (ZIP extraction to disk, SQLite writes, media copies); running
+            # it directly in this coroutine froze the whole TUI until it
+            # finished, with the progress bar stuck (TASK-38595). The
+            # status object is only read AFTER the call returns, so nothing
+            # crosses threads mid-run.
             logger.info(f"Starting chatbook import from {file_path}")
 
-            success, message = importer.import_chatbook(
+            success, message = await asyncio.to_thread(
+                importer.import_chatbook,
                 chatbook_path=file_path,
                 content_selections=None,  # Import all by default
                 conflict_resolution=resolution_strategy,
