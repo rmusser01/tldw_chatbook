@@ -110,7 +110,7 @@ Top to bottom:
   choose a model to continue ›"), so you never have to hover to find out
   why. When setup is the blocker, that reason is clickable and opens the
   setup wizard directly. A staged image the model can't read is not setup:
-  the reason reads "Send blocked — \<model\> can't accept images" and is not
+  the reason reads "Send blocked — this model can't accept images" and is not
   a link. Pressing Enter while Send is blocked keeps the draft and writes
   the reason as a System row. That row names the first thing that blocks the
   send: when none of the staged Library evidence is available, it says so,
