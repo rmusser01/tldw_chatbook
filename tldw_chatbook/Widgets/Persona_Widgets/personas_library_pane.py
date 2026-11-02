@@ -1359,6 +1359,7 @@ class PersonasLibraryPane(Vertical):
             # Read from its styles, so it holds before the bar is first shown.
             self.content_size.width - bar.styles.gutter.width,
             can_export=can_export,
+            filtered=self._filtered,
         )
         was_shown = bar.display
         if view is None:

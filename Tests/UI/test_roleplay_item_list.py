@@ -511,6 +511,16 @@ def test_marks_bar_is_absent_without_marks_and_drops_export_for_books():
     assert view.actions == ("delete", "clear")
 
 
+@pytest.mark.parametrize("hidden", [0, 2])
+@pytest.mark.parametrize("filtered", [False, True])
+def test_marks_hint_obeys_filter_precedence_even_when_no_marks_are_hidden(
+    hidden, filtered
+):
+    view = frame_state.marks_bar_view(3, hidden, 80, can_export=True, filtered=filtered)
+    assert view.labels == ("Export…", "Delete…", "Clear" if filtered else "Clear esc")
+    assert view.actions == ("export", "delete", "clear")
+
+
 # ---- the one delete modal (R32) ----
 
 
@@ -1654,7 +1664,9 @@ def test_the_first_match_landing_belongs_to_its_list():
 def test_landing_another_list_or_a_failed_read_or_a_newer_move_drops_the_first_match():
     window = frame_state.ListWindowState()
     for change in (
-        {"sort_key": "name_asc"}, {"tag": "other"}, {"mode": "lore"},
+        {"sort_key": "name_asc"},
+        {"tag": "other"},
+        {"mode": "lore"},
         {"runtime_source": "server", "server_id": "other"},
     ):
         window.owe_first(_search_fence())

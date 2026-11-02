@@ -232,7 +232,7 @@ def _text_card_markers(body: str, lines: list[str]) -> bool:
     return first == "---" or _JSON_FENCE.search(body) is not None
 
 
-def _classify_markdown(text: bytes) -> SniffResult:
+def _classify_markdown(text: bytes, *, truncated: bool = False) -> SniffResult:
     try:
         body = text.decode("utf-8")
     except UnicodeDecodeError:
@@ -256,10 +256,12 @@ def _classify_markdown(text: bytes) -> SniffResult:
             "Markdown key: value lines",
             preselect="dictionary",
         )
+    if truncated and all(char.isprintable() or char.isspace() for char in body):
+        return SniffResult("ask", TEXT_KINDS, "incomplete Markdown text")
     return _not_roleplay("Markdown with no card and no rules")
 
 
-def _classify_card_text(text: bytes) -> SniffResult:
+def _classify_card_text(text: bytes, *, truncated: bool = False) -> SniffResult:
     """Another extension (``.yaml``, ``.txt``, none) that is not JSON: a card
     when it carries frontmatter or a json block, else no Roleplay format."""
     try:
@@ -268,15 +270,18 @@ def _classify_card_text(text: bytes) -> SniffResult:
         return _not_roleplay("no Roleplay format")
     if _text_card_markers(body, body.splitlines()):
         return _decided("character", "text card (frontmatter or a json block)")
+    if truncated and all(char.isprintable() or char.isspace() for char in body):
+        return SniffResult("ask", TEXT_KINDS, "incomplete card text")
     return _not_roleplay("no Roleplay format")
 
 
-def classify(suffix: str, prefix: bytes) -> SniffResult:
+def classify(suffix: str, prefix: bytes, *, truncated: bool = False) -> SniffResult:
     """Decide a file's kind from its extension and its first bytes (pure).
 
     Args:
         suffix: The file's extension, any case (``".json"``, ``""``).
         prefix: At most ``SNIFF_MAX_BYTES`` from the start of the file.
+        truncated: The stat size exceeds the bytes read, so EOF is unconfirmed.
 
     Returns:
         The verdict. Never raises on any input.
@@ -293,15 +298,20 @@ def classify(suffix: str, prefix: bytes) -> SniffResult:
         return _not_roleplay("an image extension without an image signature")
     text = _complete_utf8(prefix.removeprefix(_UTF8_BOM))
     if suffix in MARKDOWN_SUFFIXES:
-        if text.lstrip()[:1] == b"{":
+        if text.lstrip()[:1] in (b"{", b"["):
             # A JSON card saved as Markdown: dev's card importer reads its raw
             # JSON, so its ``spec`` must still win (spec 1.4.6). Text that is
             # not readable JSON gets the Markdown checks.
             as_json = _classify_json(text)
             if as_json.verdict != "not_roleplay":
                 return as_json
-        return _classify_markdown(text)
+            # Preserve malformed/deep JSON refusal while retaining the existing
+            # Markdown marker fallback (e.g. dictionary rules after bad JSON).
+            return _classify_markdown(text)
+        return _classify_markdown(text, truncated=truncated)
     if suffix in JSON_SUFFIXES:
+        if truncated and not text.strip():
+            return SniffResult("ask", TEXT_KINDS, "JSON beyond whitespace prefix")
         return _classify_json(text)
     if text.lstrip()[:1] in (b"{", b"["):
         # Any other extension that starts like JSON is sniffed as JSON; text
@@ -310,7 +320,8 @@ def classify(suffix: str, prefix: bytes) -> SniffResult:
         as_json = _classify_json(text)
         if as_json.verdict != "not_roleplay":
             return as_json
-    return _classify_card_text(text)
+        return _classify_card_text(text)
+    return _classify_card_text(text, truncated=truncated)
 
 
 def sniff_import_file(path: str | os.PathLike[str], *, max_bytes: int) -> SniffResult:
@@ -348,7 +359,7 @@ def sniff_import_file(path: str | os.PathLike[str], *, max_bytes: int) -> SniffR
         return SniffResult("too_large", (), f"{size} bytes, over {max_bytes}")
     with open(checked, "rb") as handle:
         prefix = handle.read(SNIFF_MAX_BYTES)
-    return classify(suffix, prefix)
+    return classify(suffix, prefix, truncated=size > len(prefix))
 
 
 __all__ = [

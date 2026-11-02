@@ -272,15 +272,18 @@
 /* Frame slice B2b (RP-062): the search placeholder and typed text at AA,
    painted on every measurable theme by Tests/UI/test_theme_contrast.py.
    Textual paints the placeholder $text-disabled, under 4.5:1 on all 89
-   themes (2.12:1 on paradise_virtua): at rest it takes the placeholder
-   token. Focused, the dense form's translucent $ds-input-focus-bg over the
+   themes (2.12:1 on paradise_virtua): at rest it takes the primary auto ink.
+   The muted placeholder token misses AA on the compact input's actual fill
+   on green_phosphor_terminal and saiyan_power_orange; its italic style
+   still distinguishes the placeholder. Focused, the dense form's
+   translucent $ds-input-focus-bg over the
    pane's $panel took the focus ink under 4.5:1 on five themes (4.12:1 on
    catppuccin-frappe), so the box takes the house focus fill themes.py
    guards for $panel, as the Workflows search does; Textual's own 5% tint
    is dropped (with it, three themes stay under, 4.27:1 on
    catppuccin-mocha). The left edge stays the dense form's. */
 .roleplay-items-search > .input--placeholder {
-    color: $ds-text-placeholder;
+    color: $ds-text-primary;
 }
 
 .roleplay-items-search:focus {

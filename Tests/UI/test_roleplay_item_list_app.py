@@ -4092,13 +4092,14 @@ async def test_escape_in_the_list_clears_the_search_then_the_marks(
     clears the marks (rung 9). On dev Escape in the list cleared only marks,
     so the no-match line's "esc clears the search" would have been false."""
     async with open_styled_roleplay(
-        "mock", mock_app_instance, size=SIZE, character_db=volume_348
+        "mock", mock_app_instance, size=(220, 55), character_db=volume_348
     ) as pilot:
         screen = pilot.app.screen
         pane = screen.query_one("#personas-library-pane")
         item_list = screen.query_one(RoleplayItemList)
-        await _mark_rows(pilot, screen, visible_item_ids(screen)[:2])
-        await _search_settled(pilot, screen, "zzqx")
+        await _mark_rows(pilot, screen, visible_item_ids(screen)[1:3])
+        await _search_settled(pilot, screen, "Character")
+        assert "Clear" in _bar(screen) and "Clear esc" not in _bar(screen)
         item_list.focus()
         intent = screen._import_intent
         await pilot.press("escape")
@@ -4110,12 +4111,14 @@ async def test_escape_in_the_list_clears_the_search_then_the_marks(
         assert screen.query_one("#personas-library-search", Input).value == ""
         assert screen.state.search_query == "" and len(screen._marked_rows) == 2
         assert screen.focused is item_list
+        assert "Clear esc" in _bar(screen)
         # The user's clear is a newer intent than an import in flight, like a
         # typed search (B2b Task 5's ruling): the import then toasts.
         assert screen._import_intent > intent
         await screen._apply_tag_filter("noir")
         await settle(pilot)
         item_list.focus()
+        assert "Clear" in _bar(screen) and "Clear esc" not in _bar(screen)
         intent = screen._import_intent
         await pilot.press("escape")
         await wait_until(
@@ -4128,6 +4131,7 @@ async def test_escape_in_the_list_clears_the_search_then_the_marks(
         )
         assert len(screen._marked_rows) == 2
         assert screen._import_intent > intent
+        assert "Clear esc" in _bar(screen)
         await pilot.press("escape")
         await settle(pilot)
         assert screen._marked_rows == ()

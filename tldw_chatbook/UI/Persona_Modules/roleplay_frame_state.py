@@ -761,7 +761,7 @@ class MarksBarView:
 
 
 def marks_bar_view(
-    count: int, hidden: int, width: int, *, can_export: bool
+    count: int, hidden: int, width: int, *, can_export: bool, filtered: bool = False
 ) -> MarksBarView | None:
     """The marks bar's text at ``width`` cells, or ``None`` while nothing is marked.
 
@@ -769,7 +769,7 @@ def marks_bar_view(
     fit the bar degrades in a fixed order: the separators and the ``esc`` hint
     go, then ``marked``, then the hidden count (the tooltip keeps the full
     count). Narrower still, whole actions drop and none is ever cut: Clear
-    first (Escape on the list clears the marks too), then Export; then the
+    first (Escape on the list clears marks after any filter), then Export; then the
     count yields to Delete (it moves into Delete's tooltip, empty
     ``count_text``). Delete never drops while marks exist: it is the bulk
     path (R32). ``width`` is the bar's own content width. Export applies to
@@ -781,7 +781,11 @@ def marks_bar_view(
     dot = f" {resolve_glyph(_SEPARATOR)} "
     hidden_part = f" ({hidden} hidden)" if hidden else ""
     actions = ("export", "delete", "clear") if can_export else ("delete", "clear")
-    long_labels = {"export": "Export…", "delete": "Delete…", "clear": "Clear esc"}
+    long_labels = {
+        "export": "Export…",
+        "delete": "Delete…",
+        "clear": "Clear" if filtered else "Clear esc",
+    }
     short_labels = {"export": "Export", "delete": "Delete", "clear": "Clear"}
     tooltip = f"{count} marked" + (
         f", {hidden} hidden by the search or tag" if hidden else ""

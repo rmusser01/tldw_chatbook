@@ -24155,3 +24155,21 @@ by `_ui_ready` (the Console controller, `chat_screen.py`, the widgets it
 mounts), run `Tests/Performance/test_ui_ready_module_census.py` yourself; it
 takes about 15 seconds. Its failure names the new residents. A green preflight
 says nothing about this census.
+
+
+## PR3334: short pytest IDs and portable ownership keys on Windows (2026-11-01)
+
+The new bounded-sniff binary control initially used pytest's automatic ID for
+a 64 KiB byte prefix. Windows rejected PYTEST_CURRENT_TEST at setup because
+the environment value exceeded 32,767 characters (receipt r-89e6073c); short
+semantic IDs reached the intended assertions. The earlier fixture errors are
+not product RED.
+
+The unchanged-dev canonical CSS ownership helper also used
+`str(path.relative_to(CSS))`, producing backslashes while registry owners use
+forward slashes. Receipt r-9562fed4 falsely reported every canonical definition
+as foreign, including its actual owning sheet. `.as_posix()` preserved the
+registry and ownership predicate and passed in r-b3daab7d. This was proven
+source-inherited by exact dev-file comparison, not by a baseline execution.
+Normalize machine-readable relative keys at the producer; keep native FIFO
+coverage explicitly unavailable when os.mkfifo does not exist.

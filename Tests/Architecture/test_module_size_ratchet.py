@@ -228,6 +228,7 @@ _BUDGETS: dict[str, int] = {
     # TASK-36932 moves the bounded Lore save operation beside existing completions.
     # Rebased onto dev386 with the search/Save publication correction:
     # 16,870 combined, still 13 below current dev's 16,883 ceiling.
+    # Historical B2b source growth below; integration keeps current dev ceiling.
     # Roleplay frame B2b (TASK-33910.4), each line one commit that grows it:
     # owner decision (expand limits, never contort code), TASK-33910.4, 2026-10-26.
     # T1, the Inspector's interim Duplicate: +10 (dev's 16,859 -> 16,869).
@@ -260,7 +261,7 @@ _BUDGETS: dict[str, int] = {
     # TASK-33910.4, 2026-10-26: B2b changes it by +646 lines (16,859 -> 17,505).
     # The row rises to the measurement, never squeezed code; applied
     # 2026-10-30 after the final fix wave (B2b rows).
-    "tldw_chatbook/UI/Screens/personas_screen.py": 17505,
+    "tldw_chatbook/UI/Screens/personas_screen.py": 16859,
     # Roleplay frame B1: recipient ceiling for the moved header code (spec 5.4).
     # Roleplay frame B1 (TASK-33910.2), owner decision 2026-10-04 ("expand the
     # limits"), applied 2026-10-09: the final-review fix that puts a name and a
@@ -283,6 +284,7 @@ _BUDGETS: dict[str, int] = {
     # reason (owe_first, landing_owed, take_first); +29 (1,116 -> 1,145).
     # Its fix round 1 (same day) adds landed_elsewhere (a landing owed on a
     # superseded non-character list is dropped); +16 (1,145 -> 1,161).
+    # Historical B2b source growth below; integration keeps current dev ceiling.
     # Roleplay frame B2b (TASK-33910.4), each line one commit that grows it:
     # owner decision (expand limits, never contort code), TASK-33910.4, 2026-10-26.
     # T2, the New chooser's rows (NewChoice, new_chooser_options): +113
@@ -300,7 +302,7 @@ _BUDGETS: dict[str, int] = {
     # TASK-33910.4, 2026-10-26: B2b changes it by +463 lines (855 -> 1,318).
     # The row rises to the measurement, never squeezed code; applied
     # 2026-10-30 after the final fix wave (B2b rows).
-    "tldw_chatbook/UI/Persona_Modules/roleplay_frame_state.py": 1318,
+    "tldw_chatbook/UI/Persona_Modules/roleplay_frame_state.py": 855,
     # Roleplay frame B2a (TASK-33910.3): recipient ceiling (spec 5.4 item 4,
     # 5.10) for the items list that replaced the ListView and its pager,
     # pinned at its measured size (727 on dev -> 1,223; owner decision
@@ -315,6 +317,7 @@ _BUDGETS: dict[str, int] = {
     # inert while the first-match landing is owed, and the pane takes the
     # landing (land_on_first); +12 (1,295 -> 1,307). Fix round 1 (same day)
     # deletes the unused focus_first_result helper: -8 (1,307 -> 1,299).
+    # Historical B2b source growth below; integration keeps current dev ceiling.
     # Roleplay frame B2b (TASK-33910.4): Duplicate (T1), New Actor Pack (T2)
     # and Import Actor Pack (T4) leave the toolbar; T4 lowers the row to the
     # measurement (1,297 -> 1,246).
@@ -338,7 +341,7 @@ _BUDGETS: dict[str, int] = {
     # 2026-10-30 after the final fix wave (1,573), then +5 the same day for
     # the wave's residual (a failed Retry refocuses only if the focus is
     # still where the blank left it) (B2b rows).
-    "tldw_chatbook/Widgets/Persona_Widgets/personas_library_pane.py": 1578,
+    "tldw_chatbook/Widgets/Persona_Widgets/personas_library_pane.py": 1297,
     # TASK-33007.8 (closes task-31202): pinned at its measured size after
     # model-config Phase 7 moved the Providers & Models card out (34,179 at
     # the branch base 9b28ce1479 -> 33,607). task-1378 owns the rest of the

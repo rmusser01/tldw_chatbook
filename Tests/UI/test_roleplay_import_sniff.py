@@ -32,6 +32,49 @@ from tldw_chatbook.Character_Chat import Character_Chat_Lib
 CAP = 10 * 1024 * 1024
 
 
+@pytest.mark.parametrize("suffix", [".json", ".md", ".txt"])
+def test_deciding_card_evidence_after_the_sniff_asks(tmp_path, suffix):
+    path = tmp_path / f"late{suffix}"
+    card = json.dumps(card_v2()).encode()
+    payload = (
+        b" " * 65_537 + card
+        if suffix == ".json"
+        else b"prose\n" * 11_000 + b"```json\n" + card + b"\n```\n"
+    )
+    path.write_bytes(payload)
+    result = sniff.sniff_import_file(path, max_bytes=CAP)
+    assert (result.verdict, result.kinds) == ("ask", sniff.TEXT_KINDS)
+
+
+@pytest.mark.parametrize("size,verdict", [(65_536, "not_roleplay"), (65_537, "ask")])
+def test_prose_at_the_read_boundary_distinguishes_eof(tmp_path, size, verdict):
+    path = tmp_path / "prose.md"
+    path.write_bytes(b"x" * size)
+    result = sniff.sniff_import_file(path, max_bytes=CAP)
+    assert result.verdict == verdict
+    assert result.kinds == (sniff.TEXT_KINDS if verdict == "ask" else ())
+
+
+def test_a_short_read_before_the_stated_eof_is_inconclusive(tmp_path, monkeypatch):
+    from io import BytesIO
+
+    path = tmp_path / "short.txt"
+    path.write_bytes(b"prose" * 10)
+    reads = []
+
+    class ShortRead(BytesIO):
+        def read(self, size):
+            reads.append(size)
+            return super().read(5)
+
+    monkeypatch.setattr(
+        sniff, "open", lambda *args: ShortRead(path.read_bytes()), raising=False
+    )
+    result = sniff.sniff_import_file(path, max_bytes=CAP)
+    assert (result.verdict, result.kinds) == ("ask", sniff.TEXT_KINDS)
+    assert reads == [65_536]
+
+
 @pytest.fixture
 def fixtures(tmp_path):
     return write_import_fixtures(tmp_path / "fixtures")
@@ -292,6 +335,7 @@ def test_the_root_key_rules_decide_each_kind_without_entries(tmp_path):
     assert (nothing.verdict, nothing.kinds) == ("ask", sniff.TEXT_KINDS)
 
 
+@pytest.mark.skipif(not hasattr(os, "mkfifo"), reason="native FIFOs require os.mkfifo")
 def test_a_fifo_is_refused_without_blocking(tmp_path):
     """Deferred minor T3a: a FIFO picked as ``x.json`` blocked the sniff's
     worker in ``open()`` until a writer appeared (on dev its ``read_bytes``
@@ -323,6 +367,25 @@ def test_a_fifo_is_refused_without_blocking(tmp_path):
     error = outcome["error"]
     assert isinstance(error, OSError) and not isinstance(error, ValueError)
     assert "not a regular file" in str(error)
+
+
+def test_a_nonregular_stat_is_refused_before_open(tmp_path, monkeypatch):
+    import stat
+    from types import SimpleNamespace
+
+    path = tmp_path / "nonregular.json"
+    checked = SimpleNamespace(
+        name=path.name,
+        stat=lambda: SimpleNamespace(st_mode=stat.S_IFIFO, st_size=0),
+    )
+    monkeypatch.setattr(sniff, "validate_path_simple", lambda *a, **k: checked)
+
+    def refuse_open(*args, **kwargs):
+        pytest.fail("nonregular file reached open")
+
+    monkeypatch.setattr(sniff, "open", refuse_open, raising=False)
+    with pytest.raises(OSError, match="not a regular file"):
+        sniff.sniff_import_file(path, max_bytes=CAP)
 
 
 def test_markdown_that_fits_two_kinds_asks():
@@ -410,3 +473,26 @@ def test_the_sniff_never_runs_the_markdown_card_parser(tmp_path, monkeypatch):
     # Evidence, not a threshold (the spy above is the proof): a linear check
     # of 64 KiB never takes seconds, even under xdist and load.
     assert time.monotonic() - started < 5
+
+
+@pytest.mark.parametrize(
+    "suffix,prefix",
+    [
+        pytest.param(suffix, prefix, id=f"{name}-{suffix}")
+        for suffix in (".json", ".md", ".txt")
+        for name, prefix in (
+            ("invalid-utf8", b"\xff" * 65_536),
+            ("binary-nul", b"\x00" * 65_536),
+            ("deep-list", b"[" * 65_536),
+            ("deep-object", b'{"a":' * 13_108),
+        )
+        # Markdown's existing key:value fallback asks for a dictionary even
+        # after malformed JSON; this repair preserves that established rule.
+        if (suffix, name) != (".md", "deep-object")
+    ],
+)
+def test_incomplete_binary_and_deep_json_still_refuse(tmp_path, suffix, prefix):
+    path = tmp_path / f"refused{suffix}"
+    path.write_bytes(prefix + b"x")
+    result = sniff.sniff_import_file(path, max_bytes=CAP)
+    assert (result.verdict, result.kinds) == ("not_roleplay", ())

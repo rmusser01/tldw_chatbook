@@ -221,3 +221,20 @@ under the user's explicit "Ignore size limits" instruction for this integration.
 The test, cap and pinned snapshot remain intact. No base rerun or attribution of
 the excess to this branch is claimed. This waiver does not waive functional,
 privacy, custody, source-selection or ownership checks.
+
+
+## PR3334 integration qualification (2026-11-01)
+
+The B2b rows above retain the source-era approvals and measurements as history.
+This integration preserves current dev limits rather than applying the source
+branch's increases: pre-import LOC stays 426,199, and module ceilings stay
+16,859 (personas_screen), 855 (roleplay_frame_state), and 1,297
+(personas_library_pane). The targeted module checks measured 17,505, 1,322 and
+1,579 lines respectively: +646, +467 and +282. These three numeric failures are
+**WAIVED**, not PASS, under the user's explicit numeric-size waiver relayed by
+the integration owner. No threshold is raised and no runtime/security gate is
+waived. No current pre-import or full size sweep is claimed. The legitimate
+CSS tightening from 270 to 268 remains.
+
+Integration plan: `Docs/superpowers/plans/2026-11-01-pr3334-backlog-integration.md`.
+The original B2b pre-import limit of 440,410 is historical, not the active cap.
