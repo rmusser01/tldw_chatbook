@@ -6917,6 +6917,7 @@ class AgentService:
                 )
                 child_kwargs["config"] = child_config
                 child_kwargs["hook_tool_ids"] = selected_ids
+                self._hooks_v2_lifecycle.context.refresh_sources(child_scope)
                 child_kwargs["messages"] += list(
                     self._hooks_v2_lifecycle.context.blocks(child_scope, "child")
                 )

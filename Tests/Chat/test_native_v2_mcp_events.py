@@ -1391,3 +1391,161 @@ async def test_native_owned_result_rechecks_original_grant_after_positive_retire
     finally:
         lifecycle.close_scope(owner)
         await case.runtime.close_hooks_v2()
+
+
+@pytest.mark.parametrize("mutation", ["unrelated", "mcp_deny", "disk_deny"])
+async def test_actual_child_receiver_refreshes_original_passive_mcp_grant(
+    mcp_case, hook_file, monkeypatch, tmp_path, mutation
+):
+    import json
+
+    from Tests.Agents.test_agent_service import provider_reply
+    from Tests.Agents.test_fleet_runtime import FLEET_CFG, fence, make_inline_service
+    from Tests.Agents.test_hook_permissions import _approve
+    from Tests.Chat.test_console_hook_preparation_demand import _save_hooks
+    from tldw_chatbook.Agents.activation import worker_guard
+    from tldw_chatbook.Agents.agent_models import SPAWN_TOOL_NAME
+    from tldw_chatbook.Agents.hooks_v2.mcp_executor import MCPHookExecutor
+    from tldw_chatbook.Agents.mcp_tool_provider import MCPResultPermission
+    from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
+
+    case = mcp_case
+    value = mcp_handler().model_dump()
+    value.update(effects=["context"], require_context=True)
+    value["input"]["payload"]["structuredContent"]["context"] = [
+        {"text": "Original runtime child instructions", "lifetime": "runtime"}
+    ]
+    _save_hooks(
+        hook_file,
+        {
+            "enabled": True,
+            "handler": [
+                {k: v for k, v in value.items() if v is not None and v not in ({}, ())}
+            ],
+        },
+    )
+    permissions = case.runtime.ensure_hook_permissions()
+    case.rig.controller._hook_permissions_accessor = lambda: permissions
+    assert _approve(permissions).ready
+    sources = []
+    start = MCPHookExecutor.start
+
+    def observed(self, *args, **kwargs):
+        job = start(self, *args, **kwargs)
+        sources.append(job.native_target.event.source)
+        return job
+
+    monkeypatch.setattr(MCPHookExecutor, "start", observed)
+    db = AgentRunsDB(":memory:", client_id="native-child-receiver")
+    service, _chat = make_inline_service(db, [], monkeypatch)
+    calls, changed, received = [], [], []
+
+    def model(**kwargs):
+        calls.append(kwargs)
+        if not changed:
+            assert "Original runtime child instructions" in str(
+                kwargs["messages_payload"]
+            )
+            changed.append(True)
+            # The parent input has already been prepared. This real policy edit
+            # happens during its model call, before actual child initialization.
+            if mutation == "disk_deny":
+                path = case.service.permission_store.path
+                payload = json.loads(path.read_text())
+                payload["profiles"]["default"]["servers"]["local:fixture"]["tools"][
+                    "fixture"
+                ]["state"] = "deny"
+                path.write_text(json.dumps(payload))
+            else:
+                case.service.set_tool_state(
+                    "local:fixture",
+                    "other" if mutation == "unrelated" else "fixture",
+                    "deny",
+                )
+            return provider_reply(fence(SPAWN_TOOL_NAME, {"task": "child"}))
+        return provider_reply("parent complete")
+
+    service.chat_call = model
+    try:
+        assert (
+            await case.rig.controller.submit_draft(
+                "first", session_id=case.rig.session.id
+            )
+        ).accepted
+        source = sources[0]
+        await until(lambda: source.custody.retired)
+        assert source.custody.owner._drain_outcome is True
+        engine, lifecycle = source.issuer.engine, source.lifecycle
+        engine.mcp_executor.retire_context("session:" + case.rig.session.id)
+        source.check_memory()
+        service._hooks_v2_engine = engine
+        service._hooks_v2_lifecycle = lifecycle
+        service._hooks_v2_session_id = case.rig.session.id
+        service._hooks_v2_turn_id = "actual-child-turn"
+        check = MCPResultPermission.check
+
+        def checked(grant):
+            assert not lifecycle.checkpoints._condition._is_owned()
+            return check(grant)
+
+        monkeypatch.setattr(MCPResultPermission, "check", checked)
+        blocks = lifecycle.context.blocks
+
+        def observed_blocks(owner, checkpoint):
+            rows = blocks(owner, checkpoint)
+            if checkpoint == "child":
+                received.extend(rows)
+            return rows
+
+        monkeypatch.setattr(lifecycle.context, "blocks", observed_blocks)
+
+        def run_parent():
+            # SQLite :memory: is thread-local. Initialize and inspect the actual
+            # worker database in that same thread; no cross-thread row stand-in.
+            db._initialize_schema()
+            try:
+                run, outcome = service.run_turn(
+                    conversation_id="child-conversation",
+                    messages=[{"role": "user", "content": "spawn child"}],
+                    config=FLEET_CFG,
+                    api_endpoint="llama_cpp",
+                )
+                return (
+                    run,
+                    outcome,
+                    db.count_subagent_runs("child-conversation"),
+                    [
+                        db.get_run(row["id"])
+                        for row in db.list_runs("child-conversation")
+                    ],
+                )
+            finally:
+                db.close()
+
+        _run, result, child_count, actual_rows = await asyncio.to_thread(
+            worker_guard(service)(run_parent)
+        )
+        assert changed and calls
+        assert child_count == (1 if mutation == "unrelated" else 0)
+        if mutation == "unrelated":
+            assert "Original runtime child instructions" in str(received)
+            assert result.final_text == "parent complete"
+            # This exercises the real child receiving boundary, not a complete
+            # child model journey. Its later guarded entry adds the parent's
+            # now-bound run-log source and preserves the original-source refusal.
+            child = next(row for row in actual_rows if row["agent_kind"] == "subagent")
+            assert child["status"] == "error"
+            assert any(
+                step["kind"] == "error"
+                and "Command event activation source changed" in step["summary"]
+                for step in child["steps"]
+            )
+        else:
+            assert not received
+            # The next parent model input also refuses the revoked runtime
+            # context, so its final error replaces the earlier spawn result.
+            assert result.status == "error"
+        assert len(case.service.execution_log.read_recent()) == 1
+        assert not opaque_busy(case.runtime)
+    finally:
+        db.close()
