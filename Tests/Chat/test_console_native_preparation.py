@@ -668,3 +668,261 @@ async def test_runtime_shutdown_drains_preparation_and_original_finalizer(
     assert captured[0].native.turn_lifeline.loop.is_closed()
     assert not h.runtime._preparation_reads
     assert not h.calls
+
+
+async def _launch_native_for_test(h, prepared):
+    from tldw_chatbook.Agents.goal_storage_lifetime import owned_goal_storage
+
+    def launch():
+        with owned_goal_storage(h.service), h.phase.context.scope():
+            return prepared.native.service.launch_workflow_task(
+                prepared.authorization.task,
+                authorization=prepared.authorization,
+                should_cancel=prepared.should_cancel,
+            )
+
+    return await asyncio.to_thread(launch)
+
+
+async def _settle_native_for_test(h, prepared, receipt, *, status="completed"):
+    h.service.bind_native_receipt(prepared.authorization, receipt)
+    for thread in prepared.authorization._native_preparation[0].threads.values():
+        await asyncio.to_thread(thread.join, 5)
+        assert not thread.is_alive()
+    await h.service.call(
+        h.service.checkpoint_task,
+        WorkflowTaskResult(
+            workflow_id=h.workflow.id,
+            attempt_id=receipt.attempt_id,
+            run_id=receipt.run_id,
+            status=status,
+            summary="Native test settlement",
+            handoff="Required native result",
+        ),
+        drained=True,
+    )
+    await prepared.close()
+
+
+async def test_actual_provider_worker_admission_refusal_delivers_terminal_and_drains(
+    native_host, monkeypatch
+):
+    from tldw_chatbook.Agents import activation
+    from tldw_chatbook.Backup_Recovery import storage_admission
+
+    h = native_host
+    prepared = await h.bridge._prepare_workflow_reply(
+        phase=h.phase, task_id="task-1", binding=h.binding, resolution=h.selected
+    )
+    guarded = activation.worker_guard
+    refused, delivered, consumers = [], [], []
+    stream = h.gateway.stream_chat
+
+    def pause_actual_worker(service=None):
+        decorate = guarded(service)
+
+        def wrap(function):
+            native = decorate(function)
+            if function.__name__ != "worker":
+                return native
+
+            def invoke(*args, **kwargs):
+                pause = storage_admission._begin_local_pause()
+                try:
+                    return native(*args, **kwargs)
+                except activation.AgentActivationRequired as error:
+                    refused.append(error)
+                    raise
+                finally:
+                    pause.resume()
+
+            return invoke
+
+        return wrap
+
+    async def observe_stream(*args, **kwargs):
+        consumers.append((asyncio.get_running_loop(), asyncio.current_task()))
+        try:
+            async for item in stream(*args, **kwargs):
+                yield item
+        except BaseException as error:
+            delivered.append(error)
+            raise
+
+    monkeypatch.setattr(activation, "worker_guard", pause_actual_worker)
+    monkeypatch.setattr(h.gateway, "stream_chat", observe_stream)
+    receipt = await _launch_native_for_test(h, prepared)
+    h.service.bind_native_receipt(prepared.authorization, receipt)
+    drained = threading.Event()
+    receipt.owner.on_drained(lambda positive: drained.set() if positive else None)
+    try:
+        assert await asyncio.to_thread(drained.wait, 2), (
+            "worker refusal stranded stream"
+        )
+        assert len(refused) == 1
+        assert delivered == refused
+        assert not h.calls
+        assert h.db.get_run(receipt.run_id)["status"] == "error"
+    finally:
+        if not drained.is_set():
+            for loop, consumer in consumers:
+                loop.call_soon_threadsafe(consumer.cancel)
+        await _settle_native_for_test(h, prepared, receipt, status="failed")
+    assert not h.gateway._loop_clients
+    assert h.runtime.execution_capacity.snapshot().executions == ()
+
+
+@pytest.mark.parametrize("checked_before_close", [False, True])
+async def test_closing_original_finalizer_excludes_even_prechecked_native_launch(
+    native_host, monkeypatch, checked_before_close
+):
+    h = native_host
+    prepared = await h.bridge._prepare_workflow_reply(
+        phase=h.phase, task_id="task-1", binding=h.binding, resolution=h.selected
+    )
+    finalizing, release_finalizer = threading.Event(), threading.Event()
+    checked, release_launch = threading.Event(), threading.Event()
+    lifeline_type = type(prepared.native.turn_lifeline)
+    shutdown = lifeline_type.shutdown
+    check = prepared.native.service._check_workflow_launch_authorization
+
+    def hold_finalizer(lifeline):
+        if lifeline is prepared.native.turn_lifeline:
+            finalizing.set()
+            assert release_finalizer.wait(5)
+        shutdown(lifeline)
+
+    def hold_after_initial_check(authorization):
+        check(authorization)
+        if not checked.is_set():
+            checked.set()
+            assert release_launch.wait(5)
+
+    monkeypatch.setattr(lifeline_type, "shutdown", hold_finalizer)
+    if checked_before_close:
+        monkeypatch.setattr(
+            prepared.native.service,
+            "_check_workflow_launch_authorization",
+            hold_after_initial_check,
+        )
+        launching = asyncio.create_task(_launch_native_for_test(h, prepared))
+        assert await asyncio.to_thread(checked.wait, 3)
+    closing = asyncio.create_task(prepared.close())
+    receipt = None
+    try:
+        assert await asyncio.to_thread(finalizing.wait, 3)
+        if not checked_before_close:
+            launching = asyncio.create_task(_launch_native_for_test(h, prepared))
+        release_launch.set()
+        try:
+            receipt = await asyncio.wait_for(asyncio.shield(launching), 3)
+        except PermissionError as error:
+            assert "retired" in str(error)
+        else:
+            pytest.fail("native launch admitted while original finalizer was active")
+        assert not prepared.authorization._native_launch
+        assert not h.calls
+        assert not h.db.list_runs(h.conversation_id)
+    finally:
+        release_launch.set()
+        release_finalizer.set()
+        await closing
+        if receipt is not None:
+            for thread in prepared.authorization._native_preparation[
+                0
+            ].threads.values():
+                await asyncio.to_thread(thread.join, 5)
+                assert not thread.is_alive()
+    assert prepared._closed
+    assert prepared.native.turn_lifeline.loop.is_closed()
+
+
+async def test_refused_premature_close_keeps_admitted_child_authorized(
+    native_host, monkeypatch
+):
+    from tldw_chatbook.Agents.goal_storage_lifetime import owned_goal_storage
+
+    h = native_host
+    entered, release_provider = threading.Event(), threading.Event()
+    closing, release_close = asyncio.Event(), asyncio.Event()
+    provider = h.gateway._chat_api_call_fn
+
+    def held_provider(**kwargs):
+        entered.set()
+        assert release_provider.wait(5)
+        return provider(**kwargs)
+
+    monkeypatch.setattr(h.gateway, "_chat_api_call_fn", held_provider)
+    prepared = await h.bridge._prepare_workflow_reply(
+        phase=h.phase, task_id="task-1", binding=h.binding, resolution=h.selected
+    )
+    receipt = await _launch_native_for_test(h, prepared)
+    h.service.bind_native_receipt(prepared.authorization, receipt)
+    assert await asyncio.to_thread(entered.wait, 3)
+    read = prepared._read
+
+    async def hold_close(callback, **kwargs):
+        if kwargs.get("closing"):
+            closing.set()
+            await release_close.wait()
+        return await read(callback, **kwargs)
+
+    monkeypatch.setattr(prepared, "_read", hold_close)
+    pending = asyncio.create_task(prepared.close())
+    try:
+        await asyncio.wait_for(closing.wait(), 3)
+
+        def check_admitted():
+            with owned_goal_storage(h.service), h.phase.context.scope():
+                prepared.authorization.check_preparation()
+
+        await asyncio.to_thread(check_admitted)
+        release_close.set()
+        with pytest.raises(PermissionError, match="not drained"):
+            await pending
+        assert not prepared._closing
+        assert not prepared._closed
+        assert not prepared.native.turn_lifeline.loop.is_closed()
+    finally:
+        release_close.set()
+        release_provider.set()
+        if not pending.done():
+            await asyncio.gather(pending, return_exceptions=True)
+        await _settle_native_for_test(h, prepared, receipt)
+    assert len(h.calls) == 1
+
+
+async def test_failed_original_finalizer_never_reopens_native_launch(
+    native_host, monkeypatch
+):
+    h = native_host
+    prepared = await h.bridge._prepare_workflow_reply(
+        phase=h.phase, task_id="task-1", binding=h.binding, resolution=h.selected
+    )
+    lifeline_type = type(prepared.native.turn_lifeline)
+    shutdown = lifeline_type.shutdown
+
+    def fail_after_shutdown(lifeline):
+        shutdown(lifeline)
+        if lifeline is prepared.native.turn_lifeline:
+            raise RuntimeError("native finalizer failed")
+
+    monkeypatch.setattr(lifeline_type, "shutdown", fail_after_shutdown)
+    with pytest.raises(RuntimeError, match="native finalizer failed"):
+        await prepared.close()
+    receipt = None
+    try:
+        with pytest.raises(PermissionError, match="retired"):
+            receipt = await _launch_native_for_test(h, prepared)
+    finally:
+        if receipt is not None:
+            for thread in prepared.authorization._native_preparation[
+                0
+            ].threads.values():
+                await asyncio.to_thread(thread.join, 5)
+                assert not thread.is_alive()
+    assert not prepared._closed
+    assert prepared.native.turn_lifeline.loop.is_closed()
+    assert not prepared.authorization._native_launch
+    assert not h.calls
+    assert not h.db.list_runs(h.conversation_id)

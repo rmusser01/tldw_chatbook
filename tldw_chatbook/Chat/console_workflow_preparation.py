@@ -83,7 +83,7 @@ class _PreparedWorkflowReply:
                 raise PermissionError("workflow native target changed")
 
     def _check_task_source(self, authorization):
-        if self._closed or authorization is not self.authorization:
+        if self._closed or self._closing or authorization is not self.authorization:
             raise PermissionError("workflow native preparation retired")
         self.require_current()
         if goal_provider_ref(self.resolution) != authorization.task.target:
@@ -295,32 +295,37 @@ class _PreparedWorkflowReply:
         """Retire once after actual child drain and required durable publication."""
         if self._closed:
             return
-        if self._closing:
-            raise PermissionError("workflow native finalizer already active")
-        self._closing = True
 
         def finish():
             auth = self.authorization
-            if auth is not None and auth._native_launch:
-                tracker = self.service._tasks.get(auth.claim.id)
-                if (
-                    tracker is None
-                    or tracker.receipt is None
-                    or tracker.drain is not True
-                ):
-                    raise PermissionError("workflow native owner has not drained")
-                if tracker.receipt.failure != "no_run":
-                    self.service._checkpoint(auth.claim.workflow_id, auth.claim.id)
+            with auth._lock if auth is not None else nullcontext():
+                if self._closed:
+                    return
+                if self._closing:
+                    raise PermissionError("workflow native retirement already selected")
+                if auth is not None and auth._native_launch:
+                    tracker = self.service._tasks.get(auth.claim.id)
+                    if (
+                        tracker is None
+                        or tracker.receipt is None
+                        or tracker.drain is not True
+                    ):
+                        raise PermissionError("workflow native owner has not drained")
+                    if tracker.receipt.failure != "no_run":
+                        self.service._checkpoint(auth.claim.workflow_id, auth.claim.id)
+                # A refused close leaves admitted work authorized. The launch
+                # claim rechecks this transition under the same lock.
+                self._closing = True
+            # Failed retirement must not readmit a partly closed native frame.
             if self.native is not None:
                 self._lifetime.__exit__(None, None, None)
             elif self.turn_lifeline is not None:
                 self.turn_lifeline.shutdown()
-            self._closed = True
+            with auth._lock if auth is not None else nullcontext():
+                self._closed = True
+                self._closing = False
 
-        try:
-            await self._read(finish, roots=False, closing=True)
-        finally:
-            self._closing = False
+        await self._read(finish, roots=False, closing=True)
 
 
 async def prepare_workflow_reply(

@@ -7477,7 +7477,15 @@ class ConsoleProviderGateway:
         if automatic is not None and automatic.workflow is not None:
             from tldw_chatbook.Agents.activation import worker_guard
 
-            worker = worker_guard(automatic.ledger)(worker)
+            guarded_worker = worker_guard(automatic.ledger)(worker)
+
+            def worker() -> None:
+                try:
+                    guarded_worker()
+                except BaseException as exc:  # noqa: BLE001 - transport the exact worker failure.
+                    # Admission can refuse before consume_provider owns the queue.
+                    enqueue(_QueueItem("error", adapter_error=exc))
+                    enqueue(_QueueItem.done())
         worker_task = asyncio.create_task(asyncio.to_thread(worker))
         provider_work_owned = bool(
             signals is not None

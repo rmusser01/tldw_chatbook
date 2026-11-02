@@ -4776,6 +4776,8 @@ class AgentService:
                 tracker.service.validate_task_inputs(
                     authorization, json.loads(prepared.messages_json)
                 )
+            # Original resource retirement uses this same claim lock.
+            authorization.check_preparation()
             authorization._native_launch.append(None)
         from tldw_chatbook.Backup_Recovery.participants import _core_operation
 
