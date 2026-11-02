@@ -695,3 +695,68 @@ def test_original_source_replacement_during_readiness_handoff_is_not_ready(
         assert h.service.admit_turn("init-workspace").ready_roots == ()
     finally:
         release.set()
+
+
+def test_source_replacement_while_readiness_waits_for_publication_lock(
+    native_initializer, monkeypatch
+):
+    import inspect
+    import sys
+
+    h = native_initializer
+    checked, proceed = threading.Event(), threading.Event()
+    local = threading.local()
+    complete = h.service._complete
+    issuer_check = h.service._native.check
+    worker_ids = []
+    lines, first_line = inspect.getsourcelines(complete)
+    publication_line = first_line + next(
+        index for index, line in enumerate(lines) if line.strip() == "with self._lock:"
+    )
+
+    def completing(work, error):
+        local.completing = True
+        local.checks = 0
+        try:
+            return complete(work, error)
+        finally:
+            local.completing = False
+
+    def observed_check():
+        result = issuer_check()
+        if getattr(local, "completing", False):
+            local.checks += 1
+            if local.checks == 2:
+                worker_ids.append(threading.get_ident())
+                checked.set()
+                assert proceed.wait(5)
+        return result
+
+    def at_publication_lock():
+        frame = sys._current_frames().get(worker_ids[0])
+        return (
+            frame is not None
+            and frame.f_code is complete.__func__.__code__
+            and frame.f_lineno == publication_line
+        )
+
+    monkeypatch.setattr(h.service, "_complete", completing)
+    monkeypatch.setattr(h.service._native, "check", observed_check)
+    h.registry.set_change_review_enabled("init-workspace", True)
+    capture_change_review_admission(h.app, "init-workspace")
+    try:
+        assert checked.wait(3), "consumer did not finish its genuine source check"
+        with h.service._lock:
+            proceed.set()
+            wait_until(at_publication_lock)
+            assert h.runtime.execution_capacity.snapshot().tool_workers == 1
+            monkeypatch.setattr(h.app, "workspace_registry_service", object())
+        wait_until(lambda: h.service._queue.unfinished_tasks == 0)
+        assert h.runtime.execution_capacity.snapshot().executions == ()
+        assert (
+            h.service._readiness[("init-workspace", str(h.root))].state
+            is RootReadinessState.FAILED
+        )
+        assert h.service.admit_turn("init-workspace").ready_roots == ()
+    finally:
+        proceed.set()

@@ -267,20 +267,26 @@ class _NativeInitializationIssuer(_NativeReviewResources):
         self.initializer = service._initialize_root
         self.capability_reader = service._capability_reader
 
+    def identity_current(self) -> bool:
+        """Compare only original object references, safe under the consent lock."""
+        return (
+            self.runtime._app is self.app
+            and self.app.console_runtime is self.runtime
+            and self.runtime._change_review_consent_service is self.service
+            and self.app.change_review_consent_service is self.service
+            and self.app.workspace_registry_service is self.registry
+            and self.registry.db is self.database
+            and self.registry._change_review_binding_owner is self.service
+            and self.service._registry is self.registry
+            and self.service._native is self
+            and self.service._initialize_root is self.initializer
+            and self.service._capability_reader is self.capability_reader
+        )
+
     def check(self):
         if (
-            self.runtime._app is not self.app
-            or self.app.console_runtime is not self.runtime
-            or self.runtime._change_review_consent_service is not self.service
-            or self.app.change_review_consent_service is not self.service
-            or self.app.workspace_registry_service is not self.registry
-            or self.registry.db is not self.database
+            not self.identity_current()
             or Path(self.database.db_path) != self.database_path
-            or self.registry._change_review_binding_owner is not self.service
-            or self.service._registry is not self.registry
-            or self.service._native is not self
-            or self.service._initialize_root is not self.initializer
-            or self.service._capability_reader is not self.capability_reader
         ):
             raise ValueError("native initialization source changed")
 

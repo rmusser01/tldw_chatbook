@@ -505,6 +505,9 @@ class ChangeReviewConsentService:
                 return
             if work.workspace_id in self._toggling:
                 error = ValueError("initialization consent changed")
+            # Acquiring this lock can wait after external source validation.
+            if work.source is not None and not work.source.issuer.identity_current():
+                error = ValueError("initialization source changed")
             self._admission_revision += 1
             self._readiness[(work.workspace_id, work.root)] = _ReadinessEntry(
                 work.alias,
