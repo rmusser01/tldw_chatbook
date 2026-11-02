@@ -1,0 +1,22 @@
+{
+ "runs": [
+  {
+   "archive_path": "/Users/macbook-dev/.codex/artifacts/task-37653/live60-2026-11-02-evidence.tar.gz",
+   "archive_sha256": "9432ae17c76c9942b23df7358224a92a5ef0165fdc91363883fc7bf5ec92aae2",
+   "archive_bytes": 1348156,
+   "member_count": 187,
+   "source_packet": "/private/tmp/task37653-live60/attempt-_2f9i5ac",
+   "excluded": "the run's scratch home (temporary profile and credentials environment)",
+   "credential_scan": "0 provider-key byte matches in archived files"
+  },
+  {
+   "archive_path": "/Users/macbook-dev/.codex/artifacts/task-37653/live60b-2026-11-02-evidence.tar.gz",
+   "archive_sha256": "db1059cc3f79892426b0a0b2262e5f2ab5bcd2e774253badc13cc70302e643e3",
+   "archive_bytes": 1312735,
+   "member_count": 212,
+   "source_packet": "/private/tmp/task37653-live60b/live60b-2026-11-02-evidence.tar.gz",
+   "excluded": "the run's scratch home (temporary profile and credentials environment)",
+   "credential_scan": "0 provider-key byte matches in archived files"
+  }
+ ]
+}

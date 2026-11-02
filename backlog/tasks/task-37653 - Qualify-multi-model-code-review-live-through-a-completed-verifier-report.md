@@ -1,7 +1,7 @@
 ---
 id: TASK-37653
 title: Qualify multi-model code review live through a completed verifier report
-status: In Progress
+status: Done
 created_date: 2026-10-30 03:54
 labels:
 - agents
@@ -11,6 +11,7 @@ references:
 - backlog/tasks/task-35582 - Implement-primary-agent-multi-model-code-review-recipe.md
 documentation:
 - Docs/superpowers/qa/2026-10-18-multi-model-code-review/macos-final60/report.md
+- Docs/superpowers/qa/2026-10-18-multi-model-code-review/task37653-live60/report.md
 - backlog/decisions/281-primary-agent-multi-model-code-review.md
 ---
 
@@ -23,9 +24,9 @@ TASK-35582 merged the multi-model code review recipe on offline and scripted evi
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
 - [x] #1 The macos-final60 review_refused report reads and the continuation-persistence error are traced to an internal cause or reproduced offline, and any product defect found is fixed with a regression test.
-- [ ] #2 A bounded real Console/provider qualification uses two reviewer destinations and a fresh verifier, including a pre-authorized request under the default two-child ceiling, seeded defect/false positive/duplicate, failed reviewer, truncation, source drift, small-context and storage-overflow controls; live-model evidence is distinguished from scripted controls.
-- [ ] #3 The live run seals the verifier report and produces a unified report that expands every original finding exactly once.
-- [ ] #4 The owner approves the live request/child budget before the run, and actual spend is recorded with the evidence.
+- [x] #2 A bounded real Console/provider qualification uses two reviewer destinations and a fresh verifier, including a pre-authorized request under the default two-child ceiling, seeded defect/false positive/duplicate, failed reviewer, truncation, source drift, small-context and storage-overflow controls; live-model evidence is distinguished from scripted controls.
+- [x] #3 The live run seals the verifier report and produces a unified report that expands every original finding exactly once.
+- [x] #4 The owner approves the live request/child budget before the run, and actual spend is recorded with the evidence.
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -71,6 +72,21 @@ Files: `tldw_chatbook/Chat/console_chat_store.py` (decorator; size unchanged at 
 - *Stop persists the owner mid-seal.* The seal covers `persisted_message_id or message.id`, so a Stop that persisted the unpersisted assistant (DB-assigned id) during the unlocked seal made the recheck refuse. On that refusal (`_StaleContinuationSeal`) the write now leaves the scope, re-seals once over the fresh inputs and retries; a second change still refuses. RED: "Continuation owner changed while sealing"; GREEN: the row is written with a seal over the durable id (`sealed_for == [native, durable]`).
 - *Close snapshot.* Close passes the owner ids it claimed to the purge, which refuses ("joined this chat while closing") rather than invalidate an owner whose scope it does not hold. RED: did not raise.
 - Store ratchet row 22,410 -> 22,434 (+24, dated). Affected suites: 1002 passed. The Console store/controller suites fail only the 30 cases already known to fail on the base files.
+**Review round 4 (2026-11-02).**
+- *Close refusal removed.* Round 3's "message joined this chat while closing" refusal fired in reachable use and left the tab unclosable until restart. Close now claims late-joining owners without waiting, or waits for a held one outside first persistence, before anything irreversible; the purge never waits.
+- *Dead retry removed.* The re-seal-once retry could never succeed, because managed owners keep native id == persisted id, so it is gone. The symlink case skips on Windows hosts without symlink rights.
+
+**Live qualification (AC#2-#4, 2026-11-02, head 949ddbc452 on dev 88af9f9379).** Evidence: Docs/superpowers/qa/2026-10-18-multi-model-code-review/task37653-live60/report.md.
+- *Approvals.* The owner approved each run (60 requests / 3 children, one invocation each, no retries, CI waived).
+- *Run 1* spent 40 requests and 2 children. Both reviewers sealed, but the verifier never started: the gated harness predated PR #3286's presenter refactor, set `controller.app` directly instead of attaching through `wiring.attach_review_presenter`, and so never presented the originals (`original_reports_not_presented`).
+- *Run 2* spent 50 requests and 3 children, with that one-line harness fix. Both originals were presented before the fresh Haiku verifier, V1 sealed, and the unified report expanded R2-F1..F3 once each:
+  - the seeded empty-input regression: confirmed;
+  - the seeded false string claim: refuted;
+  - `bool` passing the int check: confirmed.
+- *Coverage limits.* R1 (gpt-6-luna) found nothing in both runs. Duplicate grouping and the failed-reviewer, truncation, drift, small-context and storage-overflow controls come from the harness's scripted offline controls (passed at this head) and are reported separately from the live evidence.
+- *Harness repairs.* macOS /tmp cleanup had deleted the raw history packets, so the runner records them as lost rather than refusing (spend caps and pins unchanged). A dev fixture-signature drift was absorbed.
+- *Archives.* Under ~/.codex/artifacts/task-37653/, credential scan clean.
+- *Totals.* 574 requests / 38 children after these runs.
 <!-- SECTION:IMPLEMENTATION_NOTES:END -->
 
 ## Final Summary

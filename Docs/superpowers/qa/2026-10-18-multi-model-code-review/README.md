@@ -1,6 +1,8 @@
 # TASK-35582 delivery evidence
 
-**Latest qualification failed; AC24 remains open and PR #3286 draft.**
+**Live qualification passed on 2026-11-02 (TASK-37653).** The [second approved run](task37653-live60/report.md) presented both originals, sealed the fresh verifier and expanded every finding exactly once (50 requests / 3 children; the first run's 40 / 2 was blocked by a harness attach gap). Earlier history follows.
+
+**Earlier: qualification failed; AC24 remained open and PR #3286 draft.**
 The [single run after macOS CI passed](macos-final60/report.md) consumed 27/60
 requests and 2/3 children on ac4816ac03. Both originals sealed and were presented;
 the primary made refused report reads, then reached the 600-second deadline
