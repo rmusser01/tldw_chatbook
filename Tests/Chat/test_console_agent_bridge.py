@@ -12569,3 +12569,117 @@ def test_builtin_child_binds_its_own_native_continuation_under_custom_parent():
     assert gateway.prepared_target == target
     assert response.provider_continuation.selected_provider == "deepseek"
     assert response.provider_continuation.provider == "deepseek"
+
+
+@pytest.mark.bootstrap_profile
+@pytest.mark.parametrize("stop_target", ["primary", "child"])
+def test_silent_fleet_stream_uses_its_native_cancellation_owner(tmp_path, stop_target):
+    """A parent's Stop must not empty an outliving child's provider stream."""
+    from tldw_chatbook.Chat.stream_stall_watchdog import STOP_POLL_SECONDS
+
+    release_child = threading.Event()
+    release_parent = threading.Event()
+    parent_entered = threading.Event()
+    child_closed = threading.Event()
+    primary_cancel = threading.Event()
+
+    class SilentFleetGateway(_FleetTwoChildGateway):
+        async def stream_chat(self, resolution, messages, tools=None, **kwargs):
+            system = str(messages[0].get("content", "")) if messages else ""
+            if system.startswith(SUBAGENT_PROMPT_PREFIX):
+                with self._count_lock:
+                    self.child_calls += 1
+                self.entered_event.set()
+                try:
+                    while not release_child.is_set():
+                        await asyncio.sleep(0.01)
+                    yield "exact surviving worker reply"
+                finally:
+                    child_closed.set()
+                return
+            if len(self._parent) == 1:
+                parent_entered.set()
+                while not release_parent.is_set():
+                    await asyncio.sleep(0.01)
+            async for chunk in super().stream_chat(
+                resolution, messages, tools=tools, **kwargs
+            ):
+                yield chunk
+
+    gateway = SilentFleetGateway(
+        parent_script=[
+            [_fence("spawn_subagent", {"task": "silent owned child"})],
+            ["parent completed"],
+        ],
+        child_result=[],
+        gate=release_child,
+        needed=1,
+    )
+    bridge, db, store, session, assistant_id = _bridge_with_gateway(tmp_path, gateway)
+    result = {}
+
+    def run_primary():
+        try:
+            result["outcome"] = _run(
+                bridge,
+                store,
+                session,
+                assistant_id,
+                should_cancel=primary_cancel.is_set,
+            )
+        except BaseException as error:  # noqa: BLE001 - report native worker failure below
+            result["error"] = error
+
+    runner = threading.Thread(target=run_primary, name="test-native-fleet-stop")
+    runner.start()
+    try:
+        assert gateway.entered_event.wait(5), result
+        assert parent_entered.wait(5), result
+        live = bridge.fleet_snapshot("conv-1")
+        assert len(live) == 1 and live[0].status == "running", live
+        child = live[0]
+        child_thread = next(
+            thread
+            for thread in threading.enumerate()
+            if thread.name == "fleet-" + child.handle_id[:8]
+        )
+        if stop_target == "primary":
+            primary_cancel.set()
+        else:
+            release_parent.set()
+        runner.join(10)
+        assert not runner.is_alive(), result
+        assert "error" not in result, result
+        assert result["outcome"].status == (
+            "cancelled" if stop_target == "primary" else "done"
+        )
+        if stop_target == "primary":
+            # Keep the actual provider silent through two normal stop polls.
+            # An erroneous parent predicate closes it before we release it.
+            assert not child_closed.wait(2 * STOP_POLL_SECONDS), (
+                "primary Stop closed the surviving child's silent provider"
+            )
+            assert child_thread.is_alive()
+            assert gateway.child_calls == 1
+            assert bridge.fleet_snapshot("conv-1")[0].run_id == child.run_id
+            release_child.set()
+        else:
+            assert bridge.cancel_subagent("conv-1", child.handle_id)
+            assert child_closed.wait(5), "own Stop did not close the silent provider"
+            assert not release_child.is_set()
+        child_thread.join(5)
+        assert not child_thread.is_alive()
+        row = db.get_run(child.run_id)
+        assert row is not None
+        assert row["status"] == ("done" if stop_target == "primary" else "cancelled")
+        if stop_target == "primary":
+            assert row["result"] == "exact surviving worker reply"
+        assert gateway.child_calls == 1
+        assert bridge.fleet_snapshot("conv-1") == []
+    finally:
+        primary_cancel.set()
+        bridge.cancel_all_subagents("conv-1")
+        release_parent.set()
+        release_child.set()
+        runner.join(10)
+        _join_fleet_threads()

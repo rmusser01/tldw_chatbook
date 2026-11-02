@@ -180,6 +180,7 @@ from .native_tools import (
 from .run_context import (
     CurrentRunActor,
     clean_subagent_label,
+    use_model_run_cancellation,
     use_run_actor,
     use_tool_call_id,  # noqa: F401 - lazy request helper compatibility seam
 )
@@ -9131,7 +9132,10 @@ class AgentService:
                             if self._run_model_scope is not None
                             else contextlib.nullcontext()
                         )
-                        with model_scope:
+                        with (
+                            use_model_run_cancellation(deps.should_cancel),
+                            model_scope,
+                        ):
                             outcome = run_agent_loop(
                                 config,
                                 run_messages,
