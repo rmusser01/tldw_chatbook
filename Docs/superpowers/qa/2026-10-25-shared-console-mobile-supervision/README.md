@@ -1,10 +1,11 @@
 # Shared served Console and mobile qualification
 
 The current candidate integrates dev `62a169f906508ed02bd7546ab278d916638d1607`.
-Targeted storage and runtime evidence is recorded below; final independent
-integration review and the complete 15-case served-browser UAT are still pending.
-Native size/import ratchets currently fail and are not waived. This is not a
-whole-branch release qualification.
+Independent integration review requested two corrections. The integrated
+15-case UAT (epoch112) returned **12 passed, 3 failed**; the correction wave has
+separate targeted evidence below. Scoped rereview and a fresh complete15-case
+UAT remain pending. Native size/import ratchets fail and are explicitly unwaived
+by the owner. This is not a whole-branch release qualification.
 
 The original feature UAT was **13 passed / 1 failed**. The mouse failure was later
 traced to a mixed native size/layout test receipt; the two-test R167 correction
@@ -375,3 +376,57 @@ remain distinct, with existing operation cleanup and honest remote-state copy.
 Both native video and mobile trace tests remain in the UI census (floor1,318).
 Connected native video checks, the final independent review and15-case UAT are
 pending on this frozen candidate; no new green result is inferred from rebase.
+
+
+## Integrated review correction wave (2026-11-01)
+
+FI-001 retains the original Console view and execution lease through native full
+app shutdown. Control loss synchronously fences the already-installed controller
+and requests ordinary exit in finally; project-index, selected view workers and
+recovered-image producers drain before runtime disposal. Epoch115 reproduced
+early lease release with actual held physical work;118 passed original-view,
+competing-owner refusal, repeated-cancellation and final native reacquisition
+checks. Three supplementary116 controls and original current/detached image
+drains in119 are separately scoped.116/117 fixture lifecycle failures remain
+retained, not relabelled as product failures.
+
+FI-002 enables the existing public full-tools setting only for the fleet's
+private profile before enrollment.119 then reached genuine workers and exposed
+an incomplete scripted provider-resolution object. Using the native immutable
+resolution model corrected that fixture;120 passed all original fleet lifetime,
+exact phone controls, desktop-owner and unrelated-chat assertions.
+
+The lifecycle fixture now performs one explicit host POST and admits commands
+only after a positive snapshot from the same sole native child. It accepts only
+a validated200 host or the exact unavailable503 at that initial step; read-only
+readiness retains its existing deadline.119 passed organic503 clean-stop and
+control-EOF.120 separately exercised an explicitly injected unavailable
+publication AFTER successful native bootstrap, then matched the native GET
+identity and proved one bootstrap through final lifecycle. Earlier112503 causes
+remain unknown;114 diagnostic pass with no signal is not a diagnosis.
+
+The shared generic Canvas fixture uses the same native typed resolution. Its
+explicit Canvas-create/update test now opts into public full tools and restores
+the original effective setting even on failure.123/124 reached native creation,
+updates, visible output and persistence;124 also proved exact old physical
+retirement before replacement registration/generation. Its later saved-load
+acknowledgement was absent in124, whose cause remains unknown. The adopted125
+input prerequisite shares the original45s across Composer paint and public
+aria-busy=false before the same single F10.125 passes saved load, then fails the
+subsequent F12 card acknowledgement after the original15s. The retained native125 traceback shows F12 reaches the handler but the canonical
+saved session is misclassified as temporary (equal session/conversation IDs),
+raising canvas_base_unavailable. This connected production defect remains unfixed
+pending root disposition;124 remains unknown. No whole generic-case pass or
+further retry is claimed. Diagnostic122 captured only bounded existing fixture outputs after the original
+failure; its temporary code was restored byte-exact and has no qualification
+credit.
+
+The UI coverage floor is strengthened to1327 entries. Size/startup ceilings are
+unchanged: app_served is330/125 and UI-ready remains the measured1044/1031 failure.
+The other20 attributed over-limit module rows remain disclosed. There are no
+introduced scoped lint findings; inherited census lint findings and generic served-flow formatting differences
+are retained explicitly. Storage94/97 and unchanged voice/video/frontend evidence
+retain their source-bound prior qualification. Final correction report/manifest
+live in the existing local dev-integration-2026-11-01 evidence directory. No
+whole15 rerun, full repository sweep, physical phone/VPN or real-profile migration
+is claimed by this correction wave.
