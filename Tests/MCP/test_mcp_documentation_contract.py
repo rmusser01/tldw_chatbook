@@ -30,7 +30,7 @@ CONSOLE_AGENT_TOOLS_DOCUMENT = (
     REPO_ROOT / "Docs" / "User_Guide" / "console" / "agent-runs-and-tools.md"
 )
 SKILLS_EXAMPLES_DOCUMENT = REPO_ROOT / "Docs" / "Examples" / "skills" / "README.md"
-CONFIG_TEMPLATE = REPO_ROOT / "tldw_chatbook" / "config.py"
+CONFIG_TEMPLATE = REPO_ROOT / "tldw_chatbook" / "Config_Files" / "default_config.toml"
 BUILTIN_TOOL_GATE = REPO_ROOT / "tldw_chatbook" / "Agents" / "builtin_tool_gate.py"
 MCP_TOOLS_MODE = (
     REPO_ROOT / "tldw_chatbook" / "UI" / "MCP_Modules" / "mcp_tools_mode.py"

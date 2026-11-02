@@ -689,3 +689,99 @@ def test_propagation_follows_imports_not_names():
     assert _resolve_relative("tldw_chatbook/pkg/sub/__init__.py", "", 2) == (
         "tldw_chatbook.pkg"
     )
+
+
+# --- TASK-36945.1: the default config template is a packaged data file ------
+
+# sha256 of the template bytes as they were inline in config.py at 88af9f9379
+# (before placeholder substitution). Any byte change to the data file, intended or
+# not, must update this pin on purpose.
+_TEMPLATE_SHA256 = "32a348ef0376086ad8734d658595351b79e51ef7983338b996b207726c1a8541"
+_TEMPLATE_RELATIVE = "tldw_chatbook/Config_Files/default_config.toml"
+
+
+def test_default_config_template_bytes_are_unchanged():
+    import hashlib
+    from pathlib import Path
+
+    data = (Path(__file__).resolve().parents[1] / _TEMPLATE_RELATIVE).read_bytes()
+    assert hashlib.sha256(data).hexdigest() == _TEMPLATE_SHA256
+
+
+def test_config_toml_content_is_the_data_file_with_placeholders_resolved():
+    import hashlib
+    import importlib.resources
+
+    from tldw_chatbook import config
+
+    raw = (
+        importlib.resources.files("tldw_chatbook.Config_Files")
+        .joinpath("default_config.toml")
+        .read_bytes()
+        .decode("utf-8")
+    )
+    expected = raw.replace(
+        "__DEFAULT_TRANSCRIPTION_PROVIDER__", config._default_stt_provider_for_platform()
+    ).replace("__DEFAULT_SPLASH_DURATION__", str(config.DEFAULT_SPLASH_DURATION_SECONDS))
+    assert config.CONFIG_TOML_CONTENT == expected
+    assert "__DEFAULT_" not in config.CONFIG_TOML_CONTENT
+
+
+def test_config_py_no_longer_embeds_the_template():
+    from pathlib import Path
+
+    source = (Path(__file__).resolve().parents[1] / "tldw_chatbook/config.py").read_text(
+        encoding="utf-8"
+    )
+    assert "# Configuration for tldw-chatbook TUI App" not in source
+
+
+def test_default_config_template_profile_paths_are_pinned():
+    """Replaces the 14 ``module:CONFIG_TOML_CONTENT`` rules in the profile-owned
+    path inventory: the scanner reads Python, not TOML, so every profile-root
+    path the template ships (values and comments alike) is pinned here."""
+    import re
+    from pathlib import Path
+
+    raw = (Path(__file__).resolve().parents[1] / _TEMPLATE_RELATIVE).read_text(encoding="utf-8")
+    found = set(re.findall(r"~/\.(?:config|local/share)/tldw_cli[^\s\"']*", raw))
+    assert found == _PROFILE_PATH_DEFAULTS
+
+
+_PROFILE_PATH_DEFAULTS = {
+    "~/.config/tldw_cli/config.toml",
+    "~/.config/tldw_cli/github_profiles",
+    "~/.local/share/tldw_cli/",
+    "~/.local/share/tldw_cli/evals.db",
+    "~/.local/share/tldw_cli/models/embeddings",
+    "~/.local/share/tldw_cli/rag_indexing.db",
+    "~/.local/share/tldw_cli/tldw_chatbook_ChaChaNotes.db",
+    "~/.local/share/tldw_cli/tldw_chatbook_library_collections.db",
+    "~/.local/share/tldw_cli/tldw_chatbook_research.db",
+    "~/.local/share/tldw_cli/tldw_chatbook_subscriptions.db",
+    "~/.local/share/tldw_cli/tldw_chatbook_workspaces.db",
+    "~/.local/share/tldw_cli/tldw_chatbook_writing.db",
+    "~/.local/share/tldw_cli/tldw_cli_media_v2.db",
+    "~/.local/share/tldw_cli/tldw_cli_prompts.db",
+}
+
+
+def test_default_config_template_ships_in_distributions():
+    import fnmatch
+    import tomllib
+    from pathlib import Path
+
+    from Packaging import check_manifest
+
+    repo = Path(__file__).resolve().parents[1]
+    config = tomllib.loads((repo / "pyproject.toml").read_text(encoding="utf-8"))
+    patterns = config["tool"]["setuptools"]["package-data"]["tldw_chatbook.Config_Files"]
+    assert any(fnmatch.fnmatchcase("default_config.toml", p) for p in patterns)
+    manifest_in = (repo / "MANIFEST.in").read_text(encoding="utf-8")
+    assert any(
+        line.startswith("recursive-include tldw_chatbook/Config_Files")
+        and "default_config.toml" in line.split()
+        for line in manifest_in.splitlines()
+    )
+    assert _TEMPLATE_RELATIVE in check_manifest.REQUIRED_WHEEL_PATHS
+    assert _TEMPLATE_RELATIVE in check_manifest.REQUIRED_SDIST_PATHS

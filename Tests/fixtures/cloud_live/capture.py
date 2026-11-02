@@ -150,12 +150,14 @@ def _env_name(record: ProviderRecord, suffix: str) -> str:
 
 
 def _config_seeds(record: ProviderRecord) -> list[str]:
-    """The ``[providers]`` seed list shipped in config.py, read as text.
+    """The ``[providers]`` seed list shipped in the default config template (Config_Files/default_config.toml), read as text.
 
     Importing ``tldw_chatbook.config`` would load the real app configuration,
     so the seed line is parsed from the source instead.
     """
-    source = (REPO_ROOT / "tldw_chatbook" / "config.py").read_text(encoding="utf-8")
+    source = (REPO_ROOT / "tldw_chatbook" / "Config_Files" / "default_config.toml").read_text(
+        encoding="utf-8"
+    )
     match = re.search(rf"^{re.escape(record.config_key)} = (\[.*\])", source, re.MULTILINE)
     if not match:
         return []
