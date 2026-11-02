@@ -10,7 +10,7 @@ labels:
 - db
 dependencies: []
 priority: high
-updated_date: 2026-10-31 21:11
+updated_date: 2026-11-02 10:15
 ---
 
 ## Description
@@ -28,6 +28,12 @@ The DB layer carries 21 independent transaction() context managers and 9 verbati
 - [ ] #5 Targeted DB test suites for every touched store pass.
 <!-- AC:END -->
 
+## Implementation Plan
+
+<!-- SECTION:PLAN:BEGIN -->
+Migration 7 deadline integration (2026-11-02): ADR required: no; existing ADR-228 and ADR-126 apply. Verify fresh and revived deadline acquisition, propagate the existing budget through Dreams setup and WAL, prove native timeout cleanup, and run focused admission, lineage, retirement and kernel controls. Preserve the current kernel ownership and remaining fleet scope.
+Migration 7 final review I1: apply the existing caller deadline separately to each lineage read and preserve timeout translation while retaining genuine schema refusal. Verify with event-controlled real SQLite contention, native close, no publication and unexpired recovery. ADR required: no; ADR-228 and ADR-126 govern the existing contract.
+<!-- SECTION:PLAN:END -->
 ## Renumbering provenance
 
 Filed 2026-09-27 as task-33087. origin/dev minted its own task-33087 before this branch merged, so per the landed-keeps-id rule this task moved to task-33132; every inbound reference moved with it.
@@ -84,4 +90,12 @@ Updated Guardian configuration and its race tests, diagnostic inventory, databas
 Current-base integration after PR #3162 merged (2026-10-31): rebased onto a0dbc1174c3dbd4d2732b0212786ec9e08bfc3b5. Independent review approved the precise overlap: install a newly opened connection in the thread cache, notify the opening hook inside that block, then retain the merged deadline check and participant-gated cleanup. Borrowed live connections skip the hook and retain their ownership. Both original regression functions and all archive lessons were preserved. ADR-228 applies; no new ADR or deadline policy.
 
 Added two deterministic native integration cases (fresh and liveness revival) proving the hook sees the installed cache, its elapsed time counts toward the deadline, and an expired new handle closes and leaves no cached handle. Eleven selected hook/deadline/revival/configuration/live-probe and Guardian raw-admission cases passed in 4.91s, with no errors. Command, JUnit, logs and before/after source hashes are retained in pr3172-resync/test-runtime/kernel-integration-1793481021535174900. Formatting of the new block is AST-identical to the passing source; existing unrelated formatter differences remain. User waived hosted CI and size gates and selected independent review in place of Qodo. Final integrated-head review remains due before oldest-first merge.
+Migration 7 deadline integration: Dreams now forwards the caller deadline through BaseDB and bounds lineage, setup and WAL by the remaining budget, retaining admission rechecks and kernel cleanup. Focused fresh/revived, native timeout cleanup and recovery, admission, lineage, rollback, retirement and kernel controls passed. Existing ADR-228 and ADR-126 apply; the parent task remains in progress. Closed handles replaced by the kernel remain strongly referenced until close_all; native closure was verified, and this bounded-scope retention delta remains documented.
+Migration 7 final-review repair: each lineage read refreshes the caller remaining budget, and lock/interruption errors retain timeout translation while real missing-schema refusal remains unchanged. A real rollback-journal exclusive-lock control demonstrated native close, no cache publication, and successful recovery; 51 focused deadline, admission, lineage and rollback cases passed. ADR-228 and ADR-126 apply; no new policy.
 <!-- SECTION:IMPLEMENTATION_NOTES:END -->
+Migration 7 (Dreams) PARKED 2026-10-19, not shipped: the migration is implemented on branch chore/task-33132-dreams-migration (worktree .worktrees/task-33132f-dreams) with the decorator-census validation catching a duplicated @staticmethod pre-write (the Guardian lesson working), but the full Tests/Dreams/ battery shows 16 REAL regressions (baseline pristine-dev: 927 passed clean) concentrated in test_track_reconcile (x10), test_dreams_db_track (x5), test_boot_dispatch_admission (x1). Confirmed symptom: test_failed_ownership_classification_retires_boot_owned_native_handle — a retired handle does NOT raise 'closed database' on use, i.e. the participants native-retirement path and the kernel/hook overrides interact incorrectly somewhere in the retirement flow. NOT root-caused; branch parked unshipped rather than guessed at. Next session: diff the old probe-replacement path (old code used _close_connection, removing from _opened; kernel uses plain conn.close()) and the participants retirement call path against the new hook timing, with the track-reconcile tests as the repro.
+
+Migration 7 UN-PARKED (2026-10-31): root cause of the 16 regressions was a STACKING bug, not a kernel bug — the branch was cut from dev before Guardian (PR #3172, carrying the _on_connection_opened hook) merged, so Dreams' hook override never fired, _opened stayed empty, and close_all closed nothing (hence the retired handle not raising 'closed database'). After rebasing onto merged dev: full Tests/Dreams/ + kernel suite 943/943 green. The parked-branch repro tests are the reason this was caught — the 'red battery vs green baseline means stop' rule converted a would-be shipped broken migration into a one-rebase fix. Deltas preserved as overrides: check_same_thread=False open (close_all's cross-thread reach), schema-lineage validation first in configure, WAL retry, the _opened registry via the kernel hook (strong refs, close_all resets thread-local), and close/_close_connection/close_all verbatim. ADR-228 exception list UNCHANGED — Dreams migrates cleanly now that the hook seam exists.
+
+
+Migration 7 review round 1: the admission-recheck loss Guardian also suffered was caught here too — _configure_connection now rechecks admission BEFORE setup (old-Dreams parity) AND after (the repaired fleet standard), with the Guardian race test ported to Tests/Dreams/test_admission_race.py (4/4: pause at allocation or setup x both getters, asserting RecoveryRequired plus a closed unadmitted handle). Recorded delta: the kernel's probe-replacement uses plain conn.close(), so a handle killed behind the store's back stays in _opened until close_all's double-close no-op removes it (benign — descriptors already released; the strong-ref rationale concerns open handles — but _opened grows monotonically between close_all calls under repeated external closes). Reviewer's design note adopted for migration 8+: propose the admission recheck as a kernel feature so stores cannot keep re-losing it — two stores have now lost it to migration.

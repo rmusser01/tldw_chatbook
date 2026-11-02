@@ -6,21 +6,17 @@ import json
 import sqlite3
 import threading
 import time
-from contextlib import contextmanager
 from pathlib import Path
-from typing import ClassVar, Iterator, Union
+from typing import ClassVar, Union
 
 from tldw_chatbook.Backup_Recovery.participants import (
     _core_access,
-    _core_cached_connection,
     _core_closing,
-    _core_getter,
-    _core_transaction,
-    _register_core_connection,
 )
 
 from ..Utils.timestamps import utc_now_iso
 from .base_db import BaseDB
+from .store_kernel import SQLiteStoreKernel
 
 #: Upper bound for any list read the UI pages through.
 MAX_LIST_LIMIT = 200
@@ -58,7 +54,7 @@ class DreamsSchemaError(RuntimeError):
         super().__init__(reason)
 
 
-class DreamsDB(BaseDB):
+class DreamsDB(SQLiteStoreKernel, BaseDB):
     """Database wrapper for the Dreams subsystem (discovery + track loops).
 
     Schema v1 covered the Phase 1 discovery tables (spec §Data model); v2
@@ -97,8 +93,10 @@ class DreamsDB(BaseDB):
     _WAL_SETUP_TIMEOUT_SECONDS = 5.0
     #: Pinging a recently-used held connection on every call roughly doubles
     #: the statement count on query-heavy paths (task-261/3011); idle ones
-    #: are probed so another component's close is transparently healed.
-    _LIVENESS_PING_IDLE_SECONDS = 30.0
+    #: BaseDB-provenance (ADR-228): connections open through BaseDB's
+    #: per-call path under the db.base owner; participants identity
+    #: stays db.base, so no per-store policy entry is minted.
+    _kernel_sqlite_owner = "db.base"
 
     _SCHEMA_DDL = (
         """
@@ -257,7 +255,7 @@ class DreamsDB(BaseDB):
                              "shared across its per-thread connections")
         # Must precede super().__init__: BaseDB.__init__ calls
         # _initialize_schema(), which already needs the held connection.
-        self._thread_local = threading.local()
+        self._init_store_kernel()
         # Every held connection this object opened and has not closed,
         # whatever thread holds it -- what ``close_all`` closes. Strong
         # references on purpose: a connection has to be closed explicitly
@@ -275,107 +273,121 @@ class DreamsDB(BaseDB):
             raise
 
     # ------------------------------------------------------------------
-    # Connection handling (Library_Collections_DB idiom)
+    # Connection handling (SQLiteStoreKernel, ADR-228)
     # ------------------------------------------------------------------
 
-    @_core_getter
-    def _get_connection(self) -> sqlite3.Connection:
+    def _open_connection(
+        self, *, operation_deadline: float | None = None
+    ) -> sqlite3.Connection:
+        """Open through BaseDB's db.base path with cross-thread close support.
+
+        ``check_same_thread=False`` (as before): each thread still USES only
+        the connection it holds; the one call that crosses threads is
+        ``close_all`` closing them (ADR-228 provenance + the kernel's
+        ``_on_connection_opened`` hook registering into ``_opened``).
+        """
+        return BaseDB._get_connection(
+            self, operation_deadline=operation_deadline, check_same_thread=False
+        )
+
+    def _configure_connection(
+        self, conn: sqlite3.Connection, *, operation_deadline: float | None = None
+    ) -> sqlite3.Connection:
+        """Dreams per-connection policy (kernel wraps registration/gating).
+
+        Refuse unknown stores before WAL changes their header/journal
+        state; NORMAL under WAL avoids an fsync per commit (task-15465
+        lineage); task-3012: the held connection needs true autocommit.
+        WAL goes through the retry helper (concurrent-opener tolerance).
+
+        Admission is rechecked before AND after setup (the repaired fleet
+        standard): a pause or retirement beginning between the kernel's
+        entry gate and PRAGMA setup must close the unadmitted handle
+        rather than cache it — the kernel's configure-failure wrapper
+        closes on the raised RecoveryRequired.
+        """
+
+        def execute(sql: str) -> None:
+            if operation_deadline is not None:
+                remaining = operation_deadline - time.monotonic()
+                if remaining <= 0:
+                    raise TimeoutError("Dreams connection budget exhausted")
+                conn.execute(
+                    f"PRAGMA busy_timeout = {max(0, int(remaining * 1000))}"
+                ).fetchall()
+            conn.execute(sql).fetchall()
+
         _core_access(self)
-        # ``check_same_thread=False`` (the other thread-local stores here --
-        # ChaChaNotes, Prompts, Media -- open theirs the same way): each
-        # thread still USES only the connection it holds; the one call
-        # that crosses threads is ``close_all`` closing them.
-        conn = super()._get_connection(check_same_thread=False)
-        _register_core_connection(self, conn)
+        if operation_deadline is not None:
+            conn.set_progress_handler(
+                lambda: int(time.monotonic() >= operation_deadline), 100
+            )
         try:
-            _core_access(self)
-            # Refuse unknown stores before WAL changes their header/journal state.
-            self._validate_schema_lineage(conn)
-            conn.execute("PRAGMA foreign_keys = ON")
+            if operation_deadline is None:
+                self._validate_schema_lineage(conn)
+            else:
+                self._validate_schema_lineage(
+                    conn, operation_deadline=operation_deadline
+                )
+            execute("PRAGMA foreign_keys = ON")
             if not self.is_memory_db:
-                self._enable_wal(conn)
-            conn.execute("PRAGMA synchronous = NORMAL")
+                self._enable_wal(conn, operation_deadline=operation_deadline)
+            execute("PRAGMA synchronous = NORMAL")
             conn.isolation_level = None
-        except BaseException:
-            conn.close()
+            _core_access(self)
+            if (
+                operation_deadline is not None
+                and time.monotonic() >= operation_deadline
+            ):
+                raise TimeoutError("Dreams connection budget exhausted")
+        except sqlite3.OperationalError as exc:
+            if operation_deadline is not None and (
+                time.monotonic() >= operation_deadline
+                or any(
+                    word in str(exc).lower() for word in ("locked", "busy", "interrupt")
+                )
+            ):
+                raise TimeoutError("Dreams connection setup timed out") from exc
             raise
+        finally:
+            if operation_deadline is not None:
+                conn.set_progress_handler(None, 0)
+                conn.execute("PRAGMA busy_timeout = 5000").fetchall()
         return conn
 
-    def _enable_wal(self, conn: sqlite3.Connection) -> None:
+    def _enable_wal(
+        self, conn: sqlite3.Connection, *, operation_deadline: float | None = None
+    ) -> None:
         """Enable WAL despite a concurrent opener briefly holding the file."""
         deadline = time.monotonic() + self._WAL_SETUP_TIMEOUT_SECONDS
+        if operation_deadline is not None:
+            deadline = min(deadline, operation_deadline)
         while True:
+            remaining = deadline - time.monotonic()
+            if (
+                remaining <= 0
+                and operation_deadline is not None
+                and deadline == operation_deadline
+            ):
+                raise TimeoutError("Dreams connection budget exhausted")
+            if operation_deadline is not None:
+                conn.execute(
+                    f"PRAGMA busy_timeout = {max(0, int(remaining * 1000))}"
+                ).fetchall()
             try:
-                conn.execute("PRAGMA journal_mode = WAL")
+                conn.execute("PRAGMA journal_mode = WAL").fetchall()
                 return
             except sqlite3.OperationalError as exc:
                 if "locked" not in str(exc).lower() or time.monotonic() >= deadline:
                     raise
-                time.sleep(0.01)
+                time.sleep(min(0.01, max(0, deadline - time.monotonic())))
 
-    @_core_getter
-    def _held_connection(self) -> sqlite3.Connection:
-        _core_access(self)
-        """Return this thread's held connection, opening or reviving it."""
-        conn = _core_cached_connection(self, getattr(self._thread_local, "conn", None))
-        if conn is not None:
-            last_used = getattr(self._thread_local, "conn_last_used", None)
-            if (
-                last_used is None
-                or (time.monotonic() - last_used)
-                >= self._LIVENESS_PING_IDLE_SECONDS
-            ):
-                try:
-                    conn.execute("SELECT 1")
-                except (sqlite3.ProgrammingError, sqlite3.OperationalError):
-                    try:
-                        sqlite3.Connection.in_transaction.__get__(conn)
-                    except sqlite3.ProgrammingError:
-                        self._close_connection(conn)
-                    else:
-                        raise
-                    conn = None
-        if conn is None:
-            conn = self._get_connection()
-            self._thread_local.conn = conn
-            with self._opened_lock:
-                self._opened.append(conn)
-        self._thread_local.conn_last_used = time.monotonic()
-        return conn
-
-    @_core_transaction
-    @contextmanager
-    def connection(self) -> Iterator[sqlite3.Connection]:
-        """Yield the thread's held connection (row factory, foreign keys on).
-
-        No transaction is opened: in autocommit mode each statement is its
-        own implicit transaction, so single-statement reads cost nothing
-        extra and never pin a WAL read snapshot between calls.
-        """
-        yield self._held_connection()
-
-    @_core_transaction
-    @contextmanager
-    def transaction(self) -> Iterator[sqlite3.Connection]:
-        """Yield the held connection inside a write transaction.
-
-        ``BEGIN IMMEDIATE`` takes the write lock up front so a read-then-
-        write block cannot fail to upgrade under a concurrent writer. On any
-        error or interruption inside the ``with`` block the transaction is
-        rolled back and the exception re-raised; on clean exit it commits.
-
-        The yielded object is the connection: call ``conn.execute(...)`` and
-        use the returned cursor's ``lastrowid``/``rowcount``.
-        """
-        conn = self._held_connection()
-        conn.execute("BEGIN IMMEDIATE")
-        try:
-            yield conn
-        except BaseException:
-            conn.rollback()
-            raise
-        else:
-            conn.commit()
+    def _on_connection_opened(self, conn: sqlite3.Connection) -> None:
+        """Register into the cross-thread close_all registry (strong refs
+        on purpose: a connection must be closed explicitly to give back
+        its descriptors; sqlite3.Connection cannot be weakly referenced)."""
+        with self._opened_lock:
+            self._opened.append(conn)
 
     def close(self) -> None:
         """Retire only the calling thread's handle when its owner permits."""
@@ -417,25 +429,58 @@ class DreamsDB(BaseDB):
         self._thread_local = threading.local()
 
     @staticmethod
-    def _validate_schema_lineage(conn: sqlite3.Connection) -> int:
+    def _validate_schema_lineage(
+        conn: sqlite3.Connection, *, operation_deadline: float | None = None
+    ) -> int:
         """Recognize complete historical catalogs before any schema write."""
         from .dreams_schema import DREAMS_SCHEMAS
 
-        catalog = tuple(" ".join(row[0].split()) for row in conn.execute(
-            "SELECT sql FROM sqlite_schema WHERE sql IS NOT NULL ORDER BY type,name"))
+        def refresh_budget() -> None:
+            if operation_deadline is not None:
+                remaining = operation_deadline - time.monotonic()
+                if remaining <= 0:
+                    raise TimeoutError("Dreams connection budget exhausted")
+                conn.execute(
+                    f"PRAGMA busy_timeout = {max(0, int(remaining * 1000))}"
+                ).fetchall()
+
+        refresh_budget()
+        catalog = tuple(
+            " ".join(row[0].split())
+            for row in conn.execute(
+                "SELECT sql FROM sqlite_schema WHERE sql IS NOT NULL ORDER BY type,name"
+            )
+        )
         if not catalog:
             return 0
         try:
-            versions = [row[0] for row in conn.execute("SELECT version FROM schema_version")]
+            refresh_budget()
+            versions = [
+                row[0] for row in conn.execute("SELECT version FROM schema_version")
+            ]
+        except sqlite3.OperationalError as exc:
+            if operation_deadline is not None and (
+                time.monotonic() >= operation_deadline
+                or any(
+                    word in str(exc).lower() for word in ("locked", "busy", "interrupt")
+                )
+            ):
+                raise
+            raise DreamsSchemaError("schema_version_missing") from exc
         except sqlite3.Error as exc:
             raise DreamsSchemaError("schema_version_missing") from exc
-        if not versions or any(type(version) is not int or version < 1 for version in versions):
+        if not versions or any(
+            type(version) is not int or version < 1 for version in versions
+        ):
             raise DreamsSchemaError("schema_version_invalid")
         version = max(versions)
         if version > DreamsDB._CURRENT_SCHEMA_VERSION:
             raise DreamsSchemaError("schema_too_new")
-        if not any(version == known and catalog == tuple(" ".join(sql.split()) for sql in schema)
-                   for known, schema in DREAMS_SCHEMAS):
+        if not any(
+            version == known
+            and catalog == tuple(" ".join(sql.split()) for sql in schema)
+            for known, schema in DREAMS_SCHEMAS
+        ):
             raise DreamsSchemaError("schema_lineage_mismatch")
         return version
 
