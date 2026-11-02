@@ -317,6 +317,43 @@ async def _drain_settings_tasks(app) -> None:
     owner = app.console_settings_durability_owner
     while owner.tasks:
         await asyncio.gather(*tuple(owner.tasks))
+        # Gathering already-done tasks may finish inline; let their retirement
+        # callbacks remove them from the owner before checking quiescence again.
+        await asyncio.sleep(0)
+
+
+@pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
+@pytest.mark.timeout(5, func_only=True)
+async def test_settings_task_drain_yields_for_completed_task_retirement() -> None:
+    """A done task still awaiting its retirement callback cannot starve the loop."""
+    from types import SimpleNamespace
+
+    from tldw_chatbook.Chat.console_settings_durability import (
+        ConsoleSettingsDurabilityOwner,
+    )
+
+    owner = ConsoleSettingsDurabilityOwner()
+    lease = owner.try_acquire()
+    assert lease is not None
+
+    async def immediate_work() -> None:
+        return None
+
+    task = owner.launch(lease, immediate_work(), name="already-done-settings")
+    await asyncio.sleep(0)
+    assert task.done() and task in owner.tasks
+    try:
+        await _drain_settings_tasks(
+            SimpleNamespace(console_settings_durability_owner=owner)
+        )
+        assert owner.tasks == set()
+        assert owner.accepting
+        next_lease = owner.try_acquire()
+        assert next_lease is not None
+        next_lease.release()
+    finally:
+        await owner.close_and_drain()
 
 
 def _apply_submission(

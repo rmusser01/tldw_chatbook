@@ -1,0 +1,17 @@
+{
+  "argv": [
+    "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python",
+    "-m",
+    "pytest",
+    "Tests/UI/test_console_provider_apply_defaults_flow.py::test_settings_task_drain_yields_for_completed_task_retirement",
+    "-q",
+    "-p",
+    "no:cacheprovider",
+    "--timeout=180",
+    "--basetemp=/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/mixins-ci-7ac-ui24-3o9r7m46/red-tmp",
+    "--junitxml=/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/mixins-ci-7ac-ui24-3o9r7m46/red.xml"
+  ],
+  "cwd": "/Users/macbook-dev/.codex/worktrees/prompt-mix-ins/tldw_chatbook",
+  "code": 1,
+  "elapsed": 8.876638332847506
+}

@@ -1957,3 +1957,7 @@ Tests/UI/test_console_send_start_window.py
 Tests/UI/test_console_response_rules.py::test_fixture_failure_retires_held_transport
 Tests/UI/test_library_note_links_readiness_diagnostics.py
 Tests/UI/test_roleplay_extraction_identity.py
+# PR3346: completed-task retirement must advance the event loop.
+Tests/UI/test_console_provider_apply_defaults_flow.py::test_settings_task_drain_yields_for_completed_task_retirement
+# PR3346: a closed owner must settle cold readiness and permit current retry.
+Tests/UI/test_console_readiness_config_projection.py::test_closed_session_before_readiness_worker_entry_settles_and_retries

@@ -24239,6 +24239,12 @@ not a broad `taskN` filename match. Keep any ownership audit private, exclude
 unrelated contents from published QA, and regenerate/verify the final Git blob
 manifest after correcting the artifact set.
 
+The 2026-11-02 CI follow-up exposed a second packaging trap: flattening an
+explicit inventory still let two subprocess `restart-output.log` files overwrite
+one retained destination. Source-hash verification caught it before commit.
+Retain original relative directories, reject destination collisions, and verify
+the artifact map against every original hash as well as the final Git bytes.
+
 ## A restored resend fixture is not yet a fresh-Send owner (PR3346, 2026-11-01)
 
 The successive accepted mix-in placement regression initially failed only after reopen with `Durable Console Library policy no longer matches acceptance.` Read-only exception monitoring traced the original native transaction refusal: the reused resend helper restored messages/preferences but omitted the production asynchronous Library policy hydration. Calling `hydrate_session_library_policy` before the fresh Send restored the intended owner and proved B/A provider order after real SQLite flush/reopen. Do not label a reopen failure a fixture issue until the actual native refusal is captured, and do not replace a fresh Send with a metadata-only assertion or bypass the policy check.
@@ -24261,3 +24267,28 @@ releases its helper and primary barriers before normal disposal, with native
 failure-retirement controls. Keep the unreproduced trigger separate from the
 proven cleanup defect; do not extend timeouts or relax cancellation ownership to
 make an unreleased test barrier disappear.
+
+
+## A test drain must yield for task retirement callbacks (PR3346)
+
+**Incident, 2026-11-02.** The Anthropic hidden-field Apply test timed out after
+180 seconds while its shared `_drain_settings_tasks` helper polled the settings
+owner's registry. A regression using the real durability owner reproduced a
+finished task still registered until its queued retirement callback ran. Gathering
+that already-finished task completed inline, so the helper's loop prevented the
+callback from running; a five-second watchdog caught the spin. Yielding once after
+the gather allows normal retirement while preserving the registry, errors and
+production durability owner. Do not treat an awaited completed future as proof
+that the event loop advanced.
+
+
+## Cover queued-worker setup with its settlement boundary (PR3346)
+
+**Incident, 2026-11-02.** A response-rule learn/repair/reopen journey hung while
+closing its chat. Hosted and local runs showed a readiness worker looking up the
+removed session before entering its `try/finally`; `KeyError` left `pending` true
+and its settlement event unset. Moving setup into the existing cold/refusal
+boundary preserves all source/publication and native-read retirement checks. A
+real-store race test proves no stale read or publication, settled waiters, and a
+successful retry for the current session. Setup before the first await can fail
+too; an async worker's cleanup boundary must cover it.

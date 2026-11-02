@@ -1,0 +1,4 @@
+{
+  "sha256": "95872b7a90b03094ad54cc6ba82fef143a2188d23acb3ac8cad66fcdb2e07125",
+  "raw_text": ".                                                                        [100%]\n--------- generated xml file: /private/tmp/mixins-7ac-tour/result.xml ----------\n============================= slowest 25 durations =============================\n46.64s call     Tests/Performance/test_ui_latency_guardrails.py::test_destination_tour_stays_under_switch_budgets\n\n(2 durations < 1s hidden.)\n1 passed in 47.03s\n"
+}

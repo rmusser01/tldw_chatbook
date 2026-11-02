@@ -746,7 +746,7 @@ MINIMUM_FILES = 1318
 # the measured count, 1,165.
 # PR3334 integration: append tag picker after sniff.
 # PR3346: three verified selectors appended; existing shard slots retained.
-MINIMUM_FILES = 1331
+MINIMUM_FILES = 1333
 
 
 def read_census(path: Path) -> list[str]:

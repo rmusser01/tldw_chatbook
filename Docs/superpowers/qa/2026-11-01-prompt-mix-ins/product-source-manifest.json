@@ -23,9 +23,9 @@
       "bytes": 13212
     },
     "Docs/Architecture/console.md": {
-      "sha256": "e70fbbbe3f66c5b231130decdc7a62cff8591cf4973eeb4e09178fbb8ffef28d",
-      "git_blob": "4d26d1a1b83b0d97dd4e795061c176fcbee1ac42",
-      "bytes": 67658
+      "sha256": "5651b3ecf5c0997ae753fae8e3d00b67430b598ff7836b16357e2eef0135ce26",
+      "git_blob": "7ac1216e9b732b96881dc8a995fb39d6fefc55ad",
+      "bytes": 68007
     },
     "Docs/Architecture/database-layer.md": {
       "sha256": "bea42af232cf6a734109bfcb7005598a55f16eda13d42e6c658f0acdf0f12029",
@@ -492,6 +492,16 @@
       "git_blob": "867c23c21bb54dd45e2ac9b314e5cdbf250b899a",
       "bytes": 130656
     },
+    "Tests/UI/test_console_provider_apply_defaults_flow.py": {
+      "sha256": "dab7f701fc1162c1b169c56c2376b59a764efd5097136e17101c42850726808c",
+      "git_blob": "e069b09bc4cc81ad0a6f249b9551589d8baa70d1",
+      "bytes": 120801
+    },
+    "Tests/UI/test_console_readiness_config_projection.py": {
+      "sha256": "59346b62a8494893623b2e6176fe7f7cd234cc771a07c4e0d8c913c91a5bdf43",
+      "git_blob": "af3e9d6030149a5f74c3d3eeabf4267c3dfa3ec4",
+      "bytes": 35870
+    },
     "Tests/UI/test_console_recovered_image_shutdown.py": {
       "sha256": "54571da9518362bc3d369525d8a02e94d1f8654ead508cf9848774b87d2843ef",
       "git_blob": "3881bea523a07daae6ae0bc0e1ffa08928be82ac",
@@ -623,9 +633,9 @@
       "bytes": 376813
     },
     "backlog/docs/lessons-testing-evidence.md": {
-      "sha256": "869229a3d47e8ad30a365f15d66bb8a5ec3376e15d4fc4fd532cd6fc25fffa08",
-      "git_blob": "c1db92803aa14792581dbc0dfa98d2b6eeca6f25",
-      "bytes": 1656946
+      "sha256": "a0978832c78d2a59e2d5375acf76260bf456ab97b268240bbb1421852f50747d",
+      "git_blob": "d8412758caa4da2a4cbc89ddc5757f8f155438b1",
+      "bytes": 1658759
     },
     "backlog/tasks/task-38534 - Design-prompt-mix-ins-for-Console-sends.md": {
       "sha256": "c3eb8b840aa0a1079fb2d108dc754cd0b18f6a9c4251c2a4a5c0bda1a37cd637",
@@ -678,13 +688,13 @@
       "bytes": 6141
     },
     "backlog/tasks/task-38544 - Qualify-the-integrated-prompt-mix-in-lifecycle-and-document-delivery.md": {
-      "sha256": "bdb1ff29c89b98bb90e60ee57ff624d15a64f51111d60145b4c6ec73dca45490",
-      "git_blob": "b98c7a9025e0df34b33c2d33c74214dd69335ef7",
-      "bytes": 35000
+      "sha256": "4683a24834d196004f9455efe8eccfa14426b09aa1c411fe983e3011dc820733",
+      "git_blob": "1cb9a24bec98d2013588e4307c9a6d09cb7aeb93",
+      "bytes": 38635
     },
     "scripts/check_ui_pr_gate_census.py": {
-      "sha256": "fc7fee3cab2b04d70f7f9fd5965d5b28f3416673dcfa224efd598f4324630697",
-      "git_blob": "9dfc408a093bb414bbcb0f772dfe6315df942730",
+      "sha256": "c187b0019d8e8a6cc172eefb9f708b252b7c5349bab1b01234b004c2833c1496",
+      "git_blob": "1b90ce4c9ad3db9f0e6329a1a25605d2a36886f9",
       "bytes": 74149
     },
     "scripts/index_plan_pin_census.tsv": {
@@ -698,9 +708,9 @@
       "bytes": 42386
     },
     "scripts/ui_pr_gate_census.txt": {
-      "sha256": "3d963234e60fc89df67bccca97653a704156bec2606c50127706c437effb6489",
-      "git_blob": "5023a423efe508102178185fee81ebf2968d8fc0",
-      "bytes": 181228
+      "sha256": "a92ce0a7602498007592d64218f6dd8d801f67c44019317da289212e2519f5b3",
+      "git_blob": "727fdd26eb56895cf471fe6ff882a565410f8e78",
+      "bytes": 181612
     },
     "tldw_chatbook/Agents/agent_service.py": {
       "sha256": "c5e1afbf7c48dd5f7be1fb40183a5d8bba16b9c886d60ccc6bfc8691843da616",
@@ -1116,6 +1126,11 @@
       "sha256": "81407224cf65be388760195a487a7912344f083afe2124ad46eca475c667469b",
       "git_blob": "90c1a3bd03d23f13eff0fcdad91ffc82fe62206a",
       "bytes": 58307
+    },
+    "tldw_chatbook/UI/Console_Modules/console_spend_projection.py": {
+      "sha256": "24b767b3a15ff6ab80b7daf704e7ebaaed5aeb5343dc758c5864d61c86f442e8",
+      "git_blob": "2df79f3f10ba5e9a3e095ef8cedded221df9ab79",
+      "bytes": 72095
     },
     "tldw_chatbook/UI/Console_Modules/emergency_stop_hold.py": {
       "sha256": "bd126a1cfa659fbc06c492066d352afbfcb858bc2febdd7f918d414979bc2b34",

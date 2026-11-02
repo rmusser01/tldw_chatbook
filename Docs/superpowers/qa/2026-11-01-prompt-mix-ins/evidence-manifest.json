@@ -81,6 +81,506 @@
       "git_blob": "e620b5a1f7a6e03578b69a666f0102b109e6975c",
       "bytes": 2293
     },
+    "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/ci-rebase/hosted-7ac/artifact-map.json": {
+      "sha256": "1ee5fb295c5d03025e10baa67c370fae3e7b2e6ff08d7394df5dbddcddb1c3ca",
+      "git_blob": "ff2c5268c87ce756ea78ccd10f2ed1f906c3c9f6",
+      "bytes": 31188
+    },
+    "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/ci-rebase/hosted-7ac/eval/hosted-initial-capture.log.json": {
+      "sha256": "c91be3409aae6a9b6b6b6b7003bbf06bc318fa180efee956efeabebb383c755e",
+      "git_blob": "0194c3ac7adc61ccb41b8ec3f61ad1d0ee188e8d",
+      "bytes": 174400
+    },
+    "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/ci-rebase/hosted-7ac/eval/hosted-red.log.json": {
+      "sha256": "0dca851a34bacc8d568c37208dd7234df54ad31a1ac6f1c6475efe8a8c518939",
+      "git_blob": "b2f59dc875db6aaecc1b1703ce42b792517e3ded",
+      "bytes": 103637
+    },
+    "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/ci-rebase/hosted-7ac/eval/observed-scopes.jsonl.json.gz": {
+      "sha256": "17dd28611927d3446518be7ada0ed02bc85440f1eb2867a23761eed529358f17",
+      "git_blob": "67396d1ea7bd28d3456adee7222db39df036f1df",
+      "bytes": 31022
+    },
+    "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/ci-rebase/hosted-7ac/eval/observed-tmp/test_complete_rebackup_retains0/original/restart-output.log.json": {
+      "sha256": "c49662b3112615e3b3ee87d617fdebdabf0b0f7da5c9a33c849ce744696e24fc",
+      "git_blob": "3779bdeff3b478bb1fe25f8486966c402294e719",
+      "bytes": 116718
+    },
+    "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/ci-rebase/hosted-7ac/eval/observed-tmp/test_complete_rebackup_retains0/reopen.log.json": {
+      "sha256": "30fb6ca9d3b26c21d3bf4e73981d2776e51b338af7501223d4abb2fd977c3eb2",
+      "git_blob": "58db6a6fb2ee8d29b20abc39663fddd7fc3b6685",
+      "bytes": 24301
+    },
+    "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/ci-rebase/hosted-7ac/eval/observed-tmp/test_complete_rebackup_retains0/restored/restart-output.log.json": {
+      "sha256": "5245549dbf5a1b4a2d5b8eb2465c64eb34a011720eba302e4f9373b4d3d1644a",
+      "git_blob": "b56b20b21395229a4c9d3e32af470c7b43a0011d",
+      "bytes": 123
+    },
+    "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/ci-rebase/hosted-7ac/eval/observed.json": {
+      "sha256": "316870993ae0c3d6fd49ca7fdc585a7e09448f5656912f8f80d998fd257dd96c",
+      "git_blob": "5f11c3f77e35a408031d09649ab8763ffcc374d0",
+      "bytes": 683
+    },
+    "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/ci-rebase/hosted-7ac/eval/observed.log.json": {
+      "sha256": "9f0f7c7cfa6c9a3f05ba4755a5c0c51f294cff7716ff8b0e592c62f761587e1b",
+      "git_blob": "7ad834c0a4bc7fe597f19c3de6f73998e01703ca",
+      "bytes": 574
+    },
+    "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/ci-rebase/hosted-7ac/eval/observed.xml.json": {
+      "sha256": "c0e20737e0858980c4b43ac13becfac4bd20e486c552d7cf7e7e353a249f06c5",
+      "git_blob": "fe6f1d6099c320013d9b5343febae018932ef211",
+      "bytes": 562
+    },
+    "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/ci-rebase/hosted-7ac/eval/report-files.json": {
+      "sha256": "3060d7f6458e5ded33ee9b5c935b165589bc403ec215083c07e8b53394f15494",
+      "git_blob": "760b3ecb8bf4938842f3993c0d9c45c0b3382287",
+      "bytes": 2729
+    },
+    "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/ci-rebase/hosted-7ac/eval/report.md": {
+      "sha256": "4282c08d4a20db6a4cf534c30b3df82b018c2fe3d3ccfb93436293c3eaccd18c",
+      "git_blob": "38f50a715b0e859ff50b4b8de9d60f68cb4f7839",
+      "bytes": 3796
+    },
+    "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/ci-rebase/hosted-7ac/eval/run.py": {
+      "sha256": "93f99193795e881f0db09c3a1cd06cc2a44f42ee0f7de343810c0a75ab78036b",
+      "git_blob": "bbe8e3da89d3114e68cffd767cb911f84cf35fe4",
+      "bytes": 966
+    },
+    "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/ci-rebase/hosted-7ac/eval/scope-comparison.json": {
+      "sha256": "543e61781400554a6f8d2eecb7f52d6ab9b23e8071cf0f9f0fe90b446c4fd0d6",
+      "git_blob": "1b0304b5a4c2dbe2215286fb0ee65e22f55e808f",
+      "bytes": 286
+    },
+    "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/ci-rebase/hosted-7ac/eval/scope_probe.py": {
+      "sha256": "9c6d1e4dde38a667bf6e25b07e873719e167340e227ee97058443ddc19c87e5a",
+      "git_blob": "985ae41d0ea553cc6acd02f20e5332cb318f5352",
+      "bytes": 1666
+    },
+    "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/ci-rebase/hosted-7ac/final-five/artifact-files.json": {
+      "sha256": "fbe19d2facb80229264b12964a52f3b922a6e4c0e242604303490ead4694d00b",
+      "git_blob": "91748843309bab2b7812609b38b64b284d310b36",
+      "bytes": 1605
+    },
+    "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/ci-rebase/hosted-7ac/final-five/mixins-perf-7ac-final-test_boot_worker_census-_boot_and_census.json": {
+      "sha256": "cbd009a140ec2fcb164178b200eef648a29da66810639674a67d59ab0d04ff85",
+      "git_blob": "bb2beafec44978c4c359532c1c3b472a17a3d8a3",
+      "bytes": 5823
+    },
+    "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/ci-rebase/hosted-7ac/final-five/mixins-perf-7ac-final-test_screen_preimport_payload_budget-_run_census.json": {
+      "sha256": "91b0c80c0eaefe59edfffa711c4b4a6c7061d60f8549383ab9148e694e9d51c6",
+      "git_blob": "1f0ce944a12690b081885bbc2e348985b4cce553",
+      "bytes": 35127
+    },
+    "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/ci-rebase/hosted-7ac/final-five/mixins-perf-7ac-final-test_screen_preimport_payload_budget-warmup.json": {
+      "sha256": "08210bc96a9ec8f51a5b8a55feb3f7f2b3deab4bb6f3e493203733b7d6206c26",
+      "git_blob": "c05a6e478be85c9055ce3118b3fe1339aad42fe3",
+      "bytes": 24403
+    },
+    "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/ci-rebase/hosted-7ac/final-five/mixins-perf-7ac-final-test_ui_ready_module_census-_boot_and_census.json": {
+      "sha256": "3d37e781185d322dd492b622984fb27ca34fbd7cd56d8a16b73371eff50f7792",
+      "git_blob": "9ba067f31eade128177f57f809a2030833ca8957",
+      "bytes": 49847
+    },
+    "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/ci-rebase/hosted-7ac/final-five/mixins-perf-7ac-final.log.json": {
+      "sha256": "af95cebf6a86ba0c6e72bda46e82b169274200dc2af8f465348306e4bdd3647e",
+      "git_blob": "3a997f0fc5f4dbccdae592d5b505e445e44fae1c",
+      "bytes": 2188
+    },
+    "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/ci-rebase/hosted-7ac/final-five/mixins-perf-probe.py": {
+      "sha256": "0e671fdc3e15b81d7d06a185610de510d45640aedfa8c195131656e4c0d4dd1c",
+      "git_blob": "79ea4da436cdda022f9bd15d836c50b0c1b2e522",
+      "bytes": 1590
+    },
+    "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/ci-rebase/hosted-7ac/final-five/report.md": {
+      "sha256": "401709268e3971cf077b937b51a4361f46bbf6e18d58b7781c86a3383e3bdeba",
+      "git_blob": "db407362e19e1ba66accdec18edfef6204027bf9",
+      "bytes": 1803
+    },
+    "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/ci-rebase/hosted-7ac/final-five/source-proof.json": {
+      "sha256": "1791c116f3be66831deb2546b72296db327797f87ca7de63494aeba25d0d0dbb",
+      "git_blob": "170a3a70de71341427ad2817d8ded69b90719ad0",
+      "bytes": 3823
+    },
+    "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/ci-rebase/hosted-7ac/hosted-and-governance/mixins-7ac-final-architecture.log.json": {
+      "sha256": "20ee32bf62f3e024e517e82e8f14b3e25ea273b51ea358ec0740e12b9d6a5d66",
+      "git_blob": "dda2a32e3b0b0e293eec7a823b65d9adf85a7438",
+      "bytes": 12864
+    },
+    "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/ci-rebase/hosted-7ac/hosted-and-governance/mixins-7ac-final-diagnostic.log.json": {
+      "sha256": "0aefc98ac4a25242e71301f90d42e803e3327fc7e169fcd01e6662dd7af6afa2",
+      "git_blob": "1ae7c49309e066b66ab540d970ae0498e7f6f554",
+      "bytes": 286
+    },
+    "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/ci-rebase/hosted-7ac/hosted-and-governance/mixins-7ac-final-markup.log.json": {
+      "sha256": "76fc908b0796aa51fef08486c59ed22a921faeef6c9bc8907c654901dff22f36",
+      "git_blob": "13c090d26704f2516262eb7970ae9f2b8464b089",
+      "bytes": 245
+    },
+    "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/ci-rebase/hosted-7ac/hosted-and-governance/mixins-7ac-final-ui-census-tests.log.json": {
+      "sha256": "dd2c4f27bebf6a4d5fa5417f8f1af2e298eb4a6c984a123cbe4ab5e78e80a391",
+      "git_blob": "a7af027286c76fac87996b1b53388301e93843df",
+      "bytes": 12478
+    },
+    "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/ci-rebase/hosted-7ac/hosted-and-governance/mixins-7ac-final-ui-census.log.json": {
+      "sha256": "93a706d7fb9818f498719a4c075f474fc465b3e4060a5263ea6b4855bd997595",
+      "git_blob": "51c6d84f532bb2d4f8a0ef506e1f4e3306fc5376",
+      "bytes": 183
+    },
+    "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/ci-rebase/hosted-7ac/hosted-and-governance/mixins-7ac-final-worker.log.json": {
+      "sha256": "93aacd96ec0246d0e94c5732d7f7f8eab04ac2b24b7bc28db1e444042faba962",
+      "git_blob": "f712576a0ba1eb7437a26ffd45e2aa8c299619ea",
+      "bytes": 368
+    },
+    "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/ci-rebase/hosted-7ac/hosted-and-governance/mixins-7ac-ui24-census-tests.log.json": {
+      "sha256": "a367c725ffbb9981cc9b1d9f612f79740b299d1254ee288264f6bbbb8789b926",
+      "git_blob": "a6a7d98714d96207083350f06ee61d75f2a1f394",
+      "bytes": 12477
+    },
+    "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/ci-rebase/hosted-7ac/hosted-and-governance/mixins-7ac-ui24-census.log.json": {
+      "sha256": "170fbe6032e015279c07083370610705d3a4dc6eaf3d333937644f55c11b9272",
+      "git_blob": "ee89b4e02d9aa80ec36c8e64531e177473b0fb89",
+      "bytes": 183
+    },
+    "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/ci-rebase/hosted-7ac/hosted-and-governance/mixins-ci-41482684724.json": {
+      "sha256": "9b611702d81c83ccbe1bcf2a1337ccba45cc7de1ad2c566670daa02fce731f6e",
+      "git_blob": "467db7441ff25a3e356bf4e2653175a4684c2663",
+      "bytes": 2590
+    },
+    "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/ci-rebase/hosted-7ac/hosted-and-governance/mixins-ci-41482684811.json": {
+      "sha256": "12f9b1ed0484406b83077f4ce827e9e65b029b51e9c31703e07535cd0796e971",
+      "git_blob": "10d381315ae4fcd6e229d1e96c6551ee9f70d1e2",
+      "bytes": 8746
+    },
+    "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/ci-rebase/hosted-7ac/hosted-and-governance/mixins-ci-7ac-perf-red.log.json": {
+      "sha256": "4aacab973be119455fc76b5f2d421c9a52fcb24e51d1f02a3dff7b6162c0cc91",
+      "git_blob": "79b07a3edf8ad42634bfff79c5dea2f3e236813b",
+      "bytes": 135899
+    },
+    "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/ci-rebase/hosted-7ac/hosted-and-governance/mixins-ci-7ac-ui24-red.log.json.gz": {
+      "sha256": "ff160ef60de00e2983a61461a670a8dc2e1eaf4a6b6db0d8daf4212e1eef2692",
+      "git_blob": "5598885f95eecbb8f710766ac72b308e258fd540",
+      "bytes": 34561
+    },
+    "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/ci-rebase/hosted-7ac/hosted-and-governance/mixins-ci-7ac-ui26-red.log.json.gz": {
+      "sha256": "bc013b8f7532753b836fbd8e9895c08f37695798168cd4d227aa5ce050d20fda",
+      "git_blob": "3a261c796f2f2a9860a5502d83ae01254578d9d4",
+      "bytes": 47722
+    },
+    "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/ci-rebase/hosted-7ac/hosted-and-governance/mixins-ci-7ac-windows-initial-capture.log.json": {
+      "sha256": "c91be3409aae6a9b6b6b6b7003bbf06bc318fa180efee956efeabebb383c755e",
+      "git_blob": "0194c3ac7adc61ccb41b8ec3f61ad1d0ee188e8d",
+      "bytes": 174400
+    },
+    "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/ci-rebase/hosted-7ac/hosted-and-governance/mixins-ci-7ac-windows-red.log.json": {
+      "sha256": "0dca851a34bacc8d568c37208dd7234df54ad31a1ac6f1c6475efe8a8c518939",
+      "git_blob": "b2f59dc875db6aaecc1b1703ce42b792517e3ded",
+      "bytes": 103637
+    },
+    "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/ci-rebase/hosted-7ac/hosted-and-governance/mixins-pr3346-readiness-close-review.md": {
+      "sha256": "e22ad200d6d69a22fa1e788f40d50c33e361d518183ca18444c0cbe00f6754cc",
+      "git_blob": "51fcd075d458682a11988b175c64e627490ee933",
+      "bytes": 4776
+    },
+    "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/ci-rebase/hosted-7ac/hosted-and-governance/mixins-pr3346-settings-drain-review.md": {
+      "sha256": "0003f3dff89c188e3d946cce0056c52ead082b1fcc317892374ee5501cd0357c",
+      "git_blob": "6c10c3701e8bf5a9d8839add24b7d1d67b308d38",
+      "bytes": 3705
+    },
+    "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/ci-rebase/hosted-7ac/readiness-close/baseline-console_spend_projection-format.txt.json": {
+      "sha256": "6728dd17e339e0d3fba989f544330bb1baa842c4a5da19d09c34788f2db87fc4",
+      "git_blob": "5a2eef579bfda94ecd5ef59fd2c1493158dddb73",
+      "bytes": 4388
+    },
+    "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/ci-rebase/hosted-7ac/readiness-close/baseline-console_spend_projection.py": {
+      "sha256": "04e051132ce461731ee098d2855ad8bc6db98f0488a963566dd9050e42d96c8f",
+      "git_blob": "7f5624a478dc7601a6b359593abf64fc72fff29c",
+      "bytes": 72007
+    },
+    "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/ci-rebase/hosted-7ac/readiness-close/baseline-test_console_readiness_config_projection-format.txt.json": {
+      "sha256": "e1b57e1c3e96c4a7d1aa6d6cd333a0ddbc9900954026d6f8f2a3de85c26591d0",
+      "git_blob": "89e800d674cbd6224b346eb20abd045974e14895",
+      "bytes": 3568
+    },
+    "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/ci-rebase/hosted-7ac/readiness-close/baseline-test_console_readiness_config_projection.py": {
+      "sha256": "1edfb6327a42f79eede653cb54f07ab23bd4bf79d1f6754c00b22c368332b5d6",
+      "git_blob": "d10ba2a54e376b355a1d5134b806e61f620dd905",
+      "bytes": 34164
+    },
+    "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/ci-rebase/hosted-7ac/readiness-close/current-console_spend_projection-format.txt.json": {
+      "sha256": "57390d9c9dc875e845224e2c6475cc5fec74cb05f22f1cedb04bbc7f419512c3",
+      "git_blob": "04ebbd5c653d55d800619385d0c039e23ce80a5b",
+      "bytes": 4335
+    },
+    "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/ci-rebase/hosted-7ac/readiness-close/current-test_console_readiness_config_projection-format.txt.json": {
+      "sha256": "15ca673c3dcab50930b036273f62bc265d164637cc407436f4bafc6f50d810d8",
+      "git_blob": "893f44b0ef9770423a165e1b5913646ce61bdb43",
+      "bytes": 3491
+    },
+    "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/ci-rebase/hosted-7ac/readiness-close/diff-check.txt.json": {
+      "sha256": "caa590418ce41a328f1ec3e3d208f5aa9392b370dd7937b2b7a0904839b3d6bb",
+      "git_blob": "30847c646b98617d9653edc65c1c078c55cb5b5f",
+      "bytes": 110
+    },
+    "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/ci-rebase/hosted-7ac/readiness-close/final-console_spend_projection.py": {
+      "sha256": "24b767b3a15ff6ab80b7daf704e7ebaaed5aeb5343dc758c5864d61c86f442e8",
+      "git_blob": "2df79f3f10ba5e9a3e095ef8cedded221df9ab79",
+      "bytes": 72095
+    },
+    "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/ci-rebase/hosted-7ac/readiness-close/final-diff.patch.json": {
+      "sha256": "6f7ef2727f5ceebca6a6c649a66ad4f09394c8356650a71b7d9890d3e0abb636",
+      "git_blob": "11c3a7c324f87905d8e9f7f6d4cb164390cf0b1a",
+      "bytes": 4939
+    },
+    "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/ci-rebase/hosted-7ac/readiness-close/final-green.json": {
+      "sha256": "6075961efd6c9bcb2820cb9aac1cdbc9ea87d1ae0089d17da8f84b74a4f569f0",
+      "git_blob": "30e00b79221ce6716dfc1c7949e3aa4d73c60fb8",
+      "bytes": 801
+    },
+    "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/ci-rebase/hosted-7ac/readiness-close/final-green.log.json": {
+      "sha256": "e7102c747b109b9a76f0549fcbfbef30743be954844b2d962d32364714cdecaa",
+      "git_blob": "b2c49fc1dd045beaf40cb04e8a0c5e2f9472d91a",
+      "bytes": 1611
+    },
+    "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/ci-rebase/hosted-7ac/readiness-close/final-green.xml.json": {
+      "sha256": "3a971240822a410298c14f59330d7e96564443e6fc4367fe120a50a0ac33d06f",
+      "git_blob": "b7d3152363a97113aa676861b67bce2ffc216888",
+      "bytes": 717
+    },
+    "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/ci-rebase/hosted-7ac/readiness-close/final-test_console_readiness_config_projection.py": {
+      "sha256": "59346b62a8494893623b2e6176fe7f7cd234cc771a07c4e0d8c913c91a5bdf43",
+      "git_blob": "af3e9d6030149a5f74c3d3eeabf4267c3dfa3ec4",
+      "bytes": 35870
+    },
+    "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/ci-rebase/hosted-7ac/readiness-close/hosted-red.log.json.gz": {
+      "sha256": "bc013b8f7532753b836fbd8e9895c08f37695798168cd4d227aa5ce050d20fda",
+      "git_blob": "3a261c796f2f2a9860a5502d83ae01254578d9d4",
+      "bytes": 47722
+    },
+    "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/ci-rebase/hosted-7ac/readiness-close/original.json": {
+      "sha256": "e6417156a42b9b262b831524f31106632614c93c57c82366e75dd15b7d388852",
+      "git_blob": "bbcee7f592a9bde184443b0e5276a3d6a11c8769",
+      "bytes": 664
+    },
+    "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/ci-rebase/hosted-7ac/readiness-close/original.log.json.gz": {
+      "sha256": "00df68128078c248eda91ce4a0c6217f4a6764704de305ac6d68cd6398a13c66",
+      "git_blob": "1f7d2af6297eef115d52006d54015d1af76bd440",
+      "bytes": 24451
+    },
+    "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/ci-rebase/hosted-7ac/readiness-close/original.xml.json": {
+      "sha256": "068cd900c3965e867b854de934a8ef33b347a0b5fc6061392cdb55a88385dfd0",
+      "git_blob": "45fdcfa47013c79234ccaa4e2e96785e0990353d",
+      "bytes": 17172
+    },
+    "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/ci-rebase/hosted-7ac/readiness-close/phases.jsonl.json.gz": {
+      "sha256": "ccacdbd51605a7dde8cc7212cb017591d5b078f35be4e506266778ee8f488978",
+      "git_blob": "6163c38ddf01be7122115bc7589d5ef2bdaf1eff",
+      "bytes": 191351
+    },
+    "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/ci-rebase/hosted-7ac/readiness-close/probe.py.json": {
+      "sha256": "96a80d1c973e6de8dddd9f34ce28889b14df95363f85c7c613f093daf01115eb",
+      "git_blob": "2e5d822a50326da65edb5dafda74c78d11f26be4",
+      "bytes": 1654
+    },
+    "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/ci-rebase/hosted-7ac/readiness-close/race-green.json": {
+      "sha256": "07b5c4c9b34da8621689bf2f0026564ffe3e48b16d4a73eecaa9b16f0bc2553c",
+      "git_blob": "c33a6224044b48e71dda33be72c75713a5169483",
+      "bytes": 1152
+    },
+    "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/ci-rebase/hosted-7ac/readiness-close/race-green.log.json": {
+      "sha256": "a65e56dfb4f4c891abb18e2ee2e6482e7373ee579b9be0a807ebb151f2001aba",
+      "git_blob": "6196ac54934000d4c0e9a1aafea30fad63d76150",
+      "bytes": 5212
+    },
+    "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/ci-rebase/hosted-7ac/readiness-close/race-green.xml.json": {
+      "sha256": "8e7616367ce6c56d8465303e26c3f47c4118b28621b13fef9f798ba1a9763859",
+      "git_blob": "03c3a080cdc12825e9a705af17542aed9d6aa8d5",
+      "bytes": 3262
+    },
+    "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/ci-rebase/hosted-7ac/readiness-close/race-red.json": {
+      "sha256": "ee50c8eacd81f2076d7b0ed76e3a9bb91da40898d1bdde81bf71200565c70971",
+      "git_blob": "b1b16be0205e987e1d109194d801dfdc20de2bc8",
+      "bytes": 673
+    },
+    "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/ci-rebase/hosted-7ac/readiness-close/race-red.log.json": {
+      "sha256": "e9e86f78fb551b10f66ef4341b720b7a2abccf95b5699309843952fece999ae4",
+      "git_blob": "78e611840cf7de2ca8770f9f9dd9c82a05e084ce",
+      "bytes": 8667
+    },
+    "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/ci-rebase/hosted-7ac/readiness-close/race-red.xml.json": {
+      "sha256": "c0d86542980bcf4308b6e34605a7faa66daa7136f7de2514d703ce3bbc0fc681",
+      "git_blob": "aa3f2c2ebc7fcaa92b9bcc38c723e6d56cd3e481",
+      "bytes": 6452
+    },
+    "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/ci-rebase/hosted-7ac/readiness-close/report-files.json": {
+      "sha256": "ee2bfff762aeaf7895edc5e001539272c495e528a210f8d46e554ad76bd336a7",
+      "git_blob": "52b0f1ded63385700941efa8141b11bf1ea4c2bc",
+      "bytes": 5762
+    },
+    "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/ci-rebase/hosted-7ac/readiness-close/report.md": {
+      "sha256": "efd3e72ec156e1a7a3f9ee9f9161ca4762074425b46172ea6d70978b74857bc3",
+      "git_blob": "12486b9c55e61d85762d2d90bcff7f450d991e03",
+      "bytes": 4558
+    },
+    "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/ci-rebase/hosted-7ac/readiness-close/run.py": {
+      "sha256": "58ec00d6b10ed1452c018beb6e50757445b1aacc42f6bfd81c25180b814a7b49",
+      "git_blob": "f225c079baf4c93fd9913eb328d33da9627738e1",
+      "bytes": 907
+    },
+    "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/ci-rebase/hosted-7ac/readiness-close/static-proof.json": {
+      "sha256": "875664ef81b451cc8bc3143d2a0e59360e68cea423d7d7f11a80e22c07fb3acd",
+      "git_blob": "27376bc3af2a36938183de385b152e5789f0324a",
+      "bytes": 2316
+    },
+    "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/ci-rebase/hosted-7ac/settings-drain/baseline-format.txt.json": {
+      "sha256": "f087f88d8414e7073c509bf81802ae14645dac053f53c75feeafcb02d11a966e",
+      "git_blob": "0cb3639fcc8c95eef5f5c8597a5599c4f425b0ea",
+      "bytes": 1122
+    },
+    "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/ci-rebase/hosted-7ac/settings-drain/baseline.py": {
+      "sha256": "651052050987e7b0130f7b4c5a8673e655fbf66e276da75303f96c3a7c548b3d",
+      "git_blob": "2de4522eb997394d5b814e7ed86a8f66e5a7c249",
+      "bytes": 119525
+    },
+    "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/ci-rebase/hosted-7ac/settings-drain/current-format.txt.json": {
+      "sha256": "c4b6bd8337e294ad6a39fb209f33460476c093421696e78021cce429cd4ca32b",
+      "git_blob": "e208500b224031a39a98d7c76eaf057f617bf039",
+      "bytes": 1087
+    },
+    "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/ci-rebase/hosted-7ac/settings-drain/diff-check.txt.json": {
+      "sha256": "caa590418ce41a328f1ec3e3d208f5aa9392b370dd7937b2b7a0904839b3d6bb",
+      "git_blob": "30847c646b98617d9653edc65c1c078c55cb5b5f",
+      "bytes": 110
+    },
+    "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/ci-rebase/hosted-7ac/settings-drain/final-diff.patch.json": {
+      "sha256": "9f15af04c0816c58bb3e552a6c4cddbb5efd991c9f8db85a1a55840e0fc2fc73",
+      "git_blob": "4bc9f49b353f717728de087a36c9cc873a13acb0",
+      "bytes": 1970
+    },
+    "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/ci-rebase/hosted-7ac/settings-drain/final.py": {
+      "sha256": "dab7f701fc1162c1b169c56c2376b59a764efd5097136e17101c42850726808c",
+      "git_blob": "e069b09bc4cc81ad0a6f249b9551589d8baa70d1",
+      "bytes": 120801
+    },
+    "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/ci-rebase/hosted-7ac/settings-drain/green.json": {
+      "sha256": "58f8b02bcc34571fd24007efc7849ef7e709bff9d972806204b02c15df5e2540",
+      "git_blob": "a4036e3093b34d820d0cb73313d6d998711b2a11",
+      "bytes": 755
+    },
+    "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/ci-rebase/hosted-7ac/settings-drain/green.log.json": {
+      "sha256": "d003811dd21eebc7aae87c4bfe55b01104a9282bb46621070b8cde599a198d6a",
+      "git_blob": "6c2b76148cd8ed8cfdc2f7f3d7546857fb740b44",
+      "bytes": 552
+    },
+    "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/ci-rebase/hosted-7ac/settings-drain/green.xml.json": {
+      "sha256": "4f1becf001cad7f28987d41aa06fdf5976b6f446c6081293a01cd01b9ab27cd0",
+      "git_blob": "585500c86b68d88f6cd315f7dfd4e97bed4ce281",
+      "bytes": 706
+    },
+    "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/ci-rebase/hosted-7ac/settings-drain/hosted-red.log.json.gz": {
+      "sha256": "ff160ef60de00e2983a61461a670a8dc2e1eaf4a6b6db0d8daf4212e1eef2692",
+      "git_blob": "5598885f95eecbb8f710766ac72b308e258fd540",
+      "bytes": 34561
+    },
+    "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/ci-rebase/hosted-7ac/settings-drain/red.json": {
+      "sha256": "af35ffa9417d338b29eec0d72fe25dd9474bc9ebb43123d6865700c622f455b6",
+      "git_blob": "ceb9d81c33c66968c0a225d34a71ac1a5b8bfec6",
+      "bytes": 633
+    },
+    "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/ci-rebase/hosted-7ac/settings-drain/red.log.json": {
+      "sha256": "32a685a0d18a05053b701a37887fcf838d548c90f805a14094e64728e6dd944d",
+      "git_blob": "4e7ba6368724801e2731aa09aabc63aae3fed586",
+      "bytes": 4778
+    },
+    "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/ci-rebase/hosted-7ac/settings-drain/red.xml.json": {
+      "sha256": "13b59dbcaa92fc85461fb3236e9d32622a585e424022494feb650aedadca6f8e",
+      "git_blob": "6c3faaa045e1d314cc68dcd179dea3c1f95cd784",
+      "bytes": 2577
+    },
+    "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/ci-rebase/hosted-7ac/settings-drain/report-files.json": {
+      "sha256": "354bd434471ba2fc258533885e63524911577023e9fc1cd91561b3211f1d6b32",
+      "git_blob": "08d3b01350529ed056260c8792a98fc545f185a0",
+      "bytes": 3113
+    },
+    "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/ci-rebase/hosted-7ac/settings-drain/report.md": {
+      "sha256": "ec8092617c7428856692781b722c6c32aa4c4d614884a9e557eb82888c8a3c20",
+      "git_blob": "faf816357700d11fb8fba4d78163ad8db39fb5a2",
+      "bytes": 3139
+    },
+    "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/ci-rebase/hosted-7ac/settings-drain/run.py": {
+      "sha256": "a1ebf1ccda51ec772231020b7b1f347174703eaf501ca5378976eb72a7007a20",
+      "git_blob": "20abf03409979a7be4d5dd99d0ed2e683a44d89d",
+      "bytes": 713
+    },
+    "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/ci-rebase/hosted-7ac/settings-drain/static-proof.json": {
+      "sha256": "0381bb82b4a44c8119778b9eefb8503dbbe5d0f76d75751389f5e6868a1608cc",
+      "git_blob": "9b8e87f6543b24414f1b17f7b4181b6c3be3591c",
+      "bytes": 1047
+    },
+    "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/ci-rebase/hosted-7ac/summary.md": {
+      "sha256": "f77db2af7488b8dbd8cf59fa8d63f0fbd8bcc4a0703ad86222d9005a143490c9",
+      "git_blob": "3b27d2480135fae7d7ae04e16c417f8245306d3f",
+      "bytes": 3580
+    },
+    "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/ci-rebase/hosted-7ac/tour/7ac-ci-extract.txt.json": {
+      "sha256": "299227c4ddcc2b34424779cfde039be48097a4facedf04b6277aac5ef88c994c",
+      "git_blob": "4da0be6014e1bb6b91238ef97443759ce6907eb2",
+      "bytes": 1530
+    },
+    "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/ci-rebase/hosted-7ac/tour/artifact-files.json": {
+      "sha256": "7f6c4f5ac275cd0a3fdb09ee7339dcd7a5a4a41de95589af6a955f540f052b06",
+      "git_blob": "9a2cd27f99541d0e6d2fc647b2c3914851277872",
+      "bytes": 2318
+    },
+    "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/ci-rebase/hosted-7ac/tour/f095-ci-extract.txt.json": {
+      "sha256": "8e39397f6b6468ae0a72cfe37b7b454fe750444ef3887cdf6d9a37e58a73ca0a",
+      "git_blob": "f40fcdf14594038f9f403894a708c8bfcfa9029a",
+      "bytes": 837
+    },
+    "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/ci-rebase/hosted-7ac/tour/measurements.json": {
+      "sha256": "a65f70fa56492eb39d03b692722559c5c992f9118318b5a6ccf2264a0f583ede",
+      "git_blob": "d9a1508b399ca6fe4575723627ee6a14f02a56ce",
+      "bytes": 2218
+    },
+    "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/ci-rebase/hosted-7ac/tour/production-diff.patch.json": {
+      "sha256": "c32d863a2162601aaf9ff53041ad3ef025716cfa78bee88250b7ed3c32456d78",
+      "git_blob": "c4765a4e87642e93c95beb2e1c42c1412699f342",
+      "bytes": 2894
+    },
+    "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/ci-rebase/hosted-7ac/tour/pytest/test_destination_tour_stays_un0/private-profile-process/pytest.log.json": {
+      "sha256": "ae6f9f8d156af1ecad09760bc97da31ffb928025401a66a1c567755840b94575",
+      "git_blob": "c343c231857550d64d8530391843d0025394b982",
+      "bytes": 1471
+    },
+    "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/ci-rebase/hosted-7ac/tour/pytest/test_destination_tour_stays_un0/private-profile-process/pytest.xml.json": {
+      "sha256": "45dc11460791f7423b77dcb4748abbbe4db8a3d585f2d001608d0013f53cfccc",
+      "git_blob": "f0d5e2f084c79f28d74f3aef545a2f8f2a723107",
+      "bytes": 532
+    },
+    "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/ci-rebase/hosted-7ac/tour/report.md": {
+      "sha256": "9595ef3e4061db4070e5cd078e8d7875e5c5d8744dfa624144fc427219652c98",
+      "git_blob": "a739cb99380005fe86f799b4119868de6b36ae4d",
+      "bytes": 4620
+    },
+    "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/ci-rebase/hosted-7ac/tour/result.xml.json": {
+      "sha256": "9f6cdc221b8b249e993f03b64bf0577b73b851c7b8c9c0a1bdf6210531b97c40",
+      "git_blob": "c7c538c6c68f7551660ec4e992f03eaada6bdac2",
+      "bytes": 532
+    },
+    "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/ci-rebase/hosted-7ac/tour/run.log.json": {
+      "sha256": "7ca37fdb898faaf1abdd7f410f66e4437d5f719f2d6d5ef882dab3a9a8c35a0d",
+      "git_blob": "efe65c3dd28debf069e8874728ad77180e180410",
+      "bytes": 511
+    },
+    "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/ci-rebase/hosted-7ac/tour/source-proof.json": {
+      "sha256": "43cd2eabd02a262c83ac8f454cd42d3607e6122bf6570aa955b2241998cb941c",
+      "git_blob": "e10510a9b3f3c319148515fe9d67d85b49054bd8",
+      "bytes": 2404
+    },
+    "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/ci-rebase/hosted-7ac/tour/tour_observer.py": {
+      "sha256": "7beccff764965d58bf7e1d30e2dc2c258975464a8b79e774066e2b9b869e0d61",
+      "git_blob": "c7da42a019d274ca3db05e72c7d11ffb6dc7574f",
+      "bytes": 1353
+    },
     "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/ci-rebase/hosted-f095/artifact-files.json": {
       "sha256": "e3480d5f2cb63f06ee36ea0b3ee0be94852763efff5f76de8557a0c835719c3d",
       "git_blob": "c07dfe5e2a6c18e9fc0fe15b5698f4ebd3594ec1",
@@ -4587,9 +5087,9 @@
       "bytes": 67218
     },
     "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/product-source-manifest.json": {
-      "sha256": "a090c8b73ddd3436b27f6a24e99d7421418a35cad15f90b0263729ac95222132",
-      "git_blob": "e5b3d8163ebdebb9ea53100ae51dd94178b574ac",
-      "bytes": 71959
+      "sha256": "200035507fe716927866d65c983f5c26d9e6bc51ad602ccd9c15450b153ce78d",
+      "git_blob": "e2c807acf3e1561990acc98536aaec0276a87b89",
+      "bytes": 72677
     },
     "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/rereview-fixes/controls1.json": {
       "sha256": "2eeecd898fac3b39564ad5e05acfab1b45deaf7e2bd198a14d74c0de0f4f87ae",
@@ -5852,9 +6352,9 @@
       "bytes": 141048
     },
     "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/verification.md": {
-      "sha256": "57211ef78a1b95d7a4c5be27add9fa66d54e2b3cf86606279b5186d73f3b8621",
-      "git_blob": "f04e843949a282471aa3b541835b499c63a1337a",
-      "bytes": 23989
+      "sha256": "ba40ad8de17083cfc8f5f8e1e179f2fada0394011c1448e3426673fd3fefbb79",
+      "git_blob": "fd2ec8df17cb4a3cda7de7a79030e0a82360c145",
+      "bytes": 24158
     },
     "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/verify_evidence.py": {
       "sha256": "96a565a5f79515602adfaf0020ba416c8b460575884032c2c53af7b31b4e565a",

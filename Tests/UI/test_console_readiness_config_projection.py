@@ -621,6 +621,51 @@ def _real_session_screen(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_closed_session_before_readiness_worker_entry_settles_and_retries(
+    monkeypatch,
+):
+    screen, store, session, tasks = _real_session_screen(monkeypatch)
+    reads = []
+    published = []
+
+    async def publication():
+        published.append(store.active_session_id)
+
+    screen._sync_native_console_chat_ui = publication
+
+    def read():
+        reads.append(store.active_session_id)
+        return _read_result(screen.app_instance.app_config)
+
+    projection = spend.ConsoleReadinessConfigProjection(screen, read_current=read)
+    warming = asyncio.create_task(projection.warm())
+    try:
+        # warm schedules the actual worker, which cannot enter until another turn.
+        await asyncio.sleep(0)
+        assert projection.pending and not projection._settled.is_set()
+        assert tasks and not tasks[0].done()
+        store.close_session(session.id)
+        assert await asyncio.wait_for(warming, 1) is False
+        assert not projection.pending and projection._settled.is_set()
+        assert projection._read_request is None and not projection._reads
+        assert projection.value is None and reads == [] and published == []
+        assert await tasks[0] is None
+
+        current = store.create_session(
+            settings=session.settings,
+            canonical_settings_baseline=session.settings,
+        )
+        assert await asyncio.wait_for(projection.warm(), 3) is True
+        await asyncio.gather(*tasks)
+        assert reads == [current.id]
+        assert published == [current.id]
+        assert projection.key[5] == current.id
+    finally:
+        warming.cancel()
+        await asyncio.gather(warming, *tasks, return_exceptions=True)
+
+
+@pytest.mark.asyncio
 async def test_expired_presentation_never_converges_real_session_but_fresh_handoff_does(
     monkeypatch,
 ):
