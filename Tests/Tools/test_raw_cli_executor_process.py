@@ -1866,3 +1866,26 @@ def test_posix_ordinary_finalization_removes_redirected_background_child(
     assert result.exit_code == 0
     assert result.cleanup_proven is True
     assert _wait_for_pid_exit(child_pid)
+
+
+def test_standalone_held_admission_return_cannot_claim_cleanup(tmp_path):
+    """A completed shell does not prove its still-running admission callback returned."""
+    entered, release = threading.Event(), threading.Event()
+    original_admit = _admit
+
+    def held(tree, commit):
+        original_admit(tree, commit)
+        entered.set()
+        assert release.wait(15)
+
+    try:
+        result = _executor().execute(
+            _request(tmp_path, "printf helper-return"),
+            cancel_event=threading.Event(),
+            on_event=lambda event: None,
+            admit_worker=held,
+        )
+        assert entered.is_set()
+        assert result.cleanup_proven is False, "admission helper is still executing"
+    finally:
+        release.set()

@@ -1165,6 +1165,7 @@ class ConsoleRuntime:
         self.trace_compatibility_metrics = _LazyTraceCompatibilityMetrics()
         self._scratch_spaces = ConsoleScratchSpaceManager()
         self._raw_cli_refusal_stash_bank: dict[str, list[Any]] = {}
+        self._raw_cli_source = None
         self._voice_dispatch_supervisor: VoiceDispatchSupervisor | None = None
         self._voice_worker = None
         self._voice_process_supervisor = None
@@ -1320,6 +1321,26 @@ class ConsoleRuntime:
     def scratch_spaces(self) -> ConsoleScratchSpaceManager:
         """The process-lifetime scratch authority shared by Console visits."""
         return self._scratch_spaces
+
+    @property
+    def raw_cli_source(self):
+        """Attach qualified direct commands to this original app runtime."""
+        from .console_raw_cli import RawCliRuntime
+        from .console_raw_cli_custody import NativeRawCliSource
+        from .console_workflow_runs import native_workflow_qualified
+
+        if type(getattr(self._app, "raw_cli_runtime", None)) is not RawCliRuntime:
+            if self._raw_cli_source is not None:
+                return self._raw_cli_source
+            return None
+        with self._execution_capacity_lock:
+            if (
+                self._raw_cli_source is None
+                and not self._disposed
+                and native_workflow_qualified()
+            ):
+                self._raw_cli_source = NativeRawCliSource(self)
+            return self._raw_cli_source
 
     @property
     def raw_cli_refusal_stash_bank(self) -> dict[str, list[Any]]:
@@ -6953,6 +6974,8 @@ class ConsoleRuntime:
         cancel_requested |= await drain_preparation_reads(self._preparation_reads)
         cancel_requested |= await self._drain_hook_review_operations()
         cancel_requested |= await self._drain_activity_hydration()
+        if self._raw_cli_source is not None:
+            cancel_requested |= await self._raw_cli_source.drain()
         self._activity_hydration_task = None
         if _recovery_owner is not None:
             cancel_requested |= await _recovery_owner.drain_recovery()

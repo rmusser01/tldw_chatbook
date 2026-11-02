@@ -2924,40 +2924,36 @@ def build_console_controllers(
     )
     screen._console_terminal_workspace = None
     screen._terminal = _DeferredConsoleTerminalController(screen)
+    raw_runtime = screen._console_runtime()
+    raw_store = screen._ensure_console_chat_store()
     screen._raw_cli = ConsoleRawCliController(
         raw_cli_runtime=lambda: screen.app_instance.raw_cli_runtime,
-        active_session_id=lambda: _raw_cli_active_session_id(screen),
-        persist_session_if_needed=(
-            lambda session_id: _raw_cli_persist_session_if_needed(screen, session_id)
-        ),
-        active_leaf_anchor=(
-            lambda session_id: _raw_cli_active_leaf_anchor(screen, session_id)
-        ),
-        persisted_leaf_anchor=(
-            lambda session_id, native_leaf_id: _raw_cli_persisted_leaf_anchor(
-                screen, session_id, native_leaf_id
-            )
-        ),
+        native_source=raw_runtime.raw_cli_source,
+        active_session_id=lambda: str(raw_store.ensure_session().id),
+        persist_session_if_needed=(raw_store.persist_session_if_needed),
+        active_leaf_anchor=(raw_store.active_leaf),
+        persisted_leaf_anchor=(raw_store.persisted_message_id_for_session_node),
         selected_local_root=(
             lambda session_id: _selected_console_local_root(screen, session_id)
         ),
         private_scratch_root=(
-            lambda session_id: (
-                screen._console_runtime().scratch_spaces.snapshot(session_id).root
-            )
+            lambda session_id: raw_runtime.scratch_spaces.snapshot(session_id).root
         ),
-        refusal_stash_bank=screen._console_runtime().raw_cli_refusal_stash_bank,
+        refusal_stash_bank=raw_runtime.raw_cli_refusal_stash_bank,
         accepts_raw_cli_refusal_callbacks=(
-            lambda: screen._console_runtime().accepts_raw_cli_refusal_callbacks
+            lambda: raw_runtime.accepts_raw_cli_refusal_callbacks
         ),
         restore_stash=(
             lambda session_id, stash: restore_refused_raw_cli_stash(
                 session_id,
                 stash,
-                composer=screen._console_composer_or_none(),
-                active_session_id=(
-                    screen._ensure_console_chat_store().active_session_id
+                composer=(
+                    screen._console_composer_or_none()
+                    if screen._console_runtime() is raw_runtime
+                    and raw_runtime._chat_store is raw_store
+                    else None
                 ),
+                active_session_id=(raw_store.active_session_id),
                 visible_session_id=screen._console_visible_draft_session_id,
             )
         ),
@@ -2970,18 +2966,13 @@ def build_console_controllers(
                 name="_append_console_raw_cli_refusal",
             )
         ),
-        append_store_marker=(
-            lambda *args, **kwargs: screen._ensure_console_chat_store().append_message(
-                *args, **kwargs
-            )
-        ),
-        update_store_marker=(
-            lambda *args, **kwargs: getattr(
-                screen._ensure_console_chat_store(), "update_tool_marker"
-            )(*args, **kwargs)
-        ),
+        append_store_marker=(raw_store.append_message),
+        update_store_marker=(raw_store.update_tool_marker),
         agent_runs_db=(
-            lambda: getattr(screen._ensure_console_agent_bridge(), "_db", None)
+            lambda: (
+                raw_runtime.ensure_activity_receipt_service()
+                and raw_runtime._agent_runs_db
+            )
         ),
         run_log_access=lambda: _raw_cli_run_log_root(),
         start_worker=lambda work, **kwargs: screen.run_worker(

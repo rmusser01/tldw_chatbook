@@ -629,6 +629,12 @@ def make_invoke_tool(
         if refusal is not None:
             return refusal
 
+        raw_cli_call = None
+        if call.name == "shell_exec":
+            from ..Chat.console_raw_cli_custody import capture_model_raw_cli
+
+            raw_cli_call = capture_model_raw_cli(self.registry, call.name)
+
         def _invoke() -> ToolResult:
             from .automatic_work_runtime import current_automatic_work
 
@@ -705,7 +711,12 @@ def make_invoke_tool(
             )
             try:
                 try:
-                    result = _invoke()
+                    with (
+                        raw_cli_call.activate(operation)
+                        if raw_cli_call
+                        else contextlib.nullcontext()
+                    ):
+                        result = _invoke()
                 except BaseException:  # noqa: BLE001 - protocol boundary
                     # This branch runs synchronously after the approved
                     # mutation has started.  Every terminal -- including
@@ -786,6 +797,7 @@ def make_invoke_tool(
                     execution_owner=self,
                     clamped_by_wall_budget=clamped_by_wall_budget,
                     owner=owner,
+                    raw_cli_call=raw_cli_call,
                 )
             finally:
                 runtime._clear_tool_call_inflight(run_id)
@@ -798,7 +810,12 @@ def make_invoke_tool(
                 dispatch_state="not_started",
             )
         try:
-            return _invoke()
+            with (
+                raw_cli_call.activate(operation)
+                if raw_cli_call
+                else contextlib.nullcontext()
+            ):
+                return _invoke()
         finally:
             if operation is not None:
                 operation.finish()

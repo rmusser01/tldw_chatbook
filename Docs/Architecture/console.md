@@ -264,6 +264,32 @@ per-session lookup have retired (TASK-35311).
 
 Streaming details, transforms (skills → chat dictionaries → world info), swipes/branching, and the non-agent plain path are covered in [chat-pipeline.md](./chat-pipeline.md).
 
+## Direct-user native RawCLI (ADR-094/285)
+
+`UI/Console_Modules/raw_cli.py` attaches to the original Runtime's private
+`console_raw_cli_custody` source. Before scratch allocation and the existing
+nonexclusive Textual worker, it reserves one manual non-child OPAQUE owner and
+one tool operation. Original app, store, session incarnation/binding, profile,
+DB and selected folder or leased scratch stay pinned; source loss refuses and
+banks the original draft rather than selecting a replacement. The existing
+persistence gate still refuses temporary chats, and only the real local_command
+row binds the owner. Required terminal settlement uses native write success or
+exact original row/status/canonical-step readback. False and a prior terminal
+status alone are insufficient; no retry or write replay is introduced.
+
+The existing executor joins its actual admission/queue-relay threads for
+qualified native calls. Model and Task7 callers hand off their exact original
+catalog/provider/runtime and already-reserved operation, adding no owner or
+charge. Standalone calls keep bounded helper waits and report missing proof.
+Host custody ends at actual synchronous acceptance or source-validated discard,
+then original storage/scratch release and operation.finish return precede root
+and activity settlement. Cancellation before worker entry seals an original
+start fence; wrapper cancellation alone cannot retire a callback that started.
+Disposal seals new admission and drains original callbacks before storage close.
+Unknown physical cleanup or required-write outcome can retain the worker,
+original storage/scratch and OPAQUE protection indefinitely. Raw shell remains
+an unsafe host-user command facility; containment is not a security sandbox.
+
 ## Finite explicit references (ADR-285)
 
 `console_reference_preparation.prepare_reference_expansion` wraps the original

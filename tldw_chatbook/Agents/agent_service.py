@@ -2064,6 +2064,7 @@ def _call_with_timeout(
     execution_owner: AgentService | None = None,
     clamped_by_wall_budget: bool = False,
     owner: ExecutionOwner | None = None,
+    raw_cli_call=None,
 ) -> ToolResult:
     """Run ``fn`` on a daemon thread, bounded by ``seconds`` of EXECUTION time.
 
@@ -2138,7 +2139,12 @@ def _call_with_timeout(
     @worker_guard(execution_owner)
     def _admitted_call() -> ToolResult:
         box["dispatch_state"] = "settled"
-        return fn()
+        with (
+            raw_cli_call.activate(operation)
+            if raw_cli_call
+            else contextlib.nullcontext()
+        ):
+            return fn()
 
     def _runner() -> None:
         try:

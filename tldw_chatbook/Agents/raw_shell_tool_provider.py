@@ -599,6 +599,9 @@ class RawShellToolProvider:
                 observation = authorization._required_evidence[0].begin_shell(
                     self, request
                 )
+            from ..Chat.console_raw_cli_custody import bind_model_raw_cli
+
+            bind_model_raw_cli(self, request)
             result = self._runtime.execute(
                 request,
                 lambda event: self._emit_progress(run_id, call_id, event),

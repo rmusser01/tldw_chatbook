@@ -1173,6 +1173,39 @@ class RawShellExecutor:
         on_event: Callable[[RawCliStreamEvent], None],
         admit_worker: RawCliAdmissionCallback,
         required_output: RequiredCliOutput | None = None,
+        _join_helpers: bool = False,
+    ) -> RawCliResult:
+        """Retain native callers through the actual returns of existing helpers."""
+        helpers: list[threading.Thread] = []
+        try:
+            result = self._execute(
+                request,
+                cancel_event=cancel_event,
+                on_event=on_event,
+                admit_worker=admit_worker,
+                required_output=required_output,
+                _helpers=helpers,
+            )
+        finally:
+            for helper in helpers:
+                if helper.ident is not None:
+                    helper.join(None if _join_helpers else _RAW_QUEUE_POLL_SECONDS * 2)
+        proven = result.cleanup_proven and all(
+            not helper.is_alive() for helper in helpers
+        )
+        if required_output is not None:
+            required_output.sealed = required_output.sealed and proven
+        return replace(result, cleanup_proven=proven)
+
+    def _execute(
+        self,
+        request: RawCliRequest,
+        *,
+        cancel_event: Any,
+        on_event: Callable[[RawCliStreamEvent], None],
+        admit_worker: RawCliAdmissionCallback,
+        required_output: RequiredCliOutput | None = None,
+        _helpers: list[threading.Thread],
     ) -> RawCliResult:
         """Execute once; ``admit_worker``'s return value is ignored.
 
@@ -1281,11 +1314,13 @@ class RawShellExecutor:
                 finally:
                     admission_done.set()
 
-            threading.Thread(
+            admission_thread = threading.Thread(
                 target=run_admission,
                 name=f"raw-cli-admission-{request.invocation_id}",
                 daemon=True,
-            ).start()
+            )
+            _helpers.append(admission_thread)
+            admission_thread.start()
             admission_deadline = time.monotonic() + _RAW_STARTUP_TIMEOUT_SECONDS
             while not launch_commit.wait(_RAW_QUEUE_POLL_SECONDS):
                 if cancel_event.is_set():
@@ -1318,6 +1353,7 @@ class RawShellExecutor:
                 )
 
             output_relay = _QueueRelay(output_queue)
+            _helpers.append(output_relay._thread)
             output_relay.start()
             terminal_state, exit_code, resolved_shell, triggered = self._consume(
                 request,
