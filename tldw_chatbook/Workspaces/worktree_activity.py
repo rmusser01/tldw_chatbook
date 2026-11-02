@@ -2,7 +2,8 @@
 
 Scopes consume resolver-admitted absolute paths and captured root identities;
 they confer no filesystem authority. Claims retire only after every attached
-native owner positively drains and its journal durably settles.
+native owner positively drains and its applicable required writes and original
+host handoffs settle.
 """
 
 from __future__ import annotations
@@ -161,7 +162,12 @@ class WorktreeActivitySettlement:
     _activity: WorktreeActivity = field(repr=False)
 
     def settle(self, *, durable: bool) -> None:
-        """Record conclusive journal settlement; false never releases a claim."""
+        """Record all required writes/host handoffs; false never releases a claim.
+
+        Ordinary finite events with no durable payload must still conclusively
+        deliver or discard their original host outcome. Workflow obligations
+        remain durable; this handle does not invent an ordinary event journal.
+        """
         self._activity._settle(self.id, durable=durable)
 
 

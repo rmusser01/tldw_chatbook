@@ -329,6 +329,21 @@ def test_model_done_is_not_a_passed_check():
 
 **Consumes:** all Task 1–7 contracts. **Produces:** `ConsoleWorkflowCoordinator`, lazily owned by ConsoleRuntime, with `start(request: WorkflowRequest, *, launch_id) -> WorkflowSnapshot`; `approve(decision: WorkflowDecision, *, command_id) -> WorkflowSnapshot`; `pause(workflow_id, *, expected_control_revision)`, `stop(workflow_id, *, expected_control_revision)`, `resume(workflow_id, *, expected_control_revision, command_id)`, `revise(workflow_id, *, expected_control_revision, instruction, command_id)` and `subscribe(callback) -> Callable[[], None]`. Controls act on explicit IDs, never the viewed tab by inference. Reuse existing controller submission/native origin, runtime shutdown and progress/settlement events.
 
+Internal dependency 8D2B1 implements complete app-managed legacy event custody:
+original source, one opaque event/non-child native owner, per-target operations
+before existing enqueue, physical process/group cleanup plus original host
+delivery/discard, retained postcommit retry and shutdown drain. It does not
+complete Task 8. V2 planned events/MCP/nested inheritance/SessionEnd are mandatory
+D2B2 next; outer ordinary-tree and initializer enqueue borrowing remain later.
+ADR required: no new ADR. ADR paths: backlog/decisions/285-native-phased-agent-workflows.md,
+backlog/decisions/148-console-run-hooks.md and
+backlog/decisions/084-change-review-consent-and-asynchronous-finalization.md.
+Reason: approved finite producer and no-journal settlement qualification.
+Task 3's `settle(durable=True)` means all applicable existing required writes
+and original host handoffs completed: an ordinary finite event's empty durable
+payload obligation set does not invent a successful journal write. Physical
+cleanup remains mandatory, and workflow durability/accounting is unchanged.
+
 - [ ] **1. Build failing integration journeys around real native owners.** In `Tests/Chat/workflow_rig.py`, provide `build_workflow_rig(tmp_path, monkeypatch, provider) -> WorkflowRig`, using existing isolated store/controller/gateway fixture construction and the Task 1 request factory. Its fields are `workflow`, `service`, `coordinator`, `controller`, `store`, `gateway`; methods are `wait_for_status(status, *, timeout=5)`, `close()`, `provider_release()` and `wait_for_provider_entry()`. Native owners must positively drain in cleanup. The test provider addresses roles/task IDs independently so concurrent agents cannot consume each other's scripted replies.
 - [ ] **2. Run red:** `.venv/bin/python -m pytest -q Tests/Chat/test_console_workflow_dispatch.py Tests/Chat/test_console_workflow_scheduling.py Tests/Chat/test_workflow_activity_admission.py Tests/Chat/test_workflow_settlement_delivery.py`.
 - [ ] **3. Admit read-only planning through typed custody and native per-session acceptance before billable preparation.** Persist the exact chosen existing chat and binding; an unsaved chat uses the current persistence owner before execution, not a second provisioning store. Plan review/approval validates exact control revision, target, inputs and remaining limits; repeated command IDs reuse receipts. Snapshot provider/preset/fallback choices and inherit current project-instruction/permission narrowing for each task.

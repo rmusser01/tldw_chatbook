@@ -3040,6 +3040,7 @@ class _DurablePostcommitContinuation:
     #: persisted any citation provenance from `a26cdafd8` onward.
     terminal_citation_finalizer: TerminalCitationFinalizer | None = None
     hook_context: str = field(default="", repr=False)
+    hook_handoff: Any | None = field(default=None, repr=False, compare=False)
     hook_continuation: bool = False
     machine_followup: bool = False
     explicit_manual_retry: bool = False
@@ -11102,6 +11103,12 @@ class ConsoleChatController:
                     session_id=session.id,
                 )
                 raise
+            from tldw_chatbook.Agents.legacy_hook_ownership import (
+                check_prompt_handoff,
+                prompt_handed_off,
+            )
+
+            check_prompt_handoff()
             if outcome is not None and outcome.blocked:
                 if echoed_user is not None:
                     self._mark_transient_echo_blocked(echoed_user.id)
@@ -11118,6 +11125,7 @@ class ConsoleChatController:
                     persist=self.store.persistence is not None,
                     metadata=MessageMetadata(origin=MESSAGE_ORIGIN_HOOK),
                 )
+                prompt_handed_off()
                 return ConsoleSubmitResult(
                     False,
                     False,
@@ -11320,6 +11328,7 @@ class ConsoleChatController:
                     self._rollback_committing_preparation(preparation.preparation_id)
                 raise
             if hook_context:
+                check_prompt_handoff()
                 # Run hooks (spec 2026-09-11, Task 7): a UserPromptSubmit
                 # hook's captured stdout is recorded as its own hook-origin
                 # SYSTEM row -- appended only once the user echo is
@@ -11333,6 +11342,7 @@ class ConsoleChatController:
                     persist=self.store.persistence is not None,
                     metadata=MessageMetadata(origin=MESSAGE_ORIGIN_HOOK),
                 )
+                prompt_handed_off()
         from .console_pre_provider_stop import AcceptedStopAuthority
 
         accepted_authority = AcceptedStopAuthority(self, session.id)
@@ -12567,6 +12577,8 @@ class ConsoleChatController:
         assistant_holder: dict[str, ConsoleChatMessage] = {}
 
         def publish_owners() -> None:
+            if continuation.hook_handoff is not None:
+                continuation.hook_handoff.check()
             _user, assistant = self.store.publish_durable_turn_owners(
                 session_id,
                 commit,
@@ -12883,6 +12895,8 @@ class ConsoleChatController:
                 publish_owners,
                 fingerprint=fingerprint,
             )
+            if continuation.hook_handoff is not None:
+                continuation.hook_handoff.complete()
             await self._run_durable_postcommit_effect(
                 preparation_id,
                 "staged_input_clearing",
@@ -13893,6 +13907,8 @@ class ConsoleChatController:
     ) -> None:
         """Release an exact frozen evidence lease once at owner retirement."""
 
+        if continuation.hook_handoff is not None:
+            continuation.hook_handoff.discard()
         prepared = continuation.prepared
         lease = prepared.staged_evidence if prepared is not None else None
         if lease is not None and not lease.released:

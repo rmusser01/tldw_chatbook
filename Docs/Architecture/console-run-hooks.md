@@ -56,6 +56,36 @@ Invalid entries fail loud: a warning is logged and that hook is disabled; a non-
 - **Logging**: every execution is a structured loguru record with session/run ids and a SHA-256 command fingerprint.
 - **Shutdown**: `close()` seals admission; live process owners kill groups within 50 ms; a `PreToolUse` fired against a closed engine fails closed.
 
+`ConsoleRuntime.ensure_run_hooks()` also attaches the private original source in
+`Agents/legacy_hook_ownership.py`. Construction is metadata-only. A selected app
+event acquires one complete opaque WorktreeActivity claim and a genuine non-child
+ExecutionOwner, reserving each real target's tool operation before the existing
+pool/notification enqueue. Capacity/activity refusal preserves the event's
+existing policy. No-target and disabled events allocate neither. Standalone
+RunHooksEngine callers remain independent of native attachment.
+
+Targets retain their operation through actual callback return, original process
+exit plus managed-group absence, and the original host handoff. First-deny keeps
+sibling workers owned. Notification discard callbacks are part of that join.
+UserPromptSubmit uses the actual submit coroutine, carrying its same handoff into
+an existing durable postcommit continuation when necessary. Failed optional audit
+publication retains that continuation for retry or conclusive discard; ordinary
+required native-write failure and unproven cleanup retain opaque protection.
+No hook journal or AgentRun is created, and ephemeral/no-transcript behavior is
+unchanged. A recoverable pending publication can therefore block competing opaque
+work until retry/discard. Runtime shutdown permanently retires non-resumable host
+continuations and joins original callbacks before disposing storage, even when a
+shutdown waiter is cancelled. An expired process/group proof remains explicitly
+unresolved; no new poller or executor claims later success.
+Native command admission currently requires POSIX process-group proof; on Windows
+it refuses before spawn under the same event policy. Standalone behavior remains.
+
+This is Task 8D2B1's legacy-only boundary. V2 planned/MCP/nested/SessionEnd native
+custody remains the mandatory D2B2 integration, and ordinary covering-tree
+borrowing must replace independent event admission before outer execution is
+enabled. Workflow capture/planning/coordinator admission remains closed. Runtime
+coordination does not exclude unrelated ordinary orphaned effects across restart.
+
 ## Consent layer (ADR-197)
 
 Every enabled hook requires explicit user consent before the next manual Send (background submissions require consent without UI). Grants are scoped to (config file, hook identity, a versioned fingerprint of event+argv+matcher+timeout) and stored in a private atomic local JSON store owned by the shared runtime. Consent failure is restrictive — it cannot inherit `UserPromptSubmit`'s fail-open behavior. Revocation seals current-runtime admission before persistence. The live v2 runtime and managed-plugin hook contributions have separate ownership and validation; legacy grants do not widen v2 authority.

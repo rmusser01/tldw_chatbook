@@ -51,3 +51,18 @@ notifications at runtime shutdown. See TASK-32507 and the review dispositions in
 ## Renumbering provenance
 
 Renumbered from ADR-148 to ADR-345 on 2026-11-03 under TASK-36943.3 (owner decision 2026-10-25: the younger file of a shared number is renumbered). ADR-148 now refers to 148-mcp-hub-rail-ia-and-responsive-triad.md.
+
+## Finite native event custody (Task 8D2B1, 2026-11-01)
+
+App-managed legacy events additionally use ADR-285's single finite opaque claim
+and native non-child owner, with one tool operation per selected target before
+existing queue admission. Parallel targets and first-deny timing remain intact;
+returning a denial cannot retire running siblings. Native busy refusal follows
+the existing fail-open/fail-closed/notification-omission policy, without waiting.
+The original source, actual process exit and managed group absence, and original
+host delivery/discard must all settle before releasing protection. In particular,
+UserPromptSubmit's original host consumes or discards its outcome after the async
+engine return; optional transcript storage is not a new universal hook journal.
+Shutdown retains existing workers/handoffs after sealing and capacity closure.
+No new executor, process poller or persistence is added. V2 ownership is separate
+mandatory D2B2 work; this amendment does not enable workflows with hooks.

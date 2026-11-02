@@ -5588,7 +5588,38 @@ class ConsoleRuntime:
                 notification_targets=owner.notification_targets,
                 launch_guard=owner.launch_guard,
             )
+            from tldw_chatbook.Agents.legacy_hook_ownership import (
+                _NativeLegacyHookSource,
+            )
+
+            self._legacy_hooks_source = _NativeLegacyHookSource(
+                self, self._run_hooks_engine, owner
+            )
+            self._run_hooks_engine._native_source = self._legacy_hooks_source
+            self._run_hooks_engine._native_attached = True
             return self._run_hooks_engine
+
+    async def _drain_legacy_hooks(self) -> bool:
+        source = getattr(self, "_legacy_hooks_source", None)
+        if source is None:
+            return False
+        source.engine.close()
+        task = getattr(self, "_legacy_hooks_cleanup_task", None)
+        if task is None:
+            task = self._legacy_hooks_cleanup_task = asyncio.create_task(
+                asyncio.to_thread(source.wait_closed),
+                name="console-legacy-hook-cleanup",
+            )
+        cancelled = False
+        while True:
+            try:
+                if not await asyncio.shield(task):
+                    logger.warning(
+                        "Console legacy hook cleanup remains unproven; native protection retained."
+                    )
+                return cancelled
+            except asyncio.CancelledError:
+                cancelled = True
 
     def ensure_workflow_service(self):
         """Create passive workflow storage; the existing wake owner supplies its audit."""
@@ -6460,8 +6491,8 @@ class ConsoleRuntime:
             engine = self.run_hooks_engine
             if self._hook_permissions is not None:
                 self._hook_permissions.close()
-            if engine is not None:
-                engine.close()
+        if engine is not None:
+            engine.close()
         if self._worktree_recovery is not None:
             self._worktree_recovery.begin_close()
         if self._voice_process_supervisor is not None:
@@ -6536,6 +6567,12 @@ class ConsoleRuntime:
                 cancelled |= await recovery_owner.drain_recovery()
             if controller is not None:
                 cancelled |= await self._drain_ordinary_native_commits(controller)
+                retire = getattr(
+                    controller, "_retire_all_live_recovery_continuations", None
+                )
+                if callable(retire):
+                    retire()
+            cancelled |= await self._drain_legacy_hooks()
             from .console_preparation_reads import drain_preparation_reads
 
             cancelled |= await drain_preparation_reads(self._preparation_reads)
@@ -6609,8 +6646,8 @@ class ConsoleRuntime:
             engine = self.run_hooks_engine
             if self._hook_permissions is not None:
                 self._hook_permissions.close()
-            if engine is not None:
-                engine.close()
+        if engine is not None:
+            engine.close()
         if self._voice_process_supervisor is not None:
             self._voice_process_supervisor.begin_close()
         if self._worktree_recovery is not None:
@@ -6842,6 +6879,12 @@ class ConsoleRuntime:
         if _recovery_owner is not None:
             cancel_requested |= await _recovery_owner.drain_recovery()
         await self.close_hooks_v2()
+        # A bounded/cancelled controller shutdown may not have reached its
+        # permanent continuation retirement; no original hook retry survives quit.
+        retire = getattr(controller, "_retire_all_live_recovery_continuations", None)
+        if callable(retire):
+            retire()
+        cancel_requested |= await self._drain_legacy_hooks()
         for turn_id in tuple(self._turn_custody):
             self._release_custody(turn_id)
         if self._chat_store is not None:

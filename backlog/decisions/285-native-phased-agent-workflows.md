@@ -194,6 +194,34 @@ by this accepted decision. Link this
 ADR from the implementation plan and task notes; select the
 next actual schema version only when implementing.
 
+### Finite legacy hook event custody (Task 8D2B1)
+
+The app's legacy hook engine admits one complete finite opaque event before its
+existing queues accept any target. Its genuine non-child native owner consumes
+no coordinator slot; every actual target reserves its own tool operation. The
+original runtime, engine, permissions/configuration and session source stay
+attached through physical command cleanup and conclusive host outcome delivery
+or discard. First-deny may return while siblings retain their operations.
+Process pipe closure, timeout, caller cancellation and bounded shutdown are not
+positive process-exit and managed-group-absence evidence. Unknown cleanup keeps
+the original opaque protection. Admission follows existing event failure policy.
+
+Settlement satisfies every applicable existing required write, plus the original
+host handoff; an event with no required durable payload has an explicit empty
+obligation set. Optional hook transcript persistence stays optional. Hooks remain
+arbitrary effects; no hook journal, AgentRun kind, fabricated Chat, crash sweep or
+per-handler durable write is introduced. Runtime-only coordination does not
+exclude unrelated ordinary orphaned OS/remote effects across an app crash.
+Existing workflow task/result/checkpoint/accounting durability remains mandatory.
+
+Shutdown seals legacy ingress before closing capacity and retains actual worker
+and host handoff drain through cancelled waiters. Standalone engines retain their
+existing API and policy. V2 planned events, MCP nested inheritance and SessionEnd
+teardown are the mandatory next D2B2 slice, not implemented by D2B1. Subsequent
+ordinary-tree admission must replace independent event acquisition with original
+covering-tree borrowing before enqueue, alongside D2A initializer borrowing.
+Workflow capture/planning/coordinator admission remains closed.
+
 ## Task 7 producer and storage contracts
 
 Task 7 uses additive AgentRuns schema v27 for immutable required checkpoint

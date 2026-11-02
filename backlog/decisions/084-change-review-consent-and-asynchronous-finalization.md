@@ -125,6 +125,14 @@ Change Review remains observation, not authorization. Existing project-context
 preparation, permission review, invocation-time permission resolution,
 refusals, stamps, audit, and kill-switch ownership remain unchanged.
 
+Task 8D2B1 gives real legacy hook events their own finite opaque native custody
+through target cleanup and original host delivery/discard. Arbitrary hooks are
+not observational snapshots and gain no snapshot authority. Required existing
+durable writes remain required; an empty ordinary-event payload obligation does
+not require a new hook journal. V2/MCP/SessionEnd and subsequent ordinary-tree
+borrowing (including enqueue-time initializer holds) remain mandatory pending
+integration, with workflow capture still refused.
+
 For a review-enabled turn, the order is:
 
 1. prepare tool calls;

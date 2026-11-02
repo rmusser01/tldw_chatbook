@@ -106,7 +106,7 @@ def capture_execution_roots(
 
 def submission_scope(controller, origin, session_id):
     """Manual sends pause their goal and reset inherited automatic context."""
-    from contextlib import nullcontext
+    from contextlib import contextmanager, nullcontext
 
     if origin is ConsoleSubmissionOrigin.WORKFLOW_PHASE:
         raise PermissionError(
@@ -127,6 +127,14 @@ def submission_scope(controller, origin, session_id):
         )
         if goals is not None and target is not None:
             goals.manual_send(target.persisted_conversation_id)
+
+    @contextmanager
+    def manual_submission():
+        from tldw_chatbook.Agents.legacy_hook_ownership import prompt_handoff
+
+        with manual_work_scope(), prompt_handoff(controller):
+            yield
+
     return (
         nullcontext()
         if origin
@@ -135,7 +143,7 @@ def submission_scope(controller, origin, session_id):
             ConsoleSubmissionOrigin.GOAL_ITERATION,
             ConsoleSubmissionOrigin.AGENT_CHAT_START,
         }
-        else manual_work_scope()
+        else manual_submission()
     )
 
 
@@ -355,12 +363,17 @@ async def legacy_submission_hook_input(controller, draft, session_id, hook_read=
         )
         if authority is not None:
             shared["authority_read"] = authority
-    return await hooks_engine.fire_async(
+    outcome = await hooks_engine.fire_async(
         "UserPromptSubmit",
         session_id=session_id,
         data={"prompt": truncate_hook_text(draft)},
         **shared,
     )
+    if outcome is None or not (outcome.blocked or outcome.context):
+        from tldw_chatbook.Agents.legacy_hook_ownership import prompt_handed_off
+
+        prompt_handed_off()
+    return outcome
 
 
 #: TASK-38751: the chat, runtime or permission owner moved during a hook
