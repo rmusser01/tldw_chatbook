@@ -952,9 +952,11 @@ view completion projects the ready owner and never rewrites its draft.
 
 `app_served.py` watches the child control connection independently of Canvas
 exposure. Genuine parent/control loss closes boot admission and automatic wakes,
-marks the Console as tearing down, awaits the existing runtime disposal/shutdown,
-and exits. Runtime physical cleanup retains the lease on failure or cancellation;
-the parent only permits a new host after observing actual process exit. Browser
+marks the Console as tearing down, synchronously fences its already-installed
+controller and requests ordinary App exit in a finally block. Native full shutdown
+retains the original view and execution lease through ordered project-index,
+view-worker and image retirement. Physical cleanup retains the lease on failure
+or cancellation; the parent only permits a new host after observing actual process exit. Browser
 revocation and Canvas disable do not enter this native shutdown path.
 
 ## Command-owned input and exact native controls (ADR-244)

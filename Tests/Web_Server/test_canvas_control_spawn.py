@@ -156,3 +156,32 @@ def test_textual_child_app_starts_and_closes_its_control_client() -> None:
     import asyncio
 
     asyncio.run(scenario())
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("installed_runtime", [False, True])
+async def test_control_loss_without_installed_controller_does_not_create_one(
+    installed_runtime,
+):
+    from tldw_chatbook import app_served
+
+    class UnusedRuntime:
+        _chat_controller = None
+        view = None
+
+        @property
+        def chat_controller(self):
+            raise AssertionError("control loss must not construct a controller")
+
+        async def dispose(self):
+            raise AssertionError("ordinary app shutdown owns physical disposal")
+
+    events = []
+    app = SimpleNamespace(
+        _close_boot_worker_gate=lambda reason: events.append(reason),
+        exit=lambda: events.append("exit"),
+    )
+    if installed_runtime:
+        app.console_runtime = UnusedRuntime()
+    await app_served._retire_after_control_loss(app)
+    assert app._shutting_down and events == ["served control lost", "exit"]

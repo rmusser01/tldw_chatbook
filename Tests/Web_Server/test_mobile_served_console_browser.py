@@ -73,7 +73,7 @@ assert not blocked_attempts() and not take_violations()
     assert result.returncode == 0, result.stdout + result.stderr
 
 
-def _prepare_profile(tmp_path, *, mobile_surface=True):
+def _prepare_profile(tmp_path, *, mobile_surface=True, full_agent_tools=False):
     """Cold profile selection precedes every parent/child application import."""
     from Tests.Backup_Recovery.test_mobile_public_operator import (
         _NO_DATA,
@@ -101,6 +101,7 @@ def _prepare_profile(tmp_path, *, mobile_surface=True):
         f'[database]\nchachanotes_db_path="{home / "canonical/chat.db"}"\n'
         f'workspaces_db_path="{home / "canonical/workspaces.db"}"\n'
         + ("[web_server]\nmobile_surface=false\n" if not mobile_surface else "")
+        + ("[tools]\nfull_agent_tools_enabled=true\n" if full_agent_tools else "")
     )
     selector.chmod(0o600)
     assert not (selector.parent / "tokenizers").exists()
@@ -786,8 +787,8 @@ async def _run_cold_phone(root):
     assert not take_violations()
 
 
-def test_two_chats_workers_and_exact_phone_controls(live_mobile_console):
-    root, environment = live_mobile_console.root, live_mobile_console.environment
+def test_two_chats_workers_and_exact_phone_controls(tmp_path):
+    root, environment = _prepare_profile(tmp_path, full_agent_tools=True)
     environment = dict(environment, TLDW_FLEET_FIXTURE="1")
     with (root / "fleet.log").open("w") as output:
         result = subprocess.run(
@@ -2445,6 +2446,7 @@ async def _run_lifecycle(root, mode):
     from Tests.real_profile_guard import take_violations
     from tldw_chatbook.Backup_Recovery import mobile_consolidation
     from tldw_chatbook.Backup_Recovery.profile_paths import canonical_console_paths
+    from tldw_chatbook.Chat.console_remote_models import ConsoleHostIdentity
     from tldw_chatbook.config import get_atomic_config_snapshot
 
     original_gate = mobile_consolidation.require_mobile_cutover
@@ -2507,7 +2509,27 @@ async def _run_lifecycle(root, mode):
             await asyncio.sleep(0.01)
 
     owned_observer = asyncio.create_task(record_owned_child())
+    bootstrap_calls = 0
     try:
+        if mode == "clean-stop":
+            from tldw_chatbook.Web_Server.mobile_service import (
+                MobileChatService,
+                MobileOwnerUnavailable,
+            )
+
+            original_bootstrap = MobileChatService.bootstrap_host
+
+            async def unavailable_publication(service):
+                nonlocal bootstrap_calls
+                bootstrap_calls += 1
+                native_host = await original_bootstrap(service)
+                result["publication_fault"] = {
+                    "fault": "injected-after-positive-native-bootstrap",
+                    "host": native_host.model_dump(),
+                }
+                raise MobileOwnerUnavailable("console_unavailable")
+
+            patch.setattr(MobileChatService, "bootstrap_host", unavailable_publication)
         async with ClientSession(
             cookie_jar=CookieJar(unsafe=True), connector=TCPConnector(ssl=False)
         ) as client:
@@ -2535,19 +2557,88 @@ async def _run_lifecycle(root, mode):
                     assert response.status in (200, 202), (response.status, value)
                     return value
 
-            host = (await post("console/host", {}))["host"]
+            # One explicit startup request; only a positive same-child snapshot
+            # below can admit commands after the exact unavailable response.
+            async with client.post(
+                stack.origin + "/api/v1/mobile/console/host",
+                json={"protocol_version": 1},
+                headers=headers,
+            ) as response:
+                initial_status = response.status
+                initial_body = await response.json()
+            result["initial_host_response"] = {
+                "status": initial_status,
+                "body": initial_body,
+            }
+            result["initial_host_response"]["source"] = (
+                "injected" if "publication_fault" in result else "native"
+            )
+            if mode == "clean-stop":
+                assert bootstrap_calls == 1
+                result["bootstrap_calls"] = bootstrap_calls
+            initial_host = None
+            if initial_status == 200:
+                assert set(initial_body) == {"host"}
+                initial_host = ConsoleHostIdentity.model_validate(initial_body["host"])
+            else:
+                assert initial_status == 503 and initial_body == {
+                    "error": "console_unavailable"
+                }
             ready = json.loads(await _wait_file(data / "console-app-ready.json"))
-            assert ready["ui_ready"] and ready["pid"] == stack.services[0]._process.pid
+            await owned_observer
+            owned = json.loads((root / "lifecycle-owned.json").read_text())
+            assert len(stack.services) == 1
+            service = stack.services[0]
+            process = service._process
+            assert process is not None
+            assert (
+                ready["ui_ready"] is True
+                and ready["pid"] == process.pid == owned["child_pid"]
+            )
+            assert psutil.Process(process.pid).create_time() == owned["child_created"]
             async with asyncio.timeout(30):
                 while True:
+                    assert len(stack.services) == 1 and stack.services[0] is service
+                    assert service._process is process and process.returncode is None
+                    assert (
+                        psutil.Process(process.pid).create_time()
+                        == owned["child_created"]
+                    )
                     async with client.get(
                         stack.origin
                         + "/api/v1/mobile/console/snapshot?protocol_version=1"
                     ) as response:
                         current = await response.json()
-                    if current.get("execution_admitted"):
+                        snapshot_status = response.status
+                    if snapshot_status == 200:
+                        assert "error" not in current
+                        assert type(current.get("execution_admitted")) is bool
+                    if (
+                        snapshot_status == 200
+                        and current.get("execution_admitted") is True
+                    ):
+                        admitted_host = ConsoleHostIdentity.model_validate(
+                            {
+                                key: current[key]
+                                for key in ("server_epoch", "console_id")
+                            }
+                        )
+                        if initial_host is not None:
+                            assert admitted_host == initial_host
+                        host = admitted_host.model_dump()
                         break
+                    assert snapshot_status == 200 or (
+                        snapshot_status == 503
+                        and current == {"error": "console_unavailable"}
+                    ), (snapshot_status, current)
                     await asyncio.sleep(0.05)
+            if "publication_fault" in result:
+                assert host == result["publication_fault"]["host"]
+            if mode == "clean-stop":
+                assert bootstrap_calls == 1
+                result["bootstrap_calls_after_readiness"] = bootstrap_calls
+            result["readiness_host"] = host
+            result["readiness_child"] = owned
             ticket = await post(
                 "commands/tickets",
                 {
@@ -2630,6 +2721,9 @@ async def _run_lifecycle(root, mode):
                 await stack.aclose()
             else:
                 raise AssertionError("parent-death must be signaled externally")
+            if mode == "clean-stop":
+                assert bootstrap_calls == 1
+                result["bootstrap_calls_after_lifecycle"] = bootstrap_calls
             result["child_exit"] = process.returncode
     except BaseException:
         import traceback

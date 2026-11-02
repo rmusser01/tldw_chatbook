@@ -2936,3 +2936,7 @@ Tests/UI/test_console_send_draft_snapshot.py::test_spoken_send_skill_read_ignore
 
 # Shared mobile integration: real native phone trace Retry/Cancel preservation.
 Tests/UI/test_console_phone_trace_recovery.py
+
+# Served control loss retains native physical ownership through ordinary shutdown.
+Tests/UI/test_console_recovered_image_shutdown.py::test_control_loss_keeps_execution_lease_through_native_app_drains
+Tests/UI/test_console_recovered_image_shutdown.py::test_control_loss_still_exits_after_native_controller_fence_error

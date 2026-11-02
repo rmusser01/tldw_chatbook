@@ -25741,3 +25741,23 @@ boundary. Epoch109's actual gateway/controlled-adapter continuation passed after
 exact marker consumption; stale/unknown marker controls still refused. Keep a
 real gateway continuation case when testing recovery across that boundary: a
 stream double cannot establish reservation ownership or provider entry.
+
+
+### Retain the original view and execution lease through physical shutdown
+
+PR3345 integrated review FI-001 and isolated epoch115 showed that disposing a
+served Console runtime before ordinary app shutdown discarded its view and let
+a competing native execution owner acquire the lease while project-index, image
+and selected view readers were still physically active. Fence the installed
+controller, then let the native app lifecycle capture and drain those owners
+before releasing execution. Epoch118 proved refusal during all held work,
+repeated-cancellation retention and acquisition only after native retirement.
+Its test keeps Textual run_test entry/exit in one asyncio task and observes the
+real shutdown from a separate owned task; epochs116/117 preserved the failed
+context-lifecycle assumptions rather than treating them as product failures.
+
+The sibling generic Canvas runs121–124 also exposed an evidence trap: the native
+harness writes one fixed lifecycle-output filename outside pytest basetemp.
+Per-epoch stdout/source/wait receipts survived, but older bounded lifecycle
+arrays were overwritten before separate archival. Preserve fixed-output
+artifacts before each new scenario, not only each private pytest directory.

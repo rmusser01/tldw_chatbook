@@ -65,16 +65,20 @@ def _start_served_canvas_control(self: Any, *, app_globals: dict[str, Any]) -> N
 async def _retire_after_control_loss(self: Any) -> None:
     """Close native admission and retain execution ownership through retirement."""
     self._shutting_down = True
-    self._close_boot_worker_gate("served control lost")
-    runtime = getattr(self, "console_runtime", None)
-    if runtime is not None:
-        view = getattr(runtime, "view", None)
-        if view is not None:
-            view._console_chat_tearing_down = True
-        # dispose closes admission/automatic wakes before its first physical drain.
-        await runtime.dispose()
-    await self._shutdown_console_runtime()
-    self.exit()
+    try:
+        self._close_boot_worker_gate("served control lost")
+        runtime = getattr(self, "console_runtime", None)
+        if runtime is not None:
+            view = getattr(runtime, "view", None)
+            if view is not None:
+                view._console_chat_tearing_down = True
+            controller = getattr(runtime, "_chat_controller", None)
+            if controller is not None:
+                controller.begin_shutdown()
+    finally:
+        # Native app shutdown retains the original view and execution lease
+        # through project-index, selected view-worker and image retirement.
+        self.exit()
 
 
 async def _watch_served_control(self: Any) -> None:
