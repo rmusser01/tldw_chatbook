@@ -727,7 +727,8 @@ CENSUS_PATH = REPO_ROOT / "scripts" / "ui_pr_gate_census.txt"
 # four original Connecting-tools cases and eight accepted-owner regression nodes.
 # PR3321 integration: preserve1303 dev entries and append8 verified export/Inspector selectors.
 # PR3323 integration: preserve1311 selectors and append4 verified readiness/modal entries.
-MINIMUM_FILES = 1315
+# PR3330 integration appends the coded Send strip selector.
+MINIMUM_FILES = 1316
 
 
 def read_census(path: Path) -> list[str]:

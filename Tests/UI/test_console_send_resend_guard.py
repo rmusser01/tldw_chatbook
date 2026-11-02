@@ -29,6 +29,7 @@ import asyncio
 
 import pytest
 
+from tldw_chatbook.Chat.console_display_state import ConsoleBlockedReason
 from Tests.UI.test_console_send_acknowledgement import (
     DRAFT,
     HeldAdmission,
@@ -456,7 +457,8 @@ async def test_a_bare_second_enter_during_a_refused_send_is_not_refused_again(dr
             if not draft:
                 image = object()
                 console._console_pending_image_attachment = lambda: image
-            console._console_send_blocked_reason = lambda: BLOCKED
+            # The send gate the prompt queue reads (TASK-33621.11: coded).
+            console._console_send_gate = lambda: ConsoleBlockedReason(BLOCKED)
             gate = HeldAdmission(console)
             try:
                 press(host, "enter", "\r")

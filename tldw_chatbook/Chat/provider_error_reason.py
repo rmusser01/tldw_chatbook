@@ -90,9 +90,7 @@ def bounded_response_body(response: object) -> str:
         return ""
 
 
-def safe_provider_reason(
-    reason: str, *, known_credentials: Iterable[str] = ()
-) -> str:
+def safe_provider_reason(reason: str, *, known_credentials: Iterable[str] = ()) -> str:
     """Cap, scrub and markup-escape one provider sentence.
 
     Args:
@@ -142,9 +140,7 @@ def provider_reason_for_exception(
         if response is not None:
             reason = reason_from_error_body(bounded_response_body(response))
             if reason:
-                return safe_provider_reason(
-                    reason, known_credentials=known_credentials
-                )
+                return safe_provider_reason(reason, known_credentials=known_credentials)
         if current.__cause__ is not None:
             current = current.__cause__
         elif not current.__suppress_context__:
@@ -231,7 +227,14 @@ def attach_provider_reason(
 
     if is_sensitive_llm_request():
         return exc
-    reason = reason_from_error_body(bounded_response_body(response))
+    body = bounded_response_body(response)
+    reason = reason_from_error_body(body)
+    try:
+        status = getattr(response, "status_code", None)
+        if type(status) is int and status in IMAGE_REFUSAL_STATUSES:  # noqa: E721 -- integer statuses exclude bool/coercions
+            exc.image_input_rejected = _body_mentions_image(body)  # type: ignore[attr-defined]
+    except Exception:  # noqa: BLE001 -- optional classification, no retained body
+        pass
     for credential in known_credentials:
         if credential and len(credential) >= 6:
             reason = reason.replace(credential, "(key hidden)")
@@ -293,3 +296,125 @@ def provider_error_category(exc: BaseException) -> str:
     if is_context_overflow_error(exc):
         category = CONTEXT_OVERFLOW_CATEGORY  # review round 2, V2-F3
     return category
+
+
+#: TASK-33621.11 AC#3: the statuses a provider refuses an image input with.
+#: Any other status (a 401, a 429, a 500 that happens to mention the image)
+#: says nothing about whether the image can be read.
+IMAGE_REFUSAL_STATUSES = frozenset({400, 413, 415, 422})
+_IMAGE_INPUT_PATH = re.compile(
+    r"(?:messages\.\d+\.content\.\d+\.(?:image\.source(?:\.[A-Za-z_]\w*)*"
+    r"|image_url(?:\.url)?)|content\.\d+\.image\.source(?:\.[A-Za-z_]\w*)*)\Z"
+)
+_IMAGE_REJECTION_CLAUSE = re.compile(
+    r"(?:image does not match the provided media type\b"
+    r"|(?:invalid|unsupported) image format\b"
+    r"|image exceeds\b[^\n]{0,200}\bmaximum\b"
+    r"|image is too large\b"
+    r"|unsupported media type for image input\b"
+    r"|this model does not support (?:vision|image) input\b"
+    r"|image input is not supported\b"
+    r"|you uploaded an unsupported image\b)",
+    re.IGNORECASE,
+)
+
+
+def _is_image_input_path(path: str) -> bool:
+    """Accept only rooted input-content paths, including bracket indices."""
+    path = re.sub(r"\[(\d+)\]", r".\1", path)
+    return _IMAGE_INPUT_PATH.fullmatch(path) is not None
+
+
+def _text_rejects_image_input(text: str) -> bool:
+    """Require an initial rejection clause or an initial image field path."""
+    text = text.strip()
+    path, separator, _detail = text.partition(":")
+    return bool(
+        (separator and _is_image_input_path(path))
+        or _IMAGE_REJECTION_CLAUSE.match(text)
+    )
+
+
+def _body_mentions_image(body: str) -> bool:
+    """Classify bounded error evidence, never echoed schemas or metadata."""
+    body = body[:_MAX_BODY_BYTES].strip()
+    try:
+        payload = json.loads(body) if body else None
+    except (TypeError, ValueError):
+        # A truncated/malformed JSON envelope is unknown, not plain text.
+        return not body.startswith(("{", "[", '"')) and _text_rejects_image_input(body)
+    if isinstance(payload, list) and payload and isinstance(payload[0], dict):
+        payload = payload[0]  # Google can wrap the error object in a list.
+    if not isinstance(payload, dict):
+        return False
+    error = payload.get("error")
+    if isinstance(error, dict):
+        if any(
+            isinstance(error.get(key), str)
+            and error[key].lower() == "invalid_image_format"
+            for key in ("code", "type")
+        ):
+            return True
+        param = error.get("param")
+        if isinstance(param, str) and _is_image_input_path(param):
+            return True
+        fields = [error.get("message")]
+    else:
+        fields = [error, payload.get("message"), payload.get("detail")]
+    return any(
+        isinstance(field, str) and _text_rejects_image_input(field) for field in fields
+    )
+
+
+def is_image_input_rejection(exc: BaseException) -> bool:
+    """Whether the provider refused this request because of its image input.
+
+    True only for a 400, 413, 415 or 422 with image-rejection evidence.
+    The body is classification evidence only and is never
+    shown. A gateway projection, whose body is gone, carries the verdict it
+    reached from the original error as ``image_input_rejected``.
+
+    Args:
+        exc: The provider failure (any exception on its unsuppressed chain
+            may carry the status, the response or the verdict).
+
+    Returns:
+        True for an image refusal; False otherwise, including when the
+        status or the body is unknown. It never raises: it runs inside the
+        failure paths (the gateway's error leg, the agent's run guard).
+    """
+    try:
+        return _is_image_input_rejection(exc)
+    except Exception:  # noqa: BLE001 -- classification is optional copy
+        return False
+
+
+def _is_image_input_rejection(exc: BaseException) -> bool:
+    seen: set[int] = set()
+    status: int | None = None
+    current: BaseException | None = exc
+    while current is not None and id(current) not in seen:
+        seen.add(id(current))
+        if getattr(current, "image_input_rejected", False) is True:
+            return True
+        response: Any = getattr(current, "response", None)
+        raw_status = getattr(current, "status_code", None)
+        if type(raw_status) is not int:  # noqa: E721 -- integer statuses exclude bool/coercions
+            raw_status = getattr(response, "status_code", None)
+        if status is None and type(raw_status) is int:  # noqa: E721 -- integer statuses exclude bool/coercions
+            status = raw_status
+        if status in IMAGE_REFUSAL_STATUSES:
+            reason = getattr(current, "provider_reason", None)
+            if isinstance(reason, str) and _text_rejects_image_input(reason):
+                return True
+            if response is not None and _body_mentions_image(
+                bounded_response_body(response)
+            ):
+                return True
+        if current.__cause__ is not None:
+            current = current.__cause__
+        elif not current.__suppress_context__:
+            current = current.__context__
+        else:
+            current = None
+    return False

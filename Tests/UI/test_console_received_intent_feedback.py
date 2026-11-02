@@ -300,6 +300,152 @@ async def _held_received_record(case):
     return record
 
 
+@pytest.mark.parametrize("route", ["enter", "send-button", "original-handler"])
+async def test_stock_received_image_refused_enter_preserves_custody(
+    route, monkeypatch, record_property
+):
+    """Stock readers keep the image and draft through a refusal, without contact."""
+    import copy
+    from textual.widgets import Static
+    from Tests.UI.test_console_send_strip_codes import _image
+    from tldw_chatbook.Chat.console_chat_models import ConsoleMessageRole
+    from tldw_chatbook.Chat.console_received_dispatch import stock_native_methods
+    from tldw_chatbook.UI.Screens.chat_screen import _CONSOLE_RECEIVED_SCREEN_SELECTORS
+
+    async with _received_console_case(monkeypatch, f"image-refused-{route}") as case:
+        assert stock_native_methods(case.console, _CONSOLE_RECEIVED_SCREEN_SELECTORS)
+        image = _image()
+        assert case.store.add_pending_attachment(case.session.id, image)
+        refusal = case.console._console_attachment_blocked_reason()
+        assert "local-model can't accept images" in refusal
+        from tldw_chatbook.UI.Console_Modules.prompt_queue import (
+            ConsolePromptDispatchResult,
+            ConsolePromptDispatchStatus,
+            ConsolePromptQueueUIController,
+        )
+
+        results = []
+        monitoring = sys.monitoring
+        tool = next(value for value in range(6) if monitoring.get_tool(value) is None)
+        monitoring.use_tool_id(tool, "stock-image-refusal-result")
+        code = ConsolePromptQueueUIController.dispatch.__code__
+
+        def returned(_code, _offset, value):
+            if isinstance(value, ConsolePromptDispatchResult):
+                results.append(value)
+
+        monitoring.register_callback(tool, monitoring.events.PY_RETURN, returned)
+        monitoring.set_local_events(tool, code, monitoring.events.PY_RETURN)
+        record = task = None
+        try:
+            if route == "original-handler":
+                await case.console.handle_console_send_message(
+                    Button.Pressed(
+                        case.console.query_one("#console-send-message", Button)
+                    )
+                )
+            else:
+                _send(case, route)
+            assert await _until(
+                lambda: case.probe.entered.is_set()
+                or any(
+                    row.role is ConsoleMessageRole.SYSTEM and row.content == refusal
+                    for row in case.store.messages_for_session(case.session.id)
+                ),
+                15,
+            )
+            if case.probe.entered.is_set():
+                record = await _held_received_record(case)
+                claim, task = record.received_claim, record.task
+                assert record.received_intent.inputs.attachments == (image,)
+                assert record.session_id == case.session.id
+                assert case.store.received_turn_for_session(case.session.id) is claim
+                case.probe.release.set()
+                assert await _until(case.probe.retired, 5)
+            else:
+                # A natural Enter frame may paint the existing blocker before
+                # receipt. Observe the real dispatch result, never fake a gate
+                # or force a held configuration phase that did not happen.
+                assert await _until(lambda: bool(results), 5)
+                assert results[-1].status is ConsolePromptDispatchStatus.REFUSED
+                assert results[-1].detail == refusal
+                assert not case.probe.entered.is_set()
+                # This attempt never entered received preparation. Stop only
+                # its still-unentered native-read observation before the later
+                # independent Context preview (which may use a UI DB reader).
+                native_tool = next(
+                    value
+                    for value in range(6)
+                    if monitoring.get_tool(value) == "configuration-original-workspace"
+                )
+                monitoring.set_local_events(native_tool, case.probe.code, 0)
+                case.probe.release.set()
+            assert await _until(
+                lambda: not case.runtime.has_custodied_turns(case.session.id), 15
+            )
+        finally:
+            monitoring.set_local_events(tool, code, 0)
+            monitoring.register_callback(tool, monitoring.events.PY_RETURN, None)
+            monitoring.free_tool_id(tool)
+        rows = case.store.messages_for_session(case.session.id)
+        system = [row for row in rows if row.role is ConsoleMessageRole.SYSTEM]
+        assert system and type(system[-1].content) is str  # noqa: E721 -- exact plain payload/terminal type contract
+        assert system[-1].content == refusal
+        assert case.provider_calls == []
+        assert not any(row.role is ConsoleMessageRole.USER for row in rows)
+        assert case.store.pending_attachments(case.session.id) == [image]
+        assert (
+            case.composer.draft_text()
+            == case.store.session_draft(case.session.id)
+            == case.draft
+        )
+        assert case.store.received_turn_for_session(case.session.id) is None
+        assert case.store.preparation_for_session(case.session.id) is None
+        if record is not None:
+            assert record.request is None and record.task is None
+            assert record.inputs.durable_accepted is False
+            assert task.done()
+            assert (
+                type(task.exception()) is RuntimeError
+            )  # exact image preflight terminal
+            assert (
+                str(task.exception())
+                == "The selected model cannot accept this attachment; draft kept."
+            )
+        else:
+            assert (
+                route != "original-handler"
+            ), "Original stock handler must reach checked received-image preflight"
+        record_property(
+            "pr3330_refusal_owner",
+            "checked_received_preflight"
+            if record is not None
+            else "coded_dispatch_before_receipt",
+        )
+        ack = vars(case.console).get("_console_send_ack")
+        if ack is not None:
+            assert case.session.id not in ack._pending
+
+        def painted():
+            return [
+                str(widget.content)
+                for widget in case.console.query_one(
+                    "#console-native-transcript"
+                ).query(Static)
+            ]
+
+        assert await _until(
+            lambda: any(refusal in text for text in painted())
+            and not any("Sending…" in text for text in painted()),
+            10,
+        )
+        copy.deepcopy(rows)
+        assert (
+            await case.controller.build_context_snapshot("", session_id=case.session.id)
+            is not None
+        )
+
+
 @pytest.mark.parametrize("route", ["enter", "send-button"])
 async def test_actual_send_paints_sending_and_accepts_input_within_100ms(
     route, monkeypatch, record_property

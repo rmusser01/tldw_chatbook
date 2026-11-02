@@ -143,10 +143,17 @@ async def test_setup_block_shows_reason_and_clears_when_unblocked(request, monke
 
         # Supply the screen's source of truth so its periodic refresh keeps
         # projecting the same blocker instead of overwriting a child-only state.
+        from tldw_chatbook.Chat.console_display_state import ConsoleBlockedReason
+
+        # TASK-33621.11: coded as the real readiness codes it; the strip reads
+        # the code, never the sentence's words.
         blocker = Mock(
-            return_value="Choose a model in Console Settings before sending."
+            return_value=ConsoleBlockedReason(
+                "Choose a model in Console Settings before sending.",
+                code="model_missing",
+            )
         )
-        monkeypatch.setattr(console, "_console_setup_blocked_reason", blocker)
+        monkeypatch.setattr(console, "_console_composer_send_blocker", blocker)
         composer.load_draft("draft ready")
         console._sync_console_composer_action_state(can_save_chatbook=False)
         await pilot.pause(0.1)

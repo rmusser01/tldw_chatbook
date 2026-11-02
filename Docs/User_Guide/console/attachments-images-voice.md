@@ -107,7 +107,7 @@ and the strip asks you to choose a model first; the row appears once you
 pick one that can't read images.
 
 Where the composer row has room, the strip beside Send reads
-`Send blocked — <model> can't accept images` (it is not a link). Hovering
+`Send blocked — this model can't accept images` (it is not a link). Hovering
 Send, or pressing Enter, gives the full message: "Console send blocked:
 <model> can't accept images. Remove the attachment, switch to a vision
 model, or mark this model as vision-capable under
@@ -121,7 +121,8 @@ explicit `vision = false` entry for a model under
 `[model_capabilities.models]` still wins.
 
 An image already in the conversation is re-sent with every later turn. If the
-provider rejects it, the failure row suggests switching to a vision-capable
+provider refuses it (a 400, 413, 415 or 422 whose message is about the
+image), the failure row suggests switching to a vision-capable
 model, or typing `/rewind` and restoring to the prompt that added the image —
 the later turns stay available as a branch. It never suggests Delete, which
 would remove every turn after that message.

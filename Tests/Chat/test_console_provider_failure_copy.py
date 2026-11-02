@@ -8,8 +8,11 @@ same undiagnosable 500 (UX review finding
 j3-provider-error-discards-detail-poisons-conversation, REGRESSION).
 """
 
+import json
+
 import httpx
 import pytest
+import requests
 
 from tldw_chatbook.Agents.hook_permissions import HookPermissions
 
@@ -41,9 +44,9 @@ MMPROJ_BODY = (
 )
 
 
-def _http_500(body: str) -> httpx.HTTPStatusError:
+def _http_500(body: str, status: int = 500) -> httpx.HTTPStatusError:
     request = httpx.Request("POST", "http://127.0.0.1:9099/v1/chat/completions")
-    response = httpx.Response(500, request=request, text=body)
+    response = httpx.Response(status, request=request, text=body)
     return httpx.HTTPStatusError(
         "Server error '500 Internal Server Error' for url "
         "'http://127.0.0.1:9099/v1/chat/completions'\n"
@@ -76,17 +79,29 @@ def test_describe_stream_failure_never_emits_mdn_link_without_body():
 
 
 class _ExplodingGateway:
+    status = 500
+
     async def resolve_for_send(self, _selection):
         return provider_resolution(ready=True, provider="llama_cpp", visible_copy="")
 
     async def stream_chat(self, _resolution, _messages, **_kwargs):
-        raise _http_500(MMPROJ_BODY)
+        raise _http_500(MMPROJ_BODY, self.status)
         yield  # pragma: no cover — makes this an async generator
 
 
 @pytest.mark.asyncio
-async def test_agent_failure_row_carries_body_and_image_recovery_hint(tmp_path):
+@pytest.mark.parametrize(("status", "image_hint"), [(500, False), (400, True)])
+async def test_agent_failure_row_carries_body_and_image_recovery_hint(
+    tmp_path, status, image_hint
+):
+    """The body always shows; the image hint only for an image REFUSAL.
+
+    TASK-33621.11 AC#3: only a 400/413/415/422 whose body is about the image
+    is evidence the model cannot read it. llama.cpp's mmproj reply is a 500,
+    so it keeps its own words ("provide the mmproj") without the hint.
+    """
     gateway = _ExplodingGateway()
+    gateway.status = status
     store = ConsoleChatStore()
     db = AgentRunsDB(tmp_path / "runs.db", client_id="t")
     bridge = ConsoleAgentBridge(agent_runs_db=db, store=store, provider_gateway=gateway)
@@ -118,10 +133,11 @@ async def test_agent_failure_row_carries_body_and_image_recovery_hint(tmp_path):
     failure_row = system_rows[-1]
     assert "provide the mmproj" in failure_row
     assert "developer.mozilla.org" not in failure_row
-    # Recovery hint: the conversation carries an image the provider may be
-    # rejecting — point at it and at the existing remove/switch affordances.
-    assert "image" in failure_row.lower()
-    assert "remove" in failure_row.lower() or "vision" in failure_row.lower()
+    # Recovery hint: the conversation carries an image the provider refused
+    # -- point at it and at the existing switch/rewind affordances.
+    assert (
+        "This conversation includes an image attachment" in failure_row
+    ) is image_hint
 
 
 # F5: one status per error. The stream worker used to stringify the adapter
@@ -264,9 +280,12 @@ async def test_typed_gateway_error_reaches_console_without_changing_diagnostics(
     assert "Provider error from Anthropic" in visible
     assert f"Status: {status}" in visible
     assert "SECRET-CANARY" not in visible
-    if status in (400, 404):
+    if status == 404:
         assert model in visible
         assert "choose another model from the model picker" in visible
+    else:  # TASK-33621.11 AC#3: a 400 (or 401, 429) is no evidence about the model
+        assert model not in visible
+        assert "choose another model" not in visible
     if status == 404:
         assert "The provider could not find this model or endpoint" in visible
         assert "Check the model name and the key" in visible
@@ -297,17 +316,33 @@ async def test_typed_gateway_error_reaches_console_without_changing_diagnostics(
 @pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 @pytest.mark.parametrize("status", [400, 404])
+@pytest.mark.parametrize("body_kind", ["none", "image", "tool"])
 async def test_typed_console_presentation_never_enters_durable_agent_error(
-    tmp_path, provider_failure_hooks, status
+    tmp_path, provider_failure_hooks, status, body_kind
 ):
     """A real gateway projection must retain content-free STEP_ERROR persistence."""
 
     def fail(**_kwargs):
-        raise ChatBadRequestError(
+        error = ChatBadRequestError(
             "Authorization: Bearer SECRET-CANARY",
             provider="anthropic",
             status_code=status,
         )
+        if body_kind != "none":
+            response = requests.Response()
+            response.status_code = status
+            response._content = json.dumps(
+                {
+                    "error": {
+                        "code": "invalid_image_format"
+                        if body_kind == "image"
+                        else "generate_image",
+                        "message": "PRESENTATION-CANARY",
+                    }
+                }
+            ).encode()
+            error.__cause__ = requests.HTTPError(response=response)
+        raise error
 
     gateway = ConsoleProviderGateway(
         config_provider=lambda: {
@@ -326,7 +361,7 @@ async def test_typed_console_presentation_never_enters_durable_agent_error(
                 resolution, [{"role": "user", "content": "hello"}]
             )
         ]
-    assert model in caught.value.console_copy
+    assert (model in caught.value.console_copy) is (status == 404)
 
     class ProjectedGateway(_ExplodingGateway):
         async def stream_chat(self, _resolution, _messages, **_kwargs):
@@ -349,6 +384,13 @@ async def test_typed_console_presentation_never_enters_durable_agent_error(
         hook_permissions_accessor=lambda: provider_failure_hooks,
     )
     session = store.create_session(title="Typed failure", ephemeral=True)
+    store.append_message(
+        session.id,
+        role=ConsoleMessageRole.USER,
+        content="image history",
+        image_data=b"\x89PNG-fake",
+        image_mime_type="image/png",
+    )
     result = await controller.submit_draft("hello")
     assert result.accepted
     visible = [
@@ -357,10 +399,13 @@ async def test_typed_console_presentation_never_enters_durable_agent_error(
         if message.role is ConsoleMessageRole.SYSTEM
     ][-1]
     assert "Provider error from Anthropic" in visible
-    assert model in visible
-    assert "choose another model from the model picker" in visible
+    # TASK-33621.11 AC#3: only the 404 names the model.
+    assert (model in visible) is (status == 404)
+    assert ("choose another model from the model picker" in visible) is (status == 404)
     assert f"Status: {status}" in visible
     assert "SECRET-CANARY" not in visible
+    image_hint = ConsoleChatController._IMAGE_REJECTION_RECOVERY_HINT
+    assert (image_hint in visible) is (body_kind == "image" and status == 400)
     runs = db.list_runs(session.id)
     assert runs
     steps = [step for run in runs for step in run["steps"]]
@@ -374,6 +419,7 @@ async def test_typed_console_presentation_never_enters_durable_agent_error(
     assert model not in summary
     assert "Provider error from Anthropic" not in summary
     assert "SECRET-CANARY" not in summary
+    assert image_hint not in summary and "PRESENTATION-CANARY" not in summary
 
     from tldw_chatbook.Agents.run_log import resolve_existing_log_dir
 
@@ -388,4 +434,5 @@ async def test_typed_console_presentation_never_enters_durable_agent_error(
     assert model not in durable
     assert "Provider error from Anthropic" not in durable
     assert "SECRET-CANARY" not in durable
+    assert image_hint not in durable and "PRESENTATION-CANARY" not in durable
     db.close()

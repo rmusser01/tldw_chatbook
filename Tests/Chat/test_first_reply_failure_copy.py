@@ -22,11 +22,75 @@ from tldw_chatbook.Chat.Chat_Deps import (
     ChatProviderError,
 )
 from tldw_chatbook.Chat.console_provider_gateway import (
+    _gateway_sentence,
     _provider_error_copy_with_model_recovery,
     safe_provider_error_copy,
 )
 from tldw_chatbook.Chat.provider_failures import describe_stream_failure
 from tldw_chatbook.Chat.stream_stall_watchdog import StreamStallError
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("image", [True, False], ids=["image-code", "tool-schema"])
+async def test_attached_structured_image_verdict_survives_suppressed_chain(image):
+    from tldw_chatbook.Chat.console_provider_gateway import (
+        ConsoleProviderGateway,
+        ConsoleProviderResolution,
+    )
+    from tldw_chatbook.Chat.provider_error_reason import attach_provider_reason
+    from tldw_chatbook.Utils.sensitive_llm_logging import sensitive_llm_request
+
+    response = requests.Response()
+    response.status_code = 400
+    response._content = json.dumps(
+        {
+            "error": {
+                "code": "invalid_image_format" if image else "generate_image",
+                "message": "Invalid request",
+                "private": "BODY-CANARY",
+            }
+        }
+    ).encode()
+    attached = ChatBadRequestError(status_code=400)
+    assert attach_provider_reason(attached, response) is attached
+    assert attached.provider_reason == "Invalid request"
+    assert not any(
+        word in repr(vars(attached))
+        for word in ("BODY-CANARY", "invalid_image_format", "generate_image")
+    )
+    sensitive = ChatBadRequestError(status_code=400)
+    with sensitive_llm_request():
+        attach_provider_reason(sensitive, response)
+    assert not getattr(sensitive, "provider_reason", None)
+    assert sensitive.image_input_rejected is False
+
+    def fail(**_kwargs):
+        try:
+            raise requests.HTTPError(response=response)
+        except requests.HTTPError:
+            raise attached from None
+
+    gateway = ConsoleProviderGateway(chat_api_call_fn=fail)
+    resolution = ConsoleProviderResolution(
+        provider="openai",
+        base_url="https://api.openai.com/v1",
+        model="gpt-4o",
+        ready=True,
+        execution_key="openai",
+        api_key="synthetic-test-key",
+        streaming=False,
+    )
+    with pytest.raises(ChatBadRequestError) as caught:
+        _ = [
+            chunk
+            async for chunk in gateway.stream_chat(
+                resolution, [{"role": "user", "content": "q"}]
+            )
+        ]
+    assert caught.value.image_input_rejected is image
+    assert str(caught.value) == str(ChatBadRequestError())
+    assert "BODY-CANARY" not in caught.value.console_copy
+
 
 OPENROUTER_EXPIRED_KEY_401 = (
     '{"error":{"message":"API key expired.","code":401,"metadata":{"headers":'
@@ -265,7 +329,6 @@ def test_the_agent_failure_summary_keeps_the_whole_fix() -> None:
     assert len(summary) > 500, "the old cut would have dropped the fix"
 
 
-
 def test_agent_service_persists_the_whole_404_fix_in_its_error_step(
     tmp_path,
 ) -> None:
@@ -365,11 +428,16 @@ def test_the_gateways_own_copy_is_not_wrapped_in_a_second_status() -> None:
         model="gemini-2.0-flash",
         status_code=404,
     )
-    # The gateway's raise: its copy, the status, and no response.
-    raised = ChatProviderError(gateway_copy, provider="google", status_code=404)
+    # The gateway's raise: its copy, the status, and no response -- marked as
+    # its own finished sentence, by type (TASK-33621.11), not by its words.
+    raised = _gateway_sentence(
+        ChatProviderError(gateway_copy, provider="google", status_code=404)
+    )
     outcome = SimpleNamespace(
         status=RUN_ERROR,
-        steps=[SimpleNamespace(kind=STEP_ERROR, summary=describe_stream_failure(raised))],
+        steps=[
+            SimpleNamespace(kind=STEP_ERROR, summary=describe_stream_failure(raised))
+        ],
         final_text="",
     )
 
@@ -400,7 +468,9 @@ def test_a_wrapped_reason_that_ends_a_sentence_keeps_one_period() -> None:
 
     copy = ConsoleChatController._agent_failure_visible_copy(outcome)
 
-    assert copy == "Agent run failed: provider returned HTTP 500 (Something broke).", copy
+    assert (
+        copy == "Agent run failed: provider returned HTTP 500 (Something broke)."
+    ), copy
 
 
 # --- Review round 1 -----------------------------------------------------------
@@ -516,8 +586,15 @@ def test_the_hosted_transport_carries_a_streamed_error_body_to_the_copy(
         def close(self):
             return None
 
-    monkeypatch.setattr(hosted_chat, "create_default_session", lambda *a, **k: _Session(), raising=False)
-    monkeypatch.setattr(hosted_chat, "create_pooled_default_session", lambda *a, **k: _Session(), raising=False)
+    monkeypatch.setattr(
+        hosted_chat, "create_default_session", lambda *a, **k: _Session(), raising=False
+    )
+    monkeypatch.setattr(
+        hosted_chat,
+        "create_pooled_default_session",
+        lambda *a, **k: _Session(),
+        raising=False,
+    )
     config = hosted_chat.HostedHTTPTransportConfig(
         provider="openrouter",
         base_url="https://openrouter.ai/api/v1",

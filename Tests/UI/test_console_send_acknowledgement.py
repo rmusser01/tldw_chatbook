@@ -784,15 +784,18 @@ async def test_a_refused_acknowledged_enter_repaints_its_refusal(
         _reach_console,
     )
     from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
+    from tldw_chatbook.Chat.console_display_state import ConsoleBlockedReason, CONSOLE_BLOCKER_ARCHIVE_INFLIGHT
 
     refusal = "Archive change in progress. Your draft is preserved."
     app, gateway = _console_app(tmp_path)
     async with app.run_test(size=(160, 45), notifications=True) as pilot:
         chat = await _reach_console(app, pilot, "explore_home")
+        await until(lambda: chat._console_attach_reconciled and not chat._console_attach_reconcile_running)
         monkeypatch.setattr(
-            ChatScreen, "_console_send_blocked_reason", lambda _screen: refusal
+            ChatScreen, "_console_send_gate", lambda _screen: ConsoleBlockedReason(refusal, code=CONSOLE_BLOCKER_ARCHIVE_INFLIGHT)
         )
         composer = chat.query_one("#console-native-composer", ConsoleComposerBar)
+        assert chat._hooks._permissions().snapshot().ready
         composer.focus()
         await pilot.pause(0.2)
         composer.load_draft("say refused")

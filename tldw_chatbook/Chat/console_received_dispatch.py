@@ -305,6 +305,21 @@ async def _run_received_intent_bound(runtime, record, source):
         and item.data is not None
         for item in intent.inputs.attachments
     ) and not configuration.capabilities.get("vision", False):
+        from .attachment_core import vision_block_reason
+        from .console_chat_models import ConsoleMessageRole
+
+        # Configuration and the received source were checked immediately
+        # above. Use that frozen verdict, not a fresh capability/config read.
+        # This branch precedes request promotion, so generic runtime recovery
+        # has no request on which to project its refusal.
+        refusal = vision_block_reason(
+            configuration.provider_selection.provider,
+            configuration.effective_model,
+            is_capable=lambda _provider, _model: False,
+        )
+        store.append_message(
+            record.session_id, role=ConsoleMessageRole.SYSTEM, content=str(refusal)
+        )
         raise RuntimeError(
             "The selected model cannot accept this attachment; draft kept."
         )
