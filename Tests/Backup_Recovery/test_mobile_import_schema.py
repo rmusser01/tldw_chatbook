@@ -43,8 +43,11 @@ def test_real_legacy_source_heads_capture_and_migrate_exactly(
     assert path.read_bytes() == before
     if leaf == "workspaces.db":
         # Restricted restore deliberately retains its native 8->9 refusal.
-        assert validate_candidate(owner, path, Event(), migrate=True) == ("unsupported_schema_migration",)
+        assert validate_candidate(owner, path, Event(), migrate=True) == (
+            "unsupported_schema_migration",
+        )
         from tldw_chatbook.DB.Workspace_DB import WorkspaceDB
+
         store = WorkspaceDB(path)
         store.close()
     else:
@@ -120,24 +123,47 @@ def test_all_registered_native_mobile_column_projections(tmp_path):
     import hashlib
     import json
 
-    from tldw_chatbook.Backup_Recovery.mobile_captured_sqlite import _native_column_layouts
+    from tldw_chatbook.Backup_Recovery.mobile_captured_sqlite import (
+        _native_column_layouts,
+    )
     from tldw_chatbook.Backup_Recovery.mobile_plan_manifest import _TABLES
     from tldw_chatbook.DB import recovery_core_schema, recovery_operations
-    from tldw_chatbook.DB.ChaChaNotes_DB import _install_canvas_revision_payload_validator
+    from tldw_chatbook.DB.ChaChaNotes_DB import (
+        _install_canvas_revision_payload_validator,
+    )
 
     specs = {(s.family, s.table): s for s in _TABLES}
-    schemas = [("runs", v, c, None) for v, c in _AGENT_RUNS_SCHEMA if v in (24, 25, 26, 27)]
-    schemas += [("workspaces", v, c, None) for v, c in recovery_operations._WORKSPACES_SCHEMA if v in (8, 9, 10, 11)]
-    for version in range(81, 87):
-        schemas += [("chat", version, c, None) for c in getattr(recovery_core_schema, f"CHACHANOTES_V{version}_SCHEMAS")]
+    schemas = [
+        ("runs", v, c, None) for v, c in _AGENT_RUNS_SCHEMA if v in (24, 25, 26, 27)
+    ]
+    schemas += [
+        ("workspaces", v, c, None)
+        for v, c in recovery_operations._WORKSPACES_SCHEMA
+        if v in (8, 9, 10, 11)
+    ]
+    for version in range(81, 88):
+        schemas += [
+            ("chat", version, c, None)
+            for c in getattr(recovery_core_schema, f"CHACHANOTES_V{version}_SCHEMAS")
+        ]
     for version, name in (
-        (81, "CANVAS_V81"), (82, "CANVAS_V82"), (83, "PORTRAIT_V83"),
-        (84, "REGIONS_V84"), (85, "ARCHIVE_V85"), (86, "MIXINS_V86"), (87, "MOBILE_V87"),
+        (81, 'CANVAS_V81'),
+        (82, 'CANVAS_V82'),
+        (83, 'PORTRAIT_V83'),
+        (84, 'REGIONS_V84'),
+        (85, 'ARCHIVE_V85'),
+        (86, 'MIXINS_V86'),
+        (87, 'MOBILE_V87'),
     ):
         for catalog in getattr(recovery_operations, f"_SUBSCRIPTIONS_{name}_SCHEMAS"):
             for subscriptions_version in (2, 3):
-                assert (subscriptions_version, catalog) in recovery_operations._SUBSCRIPTIONS_SCHEMA
-                schemas.append(("shared_subscriptions", version, catalog, subscriptions_version))
+                assert (
+                    subscriptions_version,
+                    catalog,
+                ) in recovery_operations._SUBSCRIPTIONS_SCHEMA
+                schemas.append(
+                    ("shared_subscriptions", version, catalog, subscriptions_version)
+                )
     report, failures = [], []
     for family, version, catalog, subscriptions_version in schemas:
         shared = family == "shared_subscriptions"
@@ -157,36 +183,94 @@ def test_all_registered_native_mobile_column_projections(tmp_path):
                 if name not in created and name != "sqlite_sequence":
                     conn.execute(sql)
             tables = {}
-            for table, in conn.execute("SELECT name FROM sqlite_schema WHERE type='table'").fetchall():
-                metadata = tuple(r for r in conn.execute('PRAGMA table_xinfo("' + table + '")') if r[6] != 1)
+            for (table,) in conn.execute(
+                "SELECT name FROM sqlite_schema WHERE type='table'"
+            ).fetchall():
+                metadata = tuple(
+                    r
+                    for r in conn.execute('PRAGMA table_xinfo("' + table + '")')
+                    if r[6] != 1
+                )
                 columns = tuple(r[1] for r in metadata)
                 spec = specs.get((projected_family, table))
-                if not shared or spec is not None:
-                    if spec is None or columns not in _native_column_layouts(purpose, projected_family, table, spec.columns, version):
-                        failures.append((family, version, table, columns, None if spec is None else spec.columns))
+                if (not shared or spec is not None) and (
+                    spec is None
+                    or columns
+                    not in _native_column_layouts(
+                        purpose, projected_family, table, spec.columns, version
+                    )
+                ):
+                    failures.append(
+                        (
+                            family,
+                            version,
+                            table,
+                            columns,
+                            None if spec is None else spec.columns,
+                        )
+                    )
                 defaults = {}
                 if spec is not None:
                     for column in set(spec.columns) - set(columns):
-                        assert column in {"archived_at", "archive_revision", "review_boundary_id", "composition_recipe_json"}
+                        assert column in {
+                            "archived_at",
+                            "archive_revision",
+                            "review_boundary_id",
+                            "composition_recipe_json",
+                        }
                         defaults[column] = 0 if column == "archive_revision" else None
                 tables[table] = {
                     "ordered_columns": columns,
-                    "sqlite_declarations": [dict(zip(("cid", "name", "type", "not_null", "default_sql", "pk", "hidden"), row)) for row in metadata],
-                    "disposition": "native_shared_backup_preserved_no_mobile_source_grant" if shared else ("canonical_preserved" if purpose == "canonical" else spec.handler),
+                    "sqlite_declarations": [
+                        dict(
+                            zip(
+                                (
+                                    "cid",
+                                    "name",
+                                    "type",
+                                    "not_null",
+                                    "default_sql",
+                                    "pk",
+                                    "hidden",
+                                ),
+                                row,
+                            )
+                        )
+                        for row in metadata
+                    ],
+                    "disposition": "native_shared_backup_preserved_no_mobile_source_grant"
+                    if shared
+                    else (
+                        "canonical_preserved"
+                        if purpose == "canonical"
+                        else spec.handler
+                    ),
                     "missing_column_projection": defaults,
                 }
             missing = {}
             if not shared:
                 for (spec_family, table), spec in specs.items():
-                    if spec_family == family and table not in tables and not spec.canonical_only:
+                    if (
+                        spec_family == family
+                        and table not in tables
+                        and not spec.canonical_only
+                    ):
                         missing[table] = "authenticated_predecessor_absence"
-            report.append({
-                "family": family, "version": version,
-                "subscriptions_version": subscriptions_version,
-                "mobile_member": "none" if shared or (family == "runs" and version == 26) else purpose,
-                "catalog_sha256": hashlib.sha256(repr(catalog).encode()).hexdigest(),
-                "tables": tables, "absent_tables": missing,
-            })
+            report.append(
+                {
+                    "family": family,
+                    "version": version,
+                    "subscriptions_version": subscriptions_version,
+                    "mobile_member": "none"
+                    if shared or (family == "runs" and version == 26)
+                    else purpose,
+                    "catalog_sha256": hashlib.sha256(
+                        repr(catalog).encode()
+                    ).hexdigest(),
+                    "tables": tables,
+                    "absent_tables": missing,
+                }
+            )
     destination = tmp_path / "registered-native-column-inventory.json"
     destination.write_text(json.dumps(report, indent=2, sort_keys=True))
     assert not failures, failures

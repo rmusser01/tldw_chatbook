@@ -102,7 +102,7 @@ def refuse_without_card(
         hold: The Ask hold the probe found, or None below the trigger.
         origin: The send's submission origin.
         queue_entry_id: The claimed queue entry, for a queued send.
-        preserve_composer: True for a Buddy reply: the Console draft stays.
+        preserve_composer: True for Buddy or phone input; keep the composer unchanged.
 
     Returns:
         The refusal to return, or None to go on.
@@ -111,12 +111,9 @@ def refuse_without_card(
     if hold is None:
         return None
     session_id = preparation.session_id
-    draft = controller.store.session_draft(session_id)
-    controller._abandon_preparation(preparation.preparation_id)
-    # Cancelling a manual-origin preparation puts its text in the composer;
-    # a Buddy reply's text stays in Buddy, so give the composer its own back.
-    if preserve_composer and controller.store.session_draft(session_id) != draft:
-        controller.store.set_session_draft(session_id, draft)
+    controller._abandon_preparation(
+        preparation.preparation_id, restore_draft=not preserve_composer
+    )
     return _refuse_send(controller, session_id, hold, origin, queue_entry_id)
 
 

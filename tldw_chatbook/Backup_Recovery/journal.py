@@ -2661,11 +2661,15 @@ class Journal:
             names.remove("mobile-source-claim.json")
         if len(names) > MAX_EVENTS:
             raise ValueError("journal_limit")
+
         def members():
             for name in names:
                 raw = _read(
-                    parent, name, max_bytes=RECOVERY_RECORD_BYTES,
-                    _budget=_budget, _custody=_custody,
+                    parent,
+                    name,
+                    max_bytes=RECOVERY_RECORD_BYTES,
+                    _budget=_budget,
+                    _custody=_custody,
                 )
                 if _budget is not None:
                     _budget.value(raw, text_copies=4)
@@ -2795,10 +2799,33 @@ class Journal:
         generation,
         replacement_profiles=(),
         incoming_credentials=None,
+        _source_archive=None,
+        _source_read_budget=None,
+        _source_journal=None,
+        _source_session=None,
+        _source_cancel=None,
     ):
         """Bind an explicit local publication context; never infer its scope."""
         from .publication import _prepare
 
+        source_options = {}
+        if any(
+            value is not None
+            for value in (
+                _source_archive,
+                _source_read_budget,
+                _source_journal,
+                _source_session,
+                _source_cancel,
+            )
+        ):
+            source_options = {
+                "_source_archive": _source_archive,
+                "_source_read_budget": _source_read_budget,
+                "_source_journal": _source_journal,
+                "_source_session": _source_session,
+                "_source_cancel": _source_cancel,
+            }
         _prepare(
             self,
             candidate,
@@ -2809,6 +2836,7 @@ class Journal:
             generation,
             replacement_profiles=replacement_profiles,
             incoming_credentials=incoming_credentials,
+            **source_options,
         )
 
     def record_candidate(self, stage, plan, archive):

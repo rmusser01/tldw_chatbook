@@ -889,7 +889,16 @@ def _builtin_stage_names(plan):
 
 
 def _preserved_builtin_validation(
-    plan, document, manifest_digest, work, session, cancel
+    plan,
+    document,
+    manifest_digest,
+    work,
+    session,
+    cancel,
+    *,
+    _config_data=None,
+    _read_budget=None,
+    _custody=None,
 ):
     """Copy current authenticated preserved members only for private validation."""
     from .journal import _Object
@@ -897,7 +906,50 @@ def _preserved_builtin_validation(
     from .publication import _observe_safety_source, _safety_source_matches
     from .storage_admission import copy_capture_file
 
-    if plan.local_snapshot is None or not _builtin_sources(plan):
+    installed_data = (
+        _config_data is not None or _read_budget is not None or _custody is not None
+    )
+    if installed_data and (
+        type(_config_data) is not tuple
+        or _read_budget is None
+        or _custody is None
+        or plan.local_snapshot is None
+    ):
+        raise ValueError("mobile_canonical_config_data_changed")
+    if installed_data:
+        from tldw_chatbook.Chat.console_trace_read_budget import _TraceReadBudget
+
+        from .mobile_builtin_preservation import _preservation_budget
+        from .storage_admission import MaintenanceSession, _CaptureFileDescriptors
+
+        if (
+            type(_read_budget) is not _TraceReadBudget
+            or type(_custody) is not _CaptureFileDescriptors
+            or _custody.close_failed
+            or type(session) is not MaintenanceSession
+            or _custody not in session._scopes
+        ):
+            raise ValueError("mobile_canonical_config_data_changed")
+        session._check()
+        _preservation_budget(_read_budget).reserve(512)
+    if plan.local_snapshot is None:
+        return {}, {}
+    has_builtin_work = bool(_builtin_sources(plan))
+    has_history_work = any(
+        item.owner == "agents.history"
+        and item.status == "included_directory"
+        and item.metadata is not None
+        and item.metadata.parent_id is None
+        and item.metadata.root_id == item.logical_id
+        and item.metadata.relative_path == ""
+        and item.logical_id in plan.safety_scope
+        and (item.logical_id, item.path) in plan.preserve
+        for item in plan.target.items
+    )
+    # This is only a work predicate; exact native proof below selects policy.
+    if not has_builtin_work and not has_history_work:
+        if installed_data:
+            raise ValueError("mobile_canonical_config_data_changed")
         return {}, {}
     journal, proof = verify_snapshot_source(plan)
     from .mobile_canonical_copy import _CanonicalCopy
@@ -905,9 +957,22 @@ def _preserved_builtin_validation(
     if type(proof) is _CanonicalCopy:
         from .mobile_builtin_preservation import _mobile_builtin_candidates
 
-        return _mobile_builtin_candidates(
-            plan, proof, document, manifest_digest, work, session, cancel
+        options = (
+            {
+                "_config_data": _config_data,
+                "_read_budget": _read_budget,
+                "_custody": _custody,
+            }
+            if installed_data
+            else {}
         )
+        return _mobile_builtin_candidates(
+            plan, proof, document, manifest_digest, work, session, cancel, **options
+        )
+    if installed_data:
+        raise ValueError("mobile_canonical_config_data_changed")
+    if not _builtin_sources(plan):
+        return {}, {}
     original = load_plan(journal)
     if manifest_digest != proof.manifest_digest:
         raise ValueError("local_snapshot_source_changed")

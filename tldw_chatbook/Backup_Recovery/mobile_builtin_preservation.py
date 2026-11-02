@@ -147,6 +147,34 @@ def _ordinary_builtin_members(document, target, budget):
     return matched
 
 
+def _fixed_mobile_members(
+    document, target, budget, proof, *, _custody=None, _config_data=None
+):
+    """Only installed artwork and the exact native empty history container."""
+    from .mobile_empty_history import _empty_history_members
+
+    members = _ordinary_builtin_members(document, target, budget)
+    if _config_data is None:
+        history = _empty_history_members(
+            document, target, budget, proof, _custody=_custody
+        )
+    else:
+        budget.reserve(512)
+        history = _empty_history_members(
+            document,
+            target,
+            budget,
+            proof,
+            _custody=_custody,
+            _config_data=_config_data,
+        )
+    if any(key in members for key in history):
+        raise ValueError("mobile_canonical_preservation_overlap")
+    budget.container(len(members) + len(history))
+    members.update(history)
+    return members
+
+
 def _verify_current_builtin_files(document, members, budget, *, cancel=None):
     """Read current bytes through the installed source admission and digest."""
     from threading import Event
@@ -187,7 +215,7 @@ def _member_observation(item, record, budget, custody, cancel, read_buffer):
         observe_artifact,
     )
     from .mobile_runs_goal_budget import _serialization
-    from .publication import _observe_safety_source
+    from .publication import _observe_safety_directory, _observe_safety_source
 
     _check(cancel)
     custody.scope.check()
@@ -208,6 +236,13 @@ def _member_observation(item, record, budget, custody, cancel, read_buffer):
         or item.metadata.mtime_ns != record.metadata.mtime_ns
     ):
         raise ValueError("mobile_canonical_builtin_metadata_changed")
+    history_identity = None
+    if item.owner == "agents.history":
+        from .mobile_empty_history import _empty_history_observation
+
+        history_identity = _empty_history_observation(
+            item, record, budget, custody, cancel
+        )
     if directory:
         framing = {
             "safety_directory_metadata": {
@@ -221,7 +256,11 @@ def _member_observation(item, record, budget, custody, cancel, read_buffer):
         _serialization(framing, budget, encoded=True)
         _serialization(framing, budget, encoded=True)
         expected = _evidence_digest(framing)
-        actual = _observe_safety_source(item.path)
+        actual = (
+            _observe_safety_directory(item.path, _custody=custody)
+            if item.owner == "agents.history"
+            else _observe_safety_source(item.path)
+        )
         _check(cancel)
         custody.scope.check()
         if (
@@ -230,6 +269,12 @@ def _member_observation(item, record, budget, custody, cancel, read_buffer):
             or actual["inode"] != info.st_ino
         ):
             raise ValueError("mobile_canonical_builtin_metadata_changed")
+        if (
+            history_identity is not None
+            and _empty_history_observation(item, record, budget, custody, cancel)
+            != history_identity
+        ):
+            raise ValueError("mobile_canonical_history_changed")
         return actual
     if info.st_size != record.size:
         raise ValueError("mobile_canonical_builtin_content_changed")
@@ -273,7 +318,15 @@ def _member_observation(item, record, budget, custody, cancel, read_buffer):
 
 
 def _mobile_source_members(
-    plan, proof, document, manifest_digest, session, *, _read_budget=None, _custody=None
+    plan,
+    proof,
+    document,
+    manifest_digest,
+    session,
+    *,
+    _read_budget=None,
+    _custody=None,
+    _config_data=None,
 ):
     """Fixed authenticated mobile-copy sources under actual new native admission.
 
@@ -304,6 +357,10 @@ def _mobile_source_members(
         or not plan.target.complete
     ):
         raise ValueError("local_snapshot_builtin_native_session_required")
+    if _config_data is not None and (
+        type(_config_data) is not tuple or _read_budget is None or _custody is None
+    ):
+        raise ValueError("mobile_canonical_config_data_changed")
     if _custody is not None and (
         type(_custody) is not _CaptureFileDescriptors
         or _custody not in session._scopes
@@ -339,7 +396,12 @@ def _mobile_source_members(
     }
     if current_configs != expected_configs:
         raise ValueError("mobile_canonical_selector_review_required")
+    if _custody is None:
+        budget.reserve(512)
+        budget.container(len(session._scopes) + 1)
     custody = _CaptureFileDescriptors(None) if _custody is None else _custody
+    if _custody is None:
+        session._scopes.append(custody)
     try:
         _, profiles = bootstrap._records(
             bootstrap.default_bootstrap_root(), _budget=budget, _custody=custody
@@ -366,30 +428,58 @@ def _mobile_source_members(
                 or any(name not in session._names for name in binding["namespaces"])
             ):
                 raise ValueError("mobile_canonical_selector_review_required")
+        for store in proof.prepared.targets:
+            budget.reserve(512 + 16 * len(store.witnesses[-1].path))
+            path = Path(store.witnesses[-1].path)
+            if (
+                sum(
+                    item.owner == store.owner_id and item.path == path
+                    for item in plan.target.items
+                )
+                != 1
+            ):
+                raise ValueError("mobile_canonical_store_review_required")
+        if _config_data is None:
+            members = _fixed_mobile_members(
+                document, plan.target, budget, proof, _custody=custody
+            )
+        else:
+            budget.reserve(512)
+            members = _fixed_mobile_members(
+                document,
+                plan.target,
+                budget,
+                proof,
+                _custody=custody,
+                _config_data=_config_data,
+            )
+        budget.container(
+            len(document.files) + len(document.directories) + 5 * len(members)
+        )
+        records = {
+            row.logical_id: row for row in (*document.files, *document.directories)
+        }
+        budget.container(5)
+        return members, records, profiles, registry, budget
     finally:
         if _custody is None:
             custody.retire()
-    for store in proof.prepared.targets:
-        budget.reserve(512 + 16 * len(store.witnesses[-1].path))
-        path = Path(store.witnesses[-1].path)
-        if (
-            sum(
-                item.owner == store.owner_id and item.path == path
-                for item in plan.target.items
-            )
-            != 1
-        ):
-            raise ValueError("mobile_canonical_store_review_required")
-    members = _ordinary_builtin_members(document, plan.target, budget)
-    budget.container(len(document.files) + len(document.directories) + 5 * len(members))
-    records = {row.logical_id: row for row in (*document.files, *document.directories)}
-    budget.container(5)
-    return members, records, profiles, registry, budget
+            session._scopes.remove(custody)
 
 
 @contextmanager
 def _mobile_bound_sources(
-    plan, proof, document, manifest_digest, work, session, cancel, *, _read_budget=None
+    plan,
+    proof,
+    document,
+    manifest_digest,
+    work,
+    session,
+    cancel,
+    *,
+    _read_budget=None,
+    _custody=None,
+    _config_data=None,
 ):
     """Issue only the existing fixed native source scope after fresh matching."""
     from pathlib import Path
@@ -403,6 +493,15 @@ def _mobile_bound_sources(
         _local,
     )
 
+    if _config_data is not None or _custody is not None:
+        if _config_data is None or _custody is None or _read_budget is None:
+            raise ValueError("mobile_canonical_config_data_changed")
+        _preservation_budget(_read_budget).reserve(512)
+    options = (
+        {}
+        if _config_data is None and _custody is None
+        else {"_config_data": _config_data, "_custody": _custody}
+    )
     members, records, profiles, registry, budget = _mobile_source_members(
         plan,
         proof,
@@ -410,6 +509,7 @@ def _mobile_bound_sources(
         manifest_digest,
         session,
         _read_budget=_read_budget,
+        **options,
     )
     restored = dict(plan.restore)
     files = []
@@ -433,7 +533,10 @@ def _mobile_bound_sources(
     budget.container(
         8 * len(plan.target.items) + len(plan.retire) + len(plan.safety_scope)
     )
-    sources = _stage_read_sources(plan)
+    sources = (
+        *_stage_read_sources(plan),
+        *(item for item in members.values() if item.owner == "agents.history"),
+    )
     for item in sources:
         _check(cancel)
         if item.owner == _OWNER:
@@ -496,6 +599,16 @@ def _mobile_bound_sources(
         ):
             raise ValueError("local_snapshot_builtin_scope_unverified")
         scope.check()
+        from .mobile_empty_history import _verify_empty_history_members
+
+        budget.reserve(512)
+        custody = _CaptureFileDescriptors(scope)
+        try:
+            _verify_empty_history_members(
+                document, members, budget, cancel, custody=custody
+            )
+        finally:
+            custody.retire()
         budget.reserve(256)
         yield members, records, budget, scope
         scope.check()
@@ -503,7 +616,17 @@ def _mobile_bound_sources(
 
 
 def _mobile_builtin_candidates(
-    plan, proof, document, manifest_digest, work, session, cancel
+    plan,
+    proof,
+    document,
+    manifest_digest,
+    work,
+    session,
+    cancel,
+    *,
+    _read_budget=None,
+    _custody=None,
+    _config_data=None,
 ):
     """Produce private validation candidates in the fixed native source scope."""
     import hashlib
@@ -515,8 +638,21 @@ def _mobile_builtin_candidates(
         copy_capture_file,
     )
 
+    if _config_data is not None or _read_budget is not None or _custody is not None:
+        if _config_data is None or _custody is None or _read_budget is None:
+            raise ValueError("mobile_canonical_config_data_changed")
+        _preservation_budget(_read_budget).reserve(512)
+    options = (
+        {}
+        if _config_data is None and _read_budget is None and _custody is None
+        else {
+            "_config_data": _config_data,
+            "_read_budget": _read_budget,
+            "_custody": _custody,
+        }
+    )
     with _mobile_bound_sources(
-        plan, proof, document, manifest_digest, work, session, cancel
+        plan, proof, document, manifest_digest, work, session, cancel, **options
     ) as (members, records, budget, scope):
         if not members:
             return {}, {}
@@ -612,10 +748,18 @@ def _mobile_stage_names(plan, archive, authority, cancel):
             raise ValueError("mobile_canonical_archive_required")
         document = _verify_canonical_archive(proof, archive, plan.archive_digest)
         _current_canonical_target(proof, plan.target, _read_budget=budget)
-        members = _ordinary_builtin_members(document, plan.target, budget)
+        members = _fixed_mobile_members(document, plan.target, budget, proof)
         _verify_current_builtin_files(document, members, budget, cancel=cancel)
+        from .mobile_empty_history import _verify_empty_history_members
+
+        _verify_empty_history_members(
+            document, members, budget, cancel, custody=scope.custody
+        )
         budget.container(3 * len(plan.target.items))
-        sources = _stage_read_sources(plan)
+        sources = (
+            *_stage_read_sources(plan),
+            *(item for item in members.values() if item.owner == "agents.history"),
+        )
         root = bootstrap.default_bootstrap_root()
         if authority.control_root.parent != root:
             raise ValueError("local_snapshot_builtin_scope_unverified")
@@ -805,179 +949,134 @@ def _mobile_safety_members(
             if not members:
                 return members
             roots = {members[item.metadata.root_id].path for item in members.values()}
-            if len(roots) != 1:
-                raise ValueError("mobile_safety_source_binding_unverified")
-            root = next(iter(roots))
-            budget.container(len(plan.restore) + len(plan.retire))
-            writes = (*plan.restore, *plan.retire)
-            budget.container()
-            seen_writes = set()
-            for _, path in writes:
-                # Price possible native Path hash/equality string materialization.
-                budget.reserve(path_cost(path))
-                if path in seen_writes:
-                    continue
-                budget.container(len(seen_writes) + 1)
-                seen_writes.add(path)
-                budget.reserve(512)
-                _price_paths((root, path), budget)
-                if bootstrap._overlap(root, path):
-                    raise ValueError("mobile_safety_source_not_preserved")
-            # Select current held native directory geometry, never a namespace
-            # prefix or profile grant. Only fixed installed members use this path.
-            budget.reserve(1024 + path_cost(root, copies=2))
-            covering = None
-            for name, entry in registry.items():
-                _check(cancel)
-                if (
-                    name not in prepared.publication.namespaces
-                    or name not in session._names
-                    or entry not in session._root_entries
-                    or entry["pending"] is not None
-                    or entry["proposed"]
-                ):
-                    continue
-                budget.reserve(512)
-                native_roots = effective_roots(
-                    entry["roots"],
-                    (entry,),
-                    _read_budget=budget,
-                    _custody=custody,
+            for root in roots:
+                budget.container(len(members))
+                root_members = {
+                    key: item
+                    for key, item in members.items()
+                    if members[item.metadata.root_id].path == root
+                }
+                root_item = next(
+                    item for item in root_members.values() if item.path == root
                 )
-                for bound in native_roots:
-                    if bound not in session._roots:
+                history_names = None
+                if root_item.owner == "agents.history":
+                    config_key = (
+                        ":".join(root_item.logical_id.split(":")[:2]) + ":config"
+                    )
+                    selected_configs = [
+                        item
+                        for item in plan.target.items
+                        if item.logical_id == config_key and item.owner == "config"
+                    ]
+                    if len(selected_configs) != 1:
+                        raise ValueError("mobile_safety_source_binding_unverified")
+                    binding = bootstrap._binding(
+                        selected_configs[0].path,
+                        _profiles,
+                        registry,
+                        _budget=budget,
+                        _custody=custody,
+                    )
+                    if binding is None or any(
+                        name not in session._names for name in binding["namespaces"]
+                    ):
+                        raise ValueError("mobile_safety_source_binding_unverified")
+                    history_names = frozenset(binding["namespaces"])
+                elif root_item.owner != _OWNER:
+                    raise ValueError("mobile_safety_source_binding_unverified")
+                budget.container(len(plan.restore) + len(plan.retire))
+                writes = (*plan.restore, *plan.retire)
+                budget.container()
+                seen_writes = set()
+                for _, path in writes:
+                    # Price possible native Path hash/equality string materialization.
+                    budget.reserve(path_cost(path))
+                    if path in seen_writes:
+                        continue
+                    budget.container(len(seen_writes) + 1)
+                    seen_writes.add(path)
+                    budget.reserve(512)
+                    _price_paths((root, path), budget)
+                    if bootstrap._overlap(root, path):
+                        raise ValueError("mobile_safety_source_not_preserved")
+                # Select current held native directory geometry, never a namespace
+                # prefix or profile grant. Only fixed installed members use this path.
+                budget.reserve(1024 + path_cost(root, copies=2))
+                covering = None
+                for name, entry in registry.items():
+                    _check(cancel)
+                    if (
+                        history_names is not None
+                        and name not in history_names
+                        or name not in prepared.publication.namespaces
+                        or name not in session._names
+                        or entry not in session._root_entries
+                        or entry["pending"] is not None
+                        or entry["proposed"]
+                    ):
                         continue
                     budget.reserve(512)
-                    _price_paths((bound, root), budget, copies=2)
-                    # Missing roots cannot cover this installed source. Other
-                    # real roots in a multi-root namespace remain candidates.
-                    if not os.path.lexists(bound):
-                        continue
-                    resolved = bound.resolve(strict=True)
-                    if (resolved, True) not in session._publication_roots:
-                        continue
-                    budget.container(1)
-                    _price_paths((bound,), budget)
-                    budget.reserve(
-                        path_cost(bound)
-                        + 4096
-                        + 16 * (len(".bootstrap-reader") + 1) * (len(bound.parts) + 2)
+                    native_roots = effective_roots(
+                        entry["roots"],
+                        (entry,),
+                        _read_budget=budget,
+                        _custody=custody,
                     )
-                    with custody.pinned_directory(bound) as bound_fd:
-                        bound_info = os.fstat(bound_fd)
-                        if not stat.S_ISDIR(
-                            bound_info.st_mode
-                        ) or not _contains_owned_path(bound, root, _custody=custody):
+                    for bound in native_roots:
+                        if bound not in session._roots:
                             continue
-                        budget.container(3)
-                        covering = bound, bound_info.st_dev, bound_info.st_ino
-                    break
-                if covering is not None:
-                    break
-            if covering is None:
-                raise ValueError("mobile_safety_source_binding_unverified")
-            # Group only existing member paths for this one verification call.
-            # No descriptor, resolved path or source proof survives this call.
-            budget.container(len(members))
-            parents = {}
-            for key, item in members.items():
-                _check(cancel)
-                budget.reserve(512 + path_cost(item.path, copies=2))
-                item_parent_path = item.path.parent
-                if item_parent_path not in parents:
-                    budget.container()
-                    parents[item_parent_path] = []
-                budget.container(2)
-                budget.container(len(parents[item_parent_path]) + 1)
-                parents[item_parent_path].append((key, item))
-            budget.reserve(path_cost(root, copies=4) + 4096)
-            with custody.pinned_directory(root) as root_fd:
-                root_info = os.fstat(root_fd)
-                for item_parent_path, children in parents.items():
+                        budget.reserve(512)
+                        _price_paths((bound, root), budget, copies=2)
+                        # Missing roots cannot cover this installed source. Other
+                        # real roots in a multi-root namespace remain candidates.
+                        if not os.path.lexists(bound):
+                            continue
+                        resolved = bound.resolve(strict=True)
+                        if (resolved, True) not in session._publication_roots:
+                            continue
+                        budget.container(1)
+                        _price_paths((bound,), budget)
+                        budget.reserve(
+                            path_cost(bound)
+                            + 4096
+                            + 16
+                            * (len(".bootstrap-reader") + 1)
+                            * (len(bound.parts) + 2)
+                        )
+                        with custody.pinned_directory(bound) as bound_fd:
+                            bound_info = os.fstat(bound_fd)
+                            if not stat.S_ISDIR(
+                                bound_info.st_mode
+                            ) or not _contains_owned_path(
+                                bound, root, _custody=custody
+                            ):
+                                continue
+                            budget.container(3)
+                            covering = bound, bound_info.st_dev, bound_info.st_ino
+                        break
+                    if covering is not None:
+                        break
+                if covering is None:
+                    raise ValueError("mobile_safety_source_binding_unverified")
+                # Group only existing member paths for this one verification call.
+                # No descriptor, resolved path or source proof survives this call.
+                budget.container(len(members))
+                parents = {}
+                for key, item in root_members.items():
                     _check(cancel)
-                    budget.container(1)
-                    _price_paths((item_parent_path,), budget)
-                    budget.reserve(
-                        path_cost(item_parent_path)
-                        + 16
-                        * (len(".bootstrap-reader") + 1)
-                        * (len(item_parent_path.parts) + 2)
-                    )
-                    budget.container(os.stat_result.n_fields)
+                    budget.reserve(512 + path_cost(item.path, copies=2))
+                    item_parent_path = item.path.parent
+                    if item_parent_path not in parents:
+                        budget.container()
+                        parents[item_parent_path] = []
                     budget.container(2)
-                    with custody.pinned_directory(item_parent_path) as item_parent:
-                        parent_info = os.fstat(item_parent)
-                        for key, item in children:
-                            _check(cancel)
-                            # The new leaf stat, fixed comparison tuples and native
-                            # expected-frame model are distinct from the parent walk.
-                            budget.container(os.stat_result.n_fields)
-                            budget.reserve(64 * (os.stat_result.n_fields + 12))
-                            budget.container(16)
-                            record = records[key]
-                            if (
-                                key not in plan.safety_scope
-                                or (key, item.path) not in plan.preserve
-                            ):
-                                raise ValueError("mobile_safety_source_not_preserved")
-                            info = os.stat(
-                                item.path.name,
-                                dir_fd=item_parent,
-                                follow_symlinks=False,
-                            )
-                            observed = observations.get(key)
-                            directory = item.status == "included_directory"
-                            if (
-                                observed is None
-                                or observed.owner_id != _OWNER
-                                or observed.source.path != str(item.path)
-                                or observed.source.kind
-                                != ("directory" if directory else "file")
-                                or (observed.source.device, observed.source.inode)
-                                != (info.st_dev, info.st_ino)
-                                or (
-                                    stat.S_ISDIR(info.st_mode)
-                                    if directory
-                                    else stat.S_ISREG(info.st_mode)
-                                )
-                                is False
-                                or stat.S_IMODE(info.st_mode) != record.metadata.mode
-                                or info.st_mtime_ns != record.metadata.mtime_ns
-                            ):
-                                raise ValueError("mobile_safety_source_changed")
-                            if directory:
-                                framing = {
-                                    "safety_directory_metadata": {
-                                        "device": info.st_dev,
-                                        "inode": info.st_ino,
-                                        "mode": stat.S_IMODE(info.st_mode),
-                                        "mtime_ns": info.st_mtime_ns,
-                                        "ctime_ns": info.st_ctime_ns,
-                                    }
-                                }
-                                expected_size = 0
-                            else:
-                                if info.st_size != record.size:
-                                    raise ValueError("mobile_safety_source_changed")
-                                framing = (
-                                    (
-                                        "",
-                                        "file",
-                                        record.size,
-                                        record.sha256,
-                                        stat.S_IMODE(info.st_mode),
-                                        info.st_mtime_ns,
-                                    ),
-                                )
-                                expected_size = record.size
-                            # Native _safety_source_matches just reobserved this exact
-                            # prepared Object; bind it to the authenticated raw member.
-                            _serialization(framing, budget, encoded=True)
-                            if (
-                                observed.source.size != expected_size
-                                or observed.source.sha256 != _evidence_digest(framing)
-                            ):
-                                raise ValueError("mobile_safety_source_changed")
+                    budget.container(len(parents[item_parent_path]) + 1)
+                    parents[item_parent_path].append((key, item))
+                budget.reserve(path_cost(root, copies=4) + 4096)
+                with custody.pinned_directory(root) as root_fd:
+                    root_info = os.fstat(root_fd)
+                    for item_parent_path, children in parents.items():
                         _check(cancel)
                         budget.container(1)
                         _price_paths((item_parent_path,), budget)
@@ -989,40 +1088,145 @@ def _mobile_safety_members(
                         )
                         budget.container(os.stat_result.n_fields)
                         budget.container(2)
-                        with custody.pinned_directory(
-                            item_parent_path
-                        ) as current_parent:
-                            parent_after = os.fstat(current_parent)
-                            if (parent_info.st_dev, parent_info.st_ino) != (
-                                parent_after.st_dev,
-                                parent_after.st_ino,
-                            ):
-                                raise ValueError("mobile_safety_source_changed")
-                budget.reserve(path_cost(root, copies=2) + 512)
-                with custody.pinned_directory(root) as current_root:
-                    current_root_info = os.fstat(current_root)
-                    if (current_root_info.st_dev, current_root_info.st_ino) != (
-                        root_info.st_dev,
-                        root_info.st_ino,
+                        with custody.pinned_directory(item_parent_path) as item_parent:
+                            parent_info = os.fstat(item_parent)
+                            for key, item in children:
+                                _check(cancel)
+                                # The new leaf stat, fixed comparison tuples and native
+                                # expected-frame model are distinct from the parent walk.
+                                budget.container(os.stat_result.n_fields)
+                                budget.reserve(64 * (os.stat_result.n_fields + 12))
+                                budget.container(16)
+                                record = records[key]
+                                if (
+                                    key not in plan.safety_scope
+                                    or (key, item.path) not in plan.preserve
+                                ):
+                                    raise ValueError(
+                                        "mobile_safety_source_not_preserved"
+                                    )
+                                info = os.stat(
+                                    item.path.name,
+                                    dir_fd=item_parent,
+                                    follow_symlinks=False,
+                                )
+                                observed = observations.get(key)
+                                directory = item.status == "included_directory"
+                                if (
+                                    observed is None
+                                    or observed.owner_id != item.owner
+                                    or observed.source.path != str(item.path)
+                                    or observed.source.kind
+                                    != ("directory" if directory else "file")
+                                    or (observed.source.device, observed.source.inode)
+                                    != (info.st_dev, info.st_ino)
+                                    or (
+                                        stat.S_ISDIR(info.st_mode)
+                                        if directory
+                                        else stat.S_ISREG(info.st_mode)
+                                    )
+                                    is False
+                                    or stat.S_IMODE(info.st_mode)
+                                    != record.metadata.mode
+                                    or info.st_mtime_ns != record.metadata.mtime_ns
+                                ):
+                                    raise ValueError("mobile_safety_source_changed")
+                                history_identity = None
+                                if item.owner == "agents.history":
+                                    from .mobile_empty_history import (
+                                        _empty_history_observation,
+                                    )
+
+                                    history_identity = _empty_history_observation(
+                                        item, record, budget, custody, cancel
+                                    )
+                                if directory:
+                                    framing = {
+                                        "safety_directory_metadata": {
+                                            "device": info.st_dev,
+                                            "inode": info.st_ino,
+                                            "mode": stat.S_IMODE(info.st_mode),
+                                            "mtime_ns": info.st_mtime_ns,
+                                            "ctime_ns": info.st_ctime_ns,
+                                        }
+                                    }
+                                    expected_size = 0
+                                else:
+                                    if info.st_size != record.size:
+                                        raise ValueError("mobile_safety_source_changed")
+                                    framing = (
+                                        (
+                                            "",
+                                            "file",
+                                            record.size,
+                                            record.sha256,
+                                            stat.S_IMODE(info.st_mode),
+                                            info.st_mtime_ns,
+                                        ),
+                                    )
+                                    expected_size = record.size
+                                # Native _safety_source_matches just reobserved this exact
+                                # prepared Object; bind it to the authenticated raw member.
+                                _serialization(framing, budget, encoded=True)
+                                if (
+                                    observed.source.size != expected_size
+                                    or observed.source.sha256
+                                    != _evidence_digest(framing)
+                                ):
+                                    raise ValueError("mobile_safety_source_changed")
+                                if (
+                                    history_identity is not None
+                                    and _empty_history_observation(
+                                        item, record, budget, custody, cancel
+                                    )
+                                    != history_identity
+                                ):
+                                    raise ValueError("mobile_safety_source_changed")
+                            _check(cancel)
+                            budget.container(1)
+                            _price_paths((item_parent_path,), budget)
+                            budget.reserve(
+                                path_cost(item_parent_path)
+                                + 16
+                                * (len(".bootstrap-reader") + 1)
+                                * (len(item_parent_path.parts) + 2)
+                            )
+                            budget.container(os.stat_result.n_fields)
+                            budget.container(2)
+                            with custody.pinned_directory(
+                                item_parent_path
+                            ) as current_parent:
+                                parent_after = os.fstat(current_parent)
+                                if (parent_info.st_dev, parent_info.st_ino) != (
+                                    parent_after.st_dev,
+                                    parent_after.st_ino,
+                                ):
+                                    raise ValueError("mobile_safety_source_changed")
+                    budget.reserve(path_cost(root, copies=2) + 512)
+                    with custody.pinned_directory(root) as current_root:
+                        current_root_info = os.fstat(current_root)
+                        if (current_root_info.st_dev, current_root_info.st_ino) != (
+                            root_info.st_dev,
+                            root_info.st_ino,
+                        ):
+                            raise ValueError("mobile_safety_source_changed")
+                # A session records publication path/kind, not a root inode. Reopen
+                # the exact covering path to prove this call's physical continuity.
+                bound, device, inode = covering
+                budget.reserve(512)
+                _price_paths((bound,), budget)
+                budget.reserve(
+                    path_cost(bound)
+                    + 4096
+                    + 16 * (len(".bootstrap-reader") + 1) * (len(bound.parts) + 2)
+                )
+                with custody.pinned_directory(bound) as current_bound:
+                    info = os.fstat(current_bound)
+                    if not stat.S_ISDIR(info.st_mode) or (info.st_dev, info.st_ino) != (
+                        device,
+                        inode,
                     ):
-                        raise ValueError("mobile_safety_source_changed")
-            # A session records publication path/kind, not a root inode. Reopen
-            # the exact covering path to prove this call's physical continuity.
-            bound, device, inode = covering
-            budget.reserve(512)
-            _price_paths((bound,), budget)
-            budget.reserve(
-                path_cost(bound)
-                + 4096
-                + 16 * (len(".bootstrap-reader") + 1) * (len(bound.parts) + 2)
-            )
-            with custody.pinned_directory(bound) as current_bound:
-                info = os.fstat(current_bound)
-                if not stat.S_ISDIR(info.st_mode) or (info.st_dev, info.st_ino) != (
-                    device,
-                    inode,
-                ):
-                    raise ValueError("mobile_safety_source_binding_unverified")
+                        raise ValueError("mobile_safety_source_binding_unverified")
             _check(cancel)
             session._check()
             return members

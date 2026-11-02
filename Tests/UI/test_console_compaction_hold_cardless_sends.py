@@ -53,9 +53,10 @@ def _rows(controller, session_id, role):
     ]
 
 
+@pytest.mark.parametrize("producer", ["composer", "phone"])
 @private_profile_test
 async def test_a_queued_send_over_the_ask_trigger_returns_to_the_queue_not_failed(
-    request, monkeypatch, tmp_path
+    request, monkeypatch, tmp_path, producer
 ):
     """The second reply crosses the trigger while a follow-up waits in the queue.
 
@@ -63,6 +64,19 @@ async def test_a_queued_send_over_the_ask_trigger_returns_to_the_queue_not_faile
     must not leave a Failed assistant row or a dispatch-recovery panel, and
     must wait at the head of the paused queue with the reason shown.
     """
+    if producer == "phone":
+        from functools import partial
+
+        from Tests.UI import test_console_compaction_hold_flow as hold_controls
+        from tldw_chatbook import config
+
+        monkeypatch.setattr(
+            hold_controls,
+            "_build_test_app",
+            partial(
+                hold_controls._build_test_app, user_data_dir=config.get_user_data_dir()
+            ),
+        )
     app, database, host, _adapter, adapter_calls = await _held_console(
         monkeypatch, tmp_path
     )
@@ -99,14 +113,69 @@ async def test_a_queued_send_over_the_ask_trigger_returns_to_the_queue_not_faile
                 await asyncio.sleep(0.05)
             assert entered.is_set(), "the second send never reached the provider"
 
-            # The live turn turns Send into Queue: queue through the screen.
-            console._console_composer_or_none().load_draft(_FOLLOW_UP)
-            await asyncio.wait_for(
-                console._send_console_message_from_visible_action(
-                    session_id=session.id
-                ),
-                10,
-            )
+            # Both explicit producers enter the same native queued owner.
+            phone_prompt = None
+            if producer == "composer":
+                console._console_composer_or_none().load_draft(_FOLLOW_UP)
+                await asyncio.wait_for(
+                    console._send_console_message_from_visible_action(
+                        session_id=session.id
+                    ),
+                    10,
+                )
+            else:
+                from types import SimpleNamespace
+
+                from Tests.Chat.test_console_received_intent_inputs import _attachment
+                from Tests.Chat.test_console_received_intent_transitions import (
+                    _command_owner,
+                    _outcome,
+                )
+
+                store = controller.store
+                store.set_session_draft(session.id, "desktop queued sentinel")
+                attachment = _attachment("desktop-only")
+                store.add_pending_attachment(session.id, attachment)
+                store.set_session_one_shot_prefill(session.id, "desktop prefill")
+                from tldw_chatbook.Chat.console_live_work import ConsoleLiveWorkLaunch
+
+                staged = ConsoleLiveWorkLaunch.from_values(
+                    source="rag",
+                    title="Desktop staged source",
+                    payload={"source_id": "desktop-only-rag"},
+                )
+                runtime.stage_console_staged_evidence(staged)
+                desktop_before = (session.draft, session.draft_revision)
+                commands, target, revisions = _command_owner(
+                    SimpleNamespace(session=session, runtime=runtime)
+                )
+                turn_id = await commands.send(
+                    target, _FOLLOW_UP, "phone-queued-ask", expected_revisions=revisions
+                )
+                queued_record = runtime._turn_custody[turn_id]
+                proof = queued_record.received_intent.recovery_user_origin
+                assert (await asyncio.wait_for(_outcome(queued_record), 30)).applied
+                phone_prompt = controller.prompt_queue_registry._states[
+                    session.id
+                ].waiting[0]
+                phone_request = phone_prompt.custody_request
+                assert phone_request.configuration.recovery_user_origin is proof
+                assert phone_request.input_origin == "command"
+                recovery = runtime.ensure_archive_recovery()
+                assert recovery._proofs[id(proof)] is proof
+                assert id(proof) not in recovery._accepted_proofs
+                accepted_proof = []
+                native_accept = recovery.accept_user_proof
+
+                def observe_accept(candidate, session_id, turn_id):
+                    native_accept(candidate, session_id, turn_id)
+                    if candidate is proof:
+                        assert session_id == session.id
+                        assert recovery._accepted_proofs[id(proof)] == (proof, turn_id)
+                        assert id(proof) not in recovery._proofs
+                        accepted_proof.append(turn_id)
+
+                monkeypatch.setattr(recovery, "accept_user_proof", observe_accept)
             queued = controller.prompt_queue_registry.snapshot(session.id)
             assert queued.total_count == 1, queued
             release.set()
@@ -137,6 +206,21 @@ async def test_a_queued_send_over_the_ask_trigger_returns_to_the_queue_not_faile
             assert snapshot.mode is PromptQueueMode.PAUSED
             assert snapshot.pause_reason is PromptQueuePauseReason.DISPATCH_REFUSED
             assert snapshot.entries[0].preview.startswith("queued follow-up")
+            if producer == "phone":
+                current_prompt = controller.prompt_queue_registry._states[
+                    session.id
+                ].waiting[0]
+                assert current_prompt is phone_prompt
+                assert current_prompt.custody_request is phone_request
+                assert (session.draft, session.draft_revision) == desktop_before
+                assert store.pending_attachments(session.id) == [attachment]
+                assert session.one_shot_prefill == "desktop prefill"
+                assert runtime.snapshot_console_staged_evidence()[0] is staged
+                # Native provenance is single-use. Refused promotion ends its
+                # custody even while the immutable queue request remains inert.
+                assert accepted_proof == [phone_request.turn_id]
+                assert id(proof) not in recovery._proofs
+                assert id(proof) not in recovery._accepted_proofs
             systems = [
                 row.content
                 for row in _rows(controller, session.id, ConsoleMessageRole.SYSTEM)
@@ -279,16 +363,28 @@ async def test_a_sigil_composer_send_without_capture_is_refused_before_commit(
 
 
 @private_profile_test
-async def test_a_buddy_reply_over_the_ask_trigger_is_refused_before_commit(
-    request, monkeypatch, tmp_path
+@pytest.mark.parametrize("producer", ("buddy", "phone"))
+async def test_a_cardless_reply_over_the_ask_trigger_is_refused_before_commit(
+    request, monkeypatch, tmp_path, producer
 ):
-    """A Persona Buddy reply (``preserve_composer=True``) cannot show the card.
+    """Native Buddy and authenticated phone sends refuse before adapter contact.
 
-    Buddy calls ``submit_draft(text, session_id=..., preserve_composer=True)``
-    (UI/Navigation/buddy_conversation.py) and keeps its own draft when the
-    result is not accepted. Over the Ask trigger the reply must be refused
-    with the reason, before commit, and leave the Console composer alone.
+    The phone uses real remote capture, opaque provenance and runtime custody;
+    both producers leave the held desktop draft and its revision unchanged.
     """
+    if producer == "phone":
+        from functools import partial
+
+        from Tests.UI import test_console_compaction_hold_flow as hold_controls
+        from tldw_chatbook import config
+
+        monkeypatch.setattr(
+            hold_controls,
+            "_build_test_app",
+            partial(
+                hold_controls._build_test_app, user_data_dir=config.get_user_data_dir()
+            ),
+        )
     app, database, host, adapter, adapter_calls = await _held_console(
         monkeypatch, tmp_path
     )
@@ -299,7 +395,12 @@ async def test_a_buddy_reply_over_the_ask_trigger_is_refused_before_commit(
                 host, pilot, monkeypatch, adapter, adapter_calls
             )
             card = console.query_one(TraceCallRecoveryCallout)
-            card.query_one("#console-trace-cancel", Button).press()
+            if producer == "phone":
+                held = controller.store.preparation_for_session(session.id)
+                assert held is not None
+                controller.cancel_library_preparation(held.preparation_id)
+            else:
+                card.query_one("#console-trace-cancel", Button).press()
             for _ in range(100):
                 await console._sync_native_console_chat_ui()
                 await pilot.pause(0.1)
@@ -317,36 +418,335 @@ async def test_a_buddy_reply_over_the_ask_trigger_is_refused_before_commit(
                 for row in _rows(controller, session.id, ConsoleMessageRole.ASSISTANT)
             )
 
-            result = await asyncio.wait_for(
-                controller.submit_draft(
-                    "buddy reply: thanks, continue.",
-                    session_id=session.id,
-                    preserve_composer=True,
-                ),
-                30,
-            )
+            draft_revision = session.draft_revision
+            reply = f"{producer} reply: thanks, continue."
+            if producer == "buddy":
+                result = await asyncio.wait_for(
+                    controller.submit_draft(
+                        reply,
+                        session_id=session.id,
+                        preserve_composer=True,
+                    ),
+                    30,
+                )
+            else:
+                from types import SimpleNamespace
+
+                from Tests.Chat.test_console_received_intent_transitions import (
+                    _command_owner,
+                    _outcome,
+                )
+
+                commands, target, revisions = _command_owner(
+                    SimpleNamespace(session=session, runtime=runtime)
+                )
+                turn_id = await commands.send(
+                    target,
+                    reply,
+                    "phone-compaction-refusal",
+                    expected_revisions=revisions,
+                )
+                record = runtime._turn_custody[turn_id]
+                proof = record.received_intent.recovery_user_origin
+                recovery = runtime.ensure_archive_recovery()
+                assert recovery._proofs[id(proof)] is proof
+                result = await asyncio.wait_for(_outcome(record), 30)
+                from tldw_chatbook.Chat.console_runtime import _ConsoleTurnRefusedError
+
+                assert type(result) is _ConsoleTurnRefusedError, result
+                assert result.card_held is False
+                assert result.preparation_id is None
+                assert id(proof) not in recovery._proofs
+                assert id(proof) not in recovery._accepted_proofs
+            assert session.draft_revision == draft_revision
             await console._sync_native_console_chat_ui()
             await pilot.pause()
 
-            assert not result.accepted, result
-            assert result.visible_copy.startswith("Not sent:"), result.visible_copy
-            assert "/compact" in result.visible_copy
+            if producer == "phone":
+                refusal_copy = result.reason
+            else:
+                assert not result.accepted, result
+                refusal_copy = result.visible_copy
+            assert refusal_copy.startswith("Not sent:"), refusal_copy
+            assert "/compact" in refusal_copy
             assert len(adapter_calls) == calls
             users = [
                 row.content
                 for row in _rows(controller, session.id, ConsoleMessageRole.USER)
             ]
-            assert "buddy reply: thanks, continue." not in users
+            assert reply not in users
             assert failed_before == sum(
                 row.status == "failed"
                 for row in _rows(controller, session.id, ConsoleMessageRole.ASSISTANT)
             )
-            assert runtime.recoveries_for_session(session.id) == ()
+            recoveries = runtime.recoveries_for_session(session.id)
+            if producer == "phone":
+                assert len(recoveries) == 1
+                recovery_entry = recoveries[0]
+                assert recovery_entry.turn_id == turn_id
+                assert recovery_entry.draft == reply
+                assert recovery_entry.reason == refusal_copy
+                assert recovery_entry.preparation_id is None
+            else:
+                assert recoveries == ()
             assert controller.store.preparation_for_session(session.id) is None
             # The Console composer keeps the user's own held draft.
             assert controller.store.session_draft(session.id) == held_draft
             assert composer.draft_text() == held_draft
             assert "waiting for dispatch" not in _frame(host)
+    finally:
+        if console is not None:
+            await console._console_runtime().dispose()
+        database.close()
+
+
+@private_profile_test
+@pytest.mark.parametrize(
+    ("desktop_draft", "streaming", "late_edit"),
+    (
+        ("", False, False),
+        ("desktop B", False, False),
+        ("phone reply", False, False),
+        ("desktop B", False, True),
+        ("desktop B", True, False),
+    ),
+)
+async def test_phone_ask_refusal_keeps_both_background_composers(
+    request, monkeypatch, tmp_path, desktop_draft, streaming, late_edit
+):
+    from dataclasses import replace
+    from functools import partial
+    from types import SimpleNamespace
+
+    from Tests.Chat.test_console_received_intent_transitions import (
+        _command_owner,
+        _outcome,
+    )
+    from Tests.UI import test_console_compaction_hold_flow as hold_controls
+    from tldw_chatbook import config
+    from tldw_chatbook.Chat.console_runtime import _ConsoleTurnRefusedError
+
+    monkeypatch.setattr(
+        hold_controls,
+        "_build_test_app",
+        partial(
+            hold_controls._build_test_app, user_data_dir=config.get_user_data_dir()
+        ),
+    )
+    _, database, host, adapter, adapter_calls = await _held_console(
+        monkeypatch, tmp_path
+    )
+    console = None
+    try:
+        async with host.run_test(size=(100, 32)) as pilot:
+            console, controller, phone, runtime, _ = await _drive_to_hold(
+                host, pilot, monkeypatch, adapter, adapter_calls
+            )
+            store = controller.store
+            held = store.preparation_for_session(phone.id)
+            controller.cancel_library_preparation(held.preparation_id)
+            gateway = controller.provider_gateway
+            # End only the setup helper's non-streaming override; use the actual
+            # native provider resolution with the target session's real setting.
+            monkeypatch.setattr(
+                gateway,
+                "resolve_for_send",
+                type(gateway).resolve_for_send.__get__(gateway),
+            )
+            store.replace_session_settings(
+                phone.id, replace(phone.settings, streaming=streaming)
+            )
+            desktop = store.create_session()
+            await console._sync_native_console_chat_ui()
+            console._console_composer_or_none().load_draft("desktop A sentinel")
+            console._session._sync_console_session_draft()
+            store.set_session_draft(phone.id, desktop_draft)
+            assert store.active_session_id == desktop.id
+            before = tuple(
+                (s.id, s.draft, s.draft_revision, s.settings_revision)
+                for s in store.sessions()
+            )
+            rows_before = tuple(
+                (m.id, m.role, m.status)
+                for m in store.messages_for_session(phone.id)
+                if m.role is not ConsoleMessageRole.SYSTEM
+            )
+            calls_before = len(adapter_calls)
+            cancelled = []
+            native_cancel = store.cancel_preparation
+            record = None
+
+            def observe_cancel(
+                session_id, preparation_id, *, expected_state, restore_draft=True
+            ):
+                nonlocal before
+                preparation = store.preparation_for_session(phone.id)
+                assert (
+                    preparation is not None
+                    and preparation.preparation_id == preparation_id
+                )
+                assert preparation.input_draft_revision is None
+                assert (
+                    record.request.configuration.provider_selection.streaming
+                    is streaming
+                )
+                if late_edit:
+                    store.set_session_draft(
+                        phone.id, "desktop B edited while phone prepared"
+                    )
+                    store.set_session_draft(desktop.id, "desktop A late sentinel")
+                    store.replace_session_settings(
+                        phone.id, replace(phone.settings, temperature=0.37)
+                    )
+                    before = tuple(
+                        (s.id, s.draft, s.draft_revision, s.settings_revision)
+                        for s in store.sessions()
+                    )
+                cancelled.append(restore_draft)
+                return native_cancel(
+                    session_id,
+                    preparation_id,
+                    expected_state=expected_state,
+                    restore_draft=restore_draft,
+                )
+
+            monkeypatch.setattr(store, "cancel_preparation", observe_cancel)
+            commands, target, revisions = _command_owner(
+                SimpleNamespace(session=phone, runtime=runtime)
+            )
+            turn_id = await commands.send(
+                target,
+                "phone reply",
+                "phone-background-refusal",
+                expected_revisions=revisions,
+            )
+            record = runtime._turn_custody[turn_id]
+            proof = record.received_intent.recovery_user_origin
+            recovery = runtime.ensure_archive_recovery()
+            assert recovery._proofs[id(proof)] is proof
+            outcome = await asyncio.wait_for(_outcome(record), 30)
+            assert type(outcome) is _ConsoleTurnRefusedError, outcome
+            assert (
+                outcome.reason.startswith("Not sent:") and "/compact" in outcome.reason
+            )
+            assert cancelled == [False]
+            assert (
+                tuple(
+                    (s.id, s.draft, s.draft_revision, s.settings_revision)
+                    for s in store.sessions()
+                )
+                == before
+            )
+            assert store.active_session_id == desktop.id
+            assert len(adapter_calls) == calls_before
+            assert (
+                tuple(
+                    (m.id, m.role, m.status)
+                    for m in store.messages_for_session(phone.id)
+                    if m.role is not ConsoleMessageRole.SYSTEM
+                )
+                == rows_before
+            )
+            assert store.preparation_for_session(phone.id) is None
+            assert (
+                id(proof) not in recovery._proofs
+                and id(proof) not in recovery._accepted_proofs
+            )
+            entries = runtime.recoveries_for_session(phone.id)
+            assert len(entries) == 1 and entries[0].turn_id == turn_id
+            assert (
+                entries[0].draft == "phone reply"
+                and entries[0].reason == outcome.reason
+            )
+            assert runtime.recoveries_for_session(desktop.id) == ()
+    finally:
+        if console is not None:
+            await console._console_runtime().dispose()
+        database.close()
+
+
+@private_profile_test
+async def test_background_phone_below_ask_trigger_uses_native_nonstreaming_send(
+    request, monkeypatch, tmp_path
+):
+    from dataclasses import replace
+    from functools import partial
+    from types import SimpleNamespace
+
+    from Tests.Chat.test_console_received_intent_transitions import (
+        _command_owner,
+        _outcome,
+    )
+    from Tests.UI import test_console_compaction_hold_flow as hold_controls
+    from tldw_chatbook import config
+
+    monkeypatch.setattr(
+        hold_controls,
+        "_build_test_app",
+        partial(
+            hold_controls._build_test_app, user_data_dir=config.get_user_data_dir()
+        ),
+    )
+    _, database, host, adapter, adapter_calls = await _held_console(
+        monkeypatch, tmp_path
+    )
+    console = None
+    try:
+        async with host.run_test(size=(100, 32)) as pilot:
+            console, controller, phone, runtime, _ = await _ask_console(
+                host, pilot, monkeypatch, adapter
+            )
+            gateway = controller.provider_gateway
+            monkeypatch.setattr(
+                gateway,
+                "resolve_for_send",
+                type(gateway).resolve_for_send.__get__(gateway),
+            )
+            store = controller.store
+            store.replace_session_settings(
+                phone.id, replace(phone.settings, streaming=False)
+            )
+            store.set_session_draft(phone.id, "desktop B untouched")
+            desktop = store.create_session()
+            await console._sync_native_console_chat_ui()
+            console._console_composer_or_none().load_draft("desktop A untouched")
+            console._session._sync_console_session_draft()
+            before = tuple((s.id, s.draft, s.draft_revision) for s in store.sessions())
+            commands, target, revisions = _command_owner(
+                SimpleNamespace(session=phone, runtime=runtime)
+            )
+            turn_id = await commands.send(
+                target,
+                "phone short question",
+                "phone-below-trigger",
+                expected_revisions=revisions,
+            )
+            record = runtime._turn_custody[turn_id]
+            proof = record.received_intent.recovery_user_origin
+            recovery = runtime.ensure_archive_recovery()
+            assert recovery._proofs[id(proof)] is proof
+            outcome = await asyncio.wait_for(_outcome(record), 30)
+            assert not isinstance(outcome, BaseException), outcome
+            assert outcome.accepted
+            assert len(adapter_calls) == 1
+            assert adapter_calls[0]["streaming"] is False
+            assert [
+                m.content for m in _rows(controller, phone.id, ConsoleMessageRole.USER)
+            ] == ["phone short question"]
+            answers = _rows(controller, phone.id, ConsoleMessageRole.ASSISTANT)
+            assert len(answers) == 1 and answers[0].content.startswith("answer-1 ")
+            assert answers[0].status != "failed"
+            assert (
+                tuple((s.id, s.draft, s.draft_revision) for s in store.sessions())
+                == before
+            )
+            assert store.active_session_id == desktop.id
+            assert store.preparation_for_session(phone.id) is None
+            assert runtime.recoveries_for_session(phone.id) == ()
+            assert (
+                id(proof) not in recovery._proofs
+                and id(proof) not in recovery._accepted_proofs
+            )
     finally:
         if console is not None:
             await console._console_runtime().dispose()

@@ -988,6 +988,21 @@ continuation ownership still apply. Native `preserve_composer` behavior protects
 drafts and acceptance callbacks through prepared continuations and durable
 acceptance. Buddy's existing composer guards remain unchanged.
 
+At the Ask compaction threshold, a phone command uses the native cardless refusal
+before durable acceptance. Native cancellation passes `restore_draft=False` for
+command input, preserving desktop text and revision even when it changes during
+preparation. It does not reconstruct a saved composer afterward. The forecast
+still describes only the active desktop composer; admission checks the captured
+phone request. Compaction cards and `/compact` remain native desktop controls.
+
+Validated explicit phone Send issues the existing opaque user-origin proof.
+Successful initial queue transfer retains that exact proof in the immutable
+request; actual promotion accepts it once. Refused promotion releases it from
+both native proof maps while retaining the paused request/body. The retained
+request does not preserve reusable archive-recovery provenance after refusal,
+and no generic promotion or automatic path reissues it. Native Library policy,
+answerability and destination gates still apply independently.
+
 `send()` returns the custody turn ID while it is Preparing. `execute()` returns
 body-free `state`, optional `native_id`, and `reason`: Send is `pending`, guidance
 is `queued`, accepted Stop is `accepted`, and native refusal is `refused`.

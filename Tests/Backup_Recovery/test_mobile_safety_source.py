@@ -122,10 +122,23 @@ def test_native_default_prepared_case_never_enters_mobile_alternative(
         budget = _TraceReadBudget()
         assert (
             replacement._checked_originals(
-                plan, journal, session, _source_read_budget=budget
+                plan,
+                journal,
+                session,
+                _source_archive=None,
+                _source_read_budget=None,
+                _source_journal=None,
             )
             == expected
         )
+        # R176 keeps genuine ordinary all-None behavior; a partial mobile tuple
+        # now refuses before journal acquisition or consumption of the allowance.
+        with monkeypatch.context() as isolated:
+            isolated.setattr(journal, "_locked", unexpected)
+            with pytest.raises(ValueError, match="^mobile_safety_source_required$"):
+                replacement._checked_originals(
+                    plan, journal, session, _source_read_budget=budget
+                )
         assert budget._remaining == 16 * 1024**2
 
 
@@ -141,10 +154,15 @@ def test_profile_owned_builtin_retains_original_path(
     calls = []
 
     def checked(*args, **kwargs):
-        # Genuine generic prepared case, with an unused optional allowance.
+        # The genuine ordinary call retains its native capture behavior.
+        # A partial mobile source tuple must not acquire even this real journal.
         budget = _TraceReadBudget()
-        result = native(*args, **kwargs, _source_read_budget=budget)
+        with monkeypatch.context() as isolated:
+            isolated.setattr(args[1], "_locked", unexpected)
+            with pytest.raises(ValueError, match="^mobile_safety_source_required$"):
+                native(*args, **kwargs, _source_read_budget=budget)
         assert budget._remaining == 16 * 1024**2
+        result = native(*args, **kwargs)
         calls.append(result)
         return result
 

@@ -69,7 +69,11 @@ def _workspace_rows(workspace, *, _read_budget):
         spec = specs[row.table]
         keys = tuple(values[k] for k in spec.identity_columns)
         if row.table in domain or row.table == "workspace_binding_authority":
-            d = domain["workspace_runtime_bindings"] if row.table == "workspace_binding_authority" else domain[row.table]
+            d = (
+                domain["workspace_runtime_bindings"]
+                if row.table == "workspace_binding_authority"
+                else domain[row.table]
+            )
             original = next(
                 r.original
                 for r in workspace.identities.reservations
@@ -121,7 +125,9 @@ def _close_dependencies(
                     (row.table, row.original)
                 )
         if row.table == "workspace_binding_authority":
-            known.setdefault(("binding", values["binding_id"]), set()).add((row.table, row.original))
+            known.setdefault(("binding", values["binding_id"]), set()).add(
+                (row.table, row.original)
+            )
         for name, family, table, fields in _COMPOSITES:
             if (family != "runs" or _include_runs) and table == row.table:
                 budget.container(len(fields) + 5)

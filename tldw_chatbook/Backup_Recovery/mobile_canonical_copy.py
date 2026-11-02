@@ -265,15 +265,20 @@ def _mobile_preserved_members(
     proof, document, target, *, _read_budget=None, cancel=None
 ):
     from .mobile_builtin_preservation import (
-        _ordinary_builtin_members,
+        _fixed_mobile_members,
         _preservation_budget,
         _verify_current_builtin_files,
     )
 
+    if type(proof) is not _CanonicalCopy or proof.pending:
+        raise ValueError("recovery_copy_pending")
     budget = _preservation_budget(_read_budget)
     _current_canonical_target(proof, target, _read_budget=budget)
-    members = _ordinary_builtin_members(document, target, budget)
+    members = _fixed_mobile_members(document, target, budget, proof)
     _verify_current_builtin_files(document, members, budget, cancel=cancel)
+    from .mobile_empty_history import _verify_empty_history_members
+
+    _verify_empty_history_members(document, members, budget, cancel)
     return members
 
 
@@ -312,7 +317,7 @@ def _preview_canonical(
     records = (*document.directories, *document.files)
     for record in records:
         if record.logical_id in preserved:
-            continue  # Exact unchanged package members are preserve-only.
+            continue  # Exact fixed unchanged members are preserve-only.
         if (
             record.logical_id in directories
             and directories[record.logical_id].synthetic

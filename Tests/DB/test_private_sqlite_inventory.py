@@ -545,13 +545,28 @@ def _assert_detached_normalization_source(source: str) -> None:
     """Freeze R174's reviewed disposable-copy opener and its private caller chain."""
     import hashlib
 
-    expected = {'_normalize_sqlite': 'f193786044066903e0279b1b8568bda302202eca999fb29715b369ec19391cca', '_owner_items': '596498f745a036e8b9a2d7e2ccb995173d65b97930745f635ee52bad8826cf1e', 'produce_detached_archive': '6aaa5ba9c691944a740445aae8d2299e12ad09a4c0ecb55e7204adf2a29c2d7c'}
+    expected = {
+        "_normalize_sqlite": "f193786044066903e0279b1b8568bda302202eca999fb29715b369ec19391cca",
+        "_owner_items": "596498f745a036e8b9a2d7e2ccb995173d65b97930745f635ee52bad8826cf1e",
+        "produce_detached_archive": "6aaa5ba9c691944a740445aae8d2299e12ad09a4c0ecb55e7204adf2a29c2d7c",
+    }
     tree = ast.parse(source)
     for name, digest in expected.items():
-        functions = [n for n in tree.body if isinstance(n, ast.FunctionDef) and n.name == name]
+        functions = [
+            n for n in tree.body if isinstance(n, ast.FunctionDef) and n.name == name
+        ]
         assert len(functions) == 1
-        assert hashlib.sha256(ast.dump(functions[0], include_attributes=False).encode()).hexdigest() == digest
-    calls = _QualifiedCallNodeVisitor(lambda call: isinstance(call.func, ast.Name) and call.func.id == "_normalize_sqlite")
+        assert (
+            hashlib.sha256(
+                ast.dump(functions[0], include_attributes=False).encode()
+            ).hexdigest()
+            == digest
+        )
+    calls = _QualifiedCallNodeVisitor(
+        lambda call: (
+            isinstance(call.func, ast.Name) and call.func.id == "_normalize_sqlite"
+        )
+    )
     calls.visit(tree)
     assert [(name, ast.unparse(call)) for name, call in calls.calls] == [
         ("_owner_items", "_normalize_sqlite(owners[owner_id], path, target, cancel)")
@@ -827,7 +842,12 @@ def _assert_raw_connection_census(
     # check. Its one raw call is admitted only by the strict source guard below.
     assert current[runtime_probe_site] == 1
     assert current == Counter(
-        {seam_site: 4, runtime_probe_site: 1, child_proof_site: 1, ("tldw_chatbook/Backup_Recovery/detached_layout", "_normalize_sqlite"): 1}
+        {
+            seam_site: 4,
+            runtime_probe_site: 1,
+            child_proof_site: 1,
+            ("tldw_chatbook/Backup_Recovery/detached_layout", "_normalize_sqlite"): 1,
+        }
     )
 
 
@@ -941,7 +961,9 @@ def test_raw_connection_census_is_qualified_and_transition_aware() -> None:
 
     if not seam_exists:
         assert len({module for module, _symbol in current}) == 18
-    _assert_detached_normalization_source((PROJECT_ROOT / "tldw_chatbook/Backup_Recovery/detached_layout.py").read_text())
+    _assert_detached_normalization_source(
+        (PROJECT_ROOT / "tldw_chatbook/Backup_Recovery/detached_layout.py").read_text()
+    )
     _assert_raw_connection_census(
         documented_legacy,
         current,
@@ -973,7 +995,17 @@ def test_transition_census_rejects_unapproved_or_duplicate_raw_calls() -> None:
 
     _assert_raw_connection_census(
         documented,
-        Counter({seam_site: 4, runtime_probe_site: 1, child_proof_site: 1, ("tldw_chatbook/Backup_Recovery/detached_layout", "_normalize_sqlite"): 1}),
+        Counter(
+            {
+                seam_site: 4,
+                runtime_probe_site: 1,
+                child_proof_site: 1,
+                (
+                    "tldw_chatbook/Backup_Recovery/detached_layout",
+                    "_normalize_sqlite",
+                ): 1,
+            }
+        ),
         seam_exists=True,
     )
     with pytest.raises(AssertionError):
@@ -1557,7 +1589,11 @@ def _assert_direct_backup_census(
     assert calls == Counter(
         {
             ("tldw_chatbook/DB/private_sqlite", "_backup_pages", "source"): 1,
-            ("tldw_chatbook/Backup_Recovery/detached_layout", "_normalize_sqlite", "connection"): 1,
+            (
+                "tldw_chatbook/Backup_Recovery/detached_layout",
+                "_normalize_sqlite",
+                "connection",
+            ): 1,
             (
                 "tldw_chatbook/DB/base_db",
                 "_QuiescentSQLiteConnection.backup",
@@ -2119,24 +2155,38 @@ def test_completion_read_qualification_rejects_changed_native_lifetime(
     ]
 
 
-@pytest.mark.parametrize("old,new", [
-    ("sqlite3.connect(destination)", "sqlite3.connect(source)"),
-    ("installed = _installed_owner(owner.owner_id)", "installed = owner"),
-    ("with_restrictions=True", "with_restrictions=False"),
-    ("cancel=cancel,", "cancel=None,"),
-    ("if issues:\n                raise ValueError(issues[0])", "if False:\n                raise ValueError(issues[0])"),
-    ("with create_private_file(destination):", "with _regular(destination):"),
-    ("connection.backup(output", "output.backup(output"),
-    ("pages=64", "pages=-1"),
-    ("progress=progress", "progress=None"),
-    ("output.enable_load_extension(False)", "output.enable_load_extension(True)"),
-    ("target_parent = normal /", "target_parent = source /"),
-    ("def _normalize_sqlite(", "def unchecked_normalize("),
-    ("output.enable_load_extension(False)", "sqlite3.connect(destination)\n                output.enable_load_extension(False)"),
-    ("connection.backup(output, pages=64, progress=progress, sleep=0)", "connection.backup(output, pages=64, progress=progress, sleep=0)\n                connection.backup(output, pages=64, progress=progress, sleep=0)"),
-])
+@pytest.mark.parametrize(
+    "old,new",
+    [
+        ("sqlite3.connect(destination)", "sqlite3.connect(source)"),
+        ("installed = _installed_owner(owner.owner_id)", "installed = owner"),
+        ("with_restrictions=True", "with_restrictions=False"),
+        ("cancel=cancel,", "cancel=None,"),
+        (
+            "if issues:\n                raise ValueError(issues[0])",
+            "if False:\n                raise ValueError(issues[0])",
+        ),
+        ("with create_private_file(destination):", "with _regular(destination):"),
+        ("connection.backup(output", "output.backup(output"),
+        ("pages=64", "pages=-1"),
+        ("progress=progress", "progress=None"),
+        ("output.enable_load_extension(False)", "output.enable_load_extension(True)"),
+        ("target_parent = normal /", "target_parent = source /"),
+        ("def _normalize_sqlite(", "def unchecked_normalize("),
+        (
+            "output.enable_load_extension(False)",
+            "sqlite3.connect(destination)\n                output.enable_load_extension(False)",
+        ),
+        (
+            "connection.backup(output, pages=64, progress=progress, sleep=0)",
+            "connection.backup(output, pages=64, progress=progress, sleep=0)\n                connection.backup(output, pages=64, progress=progress, sleep=0)",
+        ),
+    ],
+)
 def test_detached_normalization_census_refuses_semantic_or_caller_drift(old, new):
-    source = (PROJECT_ROOT / "tldw_chatbook/Backup_Recovery/detached_layout.py").read_text()
+    source = (
+        PROJECT_ROOT / "tldw_chatbook/Backup_Recovery/detached_layout.py"
+    ).read_text()
     _assert_detached_normalization_source(source)
     assert old in source
     with pytest.raises(AssertionError):

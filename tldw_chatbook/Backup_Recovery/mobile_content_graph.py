@@ -86,7 +86,10 @@ class _GraphBuilder:
 
         if any(
             not _native_columns_match(
-                purpose, "chat", table, catalog.get((purpose, table)),
+                purpose,
+                "chat",
+                table,
+                catalog.get((purpose, table)),
                 self.specs[table].columns,
                 next(v for p, f, v in reads.versions if (p, f) == (purpose, "chat")),
             )

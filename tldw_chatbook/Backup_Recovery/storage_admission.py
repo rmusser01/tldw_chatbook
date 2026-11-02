@@ -2998,9 +2998,8 @@ def _acquire_mobile_storage(
         and immutable is False
         and factory is sqlite3.Connection
     )
-    if (
-        lexical_path(path) != Path(scope.owner["path"])
-        or not (preflight or (owner_id == expected_policy and factory is expected_factory))
+    if lexical_path(path) != Path(scope.owner["path"]) or not (
+        preflight or (owner_id == expected_policy and factory is expected_factory)
     ):
         raise bootstrap.RecoveryRequired("mobile_connection_scope_invalid")
     lease = _CaptureLease(scope)
@@ -3311,7 +3310,8 @@ class MaintenanceSession:
                 "_source_journal": _source_journal,
                 "cancel": cancel,
             }
-        _, inventory = _checked_originals(plan, journal, self, **source_options)
+        originals = _checked_originals(plan, journal, self, **source_options)
+        _, inventory = originals
         selected = []
         for item in inventory.items:
             if item.path is not None and item.path.is_file():
@@ -3322,7 +3322,7 @@ class MaintenanceSession:
         if not selected:
             raise bootstrap.RecoveryRequired("capture_sources_required")
         with self._capture_bound_sources(tuple(selected), staging, limits, byte_budget):
-            yield
+            yield originals
 
     @contextmanager
     def _capture_bound_sources(self, selected, staging, limits, byte_budget):

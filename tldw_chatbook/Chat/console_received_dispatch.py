@@ -447,7 +447,9 @@ async def _run_received_intent_bound(runtime, record, source):
                 if intent.inputs.input_origin == "composer":
                     committed = store.commit_session_input_draft(intent.inputs)
                     if committed or intent._pressed_inputs is not None:
-                        runtime._project_received_input(record, draft_committed=committed)
+                        runtime._project_received_input(
+                            record, draft_committed=committed
+                        )
             except Exception:  # noqa: BLE001, S110 - presentation cannot retract an already accepted domain outcome.
                 # Queue admission already won; presentation cannot retract it.
                 pass

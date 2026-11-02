@@ -283,17 +283,30 @@ async def test_native_send_preparing_acceptance_queue_and_no_duplicate_dispatch(
     first = await owner.submit(ticket.token, payload)
     assert first.state == "pending" and first.reason == "Preparing"
     record = case.runtime._turn_custody[ticket.command_id]
+    recovery = case.runtime.ensure_archive_recovery()
+    proof = record.received_intent.recovery_user_origin
+    assert recovery._proofs[id(proof)] is proof
     try:
         await native_controls._wait_for_seam(record, gateway.started[0])
         assert owner.query(ticket.command_id).state == "accepted"
+        assert recovery._accepted_proofs[id(proof)] == (proof, ticket.command_id)
+        assert record.request.configuration.recovery_user_origin is proof
         assert (await owner.submit(ticket.token, payload)).state == "accepted"
         queued_payload = {"text": "second phone input", "expected_revisions": revisions}
         queued_ticket = owner.issue("send", native_target, queued_payload)
         queued_receipt = await owner.submit(queued_ticket.token, queued_payload)
         assert queued_receipt.state == "pending"
         queued_record = case.runtime._turn_custody[queued_ticket.command_id]
+        queued_proof = queued_record.received_intent.recovery_user_origin
+        assert queued_proof is not proof
         outcome = await native_controls._outcome(queued_record)
         assert outcome.applied
+        queued = case.controller.prompt_queue_registry._states[case.session.id].waiting[
+            0
+        ]
+        assert queued.custody_request.configuration.recovery_user_origin is queued_proof
+        assert recovery._proofs[id(queued_proof)] is queued_proof
+        assert id(queued_proof) not in recovery._accepted_proofs
         assert owner.query(queued_ticket.command_id).state == "queued"
         assert (
             await owner.submit(queued_ticket.token, queued_payload)
@@ -303,6 +316,9 @@ async def test_native_send_preparing_acceptance_queue_and_no_duplicate_dispatch(
             event.set()
         await native_controls._outcome(record)
         assert gateway.user_turns == ["first phone input", "second phone input"]
+        for completed_proof in (proof, queued_proof):
+            assert id(completed_proof) not in recovery._proofs
+            assert id(completed_proof) not in recovery._accepted_proofs
         assert owner.query(queued_ticket.command_id).state == "accepted"
         assert owner.query(ticket.command_id).state == "accepted"
     finally:

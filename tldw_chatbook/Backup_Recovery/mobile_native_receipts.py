@@ -85,14 +85,23 @@ def _receipt_children(plan, budget, *, reads):
                 "mapped_sha256": _row_digest(row.table, mapped, budget),
             },
         )
-        if row.table == "workspace_runtime_bindings" and ("legacy", "workspaces", 8) in reads.versions:
-            provenance("workspaces", "operational", {
-                "table": row.table,
-                "original": _array(row.original, budget),
-                "source_digest": _source_row_digest(reads, row.table, source, budget),
-                "source_manifest_digest": plan.identities.source_manifest_digest,
-                "disposition": "native_workspace8_binding_witness_revision1",
-            })
+        if (
+            row.table == "workspace_runtime_bindings"
+            and ("legacy", "workspaces", 8) in reads.versions
+        ):
+            provenance(
+                "workspaces",
+                "operational",
+                {
+                    "table": row.table,
+                    "original": _array(row.original, budget),
+                    "source_digest": _source_row_digest(
+                        reads, row.table, source, budget
+                    ),
+                    "source_manifest_digest": plan.identities.source_manifest_digest,
+                    "disposition": "native_workspace8_binding_witness_revision1",
+                },
+            )
     for record in plan.goal_provenance:
         provenance(
             "runs",

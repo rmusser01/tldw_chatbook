@@ -3812,22 +3812,36 @@ async def test_actual_console_retains_child_and_transcript_across_terminal_reatt
 
 
 @pytest.mark.bootstrap_profile
-@pytest.mark.parametrize("page_suffix", ["", ":" + "a" * 32], ids=["legacy-login", "same-page"])
+@pytest.mark.parametrize(
+    "page_suffix", ["", ":" + "a" * 32], ids=["legacy-login", "same-page"]
+)
 @pytest.mark.parametrize("boundary", ["snapshot", "launch"])
-async def test_old_canvas_await_cannot_revoke_successor_shell(tmp_path, monkeypatch, page_suffix, boundary):
+async def test_old_canvas_await_cannot_revoke_successor_shell(
+    tmp_path, monkeypatch, page_suffix, boundary
+):
     """A late old continuation must leave the successor's real bootstrap usable."""
     server = _server(tmp_path)
     app = await _browser_app(server)
     grant = server._web_auth.authenticate_local(client_ip="127.0.0.1")
-    authenticated = server._web_auth.authenticate_request(RequestFacts(
-        method="GET", path="/", peer_ip="127.0.0.1", scheme="http",
-        host="127.0.0.1:8000", cookie_value=grant.cookie_value,
-    ))
+    authenticated = server._web_auth.authenticate_request(
+        RequestFacts(
+            method="GET",
+            path="/",
+            peer_ip="127.0.0.1",
+            scheme="http",
+            host="127.0.0.1:8000",
+            cookie_value=grant.cookie_value,
+        )
+    )
     browser_id = authenticated.session_id + page_suffix
     old, successor = object(), object()
     server.bind_served_browser(browser_id, "same-child", attachment=old)
     broker = server._canvas_control_broker
-    broker.states["same-child"] = {"status": "ready", "canvas_id": "canvas-a", "revision_id": "revision-a"}
+    broker.states["same-child"] = {
+        "status": "ready",
+        "canvas_id": "canvas-a",
+        "revision_id": "revision-a",
+    }
     entered, release = asyncio.Event(), asyncio.Event()
     owner = broker if boundary == "snapshot" else server._served_canvas_gateway
     method = "browser_state" if boundary == "snapshot" else "start"
@@ -3863,13 +3877,19 @@ async def test_old_canvas_await_cannot_revoke_successor_shell(tmp_path, monkeypa
         url = urlsplit(state["url"])
         response = await client.post(
             f"{url.path.rstrip('/')}/api/boot",
-            headers={"Host": "127.0.0.1:8000", "Origin": "http://127.0.0.1:8000", "Cookie": f"{SESSION_COOKIE_NAME}={grant.cookie_value}"},
+            headers={
+                "Host": "127.0.0.1:8000",
+                "Origin": "http://127.0.0.1:8000",
+                "Cookie": f"{SESSION_COOKIE_NAME}={grant.cookie_value}",
+            },
             json={"bootstrap": parse_qs(url.fragment)["boot"][0]},
         )
         assert response.status == 200
         assert (await server.served_canvas_state(browser_id))["url"] == state["url"]
     finally:
         release.set()
-        await asyncio.gather(old_task, *([new_task] if new_task else []), return_exceptions=True)
+        await asyncio.gather(
+            old_task, *([new_task] if new_task else []), return_exceptions=True
+        )
         await client.close()
         await server._served_canvas_gateway.aclose()
