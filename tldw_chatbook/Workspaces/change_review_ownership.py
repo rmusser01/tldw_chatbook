@@ -30,8 +30,8 @@ class _NativeSnapshotIssuer:
     def __init__(self, runtime):
         self.runtime = runtime
         self.coordinator = None
-        self._capacity = None
-        self._activity = None
+        self._capacity = runtime._execution_capacity
+        self._activity = runtime._worktree_activity
 
     @property
     def capacity(self):
@@ -69,6 +69,11 @@ class _NativeSnapshotIssuer:
             or (owner is None) != (claim is None)
         ):
             raise ValueError("native change-review source unavailable")
+        # Observe resources created since issuer construction without loading them.
+        if self._capacity is None:
+            self._capacity = self.runtime._execution_capacity
+        if self._activity is None:
+            self._activity = self.runtime._worktree_activity
         session = next(
             (s for s in bridge._store.sessions() if s.id == session_id), None
         )

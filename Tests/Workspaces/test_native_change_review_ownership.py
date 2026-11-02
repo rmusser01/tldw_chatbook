@@ -1178,3 +1178,80 @@ def test_view_detach_and_session_navigation_preserve_original_capture(native_rev
         assert not reservation.admission_error
     finally:
         h.coordinator.cancel(reservation)
+
+
+@pytest.mark.parametrize("replacement_kind", ["capacity", "activity"])
+def test_existing_original_resource_replaced_before_first_admission(
+    native_review, monkeypatch, replacement_kind
+):
+    from tldw_chatbook.Agents.execution_capacity import RuntimeCapacity
+    from tldw_chatbook.Chat.console_chat_models import ConsoleMessageRole
+    from tldw_chatbook.Workspaces.worktree_activity import WorktreeActivity
+
+    h = native_review
+    original_capacity = h.runtime.execution_capacity
+    original_activity = h.runtime.worktree_activity
+    assistant = h.store.append_message(
+        h.session.id, role=ConsoleMessageRole.ASSISTANT, content="original"
+    )
+    source = h.coordinator._native.capture(
+        h.bridge,
+        session_id=h.session.id,
+        conversation_id="original",
+        origin=WorkOrigin.MANUAL,
+        roots=(h.root,),
+    )
+    entries, reservations, publications = [], [], []
+    discover = h.tracker.discover_baseline
+    begin = RuntimeCapacity.begin_execution
+
+    def observed_discover(handle):
+        entries.append(handle)
+        return discover(handle)
+
+    def observed_begin(capacity, **kwargs):
+        reservations.append(capacity)
+        return begin(capacity, **kwargs)
+
+    monkeypatch.setattr(h.tracker, "discover_baseline", observed_discover)
+    monkeypatch.setattr(RuntimeCapacity, "begin_execution", observed_begin)
+    monkeypatch.setattr(h.coordinator, "_publish", publications.append)
+    notice = h.store.capture_change_review_failure_notice(
+        h.session.id,
+        assistant.id,
+        "⚠ change review skipped workspace: native snapshot unavailable",
+    )
+    reservation = None
+    with monkeypatch.context() as changed:
+        changed.setattr(
+            h.runtime,
+            "_execution_capacity"
+            if replacement_kind == "capacity"
+            else "_worktree_activity",
+            RuntimeCapacity() if replacement_kind == "capacity" else WorktreeActivity(),
+        )
+        try:
+            reservation = h.coordinator.register(
+                [h.root], native_source=source, on_unadmitted=notice
+            )
+            assert reservation.await_baseline(4)
+            wait_for(lambda: reservation.baseline_completion.value != "pending")
+            assert reservation.baseline_completion.value == "unadmitted"
+            assert reservation.completion.value == "unadmitted"
+            assert not entries
+            assert not reservations, (
+                "replacement refusal must precede native reservation"
+            )
+            assert not publications
+            wait_for(
+                lambda: any(
+                    "change review skipped" in m.content
+                    for m in h.store.messages_for_session(h.session.id)
+                )
+            )
+            assert h.coordinator._native._capacity is original_capacity
+            assert h.coordinator._native._activity is original_activity
+        finally:
+            if reservation is not None:
+                h.coordinator.cancel(reservation)
+                assert h.coordinator.wait_idle(3)
