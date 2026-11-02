@@ -24237,3 +24237,6 @@ not a broad `taskN` filename match. Keep any ownership audit private, exclude
 unrelated contents from published QA, and regenerate/verify the final Git blob
 manifest after correcting the artifact set.
 
+## A restored resend fixture is not yet a fresh-Send owner (PR3346, 2026-11-01)
+
+The successive accepted mix-in placement regression initially failed only after reopen with `Durable Console Library policy no longer matches acceptance.` Read-only exception monitoring traced the original native transaction refusal: the reused resend helper restored messages/preferences but omitted the production asynchronous Library policy hydration. Calling `hydrate_session_library_policy` before the fresh Send restored the intended owner and proved B/A provider order after real SQLite flush/reopen. Do not label a reopen failure a fixture issue until the actual native refusal is captured, and do not replace a fresh Send with a metadata-only assertion or bypass the policy check.

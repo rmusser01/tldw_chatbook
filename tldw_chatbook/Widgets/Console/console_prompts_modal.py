@@ -1161,6 +1161,15 @@ class ConsolePromptsModal(
         source_label = "Draft Shelf" if source == "draft_shelf" else source.title()
         self.state = self.state.begin_detail(identifier)
         detail_token = self.state.detail_token
+        generation = self._mixin_generation
+
+        def current() -> bool:
+            return (
+                self.is_mounted
+                and self._mixin_generation == generation
+                and self.state.accepts_detail(detail_token, source, identifier)
+            )
+
         browse = self.query_one(ConsolePromptsBrowse)
         browse.show_status(
             f"Loading latest {source_label} detail before editing…",
@@ -1176,7 +1185,7 @@ class ConsolePromptsModal(
             if capabilities is None:
                 capabilities = await _maybe_await(self._capabilities(source))
         except Exception:
-            if not self.state.accepts_detail(detail_token, source, identifier):
+            if not current():
                 return
             browse.show_status(
                 "The selected artifact was changed or deleted before its latest detail could be loaded — Retry the Library or choose another item.",
@@ -1184,14 +1193,12 @@ class ConsolePromptsModal(
             )
             return
 
-        if not self.state.accepts_detail(detail_token, source, identifier):
+        if not current():
             return
 
         if source == "draft_shelf":
             collection_options = await self._load_draft_collections()
-            if not self.is_mounted or not self.state.accepts_detail(
-                detail_token, source, identifier
-            ):
+            if not current():
                 return
             self._selected_record = record
             self._decoded = None
@@ -1283,7 +1290,8 @@ class ConsolePromptsModal(
                     retry=False,
                 )
                 return
-            await self._capture_manual_apply_target()
+            if not await self._capture_manual_apply_target(is_current=current):
+                return
             self._recipe_selecting = False
             self._recipe_source = source
             self._recipe_source_id = identity
@@ -1296,6 +1304,12 @@ class ConsolePromptsModal(
             await self._mount_recipe_editor(decoded.definition)
             return
 
+        if (
+            decoded.state == "supported_v2"
+            and decoded.artifact_type == "prompt"
+            and not await self._capture_manual_apply_target(is_current=current)
+        ):
+            return
         self._selected_record = record
         self._decoded = decoded
         self.state = self.state.select(
@@ -1311,8 +1325,6 @@ class ConsolePromptsModal(
             unsaved = decoded.artifact_type == "recipe"
             if unsaved:
                 definition = replace(definition, kind="block_prompt")
-            else:
-                await self._capture_manual_apply_target()
             self._editor_state = PromptBlockEditorState.from_definition(
                 artifact_type="prompt", definition=definition
             )
@@ -1362,18 +1374,29 @@ class ConsolePromptsModal(
                 options.append((name, collection_id))
         return tuple(options)
 
-    async def _capture_manual_apply_target(self) -> None:
-        """Pin the provider resolution used to guard a later manual Apply."""
+    async def _capture_manual_apply_target(
+        self, *, is_current: Callable[[], bool] | None = None
+    ) -> bool:
+        """Publish a manual target only while the requesting navigation owns it."""
 
-        self._manual_apply_resolution = None
-        if self._capture_manual_resolution is None:
-            return
-        try:
-            self._manual_apply_resolution = await _maybe_await(
-                self._capture_manual_resolution()
+        generation, source = self._mixin_generation, self.state.source
+        current = is_current or (
+            lambda: (
+                self.is_mounted
+                and self._mixin_generation == generation
+                and self.state.source == source
             )
+        )
+        resolution = None
+        try:
+            if self._capture_manual_resolution is not None:
+                resolution = await _maybe_await(self._capture_manual_resolution())
         except Exception:
-            self._manual_apply_resolution = None
+            resolution = None
+        if not current():
+            return False
+        self._manual_apply_resolution = resolution
+        return True
 
     def mark_dirty(self) -> None:
         self.state = self.state.with_dirty(True)

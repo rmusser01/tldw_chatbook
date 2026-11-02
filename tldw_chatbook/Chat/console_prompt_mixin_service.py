@@ -21,6 +21,17 @@ from .console_prompt_mixins import (
 
 
 @dataclass(frozen=True)
+class MixinCaptureWitness:
+    """Current capture provenance; frozen execution snapshots carry no such authority."""
+
+    revision: int
+    require_current: Callable[[], None] = field(repr=False)
+
+    def __call__(self) -> None:
+        self.require_current()
+
+
+@dataclass(frozen=True)
 class MixinAttemptContribution(ConsoleExactNativeIdTransactionContribution):
     """An immutable write plan; its frozen fields participate in acceptance identity."""
 
@@ -369,7 +380,7 @@ class ConsolePromptMixinService:
                     raise MixinSourceChangedError("mixin_source_changed")
 
         current()
-        return current
+        return MixinCaptureWitness(expected_revision, current)
 
     async def capture(
         self, session_id: str, *, expected_revision: int
@@ -458,13 +469,17 @@ class ConsolePromptMixinService:
         )
 
     def publish_accepted_usage(
-        self, session_id: str, snapshot: MixinAttemptSnapshot
+        self,
+        session_id: str,
+        snapshot: MixinAttemptSnapshot,
+        *,
+        observed_revision: int | None = None,
     ) -> None:
         """Publish accepted versions for surviving choices without reading sources.
 
-        Unsupported/retired preferences cannot block accepted custody. Usage
-        neither changes layout nor advances its intent revision. Workbench
-        observation separately reconciles names/placement/order with a new revision.
+        Unsupported/retired preferences cannot block accepted custody. Only a
+        current capture may publish layout, and only while its preference revision
+        still owns that layout. Frozen replay publishes versions independently.
         """
         from .console_prompt_mixins import (
             MixinPreferenceConflictError,
@@ -491,6 +506,21 @@ class ConsolePromptMixinService:
                 for row in preferences.entries
             ),
         )
+        if observed_revision == preferences.revision:
+            from .console_prompt_mixins import reconcile_mixin_placements
+
+            observed = reconcile_mixin_placements(reconciled, snapshot.items)
+            names = {row.source: row.name for row in preferences.entries}
+            # Name presentation remains Workbench-owned. Accepted capture records
+            # placement/order so the next newly moved entry appends correctly.
+            observed = replace(
+                observed,
+                entries=tuple(
+                    replace(row, name=names[row.source]) for row in observed.entries
+                ),
+            )
+            if observed.entries != reconciled.entries:
+                reconciled = replace(observed, revision=preferences.revision + 1)
         if reconciled == preferences:
             return
         session.prompt_mixin_preferences = MixinPreferenceRead(
@@ -506,7 +536,12 @@ class ConsolePromptMixinService:
             self.store.schedule_prompt_mixin_preferences_save(session_id, owner=None)
 
     async def accept_attempt(
-        self, session_id: str, batch: MixinAttemptWrite, *, record_usage: bool = False
+        self,
+        session_id: str,
+        batch: MixinAttemptWrite,
+        *,
+        record_usage: bool = False,
+        observed_revision: int | None = None,
     ) -> None:
         """Retain the exact operational record before any provider can be entered."""
         import asyncio
@@ -582,7 +617,9 @@ class ConsolePromptMixinService:
             raise MixinSnapshotUnavailableError("mixin_attempt_owner_changed")
         self.store.publish_prompt_mixin_attempt(session_id, batch)
         if record_usage:
-            self.publish_accepted_usage(session_id, batch.snapshot)
+            self.publish_accepted_usage(
+                session_id, batch.snapshot, observed_revision=observed_revision
+            )
         if cancelled:
             raise asyncio.CancelledError
 

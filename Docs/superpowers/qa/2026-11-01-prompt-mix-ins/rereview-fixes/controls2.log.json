@@ -1,0 +1,4 @@
+{
+  "sha256": "704be69be8ff7bb520625a16a216b0269dade0746aa92fafbaadbfff34b283b2",
+  "raw_text": "......                                                                   [100%]\n============================= slowest 25 durations =============================\n1.22s setup    Tests/Chat/test_console_received_intent_transitions.py::test_received_current_capture_publishes_layout_only_at_acceptance[False]\n1.19s setup    Tests/Chat/test_console_received_intent_transitions.py::test_received_current_capture_publishes_layout_only_at_acceptance[True]\n1.01s call     Tests/Chat/test_console_prompt_mixin_retry.py::test_successive_accepted_placement_observations_append_in_observed_order[True]\n\n(15 durations < 1s hidden.)\n6 passed in 8.35s\n"
+}

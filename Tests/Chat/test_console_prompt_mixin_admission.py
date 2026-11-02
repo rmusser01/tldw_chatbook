@@ -1143,3 +1143,26 @@ async def test_pending_direct_continuation_keeps_source_fence(
             store.close_session(live.id)
         store.end_app_runtime()
         database.close_connection()
+
+
+@pytest.mark.asyncio
+async def test_delayed_accepted_layout_never_overwrites_newer_user_intent(case):
+    case.scope.release.set()
+    before = case.service.preferences(case.a.id)
+    case.scope.records[A.record_uuid]["prompt_definition"]["placement"] = "after"
+    snapshot = await case.service.capture(case.a.id, expected_revision=before.revision)
+    newer = case.service.replace_preferences(
+        case.a.id,
+        expected_revision=before.revision,
+        value=replace(
+            before, entries=tuple(row for row in before.entries if row.source != A)
+        ),
+    )
+    case.service.publish_accepted_usage(
+        case.a.id, snapshot, observed_revision=before.revision
+    )
+    facts = case.service.preferences(case.a.id)
+    assert facts.revision == newer.revision
+    assert tuple(
+        (row.source, row.placement, row.enabled) for row in facts.entries
+    ) == tuple((row.source, row.placement, row.enabled) for row in newer.entries)

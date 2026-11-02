@@ -1538,9 +1538,9 @@ async def test_refused_native_send_keeps_usage_facts_until_acceptance(
     )
     assert accepted.accepted and accepted.provider_started
     facts = service.preferences("session-1")
-    assert facts.revision == before.revision
+    assert facts.revision == before.revision + 1
     assert facts.entries[0].last_used_version == 2
-    assert facts.entries[0].placement == "before"
+    assert facts.entries[0].placement == "after"
     assert h.entries[-1][-1]["content"] == "input\n\nbody A"
 
 
@@ -1770,3 +1770,211 @@ async def test_used_revision_flush_reopen_and_racing_selection_cas(
             restored.store.close_session(session.id)
         restored.store.end_app_runtime()
         database.close()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("reopen", [False, True])
+async def test_successive_accepted_placement_observations_append_in_observed_order(
+    trace_harness, monkeypatch, reopen
+):
+    from Tests.Chat.test_console_prompt_mixin_admission import B
+    from Tests.Chat.test_console_turn_resend import _restore
+    from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
+
+    h = trace_harness
+    capture_mode(monkeypatch, False)
+    service, scope = select(h, monkeypatch)
+    prefs = service.preferences("session-1")
+    service.replace_preferences(
+        "session-1",
+        expected_revision=prefs.revision,
+        value=replace(
+            prefs, entries=(*prefs.entries, MixinSelection(B, True, "B", "before"))
+        ),
+    )
+    scope.records[B.record_uuid]["prompt_definition"].update(
+        body="body B", placement="after"
+    )
+    scope.records[B.record_uuid]["version"] = 2
+    first = await h.controller.submit_draft("first", session_id="session-1")
+    assert (
+        first.accepted and h.entries[-1][-1]["content"] == "body A\n\nfirst\n\nbody B"
+    )
+    observed = service.preferences("session-1")
+    assert observed.entries[-1].placement == "after"
+    assert observed.revision == prefs.revision + 2
+    await h.store.persist_prompt_mixin_preferences("session-1")
+    database = restored = None
+    controller, session_id = h.controller, "session-1"
+    try:
+        if reopen:
+            database = CharactersRAGDB(h.db.db_path, "successive-layout-reopen")
+            restored = _restore(
+                database, h.store._sessions[session_id].persisted_conversation_id
+            )
+            controller, session_id = restored.controller, restored.session_id
+            restored.store.replace_session_settings(
+                session_id, h.store._sessions["session-1"].settings
+            )
+            await restored.store.hydrate_session_library_policy(session_id)
+            controller.provider_gateway = h.gateway
+            service = ConsolePromptMixinService(
+                store=restored.store,
+                prompt_scope_service=scope,
+                persistence=restored.store.persistence,
+            )
+            monkeypatch.setattr(controller, "prompt_mixin_service", lambda: service)
+            assert service.preferences(session_id).entries == observed.entries
+        scope.records[A.record_uuid]["prompt_definition"]["placement"] = "after"
+        scope.records[A.record_uuid]["version"] = 2
+        second = await controller.submit_draft("second", session_id=session_id)
+        assert second.accepted and second.provider_started, second
+        assert h.entries[-1][-1]["content"] == "second\n\nbody B\n\nbody A"
+        assert tuple(row.source for row in service.preferences(session_id).entries) == (
+            B,
+            A,
+        )
+    finally:
+        if restored is not None:
+            await restored.controller.shutdown()
+            for session in restored.store.sessions():
+                restored.store.close_session(session.id)
+            restored.store.end_app_runtime()
+        if database is not None:
+            database.close()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("replay", ["retry", "supplied_send", "supplied_queue"])
+async def test_frozen_replay_cannot_roll_current_accepted_layout_back(
+    trace_harness, monkeypatch, replay
+):
+    from tldw_chatbook.Chat.console_prompt_queue import PromptQueuePauseReason
+
+    h = trace_harness
+    capture_mode(monkeypatch, False)
+    service, scope = select(h, monkeypatch)
+    snapshot = await service.capture("session-1", expected_revision=1)
+    configuration = replace(
+        h.controller.resolve_turn_configuration_snapshot("session-1"),
+        prompt_mixins=snapshot,
+    )
+    h.adapter_error = True
+    first = await h.controller.submit_draft("first", session_id="session-1")
+    h.adapter_error = False
+    scope.records[A.record_uuid]["version"] = 2
+    scope.records[A.record_uuid]["prompt_definition"]["placement"] = "after"
+    current = await h.controller.submit_draft("current", session_id="session-1")
+    assert current.accepted
+    before_replay = service.preferences("session-1")
+    assert before_replay.entries[0].placement == "after"
+    if replay == "retry":
+        result = await h.controller.retry_message(first.assistant_message_id)
+        assert result.accepted
+        expected = "body A\n\nfirst"
+    elif replay == "supplied_send":
+        result = await h.controller.submit_draft(
+            "frozen", session_id="session-1", configuration=configuration
+        )
+        assert result.accepted
+        expected = "body A\n\nfrozen"
+    else:
+        registry = h.controller.prompt_queue_registry
+        registry.begin_chain(
+            "session-1",
+            context_epoch=h.store.conversation_context_epoch("session-1"),
+            expected_revision=registry.snapshot("session-1").revision,
+        )
+        result = await h.controller.queue_prompt(
+            "session-1",
+            text="frozen",
+            expected_revision=registry.snapshot("session-1").revision,
+            configuration=configuration,
+        )
+        assert result.applied
+        assert service.preferences("session-1").entries[0].placement == "after"
+        registry.pause(
+            "session-1",
+            reason=PromptQueuePauseReason.MANUAL,
+            expected_revision=registry.snapshot("session-1").revision,
+        )
+        await h.controller.prompt_queue_coordinator.resume_and_drain("session-1")
+        expected = "body A\n\nfrozen"
+    assert h.entries[-1][-1]["content"] == expected
+    facts = service.preferences("session-1")
+    assert facts.revision == before_replay.revision
+    assert facts.entries[0].placement == "after"
+
+
+@pytest.mark.asyncio
+async def test_current_queue_observes_layout_once_and_drain_preserves_later_intent(
+    trace_harness, monkeypatch
+):
+    from tldw_chatbook.Chat.console_prompt_queue import PromptQueuePauseReason
+
+    h = trace_harness
+    capture_mode(monkeypatch, False)
+    service, scope = select(h, monkeypatch)
+    assert (
+        await h.controller.submit_draft("baseline", session_id="session-1")
+    ).accepted
+    scope.records[A.record_uuid]["version"] = 2
+    scope.records[A.record_uuid]["prompt_definition"]["placement"] = "after"
+    registry = h.controller.prompt_queue_registry
+    registry.begin_chain(
+        "session-1",
+        context_epoch=h.store.conversation_context_epoch("session-1"),
+        expected_revision=registry.snapshot("session-1").revision,
+    )
+    accepted = await h.controller.queue_prompt(
+        "session-1",
+        text="queued",
+        expected_revision=registry.snapshot("session-1").revision,
+    )
+    assert accepted.applied
+    observed = service.preferences("session-1")
+    assert observed.revision == 2 and observed.entries[0].placement == "after"
+    later = service.replace_preferences(
+        "session-1",
+        expected_revision=observed.revision,
+        value=replace(
+            observed,
+            entries=(replace(observed.entries[0], placement="before", enabled=False),),
+        ),
+    )
+    registry.pause(
+        "session-1",
+        reason=PromptQueuePauseReason.MANUAL,
+        expected_revision=registry.snapshot("session-1").revision,
+    )
+    await h.controller.prompt_queue_coordinator.resume_and_drain("session-1")
+    assert h.entries[-1][-1]["content"] == "queued\n\nbody A"
+    assert service.preferences("session-1") == later
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("route", ["regenerate", "edit", "continue"])
+async def test_current_choice_routes_publish_accepted_layout(
+    trace_harness, monkeypatch, route
+):
+    h = trace_harness
+    capture_mode(monkeypatch, False)
+    service, scope = select(h, monkeypatch)
+    first = await h.controller.submit_draft("first", session_id="session-1")
+    before = service.preferences("session-1")
+    scope.records[A.record_uuid]["version"] = 2
+    scope.records[A.record_uuid]["prompt_definition"]["placement"] = "after"
+    if route == "regenerate":
+        result = await h.controller.regenerate_message(first.assistant_message_id)
+    elif route == "edit":
+        result = await h.controller.edit_and_resend_message(
+            first.user_message_id, "edited"
+        )
+    else:
+        result = await h.controller.continue_from_message(first.assistant_message_id)
+    assert result.accepted and len(h.entries) == 2
+    assert h.entries[-1][-1]["content"].endswith("\n\nbody A")
+    facts = service.preferences("session-1")
+    assert facts.revision == before.revision + 1
+    assert facts.entries[0].placement == "after"
+    assert facts.entries[0].last_used_version == 2

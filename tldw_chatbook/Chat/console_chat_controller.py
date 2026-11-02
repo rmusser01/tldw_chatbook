@@ -6323,7 +6323,8 @@ class ConsoleChatController:
         )
         if result.applied:
             self.prompt_mixin_service().publish_accepted_usage(
-                session_id, configuration.prompt_mixins
+                session_id, configuration.prompt_mixins,
+                observed_revision=mixin_current.revision if mixin_current is not None else None,
             )
         if result.applied and self.response_rules is not None:
             self.response_rules.invalidate(session_id, "user_input")
@@ -11257,7 +11258,10 @@ class ConsoleChatController:
                 custody_acceptance_hook=custody_acceptance_hook,
                 hook_context=hook_context,
                 chat_start_authorization=chat_start_authorization,
-                **({"_require_mixin_current": require_mixin_current} if _prompt_mixin_capture is not None else {}),
+                **({
+                    "_require_mixin_current": require_mixin_current,
+                    "_mixin_observation_revision": _prompt_mixin_capture[2].revision,
+                } if _prompt_mixin_capture is not None else {}),
             )
         # TASK-1364: record the accepted send to the shared prompt history.
         # Same placement rule as the accepted-hook above: only a send that is
@@ -11469,7 +11473,11 @@ class ConsoleChatController:
                     )
             if origin is ConsoleSubmissionOrigin.MANUAL:
                 self.prompt_mixin_service().publish_accepted_usage(
-                    session.id, turn_context.prompt_mixins
+                    session.id, turn_context.prompt_mixins,
+                    observed_revision=(
+                        _prompt_mixin_capture[2].revision
+                        if _prompt_mixin_capture is not None else None
+                    ),
                 )
             if custody_acceptance_hook is not None:
                 custody_acceptance_hook()
@@ -12419,12 +12427,13 @@ class ConsoleChatController:
         custody_acceptance_hook: Callable[[], None] | None,
         hook_context: str = "",
         _require_mixin_current: Callable[[], None] | None = None,
+        _mixin_observation_revision: int | None = None,
         chat_start_authorization: AgentChatStartAuthorization | None = None,
     ) -> ConsoleSubmitResult:
         """Commit one durable owner, then enter its idempotent effect chain."""
         from .console_native_commit import _controller_accept_durable_turn
 
-        return await _controller_accept_durable_turn(self, session=session, preparation=preparation, preparation_outcome=preparation_outcome, prepared_continuation=prepared_continuation, echoed_user=echoed_user, staged_title=staged_title, staged_attachments=staged_attachments, resolution=resolution, provider_messages=provider_messages, trace_source_messages=trace_source_messages, prefill=prefill, prefill_from_one_shot=prefill_from_one_shot, one_shot_prefill_revision=one_shot_prefill_revision, skill_bindings=skill_bindings, skill_bundle_block=skill_bundle_block, citation_repair_contract=citation_repair_contract, terminal_citation_finalizer=terminal_citation_finalizer, turn_context=turn_context, origin=origin, queue_entry_id=queue_entry_id, committed_context_epoch=committed_context_epoch, custody_acceptance_hook=custody_acceptance_hook, hook_context=hook_context, chat_start_authorization=chat_start_authorization, _require_mixin_current=_require_mixin_current)
+        return await _controller_accept_durable_turn(self, session=session, preparation=preparation, preparation_outcome=preparation_outcome, prepared_continuation=prepared_continuation, echoed_user=echoed_user, staged_title=staged_title, staged_attachments=staged_attachments, resolution=resolution, provider_messages=provider_messages, trace_source_messages=trace_source_messages, prefill=prefill, prefill_from_one_shot=prefill_from_one_shot, one_shot_prefill_revision=one_shot_prefill_revision, skill_bindings=skill_bindings, skill_bundle_block=skill_bundle_block, citation_repair_contract=citation_repair_contract, terminal_citation_finalizer=terminal_citation_finalizer, turn_context=turn_context, origin=origin, queue_entry_id=queue_entry_id, committed_context_epoch=committed_context_epoch, custody_acceptance_hook=custody_acceptance_hook, hook_context=hook_context, chat_start_authorization=chat_start_authorization, _require_mixin_current=_require_mixin_current, _mixin_observation_revision=_mixin_observation_revision)
 
     def _postcommit_stopped_by_close(
         self,
@@ -18974,6 +18983,7 @@ class ConsoleChatController:
         )
         return await self._stream_assistant_response(
             route=ConsoleRequestRoute.CONTINUE,
+            mixin_observation_revision=mixin_current.revision if mixin_current is not None else None,
             mixin_anchor_id=mixin_anchor_id,
             mixin_retry_of_attempt_id=mixin_retry_of_attempt_id,
             mixin_replaces_attempt_id=mixin_retry_of_attempt_id if resend else None,
@@ -19175,6 +19185,7 @@ class ConsoleChatController:
         }
         result = await self._stream_assistant_response(
             route=ConsoleRequestRoute.REGENERATE,
+            mixin_observation_revision=mixin_current.revision if mixin_current is not None else None,
             mixin_anchor_id=mixin_anchor_id,
             mixin_replaces_attempt_id=mixin_replaces_attempt_id,
             resolution=resolution,
@@ -20331,6 +20342,7 @@ class ConsoleChatController:
         )
         return await self._stream_assistant_response(
             route=ConsoleRequestRoute.EDIT,
+            mixin_observation_revision=mixin_current.revision if mixin_current is not None else None,
             mixin_anchor_id=mixin_anchor_id,
             resolution=resolution,
             provider_messages=provider_messages,
@@ -24831,6 +24843,7 @@ class ConsoleChatController:
         mixin_anchor_id: str | None = None,
         mixin_retry_of_attempt_id: str | None = None,
         mixin_replaces_attempt_id: str | None = None,
+        mixin_observation_revision: int | None = None,
         work_origin: WorkOrigin = WorkOrigin.MANUAL,
         work_chain_id: str | None = None,
         compaction_ask_bypassed: bool = False,
@@ -24884,6 +24897,7 @@ class ConsoleChatController:
                     mixin_anchor_id=mixin_anchor_id,
                     mixin_retry_of_attempt_id=mixin_retry_of_attempt_id,
                     mixin_replaces_attempt_id=mixin_replaces_attempt_id,
+                    mixin_observation_revision=mixin_observation_revision,
                     compaction_ask_bypassed=compaction_ask_bypassed,
                 )
         finally:
@@ -24929,6 +24943,7 @@ class ConsoleChatController:
         mixin_anchor_id: str | None = None,
         mixin_retry_of_attempt_id: str | None = None,
         mixin_replaces_attempt_id: str | None = None,
+        mixin_observation_revision: int | None = None,
         work_origin: WorkOrigin = WorkOrigin.MANUAL,
         work_chain_id: str | None = None,
         compaction_ask_bypassed: bool = False,
@@ -25030,6 +25045,7 @@ class ConsoleChatController:
                 await self.prompt_mixin_service().accept_attempt(
                     owner_id,
                     batch,
+                    observed_revision=mixin_observation_revision,
                     record_usage=route in {
                         ConsoleRequestRoute.REGENERATE,
                         ConsoleRequestRoute.EDIT,

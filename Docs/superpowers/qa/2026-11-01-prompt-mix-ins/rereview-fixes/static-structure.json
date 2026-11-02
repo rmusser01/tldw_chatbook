@@ -1,0 +1,50 @@
+{
+  "base": "1a58f0af2cbc5129f9c8f01595d67c330a7defda",
+  "files": {
+    "Tests/Chat/test_console_prompt_mixin_admission.py": {
+      "new_duplicate_methods": {},
+      "formatter_base_exit": 0,
+      "formatter_current_exit": 0
+    },
+    "Tests/Chat/test_console_prompt_mixin_retry.py": {
+      "new_duplicate_methods": {},
+      "formatter_base_exit": 0,
+      "formatter_current_exit": 0
+    },
+    "Tests/Chat/test_console_received_intent_transitions.py": {
+      "new_duplicate_methods": {},
+      "formatter_base_exit": 1,
+      "formatter_current_exit": 1
+    },
+    "Tests/UI/test_console_prompt_mixins.py": {
+      "new_duplicate_methods": {},
+      "formatter_base_exit": 0,
+      "formatter_current_exit": 0
+    },
+    "tldw_chatbook/Chat/console_chat_controller.py": {
+      "new_duplicate_methods": {},
+      "formatter_base_exit": 1,
+      "formatter_current_exit": 1
+    },
+    "tldw_chatbook/Chat/console_native_commit.py": {
+      "new_duplicate_methods": {},
+      "formatter_base_exit": 1,
+      "formatter_current_exit": 1
+    },
+    "tldw_chatbook/Chat/console_prompt_mixin_service.py": {
+      "new_duplicate_methods": {},
+      "formatter_base_exit": 0,
+      "formatter_current_exit": 0
+    },
+    "tldw_chatbook/Chat/console_received_dispatch.py": {
+      "new_duplicate_methods": {},
+      "formatter_base_exit": 1,
+      "formatter_current_exit": 1
+    },
+    "tldw_chatbook/Widgets/Console/console_prompts_modal.py": {
+      "new_duplicate_methods": {},
+      "formatter_base_exit": 0,
+      "formatter_current_exit": 0
+    }
+  }
+}

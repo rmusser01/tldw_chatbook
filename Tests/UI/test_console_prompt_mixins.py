@@ -1058,10 +1058,12 @@ async def test_accepted_toggle_preserves_editor_dirtied_during_apply(
 
 
 @pytest.mark.asyncio
-async def test_usage_facts_leave_layout_revision_to_workbench_projection(runtime):
-    from dataclasses import replace
+async def test_accepted_layout_observation_invalidates_old_workbench_intent(runtime):
 
-    from tldw_chatbook.Chat.console_prompt_mixins import MixinSourceChangedError
+    from tldw_chatbook.Chat.console_prompt_mixins import (
+        MixinPreferenceConflictError,
+        MixinSourceChangedError,
+    )
     from tldw_chatbook.Widgets.Console.console_prompt_mixins_view import (
         MixinWorkbenchIntent,
     )
@@ -1109,15 +1111,19 @@ async def test_usage_facts_leave_layout_revision_to_workbench_projection(runtime
     snapshot = await service.capture(origin.id, expected_revision=before.revision)
     assert snapshot.items[-1].source == source
     assert snapshot.items[-1].definition.placement == "after"
-    service.publish_accepted_usage(origin.id, snapshot)
-    current()
-    facts = service.preferences(origin.id)
-    assert facts.revision == before.revision
-    assert (
-        tuple(replace(row, last_used_version=None) for row in facts.entries)
-        == before.entries
+    service.publish_accepted_usage(
+        origin.id, snapshot, observed_revision=current.revision
     )
-    assert facts.entries[0].last_used_version == 2
+    # The old pre-acceptance witness and UI intent are now stale. Accepted
+    # execution is already beyond that fence (covered by native sends).
+    with pytest.raises(MixinPreferenceConflictError):
+        current()
+    facts = service.preferences(origin.id)
+    assert facts.revision == before.revision + 1
+    assert facts.entries[-1].source == source
+    assert facts.entries[-1].last_used_version == 2
+    with pytest.raises(MixinSourceChangedError):
+        await flow.apply(old_intent)
     projected = await flow.project()
     assert projected.preferences.revision > before.revision
     assert projected.preferences.entries[-1].source == source
@@ -1125,3 +1131,104 @@ async def test_usage_facts_leave_layout_revision_to_workbench_projection(runtime
     assert source not in projected.updated
     with pytest.raises(MixinSourceChangedError):
         await flow.apply(old_intent)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("artifact_type", ["prompt", "recipe"])
+@pytest.mark.parametrize("departure", ["dirty_mixins", "source", "unmount"])
+async def test_artifact_capture_completion_cannot_replace_newer_work(
+    runtime, artifact_type, departure
+):
+    import asyncio
+
+    from textual.widgets import TextArea
+
+    from Tests.UI.test_console_prompts_modal import _definition
+    from tldw_chatbook.Widgets.Console.console_prompts_browse import (
+        ConsolePromptsBrowse,
+    )
+
+    _, scope, _, _, _, _ = runtime
+    await seed(scope)
+    await scope.save_prompt(
+        mode="local",
+        name="Held artifact",
+        artifact_type=artifact_type,
+        prompt_format="structured",
+        prompt_schema_version=2,
+        prompt_definition=_definition("block_" + artifact_type),
+    )
+    app = WorkbenchHarness(runtime)
+    async with app.run_test(size=(100, 35)) as pilot:
+        app.pilot = pilot
+        await ready(app)
+        await add(app, "Style")
+        if artifact_type == "recipe":
+            await app.modal.enter_mode("improve")
+            app.modal.query_one("#console-prompts-structured-recipe", Button).press()
+            await pilot.pause()
+            app.modal.query_one("#console-prompts-recipe-saved", Button).press()
+            await pilot.pause()
+            assert app.modal._recipe_selecting
+        else:
+            await app.modal.enter_mode("browse")
+        entered, release = asyncio.Event(), asyncio.Event()
+        target = object()
+
+        async def capture():
+            entered.set()
+            await release.wait()
+            return target
+
+        app.modal._capture_manual_resolution = capture
+        app.modal.query_one(ConsolePromptsBrowse).post_message(
+            ConsolePromptsBrowse.ArtifactSelected("Held artifact")
+        )
+        editor = None
+        generation = app.modal._mixin_generation
+        try:
+            await asyncio.wait_for(entered.wait(), 5)
+            if departure == "dirty_mixins":
+                app.modal.query_one("#console-prompts-mixins", Button).press()
+                await _wait_for_condition(
+                    pilot,
+                    lambda: bool(app.modal.query("#console-mixin-inspect-0")),
+                    message="New mix-ins view missing",
+                )
+                app.modal.query_one("#console-mixin-inspect-0", Button).press()
+                await _wait_for_condition(
+                    pilot,
+                    lambda: bool(app.modal.query("#mixin-body")),
+                    message="New editor missing",
+                )
+                editor = app.modal.query_one("#mixin-body", TextArea)
+                editor.load_text("unsaved current work")
+                await pilot.pause()
+            elif departure == "source":
+                app.modal.query_one(ConsolePromptsBrowse).post_message(
+                    ConsolePromptsBrowse.SourceChanged("draft_shelf")
+                )
+                await _wait_for_condition(
+                    pilot,
+                    lambda: app.modal.state.source == "draft_shelf",
+                    message="Source did not change",
+                )
+            else:
+                await app.modal.dismiss(None)
+                await app.modal.remove()
+                await pilot.pause()
+        finally:
+            release.set()
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+        assert app.modal._manual_apply_resolution is not target
+        if editor is not None:
+            assert app.modal.state.mode == "mixins"
+            assert app.modal.query_one("#mixin-body", TextArea) is editor
+            assert editor.text == "unsaved current work"
+        elif departure == "source":
+            assert app.modal.state.source == "draft_shelf"
+            assert app.modal.state.mode == "browse"
+        else:
+            assert app.modal not in app.screen_stack
+            assert app.modal._mixin_generation > generation

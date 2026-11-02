@@ -372,6 +372,10 @@ async def _run_received_intent_bound(runtime, record, source):
         kwargs["_before_admission"] = before_admission
         queued = await method(record.session_id, **kwargs)
         if queued.applied:
+            controller.prompt_mixin_service().publish_accepted_usage(
+                record.session_id, configuration.prompt_mixins,
+                observed_revision=preferences.revision if preferences is not None else None,
+            )
             try:
                 committed = store.commit_session_input_draft(intent.inputs)
                 if committed or intent._pressed_inputs is not None:
@@ -611,6 +615,12 @@ def publish_received_acceptance(self, record, controller) -> None:
             ):
                 return
             committed = store.commit_session_input_draft(captured)
+            if (intent is not None and request is not None
+                    and captured.prompt_mixin_preferences is not None):
+                controller.prompt_mixin_service().publish_accepted_usage(
+                    record.session_id, request.configuration.prompt_mixins,
+                    observed_revision=captured.prompt_mixin_preferences.revision,
+                )
             if committed or pressed is not None:
                 self._project_received_input(record, draft_committed=committed)
         except Exception as error:  # noqa: BLE001 - presentation cannot retract an already accepted domain outcome.

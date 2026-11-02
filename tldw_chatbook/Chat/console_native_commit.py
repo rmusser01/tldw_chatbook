@@ -626,6 +626,7 @@ async def _controller_accept_durable_turn(
     custody_acceptance_hook: Callable[[], None] | None,
     hook_context: str = "",
     _require_mixin_current: Callable[[], None] | None = None,
+    _mixin_observation_revision: int | None = None,
     chat_start_authorization: AgentChatStartAuthorization | None = None,
 ) -> ConsoleSubmitResult:
     """Commit one durable owner, then enter its idempotent effect chain."""
@@ -922,7 +923,8 @@ async def _controller_accept_durable_turn(
             )
         if origin is _source_controller.ConsoleSubmissionOrigin.MANUAL:
             self.prompt_mixin_service().publish_accepted_usage(
-                session.id, turn_context.prompt_mixins
+                session.id, turn_context.prompt_mixins,
+                observed_revision=_mixin_observation_revision,
             )
         # The durable turn now exists even if later publication needs recovery.
         # Arm once here; replaying postcommit effects must not rearm a settled turn.

@@ -546,3 +546,78 @@ async def test_received_mixin_capture_holds_chat_a_while_b_choices_change(
     assert isinstance(result, ConsoleSubmitResult) and result.accepted
     assert tuple(item.source for item in seen[0].items) == (A,)
     assert scope.calls == [(A.record_uuid,)]
+
+
+@pytest.mark.parametrize("queued", [False, True])
+async def test_received_current_capture_publishes_layout_only_at_acceptance(
+    received_workspace, tmp_path, queued
+):
+    from Tests.Chat.test_console_prompt_mixin_admission import A, B, Scope
+    from tldw_chatbook.Chat.console_prompt_mixins import (
+        MixinPreferences,
+        MixinSelection,
+    )
+    from tldw_chatbook.Chat.console_session_settings import ConsoleSessionSettings
+    from tldw_chatbook.Chat.prompt_history import PromptHistory
+
+    case = received_workspace
+    scope = Scope()
+    scope.release.set()
+    case.app.prompt_scope_service = scope
+    service = case.controller.prompt_mixin_service()
+    service.replace_preferences(
+        case.session.id,
+        expected_revision=0,
+        value=MixinPreferences(
+            entries=(
+                MixinSelection(A, True, "A", "before"),
+                MixinSelection(B, True, "B", "before"),
+            )
+        ),
+    )
+    scope.records[A.record_uuid]["prompt_definition"]["body"] = "body A"
+    scope.records[B.record_uuid]["prompt_definition"].update(
+        body="body B", placement="after"
+    )
+    scope.records[B.record_uuid]["version"] = 2
+    case.store.replace_session_settings(
+        case.session.id,
+        ConsoleSessionSettings(provider="llama_cpp", model="test-model"),
+    )
+    case.controller.prompt_history = PromptHistory(
+        tmp_path / "layout-received-history.jsonl"
+    )
+    gateway = SequencedGateway()
+    for event in gateway.release:
+        event.set()
+    case.controller.provider_gateway = gateway
+    case.store.replace_session_trace_privacy_override(
+        case.session.id,
+        capture_enabled=False,
+        pii_redaction_enabled=None,
+        expected_policy_revision=case.store.capture_policy_state(
+            case.session.id
+        ).policy_revision,
+    )
+    queue_revision = None
+    if queued:
+        registry = case.controller.prompt_queue_registry
+        queue_revision = registry.begin_chain(
+            case.session.id,
+            context_epoch=case.store.conversation_context_epoch(case.session.id),
+            expected_revision=registry.snapshot(case.session.id).revision,
+        ).snapshot.revision
+    case.store.set_session_draft(case.session.id, "first")
+    intent = _stock_intent(case, queue_revision=queue_revision)
+    case.runtime.accept_received_intent(intent)
+    record = case.runtime._turn_custody[intent.turn_id]
+    result = await _outcome(record)
+    assert not isinstance(result, BaseException), result
+    assert result.applied if queued else result.accepted
+    assert case.store.session_draft(case.session.id) == ""
+    prefs = service.preferences(case.session.id)
+    assert prefs.revision == 2
+    assert prefs.entries[-1].placement == "after"
+    assert prefs.entries[-1].last_used_version == 2
+    if not queued:
+        assert gateway.user_turns == ["body A\n\nfirst\n\nbody B"]
