@@ -371,6 +371,50 @@ def test_queue_pop_due_skips_items_without_next_run_at(db):
     assert len(queue) == 0
 
 
+def test_queue_pop_due_normalizes_naive_run_at(db):
+    """TASK-38607: a naive run_at string used to raise TypeError at the
+    comparison (naive <= aware), terminating tick()/run() on every
+    restart. Naive stamps are interpreted as UTC, like the DB layer's
+    ``_parse_utc_iso``."""
+    queue = PriorityQueue(db)
+    queue.push({"title": "NaiveDue", "next_run_at": "2026-01-01T00:00:00"})
+    queue.push({"title": "Aware", "next_run_at": "2026-01-01T00:00:01+00:00"})
+
+    due = queue.pop_due(datetime(2026, 1, 1, 0, 0, 30, tzinfo=timezone.utc))
+
+    # The naive row (00:00:00) is treated as UTC and sorts before the
+    # aware 00:00:01 row; both are due at 00:00:30.
+    assert [item["title"] for item in due] == ["NaiveDue", "Aware"]
+    assert len(queue) == 0
+
+
+def test_queue_pop_due_skips_junk_run_at_without_raising(db):
+    """A hand-edited junk timestamp must be skipped and logged like load()
+    discards rows without a run time -- never raised out of pop_due."""
+    queue = PriorityQueue(db)
+    queue.push({"title": "Junk", "next_run_at": "not-a-timestamp"})
+    queue.push({"title": "Due", "next_run_at": "2026-01-01T00:00:00+00:00"})
+
+    due = queue.pop_due(datetime(2026, 1, 1, tzinfo=timezone.utc))
+
+    assert [item["title"] for item in due] == ["Due"]
+    assert len(queue) == 0
+
+
+def test_queue_pop_due_tick_survives_poison_row(db):
+    """The scheduler tick path (pop_due) survives a poison row and keeps
+    dispatching the valid rows behind it (unit-level, no real loop)."""
+    queue = PriorityQueue(db)
+    queue.push({"title": "Poison", "next_run_at": "2026-01-01T00:00:00"})  # naive
+    queue.push({"title": "Junk", "next_run_at": ""})  # discarded as no-run-at
+    queue.push({"title": "Valid", "next_run_at": "2026-01-01T00:00:00+00:00"})
+
+    due = queue.pop_due(datetime(2026, 1, 1, 1, tzinfo=timezone.utc))
+
+    assert {item["title"] for item in due} == {"Poison", "Valid"}
+    assert len(queue) == 0
+
+
 # ---------------------------------------------------------------------------
 # Automation-definition feed (schedules-handoff PR-2, Task 5)
 # ---------------------------------------------------------------------------
