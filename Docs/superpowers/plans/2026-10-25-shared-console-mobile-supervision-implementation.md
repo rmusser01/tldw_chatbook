@@ -14,9 +14,9 @@
 
 **Planning task:** [TASK-39434](../../../backlog/tasks/task-39434%20-%20Plan-shared-served-Console-ownership-and-mobile-supervision-implementation.md)
 
-**Baseline:** `8dbf79077b10d5671dabd4f9cbe06ea9c2ee8c15`. This commit contains the approved specification and overflow correction; product implementation has not started. Re-check symbols and schema ceilings after rebasing.
+**Original planning baseline:** `8dbf79077b10d5671dabd4f9cbe06ea9c2ee8c15` recorded the approved specification and overflow correction before implementation. Later integration and qualification checkpoints are recorded below.
 
-**Status:** Product integration is frozen on native dev62a for independent review and final15-case UAT. Populated rollback and separate changed-row SafetyCopy evidence pass at their recorded source; mobile/native runtime composition is qualified. The mouse test synchronization defect is reproduced and corrected. Absolute size/startup checks remain NON-GREEN draft blockers under R178; no merge readiness or Task8/11 Done claim. Physical phone/VPN remains unverified.
+**Status:** Rebased onto native dev `88af9f93`; tested source `46f0800c`. Populated rollback and edited-row SafetyCopy checks pass. Integration scoped review closed through `95b48a09`; later cancellation changes received source advice, root code review and targeted qualification. Final UAT: 14 passed, 1 failed in 784.03 seconds. Direct cold bootstrap remains unresolved. The 24 size-pin violations and UI-ready count 1044/1031 remain unwaived draft blockers. Tasks 8/11 stay In Progress; current-head GitHub review/CI and physical phone/VPN qualification remain open.
 
 ```text
 ADR required: no
@@ -1382,3 +1382,14 @@ Preserve13214P1F and its original source/physical/artifact/native-row evidence b
 
 
 R181 physical-caller disposition before code: synchronously capture the existing native AutomaticWorkContext only for a valid native cancellation binding. Its actual ledger AgentRunsDB uses existing operation_owned_connection for the finite provider coroutine on the provider-loop thread; borrow pre-existing registered handles and retire newly acquired/replaced handles on that same caller before its model future completes. The scope adds no SQL transaction across an await. Existing Goal check/owned_goal_storage still retires Core/Runs/Workspace acquisitions per probe; nested ownership defers the same Runs handle to the outer finite caller. Admission remains in the original agent_async_worker_guard. Physical close failure propagates through native custody/held leases and never becomes False or a fresh acquisition retry. The original captured deps callback is delegated without replacing automatic checks or caching success. Do not repeatedly reopen a fresh SQLite handle per received chunk. No fourth production module or new lifetime registry is required. Real accepted automatic/Goal kill or deadline plus provider-thread handle retirement is mandatory qualification, not inferred from callback identity.
+
+
+## Final publication qualification (2026-11-02)
+
+ADR required: no new ADR
+ADR path: backlog/decisions/244-shared-console-ownership-and-mobile-supervision.md
+Reason: Documentation-only publication of the existing R168–R181 implementation and its actual acceptance evidence.
+
+Tested source `46f0800c` is properly rebased onto native dev `88af9f93`. The complete original 15-case served acceptance ran without `-x`: 14 passed, one failed in 784.03 seconds. The process was reaped with exit status 1; all 38,286 tracked before/after hashes and index entries matched. Root independently checked the report, raw output, 740 manifest bindings, 1,444 private entries and physical receipts. The direct cold failure is localized to host-bootstrap 503 before Create; its underlying cause remains unknown. It remains a functional draft blocker under R182. No retry or second correction/review wave replaces the failed result.
+
+Native dependency, populated rollback/edited SafetyCopy, Canvas and cancellation controls retain separate source-bound receipts. Independent scoped review closes through `95b48a09`; later R181 has source-design advice and root actual-code/test review, not independent post-implementation current-head review. Numeric limits remain unchanged: 24 size-pin violations and UI-ready count 1044/1031 fail; app import 683/686 passes with warning. Tasks stay In Progress. The final documentation-only commit must retain all 9,742 tested executable/test/script hashes. Authorized publication is draft PR #3345 against dev, with auto-merge off. No merge, full sweep, real-profile operation or cleanup. See the [current QA receipt](../qa/2026-10-25-shared-console-mobile-supervision/uat-2026-11-02.md).

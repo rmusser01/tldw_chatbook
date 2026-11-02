@@ -17,7 +17,7 @@ documentation:
 - Docs/superpowers/plans/2026-10-25-shared-console-mobile-supervision-implementation.md
 - Docs/superpowers/specs/2026-10-25-shared-console-mobile-supervision-design.md
 - backlog/decisions/244-shared-console-ownership-and-mobile-supervision.md
-updated_date: 2026-11-02 04:24
+updated_date: 2026-11-02 17:38
 ---
 
 ## Description
@@ -31,7 +31,7 @@ Preserve existing mobile conversations, workspaces and run history in canonical 
 - [ ] #1 One reviewed claim binds a physical legacy source and fingerprint to admitted destination resources across configurations; another configuration cannot re-import or redirect the same source.
 - [ ] #2 Journaled per-owner transactions preserve mapped conversations, message branches, settings, workspaces, exclusions, run trees, steps and referenced artifacts; each committed batch carries its own idempotency evidence.
 - [ ] #3 All imported automatic-work, goal, wake/chat-start and result-delivery authority remains quarantined across startup and journal recovery, including completed undelivered results, while truthful run statuses and delivery stamps are preserved.
-- [ ] #4 Interruption fences writes until resume or rollback of the same operation; verified cutover enables canonical use, retains originals and coherent recovery copies, and never overwrites newer post-cutover data with a stale backup.
+- [x] #4 Interruption fences writes until resume or rollback of the same operation; verified cutover enables canonical use, retains originals and coherent recovery copies, and never overwrites newer post-cutover data with a stale backup.
 - [ ] #5 Repeated, empty and conflicting imports are verified without duplicates; native recovery, history reading and a new manual turn do not release old imported execution authority.
 <!-- AC:END -->
 
@@ -179,12 +179,18 @@ FIX1 committed33b9efdab49c3138a1fe1dcaa0ce5a4dfd4d7a0d (exact4paths; production 
 Task8 COMPLETE after full original6e83cc4fe5f87d0470019fa0fd4a4d239e593bd2→076c review and FIX1 scoped076c→33b9efdab49c3138a1fe1dcaa0ce5a4dfd4d7a0d re-review. T8FULL-I1/M1 ADDRESSED;0newCritical/Important/Minor, no open findings. Root read full scoped findings and verified native evidence/artifact/source/static/commit identities; actual completed AC matrix retained in SDDtask-8-r146-delivery-ac-matrix.md with FIX1 superseding affected original accounting only. All five preservation/source-once/idempotency/quarantine/recovery/empty-conflict/manual-authority outcomes satisfy their scoped evidence. Existing ADR244 applies, including R129/R130 approved restored-profile/public4GiB checks and R145/R146 qualifications. Source/captures/failures retained; physicalphone/VPN/provider/RSS/fullFD/privateparity/activeNotes limits remain explicit. Task9 may now proceed; this is not mobile engine retirement or whole-feature completion. No full sweep or external publication.
 User-requested PR3345 dev integration reopens current-source qualification. Pinned dev4a38b3d2 introduces incompatible schema lineages and native authority/preservation fields; original source-bound Task8 evidence remains historical. Readonly integration audit complete; amend existing ADR244 before production reconciliation and targeted integrated migration/rollback/quarantine verification.
 Current-dev integration remains In Progress. Original source-bound Task8 preservation/recovery/quarantine qualification is retained; integrated Core86/Workspace11/Runs27, native new authority/chronology preservation and targeted review are not yet qualified. Pre-code R168 is recorded in ADR244 and the linked plan.
+
+Final current-source qualification (2026-11-02):
+
+The dev88a integration preserves Core86/Workspace11/Runs27 and native ownership fields. Empty-history rollback and installed-selector/capture corrections have targeted evidence and scoped integration review. Against the changed native DB implementation, populated public import/rollback and the separate post-import CAS edit/exact encrypted SafetyCopy full-row readback passed both cases in 262.62 seconds (epoch 127). AC4 is qualified at that scope. Other reopened aggregate criteria remain unchecked; these two cases alone cannot close them.
+
+Native read restrictions, custody, budgets, permissions and imported-authority holds remain enforced. Existing ADR244 and its pre-code amendments apply; these qualification notes require no new ADR. Mandatory numeric checks remain red under the owner's explicit instruction, so the task stays In Progress. See the current QA receipt.
 <!-- SECTION:IMPLEMENTATION_NOTES:END -->
 
 ## Final Summary
 
 <!-- SECTION:FINAL_SUMMARY:BEGIN -->
-Original consolidation implementation and review completed at33b9efda; user-requested current-dev compatibility is reopened under R168. All current-source AC await integrated migration/preservation/rollback/quarantine evidence and independent review.
+Rebased onto native dev88a, preserving canonical schemas86/11/27. Populated rollback and edited-row SafetyCopy readback pass at their recorded scope; AC4 is checked. Other reopened aggregate criteria and mandatory numeric checks remain open. Task stays In Progress.
 <!-- SECTION:FINAL_SUMMARY:END -->
 
 ## Definition of Done
