@@ -2781,6 +2781,13 @@ def _active_manual_rows(
     ]
 
 
+def test_transaction_ownership_consults_public_managed_depth(repository, monkeypatch):
+    db = repository.db
+    assert not db.get_connection().in_transaction
+    monkeypatch.setattr(db, "managed_transaction_depth", lambda: 1)
+    assert not folder_repository_module._repository_owns_transaction(db)
+
+
 @pytest.mark.parametrize(
     "held_for", [0.08, None], ids=["held-80ms", "held-throughout"]
 )

@@ -865,3 +865,30 @@ def test_sync_trigger_payloads_never_carry_assistant_authority(
     ]
     assert payloads
     assert all("assistant_authority_id" not in payload for payload in payloads)
+
+
+def test_managed_transaction_depth_tracks_nesting_rollback_and_thread(tmp_path):
+    import threading
+
+    db = CharactersRAGDB(tmp_path / "depth.db", client_id="depth-test")
+    try:
+        assert db.managed_transaction_depth() == 0
+        with db.transaction():
+            assert db.managed_transaction_depth() == 1
+            with db.transaction():
+                assert db.managed_transaction_depth() == 2
+            assert db.managed_transaction_depth() == 1
+            other = []
+            thread = threading.Thread(
+                target=lambda: other.append(db.managed_transaction_depth())
+            )
+            thread.start()
+            thread.join()
+            assert other == [0]
+        assert db.managed_transaction_depth() == 0
+        with pytest.raises(RuntimeError):
+            with db.transaction():
+                raise RuntimeError("boom")
+        assert db.managed_transaction_depth() == 0
+    finally:
+        db.close_connection()

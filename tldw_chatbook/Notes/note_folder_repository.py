@@ -132,7 +132,7 @@ def _repository_owns_transaction(db: CharactersRAGDB) -> bool:
     caller's raw ``BEGIN`` (borrowed): the same test
     ``console_trace_repository`` uses before it owns a transaction.
     """
-    if getattr(db._local, "transaction_depth", 0):
+    if db.managed_transaction_depth():
         return False
     return not db.get_connection().in_transaction
 
