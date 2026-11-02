@@ -7571,6 +7571,15 @@ class ConsoleChatController:
             or continuation.trace_request is not None
         ):
             return None
+        missing_request_failure = self._trace_call_boundaries_by_preparation.get(
+            preparation_id
+        )
+        if (
+            type(missing_request_failure) is not TraceCallPersistenceError
+            or missing_request_failure.reservation_status != "not_established"
+            or missing_request_failure.boundary is not None
+        ):
+            return self._prepared_action_refusal(preparation)
         try:
             trace_request = self._rebuild_continuation_trace_request(
                 preparation, continuation, resolution
@@ -7586,10 +7595,15 @@ class ConsoleChatController:
                 trace_request is not None
                 and self._durable_postcommit_continuations.get(preparation_id)
                 is continuation
+                and self._trace_call_boundaries_by_preparation.get(preparation_id)
+                is missing_request_failure
             ):
                 self._durable_postcommit_continuations[preparation_id] = replace(
                     continuation, trace_request=trace_request
                 )
+                # This marker predates gateway binding/reservation. It is not
+                # an owned gateway boundary to recover on the rebuilt request.
+                self._trace_call_boundaries_by_preparation.pop(preparation_id)
                 return None
         return self._prepared_action_refusal(
             preparation,
@@ -8354,6 +8368,7 @@ class ConsoleChatController:
             preparation.session_id,
             preparation.preparation_id,
             expected_state=ConsoleTurnPreparationState.PAUSED,
+            restore_draft=not continuation.prepared.preserve_composer,
         )
         if cancelled is not None:
             self._drop_preparation(

@@ -995,6 +995,17 @@ preparation. It does not reconstruct a saved composer afterward. The forecast
 still describes only the active desktop composer; admission checks the captured
 phone request. Compaction cards and `/compact` remain native desktop controls.
 
+A missing Capture-On request after durable acceptance retains the exact native
+TRACE_CALL preparation. Desktop Retry rebuilds from that frozen continuation,
+including a phone turn whose tab is no longer selected. Successful rebuilding
+consumes only the current controller-created `not_established` failure marker
+under the durable lock, with both marker and continuation identities unchanged;
+that marker is not a gateway recovery boundary. Unknown or replaced markers and
+failed rebuilds retain the pause. Normal native reservation/contact checks still
+run. Native Cancel settles DISCARD and honors the captured `preserve_composer`
+flag, preserving phone-target and active desktop draft text and revision. These
+remain native desktop recovery controls; no phone trace-action API is added.
+
 Validated explicit phone Send issues the existing opaque user-origin proof.
 Successful initial queue transfer retains that exact proof in the immutable
 request; actual promotion accepts it once. Refused promotion releases it from
@@ -1011,6 +1022,16 @@ worker exit. Main controls use explicit-session `steer_run`, `redirect_run` and
 `stop_run`; existing active-tab methods delegate to those native controls. A
 remote Stop needs an exact existing turn or live run and cannot stop a successor.
 
+
+Native speech preparation retains ADR-284 ownership: the same preparation
+daemon, service, transcriber and process admission survive logical cancellation
+until actual handoff or retirement. Controller maintenance readiness propagates
+to the dictation session; failed cleanup and late results remain fenced. Browser
+detach only retires its view attachment and does not dispose that owner. Exact
+phone Stop controls the selected turn/run, not microphone or model preparation,
+and does not claim physical worker exit. Model loading leaves the user's Xet
+configuration unchanged. The production progress probe supplies no attributable
+transport progress, so opaque native loading has no universal stall deadline.
 
 ## Retained remote projection and decisions (TASK-36763, ADR-244)
 
