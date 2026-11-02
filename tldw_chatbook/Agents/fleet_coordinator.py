@@ -887,7 +887,7 @@ class FleetCoordinator:
             return False
 
         def retained_json_value(value):
-            from tldw_chatbook.Chat.thinking_blocks import (
+            from tldw_chatbook.Provider_Contract.thinking_blocks import (
                 ThinkingEnvelope,
                 dump_thinking_blocks_json,
             )

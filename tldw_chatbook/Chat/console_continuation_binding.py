@@ -18,7 +18,7 @@ from tldw_chatbook.Agents.agent_models import (
     ToolCallFinished,
 )
 from tldw_chatbook.Chat.console_endpoint_provenance import ConsoleEndpointProvenance
-from tldw_chatbook.Chat.provider_continuation import (
+from tldw_chatbook.Provider_Contract.provider_continuation import (
     ContinuationConflictError,
     ContinuationRestoreTarget,
     ProviderContinuationCheckpoint,

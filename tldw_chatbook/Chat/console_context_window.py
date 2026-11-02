@@ -27,7 +27,7 @@ from tldw_chatbook.Utils.token_counter import (
     resolve_context_window,
 )
 
-from .provider_endpoint_contract import resolve_provider_endpoint
+from ..Provider_Contract.provider_endpoint_contract import resolve_provider_endpoint
 
 METADATA_MAX_BYTES = 256 * 1024
 METADATA_CHUNK_BYTES = 64 * 1024

@@ -57,7 +57,8 @@ Each tab is a `Screen` registered in `UI/Navigation/screen_registry.py`. Note: `
 
 ### Business Logic
 
-- **`Chat/`** - ~250 modules, not one bounded context: `console_*` files (the Console controller, store, bridge, gateway) are ~79% of the lines. `Chat_Functions.py` (`chat_api_call()` dispatcher, `API_CALL_HANDLERS`, `PROVIDER_PARAM_MAP`), `Chat_Deps.py` (`ChatAPIError` hierarchy), `chat_persistence_service.py` / `chat_conversation_service.py` (conversation persistence), `document_generator.py` (export formats). Chat imports the DB layer (42 files; see `Docs/Architecture/console.md`).
+- **`Chat/`** - ~250 modules, not one bounded context: `console_*` files (the Console controller, store, bridge, gateway) are ~79% of the lines. `Chat_Functions.py` (`chat_api_call()` dispatcher, `API_CALL_HANDLERS`, `PROVIDER_PARAM_MAP`), `chat_persistence_service.py` / `chat_conversation_service.py` (conversation persistence), `document_generator.py` (export formats). Chat imports the DB layer (42 files; see `Docs/Architecture/console.md`).
+- **`Provider_Contract/`** - provider types shared by Chat, Agents and LLM_Calls: the `ChatAPIError` hierarchy (in `__init__.py`), provider continuations, the endpoint contract and setup facts, sampling parameters and thinking blocks. It imports none of Chat, DB, Agents, LLM_Calls or the UI; import from here, not from the old `Chat.Chat_Deps`-style aliases.
 - **`Character_Chat/`** - `Character_Chat_Lib.py`, `ccv3_parser.py` (card formats)
 - **`Notes/`** - `sync_engine.py` (bidirectional sync), template system
 - **`RAG_Search/`** - `simplified/` for streamlined implementation, `chunking_service.py`

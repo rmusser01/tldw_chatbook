@@ -264,7 +264,7 @@ def provider_error_category(exc: BaseException) -> str:
     Returns:
         A short lower-case category, e.g. "rate limit exceeded".
     """
-    from tldw_chatbook.Chat.Chat_Deps import (
+    from tldw_chatbook.Provider_Contract import (
         ChatAuthenticationError,
         ChatBadRequestError,
         ChatConfigurationError,

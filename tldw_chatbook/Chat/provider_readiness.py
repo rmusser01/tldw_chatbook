@@ -43,7 +43,7 @@ from ..Utils.input_validation import (
     validate_navigation_context_text,
     validate_text_input,
 )
-from .Chat_Deps import ChatConfigurationError
+from ..Provider_Contract import ChatConfigurationError
 from .provider_test_evidence import (
     ConfigurationFacet,
     ConfigurationIssueCode,

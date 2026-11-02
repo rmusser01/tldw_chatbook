@@ -48,7 +48,7 @@ logger = logger.bind(module="Chat_Functions")
 
 #
 # Local Imports
-from .Chat_Deps import (  # noqa: E402
+from ..Provider_Contract import (  # noqa: E402
     ChatBadRequestError,
     ChatConfigurationError,
     ChatAPIError,
@@ -139,7 +139,7 @@ from tldw_chatbook.config import (  # noqa: E402
     load_settings,
 )
 from .console_project_instructions import EPHEMERAL_ORIGIN_KEY  # noqa: E402
-from .provider_continuation import (  # noqa: E402
+from ..Provider_Contract.provider_continuation import (  # noqa: E402
     ProviderContinuationCheckpoint,
     dump_provider_continuation_json,
     read_provider_continuation_json,
@@ -147,7 +147,7 @@ from .provider_continuation import (  # noqa: E402
 from .assistant_generation_state import (  # noqa: E402
     normalize_assistant_generation_state,
 )
-from .thinking_blocks import (  # noqa: E402
+from ..Provider_Contract.thinking_blocks import (  # noqa: E402
     THINKING_EXPORT_WARNING,
     normalize_thinking_history_policy,
     thinking_envelope_to_exchange,

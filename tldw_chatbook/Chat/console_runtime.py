@@ -163,7 +163,7 @@ if TYPE_CHECKING:
     from tldw_chatbook.Chat.console_voice_supervisor import VoiceDispatchSupervisor
     from tldw_chatbook.Chat.response_rules.resources import RuleHelperPool
 from tldw_chatbook.Chat.console_turn_context import ConsoleTurnCustodyRequest
-from tldw_chatbook.Chat.thinking_blocks import normalize_thinking_history_policy
+from tldw_chatbook.Provider_Contract.thinking_blocks import normalize_thinking_history_policy
 from tldw_chatbook.config import coerce_bool_setting, runtime_capture_policy
 from tldw_chatbook.Persona_Buddy.console_adapter import PersonaBuddyConsoleAdapter
 

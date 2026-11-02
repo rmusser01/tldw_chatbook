@@ -10,7 +10,7 @@ if TYPE_CHECKING:
 import json
 from dataclasses import dataclass
 
-from tldw_chatbook.Chat.provider_continuation import ContinuationOwnerGroup
+from tldw_chatbook.Provider_Contract.provider_continuation import ContinuationOwnerGroup
 
 from .agent_models import FENCE_TOOL_RESULT_PREFIX
 from .run_log_eviction import _make_round_boundary

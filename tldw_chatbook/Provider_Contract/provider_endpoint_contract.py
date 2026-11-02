@@ -1,0 +1,609 @@
+"""Pure provider endpoint interpretation for OpenAI-compatible APIs."""
+
+from __future__ import annotations
+
+import re
+from dataclasses import dataclass
+from enum import StrEnum
+from functools import lru_cache
+from ipaddress import ip_address
+from typing import Literal
+from unicodedata import category
+from urllib.parse import urlsplit, urlunsplit
+
+from tldw_chatbook.provider_registry import ALL_RECORDS, ProviderRecord
+
+EndpointForm = Literal[
+    "origin",
+    "api_base",
+    "chat_url",
+    "models_url",
+    "legacy_local",
+]
+
+_LLAMA_PROVIDER_KEYS = frozenset({"llama_cpp", "local_llamacpp"})
+#: Providers whose existing chat endpoint contract exposes a bounded models
+#: route suitable for an explicit, non-generating connection check.
+URL_BASED_PROVIDER_KEYS = frozenset(
+    {
+        "aphrodite",
+        "custom",
+        "custom_2",
+        "koboldcpp",
+        "llama_cpp",
+        "strata",
+        "polystrata",
+        "local_llamacpp",
+        "local_llamafile",
+        "local_ollama",
+        "local_vllm",
+        "ollama",
+        "oobabooga",
+        "qwencloud",
+        "tabbyapi",
+        "vllm",
+    }
+)
+_PROVIDER_ALIASES = {
+    "Custom": "custom",
+    "Custom OpenAI": "custom",
+    "Custom OpenAI API": "custom",
+    "custom-openai": "custom",
+    "custom_openai": "custom",
+    "custom-openai-api": "custom",
+    "custom_openai_api": "custom",
+    "Custom-2": "custom_2",
+    "Custom 2": "custom_2",
+    "custom-2": "custom_2",
+    "Custom OpenAI 2": "custom_2",
+    "custom-openai-2": "custom_2",
+    "custom_openai_2": "custom_2",
+    "Custom OpenAI API-2": "custom_2",
+    "Custom OpenAI API 2": "custom_2",
+    "custom-openai-api-2": "custom_2",
+    "custom_openai_api_2": "custom_2",
+    # ADR-179 Phase 2 Task 6: the engine-driven custom-endpoint execution key
+    # is hyphenated (the registry ``record.key`` that continuation
+    # checkpoints and restore targets pin); accept it alongside the legacy
+    # custom spellings so its connection identity resolves.
+    "custom-hosted": "custom_hosted",
+    "Custom Hosted": "custom_hosted",
+    "llama.cpp": "llama_cpp",
+    "local llama.cpp": "local_llamacpp",
+    "OpenRouter": "openrouter",
+    "local-llamacpp": "local_llamacpp",
+}
+#: Engine presets resolve around their own API base (TASK-33510);
+#: ``custom-hosted`` is an execution key, never a configured provider.
+_ENGINE_PRESETS = {
+    record.key: record
+    for record in ALL_RECORDS
+    if record.engine_driven and record.key != "custom-hosted"
+}
+
+
+#: TASK-34100.6 (review provider-20 / task-33621.32): a preset whose saved base
+#: already carries its API version owns its route suffix, so it resolves like
+#: an engine preset (``<base>/chat/completions``). Z.ai's ``/api/paas/v4``
+#: base previewed and saved ``…/v4/v1/chat/completions`` under the generic rule.
+#: The setup facts' ``ROUTE_SUFFIXES`` is the one owner (review round 1, F11).
+@lru_cache(maxsize=1)
+def _route_owning_presets() -> dict[str, ProviderRecord]:
+    """Load setup facts when interpreting an endpoint, keeping imports pure."""
+    from tldw_chatbook.Provider_Contract.provider_setup_facts import ROUTE_SUFFIXES
+
+    return {
+        record.key: record for record in ALL_RECORDS if record.key in ROUTE_SUFFIXES
+    }
+
+
+#: Cloudflare Workers AI's OpenAI-compatible base is ``…/accounts/<id>/ai/v1``
+#: (record ``CLOUDFLARE``, which carries no suffix). The account URL alone has
+#: no chat route, and Workers AI has no listing to catch it before the first
+#: chat 404s, so a URL that stops at the account gets the route (TASK-34100.6
+#: pre-merge review 2026-10-29).
+_CLOUDFLARE_ACCOUNT_ROUTE = ("ai", "v1")
+#: ``htp:/x`` or ``http:/x``: a scheme-like word and a colon not followed by a
+#: port, typed without "//" (review provider-15).
+_SCHEME_TYPO = re.compile(r"^[A-Za-z][A-Za-z0-9+.-]*:(?!\d)")
+_SCHEME_HINT = (
+    "Start the address with http:// or https:// (for example http://127.0.0.1:8080)."
+)
+_REMOTE_HTTP_WARNING = "Remote HTTP endpoints are not encrypted."
+_PROVIDER_KEY = re.compile(r"[a-z0-9_]+")
+_UNSAFE_UNICODE_CATEGORIES = frozenset({"Cc", "Cf", "Cs"})
+_HEX_DIGITS = frozenset("0123456789abcdefABCDEF")
+_UNRESERVED_ASCII = frozenset(
+    "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-._~"
+)
+_MAX_PROVIDER_LENGTH = 128
+_MAX_ENDPOINT_LENGTH = 4096
+#: KoboldAI's native generate route, koboldcpp's template endpoint. It lists
+#: nothing itself; koboldcpp serves its OpenAI-compatible ``/v1/models`` at
+#: the same root (TASK-35010, owner ruling 2026-10-20).
+_KOBOLD_NATIVE_GENERATE = ("api", "v1", "generate")
+_SUFFIXES: tuple[tuple[tuple[str, ...], EndpointForm], ...] = (
+    (("v1", "chat", "completions"), "chat_url"),
+    (("v1", "models"), "models_url"),
+    (("completion",), "legacy_local"),
+    (("v1",), "api_base"),
+)
+
+
+@dataclass(frozen=True, slots=True)
+class ProviderEndpointResolution:
+    """Normalized endpoint URLs and safe display values for one provider."""
+
+    provider_key: str
+    normalized_input: str
+    persisted_endpoint: str | None
+    chat_url: str | None
+    models_url: str | None
+    persisted_display: str
+    chat_display: str
+    models_display: str
+    form: EndpointForm | None
+    warnings: tuple[str, ...] = ()
+    errors: tuple[str, ...] = ()
+
+
+class ConnectionProbeAvailability(StrEnum):
+    """Whether the provider draft has a meaningful non-generating probe."""
+
+    MODELS_ROUTE = "models_route"
+    UNAVAILABLE = "unavailable"
+
+
+def connection_probe_availability(
+    provider: str,
+    endpoint: str | None,
+) -> ConnectionProbeAvailability:
+    """Return probe availability without reading config or performing I/O.
+
+    Args:
+        provider: Provider identifier for the draft connection.
+        endpoint: Optional endpoint entered for that provider.
+
+    Returns:
+        Whether the provider exposes a valid non-generating models route.
+    """
+
+    provider_key = normalize_provider_key_for_contract(provider)
+    if provider_key not in URL_BASED_PROVIDER_KEYS:
+        return ConnectionProbeAvailability.UNAVAILABLE
+    resolution = resolve_provider_endpoint(provider_key, endpoint)
+    if resolution.errors or resolution.models_url is None:
+        return ConnectionProbeAvailability.UNAVAILABLE
+    return ConnectionProbeAvailability.MODELS_ROUTE
+
+
+def resolve_provider_endpoint(
+    provider: str, value: object
+) -> ProviderEndpointResolution:
+    """Interpret one endpoint value without reading config or performing I/O.
+
+    TASK-33005.10: memoized. With shared evidence present, every Console
+    readiness build keys its connection, which parsed the endpoint three more
+    times: a warm build went from 10 to 34 us (llama.cpp) and 25 to 53 us
+    (OpenAI), on a path TASK-18909 counted ~400 builds per warm switch. With
+    the memo it is 15 and 31 us. The result is a frozen pure function of two
+    strings. A value that could carry a secret (user info, a query, a
+    fragment) is refused anyway and never kept as a cache key.
+    """
+
+    if (
+        type(provider) is str
+        and type(value) is str
+        and "@" not in value
+        and "?" not in value
+        and "#" not in value
+    ):
+        return _memoized_resolution(provider, value)
+    return _resolve_provider_endpoint(provider, value)
+
+
+def _resolve_provider_endpoint(
+    provider: str, value: object
+) -> ProviderEndpointResolution:
+    if not isinstance(provider, str) or len(provider) > _MAX_PROVIDER_LENGTH:
+        return _invalid_resolution("", "Provider name is invalid or too long.")
+    provider_key = normalize_provider_key_for_contract(provider)
+    if not provider_key:
+        return _invalid_resolution("", "Select a valid provider.")
+    if not isinstance(value, str):
+        return _invalid_resolution(provider_key, "Enter an endpoint URL.")
+    if len(value) > _MAX_ENDPOINT_LENGTH:
+        return _invalid_resolution(provider_key, "Endpoint URL is too long.")
+    if _contains_unsafe_unicode(value):
+        return _invalid_resolution(
+            provider_key, "Endpoint URL contains invalid characters."
+        )
+
+    raw_value = value.strip()
+    if not raw_value:
+        return _invalid_resolution(provider_key, "Enter an endpoint URL.")
+    if any(character.isspace() for character in raw_value):
+        return _invalid_resolution(
+            provider_key, "Endpoint URL contains invalid characters."
+        )
+    if "?" in raw_value:
+        return _invalid_resolution(
+            provider_key, "Endpoint URL must not include a query."
+        )
+    if "#" in raw_value:
+        return _invalid_resolution(
+            provider_key, "Endpoint URL must not include a fragment."
+        )
+
+    has_explicit_scheme = "://" in raw_value
+    if not has_explicit_scheme and _SCHEME_TYPO.match(raw_value):
+        return _invalid_resolution(provider_key, _SCHEME_HINT)
+    candidate = raw_value if has_explicit_scheme else f"http://{raw_value}"
+    try:
+        parsed = urlsplit(candidate)
+        hostname = parsed.hostname
+        port = parsed.port
+    except ValueError:
+        return _invalid_resolution(provider_key, "Endpoint URL is malformed.")
+
+    scheme = parsed.scheme.lower()
+    if scheme not in {"http", "https"}:
+        return _invalid_resolution(provider_key, _SCHEME_HINT)
+    if (
+        parsed.username is not None
+        or parsed.password is not None
+        or "@" in parsed.netloc
+    ):
+        return _invalid_resolution(
+            provider_key, "Endpoint URL must not include user information."
+        )
+    if parsed.netloc.endswith(":"):
+        return _invalid_resolution(
+            provider_key, "Endpoint URL must not include an empty port."
+        )
+    if parsed.query:
+        return _invalid_resolution(
+            provider_key, "Endpoint URL must not include a query."
+        )
+    if parsed.fragment:
+        return _invalid_resolution(
+            provider_key, "Endpoint URL must not include a fragment."
+        )
+    canonical_host = _canonical_host(hostname) if hostname else None
+    if not canonical_host or port == 0:
+        return _invalid_resolution(
+            provider_key, "Endpoint URL must include a valid host and port."
+        )
+    if not has_explicit_scheme and not _is_exact_schemeless_host(parsed.netloc):
+        return _invalid_resolution(
+            provider_key,
+            "Remote endpoint URLs must include an HTTP or HTTPS scheme.",
+        )
+
+    original_path = parsed.path
+    if "//" in original_path or "\\" in original_path:
+        return _invalid_resolution(provider_key, "Endpoint path is ambiguous.")
+    canonical_path = _canonicalize_path(original_path)
+    if canonical_path is None:
+        return _invalid_resolution(
+            provider_key, "Endpoint path contains invalid percent encoding."
+        )
+
+    path = canonical_path.removesuffix("/")
+    segments = tuple(segment for segment in path.split("/") if segment)
+    if any(segment in {".", ".."} for segment in segments):
+        return _invalid_resolution(provider_key, "Endpoint path is ambiguous.")
+
+    netloc = _normalized_netloc(canonical_host, port)
+    preset = _ENGINE_PRESETS.get(provider_key) or _route_owning_presets().get(
+        provider_key
+    )
+    if preset is not None:
+        return _engine_preset_resolution(
+            preset, provider_key, scheme, netloc, canonical_host, segments
+        )
+
+    native = _is_kobold_native_generate(provider_key, segments)
+    suffix = _terminal_suffix(
+        segments[:-3] if native else segments,
+        allow_legacy_local=provider_key in _LLAMA_PROVIDER_KEYS,
+    )
+    if native:
+        # Only from a plain root: an API suffix before the route is ambiguous.
+        suffix = (suffix[0], "chat_url") if suffix and suffix[1] == "origin" else None
+    if suffix is None:
+        return _invalid_resolution(
+            provider_key, "Endpoint path has ambiguous API suffixes."
+        )
+    prefix_segments, form = suffix
+
+    prefix_path = f"/{'/'.join(prefix_segments)}" if prefix_segments else ""
+    root = urlunsplit((scheme, netloc, prefix_path, "", ""))
+    normalized_path = f"/{'/'.join(segments)}" if segments else ""
+    normalized_input = urlunsplit((scheme, netloc, normalized_path, "", ""))
+    # A koboldcpp native endpoint is the URL its send posts to: kept whole.
+    chat_url = normalized_input if native else f"{root}/v1/chat/completions"
+    models_url = f"{root}/v1/models"
+    persisted_endpoint = root if provider_key in _LLAMA_PROVIDER_KEYS else chat_url
+    warnings = (
+        (_REMOTE_HTTP_WARNING,)
+        if scheme == "http" and not _is_loopback_host(canonical_host)
+        else ()
+    )
+
+    return ProviderEndpointResolution(
+        provider_key=provider_key,
+        normalized_input=normalized_input,
+        persisted_endpoint=persisted_endpoint,
+        chat_url=chat_url,
+        models_url=models_url,
+        persisted_display=persisted_endpoint,
+        chat_display=chat_url,
+        models_display=models_url,
+        form=form,
+        warnings=warnings,
+    )
+
+
+def _engine_preset_resolution(
+    preset: ProviderRecord,
+    provider_key: str,
+    scheme: str,
+    netloc: str,
+    host: str,
+    segments: tuple[str, ...],
+) -> ProviderEndpointResolution:
+    """Resolve an engine preset's endpoint around its own API base.
+
+    Engine presets' bases are not all ``.../v1`` (BytePlus ``/api/v3``, Kilo
+    ``/api/gateway``, Qianfan ``/v2``, DeepInfra ``/v1/openai``), so the
+    generic ``/v1`` suffix model would rewrite or reject them (TASK-33510).
+    The entered path IS the base, minus a pasted ``/chat/completions`` or
+    ``/models``; a bare host gets the record's suffix (Azure/Databricks
+    ``/openai/v1``), the documented path when it is the preset's own host,
+    or ``/v1``; a Cloudflare URL that stops at ``/accounts/<id>`` gets
+    ``/ai/v1``.
+
+    Args:
+        preset: The provider's registry record.
+        provider_key: Canonical provider key.
+        scheme: Validated URL scheme.
+        netloc: Normalized network location.
+        host: Canonical host name.
+        segments: Canonical, validated path segments.
+
+    Returns:
+        The resolution whose chat URL is ``<base>/chat/completions``.
+    """
+    form: EndpointForm = "api_base"
+    if segments[-2:] == ("chat", "completions"):
+        segments, form = segments[:-2], "chat_url"
+    elif segments[-1:] == ("models",):
+        segments, form = segments[:-1], "models_url"
+    if provider_key == "cloudflare" and segments[-2:-1] == ("accounts",):
+        segments = (*segments, *_CLOUDFLARE_ACCOUNT_ROUTE)
+    if not segments:
+        form = "origin"
+        default = urlsplit(preset.default_base_url or "")
+        if preset.base_url_suffix:
+            base_path = preset.base_url_suffix
+        elif default.hostname == host and default.path:
+            base_path = default.path
+        else:
+            base_path = "/v1"
+        segments = tuple(segment for segment in base_path.split("/") if segment)
+    base = urlunsplit((scheme, netloc, f"/{'/'.join(segments)}", "", ""))
+    chat_url = f"{base}/chat/completions"
+    models_url = f"{base}/models"
+    return ProviderEndpointResolution(
+        provider_key=provider_key,
+        normalized_input=base,
+        persisted_endpoint=chat_url,
+        chat_url=chat_url,
+        models_url=models_url,
+        persisted_display=chat_url,
+        chat_display=chat_url,
+        models_display=models_url,
+        form=form,
+        warnings=(
+            (_REMOTE_HTTP_WARNING,)
+            if scheme == "http" and not _is_loopback_host(host)
+            else ()
+        ),
+    )
+
+
+#: ponytail: 256 entries bounds it; the strings are endpoints, short and few.
+_memoized_resolution = lru_cache(maxsize=256)(_resolve_provider_endpoint)
+
+
+def _is_kobold_native_generate(provider_key: str, segments: tuple[str, ...]) -> bool:
+    return provider_key == "koboldcpp" and segments[-3:] == _KOBOLD_NATIVE_GENERATE
+
+
+def canonical_connection_identity(
+    provider: str, value: object
+) -> tuple[str, str] | None:
+    """Return the provider and canonical persisted endpoint when valid."""
+
+    resolution = resolve_provider_endpoint(provider, value)
+    if resolution.persisted_endpoint is None:
+        return None
+    return (
+        resolution.provider_key,
+        _drop_default_port(resolution.persisted_endpoint),
+    )
+
+
+def normalize_provider_key_for_contract(provider: object) -> str:
+    """Return the canonical provider key accepted by this endpoint contract.
+
+    Args:
+        provider: Provider config key or established display-name alias.
+
+    Returns:
+        The canonical provider key, or an empty string when unsupported.
+    """
+    if not isinstance(provider, str):
+        return ""
+    provider_key = provider.strip()
+    alias = _PROVIDER_ALIASES.get(provider_key)
+    if alias is not None:
+        return alias
+    if not _PROVIDER_KEY.fullmatch(provider_key):
+        return ""
+    return provider_key
+
+
+def _invalid_resolution(provider_key: str, error: str) -> ProviderEndpointResolution:
+    return ProviderEndpointResolution(
+        provider_key=provider_key,
+        normalized_input="",
+        persisted_endpoint=None,
+        chat_url=None,
+        models_url=None,
+        persisted_display="",
+        chat_display="",
+        models_display="",
+        form=None,
+        errors=(error,),
+    )
+
+
+def _terminal_suffix(
+    segments: tuple[str, ...],
+    *,
+    allow_legacy_local: bool,
+) -> tuple[tuple[str, ...], EndpointForm] | None:
+    occurrences: list[tuple[int, tuple[str, ...], EndpointForm]] = []
+    for index in range(len(segments)):
+        for suffix, form in _SUFFIXES:
+            if form == "legacy_local" and not allow_legacy_local:
+                continue
+            if segments[index : index + len(suffix)] == suffix:
+                occurrences.append((index, suffix, form))
+                break
+
+    if not occurrences:
+        return (segments, "origin")
+    if len(occurrences) != 1:
+        return None
+
+    index, suffix, form = occurrences[0]
+    if index + len(suffix) != len(segments):
+        return None
+    return (segments[:index], form)
+
+
+def _contains_unsafe_unicode(value: str) -> bool:
+    return any(category(character) in _UNSAFE_UNICODE_CATEGORIES for character in value)
+
+
+def _canonicalize_path(path: str) -> str | None:
+    canonical: list[str] = []
+    index = 0
+    while index < len(path):
+        character = path[index]
+        if character != "%":
+            if character.isascii():
+                canonical.append(character)
+            else:
+                canonical.extend(f"%{octet:02X}" for octet in character.encode("utf-8"))
+            index += 1
+            continue
+
+        octets = bytearray()
+        while index < len(path) and path[index] == "%":
+            if (
+                index + 2 >= len(path)
+                or path[index + 1] not in _HEX_DIGITS
+                or path[index + 2] not in _HEX_DIGITS
+            ):
+                return None
+            octets.append(int(path[index + 1 : index + 3], 16))
+            index += 3
+
+        if _percent_octets_contain_unsafe_unicode(octets):
+            return None
+        for octet in octets:
+            if octet in {0x2F, 0x5C} or octet < 0x20 or octet == 0x7F:
+                return None
+            decoded = chr(octet)
+            canonical.append(
+                decoded if decoded in _UNRESERVED_ASCII else f"%{octet:02X}"
+            )
+    return "".join(canonical)
+
+
+def _percent_octets_contain_unsafe_unicode(octets: bytearray) -> bool:
+    try:
+        decoded = bytes(octets).decode("utf-8")
+    except UnicodeDecodeError:
+        return True
+    return _contains_unsafe_unicode(decoded)
+
+
+def _canonical_host(hostname: str) -> str | None:
+    if not hostname.isascii() or "%" in hostname:
+        return None
+    try:
+        return ip_address(hostname).compressed.lower()
+    except ValueError:
+        pass
+
+    if hostname.endswith(".."):
+        return None
+    host = hostname.removesuffix(".")
+    if not host or len(host) > 253:
+        return None
+    if all(character.isdigit() or character == "." for character in host):
+        return None
+    if not all(_valid_dns_label(label) for label in host.split(".")):
+        return None
+    return host.lower()
+
+
+def _valid_dns_label(label: str) -> bool:
+    return (
+        1 <= len(label) <= 63
+        and label[0].isalnum()
+        and label[-1].isalnum()
+        and all(character.isalnum() or character == "-" for character in label)
+    )
+
+
+def _normalized_netloc(hostname: str, port: int | None) -> str:
+    host = hostname
+    if ":" in host:
+        host = f"[{host}]"
+    return f"{host}:{port}" if port is not None else host
+
+
+def _is_exact_schemeless_host(netloc: str) -> bool:
+    return any(
+        netloc == host or netloc.startswith(f"{host}:")
+        for host in ("localhost", "127.0.0.1", "[::1]")
+    )
+
+
+def _drop_default_port(endpoint: str) -> str:
+    parsed = urlsplit(endpoint)
+    default_port = (parsed.scheme == "http" and parsed.port == 80) or (
+        parsed.scheme == "https" and parsed.port == 443
+    )
+    if not default_port or parsed.hostname is None:
+        return endpoint
+    canonical_host = _canonical_host(parsed.hostname)
+    if canonical_host is None:
+        return endpoint
+    netloc = _normalized_netloc(canonical_host, None)
+    return urlunsplit((parsed.scheme, netloc, parsed.path, "", ""))
+
+
+def _is_loopback_host(hostname: str) -> bool:
+    if hostname.lower() == "localhost":
+        return True
+    try:
+        return ip_address(hostname).is_loopback
+    except ValueError:
+        return False

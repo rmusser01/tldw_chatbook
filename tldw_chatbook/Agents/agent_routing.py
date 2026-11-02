@@ -14,11 +14,11 @@ from typing import Any
 
 from tldw_chatbook.Agents.agent_models import AgentDefinition
 
-# Module-level only because ADR-147 defines Chat/sampling_params.py as the
+# Module-level only because ADR-147 defines sampling_params.py as the
 # pure, dependency-free leaf shared by presets, registry entries, and this
 # resolver; every other Chat import below stays lazy (inside functions) so
 # agent_service.py remains the only impure Agents module.
-from tldw_chatbook.Chat.sampling_params import (
+from tldw_chatbook.Provider_Contract.sampling_params import (
     KNOWN_SAMPLING_PARAM_KEYS,
     params_to_dict,
     params_to_tuple,

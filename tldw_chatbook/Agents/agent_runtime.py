@@ -28,7 +28,7 @@ if TYPE_CHECKING:
 from loguru import logger
 
 from tldw_chatbook.Chat.console_project_instructions import EPHEMERAL_ORIGIN_KEY
-from tldw_chatbook.Chat.provider_continuation import (
+from tldw_chatbook.Provider_Contract.provider_continuation import (
     ContinuationRestoreTarget,
     ContinuationCall,
     ContinuationRound,
@@ -1133,7 +1133,7 @@ def run_agent_loop(
     """
     # ADR-097 boot ratchet: deferred off the boot path (loads on first use).
     from .fallback_chain import is_credit_terminal
-    from tldw_chatbook.Chat.Chat_Deps import ChatModelUnavailableError
+    from tldw_chatbook.Provider_Contract import ChatModelUnavailableError
     from .history_projection import ProjectionError, project_history_for_protocol
     from .model_retry import (
         RetryPolicy,

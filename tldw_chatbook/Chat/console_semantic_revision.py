@@ -187,7 +187,7 @@ def _project_revision_response_envelope(
     raw_thinking = envelope.get("thinking_blocks")
     if raw_thinking is None:
         return projected
-    from tldw_chatbook.Chat.thinking_blocks import (
+    from tldw_chatbook.Provider_Contract.thinking_blocks import (
         DisplayableThinkingBlock,
         ProprietaryThinkingBlock,
         parse_thinking_blocks_json,

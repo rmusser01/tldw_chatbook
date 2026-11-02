@@ -361,7 +361,7 @@ def _normalize_legacy_chat_delete_intent_payload(
 
 def _validated_provider_continuation(value: object) -> tuple[Any, str]:
     """Return a parsed checkpoint and canonical private JSON."""
-    from tldw_chatbook.Chat.provider_continuation import (
+    from tldw_chatbook.Provider_Contract.provider_continuation import (
         ContinuationValidationError,
         dump_provider_continuation_json,
         parse_provider_continuation_json,
@@ -379,7 +379,7 @@ def _validated_provider_continuation(value: object) -> tuple[Any, str]:
 
 def _validated_thinking_blocks_json(value: object) -> str:
     """Return canonical supported thinking JSON or raise content-free input error."""
-    from tldw_chatbook.Chat.thinking_blocks import (
+    from tldw_chatbook.Provider_Contract.thinking_blocks import (
         ThinkingEnvelopeValidationError,
         dump_thinking_blocks_json,
         parse_thinking_blocks_json,
@@ -396,7 +396,7 @@ def _validated_thinking_blocks_json(value: object) -> str:
 
 def _require_thinking_generation_actions(value: object) -> None:
     """Reject replacement of an unsupported durable thinking envelope."""
-    from tldw_chatbook.Chat.thinking_blocks import read_thinking_blocks_json
+    from tldw_chatbook.Provider_Contract.thinking_blocks import read_thinking_blocks_json
 
     if not read_thinking_blocks_json(value).generation_actions_enabled:
         raise InputError("Stored thinking data cannot be replaced.")
@@ -21050,7 +21050,7 @@ DELETE FROM keywords
             The validated committed source record, or ``None`` when the
             source proof is absent, ambiguous, invalid, or uncommitted.
         """
-        from tldw_chatbook.Chat.provider_continuation import (
+        from tldw_chatbook.Provider_Contract.provider_continuation import (
             ContinuationValidationError,
             dump_provider_continuation_json,
             parse_provider_continuation_json,
@@ -21250,7 +21250,7 @@ DELETE FROM keywords
         message_version: int,
     ) -> str | None:
         """Return the immediate prior committed whole-record hash, if provable."""
-        from tldw_chatbook.Chat.provider_continuation import (
+        from tldw_chatbook.Provider_Contract.provider_continuation import (
             dump_provider_continuation_json,
             parse_provider_continuation_json,
         )
@@ -21384,7 +21384,7 @@ DELETE FROM keywords
             The validated committed delete source, or ``None`` when its
             proof is absent, ambiguous, invalid, or uncommitted.
         """
-        from tldw_chatbook.Chat.provider_continuation import (
+        from tldw_chatbook.Provider_Contract.provider_continuation import (
             ContinuationValidationError,
             dump_provider_continuation_json,
             parse_provider_continuation_json,
@@ -21765,7 +21765,7 @@ DELETE FROM keywords
             Validated current intent descriptors safe to pass to the
             idempotent Chat Sync-v2 reconcilers.
         """
-        from tldw_chatbook.Chat.provider_continuation import (
+        from tldw_chatbook.Provider_Contract.provider_continuation import (
             ContinuationValidationError,
             dump_provider_continuation_json,
             parse_provider_continuation_json,

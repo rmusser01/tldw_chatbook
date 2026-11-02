@@ -132,8 +132,8 @@ from pydantic import (
     field_validator,
 )
 
-from tldw_chatbook.Chat.Chat_Deps import ChatBadRequestError, ChatProviderError
-from tldw_chatbook.Chat.provider_continuation import (
+from tldw_chatbook.Provider_Contract import ChatBadRequestError, ChatProviderError
+from tldw_chatbook.Provider_Contract.provider_continuation import (
     ContinuationCall,
     ContinuationRestoreTarget,
     ContinuationRound,
@@ -147,7 +147,7 @@ from tldw_chatbook.Chat.provider_readiness import (
     configured_workspace_base_url,
     resolve_provider_credential,
 )
-from tldw_chatbook.Chat.sampling_params import REASONING_EFFORT_VALUES
+from tldw_chatbook.Provider_Contract.sampling_params import REASONING_EFFORT_VALUES
 from tldw_chatbook.LLM_Calls.hosted_chat import (
     HostedChatProtocolError,
     HostedChatStream,

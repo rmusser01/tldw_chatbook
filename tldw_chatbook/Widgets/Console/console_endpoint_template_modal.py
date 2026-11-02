@@ -45,7 +45,7 @@ from tldw_chatbook.Chat.custom_endpoint_registry import (
     validate_entry,
 )
 from tldw_chatbook.Chat.provider_readiness import provider_config_key
-from tldw_chatbook.Chat.sampling_params import (
+from tldw_chatbook.Provider_Contract.sampling_params import (
     params_to_dict,
     params_to_tuple,
     parse_params_text,

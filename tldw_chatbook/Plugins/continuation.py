@@ -263,7 +263,7 @@ def capture_pin(
 
 
 def _unsigned_checkpoint_value(checkpoint):
-    from tldw_chatbook.Chat.provider_continuation import _checkpoint_value
+    from tldw_chatbook.Provider_Contract.provider_continuation import _checkpoint_value
 
     return _checkpoint_value(
         replace(

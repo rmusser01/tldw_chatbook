@@ -7,7 +7,7 @@ This document describes how chat requests reach providers: the `chat_api_call` d
 | File | Role |
 | --- | --- |
 | `Chat/Chat_Functions.py` | THE dispatcher: `API_CALL_HANDLERS` (endpoint → handler map), `chat_api_call()`, `PROVIDER_PARAM_MAP`, `chat_reply_text()` |
-| `Chat/Chat_Deps.py` | The `ChatAPIError` hierarchy (`ChatAuthenticationError`, `ChatRateLimitError`, `ChatBadRequestError`, `ChatProviderError`, …) |
+| `Provider_Contract/__init__.py` | The `ChatAPIError` hierarchy (`ChatAuthenticationError`, `ChatRateLimitError`, `ChatBadRequestError`, `ChatProviderError`, …). The package also holds provider continuations, the endpoint contract, sampling parameters and thinking blocks, and imports none of Chat, DB, Agents, LLM_Calls or the UI (TASK-36944.1). The old `Chat.Chat_Deps`, `Chat.provider_continuation`, `Chat.provider_endpoint_contract`, `Chat.provider_setup_facts`, `Chat.sampling_params` and `Chat.thinking_blocks` paths are aliases of these modules |
 | `provider_registry.py` (package root) | Single source of provider identity and engine-preset data (`ProviderRecord`, `ALL_RECORDS`, `RECORDS_BY_KEY`, `ENGINE_RECORDS`; ADR-179). Stdlib-only leaf module so `config.py` can import it |
 | `LLM_Calls/hosted_provider_engine.py` | Generic strict Chat-Completions engine: `build_hosted_chat_handler(record)` builds one handler per preset record (resolve, payload, transport, response layers) |
 | `LLM_Calls/LLM_API_Calls.py` | Hosted provider handlers, one `chat_with_<provider>()` each; `get_openai_embeddings()` |
@@ -170,7 +170,7 @@ The upstream contracts and client-only qualification scope are recorded in
 ## Boundaries
 
 - `LLM_Calls/*` — transport + payload assembly per provider; knows config sections, never UI.
-- `Chat/Chat_Functions.py` — dispatch, param projection, error mapping, usage recording. `Chat/Chat_Deps.py` — the shared exception contract.
+- `Chat/Chat_Functions.py` — dispatch, param projection, error mapping, usage recording. `Provider_Contract/` — the shared exception contract and provider types that Chat, Agents and LLM_Calls all import.
 - `LLM_Provider_Catalog/` — model **list** discovery only; never builds chat requests.
 - `model_capabilities.py` — per-model request-shape facts consumed by handlers and UI.
 - Console layers (`console_provider_gateway`) consume dicts/SSE from handlers and must not reimplement dispatch.

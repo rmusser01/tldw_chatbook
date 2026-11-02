@@ -34,7 +34,7 @@ from tldw_chatbook.DB.ChaChaNotes_DB import (  # noqa: E402
     ConflictError,
     InputError,
 )
-from tldw_chatbook.Chat.provider_continuation import (  # noqa: E402
+from tldw_chatbook.Provider_Contract.provider_continuation import (  # noqa: E402
     dump_provider_continuation_json,
     read_provider_continuation_json,
 )
@@ -43,7 +43,7 @@ from tldw_chatbook.Chat.assistant_generation_state import (  # noqa: E402
     normalize_assistant_generation_state,
     render_exported_assistant_content,
 )
-from tldw_chatbook.Chat.thinking_blocks import (  # noqa: E402
+from tldw_chatbook.Provider_Contract.thinking_blocks import (  # noqa: E402
     preflight_thinking_history_policy,
     thinking_exchange_to_json,
 )

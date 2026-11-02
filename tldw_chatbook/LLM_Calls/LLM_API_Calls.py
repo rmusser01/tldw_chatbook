@@ -46,7 +46,7 @@ from tldw_chatbook.LLM_Calls.deepseek import chat_with_deepseek
 from tldw_chatbook.LLM_Calls.mistral import chat_with_mistral
 from tldw_chatbook.LLM_Calls.openrouter import chat_with_openrouter
 
-from tldw_chatbook.Chat.Chat_Deps import (
+from tldw_chatbook.Provider_Contract import (
     ChatAPIError,
     ChatAuthenticationError,
     ChatRateLimitError,
@@ -55,7 +55,7 @@ from tldw_chatbook.Chat.Chat_Deps import (
     ChatConfigurationError,
 )
 from tldw_chatbook.Chat.console_provider_endpoints import builtin_provider_endpoint
-from tldw_chatbook.Chat.provider_continuation import ProviderContinuationCheckpoint
+from tldw_chatbook.Provider_Contract.provider_continuation import ProviderContinuationCheckpoint
 from tldw_chatbook.config import (
     get_cli_setting,
     get_runtime_config_snapshot,

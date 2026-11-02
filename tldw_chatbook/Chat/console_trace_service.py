@@ -88,7 +88,7 @@ from tldw_chatbook.Chat.conversation_local_marks_service import (
     ConversationLocalMarksService,
 )
 from tldw_chatbook.Chat.message_metadata import MessageMetadata
-from tldw_chatbook.Chat.provider_continuation import parse_provider_continuation_json
+from tldw_chatbook.Provider_Contract.provider_continuation import parse_provider_continuation_json
 from tldw_chatbook.DB.base_db import operation_owned_connection
 from tldw_chatbook.DB.transaction_observer import (
     current_managed_transaction,
@@ -4937,7 +4937,7 @@ class ConsoleTraceService:
     @classmethod
     def _completed_replay_trace_checkpoint(cls, value, policy, *, known_credentials=()):
         """Compare historical artifacts only within their frozen disclosure policy."""
-        from tldw_chatbook.Chat.provider_continuation import (
+        from tldw_chatbook.Provider_Contract.provider_continuation import (
             parse_provider_continuation_json,
         )
 
@@ -4951,7 +4951,7 @@ class ConsoleTraceService:
         )
 
     def _completed_replay_values(self, cursor, owner_id, revision_id, policy=None):
-        from tldw_chatbook.Chat.provider_continuation import (
+        from tldw_chatbook.Provider_Contract.provider_continuation import (
             parse_provider_continuation_json,
             project_provider_continuation,
         )

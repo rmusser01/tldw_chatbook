@@ -21,7 +21,7 @@ from ...Chat.console_context_policy import (
 )
 from ...model_capabilities import ModelCapabilities
 from ...config import coerce_bool_setting
-from ...Chat.thinking_blocks import (
+from ...Provider_Contract.thinking_blocks import (
     ThinkingHistoryPolicy,
     normalize_thinking_history_policy,
 )

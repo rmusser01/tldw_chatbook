@@ -38,7 +38,7 @@ tldw_chatbook.Chat.permission_summary_service	tldw_chatbook.Widgets.Chat_Widgets
 tldw_chatbook.Chat.scope_picker_listers	tldw_chatbook.Widgets.Console.console_scope_picker_modal	top
 tldw_chatbook.DB.AgentRuns_DB	tldw_chatbook.Agents.run_log	top
 tldw_chatbook.DB.AgentRuns_DB	tldw_chatbook.Backup_Recovery.participants	top
-tldw_chatbook.DB.AgentRuns_DB	tldw_chatbook.Chat.sampling_params	top
+tldw_chatbook.DB.AgentRuns_DB	tldw_chatbook.Provider_Contract.sampling_params	top
 tldw_chatbook.DB.ChaChaNotes_DB	tldw_chatbook.Backup_Recovery.participants	lazy
 tldw_chatbook.DB.ChaChaNotes_DB	tldw_chatbook.Backup_Recovery.participants	top
 tldw_chatbook.DB.ChaChaNotes_DB	tldw_chatbook.Character_Chat.portrait_performance	lazy
@@ -46,9 +46,9 @@ tldw_chatbook.DB.ChaChaNotes_DB	tldw_chatbook.Chat.assistant_generation_state	la
 tldw_chatbook.DB.ChaChaNotes_DB	tldw_chatbook.Chat.console_exchange_capture	lazy
 tldw_chatbook.DB.ChaChaNotes_DB	tldw_chatbook.Chat.console_library_policy	lazy
 tldw_chatbook.DB.ChaChaNotes_DB	tldw_chatbook.Chat.console_semantic_revision	lazy
-tldw_chatbook.DB.ChaChaNotes_DB	tldw_chatbook.Chat.provider_continuation	lazy
-tldw_chatbook.DB.ChaChaNotes_DB	tldw_chatbook.Chat.thinking_blocks	lazy
 tldw_chatbook.DB.ChaChaNotes_DB	tldw_chatbook.Library.library_artifacts_state	lazy
+tldw_chatbook.DB.ChaChaNotes_DB	tldw_chatbook.Provider_Contract.provider_continuation	lazy
+tldw_chatbook.DB.ChaChaNotes_DB	tldw_chatbook.Provider_Contract.thinking_blocks	lazy
 tldw_chatbook.DB.ChaChaNotes_DB	tldw_chatbook.Sync_Interop.chat_outbox_producer	lazy
 tldw_chatbook.DB.ChaChaNotes_DB	tldw_chatbook.Sync_Interop.hashing	lazy
 tldw_chatbook.DB.ChaChaNotes_DB	tldw_chatbook.model_capabilities	lazy

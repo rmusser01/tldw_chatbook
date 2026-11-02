@@ -506,7 +506,7 @@ def make_call_model(
             from tldw_chatbook.Chat.console_thinking_capture import (
                 CALL_THINKING_KEY,
             )
-            from tldw_chatbook.Chat.thinking_blocks import ThinkingEnvelope
+            from tldw_chatbook.Provider_Contract.thinking_blocks import ThinkingEnvelope
 
             if not isinstance(thinking_envelope, ThinkingEnvelope):
                 raise ValueError("Call thinking metadata is malformed.")

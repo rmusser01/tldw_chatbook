@@ -30,7 +30,7 @@ from tldw_chatbook.Chat.console_provider_endpoints import (
     DEFAULT_LLAMACPP_BASE_URL,
     safe_endpoint_display,
 )
-from tldw_chatbook.Chat.provider_endpoint_contract import (
+from tldw_chatbook.Provider_Contract.provider_endpoint_contract import (
     normalize_provider_key_for_contract,
     resolve_provider_endpoint,
 )

@@ -48,7 +48,7 @@ _AUDITED_LITERAL_ALLOWLIST: dict[str, tuple[int, int]] = {
     # Audit-leave: identity handler-key universe (settings options).
     "tldw_chatbook/Chat/console_session_settings.py": (1, 1),
     # Audit-leave: identity aliases (execution spelling -> readiness key).
-    "tldw_chatbook/Chat/provider_endpoint_contract.py": (1, 1),
+    "tldw_chatbook/Provider_Contract/provider_endpoint_contract.py": (1, 1),
     # Audit-leave: identity aliases (setup persistence).
     "tldw_chatbook/Chat/provider_setup_persistence.py": (1, 1),
     # Audit-leave: docstring reference to the legacy table's own keys.

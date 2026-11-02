@@ -3015,7 +3015,7 @@ class ConsoleAgentController:
         if bridge is None:
             return messages
         from tldw_chatbook.Chat.console_agent_bridge import inject_resume_agent_markers
-        from tldw_chatbook.Chat.thinking_blocks import ThinkingEnvelope
+        from tldw_chatbook.Provider_Contract.thinking_blocks import ThinkingEnvelope
 
         thinking_rounds_by_owner = {
             message.persisted_message_id or message.id: frozenset(

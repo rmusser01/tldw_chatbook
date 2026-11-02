@@ -54,8 +54,8 @@ from tldw_chatbook.Chat.local_reasoning import (
     effective_replay_policy,
     starts_reasoning_exchange,
 )
-from tldw_chatbook.Chat.provider_continuation import ContinuationOwnerGroup
-from tldw_chatbook.Chat.thinking_blocks import ThinkingHistoryPolicy
+from tldw_chatbook.Provider_Contract.provider_continuation import ContinuationOwnerGroup
+from tldw_chatbook.Provider_Contract.thinking_blocks import ThinkingHistoryPolicy
 
 MIXIN_ATTEMPT_KEY = "_tldw_mixin_attempt"
 
@@ -1349,7 +1349,7 @@ def _project_runtime_guidance(
 
 def _completed_replay_plan(messages, groups):
     """Expand only a collapsed, exact completed owner under an engine contract."""
-    from tldw_chatbook.Chat.provider_continuation import project_provider_continuation
+    from tldw_chatbook.Provider_Contract.provider_continuation import project_provider_continuation
     from tldw_chatbook.provider_registry import ENGINE_RECORDS
 
     engine_keys = {record.key for record in ENGINE_RECORDS}

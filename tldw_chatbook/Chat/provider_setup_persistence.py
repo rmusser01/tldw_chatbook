@@ -28,7 +28,7 @@ from ..config import (
     normalize_provider_config_key,
 )
 from ..provider_registry import ALL_RECORDS
-from .provider_endpoint_contract import (
+from ..Provider_Contract.provider_endpoint_contract import (
     canonical_connection_identity,
     resolve_provider_endpoint,
 )
@@ -1054,7 +1054,7 @@ def environment_credential_records(
         ``{"api_settings.<section>": {"api_key_env_var": NAME}}``, read-only,
         using each provider's configured section spelling and variable name.
     """
-    from .provider_setup_facts import provider_setup_facts
+    from tldw_chatbook.Provider_Contract.provider_setup_facts import provider_setup_facts
 
     if not isinstance(app_config, Mapping):
         app_config = {}

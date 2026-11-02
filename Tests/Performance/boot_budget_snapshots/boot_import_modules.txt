@@ -1,5 +1,5 @@
 # tldw_chatbook.* modules resident after `import tldw_chatbook.app`.
-# 675 modules. Written ONLY by scripts/update_boot_budget_snapshots.py (ADR-097).
+# 676 modules. Written ONLY by scripts/update_boot_budget_snapshots.py (ADR-097).
 tldw_chatbook
 tldw_chatbook.ACP_Interop
 tldw_chatbook.ACP_Interop.runtime_process
@@ -73,7 +73,6 @@ tldw_chatbook.Character_Chat.visual_identity
 tldw_chatbook.Character_Chat.world_book_manager
 tldw_chatbook.Character_Chat.world_info_regex
 tldw_chatbook.Chat
-tldw_chatbook.Chat.Chat_Deps
 tldw_chatbook.Chat.Chat_Functions
 tldw_chatbook.Chat.answer_citations
 tldw_chatbook.Chat.assistant_generation_state
@@ -123,17 +122,13 @@ tldw_chatbook.Chat.custom_endpoint_registry
 tldw_chatbook.Chat.local_server_discovery
 tldw_chatbook.Chat.message_metadata
 tldw_chatbook.Chat.provider_catalog
-tldw_chatbook.Chat.provider_continuation
-tldw_chatbook.Chat.provider_endpoint_contract
 tldw_chatbook.Chat.provider_readiness
 tldw_chatbook.Chat.provider_setup_persistence
 tldw_chatbook.Chat.provider_test_evidence
 tldw_chatbook.Chat.provider_usage
 tldw_chatbook.Chat.rag_scope
-tldw_chatbook.Chat.sampling_params
 tldw_chatbook.Chat.server_chat_conversation_service
 tldw_chatbook.Chat.server_chat_loop_service
-tldw_chatbook.Chat.thinking_blocks
 tldw_chatbook.Chat_Grammars_Interop
 tldw_chatbook.Chat_Grammars_Interop.chat_grammars_scope_service
 tldw_chatbook.Chat_Grammars_Interop.local_chat_grammars_service
@@ -354,6 +349,12 @@ tldw_chatbook.Prompt_Management.server_prompt_service
 tldw_chatbook.Prompt_Studio_Interop
 tldw_chatbook.Prompt_Studio_Interop.prompt_studio_scope_service
 tldw_chatbook.Prompt_Studio_Interop.server_prompt_studio_service
+tldw_chatbook.Provider_Contract
+tldw_chatbook.Provider_Contract.provider_continuation
+tldw_chatbook.Provider_Contract.provider_endpoint_contract
+tldw_chatbook.Provider_Contract.provider_setup_facts
+tldw_chatbook.Provider_Contract.sampling_params
+tldw_chatbook.Provider_Contract.thinking_blocks
 tldw_chatbook.RAG_Admin
 tldw_chatbook.RAG_Admin.local_rag_admin_service
 tldw_chatbook.RAG_Admin.rag_admin_normalizers

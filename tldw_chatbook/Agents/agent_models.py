@@ -32,11 +32,11 @@ if TYPE_CHECKING:
     from .code_review_models import ReviewRunBinding
     from .fallback_chain import FallbackCandidate
 
-from tldw_chatbook.Chat.provider_continuation import (
+from tldw_chatbook.Provider_Contract.provider_continuation import (
     ContinuationResult,
     ProviderContinuationCheckpoint,
 )
-from tldw_chatbook.Chat.sampling_params import (
+from tldw_chatbook.Provider_Contract.sampling_params import (
     params_to_dict,
     params_to_tuple,
     validate_sampling_params,
@@ -1232,7 +1232,7 @@ class AgentConfig:
             primary and for children inheriting a built-in provider.
         sampling_params: The resolved target's own sampling/API params as
             ``(key, value)`` pairs (keys from
-            ``Chat.sampling_params.KNOWN_SAMPLING_PARAM_KEYS``), applied to
+            ``Provider_Contract.sampling_params.KNOWN_SAMPLING_PARAM_KEYS``), applied to
             this run's model calls; empty for a primary. A child NEVER
             inherits its parent's params — these come from the resolver's
             six-layer stack for the child's own provider.

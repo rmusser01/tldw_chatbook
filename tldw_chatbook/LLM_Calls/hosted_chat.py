@@ -23,7 +23,7 @@ from loguru import logger
 from requests.exceptions import RequestException, Timeout as RequestsTimeout
 from urllib3.util import Retry
 
-from tldw_chatbook.Chat.Chat_Deps import (
+from tldw_chatbook.Provider_Contract import (
     ChatAuthenticationError,
     model_unavailable_error,
     ChatBadRequestError,

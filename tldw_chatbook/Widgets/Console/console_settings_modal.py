@@ -107,7 +107,7 @@ from tldw_chatbook.Chat.local_server_discovery import (
     probe_models_endpoint,
 )
 from tldw_chatbook.Chat.provider_catalog import listed_pick_note, provider_display_name
-from tldw_chatbook.Chat.provider_endpoint_contract import (
+from tldw_chatbook.Provider_Contract.provider_endpoint_contract import (
     ConnectionProbeAvailability,
     canonical_connection_identity,
     connection_probe_availability,
@@ -130,7 +130,7 @@ from tldw_chatbook.Chat.provider_test_evidence import (
     console_generation_test_availability,
     listing_refused_without_a_key,
 )
-from tldw_chatbook.Chat.thinking_blocks import (
+from tldw_chatbook.Provider_Contract.thinking_blocks import (
     ThinkingHistoryPolicy,
     normalize_thinking_history_policy,
 )

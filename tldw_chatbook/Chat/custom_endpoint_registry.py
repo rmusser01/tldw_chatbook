@@ -22,7 +22,7 @@ from pydantic import BaseModel, field_validator
 
 from tldw_chatbook.Chat.console_provider_support import MODEL_FIELD_LABELS
 from tldw_chatbook.Chat.console_session_settings import normalize_llamacpp_base_url
-from tldw_chatbook.Chat.sampling_params import (
+from tldw_chatbook.Provider_Contract.sampling_params import (
     params_to_dict,
     params_to_tuple,
     validate_sampling_params,

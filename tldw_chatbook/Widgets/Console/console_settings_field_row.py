@@ -69,7 +69,7 @@ from tldw_chatbook.Chat.provider_readiness import (
     get_provider_readiness,
     provider_config_key,
 )
-from tldw_chatbook.Chat.sampling_params import temperature_range
+from tldw_chatbook.Provider_Contract.sampling_params import temperature_range
 from tldw_chatbook.provider_registry import RECORDS_BY_KEY
 
 from .console_model_popover import context_copy

@@ -84,9 +84,9 @@ class ConsoleProviderCatalogEntry:
         """What setup needs to know: locality, key URL, base URL, ports (SF5).
 
         Settings and first-run setup read these from this one shared record
-        (TASK-34100.6); ``Chat/provider_setup_facts.py`` owns the values.
+        (TASK-34100.6); ``Provider_Contract/provider_setup_facts.py`` owns the values.
         """
-        from tldw_chatbook.Chat.provider_setup_facts import provider_setup_facts
+        from tldw_chatbook.Provider_Contract.provider_setup_facts import provider_setup_facts
 
         return provider_setup_facts(self.readiness_key)
 

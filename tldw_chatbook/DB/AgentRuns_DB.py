@@ -28,7 +28,7 @@ from tldw_chatbook.Agents.agent_models import (
     validate_agent_definition,
 )
 from tldw_chatbook.Agents.run_log import DEFAULT_MAX_RECORD_BYTES
-from tldw_chatbook.Chat.sampling_params import params_to_dict
+from tldw_chatbook.Provider_Contract.sampling_params import params_to_dict
 from . import store_kernel as _store_kernel
 from .base_db import BaseDB
 from .store_kernel import SQLiteStoreKernel

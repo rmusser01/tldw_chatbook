@@ -6,7 +6,7 @@ from collections.abc import Mapping
 from ipaddress import ip_address
 from urllib.parse import urlparse, urlunparse
 
-from tldw_chatbook.Chat.provider_endpoint_contract import (
+from tldw_chatbook.Provider_Contract.provider_endpoint_contract import (
     URL_BASED_PROVIDER_KEYS,
     canonical_connection_identity,
     resolve_provider_endpoint,

@@ -749,7 +749,7 @@ class ProviderStep(provider_check.ProviderCheckStep):
             return ""
         if not candidate.strip():
             return ""
-        from tldw_chatbook.Chat.provider_endpoint_contract import (
+        from tldw_chatbook.Provider_Contract.provider_endpoint_contract import (
             resolve_provider_endpoint,
         )
 
@@ -762,7 +762,7 @@ class ProviderStep(provider_check.ProviderCheckStep):
     def _provider_current_draft_identity(self):
         """Build a secret-free identity for the exact controls now on screen."""
 
-        from tldw_chatbook.Chat.provider_endpoint_contract import (
+        from tldw_chatbook.Provider_Contract.provider_endpoint_contract import (
             canonical_connection_identity,
         )
         from tldw_chatbook.Chat.provider_test_evidence import ProviderDraftIdentity

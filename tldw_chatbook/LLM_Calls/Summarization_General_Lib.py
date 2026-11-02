@@ -1179,7 +1179,7 @@ def _summarize_via_chat_api(
     # Deferred: chat-side imports stay off this module's import time (the
     # ingest import-weight tests pin it).
     from ..Chat.Chat_Functions import chat_api_call, chat_reply_text
-    from ..Chat.Chat_Deps import (
+    from ..Provider_Contract import (
         ChatAPIError,
     )
 

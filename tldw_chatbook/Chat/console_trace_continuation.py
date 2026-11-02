@@ -20,7 +20,7 @@ if TYPE_CHECKING:
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 
-from tldw_chatbook.Chat.provider_continuation import ProviderContinuationCheckpoint
+from tldw_chatbook.Provider_Contract.provider_continuation import ProviderContinuationCheckpoint
 
 
 @dataclass(frozen=True, slots=True, repr=False)
@@ -98,7 +98,7 @@ def _projection_bytes(value):
 
 def _bounded_projection(value):
     """Validate trace projection structure without creating execution state."""
-    from tldw_chatbook.Chat.provider_continuation import (
+    from tldw_chatbook.Provider_Contract.provider_continuation import (
         _MAX_ARGUMENT_BYTES,
         _MAX_CALLS,
         _MAX_JSON_DEPTH,
@@ -201,7 +201,7 @@ def compact_continuation_projection(previous, current, policy_id):
 
 def resolve_continuation_node(repository, cursor, node, *, policy_id=None):
     """Materialize a trace-only round chain through exact replacement edges."""
-    from tldw_chatbook.Chat.provider_continuation import (
+    from tldw_chatbook.Provider_Contract.provider_continuation import (
         _MAX_JSON_DEPTH,
         _MAX_JSON_NODES,
         _MAX_PAYLOAD_BYTES,
@@ -960,7 +960,7 @@ def validate_completed_tool_turn(
             raise ValueError("completed_project_turn_anchor")
     replay_continuations = set()
     if witness.replay_row_count:
-        from tldw_chatbook.Chat.provider_continuation import (
+        from tldw_chatbook.Provider_Contract.provider_continuation import (
             parse_provider_continuation_json,
         )
 

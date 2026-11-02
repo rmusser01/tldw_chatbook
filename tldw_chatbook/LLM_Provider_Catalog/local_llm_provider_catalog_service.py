@@ -12,7 +12,7 @@ from typing import Any
 
 from loguru import logger
 
-from tldw_chatbook.Chat.Chat_Deps import ChatConfigurationError
+from tldw_chatbook.Provider_Contract import ChatConfigurationError
 from tldw_chatbook.Chat.console_provider_endpoints import (
     effective_provider_endpoint,
     first_configured_endpoint,

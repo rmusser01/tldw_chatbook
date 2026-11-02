@@ -320,7 +320,7 @@ from tldw_chatbook.Chat.console_project_instructions import (
     project_instruction_notice_key,
     sanitized_destination_label,
 )
-from tldw_chatbook.Chat.provider_continuation import (
+from tldw_chatbook.Provider_Contract.provider_continuation import (
     ContinuationConflictError,
     ContinuationRestoreTarget,
     ProviderContinuationCheckpoint,
@@ -547,7 +547,7 @@ from tldw_chatbook.Chat.console_thinking_history import (
     effective_thinking_history_policy,
     resolve_thinking_history,
 )
-from tldw_chatbook.Chat.thinking_blocks import (
+from tldw_chatbook.Provider_Contract.thinking_blocks import (
     THINKING_ENVELOPE_VERSION,
     ThinkingEnvelope,
     ThinkingHistoryPolicy,

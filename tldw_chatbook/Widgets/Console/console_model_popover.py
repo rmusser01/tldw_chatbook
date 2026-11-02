@@ -74,7 +74,7 @@ from tldw_chatbook.Chat.provider_catalog import (
     PROVIDER_LEGACY_ALIAS_KEYS,
     provider_display_name,
 )
-from tldw_chatbook.Chat.provider_endpoint_contract import (
+from tldw_chatbook.Provider_Contract.provider_endpoint_contract import (
     URL_BASED_PROVIDER_KEYS,
     canonical_connection_identity,
 )
@@ -82,7 +82,7 @@ from tldw_chatbook.Chat.provider_readiness import (
     KEYLESS_PROVIDER_KEYS,
     provider_config_key,
 )
-from tldw_chatbook.Chat.sampling_params import MIN_MAX_TOKENS, temperature_range
+from tldw_chatbook.Provider_Contract.sampling_params import MIN_MAX_TOKENS, temperature_range
 from tldw_chatbook.config import SHIPPED_SAMPLE_MODEL_IDS
 from tldw_chatbook.Utils.input_validation import validate_text_input
 from tldw_chatbook.Widgets.Console.console_settings_unsaved import unsaved_prompt_copy

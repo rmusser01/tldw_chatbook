@@ -48,7 +48,7 @@ from tldw_chatbook.Chat.console_trace_models import (
     SemanticRevisionRef,
     new_opaque_id,
 )
-from tldw_chatbook.Chat.provider_continuation import (
+from tldw_chatbook.Provider_Contract.provider_continuation import (
     ProviderContinuationCheckpoint,
     dump_provider_continuation_json,
 )

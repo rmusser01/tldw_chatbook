@@ -29,7 +29,7 @@ from tldw_chatbook.Chat.console_session_settings import (
     console_send_connection,
 )
 from tldw_chatbook.Chat.custom_endpoint_registry import CUSTOM_ENDPOINT_ID_PREFIX
-from tldw_chatbook.Chat.provider_endpoint_contract import (
+from tldw_chatbook.Provider_Contract.provider_endpoint_contract import (
     URL_BASED_PROVIDER_KEYS,
     ConnectionProbeAvailability,
     canonical_connection_identity,

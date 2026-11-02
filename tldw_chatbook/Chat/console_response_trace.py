@@ -15,7 +15,7 @@ from tldw_chatbook.Chat.console_turn_grouping import (
     group_console_transcript_messages,
     ordered_assistant_activities,
 )
-from tldw_chatbook.Chat.thinking_blocks import DisplayableThinkingBlock
+from tldw_chatbook.Provider_Contract.thinking_blocks import DisplayableThinkingBlock
 
 
 def _label(text: str) -> str:

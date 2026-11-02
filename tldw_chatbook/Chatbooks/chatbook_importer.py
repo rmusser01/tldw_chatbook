@@ -51,13 +51,13 @@ from ..Chat.chat_conversation_service import ChatConversationService
 from ..Chat.citation_service_factory import (
     build_local_citation_conversation_service,
 )
-from ..Chat.provider_continuation import (
+from ..Provider_Contract.provider_continuation import (
     ProviderContinuationCheckpoint,
     dump_provider_continuation_json,
     parse_provider_continuation_json,
     read_provider_continuation_json,
 )
-from ..Chat.thinking_blocks import (
+from ..Provider_Contract.thinking_blocks import (
     preflight_thinking_history_policy,
     thinking_exchange_to_json,
 )
@@ -1961,7 +1961,7 @@ class ChatbookImporter:
             CitationTraceRepository,
             load_local_citation_identity_context,
         )
-        from ..Chat.thinking_blocks import normalize_thinking_history_policy
+        from ..Provider_Contract.thinking_blocks import normalize_thinking_history_policy
         from .chatbook_creator import ChatbookCreator
 
         path = self._conversation_file_path(

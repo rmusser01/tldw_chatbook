@@ -48,7 +48,7 @@ from tldw_chatbook.Chat.provider_catalog import (
     PROVIDER_CUSTOM_GROUP_KEYS,
     provider_display_name,
 )
-from tldw_chatbook.Chat.provider_endpoint_contract import canonical_connection_identity
+from tldw_chatbook.Provider_Contract.provider_endpoint_contract import canonical_connection_identity
 from tldw_chatbook.Chat.provider_readiness import (
     KEYLESS_PROVIDER_KEYS,
     STILL_ENCRYPTED_REASON,
@@ -78,7 +78,7 @@ from tldw_chatbook.Chat.provider_test_evidence import (
     connection_credential_revision,
     provider_readiness_verdict,
 )
-from tldw_chatbook.Chat.sampling_params import (
+from tldw_chatbook.Provider_Contract.sampling_params import (
     TEMPERATURE_RANGE,
     _is_blank_value,
     _parse_optional_int,
@@ -93,7 +93,7 @@ from tldw_chatbook.Chat.sampling_params import (
 # The enum sets canonicalize in sampling_params.py (ADR-147's shared leaf)
 # so presets, registry entries, and Console settings validate against ONE
 # contract; the underscore aliases keep this module's call sites unchanged.
-from tldw_chatbook.Chat.sampling_params import (
+from tldw_chatbook.Provider_Contract.sampling_params import (
     REASONING_EFFORT_VALUES as _REASONING_EFFORT_VALUES,
     REASONING_SUMMARY_VALUES as _REASONING_SUMMARY_VALUES,
     THINKING_EFFORT_VALUES as _THINKING_EFFORT_VALUES,

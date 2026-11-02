@@ -27,7 +27,7 @@ from tldw_chatbook.LLM_Calls import recovery_review as _provider_recovery
 from tldw_chatbook.LLM_Calls.hosted_chat import _MAX_RETRY_AFTER_SECONDS
 from tldw_chatbook.Utils.input_validation import strict_json_loads
 
-from tldw_chatbook.Chat.Chat_Deps import (
+from tldw_chatbook.Provider_Contract import (
     ChatAuthenticationError,
     ChatBadRequestError,
     ChatConfigurationError,

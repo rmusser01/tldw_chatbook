@@ -13,7 +13,7 @@ from typing import TYPE_CHECKING, Any, Never, cast
 
 import requests
 
-from tldw_chatbook.Chat.Chat_Deps import ChatProviderError
+from tldw_chatbook.Provider_Contract import ChatProviderError
 from tldw_chatbook.Utils.input_validation import (
     StrictJSONError,
     strict_json_loads,
