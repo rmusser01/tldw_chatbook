@@ -287,6 +287,9 @@ async def test_nonstarting_discovery_replaces_retired_cache_and_fences_old_host(
     buffer = ConsoleEventBuffer()
 
     class Broker:
+        def console_identity(self, child_id):
+            return ConsoleHostIdentity(server_epoch="server-epoch", console_id=child_id)
+
         async def wait_connected(self, child_id, **kwargs):
             pass
 
