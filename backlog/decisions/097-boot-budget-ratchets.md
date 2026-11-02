@@ -211,3 +211,12 @@ unchanged with 24,604 B headroom. The snapshot was refreshed by
 `scripts/update_boot_budget_snapshots.py --only css`. No exception or budget
 increase was used. This pays the CSS-byte debt; it does not claim a measured
 startup-time improvement or complete TASK-31500's separate modal deferrals.
+
+## PR3332 numeric-size exception — 2026-11-01
+
+The integration's targeted UI-ready census completed both boots and measured
+1034 own modules against the unchanged 1031 cap. This numeric failure is WAIVED
+under the user's explicit "Ignore size limits" instruction for this integration.
+The test, cap and pinned snapshot remain intact. No base rerun or attribution of
+the excess to this branch is claimed. This waiver does not waive functional,
+privacy, custody, source-selection or ownership checks.

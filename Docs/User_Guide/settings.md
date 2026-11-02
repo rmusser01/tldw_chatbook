@@ -278,6 +278,13 @@ and Hugging Face model downloads (Parakeet speech to text, OmniVoice, the
 Models screen's remote installs) still read the `[API]` line itself; delete
 it from `config.toml` to stop them using it.
 
+Hugging Face model downloads use the installed client's transport defaults
+and your `HF_HUB_DISABLE_XET` environment choice. The app does not override
+that choice. Console's current speech adapters do not expose exact download
+artifacts, so preparation shows Loading without a byte count or automatic
+inactivity timeout. Cancel stays available; see Console dictation for its
+background-work and retry behavior.
+
 Summaries (Library analysis, web search) send the key the **API key** row
 resolves for their provider, so "no credential", **Clear** and an **Env var**
 choice decide for them as they do for the **Key check**. A summary for

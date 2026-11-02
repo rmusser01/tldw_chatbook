@@ -190,7 +190,28 @@ is never sent automatically, so you can edit before pressing Enter.
 
 - **First run:** "Preparing the speech model for the first time. The first
   run downloads it and can take several minutes. Nothing is being recorded
-  yet — the microphone opens once the model is ready."
+  yet — the microphone opens once the model is ready." Current adapters
+  show **Loading speech model…**: they do not expose an exact download
+  artifact or a native-load heartbeat. **Cancel** ends the recording attempt
+  promptly; preparation continues in the background until it finishes or you
+  quit. Another press cannot start a second preparation while that work or its
+  cleanup is still running, even after leaving and returning to Console.
+  Completed disk-cache bytes remain available to the provider on a later try;
+  resumability depends on that provider and transport. If cleanup fails, quit
+  and restart before trying again.
+- **Model download or load fails:** the attempt ends with one message —
+  "Dictation failed: The 'parakeet-mlx' speech model could not be downloaded
+  or loaded. Nothing was recorded. Check your network connection and try
+  again, or choose another model in Settings ▸ Speech & TTS. The log has the
+  details." The microphone never opens, the chip clears and the button reads
+  **Dictate** again; pressing it is the retry.
+- **Download inactivity:** `dictation.model_prepare_stall_seconds` defaults
+  to 120 seconds, but applies only when an adapter identifies an exact active
+  download artifact. Current legacy speech adapters do not supply this, so
+  they have no automatic inactivity bound. Quiet cache files cannot establish
+  that a native load is stuck. Use **Cancel** to leave Loading; quitting ends
+  remaining background work. Byte progress is not qualified for Xet,
+  Lightning Whisper, NeMo or opaque post-download loading.
 - **Length cap:** a capture stops itself at 60 seconds — "Dictation limit
   reached; transcribing the captured audio."
 - **Requires optional extras.** Without a microphone backend: "Microphone

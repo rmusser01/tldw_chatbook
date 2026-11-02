@@ -297,6 +297,7 @@ class LazyLiveDictationService:
         self._transcription_service_factory = transcription_service_factory
         self._recorder_factory = recorder_factory
         self.transcript_engine = transcript_engine
+        self._capture_cancellation: Optional[Callable[[], bool]] = None
 
         # Lazy-loaded services
         self._audio_service = None
@@ -751,6 +752,14 @@ class LazyLiveDictationService:
         self._notify_segment_transcribing(done=True)
         self._finalize_current_segment()
 
+    def set_capture_cancellation(self, cancelled: Callable[[], bool]) -> None:
+        """Install an owner's nonblocking retirement predicate before startup."""
+        self._capture_cancellation = cancelled
+
+    def _capture_was_cancelled(self) -> bool:
+        predicate = getattr(self, "_capture_cancellation", None)
+        return predicate is not None and predicate()
+
     def start_dictation(
         self,
         on_partial_transcript: Optional[Callable[[str], None]] = None,
@@ -810,6 +819,8 @@ class LazyLiveDictationService:
                 armed and incorrectly swallow the NEXT real segment's
                 final. Carries no payload.
         """
+        if self._capture_was_cancelled():
+            return False
         with self.state_lock:
             if self.state != DictationState.IDLE:
                 logger.warning(f"Cannot start dictation in state: {self.state}")
@@ -841,6 +852,8 @@ class LazyLiveDictationService:
                 self._notify_state_change()
                 return False
 
+            if self._capture_was_cancelled():
+                return False
             with self.state_lock:
                 self.state = DictationState.STARTING
             self._notify_state_change()
@@ -860,6 +873,8 @@ class LazyLiveDictationService:
 
             # Initialize streaming transcriber
             self._initialize_streaming_transcriber()
+            if self._capture_was_cancelled():
+                return False
 
             # Start processing thread (simplified)
             self.stop_processing.clear()
@@ -876,6 +891,9 @@ class LazyLiveDictationService:
                 raise
 
             # Start audio recording
+            if self._capture_was_cancelled():
+                self.stop_processing.set()
+                return False
             success = audio_svc.start_recording(callback=self._audio_callback)
 
             if success:

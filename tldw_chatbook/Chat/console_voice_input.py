@@ -19,8 +19,9 @@ import math
 import string
 import sys  # noqa: F401 - patched seam; see comment above
 import threading
+import time
 import unicodedata
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any, Callable
 
 from loguru import logger
@@ -110,20 +111,39 @@ WARMUP_DETAIL_FIRST_RUN = (
     "and can take several minutes. Nothing is being recorded yet — the "
     "microphone opens once the model is ready."
 )
-WARMUP_REASON_TEMPLATE = "The '{provider}' speech model could not be prepared."
+#: TASK-33621.21: every warm-up failure is fatal and reads the same way. The
+#: warm-up transcribes silence through the very transcriber the capture would
+#: use, so recording after it failed records into a transcriber that already
+#: failed -- live, that was a "may be slow" warning followed by a streaming
+#: load that hung forever. Each press builds a fresh service and warms again,
+#: so a transient error costs one press, and pressing again is the retry. The
+#: raw error (errno values, cache paths, parakeet-mlx's misleading local-path
+#: fallback) goes to the log only. Dictate and Hands-free both reach this
+#: copy, so the retry names neither button, and a cause the network does not
+#: explain (a bad model name, a corrupt cache) gets the settings pointer.
+WARMUP_REASON_TEMPLATE = (
+    "The '{provider}' speech model could not be downloaded or loaded."
+)
 WARMUP_REMEDY = (
-    "Check the transcription provider and model in Settings, and that the "
-    "model can be downloaded or is already on disk."
+    "Nothing was recorded. Check your network connection and try again, or "
+    "choose another model in Settings ▸ Speech & TTS. The log has the details."
 )
-#: A warm-up that fails *after* the model loaded (the silence transcription
-#: itself erroring) is weak evidence: it costs the user nothing to try the real
-#: capture, and Fix 2/3 mean a degraded capture can no longer be misreported as
-#: a dead microphone. Fatal warm-up is reserved for a transcription service that
-#: cannot be built at all.
-WARMUP_DEGRADED_REASON_TEMPLATE = (
-    "Could not pre-load the '{provider}' speech model; the first part of this "
-    "capture may be slow."
+#: Only an explicitly owned active HTTP artifact earns an inactivity failure.
+WARMUP_STALLED_REASON_TEMPLATE = (
+    "The '{provider}' speech model showed no download progress for {seconds} seconds."
 )
+WARMUP_STALLED_REMEDY = (
+    "Nothing was recorded. Background preparation may still be finishing. "
+    "Try again when ready, or quit to stop it. Check the network or model "
+    "in Settings ▸ Speech & TTS."
+)
+#: Chip text while a model download is visibly running. "◐ " plus this plus
+#: "1.2 GB" stays inside WARMUP_MESSAGE_MAX_CELLS.
+WARMUP_DOWNLOAD_MESSAGE_TEMPLATE = "Downloading speech model… {size}"
+#: Inactivity bound for a positively attributed active HTTP artifact
+#: (`dictation.model_prepare_stall_seconds`). Opaque native loading is excluded;
+#: only observed bytes belonging to this attempt reset the download clock.
+DEFAULT_MODEL_PREPARE_STALL_SECONDS = 120.0
 
 # --- Stop-side outcomes ----------------------------------------------------
 #
@@ -631,19 +651,6 @@ class VoiceModelPreparing:
 
 
 @dataclass(frozen=True)
-class VoiceModelWarmupFailed:
-    """Pre-loading the model failed, but the capture is going ahead anyway.
-
-    Not a `VoiceFailed`: nothing has gone wrong with the microphone or with the
-    session, and treating it as fatal would make one transient error render
-    dictation permanently unusable -- the Console warms on *every* press.
-    """
-
-    reason: str
-    remedy: str = ""
-
-
-@dataclass(frozen=True)
 class VoiceVadUnavailable:
     """The capture started, but the recorder's voice-activity detection did not.
 
@@ -846,6 +853,41 @@ def classify_segment(text: str) -> "VoiceCommand | VoiceFinal":
 _WARMED_MODELS: set[tuple[str, str]] = set()
 _WARMED_MODELS_LOCK = threading.Lock()
 
+# ADR-284: the screen's maintenance set cannot survive screen replacement.
+# ponytail: serialize Console preparation process-wide; per-model admission
+# requires evidence that the native resources are independent.
+_MODEL_PREPARATION_ADMISSION = threading.Lock()
+
+
+@dataclass
+class _ModelPreparation:
+    service: Any
+    transcriber: Any
+    native_done: threading.Event = field(default_factory=threading.Event)
+    handoff: threading.Event = field(default_factory=threading.Event)
+    capture_done: threading.Event = field(default_factory=threading.Event)
+    capture_committed: threading.Event = field(default_factory=threading.Event)
+    done: threading.Event = field(default_factory=threading.Event)
+    start_capture: Callable[[], bool] | None = None
+    started: bool = False
+    thread: threading.Thread | None = None
+    error: BaseException | None = None
+    release_when_done: bool = False
+    accepted: bool = False
+    released: bool = False
+    cleanup_failed: bool = False
+
+
+_ACTIVE_MODEL_PREPARATION: _ModelPreparation | None = None
+
+
+class SpeechModelPreparing(RuntimeError):
+    """A previous Console attempt still owns physical preparation."""
+
+
+class SpeechModelCleanupFailed(RuntimeError):
+    """Failed native disposal still owns admission until process exit."""
+
 
 def _warmup_key(effective: EffectiveConfig) -> tuple[str, str]:
     return (effective.provider, effective.model or "")
@@ -898,8 +940,9 @@ def warm_before_capture_enabled() -> bool:
 
     `dictation.warm_model_before_capture`, default True. The escape hatch
     exists because warming runs on *every* press (the Console builds a fresh
-    service each time), so a provider that chokes on digital silence would
-    otherwise degrade every capture forever.
+    service each time), and a failed warm-up ends the attempt (TASK-33621.21),
+    so a provider that chokes on digital silence would otherwise fail every
+    press.
 
     Returns:
         True when the warm-up should run.
@@ -908,6 +951,62 @@ def warm_before_capture_enabled() -> bool:
     if isinstance(raw, str):
         return raw.strip().lower() not in {"false", "no", "0", "off"}
     return bool(raw)
+
+
+def model_prepare_stall_seconds() -> float:
+    """Allowed inactivity of an explicitly observed download artifact.
+
+    `dictation.model_prepare_stall_seconds`, default
+    `DEFAULT_MODEL_PREPARE_STALL_SECONDS`. Same validation as
+    `handsfree_send_delay_seconds`: a non-numeric, non-positive or non-finite
+    value is logged and replaced by the default, because a zero bound would
+    fail every observed download. Opaque native loading has no automatic bound.
+
+    Returns:
+        The bound in seconds, always positive and finite.
+    """
+    raw = get_cli_setting(
+        "dictation",
+        "model_prepare_stall_seconds",
+        DEFAULT_MODEL_PREPARE_STALL_SECONDS,
+    )
+    try:
+        value = float(raw)
+    except (TypeError, ValueError):
+        value = 0.0
+    if not math.isfinite(value) or value <= 0:
+        logger.warning(
+            "dictation.model_prepare_stall_seconds invalid ({!r}); using {}",
+            raw,
+            DEFAULT_MODEL_PREPARE_STALL_SECONDS,
+        )
+        return DEFAULT_MODEL_PREPARE_STALL_SECONDS
+    return value
+
+
+def download_progress_probe() -> Any:
+    """Return no observer until a provider supplies an owned HTTP artifact.
+
+    Legacy loaders expose start/loaded stages, not exact attempt-owned paths.
+    Neither the selected repo nor cache-wide growth proves ownership. Xet,
+    Lightning/NeMo caches and native loading remain unobservable (ADR-284).
+    Tests with a known exact artifact replace this existing seam.
+    """
+    return None
+
+
+def _format_download_size(num_bytes: int) -> str:
+    from ..Utils.model_download_guard import format_download_size
+
+    return format_download_size(num_bytes)
+
+
+class SpeechModelStalled(TimeoutError):
+    """The model load made no visible progress for the stall bound."""
+
+    def __init__(self, seconds: float) -> None:
+        super().__init__(f"speech model load made no progress for {seconds:g} s")
+        self.seconds = seconds
 
 
 #: Default seconds a finalized segment sits in `countdown` before the
@@ -1331,6 +1430,9 @@ class ConsoleVoiceInputController:
     #: How often the abandon-aware warm-up wait re-checks. Small enough that
     #: quitting mid-download feels immediate, large enough not to spin.
     WARMUP_POLL_SECONDS = 0.05
+    #: How often that wait samples an attributed HTTP artifact, if supported,
+    #: and checks its inactivity bound. Opaque loading has no such deadline.
+    WARMUP_PROGRESS_POLL_SECONDS = 1.0
 
     def __init__(
         self,
@@ -1355,6 +1457,7 @@ class ConsoleVoiceInputController:
         self._spawn = spawn
         self._service_factory = service_factory
         self._service: Any | None = None
+        self._model_preparation: _ModelPreparation | None = None
         self._state = STATE_IDLE
         self._state_lock = threading.Lock()
         self._override_announced = False
@@ -1634,6 +1737,21 @@ class ConsoleVoiceInputController:
         # orphaned processing thread from THIS attempt reports when it
         # finally calls one of them.
         capture_generation = self._pending_capture_generation
+        # TASK-33621.21: before anything can download a model -- the warm-up
+        # below, or the streaming load inside `start_dictation()` -- make
+        # tqdm's process-wide lock buildable under Textual's fd-less stderr.
+        # Unguarded, the first download died on `fds_to_keep` and left that
+        # lock held, so the next load blocked forever.
+        try:
+            from ..Utils.model_download_guard import (
+                allow_tqdm_without_stderr_descriptor,
+            )
+
+            allow_tqdm_without_stderr_descriptor()
+        except Exception:  # noqa: BLE001 - the guard must never cost a capture
+            logger.opt(exception=True).warning(
+                "Console dictation could not prepare tqdm for in-app downloads"
+            )
         try:
             service = self._service_factory(
                 transcription_provider=effective.provider,
@@ -1647,6 +1765,10 @@ class ConsoleVoiceInputController:
             )
             self._fail(str(exc))
             return
+
+        set_cancellation = getattr(service, "set_capture_cancellation", None)
+        if callable(set_cancellation):
+            set_cancellation(lambda: self._abandoned)
 
         if effective.provider == "parakeet-onnx":
             reserve = getattr(service, "reserve_deferred_dictation", None)
@@ -1681,31 +1803,39 @@ class ConsoleVoiceInputController:
             return
 
         try:
-            started = service.start_dictation(
-                on_partial_transcript=lambda text, _gen=capture_generation: (
-                    self._emit_capture_event(VoicePartial(text), _gen)
+            started = self._start_service_capture(
+                service,
+                lambda: service.start_dictation(
+                    on_partial_transcript=lambda text, _gen=capture_generation: (
+                        self._emit_capture_event(VoicePartial(text), _gen)
+                    ),
+                    on_final_transcript=lambda text, _gen=capture_generation: (
+                        self._emit_capture_event(classify_segment(text), _gen)
+                    ),
+                    on_segment_transcribing=lambda done, _gen=capture_generation: (
+                        self._emit_capture_event(
+                            VoiceSegmentTranscribing(done=done), _gen
+                        )
+                    ),
+                    on_speech_resumed=lambda _gen=capture_generation: (
+                        self._emit_capture_event(VoiceSpeechResumed(), _gen)
+                    ),
+                    on_segment_no_final=lambda _gen=capture_generation: (
+                        self._emit_capture_event(VoiceSegmentNoFinal(), _gen)
+                    ),
+                    on_state_change=lambda _state: (
+                        None
+                    ),  # our state machine is authoritative
+                    on_error=lambda error, _gen=capture_generation: (
+                        self._report_service_error(error, generation=_gen)
+                    ),
+                    save_audio=self.save_audio_requested,
                 ),
-                on_final_transcript=lambda text, _gen=capture_generation: (
-                    self._emit_capture_event(classify_segment(text), _gen)
-                ),
-                on_segment_transcribing=lambda done, _gen=capture_generation: (
-                    self._emit_capture_event(VoiceSegmentTranscribing(done=done), _gen)
-                ),
-                on_speech_resumed=lambda _gen=capture_generation: (
-                    self._emit_capture_event(VoiceSpeechResumed(), _gen)
-                ),
-                on_segment_no_final=lambda _gen=capture_generation: (
-                    self._emit_capture_event(VoiceSegmentNoFinal(), _gen)
-                ),
-                on_state_change=lambda _state: (
-                    None
-                ),  # our state machine is authoritative
-                on_error=lambda error, _gen=capture_generation: (
-                    self._report_service_error(error, generation=_gen)
-                ),
-                save_audio=self.save_audio_requested,
             )
         except Exception as exc:  # noqa: BLE001 - surfaced to the user verbatim
+            self._release(service)
+            if self._abandoned:
+                return
             logger.opt(exception=True).warning("Console dictation failed to start")
             # `on_error` is invoked from *inside* `start_dictation()`, i.e.
             # from inside the `try` above, so this `exc` can be the real
@@ -1726,23 +1856,46 @@ class ConsoleVoiceInputController:
         # take tens of seconds) was still in flight. That check happened
         # against no service to release, so it's on us to release this one.
         with self._state_lock:
-            if self._abandoned:
-                claimed = False
-            else:
+            claimed = started and not self._abandoned
+            if claimed:
                 self._service = service
-                claimed = True
+            work = self._model_preparation
+            if work is not None and work.service is service:
+                work.accepted = claimed
+                work.release_when_done = not claimed
+                work.capture_committed.set()
 
         if not claimed:
             self._release(service)
-            return
-
-        if not started:
-            self._claim_service()  # drop it; the service already cleaned up
-            self._fail_not_started()
+            if not self._abandoned and not started:
+                self._fail_not_started()
             return
 
         if self._enter_listening():
             self._maybe_report_vad_unavailable(service)
+
+    def _start_service_capture(self, service: Any, start: Callable[[], bool]) -> bool:
+        """Keep native startup on the retained owner, waiting abandon-aware."""
+        work = self._model_preparation
+        if work is None or work.service is not service:
+            return False if self._abandoned else start()
+        with self._state_lock:
+            if self._abandoned:
+                work.release_when_done = True
+                work.capture_committed.set()
+            else:
+                work.start_capture = start
+            work.handoff.set()
+        while not work.capture_done.wait(self.WARMUP_POLL_SECONDS):
+            if self._abandoned:
+                return False
+        if self._abandoned:
+            return False
+        error = work.error
+        if error is not None:
+            self._release(service)
+            raise error
+        return work.started
 
     def _prepare_speech_model(self, service: Any, effective: EffectiveConfig) -> bool:
         """Load the speech model while still in `preparing`, before capture.
@@ -1753,15 +1906,12 @@ class ConsoleVoiceInputController:
         thread join. Doing it here costs a warm press nothing extra (the load
         it performs is the one the first chunk would have performed anyway).
 
-        Two failure modes, deliberately weighted differently:
-
-        * The transcription service cannot be *built* -- models genuinely
-          absent. Fatal, reported as a model/provider problem.
-        * The silence transcription itself errors after the service was built.
-          Not fatal: the Console warms on every press, so making this fatal
-          would turn one transient error into permanently unusable dictation.
-          It is announced and the capture proceeds, which is only safe because
-          an empty result can no longer be misreported as a dead microphone.
+        Every failure here is fatal and never opens the microphone
+        (TASK-33621.21): the transcriber cannot be built, the warm-up raised
+        (a download or load error), or an attributed active download showed no
+        progress for `model_prepare_stall_seconds()`. Each ends `preparing` with one
+        plain message and a retry (press Dictate or Hands-free again); the
+        raw error is logged, never shown.
 
         Opt out entirely with `dictation.warm_model_before_capture = false`.
 
@@ -1771,12 +1921,25 @@ class ConsoleVoiceInputController:
 
         Returns:
             True when capture may proceed. False when this attempt is over --
-            either the model could not be prepared at all (already reported
-            through `_fail`) or `abandon()` landed while the model was loading.
+            either the model could not be prepared (already reported through
+            `_fail`) or `abandon()` landed while the model was loading.
         """
         if self._abandoned:
             self._release(service)
             return False
+        # Even opt-out/deferred starts must respect an already-retained owner.
+        # This snapshot does not serialize otherwise unowned opt-out startup.
+        if not _MODEL_PREPARATION_ADMISSION.acquire(blocking=False):
+            active = _ACTIVE_MODEL_PREPARATION
+            error = (
+                SpeechModelCleanupFailed()
+                if active is not None and active.cleanup_failed
+                else SpeechModelPreparing()
+            )
+            self._release(service)
+            self._fail(*self._warmup_failure(effective, error))
+            return False
+        _MODEL_PREPARATION_ADMISSION.release()
         if bool(getattr(service, "uses_deferred_dictation", False)):
             return True
         if not warm_before_capture_enabled():
@@ -1787,12 +1950,12 @@ class ConsoleVoiceInputController:
             return True
         try:
             transcriber = warmup_target(service)
-        except Exception as exc:  # noqa: BLE001 - reported as a model failure
+        except Exception:  # noqa: BLE001 - reported as a model failure
             logger.opt(exception=True).warning(
                 "Console dictation transcription service could not be built"
             )
             self._release(service)
-            self._fail(self._warmup_failure(effective, exc), WARMUP_REMEDY)
+            self._fail(*self._warmup_failure(effective))
             return False
         if transcriber is None:
             return True
@@ -1807,7 +1970,7 @@ class ConsoleVoiceInputController:
             "model-preparing notice",
         )
 
-        error = self._run_warmup_off_the_executor(transcriber, effective)
+        error = self._run_warmup_off_the_executor(transcriber, effective, service)
         if self._abandoned:
             # A first-run warm-up runs for minutes; the screen can unmount
             # inside it. Never hand a live microphone to a torn-down machine.
@@ -1815,24 +1978,18 @@ class ConsoleVoiceInputController:
             return False
         if error is not None:
             logger.opt(exception=error).warning(
-                "Console dictation model warm-up failed"
+                "Console dictation model warm-up failed ({}); not opening the "
+                "microphone",
+                type(error).__name__,
             )
-            self._emit_quietly(
-                VoiceModelWarmupFailed(
-                    reason=(
-                        f"{WARMUP_DEGRADED_REASON_TEMPLATE.format(provider=effective.provider)}"
-                        f" {error}"
-                    ).strip(),
-                    remedy=WARMUP_REMEDY,
-                ),
-                "model warm-up warning",
-            )
-            return True
+            self._release(service)
+            self._fail(*self._warmup_failure(effective, error))
+            return False
         _mark_warmed(effective)
         return True
 
     def _run_warmup_off_the_executor(
-        self, transcriber: Any, effective: EffectiveConfig
+        self, transcriber: Any, effective: EffectiveConfig, service: Any
     ) -> BaseException | None:
         """Perform the warm-up on a daemon thread, waiting abandon-aware.
 
@@ -1845,37 +2002,184 @@ class ConsoleVoiceInputController:
         releases this frame promptly, the executor thread returns, and the
         process can exit; the orphaned download dies with it.
 
+        Only an attributed active download earns the inactivity bound. Current
+        legacy adapters have no such observer and remain Loading until return
+        or Cancel. The retained record and admission survive logical retirement;
+        abandoned services are disposed after native return, without UI joining.
+
         Args:
             transcriber: The transcription service to warm.
             effective: The provider/model/language the capture will run with.
 
         Returns:
-            None when the model loaded, the exception when it did not, or a
+            None when the model loaded, the exception when it did not,
+            `SpeechModelStalled` when it stopped making progress, or a
             `RuntimeError` placeholder when `abandon()` ended the wait early
             (the caller checks `_abandoned` first, so that value is unused).
         """
-        done = threading.Event()
-        box: dict[str, BaseException] = {}
+        global _ACTIVE_MODEL_PREPARATION
+        stall_seconds = model_prepare_stall_seconds()
+        progress = self._download_progress()
+        downloaded = self._read_downloaded_bytes(progress) or 0
+        if not _MODEL_PREPARATION_ADMISSION.acquire(blocking=False):
+            active = _ACTIVE_MODEL_PREPARATION
+            if active is not None and active.cleanup_failed:
+                return SpeechModelCleanupFailed()
+            return SpeechModelPreparing()
+        work = _ModelPreparation(service=service, transcriber=transcriber)
+        _ACTIVE_MODEL_PREPARATION = work
+        self._model_preparation = work
 
         def _work() -> None:
             try:
                 warm_transcription_model(transcriber, effective)
             except BaseException as exc:  # noqa: BLE001 - handed back to the caller
-                box["error"] = exc
+                work.error = exc
             finally:
-                done.set()
+                work.native_done.set()
+                # Only this daemon disposes native resources, even when return
+                # wins the race with Cancel/error processing on the executor.
+                work.handoff.wait()
+                try:
+                    if not work.release_when_done and work.start_capture is not None:
+                        work.started = work.start_capture()
+                except BaseException as exc:
+                    work.error = exc
+                finally:
+                    work.capture_done.set()
+                work.capture_committed.wait()
+                self._finish_model_preparation(work, captured=True)
 
-        threading.Thread(
+        shown = ""
+        last_progress_at = next_check = time.monotonic()
+        work.thread = threading.Thread(
             target=_work, daemon=True, name="ConsoleDictationModelWarmup"
-        ).start()
-        while not done.wait(self.WARMUP_POLL_SECONDS):
+        )
+        try:
+            work.thread.start()
+        except BaseException:
+            work.native_done.set()
+            _ACTIVE_MODEL_PREPARATION = None
+            _MODEL_PREPARATION_ADMISSION.release()
+            work.done.set()
+            raise
+        active_before = False
+        while not work.native_done.wait(self.WARMUP_POLL_SECONDS):
             if self._abandoned:
                 logger.debug(
                     "Console dictation abandoned while the speech model was loading; "
                     "leaving the load to finish on its daemon thread"
                 )
                 return RuntimeError("abandoned during model warm-up")
-        return box.get("error")
+            now = time.monotonic()
+            if now < next_check:
+                continue
+            next_check = now + self.WARMUP_PROGRESS_POLL_SECONDS
+            current = self._read_downloaded_bytes(progress)
+            active = current is not None and bool(getattr(progress, "active", False))
+            if not active:
+                last_progress_at = now
+                active_before = False
+                if shown != WARMUP_MESSAGE:
+                    shown = WARMUP_MESSAGE
+                    self._emit_quietly(
+                        VoiceModelPreparing(message=shown), "model loading"
+                    )
+                continue
+            if not active_before:
+                last_progress_at = now
+            active_before = True
+            if current > downloaded:
+                downloaded, last_progress_at = current, now
+                message = WARMUP_DOWNLOAD_MESSAGE_TEMPLATE.format(
+                    size=_format_download_size(current)
+                )
+                if message != shown:
+                    shown = message
+                    self._emit_quietly(
+                        VoiceModelPreparing(message=message), "download progress"
+                    )
+            elif now - last_progress_at >= stall_seconds:
+                logger.warning(
+                    "Console dictation speech model load made no progress for "
+                    "{:g} s ({} bytes downloaded); giving up on this attempt",
+                    stall_seconds,
+                    downloaded,
+                )
+                return SpeechModelStalled(now - last_progress_at)
+        return work.error
+
+    def _finish_model_preparation(
+        self, work: _ModelPreparation, *, captured: bool = False
+    ) -> None:
+        """Release admission once, after handoff or abandoned-service disposal."""
+        global _ACTIVE_MODEL_PREPARATION
+        with self._state_lock:
+            retire = captured and (work.release_when_done or not work.accepted)
+            if retire:
+                work.release_when_done = True
+            elif not work.done.is_set():
+                if _ACTIVE_MODEL_PREPARATION is not work:
+                    return
+                work.transcriber = None
+                work.error = None
+                _ACTIVE_MODEL_PREPARATION = None
+                _MODEL_PREPARATION_ADMISSION.release()
+                work.done.set()
+        if retire:
+            self._dispose_model_preparation(work)
+
+    def _dispose_model_preparation(self, work: _ModelPreparation) -> None:
+        """Dispose abandoned native state on its retained daemon, then admit."""
+        self._release_service(work.service)
+        # An admitted capture can have a processor using this model even after
+        # nonjoining abandon returns. Keep its exact owner until that user exits.
+        while not getattr(work.service, "maintenance_ready", True):
+            time.sleep(self.WARMUP_POLL_SECONDS)
+        cleanup = getattr(work.transcriber, "cleanup", None)
+        if callable(cleanup):
+            try:
+                cleanup()
+            except Exception:
+                # Native cleanup may retain its own custody after failure.
+                # Keep the record and admission until process exit.
+                work.cleanup_failed = True
+                logger.opt(exception=True).warning(
+                    "Abandoned Console model preparation cleanup failed"
+                )
+                return
+        work.released = True
+        self._finish_model_preparation(work)
+
+    @property
+    def maintenance_ready(self) -> bool:
+        """Whether this controller's physical preparation has retired."""
+        work = self._model_preparation
+        return work is None or work.done.is_set()
+
+    @staticmethod
+    def _download_progress() -> Any | None:
+        """Build this attempt's download-progress probe; None if it cannot."""
+        try:
+            return download_progress_probe()
+        except Exception:  # noqa: BLE001 - no probe means no progress, not a crash
+            logger.opt(exception=True).debug(
+                "Console dictation download progress is unavailable"
+            )
+            return None
+
+    @staticmethod
+    def _read_downloaded_bytes(progress: Any | None) -> int | None:
+        """Read the probe, treating a failure as unobservable, never stalled."""
+        if progress is None:
+            return None
+        try:
+            return int(progress.downloaded_bytes())
+        except Exception:  # noqa: BLE001 - a broken probe is no progress
+            logger.opt(exception=True).debug(
+                "Console dictation download progress could not be read"
+            )
+            return None
 
     def _emit_quietly(self, event: Any, description: str) -> None:
         """Emit an advisory event, swallowing a plumbing failure.
@@ -1896,9 +2200,40 @@ class ConsoleVoiceInputController:
             )
 
     @staticmethod
-    def _warmup_failure(effective: EffectiveConfig, exc: Exception) -> str:
-        """Phrase a warm-up failure as a model problem, never a microphone one."""
-        return f"{WARMUP_REASON_TEMPLATE.format(provider=effective.provider)} {exc}".strip()
+    def _warmup_failure(
+        effective: EffectiveConfig, error: BaseException | None = None
+    ) -> tuple[str, str]:
+        """Phrase a warm-up failure as a model problem, never a microphone one.
+
+        The raw error is deliberately not included: it is logged by the
+        caller, and what it says is often misleading (parakeet-mlx reports a
+        failed fetch as a missing local `config.json`) and carries errno
+        values and cache paths (TASK-33621.21).
+
+        Returns:
+            The `(reason, remedy)` pair for `_fail()`.
+        """
+        if isinstance(error, SpeechModelCleanupFailed):
+            return (
+                "Speech model cleanup failed.",
+                "Nothing was recorded. Quit and restart the app before trying again.",
+            )
+        if isinstance(error, SpeechModelPreparing):
+            return (
+                "Speech model preparation is still finishing.",
+                "Nothing was recorded. Try again when ready, or quit to stop background work.",
+            )
+        if isinstance(error, SpeechModelStalled):
+            return (
+                WARMUP_STALLED_REASON_TEMPLATE.format(
+                    provider=effective.provider, seconds=f"{error.seconds:g}"
+                ),
+                WARMUP_STALLED_REMEDY,
+            )
+        return (
+            WARMUP_REASON_TEMPLATE.format(provider=effective.provider),
+            WARMUP_REMEDY,
+        )
 
     def _report_service_error(
         self, error: Any, *, generation: int | None = None
@@ -2234,6 +2569,11 @@ class ConsoleVoiceInputController:
         """
         with self._state_lock:
             self._abandoned = True
+            work = self._model_preparation
+            if work is not None and not work.done.is_set():
+                work.release_when_done = True
+                work.handoff.set()
+                work.capture_committed.set()
             service, self._service = self._service, None
             self._state = STATE_IDLE
             self._retry_action = None
@@ -2259,6 +2599,22 @@ class ConsoleVoiceInputController:
         Args:
             service: The dictation service instance to release.
         """
+        with self._state_lock:
+            work = self._model_preparation
+            if work is not None and work.service is service:
+                if work.released:
+                    return
+                if not work.done.is_set():
+                    work.release_when_done = True
+                    work.handoff.set()
+                    work.capture_committed.set()
+                    return
+                work.service = None
+        self._release_service(service)
+
+    @staticmethod
+    def _release_service(service: Any) -> None:
+        """Release capture/processor resources without joining native work."""
         abandon = getattr(service, "abandon", None)
         if callable(abandon):
             try:

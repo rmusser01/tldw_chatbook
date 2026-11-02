@@ -30,6 +30,7 @@ def _service_with(recorder):
     return service
 
 
+@pytest.mark.bootstrap_profile
 def test_stop_dictation_releases_capture():
     """The whole point: a successful stop must stop the microphone."""
     recorder = _Recorder()
@@ -41,6 +42,7 @@ def test_stop_dictation_releases_capture():
     assert recorder.is_recording is False
 
 
+@pytest.mark.bootstrap_profile
 def test_stop_dictation_does_not_construct_a_recorder_when_none_exists():
     """`audio_service` is a lazy property; reading it opens a device.
 
