@@ -102,6 +102,31 @@ async def _invoke_callback(callback, *args) -> None:
         await result
 
 
+def _reject_nonfinite_numbers(value: Any, label: str) -> Any:
+    """Recursively replace non-finite floats with ``None`` (TASK-38583).
+
+    ``float("-inf")``/``nan`` serialize as ``-Infinity``/``NaN`` under
+    ``json.dumps`` (the EvalsDB persist path), which is invalid strict JSON
+    on export. This is the belt-and-braces guard at the metrics boundary:
+    the runners must not produce non-finite values, and any that slip
+    through become ``None`` with a warning instead of being persisted.
+    """
+    if isinstance(value, float) and not math.isfinite(value):
+        logger.warning(
+            f"{label}: non-finite float ({value}) replaced with None so "
+            "persisted metrics stay strict-JSON valid"
+        )
+        return None
+    if isinstance(value, dict):
+        return {
+            key: _reject_nonfinite_numbers(item, label)
+            for key, item in value.items()
+        }
+    if isinstance(value, list):
+        return [_reject_nonfinite_numbers(item, label) for item in value]
+    return value
+
+
 class EvalError(Exception):
     """Base exception for evaluation errors."""
 
@@ -178,6 +203,12 @@ class EvalSampleResult:
             self.metadata = {}
         if self.error_info is None:
             self.error_info = {}
+        # Persist boundary guard (TASK-38583): every sample result flows
+        # into EvalsDB.store_result via json.dumps; non-finite floats would
+        # be persisted as invalid strict JSON. Sanitize before anything
+        # downstream can observe them.
+        self.metrics = _reject_nonfinite_numbers(self.metrics, "metrics")
+        self.logprobs = _reject_nonfinite_numbers(self.logprobs, "logprobs")
 
 
 class DatasetLoader:
@@ -2372,8 +2403,51 @@ class ClassificationRunner(BaseEvalRunner):
             raise
 
 
+class LogProbUnsupportedError(EvaluationError):
+    """Raised when no provider path can expose logprobs for a sample.
+
+    TASK-38583: ``chat_api_call`` accepts a ``logprobs`` request parameter
+    (PROVIDER_PARAM_MAP maps it for OpenAI-compatible providers), but no
+    handler returns continuation log probabilities through it — the eval
+    dispatcher boundary (``_call_llm``) only yields response *text*, and
+    generated-token logprobs are not P(supplied continuation | prompt).
+    LogProbRunner therefore fails honestly instead of fabricating a
+    prediction. Non-retryable: no provider or retry count changes this.
+    """
+
+    def __init__(self, provider: str):
+        super().__init__(
+            ErrorContext(
+                category=ErrorCategory.MODEL_CONFIGURATION,
+                severity=ErrorSeverity.WARNING,
+                message=(
+                    "logprobs are not supported via chat_api_call for "
+                    f"provider '{provider}'"
+                ),
+                details=(
+                    "No provider handler returns continuation log "
+                    "probabilities through chat_api_call; the eval LLM "
+                    "boundary only yields response text."
+                ),
+                suggestion=(
+                    "Use a logprob-capable engine (for example the word "
+                    "bench via llama.cpp completions) or a different task "
+                    "type."
+                ),
+                is_retryable=False,
+                error_code="LOGPROBS_UNSUPPORTED",
+            )
+        )
+
+
 class LogProbRunner(BaseEvalRunner):
-    """Runner for log probability evaluation tasks."""
+    """Runner for log probability evaluation tasks.
+
+    Every sample run through this runner today is recorded as an ERROR
+    sample: no provider exposes continuation logprobs through the shared
+    chat dispatcher, so predicting would mean fabricating a choice
+    (TASK-38583).
+    """
 
     async def run_sample(self, sample: EvalSample) -> EvalSampleResult:
         """Run log probability evaluation on a single sample."""
@@ -2475,49 +2549,25 @@ class LogProbRunner(BaseEvalRunner):
         return await self._get_text_logprob(full_text)
 
     async def _get_text_logprob(self, text: str) -> float:
-        """Get log probability of text from LLM."""
-        try:
-            # OpenAI supports logprobs with specific parameters
-            if self.provider_name == "openai":
-                # Call LLM using the unified interface with logprobs
-                config = self.task_config.generation_kwargs
-                await self._call_llm(
-                    prompt=text,
-                    temperature=config.get("temperature", 0.0),
-                    max_tokens=config.get("max_tokens", 1),
-                    logprobs=True,  # Request log probabilities
-                    **{
-                        k: v
-                        for k, v in config.items()
-                        if k
-                        not in [
-                            "temperature",
-                            "temp",
-                            "max_tokens",
-                            "input_data",
-                            "model",
-                            "api_key",
-                        ]
-                    },
-                )
+        """Fail honestly: logprobs are unavailable through this boundary.
 
-                # Note: Log probability extraction may need provider-specific handling
-                # For now, we'll return a default value since logprobs require special API support
-                logger.warning(
-                    f"Log probabilities require provider-specific implementation for {self.provider_name}"
-                )
-                return float("-inf")
-            else:
-                # For providers that don't support logprobs, we could approximate
-                # by using perplexity or other metrics, but for now log warning
-                logger.warning(
-                    f"Log probabilities not supported by {self.provider_name}"
-                )
-                return float("-inf")
+        Previous behavior (TASK-38583): the OpenAI branch fired a real paid
+        request whose result was discarded, then returned ``float("-inf")``
+        for every provider — so ``run_sample`` always predicted choice 0 and
+        ``-Infinity`` reached the persisted metrics. PROVIDER_PARAM_MAP maps
+        a ``logprobs`` *request* parameter for OpenAI-compatible providers,
+        but no handler returns continuation log probabilities through
+        ``chat_api_call`` (the eval ``_call_llm`` boundary only yields
+        response text, and generated-token logprobs are not the logprob of
+        the supplied continuation), so there is nothing honest to compute
+        here today. Raise a typed, non-retryable error instead of calling
+        at all; ``run_sample`` records the sample as an error sample.
 
-        except Exception as e:
-            logger.error(f"Failed to get logprob: {e}")
-            return float("-inf")
+        Raises:
+            LogProbUnsupportedError: always, with ``LOGPROBS_UNSUPPORTED``
+                context.
+        """
+        raise LogProbUnsupportedError(self.provider_name)
 
 
 class GenerationRunner(BaseEvalRunner):
@@ -2936,11 +2986,22 @@ class EvalRunner:
         aggregate_metrics = {}
 
         for metric_name in all_metrics:
-            values = [
-                result.metrics.get(metric_name, 0.0)
-                for result in results
-                if metric_name in result.metrics
-            ]
+            values = []
+            for result in results:
+                if metric_name not in result.metrics:
+                    continue
+                value = result.metrics[metric_name]
+                # TASK-38583 belt-and-braces: sanitized samples carry None
+                # for non-finite values; never aggregate (or persist)
+                # non-finite numbers into run metrics.
+                if isinstance(value, (int, float)) and math.isfinite(float(value)):
+                    values.append(value)
+                else:
+                    logger.warning(
+                        f"Skipping non-finite/None value for metric "
+                        f"'{metric_name}' (sample {result.sample_id}) in "
+                        "aggregate metrics"
+                    )
 
             if values:
                 aggregate_metrics[f"{metric_name}_mean"] = sum(values) / len(values)
