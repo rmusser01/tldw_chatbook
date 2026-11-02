@@ -1166,6 +1166,7 @@ class ConsoleRuntime:
         self._scratch_spaces = ConsoleScratchSpaceManager()
         self._raw_cli_refusal_stash_bank: dict[str, list[Any]] = {}
         self._raw_cli_source = None
+        self._change_revert_native = None
         self._voice_dispatch_supervisor: VoiceDispatchSupervisor | None = None
         self._voice_worker = None
         self._voice_process_supervisor = None
@@ -5151,6 +5152,11 @@ class ConsoleRuntime:
 
             if native_workflow_qualified():
                 change_native = _NativeSnapshotIssuer(self)
+                from tldw_chatbook.Workspaces.change_revert_ownership import (
+                    NativeUndoIssuer,
+                )
+
+                self._change_revert_native = NativeUndoIssuer(self)
 
             def _publish_change_review(item: Any) -> None:
                 runs_db.record_change_snapshots_batch(
@@ -5179,6 +5185,7 @@ class ConsoleRuntime:
             buddy_sink=self.persona_buddy_sink,
             change_finalization_coordinator=change_coordinator,
             change_review_native=change_native,
+            change_revert_native=self._change_revert_native,
             # run-hooks (Task 5): hand the bridge this runtime's engine
             # accessor so per-turn fire sites (PostToolUse today; PreToolUse
             # and the settle events in later tasks) resolve the app-owned
@@ -6783,6 +6790,8 @@ class ConsoleRuntime:
             )
         for decision in dispatch_decisions:
             self.resolve_project_instruction_dispatch(decision.decision_id, "cancel")
+        if self._change_revert_native is not None:
+            self._change_revert_native.begin_close()
         self._scratch_spaces.tombstone_all()
         self._begin_progress_cleanup(self._agent_bridge)
         with self._execution_capacity_lock:
@@ -6976,6 +6985,8 @@ class ConsoleRuntime:
         cancel_requested |= await self._drain_activity_hydration()
         if self._raw_cli_source is not None:
             cancel_requested |= await self._raw_cli_source.drain()
+        if self._change_revert_native is not None:
+            cancel_requested |= await self._change_revert_native.drain()
         self._activity_hydration_task = None
         if _recovery_owner is not None:
             cancel_requested |= await _recovery_owner.drain_recovery()

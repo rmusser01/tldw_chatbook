@@ -178,6 +178,18 @@ class ConsoleScratchSpaceManager:
             self._records[token] = record
             return snapshot
 
+    def existing_snapshot_for_root(self, root: Path) -> ConsoleScratchSnapshot | None:
+        """Observe an existing generation, including revoked ones; never allocate."""
+        with self._condition:
+            return next(
+                (
+                    record.snapshot
+                    for record in self._records.values()
+                    if root.is_relative_to(record.snapshot.root)
+                ),
+                None,
+            )
+
     @contextmanager
     def lease(self, snapshot: ConsoleScratchSnapshot) -> Iterator[Path]:
         """Keep a validated scratch generation alive for one filesystem access.

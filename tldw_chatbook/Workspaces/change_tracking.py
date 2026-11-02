@@ -214,6 +214,11 @@ class ShadowRepoService:
         source = native_snapshot_source()
         if source is not None:
             source.validate_root(canonical)
+        from .change_revert_ownership import native_undo_call
+
+        undo = native_undo_call()
+        if undo is not None:
+            undo.validate_root(canonical)
         if not canonical.is_dir():
             # Roots come from the workspace registry, not from agent input,
             # so this is a sanity guard rather than a security boundary --
@@ -293,6 +298,11 @@ class ShadowRepo:
             )
 
             source = native_snapshot_source()
+            from .change_revert_ownership import native_undo_call
+
+            undo = native_undo_call()
+            if undo is not None:
+                undo.validate_root(self.root)
             env = self._env()
             if source is not None:
                 source.validate_root(self.root)
@@ -333,7 +343,10 @@ class ShadowRepo:
         )
 
         source = native_snapshot_source()
-        if source is None:
+        from .change_revert_ownership import native_undo_call
+
+        undo = native_undo_call()
+        if source is None and undo is None:
             return subprocess.run(
                 cmd,
                 capture_output=True,
@@ -343,10 +356,11 @@ class ShadowRepo:
                 text=not binary,
                 check=False,
             )
-        ticket = native_snapshot_ticket()
+        ticket = undo if undo is not None else native_snapshot_ticket()
         if (
             ticket is None
-            or ticket.source is not source
+            or undo is None
+            and ticket.source is not source
             or current_execution_owner() is not ticket.owner
         ):
             raise ChangeTrackingUnavailableError(

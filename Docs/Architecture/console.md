@@ -291,6 +291,33 @@ Unknown physical cleanup or required-write outcome can retain the worker,
 original storage/scratch and OPAQUE protection indefinitely. Raw shell remains
 an unsafe host-user command facility; containment is not a security sandbox.
 
+## Confirmed historical Undo (ADR-084/089/285)
+
+`Workspaces/change_revert_ownership.py` binds the original Runtime/bridge/provider
+to Review single-file/Undo All and the Console turn card. Their actual positive
+modal callback confirms only captured rows, paths and fingerprints. Finite native
+preflight retires before human wait. Each confirmed batch obtains one complete
+OPAQUE manual nonchild tool operation before its original worker is enqueued;
+`run_preparation_read` supplies only the source/DB/capacity admission hop. Source
+loss, native conflicts or changed rows/files refuse without selecting replacements.
+Direct app-owned provider mutation requires that same active confirmed call.
+
+Historical checkout and filters use the existing native Git process transport,
+independently of snapshot qualification. Every attempted mutation requires the
+post-revert snapshot; successful paths also require exact original DB readback.
+Unprovable settlement reports partial results and retains the original worker,
+storage and claim indefinitely. There is no replay, repair journal or polling.
+Original source scopes, DB handles and any captured scratch-generation lease stay
+live through original host acceptance/discard and operation.finish return. A
+metadata-only scratch lookup cannot allocate or replace revoked generations.
+
+The synchronous host marshaller uses the captured original host context: Textual
+copies ContextVars, so native Undo authority is also restricted to the original
+worker thread. Disposal seals new/unstarted work and drains already-started
+obligations before closing storage. Proven activation-entry refusal can retire
+unused work only after partial scopes unwind and finish returns; callback-body,
+unwind or finish uncertainty never qualifies as unused work.
+
 ## Finite explicit references (ADR-285)
 
 `console_reference_preparation.prepare_reference_expansion` wraps the original

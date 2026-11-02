@@ -20038,8 +20038,22 @@ class ChatScreen(BaseAppScreen):
         token = object()
         self._console_turn_undo_token = token
         try:
-            plan = await asyncio.to_thread(
-                _prepare_console_turn_undo, provider, event.run_id
+            from tldw_chatbook.Workspaces.change_revert_ownership import capture_undo
+
+            undo = capture_undo(provider)
+            plan = (
+                await undo.prepare(
+                    lambda: _prepare_console_turn_undo(provider, event.run_id),
+                    marshal=self.app.call_from_thread,
+                    current=lambda: (
+                        self in self.app.screen_stack
+                        and self._console_turn_undo_token is token
+                    ),
+                )
+                if undo is not None
+                else await asyncio.to_thread(
+                    _prepare_console_turn_undo, provider, event.run_id
+                )
             )
         except _ConsoleTurnUndoAmbiguousError as exc:
             self._finish_console_turn_undo(token, card, success=False)
@@ -20073,8 +20087,15 @@ class ChatScreen(BaseAppScreen):
             if not self.is_mounted:
                 self._finish_console_turn_undo(token, card, success=False)
                 return
+            try:
+                if undo is not None:
+                    undo.confirm()
+            except Exception as exc:  # noqa: BLE001 -- original feature outcome must reach its host
+                self._finish_console_turn_undo(token, card, success=False)
+                self.app_instance.notify(str(exc), severity="warning")
+                return
             self.run_worker(
-                self._run_console_turn_undo(token, card, provider, plan),
+                self._run_console_turn_undo(token, card, provider, plan, undo),
                 group="console-turn-undo-all",
                 exit_on_error=False,
             )
@@ -20093,34 +20114,65 @@ class ChatScreen(BaseAppScreen):
         card: ConsoleTurnFileCard,
         provider: Any,
         plan: _ConsoleTurnUndoPlan,
+        undo: Any = None,
     ) -> None:
-        """Apply a confirmed plan off-thread and publish honest outcomes."""
+        """Apply off-thread and accept the original result before native retirement."""
+        publish = lambda outcomes, error: self._publish_console_turn_undo(
+            token, card, plan, outcomes, error
+        )
         try:
-            outcomes = await asyncio.to_thread(_apply_console_turn_undo, provider, plan)
-        except _ConsoleTurnUndoUnavailableError as exc:
-            self.app_instance.notify(str(exc), severity="warning")
-            self._finish_console_turn_undo(token, card, success=False)
-            return
-        except Exception as exc:  # noqa: BLE001 -- provider failure must degrade
+            if undo is not None:
+                await undo.apply(
+                    lambda: _apply_console_turn_undo(provider, plan),
+                    marshal=self.app.call_from_thread,
+                    current=lambda: (
+                        self in self.app.screen_stack
+                        and self._console_turn_undo_token is token
+                    ),
+                    publish=publish,
+                )
+            else:
+                outcomes = await asyncio.to_thread(
+                    _apply_console_turn_undo, provider, plan
+                )
+                publish(outcomes, None)
+        except Exception as exc:  # noqa: BLE001 -- original feature outcome must reach its host
+            publish(None, exc)
+
+    def _publish_console_turn_undo(self, token, card, plan, outcomes, error):
+        if error is not None:
             from tldw_chatbook.Workspaces.change_revert import RevertRefusedError
 
-            if isinstance(exc, RevertRefusedError):
-                self.app_instance.notify(str(exc), severity="warning")
+            if isinstance(
+                error, (_ConsoleTurnUndoUnavailableError, RevertRefusedError)
+            ):
+                self.app_instance.notify(str(error), severity="warning")
             else:
-                logger.opt(exception=True).warning(
+                logger.opt(exception=error).warning(
                     "Console turn-card Undo All apply failed."
                 )
                 self.app_instance.notify(
-                    f"Undo All failed before completion: {str(exc)[:240]}",
+                    f"Undo All failed before completion: {str(error)[:240]}",
                     severity="error",
                 )
             self._finish_console_turn_undo(token, card, success=False)
             return
-
+        unsettled = [outcome for outcome in outcomes if not outcome.settled]
         failed = [outcome for outcome in outcomes if not outcome.ok]
         succeeded = [outcome for outcome in outcomes if outcome.ok]
-        success = bool(outcomes) and not failed and len(outcomes) == plan.total_files
-        if failed:
+        success = (
+            bool(outcomes)
+            and not failed
+            and not unsettled
+            and len(outcomes) == plan.total_files
+        )
+        if unsettled:
+            self.app_instance.notify(
+                "Undo changed files, but required history or bookkeeping is incomplete. "
+                "Native work remains protected.",
+                severity="error",
+            )
+        elif failed:
             detail = ", ".join(
                 f"{outcome.path} ({outcome.error})" for outcome in failed[:5]
             )

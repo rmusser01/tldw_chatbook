@@ -5303,6 +5303,7 @@ class ConsoleAgentBridge:
         buddy_sink: "PersonaBuddyConsoleAdapter | None" = None,
         change_finalization_coordinator: Any | None = None,
         change_review_native: Any | None = None,
+        change_revert_native: Any | None = None,
         runtime_capacity: RuntimeCapacity | None = None,
         runtime_capacity_factory: Callable[[], RuntimeCapacity] | None = None,
         message_store: MessageStore | None = None,
@@ -5359,6 +5360,8 @@ class ConsoleAgentBridge:
         self._change_tracker = change_tracker
         self._buddy_sink = buddy_sink
         self._change_finalization_coordinator = change_finalization_coordinator
+        self._change_revert_native = change_revert_native
+        self._native_undo_expected = change_revert_native is not None
         self._change_review_native = change_review_native
         self._native_change_review_expected = change_review_native is not None
         self._store = store
@@ -11669,6 +11672,8 @@ class ConsoleAgentBridge:
             db=self._db,
             service=self._change_tracker.service,
             conversation_id=conversation_id,
+            undo_native=self._change_revert_native,
+            native_undo_expected=self._native_undo_expected,
         )
 
     @staticmethod

@@ -3355,27 +3355,8 @@ class ChangeReviewScreen(Screen):
         self, rows_paths: list[tuple[dict, list[str]]], total: int
     ) -> None:
         """Read whole-turn overwrite warnings without blocking Textual."""
-        all_edited: list[str] = []
-        for row, paths in rows_paths:
-            preflight = await asyncio.to_thread(
-                self._provider.preflight_revert, row, paths
-            )
-            all_edited.extend(preflight.edited_since)
-
-        def _apply(confirmed: bool | None) -> None:
-            if not confirmed:
-                return
-            self.run_worker(
-                self._revert_rows(rows_paths),
-                group="change-review-revert",
-                exit_on_error=False,
-            )
-
-        self.app.push_screen(
-            ChangeRevertConfirmModal(
-                f"Undo all {total} files from this turn?", all_edited
-            ),
-            callback=_apply,
+        await self._prepare_revert_selection(
+            rows_paths, f"Undo all {total} files from this turn?"
         )
 
     def _confirm_and_revert(self, row: dict, paths: list[str], summary: str) -> None:
@@ -3389,23 +3370,90 @@ class ChangeReviewScreen(Screen):
         self, row: dict, paths: list[str], summary: str
     ) -> None:
         """Prepare one confirmation without hashing files on the UI thread."""
-        preflight = await asyncio.to_thread(self._provider.preflight_revert, row, paths)
+        await self._prepare_revert_selection([(row, paths)], summary)
 
-        def _apply(confirmed: bool | None) -> None:
-            if not confirmed:
+    async def _prepare_revert_selection(self, rows_paths, summary):
+        from tldw_chatbook.Workspaces.change_revert_ownership import capture_undo
+
+        provider = self._provider
+
+        def prepare():
+            return [
+                path
+                for row, paths in rows_paths
+                for path in provider.preflight_revert(row, paths).edited_since
+            ]
+
+        try:
+            undo = capture_undo(provider)
+            edited = (
+                await undo.prepare(
+                    prepare,
+                    marshal=self.app.call_from_thread,
+                    current=lambda: (
+                        self in self.app.screen_stack and self._provider is provider
+                    ),
+                )
+                if undo is not None
+                else await asyncio.to_thread(prepare)
+            )
+        except Exception as exc:  # noqa: BLE001 -- original feature outcome must reach its host
+            self.notify(str(exc), severity="warning")
+            return
+
+        def apply(confirmed):
+            if not confirmed or not self.is_mounted:
+                return
+            try:
+                if undo is not None:
+                    undo.confirm()
+            except Exception as exc:  # noqa: BLE001 -- original feature outcome must reach its host
+                self.notify(str(exc), severity="warning")
                 return
             self.run_worker(
-                self._revert_rows([(row, paths)]),
+                self._revert_rows(rows_paths, undo),
                 group="change-review-revert",
                 exit_on_error=False,
             )
 
-        self.app.push_screen(
-            ChangeRevertConfirmModal(summary, preflight.edited_since), callback=_apply
-        )
+        self.app.push_screen(ChangeRevertConfirmModal(summary, edited), callback=apply)
 
-    async def _revert_rows(self, rows_paths: list[tuple[dict, list[str]]]) -> None:
-        """Apply one confirmed selection off-thread, then update the screen."""
+    async def _revert_rows(self, rows_paths, undo=None) -> None:
+        """Apply the complete confirmed selection, retaining original host return."""
+        if undo is not None:
+            from tldw_chatbook.Workspaces.change_revert import RevertOutcome
+
+            provider = self._provider
+
+            def apply():
+                outcomes = []
+                for row, paths in rows_paths:
+                    try:
+                        outcomes.extend(provider.revert(row, paths))
+                    except Exception as exc:  # noqa: BLE001 -- original feature outcome must reach its host
+                        outcomes.extend(
+                            RevertOutcome(path, False, str(exc)) for path in paths
+                        )
+                return outcomes
+
+            def publish(outcomes, error):
+                if error is not None:
+                    self.notify(str(error), severity="warning")
+                else:
+                    self._report_outcomes(outcomes)
+
+            try:
+                await undo.apply(
+                    apply,
+                    marshal=self.app.call_from_thread,
+                    current=lambda: (
+                        self in self.app.screen_stack and self._provider is provider
+                    ),
+                    publish=publish,
+                )
+            except Exception as exc:  # noqa: BLE001 -- original feature outcome must reach its host
+                self.notify(str(exc), severity="warning")
+            return
         outcomes = []
         for row, paths in rows_paths:
             outcomes.extend(await self._run_revert(row, paths))
@@ -3422,8 +3470,15 @@ class ChangeReviewScreen(Screen):
 
     def _report_outcomes(self, outcomes: list) -> None:
         """Per-path honesty: failures are named, never rolled up silently."""
+        unsettled = [o for o in outcomes if not o.settled]
         failed = [o for o in outcomes if not o.ok]
-        if failed:
+        if unsettled:
+            self.notify(
+                "Undo changed files, but required history or bookkeeping is incomplete. "
+                "Native work remains protected.",
+                severity="error",
+            )
+        elif failed:
             names = ", ".join(f"{o.path} ({o.error})" for o in failed[:5])
             self.notify(
                 f"{len(failed)} file(s) could not be reverted: {names}",

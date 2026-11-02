@@ -24998,3 +24998,18 @@ were retained and were not relabelled as valid snapshot RED or executed BASE.
 When one request creates sequential finite jobs, tie the held effect to its actual
 source/operation before asserting retirement. A previously completed sibling is
 neither evidence of premature release nor coverage for the effect-bearing job.
+
+## Trace the actual host context and return (TASK-38531 confirmed Undo)
+
+The real Review callback refreshed Git-backed rows through Textual's
+`call_from_thread`, which copied the worker's native Undo ContextVar onto the UI
+loop. That caused an attempted nested asyncio.Runner and left required history
+proved but host acceptance unresolved. A retained-worker stack probe established
+this exact source; passing engine tests had not covered it. Capture the original
+host context and bind native authority to the original thread, while keeping its
+storage scopes through the synchronous host return. Tests must observe the actual
+worker/operation during that return, not expect worker ContextVars inside the
+deliberately restored host context. Also, Textual's is_mounted remained true after
+screen pop: original screen-stack membership supplied the conclusive stale-host
+discard check. Raw diagnostic and fixture-error receipts remain separate from
+the corrected mounted-path evidence.
