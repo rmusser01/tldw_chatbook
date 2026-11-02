@@ -133,7 +133,7 @@ _LIFECYCLE_SCHEMA = "tldw.tool-pack-lifecycle/v1"
 ProfileLifecycleDisposition = Literal["legacy", "imported", "tombstone", "invalid"]
 
 _PATH_LOCKS_GUARD = threading.Lock()
-_PATH_LOCKS: dict[Path, threading.RLock] = {}
+_PATH_LOCKS: dict[Path, _PermissionPathFence] = {}
 _UNSUPPORTED_DIRECTORY_FSYNC_ERRNOS = frozenset(
     {
         errno.EINVAL,
@@ -205,11 +205,48 @@ def profile_policy_chain_digest(payload: Mapping[str, Any], profile_id: str) -> 
     return hashlib.sha256(json.dumps(chain, separators=(",", ":")).encode()).hexdigest()
 
 
-def _resolved_path_lock(path: Path) -> threading.RLock:
-    """Return the one process-wide reentrant lock for ``path``."""
+class _PermissionPathFence:
+    """Publication observation on the existing shared permission-store fence."""
+
+    def __init__(self):
+        self.lock = threading.RLock()
+        self.token = None
+        self.observed = None
+        self.pending = False
+        self.uncertain = False
+
+    def observe(self, payload):
+        if self.pending or self.uncertain:
+            return
+        observed = hashlib.sha256(
+            json.dumps(payload, sort_keys=True, allow_nan=False).encode("utf-8")
+        ).digest()
+        if observed != self.observed or self.token is None:
+            self.observed = observed
+            self.token = object()
+
+    def begin(self):
+        self.token = self.observed = None
+        self.pending = True
+
+    def complete(self):
+        self.pending = False
+        # A subsequent positive read, not write completion, publishes a token.
+
+    def fail(self):
+        self.token = self.observed = None
+        self.uncertain = True
+
+
+def _resolved_path_fence(path: Path) -> _PermissionPathFence:
     resolved = path.expanduser().resolve(strict=False)
     with _PATH_LOCKS_GUARD:
-        return _PATH_LOCKS.setdefault(resolved, threading.RLock())
+        return _PATH_LOCKS.setdefault(resolved, _PermissionPathFence())
+
+
+def _resolved_path_lock(path: Path) -> threading.RLock:
+    """Return the one process-wide reentrant lock for ``path``."""
+    return _resolved_path_fence(path).lock
 
 
 def _fsync_parent_directory(path: Path) -> None:
@@ -804,6 +841,7 @@ class MCPPermissionStore:
         select(self)
         self._path_lock = _resolved_path_lock(self.path)
         self._mutation_lock = self._path_lock
+        self._permission_publication = _resolved_path_fence(self.path)
 
     # -- raw load/save -----------------------------------------------------
 
@@ -826,7 +864,9 @@ class MCPPermissionStore:
             persistence failures propagate without resetting policy.
         """
         with self.mutation_fence():
-            return self._load_locked()
+            payload = self._load_locked()
+            self._permission_publication.observe(payload)
+            return payload
 
     @mcp_sources.guarded
     def _load_locked(self) -> dict[str, Any]:
@@ -1062,6 +1102,7 @@ class MCPPermissionStore:
         from .recovery_activation import require_store_write
 
         require_store_write(self, "mcp.permissions")
+        mcp_sources.permission_mutation(self)
         stamp = _iso_utc_now()
         persisted = dict(payload, updated_at=stamp)
         if mcp_sources.binding(self)[2]:
@@ -1117,6 +1158,7 @@ class MCPPermissionStore:
         from .recovery_activation import require_store_write
 
         require_store_write(self, "mcp.permissions")
+        mcp_sources.permission_mutation(self)
         try:
             mcp_sources.backup_corrupt(self)
         except OSError as exc:
@@ -3039,7 +3081,8 @@ def _console_owned_load_current(source, captured) -> bool:
     ):
         return False
     with _PATH_LOCKS_GUARD:
-        return _PATH_LOCKS.get(selected) is lock
+        fence = _PATH_LOCKS.get(selected)
+        return fence is not None and fence.lock is lock
 
 
 def _capture_console_owned_load(source) -> tuple[Any, ...] | None:

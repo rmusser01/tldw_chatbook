@@ -191,6 +191,12 @@ class _CommandEvent:
         )
 
     def check_memory(self, event=None):
+        self._check_sources(event)
+        for plan in self.all_plans:
+            if plan.permission is not None:
+                plan.permission.check_memory()
+
+    def _check_sources(self, event=None):
         issuer, runtime = self.issuer, self.issuer.runtime
         engine = issuer.engine
         event = event or self.event
@@ -298,6 +304,22 @@ class _CommandEvent:
         for plan in self.all_plans:
             if plan.mcp is not None:
                 plan.mcp.check_registration()
+
+    def refresh_permissions(self):
+        """Prepare passive context without reactivating the retired execution."""
+        if not (
+            self.custody is not None
+            and self.custody.retired
+            and self.custody.owner._drain_outcome is True
+        ):
+            return
+        self._check_sources()
+        if _guard.captured_sources(None) != self.sources:
+            raise RuntimeError("Command event activation source changed.")
+        for plan in self.all_plans:
+            if plan.permission is not None:
+                plan.permission.refresh()
+        self.check_memory()
 
     def check(self):
         self.check_memory()
@@ -503,6 +525,7 @@ class _HeldHandler:
     children: dict
     target: object | None = None
     issued: dict = field(default_factory=dict)
+    permission: object | None = None
 
     def walk(self):
         yield self

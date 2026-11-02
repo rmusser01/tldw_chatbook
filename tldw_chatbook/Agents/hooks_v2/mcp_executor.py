@@ -204,6 +204,8 @@ class MCPHookSelection:
                 ),
             ),
             (provider._service, ("local_service",)),
+            (provider._service, ("_permission_store", "_session_approvals")),
+            (provider._service.permission_store, ("path", "_permission_publication")),
             (getattr(provider._service, "local_service", None), ("client", "store")),
             (
                 getattr(provider, "plugins", None),
@@ -281,6 +283,59 @@ class MCPHookSelection:
         self.check_memory()
         if self.context.definition(ToolCall(self.name, {}, "")) != self.definition:
             raise PermissionError("hook_mcp_original_definition_changed")
+
+
+class MCPHookPermission:
+    """Original actual grant receipt, refreshed outside host bookkeeping locks."""
+
+    def __init__(self, selection, grant):
+        if (
+            grant is None
+            or grant.provider is not selection.provider
+            or grant.tool is not selection.entry[0]
+        ):
+            raise PermissionError("hook_mcp_original_grant_unavailable")
+        self.selection, self.grant = selection, grant
+        self.store = selection.service._permission_store
+        self.publication = self.store._permission_publication
+        self.token = None
+        self.session_grant = (
+            (
+                dict(grant.profile).get("profile_id", "default"),
+                grant.tool.server_key,
+                grant.tool.name,
+            )
+            if grant.decision == "approved-session"
+            else None
+        )
+
+    def refresh(self):
+        self.token = None
+        self.selection.check_memory()
+        # This read observes disk edits as well as same-path store mutations.
+        # The actual provider then evaluates its original arguments/decision.
+        self.store.load()
+        before = self.publication.token
+        if before is None or self.publication.pending or self.publication.uncertain:
+            raise PermissionError("hook_mcp_permission_publication_unavailable")
+        self.grant.check()
+        self.selection.check_memory()
+        if self.publication.token is not before:
+            raise PermissionError("hook_mcp_permission_publication_changed")
+        self.token = before
+        self.check_memory()
+
+    def check_memory(self):
+        if (
+            self.token is None
+            or self.publication.token is not self.token
+            or self.publication.pending
+            or self.publication.uncertain
+            or self.store._mcp_persistence_error is not None
+            or self.session_grant is not None
+            and self.session_grant not in self.selection.service._session_approvals
+        ):
+            raise PermissionError("hook_mcp_original_permission_changed")
 
 
 @dataclass(eq=False)
@@ -707,13 +762,20 @@ class MCPHookExecutor:
                 policy.check()
                 if evidence is None or result.dispatch_state != "settled":
                     raise ValueError("hook_mcp_execution_failed")
-                raw, owner_current = evidence
+                raw, owner_current, grant = evidence
+                permission = (
+                    MCPHookPermission(job.native_plan.mcp, grant)
+                    if job.native_plan is not None
+                    else None
+                )
 
                 def result_current():
                     policy.check()
                     if context.definition(call) != expected:
                         raise PermissionError("hook_mcp_result_definition_changed")
                     owner_current()
+                    if permission is not None:
+                        permission.refresh()
                     # The normal owned authority port can block. Its completion
                     # is not permission to outlive this original event/scope.
                     policy.check()
@@ -723,6 +785,8 @@ class MCPHookExecutor:
 
                 job.result_check = result_current
                 result_current()
+                if job.native_plan is not None:
+                    job.native_plan.permission = permission
                 return normalize_hook_result(raw, job.handler)
         finally:
             self.retire_context(operation_id)

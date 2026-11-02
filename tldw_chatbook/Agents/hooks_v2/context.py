@@ -230,6 +230,22 @@ class ContextLedger:
                 seen.add(key)
             return tuple(rows)
 
+    def refresh_sources(self, owner_id: str) -> None:
+        """Read passive grants before the caller enters publication locks."""
+        with self._lock:
+            owners = self._owners(owner_id)
+            sources = {
+                source.root
+                for key, (event, result) in self._accepted.items()
+                if self._events[key][0] in owners
+                for source in result._native_sources
+                if hasattr(source, "refresh_permissions") or hasattr(source, "root")
+            }
+        for source in sources:
+            refresh = getattr(source, "refresh_permissions", None)
+            if refresh is not None:
+                refresh()
+
     def transfer(self, source: str, target: str, *, current) -> None:
         """Consume one manually committed operation's context into a real turn."""
         with self._lock:

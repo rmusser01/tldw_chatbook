@@ -857,3 +857,19 @@ schema/catalog maximum, plugin/permission/runtime/store and activation checks st
 in force. Closed scopes and returned operations cannot dispatch or be borrowed;
 no caller flag or replacement context grants authority. This preserves legitimate
 later Send reuse of accepted runtime context without reviving launch permission.
+
+
+I1 permission qualification (Task 8D2B2b2 fix1): passive context retains the actual
+MCP provider's original tool, arguments, grant decision, profile and exact service/
+permission-store sources. Refresh only that original permission policy before
+passive input preparation, outside bookkeeping locks; never reactivate spent
+work, dispatch, prompt or consume a grant. The existing resolved-path permission
+store fence publishes one shared quiescent token across same-path instances;
+policy mutation invalidates it before effects, and uncertain writes remain
+unavailable. Fresh successful reads may preserve unrelated permission edits;
+deny, kill switch, profile/argument/session-grant narrowing or read/source
+uncertainty refuses. Final context publication rechecks only original identities
+and the positively observed token. No new permission store/ledger or passive-mode
+flag. Cost is bounded original-policy reads per passive preparation and
+conservative refusal during concurrent mutation. ADR required: no new ADR;
+existing ADR-285/163 source-revocation qualification governs this correction.

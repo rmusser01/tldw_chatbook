@@ -1129,8 +1129,24 @@ async def test_original_reaper_and_done_callback_return_the_same_hold_once(
             return_done()
 
 
+@pytest.mark.parametrize(
+    "revocation",
+    [
+        "hook",
+        "mcp",
+        "same_path",
+        "ask",
+        "kill",
+        "unrelated",
+        "race",
+        "disk",
+        "pending",
+        "session",
+        "argument",
+    ],
+)
 async def test_passive_accepted_mcp_context_still_refuses_actual_saved_grant_revocation(
-    mcp_case, hook_file, monkeypatch
+    mcp_case, hook_file, monkeypatch, revocation
 ):
     from Tests.Agents.test_hook_permissions import _approve
     from Tests.Chat.test_console_hook_preparation_demand import _save_hooks
@@ -1142,6 +1158,14 @@ async def test_passive_accepted_mcp_context_still_refuses_actual_saved_grant_rev
     value["input"]["payload"]["structuredContent"]["context"] = [
         {"text": "Reviewed runtime context", "lifetime": "runtime"}
     ]
+    if revocation in {"session", "argument"}:
+        case.service.set_tool_state("local:fixture", "fixture", "ask")
+        if revocation == "session":
+            case.service.approve_for_session("local:fixture", "fixture")
+        else:
+            case.service.add_tool_arg_rule(
+                "local:fixture", "fixture", args=value["input"], tool=case.tool
+            )
     _save_hooks(
         hook_file,
         {
@@ -1171,12 +1195,199 @@ async def test_passive_accepted_mcp_context_still_refuses_actual_saved_grant_rev
     assert source.custody.owner._drain_outcome is True
     source.issuer.engine.mcp_executor.retire_context("session:" + case.rig.session.id)
     source.check_memory()
-    review = permissions.snapshot()
-    permissions.revoke(review, review.rows[0].entry.key)
-    with pytest.raises(PermissionError):
-        source.check_memory()
-    assert not (
-        await case.rig.controller.submit_draft("second", session_id=case.rig.session.id)
-    ).accepted
+    from tldw_chatbook.Agents.mcp_tool_provider import MCPResultPermission
+
+    read = MCPResultPermission.check
+    reads = []
+
+    def observed_read(grant):
+        assert not source.lifecycle.checkpoints._condition._is_owned()
+        reads.append(grant)
+        read(grant)
+        if revocation == "race":
+            # Revoke after the actual provider read but before pure publication.
+            case.service.set_tool_state("local:fixture", "fixture", "deny")
+
+    monkeypatch.setattr(MCPResultPermission, "check", observed_read)
+    if revocation == "hook":
+        review = permissions.snapshot()
+        permissions.revoke(review, review.rows[0].entry.key)
+    elif revocation == "same_path":
+        from tldw_chatbook.MCP.permission_store import MCPPermissionStore
+
+        other = MCPPermissionStore(case.service.permission_store.path)
+        assert other is not case.service.permission_store
+        other.set_tool_state("local:fixture", "fixture", "deny")
+    elif revocation == "kill":
+        case.service.set_kill_switch(True)
+    elif revocation == "session":
+        assert source.plans["mcp"].permission.grant.decision == "approved-session"
+        assert case.service.revoke_session_approval("local:fixture", "fixture")
+    elif revocation == "argument":
+        assert source.plans["mcp"].permission.grant.decision == "allowed"
+        rule = case.service.list_tool_arg_rules("local:fixture", "fixture")[0]
+        assert case.service.remove_tool_arg_rule(
+            "local:fixture", "fixture", rule["rule_id"]
+        )
+    elif revocation == "pending":
+        from tldw_chatbook.MCP.permission_store import MCPPermissionStore
+
+        store = MCPPermissionStore(case.service.permission_store.path)
+        publication = store._permission_publication
+        complete = type(publication).complete
+        entered, release = threading.Event(), threading.Event()
+        errors = []
+
+        def held_close(owner):
+            if owner is publication:
+                entered.set()
+                assert release.wait(8)
+            complete(owner)
+
+        def revoke():
+            try:
+                store.set_tool_state("local:fixture", "fixture", "deny")
+            except BaseException as error:  # noqa: BLE001 -- asserted after writer joins
+                errors.append(error)
+
+        monkeypatch.setattr(type(publication), "complete", held_close)
+        writer = threading.Thread(target=revoke)
+        writer.start()
+        try:
+            await until(entered.is_set)
+            assert publication.pending and publication.token is None
+            with pytest.raises(PermissionError):
+                source.check_memory()
+        finally:
+            release.set()
+            await asyncio.to_thread(writer.join, 8)
+        assert not writer.is_alive() and not errors
+        assert not publication.pending and publication.token is None
+    elif revocation == "unrelated":
+        case.service.set_tool_state("local:fixture", "other_tool", "deny")
+    elif revocation == "disk":
+        import json
+
+        path = case.service.permission_store.path
+        payload = json.loads(path.read_text())
+        payload["profiles"]["default"]["servers"]["local:fixture"]["tools"]["fixture"][
+            "state"
+        ] = "deny"
+        path.write_text(json.dumps(payload))
+    elif revocation == "race":
+        pass
+    else:
+        case.service.set_tool_state(
+            "local:fixture", "fixture", "ask" if revocation == "ask" else "deny"
+        )
+    if revocation in {"mcp", "same_path"}:
+        assert case.service.gate_tool_test(case.tool).state == "deny"
+    if revocation not in {"unrelated", "race", "disk"}:
+        with pytest.raises(PermissionError):
+            source.check_memory()
+    again = await case.rig.controller.submit_draft(
+        "second", session_id=case.rig.session.id
+    )
+    assert again.accepted is (revocation == "unrelated")
+    if revocation in {"unrelated", "race", "disk"}:
+        assert reads
     assert len(case.service.execution_log.read_recent()) == 1
     assert not opaque_busy(case.runtime)
+
+
+@pytest.fixture
+async def native_owned_result_case(native_package, tmp_path, monkeypatch, request):
+    from contextlib import aclosing
+
+    import Tests.Plugins.test_owned_mcp_tools as existing
+
+    # The Console fixture already owns tmp_path/profile; this actual plugin
+    # service needs its own fixture directory, as owned_mcp_case does above.
+    directory = tmp_path / "owned-result"
+    directory.mkdir()
+    response = '{"version":2,"decision":"pass","context":[{"text":"owned instructions","lifetime":"turn"}]}'
+    monkeypatch.setattr(
+        existing,
+        "SERVER",
+        existing.SERVER.replace(
+            'result = {"content": [{"type": "text", "text": "ok"}]}',
+            f'result = {{"content": [{{"type": "text", "text": {response!r}}}]}}',
+        ),
+    )
+    async with aclosing(
+        existing.shared_connection_case.__wrapped__(
+            native_package, directory, monkeypatch, request
+        )
+    ) as cases:
+        async for case in cases:
+            yield case
+
+
+async def test_native_owned_result_rechecks_original_grant_after_positive_retirement(
+    event_case, native_owned_result_case
+):
+    from tldw_chatbook.Agents.hooks_v2.mcp_executor import MCPHookContext
+
+    case, owned = event_case, native_owned_result_case
+    owned.release.touch()
+    assert (await owned.pending).ok
+    handler = parse_handlers(
+        [
+            {
+                "id": "owned_context",
+                "event": "PreCompact",
+                "type": "mcp_tool",
+                "server": "local:" + owned.profile_id,
+                "tool": "echo",
+                "required": True,
+                "require_context": True,
+                "effects": ["context"],
+            }
+        ]
+    )[0]
+    engine = case.runtime.ensure_hooks_v2(
+        case.rig.session.id, (handler,), lambda *_: True
+    )
+    lifecycle = await case.runtime.prepare_hooks_v2(case.rig.session.id)
+    provider = owned.providers["a"]
+    engine.mcp_executor.bind_context(
+        MCPHookContext(
+            owned.registries["a"],
+            lifecycle,
+            lifecycle.scope_id,
+            "run-a",
+            case.rig.session.id,
+            frozenset(row.name for row in provider.list_catalog()),
+            lifecycle.current,
+            lambda _definition: (),
+            workspace_id="a",
+        )
+    )
+    before = len(owned.calls.read_text().splitlines())
+    owner = lifecycle.open_scope()
+    try:
+        event = lifecycle.event(
+            "PreCompact", data={"reason": "manual", "candidate": []}
+        )
+        result = await lifecycle.fire(event, owner)
+        assert result.succeeded and result.accepted
+        source = result._native_sources[0]
+        await until(lambda: source.custody.retired)
+        assert source.custody.owner._drain_outcome is True
+        engine.mcp_executor.retire_context("session:" + case.rig.session.id)
+        lifecycle.context.refresh_sources(owner)
+        assert lifecycle.context.blocks(owner, "positive")
+        tool = source.plans["owned_context"].mcp.entry[0]
+        owned.unified.set_tool_state(tool.server_key, tool.name, "deny", tool=tool)
+        with pytest.raises(PermissionError):
+            source.check_memory()
+        with pytest.raises(PermissionError):
+            lifecycle.context.refresh_sources(owner)
+        with pytest.raises(ValueError):
+            lifecycle.context.blocks(owner, "revoked")
+        assert len(owned.calls.read_text().splitlines()) == before + 1
+        assert not opaque_busy(case.runtime)
+        assert owned.service._thread.is_alive()
+    finally:
+        lifecycle.close_scope(owner)
+        await case.runtime.close_hooks_v2()

@@ -189,6 +189,7 @@ class MCPResultCapture:
         self._lock = threading.Lock()
         self._value = None
         self._closed = False
+        self._permission = None
 
     def _record(self, provider, raw, projected, current=None):
         with self._lock:
@@ -225,17 +226,36 @@ class MCPResultCapture:
 
     def consume_authorized(
         self, result: ToolResult
-    ) -> tuple[MCPToolResult, Callable[[], None]] | None:
+    ) -> tuple[MCPToolResult, Callable[[], None], MCPResultPermission | None] | None:
         """Transfer exact result evidence and its original owner's read-only check."""
         value = self._take(result)
         return (
-            (value[0], value[2]) if value is not None and value[2] is not None else None
+            (value[0], value[2], self._permission)
+            if value is not None and value[2] is not None
+            else None
         )
 
     def close(self) -> None:
         with self._lock:
             self._closed = True
             self._value = None
+            self._permission = None
+
+
+@dataclass(frozen=True)
+class MCPResultPermission:
+    """The actual provider call's grant, without its spent execution context."""
+
+    provider: object
+    tool: object
+    arguments: str
+    decision: str
+    profile: tuple
+
+    def check(self):
+        self.provider._check_passive_result_permission(
+            self.tool, json.loads(self.arguments), self.decision, dict(self.profile)
+        )
 
 
 _result_capture: ContextVar[MCPResultCapture | None] = ContextVar(
@@ -1975,6 +1995,13 @@ class MCPToolProvider:
 
         return lambda: original_context.copy().run(check)
 
+    def _check_passive_result_permission(self, tool, args, decision, profile):
+        """Read original grant policy only; never reactivate or invoke a call."""
+        if self._profile_kwargs() != profile:
+            raise PermissionError("hook_mcp_result_profile_changed")
+        self._check_current_definition(tool)
+        self._check_result_permission(tool, args, decision)
+
     def _execute(self, tool: HubTool, args: dict, *, decision: str) -> ToolResult:
         """Run the tool via the main loop. NEVER raises, NEVER hangs unbounded.
 
@@ -2047,6 +2074,13 @@ class MCPToolProvider:
             automatic_work = current_automatic_work()
             if _result_capture.get() is not None:
                 result_currentness = self._result_currentness(tool, args, decision)
+                _result_capture.get()._permission = MCPResultPermission(
+                    self,
+                    tool,
+                    json.dumps(args, sort_keys=True, allow_nan=False),
+                    decision,
+                    tuple(self._profile_kwargs().items()),
+                )
             if automatic_work is not None:
                 # An approval may have arrived after this chain stopped.
                 automatic_work.check()

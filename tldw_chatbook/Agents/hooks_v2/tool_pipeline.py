@@ -690,6 +690,7 @@ class ToolHookRun:
         )
         rows = []
         if self.lifecycle is not None:
+            self.lifecycle.context.refresh_sources(self.run_id)
             rows.extend(self.lifecycle.context.blocks(self.run_id, "model"))
         for event, outcome in self.checkpoints.drain_context(self.run_id):
             if event.event not in {"PreToolUse", "PostToolUse", "PostToolUseFailure"}:

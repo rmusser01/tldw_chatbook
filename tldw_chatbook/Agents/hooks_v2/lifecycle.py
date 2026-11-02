@@ -404,6 +404,9 @@ class HookSessionLifecycle:
             required_handler_ids=required_handler_ids,
             should_cancel=lambda: not self.current(),
         )
+        self.context.refresh_sources(owner)
+        if self._handoff is not None:
+            self.context.refresh_sources(self._handoff[0])
 
     def close_scope(self, owner: str) -> None:
         if self.engine.mcp_executor is not None:
