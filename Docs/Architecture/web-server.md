@@ -197,6 +197,16 @@ its bounded terminal queue (64 frames / 1 MiB) never waits on a browser socket.
 Successful enqueue yields once to runnable consumers, so buffered child output
 does not falsely overflow an already-waiting terminal receiver. A stalled receiver
 still detaches at the same frame/byte bounds; child ownership is unchanged (R186).
+Terminal upgrades validate the native WebSocket handshake before child startup.
+The shared child start completes before `prepare` starts the unchanged 15-second
+heartbeat; the current native login and exact registry/host are revalidated before
+upgrade and attachment. This keeps a healthy client's Pong from waiting behind
+startup while the sole receive loop has not yet begun. Malformed upgrades return
+400 before child effects; expired/revoked pending logins return 401, and unavailable
+startup returns 503 before upgrade. Established revocation/expiry channels still
+close with 4001. Observer cancellation does not cancel the retained start; no
+heartbeat increase, input queue or startup retry is introduced (ADR-244 R189).
+
 Independent phone observers discover the retained child even with no terminal.
 An explicit phone host bootstrap waits up to 20 seconds for that child's native
 control authentication because process creation precedes App mount. Ordinary

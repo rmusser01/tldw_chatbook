@@ -28,7 +28,7 @@ Demonstrate the full phone-to-existing-Console workflow through real served proc
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [x] #1 A real served child with isolated SQLite and a controlled agent/tool sequence keeps the same process, session and run across terminal closure, phone reconnection and terminal reattachment; mouse, multiline paste and resize work afterward.
+- [ ] #1 A real served child with isolated SQLite and a controlled agent/tool sequence keeps the same process, session and run across terminal closure, phone reconnection and terminal reattachment; mouse, multiline paste and resize work afterward.
 - [ ] #2 Cold explicit Create/Open selection and immediate Send, multi-chat and multi-subagent correction, background decisions, command acknowledgement loss, expiry, stale attachment races and projection overflow are verified through production routes with honest outcomes.
 - [ ] #3 Migration crash/retry, populated conflicts, cross-config source claims and completed-result quarantine have current targeted evidence; retired mobile engine constructors are absent from the shared path.
 - [x] #4 Authentication, revocation, Canvas-disabled operation, same-origin protections and inert content hold in real browser journeys without granting authority from VPN access.
@@ -132,6 +132,8 @@ R185 before diagnostic: whole14814P1F preserves passing cold paths but exposes i
 R185 test-only continuation: after frozen/restored149, run exactly two unchanged-production component regressions from fleet148-149-component-regression-proposal.md: a real host/attachment ordered burst with an already-waiting receiver, and shipped question form/one public pointer dispatch across unrelated Chat attention metadata. No retrospective cause claim, fabricated native admission, blind fleet retry or production fix before meaningful RED/source proposal. Existing ADR244 applies; all limits/guards remain.
 
 R186 before production: meaningful RED150 requires fair bounded output and stable exact current decision inputs/overview through unrelated metadata. Existing ADR244 amended. Adopt only two-file v2 correction: one enqueue cooperative yield, no browser wait or cap change; separate UI-only overview/form keys with strict native identity/withdrawal unchanged. Both-engine pointer/answer/overview and exact pressure/cancellation/generation/target/round/unknown-command controls then one original unobserved fleet; root scoped review/commit/finalwhole15/PR update follow. No retrospective148/149 causal credit, redesign, authority/schema/dependency or governance waiver.
+
+R187 before diagnostic154: currentwhole15314P1F fails initial terminal first-output beforeprompt; bothcold/fleet/othercasespass. AC1 reopened. Adopt exactboundedthree-boundary8record/4096ASCII close diagnostic from retention153-close-diagnostic-proposal.md with delegateoriginals/no locals/payloads/IDs/probe/newtask; deferredwriteafterphysicalclosure, exacttestrestore, original45s/heartbeat15/caps/guards. Oneoriginalretentioncase only, no blindretry/causeguess orproductionfixbeforeactualevidence. Existing ADR244 governs observation; numeric limits unchanged.
 <!-- SECTION:PLAN:END -->
 
 ## Implementation Notes
@@ -166,3 +168,7 @@ Source46f0800 is rebased onto dev88a. Final UAT:14 passed, one failed in784.03 s
 ## Definition of Done
 <!-- DOD:BEGIN -->
 <!-- DOD:END -->
+
+R188 pretest: adopt one real authenticated socket/slow awaited child-start25s control in existing tab-isolation fixture; native15/7.5 heartbeat,45s readiness, auth/protocol/owner/caps unchanged. Real Ping/Pong/ready/echo/onechild expected; no production change before actual RED.154 no-repro and148/153 unknown causes retained. Existing ADR244/test-only/no new ADR.
+
+R189 before production: existing ADR244 amended for exact startup155v2 ordering repair. Native handshake validation precedes shared startup, native session/owner validation precedes prepare/heartbeat, typed pre-upgrade refusals and prepared-only close preserve ownership/auth.155 actual healthy-Pong RED; no historical148/153 attribution. Qualify real slow-start + native malformed/auth/cancel/shutdown/established controls, focused review and original whole15; caps/deadlines/numeric limits unchanged; AC1 stays open until final acceptance.
