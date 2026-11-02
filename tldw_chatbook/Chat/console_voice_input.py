@@ -140,10 +140,9 @@ WARMUP_STALLED_REMEDY = (
 #: Chip text while a model download is visibly running. "◐ " plus this plus
 #: "1.2 GB" stays inside WARMUP_MESSAGE_MAX_CELLS.
 WARMUP_DOWNLOAD_MESSAGE_TEMPLATE = "Downloading speech model… {size}"
-#: How long the model load may go without any visible progress before the
-#: attempt ends (`dictation.model_prepare_stall_seconds`). Long enough for a
-#: cached multi-gigabyte model to load from a slow disk; a running download
-#: resets the clock every time bytes land in the Hugging Face cache.
+#: Inactivity bound for a positively attributed active HTTP artifact
+#: (`dictation.model_prepare_stall_seconds`). Opaque native loading is excluded;
+#: only observed bytes belonging to this attempt reset the download clock.
 DEFAULT_MODEL_PREPARE_STALL_SECONDS = 120.0
 
 # --- Stop-side outcomes ----------------------------------------------------
@@ -866,7 +865,11 @@ class _ModelPreparation:
     transcriber: Any
     native_done: threading.Event = field(default_factory=threading.Event)
     handoff: threading.Event = field(default_factory=threading.Event)
+    capture_done: threading.Event = field(default_factory=threading.Event)
+    capture_committed: threading.Event = field(default_factory=threading.Event)
     done: threading.Event = field(default_factory=threading.Event)
+    start_capture: Callable[[], bool] | None = None
+    started: bool = False
     thread: threading.Thread | None = None
     error: BaseException | None = None
     release_when_done: bool = False
@@ -1427,8 +1430,8 @@ class ConsoleVoiceInputController:
     #: How often the abandon-aware warm-up wait re-checks. Small enough that
     #: quitting mid-download feels immediate, large enough not to spin.
     WARMUP_POLL_SECONDS = 0.05
-    #: How often that wait measures download progress (a directory scan of the
-    #: Hugging Face cache) and checks the stall bound.
+    #: How often that wait samples an attributed HTTP artifact, if supported,
+    #: and checks its inactivity bound. Opaque loading has no such deadline.
     WARMUP_PROGRESS_POLL_SECONDS = 1.0
 
     def __init__(
@@ -1763,6 +1766,10 @@ class ConsoleVoiceInputController:
             self._fail(str(exc))
             return
 
+        set_cancellation = getattr(service, "set_capture_cancellation", None)
+        if callable(set_cancellation):
+            set_cancellation(lambda: self._abandoned)
+
         if effective.provider == "parakeet-onnx":
             reserve = getattr(service, "reserve_deferred_dictation", None)
             if callable(reserve):
@@ -1796,31 +1803,39 @@ class ConsoleVoiceInputController:
             return
 
         try:
-            started = service.start_dictation(
-                on_partial_transcript=lambda text, _gen=capture_generation: (
-                    self._emit_capture_event(VoicePartial(text), _gen)
+            started = self._start_service_capture(
+                service,
+                lambda: service.start_dictation(
+                    on_partial_transcript=lambda text, _gen=capture_generation: (
+                        self._emit_capture_event(VoicePartial(text), _gen)
+                    ),
+                    on_final_transcript=lambda text, _gen=capture_generation: (
+                        self._emit_capture_event(classify_segment(text), _gen)
+                    ),
+                    on_segment_transcribing=lambda done, _gen=capture_generation: (
+                        self._emit_capture_event(
+                            VoiceSegmentTranscribing(done=done), _gen
+                        )
+                    ),
+                    on_speech_resumed=lambda _gen=capture_generation: (
+                        self._emit_capture_event(VoiceSpeechResumed(), _gen)
+                    ),
+                    on_segment_no_final=lambda _gen=capture_generation: (
+                        self._emit_capture_event(VoiceSegmentNoFinal(), _gen)
+                    ),
+                    on_state_change=lambda _state: (
+                        None
+                    ),  # our state machine is authoritative
+                    on_error=lambda error, _gen=capture_generation: (
+                        self._report_service_error(error, generation=_gen)
+                    ),
+                    save_audio=self.save_audio_requested,
                 ),
-                on_final_transcript=lambda text, _gen=capture_generation: (
-                    self._emit_capture_event(classify_segment(text), _gen)
-                ),
-                on_segment_transcribing=lambda done, _gen=capture_generation: (
-                    self._emit_capture_event(VoiceSegmentTranscribing(done=done), _gen)
-                ),
-                on_speech_resumed=lambda _gen=capture_generation: (
-                    self._emit_capture_event(VoiceSpeechResumed(), _gen)
-                ),
-                on_segment_no_final=lambda _gen=capture_generation: (
-                    self._emit_capture_event(VoiceSegmentNoFinal(), _gen)
-                ),
-                on_state_change=lambda _state: (
-                    None
-                ),  # our state machine is authoritative
-                on_error=lambda error, _gen=capture_generation: (
-                    self._report_service_error(error, generation=_gen)
-                ),
-                save_audio=self.save_audio_requested,
             )
         except Exception as exc:  # noqa: BLE001 - surfaced to the user verbatim
+            self._release(service)
+            if self._abandoned:
+                return
             logger.opt(exception=True).warning("Console dictation failed to start")
             # `on_error` is invoked from *inside* `start_dictation()`, i.e.
             # from inside the `try` above, so this `exc` can be the real
@@ -1841,23 +1856,46 @@ class ConsoleVoiceInputController:
         # take tens of seconds) was still in flight. That check happened
         # against no service to release, so it's on us to release this one.
         with self._state_lock:
-            if self._abandoned:
-                claimed = False
-            else:
+            claimed = started and not self._abandoned
+            if claimed:
                 self._service = service
-                claimed = True
+            work = self._model_preparation
+            if work is not None and work.service is service:
+                work.accepted = claimed
+                work.release_when_done = not claimed
+                work.capture_committed.set()
 
         if not claimed:
             self._release(service)
-            return
-
-        if not started:
-            self._claim_service()  # drop it; the service already cleaned up
-            self._fail_not_started()
+            if not self._abandoned and not started:
+                self._fail_not_started()
             return
 
         if self._enter_listening():
             self._maybe_report_vad_unavailable(service)
+
+    def _start_service_capture(self, service: Any, start: Callable[[], bool]) -> bool:
+        """Keep native startup on the retained owner, waiting abandon-aware."""
+        work = self._model_preparation
+        if work is None or work.service is not service:
+            return False if self._abandoned else start()
+        with self._state_lock:
+            if self._abandoned:
+                work.release_when_done = True
+                work.capture_committed.set()
+            else:
+                work.start_capture = start
+            work.handoff.set()
+        while not work.capture_done.wait(self.WARMUP_POLL_SECONDS):
+            if self._abandoned:
+                return False
+        if self._abandoned:
+            return False
+        error = work.error
+        if error is not None:
+            self._release(service)
+            raise error
+        return work.started
 
     def _prepare_speech_model(self, service: Any, effective: EffectiveConfig) -> bool:
         """Load the speech model while still in `preparing`, before capture.
@@ -1889,6 +1927,19 @@ class ConsoleVoiceInputController:
         if self._abandoned:
             self._release(service)
             return False
+        # Even opt-out/deferred starts must respect an already-retained owner.
+        # This snapshot does not serialize otherwise unowned opt-out startup.
+        if not _MODEL_PREPARATION_ADMISSION.acquire(blocking=False):
+            active = _ACTIVE_MODEL_PREPARATION
+            error = (
+                SpeechModelCleanupFailed()
+                if active is not None and active.cleanup_failed
+                else SpeechModelPreparing()
+            )
+            self._release(service)
+            self._fail(*self._warmup_failure(effective, error))
+            return False
+        _MODEL_PREPARATION_ADMISSION.release()
         if bool(getattr(service, "uses_deferred_dictation", False)):
             return True
         if not warm_before_capture_enabled():
@@ -1934,14 +1985,6 @@ class ConsoleVoiceInputController:
             self._release(service)
             self._fail(*self._warmup_failure(effective, error))
             return False
-        work = self._model_preparation
-        if work is not None:
-            with self._state_lock:
-                work.accepted = not self._abandoned
-                work.release_when_done = not work.accepted
-                work.handoff.set()
-            if not work.accepted:
-                return False
         _mark_warmed(effective)
         return True
 
@@ -1997,10 +2040,15 @@ class ConsoleVoiceInputController:
                 # Only this daemon disposes native resources, even when return
                 # wins the race with Cancel/error processing on the executor.
                 work.handoff.wait()
-                if work.release_when_done:
-                    self._dispose_model_preparation(work)
-                else:
-                    self._finish_model_preparation(work)
+                try:
+                    if not work.release_when_done and work.start_capture is not None:
+                        work.started = work.start_capture()
+                except BaseException as exc:
+                    work.error = exc
+                finally:
+                    work.capture_done.set()
+                work.capture_committed.wait()
+                self._finish_model_preparation(work, captured=True)
 
         shown = ""
         last_progress_at = next_check = time.monotonic()
@@ -2061,11 +2109,16 @@ class ConsoleVoiceInputController:
                 return SpeechModelStalled(now - last_progress_at)
         return work.error
 
-    def _finish_model_preparation(self, work: _ModelPreparation) -> None:
+    def _finish_model_preparation(
+        self, work: _ModelPreparation, *, captured: bool = False
+    ) -> None:
         """Release admission once, after handoff or abandoned-service disposal."""
         global _ACTIVE_MODEL_PREPARATION
         with self._state_lock:
-            if not work.done.is_set():
+            retire = captured and (work.release_when_done or not work.accepted)
+            if retire:
+                work.release_when_done = True
+            elif not work.done.is_set():
                 if _ACTIVE_MODEL_PREPARATION is not work:
                     return
                 work.transcriber = None
@@ -2073,9 +2126,16 @@ class ConsoleVoiceInputController:
                 _ACTIVE_MODEL_PREPARATION = None
                 _MODEL_PREPARATION_ADMISSION.release()
                 work.done.set()
+        if retire:
+            self._dispose_model_preparation(work)
 
     def _dispose_model_preparation(self, work: _ModelPreparation) -> None:
         """Dispose abandoned native state on its retained daemon, then admit."""
+        self._release_service(work.service)
+        # An admitted capture can have a processor using this model even after
+        # nonjoining abandon returns. Keep its exact owner until that user exits.
+        while not getattr(work.service, "maintenance_ready", True):
+            time.sleep(self.WARMUP_POLL_SECONDS)
         cleanup = getattr(work.transcriber, "cleanup", None)
         if callable(cleanup):
             try:
@@ -2088,7 +2148,6 @@ class ConsoleVoiceInputController:
                     "Abandoned Console model preparation cleanup failed"
                 )
                 return
-        self._release_service(work.service)
         work.released = True
         self._finish_model_preparation(work)
 
@@ -2511,9 +2570,10 @@ class ConsoleVoiceInputController:
         with self._state_lock:
             self._abandoned = True
             work = self._model_preparation
-            if work is not None and not work.accepted:
+            if work is not None and not work.done.is_set():
                 work.release_when_done = True
                 work.handoff.set()
+                work.capture_committed.set()
             service, self._service = self._service, None
             self._state = STATE_IDLE
             self._retry_action = None
@@ -2544,9 +2604,10 @@ class ConsoleVoiceInputController:
             if work is not None and work.service is service:
                 if work.released:
                     return
-                if not work.accepted:
+                if not work.done.is_set():
                     work.release_when_done = True
                     work.handoff.set()
+                    work.capture_committed.set()
                     return
                 work.service = None
         self._release_service(service)

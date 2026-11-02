@@ -24,3 +24,12 @@ Reason: physical work/admission spans session and screen replacement.
 No real model download, microphone/provider use or optional dependency install.
 Native Lightning/NeMo/slow CPU qualification and universal automatic bounds
 remain explicitly unresolved. No full test sweep.
+
+Final-review repair: retain the same owner through real capture initialization
+and controller publication; fence retirement at the lazy service's final
+pre-recording predicate. Already-admitted capture cleanup waits for the existing
+processor maintenance owner before model disposal, entirely on the daemon.
+Opt-out refuses an already-held admission lock; no-owner opt-out concurrency is
+still unqualified under .111. Deterministic post-prepare, audio/streaming-init,
+admitted-processor, pending/failed-cleanup opt-out and exact-retry controls cover
+this delta. ADR-284 is extended before these contract repairs.

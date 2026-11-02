@@ -2082,16 +2082,18 @@ def test_a_failed_model_load_is_fatal_and_never_opens_the_microphone(monkeypatch
 
 
 def test_a_second_press_after_a_failed_load_fails_the_same_way(monkeypatch):
-    """No hidden state survives a failed attempt (TASK-33621.21 AC#3)."""
+    """A fresh press after actual disposal can retry (TASK-33621.21 AC#3)."""
     transcriber = _Transcriber(error=RuntimeError(_RAW_LOAD_ERROR))
     service = _WarmableService(transcriber=transcriber)
     controller, events, _ = _controller(monkeypatch, service=service)
 
     controller.start()
     first = _failure_text(events)
+    assert controller._model_preparation.done.wait(2), "native disposal did not finish"
     events.clear()
     controller.start()
     second = _failure_text(events)
+    assert controller._model_preparation.done.wait(2)
 
     assert first == second
     assert len(transcriber.buffer_calls) == 2, "the second press never re-warmed"
@@ -2099,7 +2101,7 @@ def test_a_second_press_after_a_failed_load_fails_the_same_way(monkeypatch):
 
 
 class _ScriptedProgress:
-    """Stands in for the Hugging Face cache probe, returning queued byte counts."""
+    """Stands in for an attributed active HTTP artifact's byte counter."""
 
     def __init__(self, values, then=None):
         self.active = True
@@ -2335,6 +2337,168 @@ def test_cancel_after_native_return_retires_without_waiting_for_handoff(monkeypa
 
 
 @pytest.mark.bootstrap_profile
+def test_cancel_after_preparation_acceptance_never_enters_capture(monkeypatch):
+    prepared, resume, caller_done = (threading.Event() for _ in range(3))
+    cleanup = []
+    original = cvi.ConsoleVoiceInputController._prepare_speech_model
+
+    class ResourceTranscriber(_Transcriber):
+        def cleanup(self):
+            cleanup.append(threading.current_thread())
+
+    def paused(self, *args):
+        result = original(self, *args)
+        prepared.set()
+        assert resume.wait(5)
+        return result
+
+    def spawn(thunk):
+        def run():
+            try:
+                thunk()
+            finally:
+                caller_done.set()
+
+        threading.Thread(target=run, daemon=True).start()
+
+    monkeypatch.setattr(
+        cvi.ConsoleVoiceInputController, "_prepare_speech_model", paused
+    )
+    service = _WarmableService(transcriber=ResourceTranscriber())
+    controller, events, _ = _controller(monkeypatch, service=service, spawn=spawn)
+    try:
+        controller.start()
+        assert prepared.wait(5)
+        controller.abandon()
+        frozen = list(events)
+        assert not caller_done.is_set(), "Cancel waited for the paused caller"
+    finally:
+        resume.set()
+        assert caller_done.wait(3)
+    assert not service.started, "retired prepared service entered capture"
+    work = controller._model_preparation
+    assert work.done.wait(3)
+    assert cleanup == [work.thread]
+    assert events == frozen
+
+
+@pytest.mark.bootstrap_profile
+@pytest.mark.parametrize("boundary", ["audio", "streaming"])
+def test_real_service_rechecks_retirement_after_blocking_initialization(
+    monkeypatch, boundary
+):
+    from Tests.Audio.test_dictation_lazy_transcription import (
+        _build_service,
+        _FakeRecorder,
+        _FakeTranscriptionService,
+    )
+
+    entered, resume, caller_done = (threading.Event() for _ in range(3))
+    mic_entries, cleanup = [], []
+
+    class Transcriber(_FakeTranscriptionService):
+        def create_streaming_transcriber(self, **kwargs):
+            if boundary == "streaming":
+                entered.set()
+                assert resume.wait(5)
+            return super().create_streaming_transcriber(**kwargs)
+
+        def cleanup(self):
+            cleanup.append(threading.current_thread())
+
+    class Recorder(_FakeRecorder):
+        def start_recording(self, callback):
+            mic_entries.append("entered")
+            return super().start_recording(callback)
+
+    recorder = Recorder()
+    service = _build_service(monkeypatch, Transcriber(), recorder=recorder)
+    if boundary == "audio":
+
+        def build_recorder(**kwargs):
+            entered.set()
+            assert resume.wait(5)
+            return recorder
+
+        service._audio_service = None
+        service._recorder_factory = build_recorder
+
+    def spawn(thunk):
+        def run():
+            try:
+                thunk()
+            finally:
+                caller_done.set()
+
+        threading.Thread(target=run, daemon=True).start()
+
+    controller, events, _ = _controller(monkeypatch, service=service, spawn=spawn)
+    try:
+        controller.start()
+        assert entered.wait(5)
+        controller.abandon()
+        frozen = list(events)
+        assert caller_done.wait(1), "logical retirement joined service initialization"
+    finally:
+        resume.set()
+        assert caller_done.wait(3)
+    work = controller._model_preparation
+    assert work.done.wait(3)
+    assert mic_entries == []
+    assert cleanup == [work.thread]
+    assert events == frozen
+
+
+@pytest.mark.bootstrap_profile
+@pytest.mark.parametrize("cleanup_fails", [False, True])
+def test_warmup_opt_out_cannot_bypass_retained_preparation(monkeypatch, cleanup_fails):
+    monkeypatch.setattr(cvi, "_MODEL_PREPARATION_ADMISSION", threading.Lock())
+    monkeypatch.setattr(cvi, "_ACTIVE_MODEL_PREPARATION", None)
+    monkeypatch.setattr(cvi, "warm_before_capture_enabled", lambda: True)
+    gate, entered = threading.Event(), threading.Event()
+
+    class ResourceTranscriber(_Transcriber):
+        def cleanup(self):
+            if cleanup_fails:
+                raise RuntimeError("private cleanup detail")
+
+    service = _WarmableService(
+        transcriber=ResourceTranscriber(gate=gate, entered=entered)
+    )
+    controller, _, _ = _threaded_controller(
+        monkeypatch, service, stall_seconds=1, progress=None
+    )
+    try:
+        controller.start()
+        assert entered.wait(5)
+        controller.abandon()
+        work = controller._model_preparation
+        if cleanup_fails:
+            gate.set()
+            work.thread.join(3)
+            assert work.cleanup_failed
+        monkeypatch.setattr(cvi, "warm_before_capture_enabled", lambda: False)
+        retry_service = _WarmableService()
+        retry, events, _ = _controller(monkeypatch, service=retry_service)
+        retry.start()
+        assert not retry_service.started, "opt-out bypassed retained physical ownership"
+        assert retry_service._transcriber.buffer_calls == []
+        assert ("restart" if cleanup_fails else "still finishing") in _failure_text(
+            events
+        )
+    finally:
+        gate.set()
+        work.thread.join(3)
+    if not cleanup_fails:
+        assert work.done.is_set()
+        available_service = _WarmableService()
+        available, _, _ = _controller(monkeypatch, service=available_service)
+        available.start()
+        assert available_service.started
+        available.abandon()
+
+
+@pytest.mark.bootstrap_profile
 def test_unrelated_download_cannot_keep_an_owned_artifact_alive(monkeypatch, tmp_path):
     from tldw_chatbook.Utils.model_download_guard import HubDownloadProgress
 
@@ -2369,13 +2533,86 @@ def _wait_for_state(controller, state, timeout):
     return controller.state
 
 
+@pytest.mark.bootstrap_profile
+def test_retired_admitted_capture_keeps_model_until_processor_finishes(monkeypatch):
+    from Tests.Audio.test_dictation_lazy_transcription import (
+        _build_service,
+        _FakeRecorder,
+        _FakeTranscriptionService,
+    )
+
+    admitted, finish_start, stopped = (threading.Event() for _ in range(3))
+    processing, finish_processor, processor_done = (threading.Event() for _ in range(3))
+    disposed, caller_done = threading.Event(), threading.Event()
+    cleanup_threads = []
+
+    class Transcriber(_FakeTranscriptionService):
+        def cleanup(self):
+            cleanup_threads.append(threading.current_thread())
+            disposed.set()
+
+    class Recorder(_FakeRecorder):
+        def start_recording(self, callback):
+            admitted.set()
+            assert finish_start.wait(5)
+            return super().start_recording(callback)
+
+        def stop_recording(self):
+            result = super().stop_recording()
+            stopped.set()
+            return result
+
+    service = _build_service(monkeypatch, Transcriber(), recorder=Recorder())
+
+    def process():
+        processing.set()
+        assert finish_processor.wait(5)
+        processor_done.set()
+
+    monkeypatch.setattr(service, "_processing_loop", process)
+
+    def spawn(thunk):
+        def run():
+            try:
+                thunk()
+            finally:
+                caller_done.set()
+
+        threading.Thread(target=run, daemon=True).start()
+
+    controller, events, _ = _controller(monkeypatch, service=service, spawn=spawn)
+    try:
+        controller.start()
+        assert admitted.wait(3) and processing.wait(3)
+        controller.abandon()
+        frozen = list(events)
+        assert caller_done.wait(1), "Cancel joined the admitted device call"
+        work = controller._model_preparation
+        finish_start.set()
+        assert stopped.wait(3)
+        assert not disposed.is_set(), "model disposed while capture processor was live"
+        assert not controller.maintenance_ready
+        replacement = _WarmableService()
+        retry, _, _ = _controller(monkeypatch, service=replacement)
+        retry.start()
+        assert not replacement.started
+    finally:
+        finish_start.set()
+        finish_processor.set()
+    assert processor_done.wait(3)
+    assert work.done.wait(3)
+    assert disposed.is_set() and cleanup_threads == [work.thread]
+    assert events == frozen
+
+
 def test_a_load_that_stops_making_progress_fails_within_the_bound(monkeypatch):
-    """'Preparing speech model…' never persists indefinitely (TASK-33621.21).
+    """An attributed active HTTP download has an inactivity bound.
 
     The live hang was a load blocked on a lock forever, with a 0-byte
-    `.incomplete` beside it. Whatever blocks next, a load with no progress
-    for the stall bound ends with a plain error, and the microphone stays
-    closed even if the stuck load finishes later.
+    `.incomplete` beside it. This scripted observer attests that the artifact
+    belongs to this attempt. Its inactivity ends with a plain error and the
+    microphone stays closed even if the stuck call finishes later. Opaque
+    provider/native loading is deliberately outside this deadline.
     """
     gate = threading.Event()
     entered = threading.Event()
@@ -2393,10 +2630,8 @@ def test_a_load_that_stops_making_progress_fails_within_the_bound(monkeypatch):
         assert state == cvi.STATE_IDLE, "preparing outlived the stall bound"
         text = _failure_text(events)
         _assert_plain_model_failure(text)
-        # Only bytes in the Hugging Face cache count as progress, so a
-        # provider that downloads elsewhere, or a long load after the
-        # download, can reach this too: say what was measured, and name the
-        # setting that gives it longer.
+        # Say what the attributed observer measured; unknown caches and
+        # post-download loading cannot earn this download-stall outcome.
         assert "no download progress" in text.lower()
         assert "background preparation may still be finishing" in text.lower()
         assert service.started is False

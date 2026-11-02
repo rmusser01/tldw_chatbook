@@ -13,6 +13,14 @@ until restart. `ConsoleStreamingDictationSession.maintenance_ready` observes the
 same work record alongside its existing processor retention. Current legacy
 providers expose no exact download artifact, so `download_progress_probe()` is
 unobservable: Loading remains cancellable without a guessed inactivity timeout.
+The same daemon owns default preparation through capture initialization and
+controller publication. The lazy service rechecks Console retirement after
+blocking initializers; its last predicate read before `start_recording` is the
+microphone admission point. Already-admitted calls cannot be preempted. Their
+retired owner requests capture release, waits for existing processor maintenance
+readiness on the daemon, then cleans the transcriber. UI/exit never joins it.
+Opt-out/deferred starts refuse an already-retained owner, but a no-owner opt-out
+start is not newly serialized or automatically bounded (TASK-33621.111).
 
 | Concern | File | Key symbols |
 | --- | --- | --- |
