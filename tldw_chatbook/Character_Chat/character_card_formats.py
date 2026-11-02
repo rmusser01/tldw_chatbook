@@ -29,14 +29,21 @@ class CharacterCardFormatDetector:
 
     def __init__(self):
         """Initialize the format detector with known format patterns."""
+        # TASK-38604: chub must be probed BEFORE v2. Every chub card is a
+        # ``spec == "chara_card_v2"`` card, so with v2 first the chub
+        # detector was unreachable and chub/rating/version_history were
+        # silently dropped by the plain v2 parser. Chub can only ever steal
+        # detections from v2 (it requires spec == "chara_card_v2"), and a
+        # chub detection parses via the v2 parser plus the chub extensions,
+        # so nothing else changes.
         self.format_patterns = {
+            "chub": self._is_chub_format,
             "v2": self._is_v2_format,
             "v1": self._is_v1_format,
             "agnai": self._is_agnai_format,
             "characterai": self._is_characterai_format,
             "koboldai": self._is_koboldai_format,
             "textgen": self._is_textgen_format,
-            "chub": self._is_chub_format,
         }
 
         self.parsers = {
@@ -233,7 +240,24 @@ class CharacterCardFormatDetector:
         """Parse Agnai format to V2."""
         # Extract personality from persona
         persona = data.get("persona", data.get("personality", ""))
-        personality = persona
+        # TASK-38604: an agnai persona is an object ({"kind": ...,
+        # "attributes": {...}}); passing the dict through left a dict in
+        # the V2 personality field, which downstream text coercion turned
+        # into "". Stringify it instead: attributes flattened to
+        # "key: value" lines when present, otherwise a JSON encoding, so
+        # the information survives instead of being dropped.
+        if isinstance(persona, dict) and "attributes" in persona:
+            attrs = persona["attributes"]
+            if isinstance(attrs, dict):
+                personality = "\n".join(
+                    f"{key}: {value}" for key, value in attrs.items()
+                )
+            else:
+                personality = json.dumps(persona, ensure_ascii=False)
+        elif isinstance(persona, (dict, list)):
+            personality = json.dumps(persona, ensure_ascii=False)
+        else:
+            personality = persona
 
         # Agnai often uses attributes/traits
         if "attributes" in data:
