@@ -224,6 +224,17 @@ def _assert_host_allowed(host: str, resolver) -> None:
     stays deliberately stricter than egress AROUND the predicate: https-only
     per hop (enforced in fetch_zip_bytes), no trusted_origins, no config
     allowlist.
+
+    TASK-38598: TLS is what anchors the validated hostname to the host that
+    actually serves the response -- httpx verifies the certificate against
+    the URL hostname, so a DNS-rebind to a different server fails the
+    handshake. That is also why plain ``http://`` is rejected outright
+    (classification AND per redirect hop): with no TLS there is nothing to
+    anchor identity, and this layer deliberately has no allowlist machinery
+    to admit exceptions -- fail closed. The residual rebinding window (a
+    public-validated hostname re-resolving to a private address inside
+    httpx's own connection) is closed post-connect in ``fetch_zip_bytes``
+    by re-validating the connected peer address when httpx exposes it.
     """
     try:
         literal = ipaddress.ip_address(host)
@@ -236,6 +247,36 @@ def _assert_host_allowed(host: str, resolver) -> None:
     if not addresses:
         raise RemoteSkillError(f"Could not resolve {host}.")
     for raw in addresses:
+        if not address_is_fetchable(raw.split("%", 1)[0]):
+            raise RemoteSkillError("That host is not reachable from here.")
+
+
+def _connected_peer_addresses(response: httpx.Response) -> list[str]:
+    """Best-effort connected peer IPs for an in-flight httpx stream response.
+
+    httpx (httpcore) exposes the underlying network stream as
+    ``response.extensions["network_stream"]``; its raw socket's
+    ``getpeername()`` is the address this connection actually dialed. Not
+    every transport exposes a socket (TLS-wrapped streams, custom test
+    transports), so an unavailable peer yields ``[]`` -- callers treat that
+    as "cannot revalidate", never as "allowed".
+    """
+    stream = (getattr(response, "extensions", None) or {}).get("network_stream")
+    if stream is None or not hasattr(stream, "get_extra_info"):
+        return []
+    sock = stream.get_extra_info("socket")
+    try:
+        peer = sock.getpeername()
+    except (AttributeError, OSError):
+        return []
+    if isinstance(peer, tuple) and peer:
+        return [str(peer[0])]
+    return [str(peer)] if peer else []
+
+
+def _assert_peers_fetchable(response: httpx.Response) -> None:
+    """Re-validate the connected address(es) through the shared predicate."""
+    for raw in _connected_peer_addresses(response):
         if not address_is_fetchable(raw.split("%", 1)[0]):
             raise RemoteSkillError("That host is not reachable from here.")
 
@@ -280,7 +321,14 @@ async def fetch_zip_bytes(
     try:
         async with asyncio.timeout(total_deadline):
             async with httpx.AsyncClient(
-                transport=transport, timeout=timeout, follow_redirects=False
+                transport=transport,
+                timeout=timeout,
+                follow_redirects=False,
+                # TASK-38598: with HTTP(S)_PROXY honored, the proxy does its
+                # own DNS and connects on this process's behalf, bypassing
+                # _assert_host_allowed entirely. Same policy as the MCP
+                # streamable_http transport (trust_env=False, no redirects).
+                trust_env=False,
             ) as client:
                 for _hop in range(REMOTE_FETCH_MAX_HOPS + 1):
                     if not validate_url(current):
@@ -311,6 +359,13 @@ async def fetch_zip_bytes(
                                 raise RemoteSkillError(
                                     f"Download failed (HTTP {response.status_code})."
                                 )
+                            # TASK-38598: close the check-then-connect gap --
+                            # DNS may rebind between _assert_host_allowed's
+                            # resolution and httpx's own dial, so the
+                            # connected peer is revalidated through the same
+                            # fetchable predicate (no-op when the transport
+                            # does not expose the peer address).
+                            _assert_peers_fetchable(response)
                             chunks: list[bytes] = []
                             received = 0
                             async for chunk in response.aiter_bytes(_FETCH_CHUNK):
