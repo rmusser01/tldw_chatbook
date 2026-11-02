@@ -137,12 +137,15 @@ class TestMatrixSearchParity:
 
     @staticmethod
     def _normalize_score(metric: str, raw: float) -> float:
-        """The search-path score normalization, exactly as the old code."""
-        if metric == "cosine":
-            return (raw + 1) / 2  # From [-1, 1] to [0, 1]
-        if metric == "l2":
-            return 1 / (1 + abs(raw))
-        return max(0, min(1, raw))  # ip: clamp to [0, 1]
+        """The search-path score mapping, exactly as TASK-38592 unified it.
+
+        cosine and l2 similarities from ``_compute_similarity`` are already
+        on their final scales (raw cosine in [-1, 1] -- matching
+        ChromaVectorStore's ``1 - distance`` -- and ``1/(1+distance)`` in
+        (0, 1]); only inner product is clamped."""
+        if metric == "ip":
+            return max(0, min(1, raw))  # ip: clamp to [0, 1]
+        return raw
 
     def _assert_parity(
         self,
@@ -305,7 +308,7 @@ class TestMatrixSearchParity:
         results = store.search([1.0, 0.0], top_k=2)
 
         assert [r.id for r in results] == ["a", "b"]
-        assert results[0].score == pytest.approx(1.0)  # cosine 1.0 -> (1+1)/2
+        assert results[0].score == pytest.approx(1.0)  # raw cosine of identical vectors (TASK-38592)
 
     def test_batch_ingest_of_2000_docs_then_search(self):
         """task-34391 smoke: O(1)-per-add structure updates (no per-add
@@ -329,7 +332,163 @@ class TestMatrixSearchParity:
 
         assert results[0].id == "d1234"  # exact row: nearest to itself
         assert len(results) == 5
-        assert all(0.0 <= r.score <= 1.0 for r in results)
+        # Raw cosine scale (TASK-38592): [-1, 1], same as Chroma.
+        assert all(-1.0 <= r.score <= 1.0 for r in results)
+        assert results[0].score == pytest.approx(1.0)  # the query row itself
+
+
+class TestUnifiedScoreScales:
+    """TASK-38592: both backends report scores on the same per-metric scale.
+
+    InMemoryVectorStore used to remap cosine to (cos+1)/2 in [0, 1] (Chroma
+    reports raw cosine in [-1, 1]) and to re-normalize its already-scored
+    l2 values with 1/(1+|score|), which INVERTED them -- a perfect l2 match
+    scored 0.5 while far chunks scored ~0.9+, so score_threshold filtered
+    backwards.
+    """
+
+    def test_l2_perfect_match_scores_one_and_ordering_is_forward(self):
+        store = InMemoryVectorStore(distance_metric="l2")
+        query_vec = [1.0, 0.0, 0.0]
+        store.add(
+            ids=["exact", "far"],
+            embeddings=_embed(query_vec, [9.0, 9.0, 9.0]),
+            documents=["exact doc", "far doc"],
+            metadata=[{}, {}],
+        )
+
+        results = store.search(_embed(query_vec)[0], top_k=2)
+
+        assert results[0].id == "exact"
+        # 1/(1+0): a perfect match is 1.0, not the historical double-
+        # normalized 0.5.
+        assert results[0].score == pytest.approx(1.0)
+        # A distant chunk scores LOWER than a close one (the old mapping
+        # scored the distant one ~0.99, i.e. higher than the exact match).
+        assert results[1].id == "far"
+        assert results[1].score < 0.2 < results[0].score
+
+    def test_l2_score_threshold_filters_forward(self):
+        store = InMemoryVectorStore(distance_metric="l2")
+        query_vec = [1.0, 0.0, 0.0]
+        store.add(
+            ids=["exact", "mid", "far"],
+            # distances 0, 1, 9 along the same axis -> scores 1.0, 0.5, 0.1
+            embeddings=_embed(
+                query_vec,
+                [2.0, 0.0, 0.0],
+                [10.0, 0.0, 0.0],
+            ),
+            documents=["exact doc", "mid doc", "far doc"],
+            metadata=[{}, {}, {}],
+        )
+
+        kept = store.search_with_citations(
+            _embed(query_vec)[0], "q", top_k=5, score_threshold=0.5
+        )
+
+        # exact (1.0) and mid (0.5) survive 0.5; far (0.1) is dropped. Under
+        # the inverted mapping the scores were 0.5 / 0.67 / 0.91 -- the SAME
+        # threshold kept everything and the perfect match sat ON the line.
+        assert [r.id for r in kept] == ["exact", "mid"]
+        assert kept[0].score == pytest.approx(1.0)
+        assert kept[1].score == pytest.approx(0.5)
+
+    def test_cosine_reports_raw_scale(self):
+        store = InMemoryVectorStore(distance_metric="cosine")
+        store.add(
+            ids=["same", "orthogonal", "opposite"],
+            embeddings=_embed([1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [-1.0, 0.0, 0.0]),
+            documents=["same", "orthogonal", "opposite"],
+            metadata=[{}, {}, {}],
+        )
+
+        results = store.search(_embed([1.0, 0.0, 0.0])[0], top_k=3)
+        by_id = {r.id: r.score for r in results}
+
+        # Raw cosine in [-1, 1] -- ChromaVectorStore's scale. The old
+        # (cos+1)/2 mapping reported 1.0 / 0.5 / 0.0.
+        assert by_id["same"] == pytest.approx(1.0)
+        assert by_id["orthogonal"] == pytest.approx(0.0)
+        assert by_id["opposite"] == pytest.approx(-1.0)
+
+
+@pytest.mark.skipif(not CHROMADB_AVAILABLE, reason="chromadb extra not installed")
+class TestUnifiedScoreScaleChromaParity:
+    """The same query over the same vectors scores identically on both
+    backends, and score_threshold behaves the same (AC #2/#3)."""
+
+    @staticmethod
+    def _chroma_store(tmp_path, name):
+        from tldw_chatbook.RAG_Search.simplified.vector_store import (
+            ChromaVectorStore,
+        )
+
+        return ChromaVectorStore(
+            persist_directory=tmp_path / name,
+            collection_name=name,
+            distance_metric="cosine",
+        )
+
+    def test_cosine_scores_match_chroma_elementwise(self, tmp_path):
+        in_memory = InMemoryVectorStore(distance_metric="cosine")
+        chroma = self._chroma_store(tmp_path, "parity_cosine")
+        try:
+            vectors = _embed(
+                [1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [-1.0, 0.0, 0.0], [0.7, 0.7, 0.0]
+            )
+            ids = ["same", "orthogonal", "opposite", "diagonal"]
+            documents = [f"doc {i}" for i in ids]
+            metadatas = [{"topic": "scale"}] * 4
+            in_memory.add(ids=ids, embeddings=vectors, documents=documents, metadata=metadatas)
+            chroma.add(ids=ids, embeddings=vectors, documents=documents, metadata=metadatas)
+
+            query = _embed([1.0, 0.0, 0.0])[0]
+            memory_scores = {r.id: r.score for r in in_memory.search(query, top_k=4)}
+            chroma_scores = {r.id: r.score for r in chroma.search(query, top_k=4)}
+
+            assert set(memory_scores) == set(chroma_scores) == set(ids)
+            for doc_id in ids:
+                assert memory_scores[doc_id] == pytest.approx(
+                    chroma_scores[doc_id], abs=1e-5
+                ), f"scale mismatch for {doc_id}"
+        finally:
+            chroma.close()
+
+    def test_score_threshold_filters_identically_on_both_backends(self, tmp_path):
+        in_memory = InMemoryVectorStore(distance_metric="cosine")
+        chroma = self._chroma_store(tmp_path, "parity_threshold")
+        try:
+            vectors = _embed(
+                [1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [-1.0, 0.0, 0.0], [0.6, 0.8, 0.0]
+            )
+            ids = ["same", "orthogonal", "opposite", "mid"]
+            documents = [f"doc {i}" for i in ids]
+            metadatas = [{"topic": "threshold"}] * 4
+            in_memory.add(ids=ids, embeddings=vectors, documents=documents, metadata=metadatas)
+            chroma.add(ids=ids, embeddings=vectors, documents=documents, metadata=metadatas)
+
+            query = _embed([1.0, 0.0, 0.0])[0]
+            # Threshold 0.2 keeps same (1.0) and mid (0.6); drops orthogonal
+            # (0.0) and opposite (-1.0). Under the old InMemory mapping all
+            # four scored >= 0.0 and a 0.2 threshold kept everything.
+            memory_kept = [
+                r.id
+                for r in in_memory.search_with_citations(
+                    query, "q", top_k=4, score_threshold=0.2
+                )
+            ]
+            chroma_kept = [
+                r.id
+                for r in chroma.search_with_citations(
+                    query, "q", top_k=4, score_threshold=0.2
+                )
+            ]
+
+            assert memory_kept == ["same", "mid"]
+            assert chroma_kept == ["same", "mid"]
+        finally:
+            chroma.close()
 
 
 @pytest.mark.skipif(not CHROMADB_AVAILABLE, reason="chromadb extra not installed")
