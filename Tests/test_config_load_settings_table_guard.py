@@ -743,26 +743,30 @@ def test_default_config_template_profile_paths_are_pinned():
     import re
     from pathlib import Path
 
+    from collections import Counter
+
     raw = (Path(__file__).resolve().parents[1] / _TEMPLATE_RELATIVE).read_text(encoding="utf-8")
-    found = set(re.findall(r"~/\.(?:config|local/share)/tldw_cli[^\s\"']*", raw))
+    found = Counter(re.findall(r"~/\.(?:config|local/share)/tldw_cli[^\s\"']*", raw))
     assert found == _PROFILE_PATH_DEFAULTS
 
 
+# Path -> occurrence count, exactly as the removed inventory rules pinned them. Every
+# entry is a PERSISTED_DEFAULT: the shipped template writes it into a fresh config.toml.
 _PROFILE_PATH_DEFAULTS = {
-    "~/.config/tldw_cli/config.toml",
-    "~/.config/tldw_cli/github_profiles",
-    "~/.local/share/tldw_cli/",
-    "~/.local/share/tldw_cli/evals.db",
-    "~/.local/share/tldw_cli/models/embeddings",
-    "~/.local/share/tldw_cli/rag_indexing.db",
-    "~/.local/share/tldw_cli/tldw_chatbook_ChaChaNotes.db",
-    "~/.local/share/tldw_cli/tldw_chatbook_library_collections.db",
-    "~/.local/share/tldw_cli/tldw_chatbook_research.db",
-    "~/.local/share/tldw_cli/tldw_chatbook_subscriptions.db",
-    "~/.local/share/tldw_cli/tldw_chatbook_workspaces.db",
-    "~/.local/share/tldw_cli/tldw_chatbook_writing.db",
-    "~/.local/share/tldw_cli/tldw_cli_media_v2.db",
-    "~/.local/share/tldw_cli/tldw_cli_prompts.db",
+    "~/.config/tldw_cli/config.toml": 1,  # the active config file
+    "~/.config/tldw_cli/github_profiles": 1,  # GitHub profiles
+    "~/.local/share/tldw_cli/": 1,  # base data directory
+    "~/.local/share/tldw_cli/evals.db": 1,  # Evals database
+    "~/.local/share/tldw_cli/models/embeddings": 1,  # persisted embedding cache
+    "~/.local/share/tldw_cli/rag_indexing.db": 1,  # RAG indexing database
+    "~/.local/share/tldw_cli/tldw_chatbook_ChaChaNotes.db": 1,  # ChaChaNotes database
+    "~/.local/share/tldw_cli/tldw_chatbook_library_collections.db": 1,  # library collections database
+    "~/.local/share/tldw_cli/tldw_chatbook_research.db": 1,  # research database
+    "~/.local/share/tldw_cli/tldw_chatbook_subscriptions.db": 1,  # subscriptions database
+    "~/.local/share/tldw_cli/tldw_chatbook_workspaces.db": 1,  # workspaces database
+    "~/.local/share/tldw_cli/tldw_chatbook_writing.db": 1,  # writing database
+    "~/.local/share/tldw_cli/tldw_cli_media_v2.db": 1,  # media database
+    "~/.local/share/tldw_cli/tldw_cli_prompts.db": 1,  # prompts database
 }
 
 
