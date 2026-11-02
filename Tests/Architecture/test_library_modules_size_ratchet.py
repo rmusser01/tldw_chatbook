@@ -719,7 +719,8 @@ _BUDGETS: dict[str, int] = {
     # §17 re-pin-at-move flow applied to a docstring-only delta. 4991 ->
     # 4998.
     # TASK-36454..36458: narrow save/install completion helpers reduce this owner.
-    "tldw_chatbook/UI/Library_Modules/library_prompts_controller.py": 5100,
+    # PR3346: submission joins its existing save/ack owner; no ceiling increase.
+    "tldw_chatbook/UI/Library_Modules/library_prompts_controller.py": 5065,
     # 2026-09-03, wave-3 task 3 (combined search+RAG controller PR, series
     # 2/3): born-governed by the glob above -- new file, pinned at its
     # exact measured line count on landing (42 moved methods + the

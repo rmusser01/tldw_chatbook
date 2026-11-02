@@ -547,10 +547,10 @@ from ..Library_Modules.skills_trust_modals import (
     SkillRecoveryReviewModal,
 )
 from .study_scope_models import (
-    MATERIAL_SOURCE_LIBRARY,
-    MATERIAL_TITLE_LIBRARY_SOURCES,
-    StudyScopeContext,
-    StudySourceItem,
+    MATERIAL_SOURCE_LIBRARY,  # noqa: F401 -- live defining globals for extracted helpers
+    MATERIAL_TITLE_LIBRARY_SOURCES,  # noqa: F401 -- live defining globals for extracted helpers
+    StudyScopeContext,  # noqa: F401 -- live defining globals for extracted helpers
+    StudySourceItem,  # noqa: F401 -- live defining globals for extracted helpers
 )
 
 if TYPE_CHECKING:
@@ -810,10 +810,10 @@ from ..Library_Modules.screen_constants import (
     LIBRARY_NOTES_RAIL_ROWS,
     LIBRARY_NOTES_SOURCE_STRIP_CANVAS_KINDS,
     LIBRARY_RAG_ANSWERABLE_RETRIEVAL_STATUSES,
-    LIBRARY_STUDY_HANDOFF_LOCAL_MODE_COPY,
-    LIBRARY_STUDY_HANDOFF_MODES,
-    LIBRARY_STUDY_HANDOFF_OWNERSHIP_COPY,
-    LIBRARY_STUDY_HANDOFF_READY_COPY,
+    LIBRARY_STUDY_HANDOFF_LOCAL_MODE_COPY,  # noqa: F401 -- live defining globals for extracted helpers
+    LIBRARY_STUDY_HANDOFF_MODES,  # noqa: F401 -- live defining globals for extracted helpers
+    LIBRARY_STUDY_HANDOFF_OWNERSHIP_COPY,  # noqa: F401 -- live defining globals for extracted helpers
+    LIBRARY_STUDY_HANDOFF_READY_COPY,  # noqa: F401 -- live defining globals for extracted helpers
     LIBRARY_STUDY_HANDOFF_TITLES_CAP,
     LIBRARY_NAV_MODE_TO_ROW_ID,
     LIBRARY_STUDY_HANDOFF_ROW_IDS,
@@ -853,7 +853,7 @@ from ..Library_Modules.screen_helpers import (
     library_note_persisted_title,
     _ingestible_file_filters,
     _transcribe_cpp_gguf_filters,
-    _library_carries_forward_line,
+    _library_carries_forward_line,  # noqa: F401 -- live defining globals for extracted helpers
     _unbreakable_size_text,
     _active_library_principal_id,
     _active_library_sync_scope,
@@ -14927,7 +14927,9 @@ class LibraryScreen(BaseAppScreen):
         self, kind: str
     ) -> LibraryStudyHandoffCanvasState:
         """Build one handoff owner's display-only snapshot."""
-        copy = self._study_handoff_copy(kind)
+        from ..Library_Modules.screen_helpers import study_handoff_copy
+
+        copy = study_handoff_copy(self, kind, source=globals())
         return LibraryStudyHandoffCanvasState(
             header=copy["header"],
             purpose=copy["purpose"],
@@ -14976,26 +14978,6 @@ class LibraryScreen(BaseAppScreen):
             if value:
                 return value
         return None
-
-    def _study_source_items(self) -> tuple[StudySourceItem, ...]:
-        source_items: list[StudySourceItem] = []
-        source_type_map = {
-            "notes": "note",
-            "media": "media",
-        }
-        for source_type, study_source_type in source_type_map.items():
-            for record in self._local_source_records[source_type]:
-                source_id = self._source_record_id(record)
-                if not source_id:
-                    continue
-                source_items.append(
-                    StudySourceItem(
-                        source_type=study_source_type,
-                        source_id=source_id,
-                        label=self._source_title(source_type, record),
-                    )
-                )
-        return tuple(source_items)
 
     def _source_count_metadata(self) -> dict[str, int | None]:
         metadata: dict[str, int | None] = {}
@@ -15053,79 +15035,6 @@ class LibraryScreen(BaseAppScreen):
                 )
             )
         return self._library_workspace_depth_state_cache
-
-    def _source_study_context(self) -> StudyScopeContext | None:
-        if not self._has_source_study_context():
-            return None
-        material_titles: list[str] = []
-        for source_type in ("notes", "media", "conversations"):
-            material_titles.extend(self._source_sample_titles(source_type))
-        return StudyScopeContext(
-            material_source=MATERIAL_SOURCE_LIBRARY,
-            material_title=MATERIAL_TITLE_LIBRARY_SOURCES,
-            material_summary=self._source_snapshot_body(),
-            material_titles=tuple(material_titles),
-            source_items=self._study_source_items(),
-            return_hint=MATERIAL_SOURCE_LIBRARY,
-        )
-
-    def _source_study_handoff_titles(self) -> tuple[str, ...]:
-        material_titles: list[str] = []
-        for source_type in ("notes", "media", "conversations"):
-            material_titles.extend(self._source_sample_titles(source_type))
-        return tuple(material_titles)
-
-    def _has_source_study_context(self) -> bool:
-        return self._has_local_sources()
-
-    def _study_handoff_copy(self, kind: str) -> dict[str, str]:
-        mode = LIBRARY_STUDY_HANDOFF_MODES.get(
-            kind,
-            LIBRARY_STUDY_HANDOFF_MODES["study"],
-        )
-        titles = self._source_study_handoff_titles()
-        has_context = self._has_source_study_context()
-        action_label = mode["action_label"]
-        if has_context and titles:
-            context_copy = _library_carries_forward_line(titles)
-        elif has_context:
-            context_copy = (
-                "Carries forward: Library source snapshot (titles unavailable)"
-            )
-        else:
-            # No Library sources at all: the carries-forward line is omitted
-            # entirely rather than stating the negative (the blocked
-            # "recovery" line below already carries that signal).
-            context_copy = ""
-        return {
-            "header": mode["header"],
-            "action_label": action_label,
-            "button_label": mode["button_label"],
-            "purpose": mode["purpose"],
-            "context": context_copy,
-            "owner": LIBRARY_STUDY_HANDOFF_OWNERSHIP_COPY,
-            "recovery": (
-                self._study_handoff_ready_copy()
-                if has_context
-                else (
-                    "Import sources or create notes first, or open "
-                    f"{action_label} globally without Library context."
-                )
-            ),
-        }
-
-    def _study_handoff_ready_copy(self) -> str:
-        """The readiness line for a hand-off that HAS a source snapshot.
-
-        TASK-34000.6 (S-05): "Source snapshot is ready." promised a
-        generation local mode cannot run (Study refuses with "Source
-        generation requires server mode."). In local mode the line says what
-        needs a server and what still works by hand; server mode keeps the
-        ready line.
-        """
-        if self._runtime_active_source() == "server":
-            return LIBRARY_STUDY_HANDOFF_READY_COPY
-        return LIBRARY_STUDY_HANDOFF_LOCAL_MODE_COPY
 
     def _runtime_active_source(self) -> str:
         """``"local"`` or ``"server"`` from the app's runtime policy state."""
@@ -34470,7 +34379,7 @@ class LibraryScreen(BaseAppScreen):
 
         On success, the deleted item is dropped from the cached
         ``_local_source_records["media"]`` snapshot (matched via
-        ``_source_record_id``, the same id-key precedence ``_study_source_items``
+        ``_source_record_id``, the same id-key precedence ``study_source_items``
         uses) so the list view reflects the trash immediately, without
         waiting on a full snapshot re-fetch, and the canvas returns to its
         list view. task-3020 AC5: ``_local_source_counts["media"]`` is
@@ -38075,7 +37984,9 @@ class LibraryScreen(BaseAppScreen):
     def _open_study_section(self, initial_section: str = "dashboard") -> None:
         open_study_screen = getattr(self.app_instance, "open_study_screen", None)
         if callable(open_study_screen):
-            scope_context = self._source_study_context()
+            from ..Library_Modules.screen_helpers import source_study_context
+
+            scope_context = source_study_context(self, source=globals())
             if scope_context is None:
                 open_study_screen(initial_section=initial_section)
             else:

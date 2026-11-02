@@ -1,0 +1,8 @@
+{
+  "original_save_executable_body_ast_equal_after_global_qualification": true,
+  "original_public_facade_docstring_clean_text_equal": true,
+  "original_public_signature_equal": true,
+  "existing_acknowledgement_ast_equal": true,
+  "controller_lines": 5065,
+  "helper_lines": 548
+}

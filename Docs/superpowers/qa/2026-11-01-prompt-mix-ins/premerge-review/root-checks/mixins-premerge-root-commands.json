@@ -1,0 +1,176 @@
+{
+  "cwd": "/Users/macbook-dev/.codex/worktrees/prompt-mix-ins/tldw_chatbook",
+  "python": "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python",
+  "qualification": "Literal argument vectors and cwd; stdout/stderr are retained in the explicit root log inventory. The separate --noconftest architecture invocation was invalid collection-only and no tests ran. Scope-specific producer inventories retain their own exact commands.",
+  "commands": [
+    {
+      "phase": "literal-guard-red",
+      "result": "6 failed, 9 passed before recognizer fix",
+      "argv": [
+        "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python",
+        "-m",
+        "pytest",
+        "--noconftest",
+        "-o",
+        "addopts=",
+        "Tests/Scripts/test_check_textual_worker_contract.py::test_w002_literal_dependency_catchers_preserve_lookup_protection",
+        "Tests/Scripts/test_check_textual_worker_contract.py::test_w002_literal_dependency_catchers_do_not_protect_other_clauses",
+        "Tests/Architecture/test_persistent_diagnostic_inventory.py::test_literal_dependency_loggers_remain_in_the_diagnostic_inventory",
+        "-q"
+      ]
+    },
+    {
+      "phase": "worker-script-tests",
+      "result": "375 passed; old shared pytest garbage cleanup warnings retained",
+      "argv": [
+        "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python",
+        "-m",
+        "pytest",
+        "--noconftest",
+        "-o",
+        "addopts=",
+        "Tests/Scripts/test_check_textual_worker_contract.py",
+        "-q"
+      ]
+    },
+    {
+      "phase": "current-architecture",
+      "result": "244 passed; literal expanded selectors recorded in ci-enrollment-proof and tool transcript",
+      "argv": [
+        "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python",
+        "-m",
+        "pytest",
+        "-p",
+        "no:cacheprovider",
+        "--basetemp=/private/tmp/mixins-premerge-architecture-tmp",
+        "Tests/Architecture/test_module_size_ratchet.py",
+        "Tests/Architecture/test_screen_size_ratchet.py",
+        "Tests/Architecture/test_library_modules_size_ratchet.py::test_controller_does_not_grow_past_its_budget[tldw_chatbook/UI/Library_Modules/library_prompts_controller.py]",
+        "Tests/Architecture/test_library_modules_size_ratchet.py::test_budget_is_not_left_slack_after_a_move[tldw_chatbook/UI/Library_Modules/library_prompts_controller.py]",
+        "Tests/Architecture/test_library_modules_size_ratchet.py::test_controller_does_not_grow_past_its_budget[tldw_chatbook/UI/Library_Modules/library_prompt_browse_controller.py]",
+        "Tests/Architecture/test_library_modules_size_ratchet.py::test_budget_is_not_left_slack_after_a_move[tldw_chatbook/UI/Library_Modules/library_prompt_browse_controller.py]",
+        "Tests/Architecture/test_library_modules_size_ratchet.py::test_every_controller_file_has_a_budget_row",
+        "Tests/Architecture/test_library_prompts_wiring.py",
+        "Tests/Architecture/test_layer_direction.py",
+        "Tests/Architecture/test_app_string_lookup_census.py",
+        "Tests/Architecture/test_agent_runtime_import_footprint.py",
+        "-q"
+      ]
+    },
+    {
+      "phase": "ci-contracts",
+      "result": "254 passed",
+      "argv": [
+        "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python",
+        "-m",
+        "pytest",
+        "-p",
+        "no:cacheprovider",
+        "--basetemp=/private/tmp/mixins-premerge-ci-tmp",
+        "Tests/CI/test_ci_queue_pressure_contract.py",
+        "Tests/CI/test_derived_artifacts_workflow.py",
+        "Tests/CI/test_ui_pr_gate_census_checker.py",
+        "-q"
+      ]
+    },
+    {
+      "phase": "diagnostic-tests",
+      "result": "80 passed, 1 historical-commit-unavailable skip",
+      "argv": [
+        "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python",
+        "-m",
+        "pytest",
+        "-p",
+        "no:cacheprovider",
+        "--basetemp=/private/tmp/mixins-premerge-diagnostic-tests-tmp",
+        "Tests/Architecture/test_persistent_diagnostic_inventory.py",
+        "-q"
+      ]
+    },
+    {
+      "phase": "worker-preflight",
+      "result": "passed; no new W001/W002/W003, no census waiver",
+      "argv": [
+        "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python",
+        "scripts/check_textual_worker_contract.py"
+      ]
+    },
+    {
+      "phase": "markup-preflight",
+      "result": "passed unchanged",
+      "argv": [
+        "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python",
+        "scripts/check_markup_interpolation.py"
+      ]
+    },
+    {
+      "phase": "diagnostic-review",
+      "result": "three receiver-qualified ownership moves; full132 call AST multiset unchanged",
+      "argv": [
+        "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python",
+        "scripts/check_persistent_diagnostic_inventory.py",
+        "--statements",
+        "tldw_chatbook/UI/Library_Modules/library_prompts_controller.py",
+        "tldw_chatbook/UI/Library_Modules/prompt_save_ack.py",
+        "tldw_chatbook/UI/Console_Modules/command_handoff.py",
+        "tldw_chatbook/UI/Screens/chat_screen.py",
+        "--since",
+        "b1108874cab28d23f660aa22c11c863466a84a8e"
+      ]
+    },
+    {
+      "phase": "diagnostic-rebuild",
+      "result": "only four reviewed owner rows updated; no sink change",
+      "argv": [
+        "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python",
+        "scripts/check_persistent_diagnostic_inventory.py",
+        "--write"
+      ]
+    },
+    {
+      "phase": "diagnostic-preflight",
+      "result": "728 owners; 1079/56/7801 calls by task;16 sinks verified",
+      "argv": [
+        "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python",
+        "scripts/check_persistent_diagnostic_inventory.py"
+      ]
+    },
+    {
+      "phase": "ui-census",
+      "result": "1335 entries; old1333 prefix unchanged",
+      "argv": [
+        "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python",
+        "scripts/check_ui_pr_gate_census.py"
+      ]
+    },
+    {
+      "phase": "literal-guard-final",
+      "argv": [
+        "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python",
+        "-m",
+        "pytest",
+        "-p",
+        "no:cacheprovider",
+        "--basetemp=/private/tmp/mixins-premerge-final-guard-cases-tmp",
+        "Tests/Scripts/test_check_textual_worker_contract.py::test_w002_literal_dependency_catchers_preserve_lookup_protection",
+        "Tests/Scripts/test_check_textual_worker_contract.py::test_w002_literal_dependency_catchers_do_not_protect_other_clauses",
+        "Tests/Architecture/test_persistent_diagnostic_inventory.py::test_literal_dependency_loggers_remain_in_the_diagnostic_inventory",
+        "-q"
+      ],
+      "result": "15 passed on frozen final bytes"
+    }
+  ],
+  "exact_library_guard_selectors": [
+    "Tests/Architecture/test_library_modules_size_ratchet.py::test_every_controller_file_has_a_budget_row",
+    "Tests/Architecture/test_library_modules_size_ratchet.py::test_controller_does_not_grow_past_its_budget[tldw_chatbook/UI/Library_Modules/library_prompt_browse_controller.py]",
+    "Tests/Architecture/test_library_modules_size_ratchet.py::test_budget_is_not_left_slack_after_a_move[tldw_chatbook/UI/Library_Modules/library_prompt_browse_controller.py]",
+    "Tests/Architecture/test_library_modules_size_ratchet.py::test_controller_does_not_grow_past_its_budget[tldw_chatbook/UI/Library_Modules/library_prompts_controller.py]",
+    "Tests/Architecture/test_library_modules_size_ratchet.py::test_budget_is_not_left_slack_after_a_move[tldw_chatbook/UI/Library_Modules/library_prompts_controller.py]"
+  ],
+  "exact_diagnostic_owner_paths": [
+    "tldw_chatbook/UI/Library_Modules/library_prompts_controller.py",
+    "tldw_chatbook/UI/Library_Modules/prompt_save_ack.py",
+    "tldw_chatbook/UI/Console_Modules/command_handoff.py",
+    "tldw_chatbook/UI/Screens/chat_screen.py"
+  ]
+}

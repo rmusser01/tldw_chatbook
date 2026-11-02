@@ -142,6 +142,8 @@ The migration statement parser and leading-comment scanner live in
 `DB/sql_validation.py`; ChaChaNotes supplies its original schema error type.
 The public `Prompts_DB.export_prompts_formatted` delegates lazily to
 `DB/prompt_export.py`, keeping current DB dependency bindings and legacy export
-formats. Sealed citation row-set comparison lives in
+formats. A filtered selection containing Mix-ins is refused before output creation;
+the typed Library/Chatbook export preserves their canonical definition and placement.
+Sealed citation row-set comparison lives in
 `Chat/citation_artifact_ownership.py` and uses the repository's already acquired
 connection; transaction and seal ownership remain on the repository.

@@ -70,8 +70,9 @@ from tldw_chatbook.UI.Library_Modules.library_prompts_state import (
 #: 46 fields found, 3 WIRING (live controller instances -- see below), 0
 #: BLOCKED, so 43 move. Pinned here so a field silently added to or dropped
 #: from the dataclass fails loudly instead of quietly resizing the shim
-#: surface this file checks.
-_EXPECTED_PROMPT_STATE_FIELD_COUNT = 43
+#: surface this file checks. TASK-38544 adds the private ``mixin_draft`` and
+#: ``mixin_source_identity`` fields, retaining their representation exclusions.
+_EXPECTED_PROMPT_STATE_FIELD_COUNT = 45
 
 #: The 3 WIRING fields the state PR deliberately left on ``LibraryScreen``
 #: (the ``_conversation_reader_controller``/``_library_collections_capture_

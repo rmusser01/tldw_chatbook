@@ -1961,3 +1961,6 @@ Tests/UI/test_roleplay_extraction_identity.py
 Tests/UI/test_console_provider_apply_defaults_flow.py::test_settings_task_drain_yields_for_completed_task_retirement
 # PR3346: a closed owner must settle cold readiness and permit current retry.
 Tests/UI/test_console_readiness_config_projection.py::test_closed_session_before_readiness_worker_entry_settles_and_retries
+# PR3346 pre-merge review: preserve screen derivations and live worker lookup.
+Tests/UI/test_screen_derivation_helpers.py
+Tests/UI/test_library_prompt_browse_controller.py::test_controller_live_reads_replaced_screen_worker

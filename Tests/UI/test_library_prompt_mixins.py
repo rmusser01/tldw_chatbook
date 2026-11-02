@@ -269,6 +269,82 @@ async def test_library_mixin_save_conflict_export_and_dirty_escape(tmp_path):
 
 
 @pytest.mark.asyncio
+async def test_literal_save_keeps_live_defining_module_policy_callbacks(
+    tmp_path, monkeypatch
+):
+    from tldw_chatbook.UI.Library_Modules import library_prompts_controller as owner
+
+    db, service = _real_prompt_scope_service(tmp_path)
+    prompt_id = seed_mixin(db)
+    app = _build_test_app()
+    _wire_empty_non_prompt_services(app)
+    app.prompt_scope_service = service
+    host = LibraryProductionCSSHarness(app)
+    entered, release = threading.Event(), threading.Event()
+    validator = owner.require_artifact_save_supported
+    classifier = owner.classify_prompt_save_error
+    save = service.save_prompt
+
+    def refuse(*_args, **_kwargs):
+        raise ValueError("Source policy refused this draft.")
+
+    async def held_save(**kwargs):
+        entered.set()
+        if not release.wait(5):
+            raise TimeoutError("literal save was not released")
+        return await save(**kwargs)
+
+    def classify(*args):
+        outcome = classifier(*args)
+        return "name-in-use" if outcome == "ok" else outcome
+
+    try:
+        async with host.run_test(size=(120, 40)) as pilot:
+            screen = _active_library_screen(host)
+            await _wait_for_library_shell(screen, pilot)
+            await _open_prompt_editor(screen, pilot, prompt_id)
+            await _wait_for_condition(
+                pilot,
+                lambda: screen._prompts_state.editor_armed,
+                message="Literal editor did not arm",
+            )
+            editor = screen.query_one(PromptMixinEditor)
+            editor.query_one("#mixin-body", TextArea).load_text("kept literal draft")
+            await pilot.pause()
+            monkeypatch.setattr(owner, "require_artifact_save_supported", refuse)
+            screen.query_one("#library-prompt-save", Button).press()
+            await _wait_for_condition(
+                pilot,
+                lambda: (
+                    screen._prompts_state.status == "Source policy refused this draft."
+                ),
+                message="Save bypassed the defining-module policy validator",
+            )
+            assert db.fetch_prompt_details(prompt_id)["version"] == 1
+            assert editor.read_draft()[1] == "kept literal draft"
+            monkeypatch.setattr(owner, "require_artifact_save_supported", validator)
+            service.save_prompt = held_save
+            screen.query_one("#library-prompt-save", Button).press()
+            await _wait_for_condition(
+                pilot, entered.is_set, message="Save did not reach its source worker"
+            )
+            monkeypatch.setattr(owner, "classify_prompt_save_error", classify)
+            release.set()
+            await _wait_for_condition(
+                pilot,
+                lambda: "Name already in use" in screen._prompts_state.status,
+                message="Save captured an obsolete result classifier before its await",
+            )
+            assert db.fetch_prompt_details(prompt_id)["version"] == 2
+            assert screen._prompts_state.version == 1
+            assert screen._prompts_state.dirty
+            assert editor.read_draft()[1] == "kept literal draft"
+    finally:
+        release.set()
+        db.close_connection()
+
+
+@pytest.mark.asyncio
 async def test_library_mixin_create_and_filtered_pagination_totals(tmp_path):
     db, service = _real_prompt_scope_service(tmp_path)
     for i in range(22):
@@ -1069,3 +1145,352 @@ async def test_library_mixin_save_ack_preserves_newer_literal_draft(tmp_path):
     finally:
         release.set()
         db.close()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("retained_type", "current_type"),
+    [
+        ("mixin", "mixin"),
+        ("prompt", "mixin"),
+        ("recipe", "mixin"),
+    ],
+)
+async def test_literal_history_restore_keeps_kind_definition_and_guards(
+    tmp_path, retained_type, current_type
+):
+    from Tests.UI.test_console_prompts_modal import _definition
+    from Tests.UI.test_library_prompt_action_journeys import _activate_more_action
+    from tldw_chatbook.UI.Library_Modules.prompt_history_region import (
+        LibraryPromptHistoryRegion,
+    )
+    from tldw_chatbook.Widgets.confirmation_dialog import ConfirmationDialog
+
+    db, service = _real_prompt_scope_service(tmp_path)
+    literal = {
+        "kind": "text_mixin",
+        "schema_version": 3,
+        "body": "  Original {literal}\n[before]\n",
+        "placement": "before",
+    }
+    original_definition = (
+        literal if retained_type == "mixin" else _definition("block_" + retained_type)
+    )
+    created = await service.save_prompt(
+        mode="local",
+        name="Retained artifact",
+        author="Original author",
+        details="Original details",
+        keywords=["original"],
+        artifact_type=retained_type,
+        prompt_format="structured",
+        prompt_schema_version=original_definition["schema_version"],
+        prompt_definition=original_definition,
+    )
+    original = db.fetch_prompt_details(created["uuid"])
+    prompt_id = original["id"]
+    current_definition = (
+        {**literal, "body": "Current instructions", "placement": "after"}
+        if current_type == "mixin"
+        else _definition("block_" + current_type)
+    )
+    await service.save_prompt(
+        mode="local",
+        prompt_identifier=prompt_id,
+        expected_version=1,
+        name="Retained artifact",
+        author="Current author",
+        details="Current details",
+        artifact_type=current_type,
+        prompt_format="structured",
+        prompt_schema_version=current_definition["schema_version"],
+        prompt_definition=current_definition,
+    )
+    app = _build_test_app()
+    _wire_empty_non_prompt_services(app)
+    app.prompt_scope_service = service
+    host = LibraryProductionCSSHarness(app)
+
+    async def select_original(screen, pilot):
+        await _activate_more_action(screen, pilot, "more-history")
+        await _wait_for_condition(
+            pilot,
+            lambda: (
+                screen._library_prompt_history_state.page_status == "loaded"
+                and len(screen.query(".library-prompt-history-row")) == 2
+            ),
+            message="Literal retained history did not load",
+        )
+        next(
+            row
+            for row in screen.query(".library-prompt-history-row")
+            if row.source_version == 1
+        ).press()
+        await _wait_for_condition(
+            pilot,
+            lambda: screen._library_prompt_history_state.selected is not None,
+            message="Retained v1 was not selected",
+        )
+        await pilot.pause()
+
+    try:
+        async with host.run_test(size=(140, 44)) as pilot:
+            screen = _active_library_screen(host)
+            await _wait_for_library_shell(screen, pilot)
+            await _open_prompt_editor(screen, pilot, prompt_id)
+            await select_original(screen, pilot)
+            restore = screen.query_one("#library-prompt-history-restore", Button)
+            assert not restore.disabled
+            assert screen.query_one("#library-prompt-history-user", TextArea).read_only
+            state = screen._library_prompt_history_state
+            stale = LibraryPromptHistoryRegion.RestoreRequested(
+                prompt_uuid=state.prompt_uuid, scope_token=state.scope_token
+            )
+            controller = screen._prompts_controller
+            capabilities = controller._library_prompt_capabilities
+            controller._library_prompt_capabilities = replace(
+                capabilities, conditional_update=False
+            )
+            controller._sync_library_prompt_history_region()
+            await pilot.pause()
+            assert screen.query_one("#library-prompt-history-restore", Button).disabled
+            controller.handle_library_prompt_history_restore(stale)
+            assert host.screen is screen
+            controller._library_prompt_capabilities = capabilities
+            controller._sync_library_prompt_history_region()
+            field = screen.query_one(
+                "#mixin-name" if current_type == "mixin" else "#library-prompt-name",
+                Input,
+            )
+            field.value = "Unsaved name"
+            await _wait_for_condition(
+                pilot,
+                lambda: screen._prompts_state.dirty,
+                message="History edit did not become dirty",
+            )
+            assert screen.query_one("#library-prompt-history-restore", Button).disabled
+            controller.handle_library_prompt_history_restore(stale)
+            assert host.screen is screen
+            screen.query_one("#library-prompt-discard", Button).press()
+            await _wait_for_condition(
+                pilot,
+                lambda: screen._prompts_state.view == "list",
+                message="Discard did not leave the editor",
+            )
+            await _wait_for_condition(
+                pilot,
+                lambda: (
+                    screen._library_prompt_browse_controller.result.status == "ready"
+                    and bool(screen.query(f"#library-prompt-row-{prompt_id}"))
+                    and screen.query_one(
+                        f"#library-prompt-row-{prompt_id}"
+                    ).region.height
+                    > 0
+                ),
+                message="Discarded editor did not reveal its settled Library row",
+            )
+            await pilot.pause()
+            screen.query_one(f"#library-prompt-row-{prompt_id}", Button).press()
+            await _wait_for_condition(
+                pilot,
+                lambda: (
+                    screen._prompts_state.view == "editor"
+                    and screen._prompts_state.detail is not None
+                    and screen._prompts_state.editor_armed
+                ),
+                message="The settled Library row did not reopen its editor",
+            )
+            await select_original(screen, pilot)
+            controller.handle_library_prompt_history_restore(stale)
+            assert host.screen is screen
+            screen.query_one("#library-prompt-history-restore", Button).press()
+            await _wait_for_condition(
+                pilot,
+                lambda: isinstance(host.screen, ConfirmationDialog),
+                message="Literal restore confirmation did not open",
+            )
+            dialog = host.screen
+            assert "retained v1" in dialog.message and "current v2" in dialog.message
+            if retained_type != current_type:
+                current_label = (
+                    "Mix-in" if current_type == "mixin" else current_type.title()
+                )
+                retained_label = (
+                    "Mix-in" if retained_type == "mixin" else retained_type.title()
+                )
+                assert f"{current_label} to {retained_label}" in dialog.message
+            controller._library_prompt_capabilities = replace(
+                capabilities, conditional_update=False
+            )
+            dialog.query_one("#confirm-button", Button).press()
+            await _wait_for_condition(
+                pilot,
+                lambda: host.screen is screen,
+                message="Read-only confirmation did not return to the editor",
+            )
+            await pilot.pause()
+            assert db.fetch_prompt_details(prompt_id)["version"] == 2
+            controller._library_prompt_capabilities = capabilities
+            controller._sync_library_prompt_history_region()
+            await pilot.pause()
+            screen.query_one("#library-prompt-history-restore", Button).press()
+            await _wait_for_condition(
+                pilot,
+                lambda: isinstance(host.screen, ConfirmationDialog),
+                message="Restore could not retry after its source became writable",
+            )
+            dialog = host.screen
+            dialog.query_one("#confirm-button", Button).press()
+            await _wait_for_condition(
+                pilot,
+                lambda: host.screen is screen and screen._prompts_state.version == 3,
+                message="Retained definition did not become current v3",
+            )
+            restored = db.fetch_prompt_details(prompt_id)
+            assert restored["version"] == 3
+            for key in (
+                "artifact_type",
+                "author",
+                "details",
+                "keywords",
+                "system_prompt",
+                "user_prompt",
+                "prompt_schema_version",
+            ):
+                assert restored[key] == original[key], key
+            assert json.loads(restored["prompt_definition"]) == original_definition
+            if retained_type == "mixin":
+                await _wait_for_condition(
+                    pilot,
+                    lambda: (
+                        bool(screen.query(PromptMixinEditor))
+                        and screen.query_one(PromptMixinEditor).read_draft()[1:]
+                        == (literal["body"], "before")
+                    ),
+                    message="Restored literal editor did not mount",
+                )
+                assert screen.query_one(PromptMixinEditor).read_definition() == (
+                    LiteralMixinDefinition(literal["body"], "before")
+                )
+                assert not screen.query("#library-prompt-block-editor")
+            else:
+                await _wait_for_condition(
+                    pilot,
+                    lambda: bool(screen.query("#library-prompt-block-editor")),
+                    message="Restored block editor did not mount",
+                )
+                assert not screen.query(PromptMixinEditor)
+                screen.query_one(
+                    "#library-prompt-history-collapsible"
+                ).collapsed = False
+                await _wait_for_condition(
+                    pilot,
+                    lambda: len(screen.query(".library-prompt-history-row")) == 3,
+                    message="Restored artifact history did not refresh",
+                )
+                next(
+                    row
+                    for row in screen.query(".library-prompt-history-row")
+                    if row.source_version == 2
+                ).press()
+                await _wait_for_condition(
+                    pilot,
+                    lambda: (
+                        screen._library_prompt_history_state.selected is not None
+                        and screen._library_prompt_history_state.selected.source_version
+                        == 2
+                    ),
+                    message="Retained mix-in v2 was not selected",
+                )
+                screen.query_one("#library-prompt-history-restore", Button).press()
+                await _wait_for_condition(
+                    pilot,
+                    lambda: isinstance(host.screen, ConfirmationDialog),
+                    message="Block-to-mix-in restore confirmation did not open",
+                )
+                assert f"{retained_type.title()} to Mix-in" in host.screen.message
+                host.screen.query_one("#confirm-button", Button).press()
+                await _wait_for_condition(
+                    pilot,
+                    lambda: (
+                        host.screen is screen
+                        and screen._prompts_state.version == 4
+                        and bool(screen.query(PromptMixinEditor))
+                        and screen.query_one(PromptMixinEditor).read_draft()[1:]
+                        == ("Current instructions", "after")
+                    ),
+                    message="Historical mix-in was projected into a block editor",
+                )
+                restored_mixin = db.fetch_prompt_details(prompt_id)
+                assert restored_mixin["artifact_type"] == "mixin"
+                assert (
+                    json.loads(restored_mixin["prompt_definition"])
+                    == current_definition
+                )
+                assert screen.query_one(PromptMixinEditor).read_definition() == (
+                    LiteralMixinDefinition("Current instructions", "after")
+                )
+    finally:
+        db.close_connection()
+
+
+@pytest.mark.asyncio
+async def test_literal_editor_metadata_survives_the_saved_info_mode(tmp_path):
+    from Tests.UI.test_library_prompt_action_journeys import _activate_more_action
+
+    db, service = _real_prompt_scope_service(tmp_path)
+    prompt_id = seed_mixin(db)
+    app = _build_test_app()
+    _wire_empty_non_prompt_services(app)
+    app.prompt_scope_service = service
+    app.app_config.setdefault("library", {})["prompt_editor_mode"] = "info"
+    host = LibraryProductionCSSHarness(app)
+    try:
+        async with host.run_test(size=(120, 40)) as pilot:
+            screen = _active_library_screen(host)
+            await _wait_for_library_shell(screen, pilot)
+            await _open_prompt_editor(screen, pilot, prompt_id)
+            await _wait_for_condition(
+                pilot,
+                lambda: (
+                    bool(screen.query(PromptMixinEditor))
+                    and screen._prompts_state.editor_armed
+                ),
+                message="Info preference did not open the literal editor",
+            )
+            assert not screen.query_one("#library-prompt-mode-controls").display
+            for selector in ("#library-prompt-author", "#library-prompt-keywords"):
+                control = screen.query_one(selector, Input)
+                assert control.display
+                control.focus()
+                await pilot.pause()
+                assert screen.focused is control and control.region.height > 0
+            screen.query_one("#library-prompt-author", Input).value = "Edited author"
+            screen.query_one("#library-prompt-keywords", Input).value = "scene, edited"
+            await _wait_for_condition(
+                pilot,
+                lambda: screen._prompts_state.dirty,
+                message="Literal metadata edit did not become dirty",
+            )
+            screen.query_one("#library-prompt-save", Button).press()
+            await _wait_for_condition(
+                pilot,
+                lambda: (
+                    screen._prompts_state.version == 2
+                    and not screen._prompts_state.dirty
+                ),
+                message="Literal metadata did not save",
+            )
+            stored = db.fetch_prompt_details(prompt_id)
+            assert stored["author"] == "Edited author"
+            assert set(stored["keywords"]) == {"scene", "edited"}
+            assert (
+                json.loads(stored["prompt_definition"])["body"] == "{pose}\n## User\n"
+            )
+            await _activate_more_action(screen, pilot, "more-history")
+            assert screen.query_one("#library-prompt-author", Input).display
+            assert screen.query_one("#library-prompt-keywords", Input).display
+            assert screen._prompts_controller._library_prompt_editor_mode == "info"
+            assert app.app_config["library"]["prompt_editor_mode"] == "info"
+    finally:
+        db.close_connection()

@@ -362,6 +362,10 @@ def _catches_lookup_failure(node: ast.Try | ast.TryStar) -> bool:
                 name: str | None = entry.attr
             elif isinstance(entry, ast.Name):
                 name = entry.id
+            elif isinstance(entry, ast.Subscript) and isinstance(
+                entry.slice, ast.Constant
+            ):
+                name = entry.slice.value if isinstance(entry.slice.value, str) else None
             else:
                 name = None
             if name in LOOKUP_CATCHERS:

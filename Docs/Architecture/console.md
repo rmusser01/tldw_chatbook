@@ -591,6 +591,8 @@ these unreleased v86 changes.
 
 The existing composer Menu → Prompts action opens Browse; its Mix-ins section owns enabled references and Before/After order. A queued entry retains its accepted snapshot even after Library edits, toggles or tab switches. Reopen restores references/flags/order; live and durable preference CAS revisions have distinct lifetimes. New/copy/fork chats do not inherit active selections.
 
+Browse → Mix-ins admits its mode transition and definition read through a modal-owned worker. Close and Back remain responsive while a read is held; mode, source, session and unmount fences reject late publication. Original mix-in inspection explains that exact Retry content is retained with the chat even with diagnostic Capture Off, independently of trace purge.
+
 `ConsoleChatMessage.mixin_usage_count` and `ConsoleVariant.mixin_usage_count` are transient display projections. Generation capture/apply moves the count with that generation; a manual or unqualified replacement carries `None`. This prevents the prior generation's Retry label leaking onto a replacement. Operational snapshot validation remains the only Retry authority. Unknown counts do not mean zero.
 
 

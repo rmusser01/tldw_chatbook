@@ -422,7 +422,7 @@ class LibraryPromptsListCanvas(PostRecomposeCallback, Vertical):
         self.editor_mode = requested
         effective = (
             "advanced"
-            if requested == "basic" and self.basic_unavailable_reason
+            if is_mixin or (requested == "basic" and self.basic_unavailable_reason)
             else requested
         )
         self.query_one("#library-prompt-basic-region").display = (
@@ -1319,7 +1319,8 @@ class LibraryPromptsListCanvas(PostRecomposeCallback, Vertical):
         )
         effective_mode = (
             "advanced"
-            if self.editor_mode == "basic" and self.basic_unavailable_reason
+            if is_mixin
+            or (self.editor_mode == "basic" and self.basic_unavailable_reason)
             else self.editor_mode
         )
         item_locked = (

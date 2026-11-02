@@ -24309,3 +24309,25 @@ requested refreeze's quiet period elapsed. The test now waits for both existing
 outcomes within its original ten-second limit, retaining the real GC, timer,
 custody and exact-reason assertions. Collection by one idle request does not prove
 another request has completed; production scheduling needed no change.
+
+## A passing size-guard subset does not qualify independent owner limits (PR3346)
+
+**Incident, 2026-11-02.** Pre-merge review found the Mix-in branch's Library
+Prompts controller at 5,356 lines against its unchanged 5,100 cap, plus Browse
+and screen line/method overruns. Earlier checks had covered the general module
+ratchet and required CI, which selected only some general rows and omitted the
+independent Library/screen guards. The fixes use existing cohesive owners and
+lower exact pins; required CI now covers all general rows, canonical screens and
+the affected Library rows. Preserve previous selector coverage when replacing
+node lists with a whole file, and audit every applicable guard family. The
+unchanged Skills and historical Chat projection failures remain separately
+qualified rather than being hidden behind an all-guards-green claim.
+
+The same extraction exposed two literal-dependency syntax blind spots: dictionary
+lookups of the original logger disappeared from the diagnostic inventory, while
+dictionary lookups of the original QueryError classes lost static recognition.
+Positive and negative snippets failed before the recognizer fix. The final
+detectors retain unsafe-case checks, and a 132-call AST comparison proves that
+only three logger ownership locations changed, with identical messages,
+arguments, levels and sink topology. A source move must preserve guard coverage
+as well as runtime behavior.

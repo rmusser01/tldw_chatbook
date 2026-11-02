@@ -426,8 +426,10 @@ class ConsolePromptsModal(
         return view if self._mixin_ui_current(generation, view) else None
 
     @on(ConsolePromptsBrowse.MixinsRequested)
-    async def _open_mixins(self) -> None:
-        await self.enter_mode("mixins")
+    def _open_mixins(self) -> None:
+        self.run_worker(
+            self.enter_mode("mixins"), exclusive=True, group="console-mixins"
+        )
 
     @on(ConsolePromptMixinsView.BrowseRequested)
     async def _mixins_browse(self) -> None:

@@ -1232,3 +1232,61 @@ async def test_artifact_capture_completion_cannot_replace_newer_work(
         else:
             assert app.modal not in app.screen_stack
             assert app.modal._mixin_generation > generation
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("departure", ["close", "back"])
+async def test_browse_mixins_read_does_not_hold_navigation(runtime, departure):
+    import asyncio
+
+    from tldw_chatbook.Widgets.Console.console_prompts_browse import (
+        ConsolePromptsBrowse,
+    )
+
+    _, scope, _, _, _, _ = runtime
+    await seed(scope)
+    app = WorkbenchHarness(runtime)
+    async with app.run_test(size=(100, 30)) as pilot:
+        app.pilot = pilot
+        await ready(app)
+        await add(app, "Style")
+        await app.modal.enter_mode("browse")
+        await app.modal.reload_browse()
+        await pilot.pause()
+        entered, release = asyncio.Event(), asyncio.Event()
+        original = scope.read_mixin_records
+
+        async def held(**kwargs):
+            entered.set()
+            await release.wait()
+            return await original(**kwargs)
+
+        scope.read_mixin_records = held
+        app.modal.query_one("#console-prompts-mixins", Button).press()
+        try:
+            await asyncio.wait_for(entered.wait(), 5)
+            app.modal.query_one(f"#console-prompts-{departure}", Button).press()
+            for _ in range(250):
+                departed = (
+                    app.screen is not app.modal
+                    if departure == "close"
+                    else app.modal.state.mode == "browse"
+                    and bool(app.modal.query(ConsolePromptsBrowse))
+                )
+                if departed:
+                    break
+                await asyncio.sleep(0.02)
+            assert departed, "Mix-ins source read held the modal navigation pump"
+            generation = app.modal._mixin_generation
+        finally:
+            release.set()
+            scope.read_mixin_records = original
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+        if departure == "close":
+            assert app.modal not in app.screen_stack
+        else:
+            assert app.modal.state.mode == "browse"
+            assert app.modal.query(ConsolePromptsBrowse)
+            assert not app.modal.query("#console-mixins-add")
+        assert app.modal._mixin_generation == generation

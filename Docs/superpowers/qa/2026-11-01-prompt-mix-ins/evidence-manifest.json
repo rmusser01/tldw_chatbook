@@ -4271,6 +4271,656 @@
       "git_blob": "d1448227e383f579f6d1becb4017c60632ae7cf6",
       "bytes": 400957
     },
+    "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/premerge-review/artifact-map.json": {
+      "sha256": "6644636e0ee10c718dbede13a9858a2d7bc5570af77ba5c92e82891cf0ab52c2",
+      "git_blob": "8fd3cb761473808406a2aa93835e397e09f83c49",
+      "bytes": 57066
+    },
+    "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/premerge-review/export-fix/baseline-final.log.json.gz": {
+      "sha256": "b2786d0487322f86fcad979039b3eb58ebb657297703d0130c061c1d6fb595a5",
+      "git_blob": "2129fb4bf2821f37e2dab80935a6cc44af25f7bf",
+      "bytes": 9776
+    },
+    "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/premerge-review/export-fix/baseline-probe.py": {
+      "sha256": "6f9ee59b8a0684cf8fad7d5dbc86183aa9519cc6c94696b121b77dd496cfe4f4",
+      "git_blob": "046842b5692816414d82af47603bb072544fb705",
+      "bytes": 809
+    },
+    "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/premerge-review/export-fix/commands.json": {
+      "sha256": "07093752024fd0ffc29484f26f914bb804cc6c5b42c2fb46aae81d87532e18f6",
+      "git_blob": "84455adb529705029ac299cceb44ee6f71401c4d",
+      "bytes": 3736
+    },
+    "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/premerge-review/export-fix/contracts.log.json": {
+      "sha256": "be35b4ac9bd659e362c4c713955275620169309575ab13b5c485ff5d75a40e90",
+      "git_blob": "7ebc88cd041da37f2989dd413c4169a26780cc31",
+      "bytes": 397
+    },
+    "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/premerge-review/export-fix/final-exports.log.json": {
+      "sha256": "12cba82c11ad11f74c0fc4e17f53023c89b2772118d40bf43d2c591e6783bcbe",
+      "git_blob": "211082f57e469450c554a7b8e3378ae865024a26",
+      "bytes": 463
+    },
+    "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/premerge-review/export-fix/fix.patch.json": {
+      "sha256": "f60bb06ae7e6796980dd21238c692221b8e47484fb3a70ba56e680b1a823b59d",
+      "git_blob": "9fd787258808fb711317c001a2fad986612ac0a6",
+      "bytes": 8561
+    },
+    "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/premerge-review/export-fix/format.log.json": {
+      "sha256": "a8d55ae5575deb094e7cc8b22aec510097d0990071d9eacf12cbdf2b9c5b6813",
+      "git_blob": "bd4486cb7390b9b030e114ae740491ad2993b122",
+      "bytes": 128
+    },
+    "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/premerge-review/export-fix/green.log.json": {
+      "sha256": "c7a506c886d6208243acde6f72ceaaa2e9a02781683a452742e5858529130d8b",
+      "git_blob": "2e2ae70a0c35d0040dba8acd4530a13e3f8e1cf2",
+      "bytes": 330
+    },
+    "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/premerge-review/export-fix/lint-base.json": {
+      "sha256": "869eab6f721976ebecc6a0ab6e0380193462d7dab19edf7a96cca477e1668b56",
+      "git_blob": "a7d8d95d52ef4d5b1dfd029aebfec6647fff3d13",
+      "bytes": 1934
+    },
+    "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/premerge-review/export-fix/lint-current.json": {
+      "sha256": "b83c860af883af7e62b18db831d37daad7dbd9c61b46e9415293105c4df4317f",
+      "git_blob": "a3a6fcd7f50582519f1320df8b55bf31b165c3b4",
+      "bytes": 1934
+    },
+    "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/premerge-review/export-fix/lint-delta.json": {
+      "sha256": "ba4f5039119e7cd7896e3e1a45aeeb1734f96a4eda088715b7317beeb89aec22",
+      "git_blob": "909ec778cda872f0d4b0d2b580b99842dd58f3c8",
+      "bytes": 107
+    },
+    "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/premerge-review/export-fix/red.log.json": {
+      "sha256": "2216ad01341fc1028de3c3468c03fcd705ef029c7927d936f39a991c99cce1b4",
+      "git_blob": "a486d4bbff971d38698204fe5f46b82a7bcc3a11",
+      "bytes": 133885
+    },
+    "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/premerge-review/export-fix/report-files.json": {
+      "sha256": "11239ec827aa2936ecbe4e56996a146d818ae2da0185f819fe9586affb108dd1",
+      "git_blob": "dab12d582833cb07fdbb5cf1c5be3004c94b5f43",
+      "bytes": 3145
+    },
+    "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/premerge-review/export-fix/report.md": {
+      "sha256": "c7f51cd4ef19f93458a48fc265a8b558d622c262ed011764b14c0e37ebee919c",
+      "git_blob": "1cf409a9d08196a015a39cbd771ce91699666309",
+      "bytes": 3987
+    },
+    "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/premerge-review/export-fix/source-proof.json": {
+      "sha256": "aa773e3b91f1d269d4ab6dec393b9f26a30a978fd70a0126b3d91f3db14a0ac1",
+      "git_blob": "cd7a30663847010b64518389005654fb28d89237",
+      "bytes": 603
+    },
+    "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/premerge-review/export-fix/whitespace.json": {
+      "sha256": "b494c9f17d7c3704a866237d2b20bc65d5df36b099d7c499f10ca07361eae824",
+      "git_blob": "93e60d9c8133d39e905ba8fcd551d8502bb40e6a",
+      "bytes": 408
+    },
+    "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/premerge-review/export-fix/whitespace.log.json": {
+      "sha256": "cd5adbe4889b6b19155498133831b8770e2b02292fa74b67afe5368c5f2edc70",
+      "git_blob": "2be41d6abea567213779310893fc1aa3572d160f",
+      "bytes": 101
+    },
+    "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/premerge-review/reviews/mixins-pr3346-premerge-core-review.md.json": {
+      "sha256": "963a7f7f79490eb17eba4b50f4cb08382f5668bdb0554e83d2b481b90b8ea2f2",
+      "git_blob": "05841b338922faa6a4d6d6c0839a0f029778e8a9",
+      "bytes": 11797
+    },
+    "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/premerge-review/reviews/mixins-pr3346-premerge-fix-review.md": {
+      "sha256": "7d9e6691aaede5a1f70c285e11dc7a0398eaef2ee4ed66e654557b1183f39211",
+      "git_blob": "c13fbbab0657e12aba41c59b01e865bf13574253",
+      "bytes": 12904
+    },
+    "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/premerge-review/reviews/mixins-pr3346-premerge-integration-review.md.json": {
+      "sha256": "3f12dd32419fcc12c108d9b769fa7359afc11a753f107ea5750a7ad691c41508",
+      "git_blob": "ccd963106879638426cfff9481396c6219db6d3f",
+      "bytes": 9347
+    },
+    "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/premerge-review/reviews/mixins-pr3346-premerge-ui-review.md.json": {
+      "sha256": "18b6e0a62102199d332ca49719c2158f31822fcce557b1b3513944825a844906",
+      "git_blob": "eac54718c44e1c6d3e07eeae4f954c8e5321c5fc",
+      "bytes": 10154
+    },
+    "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/premerge-review/root-checks/mixins-premerge-architecture-unbootstrapped.log.json": {
+      "sha256": "45612e928f96ff7e5e31c416f45e84d66013eca148f71eb9204bc53a42f86c3a",
+      "git_blob": "d8c09a9aabb357b598a562adbd3e007457aa0a3b",
+      "bytes": 11101
+    },
+    "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/premerge-review/root-checks/mixins-premerge-ci-enrollment-proof.json": {
+      "sha256": "d74d2607c568994b7dddaf03053ae118005278f991dff4229f2300dc2d9f1838",
+      "git_blob": "f14a2e10a6837d9e3ce143c57e936f5e0abdde04",
+      "bytes": 52625
+    },
+    "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/premerge-review/root-checks/mixins-premerge-ci-selector-checks.log.json": {
+      "sha256": "fed9808924407c9f92975aef7b6b14181c211c01b2b45cd7db8090a3b1b044aa",
+      "git_blob": "5b62063bbcc94691de774c0d8acea3678bd166fd",
+      "bytes": 201
+    },
+    "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/premerge-review/root-checks/mixins-premerge-ci-selector-final.log.json": {
+      "sha256": "e148a44b83ca3d69afba53fbf242a9b1be19d046d1ff698eb254bb2f84c3002c",
+      "git_blob": "6cc99080375ed104b7f9a385431438ae6ab76981",
+      "bytes": 201
+    },
+    "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/premerge-review/root-checks/mixins-premerge-diagnostic-diff.log.json": {
+      "sha256": "938dd3ff02ff65803f806078889c3d1bbb9792aac0dcfe52bf48e58575e44af4",
+      "git_blob": "7cebbec7802c93494d02f5832c7426495aa9eeff",
+      "bytes": 2707
+    },
+    "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/premerge-review/root-checks/mixins-premerge-diagnostic-move-proof.json": {
+      "sha256": "17f2772156371cd0a27ba01b51a8f576450ccabc3be485e95a85b5abdd0f576f",
+      "git_blob": "dbdcca26e8f729a609b0341906a1142e055fc577",
+      "bytes": 816
+    },
+    "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/premerge-review/root-checks/mixins-premerge-diagnostic-statements-fixed.log.json": {
+      "sha256": "89131c51501c9a6b58f714c582cc3c3d7f7bc4e579dd6a6ded247c927428b3b9",
+      "git_blob": "4b19f13e293f9fb544c5095551e07014921d7555",
+      "bytes": 2051
+    },
+    "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/premerge-review/root-checks/mixins-premerge-diagnostic-statements.log.json": {
+      "sha256": "846cf8fe8aedb69ac2e62ff2150eb4b853f4737394e4b497435f57b56899476e",
+      "git_blob": "8a0a895abc4f13f72bea9079c0103444ee85d583",
+      "bytes": 1626
+    },
+    "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/premerge-review/root-checks/mixins-premerge-diagnostic-write.log.json": {
+      "sha256": "52faecec77290d09e4e9cf8f4cf61858e1f16b3e7719266471304d662c5fad79",
+      "git_blob": "d88448edda43586575e6a1726445ae0c8af65595",
+      "bytes": 159
+    },
+    "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/premerge-review/root-checks/mixins-premerge-final-architecture.log.json": {
+      "sha256": "c371ac8ee91b610028acb5cdf845c49a2cf9816cafda1eb6fb33be3d36de3577",
+      "git_blob": "c1b290c6b181893bbda76a81e6c41f28f0dbfb0f",
+      "bytes": 969
+    },
+    "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/premerge-review/root-checks/mixins-premerge-final-ci-tests.log.json": {
+      "sha256": "ca93c65badb705a14f166004f03c07f707c1c8c6f2ee0a174c03a69e8a0723dc",
+      "git_blob": "7079355a50266e5260486aa4bc9eaf0cae3abb12",
+      "bytes": 908
+    },
+    "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/premerge-review/root-checks/mixins-premerge-final-diagnostic-tests.log.json": {
+      "sha256": "cc74943fee17592f38ff5003b9f57fd673692cd4b8b4f44aa351da7bfe4a4c88",
+      "git_blob": "e0af41464ae251eef923b4cf08f8c88a5342e8d3",
+      "bytes": 3579
+    },
+    "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/premerge-review/root-checks/mixins-premerge-final-diagnostic.log.json": {
+      "sha256": "ccb9279946fd928ae99756027535962248eb27aea6054db4dd0054ef05d44c90",
+      "git_blob": "a2e28f5a040518d18e1b453d4559f1c2b182ef72",
+      "bytes": 222
+    },
+    "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/premerge-review/root-checks/mixins-premerge-final-guard-cases.log.json": {
+      "sha256": "fac6fa23ac37c8e3b18975baa0bd313f5a40dadaefe681ee358fb5f00f699d31",
+      "git_blob": "321f7de2e04a0bcb8b9a7d8617c5d1297bc8f3c2",
+      "bytes": 315
+    },
+    "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/premerge-review/root-checks/mixins-premerge-injected-guard-green.log.json": {
+      "sha256": "13d05dce02b3c2651c66693e6feb2873a9a89e8fa286e2b74ac610032627254f",
+      "git_blob": "4dd48e5d08438f1c96ae52b32800ba68ff707261",
+      "bytes": 202
+    },
+    "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/premerge-review/root-checks/mixins-premerge-injected-guard-red.log.json": {
+      "sha256": "396ed896bc2133a00bef99d26ea22f2b3658614c7b7bd4da2321d6bc74cca0ef",
+      "git_blob": "f9377a73c8253b1936bf1a0225b123bc49acc069",
+      "bytes": 8166
+    },
+    "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/premerge-review/root-checks/mixins-premerge-markup.log.json": {
+      "sha256": "76fc908b0796aa51fef08486c59ed22a921faeef6c9bc8907c654901dff22f36",
+      "git_blob": "13c090d26704f2516262eb7970ae9f2b8464b089",
+      "bytes": 245
+    },
+    "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/premerge-review/root-checks/mixins-premerge-root-commands.json": {
+      "sha256": "c1d5a139e9c3959a4cc862ad7afdeba74d926925b82e13f9f241d5367e7565c1",
+      "git_blob": "4c96f460fa18097a46487277d8c71616af8ebea5",
+      "bytes": 8004
+    },
+    "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/premerge-review/root-checks/mixins-premerge-root-format.json": {
+      "sha256": "d95d94bbe175103d32000fe74bf64e2c208fc3e6fcc422e1a8ff648edf110746",
+      "git_blob": "3e8612fe3ee12258c6884f5e81cf80e1a5fb1f5d",
+      "bytes": 19094
+    },
+    "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/premerge-review/root-checks/mixins-premerge-root-guard-ci.patch.json": {
+      "sha256": "7c45a8f9c0db2ee73c2cc45cf016a659b2cc9a64420767397f706febbdd55523",
+      "git_blob": "e3e9f97a4678d57278cbffdfb7a3d4092d77dba0",
+      "bytes": 44948
+    },
+    "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/premerge-review/root-checks/mixins-premerge-root-lint-baseline.json": {
+      "sha256": "3dd00b0e17b592a5f7efc0a08c71ea6ff5a647ec9edbed00f5052d45a1acb4b0",
+      "git_blob": "22efd2e8b88e8bc88ca26db57d46f59189484404",
+      "bytes": 58458
+    },
+    "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/premerge-review/root-checks/mixins-premerge-root-lint-current.json": {
+      "sha256": "c8bb4d54d7a6de77cb55a628618b80141f86a9507a78ae50feb9f2edc95c83d6",
+      "git_blob": "ff8831f3b74db55d6ed233b3fbe0566c2d179af9",
+      "bytes": 58457
+    },
+    "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/premerge-review/root-checks/mixins-premerge-root-lint-delta.json": {
+      "sha256": "fe85e5c858fa48c8ab895592584ec23324ae2a3b4719d58ac10cea25132d42ed",
+      "git_blob": "f9c5ecd1a7b973738ad102929366fa6c323df26a",
+      "bytes": 51
+    },
+    "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/premerge-review/root-checks/mixins-premerge-ui-census.log.json": {
+      "sha256": "b160554ffd4602388fe3835601819d1b81e89cf94132f09cf3032d8ccb57231a",
+      "git_blob": "cba75a83358513eddfa55679403e334085844ab7",
+      "bytes": 183
+    },
+    "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/premerge-review/root-checks/mixins-premerge-worker-final.log.json": {
+      "sha256": "93aacd96ec0246d0e94c5732d7f7f8eab04ac2b24b7bc28db1e444042faba962",
+      "git_blob": "f712576a0ba1eb7437a26ffd45e2aa8c299619ea",
+      "bytes": 368
+    },
+    "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/premerge-review/root-checks/mixins-premerge-worker-tests.log.json": {
+      "sha256": "2d67b4ab4e776a85ed1e612142549b8e58643af465ef17b5bbf090b7534bc5be",
+      "git_blob": "d65580c8ecb98a6ea387b7667de3e7fe803e8b3a",
+      "bytes": 12585
+    },
+    "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/premerge-review/root-checks/mixins-premerge-worker.log.json": {
+      "sha256": "841cf636054c02c56cb46eefa8f4f738b5024e6e11e1a3a95d029ea3dd371a52",
+      "git_blob": "de67135ac06e35cd77809d8acad95edd89d51b0c",
+      "bytes": 723
+    },
+    "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/premerge-review/screen-extractions/ast-proof.log.json": {
+      "sha256": "aa917f1a105ef40f9d65318a8aeda090deef14226dbcc8103a639cdc6c8e3eb3",
+      "git_blob": "5ccc9b6aab60b414054356389879b1bfcc8ba3a6",
+      "bytes": 140
+    },
+    "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/premerge-review/screen-extractions/ast-reverse-proof.json": {
+      "sha256": "e00b39f1228c1cc03d72709790b3daeb671ac36a5338afdfffe8e3da83251dbf",
+      "git_blob": "7cb65caca89be2f2ee2d614025419007060ad61e",
+      "bytes": 730
+    },
+    "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/premerge-review/screen-extractions/baseline-browse.log.json": {
+      "sha256": "00e9e9cc05e86fb40a6e8f27accb2bca64a3588ce827315b1552dc2aed15398d",
+      "git_blob": "e16a697e442fcda2a28ee0884f65eafde2752862",
+      "bytes": 88214
+    },
+    "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/premerge-review/screen-extractions/baseline-profile-browse-final.log.json": {
+      "sha256": "454161ff8d81fd34be768b57e9510b286b160a412ade311aafacaae9710a5338",
+      "git_blob": "8d77b17c25cad0782505ce2a8729b019973b223d",
+      "bytes": 6270
+    },
+    "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/premerge-review/screen-extractions/baseline-profile-browse.log.json": {
+      "sha256": "60181ffe3232f7b80b010e7623c5751f82547751064a36f5e6451f3590ac352f",
+      "git_blob": "333a948797d1371f65a968935c02992b155b66ba",
+      "bytes": 36199
+    },
+    "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/premerge-review/screen-extractions/browse-probe.py": {
+      "sha256": "ab64ce342ec1b0c512836766d4dde425747e80ec915f2e7354d3ccc73603999b",
+      "git_blob": "f52068a2e6577038ce3507816d732339d3c3fa60",
+      "bytes": 1368
+    },
+    "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/premerge-review/screen-extractions/browse.log.json": {
+      "sha256": "c5260614a9721a3f715dbe730b1e9b84576d62b73fd02d43f07004991e464679",
+      "git_blob": "a6a352684dd0d93feb0f54d0724518189d7c7183",
+      "bytes": 81894
+    },
+    "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/premerge-review/screen-extractions/ci-worker.log.json": {
+      "sha256": "2b738f18364dccd8e152f401622b2e689f6ec6223d9e5b3f0f29dd12d344740b",
+      "git_blob": "d2844084b2f61b37967114c58f36b3591f91aa89",
+      "bytes": 313
+    },
+    "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/premerge-review/screen-extractions/commands.json": {
+      "sha256": "c76941be7ed4fc978a45a1c139073d524450c497fbb0f7b5546499304826d0f5",
+      "git_blob": "893baa93a632d8412c9d4547a8645556b94ba711",
+      "bytes": 6086
+    },
+    "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/premerge-review/screen-extractions/current-profile-browse-final.log.json": {
+      "sha256": "42f48ff8ccc18157cd88c44db445ea1c09337d987295c72857158a4e88eee0c6",
+      "git_blob": "6f0b93f8beaec34098c5a1c802251e1bc2e05d56",
+      "bytes": 6145
+    },
+    "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/premerge-review/screen-extractions/current-profile-browse.log.json": {
+      "sha256": "a84c1d5ba9fea2d209b27a9fd3893848baeb86f5c117e8f66ad785d738a5f855",
+      "git_blob": "94aedab1686b88fbe85e55df83ca01b453c5b145",
+      "bytes": 315
+    },
+    "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/premerge-review/screen-extractions/derived.log.json": {
+      "sha256": "93098baf9aab565ce26e27e0772b4db005b689d95820e32c3457667f6aff8a23",
+      "git_blob": "53f14423373f9090ce541e61d185018f61d10b29",
+      "bytes": 313
+    },
+    "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/premerge-review/screen-extractions/fix.patch.json": {
+      "sha256": "b82afdb2f4c35459fcf06deb0f25d9b8227977f598ff1795235852035e5769fc",
+      "git_blob": "ec316cb43ab51afe2c390cb6d9fdb22a61b13fea",
+      "bytes": 38288
+    },
+    "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/premerge-review/screen-extractions/format-source-comparison.json": {
+      "sha256": "4804e2825464855fb35c30009b9b440c52664acf5eee855a4547d678f61ac5d3",
+      "git_blob": "689990f5dca92864f098ea7c11b385b583238654",
+      "bytes": 1994
+    },
+    "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/premerge-review/screen-extractions/frozen-source-proof.json": {
+      "sha256": "bd17d78a947aa28cb777f3ff73f0f14e0b782ffd10e23996a47187c919a1855f",
+      "git_blob": "07731e58e988814828abab381988e9b9168e7176",
+      "bytes": 1257
+    },
+    "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/premerge-review/screen-extractions/guards.log.json": {
+      "sha256": "3e5949f4e32ffd3b46af4801131c4977fa4147330415c2c37705aa171d1e0d31",
+      "git_blob": "93b2179278661b5c4f4512d3963bb68330326bbc",
+      "bytes": 410
+    },
+    "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/premerge-review/screen-extractions/helper-lint.json": {
+      "sha256": "82d5d7abbadc45291e21479f8da9145371b4ee699822d17f3b64845a8297050c",
+      "git_blob": "018d4a35de7765d098335b0e6e22ffa262e1e93b",
+      "bytes": 7945
+    },
+    "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/premerge-review/screen-extractions/lint-base.json.gz": {
+      "sha256": "27ba2b652020efbf8b37d49306dae2295970adb468995ee72bee0f0c1318d301",
+      "git_blob": "6d68ea379a6d211a598eaaa46f04cf79062b80b1",
+      "bytes": 28394
+    },
+    "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/premerge-review/screen-extractions/lint-current.json.gz": {
+      "sha256": "2793bc8f34d8cb560d3f2534904bcfeaa6b64dddac544b37d9280940e13012e3",
+      "git_blob": "284cee5690f671fd51a7e8198b64939b9387550b",
+      "bytes": 28427
+    },
+    "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/premerge-review/screen-extractions/lint-delta.json": {
+      "sha256": "783b609c04145d87c4bc97a8fdc2fb42ed395dbfed7c6b30afe44254d8c8ae80",
+      "git_blob": "2811f071fbd6b71bee37517a39561ff21d6e56ff",
+      "bytes": 229
+    },
+    "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/premerge-review/screen-extractions/moves.json": {
+      "sha256": "b554bf632494c6c9d21befa79244d238a97421f7f6a8cf30d1891df85ccb1211",
+      "git_blob": "00a51021e9990a4451023ece497bd0a87182593f",
+      "bytes": 688
+    },
+    "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/premerge-review/screen-extractions/original-bodies.json": {
+      "sha256": "77ef6bb265a2ca148759f37c7dec821ab2ccea6b41cd440b55fab2851bc9a9ca",
+      "git_blob": "028401d35e9053f1d750adab02f06b2d4bd3ecb5",
+      "bytes": 9672
+    },
+    "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/premerge-review/screen-extractions/pure.log.json": {
+      "sha256": "29368cacedcca2b4079db21b577ab49e1e8a4a8e0f9b4902619abe347c070433",
+      "git_blob": "d9fd7717af3c1e94c4ad1ef6e9b89abe95ea2275",
+      "bytes": 93744
+    },
+    "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/premerge-review/screen-extractions/red.log.json": {
+      "sha256": "42161b9e9c1b7d9709d5fde864d7aa826651c6915aa782ebc5181d199f3c2845",
+      "git_blob": "925fda4102320b5bd32aa06d38582a67b149d802",
+      "bytes": 8632
+    },
+    "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/premerge-review/screen-extractions/report-files.json": {
+      "sha256": "d9f1907db9160bd99d8a0c821fea4ae18105eec5e559f9e36485919f818256fa",
+      "git_blob": "02650dee8a0fc3097893f855e53d60923121daff",
+      "bytes": 10966
+    },
+    "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/premerge-review/screen-extractions/report.md": {
+      "sha256": "00eb53e481e38076057993123b5a761aa181ff90c60bc88ab9e0a30b483ca192",
+      "git_blob": "4ca1f0198a05db906bd1449efef94141cdff5150",
+      "bytes": 6846
+    },
+    "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/premerge-review/screen-extractions/retired-caller-census.txt.json": {
+      "sha256": "5f6a40086dbea77f55648c7bb9a314dd4cab6f63009b675788fb0a8fa161e0df",
+      "git_blob": "4f1f6f2659ecbc9bd4bba1c63648ca009012aed8",
+      "bytes": 163
+    },
+    "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/premerge-review/screen-extractions/screen-lint.json.gz": {
+      "sha256": "78a210db29a7a756e4bc84816b95237717b557c3bc892ddc78e4b4fce4bcaef2",
+      "git_blob": "dd6157fa5ba886767751d2b3d562665f3feb3b75",
+      "bytes": 28286
+    },
+    "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/premerge-review/screen-extractions/source-proof.json": {
+      "sha256": "d1ea325f4c19458831c806e8519eeec8f4edab57e70558856148b28725a876e3",
+      "git_blob": "dedb593c19baa1289bb6819a8201d3bb36d80e5a",
+      "bytes": 1332
+    },
+    "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/premerge-review/screen-extractions/test-format.log.json": {
+      "sha256": "a8d55ae5575deb094e7cc8b22aec510097d0990071d9eacf12cbdf2b9c5b6813",
+      "git_blob": "bd4486cb7390b9b030e114ae740491ad2993b122",
+      "bytes": 128
+    },
+    "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/premerge-review/screen-extractions/test-lint-final.json": {
+      "sha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "git_blob": "0637a088a01e8ddab3bf3fa98dbe804cbde1a0dc",
+      "bytes": 2
+    },
+    "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/premerge-review/screen-extractions/test-lint.json": {
+      "sha256": "bc43c4fb0a8dc49caa76c45b6a14c07be10866ba7d0f3f75649ab63490a0a2b9",
+      "git_blob": "d9ef28ac7569dc0a1e196fe7497592839bd7b228",
+      "bytes": 1454
+    },
+    "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/premerge-review/screen-extractions/top-level-import-proof.json": {
+      "sha256": "224a5862df0ad86ecb65459f01f9aac847f4ffa25f7d64bb2cfea8731e448d75",
+      "git_blob": "5b12cd84a4446894bf0ad74024530ec18c1dd3f9",
+      "bytes": 625
+    },
+    "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/premerge-review/screen-extractions/verify_moves.py": {
+      "sha256": "636dc420bebaad88b17485aa58e79b92d866cb41e92488a7320b4b7a6084a4b7",
+      "git_blob": "43e658128341813b4ae9470a1fe6842081b70dbc",
+      "bytes": 3166
+    },
+    "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/premerge-review/screen-extractions/whitespace.log.json": {
+      "sha256": "cd5adbe4889b6b19155498133831b8770e2b02292fa74b67afe5368c5f2edc70",
+      "git_blob": "2be41d6abea567213779310893fc1aa3572d160f",
+      "bytes": 101
+    },
+    "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/premerge-review/startup-guards/artifact-files.json": {
+      "sha256": "a4338044e5aaeb22b235de06a57a2ecdc34989feba7cfdcd0c9cbd68e70e1aa7",
+      "git_blob": "11c071a50c31a77dc64e733a291e613ebabd6e9a",
+      "bytes": 2757
+    },
+    "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/premerge-review/startup-guards/commands.json": {
+      "sha256": "9945bc63e4f030bd2cae4defd4c314dc63748dffc4d9ddc98a7ebc5f7bde0fc0",
+      "git_blob": "3f12a114b9273a810df55bdae538f4ccc5e5a3ac",
+      "bytes": 3835
+    },
+    "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/premerge-review/startup-guards/mixins-perf-pr3346-frozen-test_boot_worker_census-_boot_and_census.json": {
+      "sha256": "1d895b0f4eac2051f4809ba8fc3dce0a2fe387b574e92d7db7e450df78cc79f5",
+      "git_blob": "5fc4e2c2febffac6b833d49683528cdffc668c3c",
+      "bytes": 6576
+    },
+    "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/premerge-review/startup-guards/mixins-perf-pr3346-frozen-test_screen_preimport_payload_budget-_run_census.json": {
+      "sha256": "20dcabd356c2960996c344f86d4535615162db1de433074e4640ca552fef949d",
+      "git_blob": "acaba5ce2c8032afafb79efa5ef2f7d0cddf01b7",
+      "bytes": 35127
+    },
+    "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/premerge-review/startup-guards/mixins-perf-pr3346-frozen-test_screen_preimport_payload_budget-warmup.json": {
+      "sha256": "08210bc96a9ec8f51a5b8a55feb3f7f2b3deab4bb6f3e493203733b7d6206c26",
+      "git_blob": "c05a6e478be85c9055ce3118b3fe1339aad42fe3",
+      "bytes": 24403
+    },
+    "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/premerge-review/startup-guards/mixins-perf-pr3346-frozen-test_ui_ready_module_census-_boot_and_census.json": {
+      "sha256": "3d37e781185d322dd492b622984fb27ca34fbd7cd56d8a16b73371eff50f7792",
+      "git_blob": "9ba067f31eade128177f57f809a2030833ca8957",
+      "bytes": 49847
+    },
+    "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/premerge-review/startup-guards/mixins-perf-pr3346-frozen.log.json": {
+      "sha256": "da800c009b34ac4b28ba1bbfa2dd79f4bc6f40430ab79e9bcdc7af80df1d05b0",
+      "git_blob": "cda8193855d5ef23e47123ed1d424fd411e11f2a",
+      "bytes": 2186
+    },
+    "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/premerge-review/startup-guards/probe.py": {
+      "sha256": "0e671fdc3e15b81d7d06a185610de510d45640aedfa8c195131656e4c0d4dd1c",
+      "git_blob": "79ea4da436cdda022f9bd15d836c50b0c1b2e522",
+      "bytes": 1590
+    },
+    "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/premerge-review/startup-guards/process-proof.json": {
+      "sha256": "8f3e67b673ca2e7cd8b79189170091bf5827a4370a8803e45a59f33461bd1aef",
+      "git_blob": "35af4651d9d91b85ef96d42a08f49dee78cba4f9",
+      "bytes": 434
+    },
+    "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/premerge-review/startup-guards/report.md": {
+      "sha256": "c4b2679936892303174c4a0e1795379f47d3b874514e0a8319dc64b22f3a2605",
+      "git_blob": "1baba47c6e66bc6c0517d91195842142b2b37dda",
+      "bytes": 3451
+    },
+    "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/premerge-review/startup-guards/source-after.json.gz": {
+      "sha256": "8717888ba9326571d5ab43eafc6207cfb18b96b41b0c6c6e63f3d4a23ab78f24",
+      "git_blob": "0135840f30e30571a12e5096ac012a30dbe45679",
+      "bytes": 171176
+    },
+    "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/premerge-review/startup-guards/source-before.json.gz": {
+      "sha256": "86862c48d2b42ee7cbb6131a5410e5c1d6c55db245eadbab53a666c6ef54a1fb",
+      "git_blob": "765610285cb2fb43648943a633389874975e4524",
+      "bytes": 171176
+    },
+    "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/premerge-review/startup-guards/source-proof.json": {
+      "sha256": "d66858192756a7087e85264885496ea53e6630b3dd4b4c696e4bb0575bba240a",
+      "git_blob": "427ab8cf93f27f084aff994871e8b4010d7c5d59",
+      "bytes": 509
+    },
+    "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/premerge-review/summary.md": {
+      "sha256": "9a38b2d14c51b79c56f3a7da700b2d81d93da7c9855984a260aa4ec08031ea8f",
+      "git_blob": "1674a691e4b8e059d3c01e085f2fde03c604be99",
+      "bytes": 9454
+    },
+    "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/premerge-review/ui-fixes/affected-ui.log.json": {
+      "sha256": "168b58e1376e0903968a660fe25a1943ac4883dbc9992b78ea932c4bf431bae7",
+      "git_blob": "df0be8007a9c4e7c778cb2235ddb1a6364bd0f0f",
+      "bytes": 2812
+    },
+    "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/premerge-review/ui-fixes/architecture-final.log.json": {
+      "sha256": "2b8ea484d7f621837ad3dcf9ac77d44a9d834fb03aafbe8a3590f66e07f4da91",
+      "git_blob": "ad8a0df30106258e1a3b713a149fc49152b52438",
+      "bytes": 522
+    },
+    "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/premerge-review/ui-fixes/architecture.log.json": {
+      "sha256": "c3bf4bf4778a446e2699ee397f137743e594b8eed7e4774133aa1a45300966d5",
+      "git_blob": "362b0cd9a3aaf12895c242f397a4926b5090ada5",
+      "bytes": 4179
+    },
+    "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/premerge-review/ui-fixes/baseline-lint.json": {
+      "sha256": "0e1fa772ad2fec8cdf5477817838282266283bb0bc79e96e1d6de077d2f83ddd",
+      "git_blob": "f3b106b26f715cd2f73e91d85d1970b24c9fb028",
+      "bytes": 6101
+    },
+    "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/premerge-review/ui-fixes/cohort-source-proof.json": {
+      "sha256": "d4ac19d0a87bcd864d7990397509f552e20b60819c8c1049caf84ecbfdaae98b",
+      "git_blob": "642f63e0ae1ccffa98a6de2787d9eb62a0199b36",
+      "bytes": 873
+    },
+    "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/premerge-review/ui-fixes/controller-guards.log.json": {
+      "sha256": "f761dde48c9446d7cd08bc0ff21080402708f031abed2b823f2df56516f5e7f6",
+      "git_blob": "9049a2ea4cc3a146f766fb67a505b1b6923cedda",
+      "bytes": 313
+    },
+    "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/premerge-review/ui-fixes/current-lint.json": {
+      "sha256": "5ed61053bc348dc7316c80413614e1f3ff258b5e8e985224fa8efc43583757b7",
+      "git_blob": "d3dbf45de763b9b32aaa3274d174a905faa9688a",
+      "bytes": 1214
+    },
+    "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/premerge-review/ui-fixes/evidence-inventory.json": {
+      "sha256": "22d0dbf629c36d758b51e33f143855deb57b34e121f8391275f0f125ad6eb2b6",
+      "git_blob": "ef9462fab3580bba16ae3852a7f4fa889955f6f2",
+      "bytes": 9122
+    },
+    "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/premerge-review/ui-fixes/external/mixin-120x40-clean.svg.gz": {
+      "sha256": "a6110e4cd852296a47443b9d677be98f7bf1dc109214da09da97c17b3d51f0d9",
+      "git_blob": "f7e7f0ff5b23e9ea43e720a6528f3f7a4f0b814d",
+      "bytes": 8267
+    },
+    "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/premerge-review/ui-fixes/external/mixin-120x40-dirty.svg.gz": {
+      "sha256": "859f1a1dde3d01e3b2df846f162d7562236147871557c787aa79cb131dc580b6",
+      "git_blob": "62bd8494628fdc72e948786a63603da3b5a4d9f2",
+      "bytes": 8196
+    },
+    "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/premerge-review/ui-fixes/external/mixin-170x48-clean.svg.gz": {
+      "sha256": "1954b2cf3988329efda2bdba2076f605ba1a11d8d1aedfd89196ba7641d4b2e4",
+      "git_blob": "519caf0037dbc5e6713d2a3a7550f43b50b35114",
+      "bytes": 12578
+    },
+    "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/premerge-review/ui-fixes/external/mixin-170x48-dirty.svg.gz": {
+      "sha256": "3311744c661c925798ad37b60ea78142b573777144cabe23ba8cb0a03eab9715",
+      "git_blob": "07a8de1e499edc0735fb28f60d663b46f3e3a9a1",
+      "bytes": 12535
+    },
+    "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/premerge-review/ui-fixes/external/mixin-80x24-clean.svg.gz": {
+      "sha256": "f48ed6f17dbc5612d01eecf0beaab5e8cab37ff55faccf7f2ba0898a0d286bfa",
+      "git_blob": "fface18b0c58fa3cb0d1910cbb70c0a0143b9069",
+      "bytes": 3632
+    },
+    "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/premerge-review/ui-fixes/external/mixin-80x24-dirty.svg.gz": {
+      "sha256": "406acc469017bd5abe6dce082956311ee347a6caeab4ebbcfcef19095d96468f",
+      "git_blob": "1602bbe630a01330d9468e44c856f5dab02e6562",
+      "bytes": 3737
+    },
+    "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/premerge-review/ui-fixes/frozen-source-proof.json": {
+      "sha256": "77f7b23981cba87f044d4e3ce5dfb0b3897c39f9c05f0ccbe98a4fe96fdb813c",
+      "git_blob": "46fba6dd29196d41fef9173f88c01a51434f0992",
+      "bytes": 1313
+    },
+    "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/premerge-review/ui-fixes/green-focused-final.log.json": {
+      "sha256": "b85263a59d991c2141e59bb991c31e78d762fbc32255f1694c59955fcf305e89",
+      "git_blob": "4e54dcaf0e4a761530b4a562fb415f1b5fa8b1d3",
+      "bytes": 943
+    },
+    "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/premerge-review/ui-fixes/green-focused.log.json.gz": {
+      "sha256": "ab1cf661056e455a3e09f981c81cb617da51d60413bf3eca4432855e67dc23b4",
+      "git_blob": "5d9f787c94db7e857e34ce32eb794e949eefab2b",
+      "bytes": 28139
+    },
+    "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/premerge-review/ui-fixes/green-initial.log.json": {
+      "sha256": "1f6135fd0f755fc32662c248cd8514ff8f70664396d72863895f269ba9dd7d2a",
+      "git_blob": "7bca64f179f249822a115cbbd3229964f982a5f5",
+      "bytes": 176713
+    },
+    "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/premerge-review/ui-fixes/info-mode-probe.log.json": {
+      "sha256": "e7d75d75c38bed70a0c2fa9d2faf01d97b87dd257f85f42381d17c00a3ed7aaf",
+      "git_blob": "abf9ac284f1cc78428228890fe608c5e93222480",
+      "bytes": 675
+    },
+    "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/premerge-review/ui-fixes/metadata-red.log.json": {
+      "sha256": "84ce3f76e2affc360bd115fa5664aa4389ed4130f218cce269448f651d8e79f0",
+      "git_blob": "9c5552050c9fff14eab0d9b62577b1214b70fe6f",
+      "bytes": 51686
+    },
+    "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/premerge-review/ui-fixes/modal-guard-baseline.json": {
+      "sha256": "5dbfa656e7c3750dc6214bb3475145d733337c105f926734279fff1655015156",
+      "git_blob": "1dbf132eac2be9fc44adeb750920c2350a260f4d",
+      "bytes": 1176
+    },
+    "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/premerge-review/ui-fixes/original-app-controls-profile-owned-nodes.json": {
+      "sha256": "aff7fe2e7e9c1144228d6df2b490811c5ed8248aa9b819d2325f0b8973fb8bb8",
+      "git_blob": "c1fefe820bcaeca7850d7d66bbb59b8073585d55",
+      "bytes": 3761
+    },
+    "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/premerge-review/ui-fixes/original-app-controls-profile-owned.log.json": {
+      "sha256": "30da80c02fb55856ccf22a761e8d343c895154ffe2d78d98f46183031ecbafc8",
+      "git_blob": "ff506f7410b51b972061f8e3fff712f41e8c05e7",
+      "bytes": 3627
+    },
+    "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/premerge-review/ui-fixes/original-controls.log.json": {
+      "sha256": "58e530de7cedb72c8b0fa4f19aea8ba1f5fecb457eaad1aba6f4d2c9c9ebb208",
+      "git_blob": "dd2f48cb84fbc575de2255a763508214f507e9ba",
+      "bytes": 9016
+    },
+    "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/premerge-review/ui-fixes/red.log.json.gz": {
+      "sha256": "791a3eabb4b18d1b2e75c8afedd896173129b8d426bd3aacd6e9faee9b65933f",
+      "git_blob": "6c4535da2b6fc508f3b1abba0639ffd208af591f",
+      "bytes": 22733
+    },
+    "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/premerge-review/ui-fixes/report.md": {
+      "sha256": "5ae4b39bb01625f4c1f2b447b1840212e6f19a7d4b34ea445847b74e6eaa3faa",
+      "git_blob": "61c58f698ffe4a2649f991f04c2bcbc8932e1a70",
+      "bytes": 7368
+    },
+    "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/premerge-review/ui-fixes/restore-metadata-green.log.json": {
+      "sha256": "b4bd9255ed17cba349283ab9a49f6c354f1e8fd2f825aef048682df44b459d70",
+      "git_blob": "562b623bfc86cbd73bc40700f212e4d5ba01f92d",
+      "bytes": 166300
+    },
+    "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/premerge-review/ui-fixes/restore-red.log.json": {
+      "sha256": "53502e32305a4a981a5877893ba91a9421dc376a65615f7b4498fe2bb00f23f8",
+      "git_blob": "448de467b409989f8c6a1c410bc25a5f9c628766",
+      "bytes": 175688
+    },
+    "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/premerge-review/ui-fixes/review-reproduction-inventory.json": {
+      "sha256": "3b8492bb8f23f1b784f9163f7d40e18f2e662b78bf87f7797867b3f5ca44063c",
+      "git_blob": "90abaf71bd91e8c83832dc484a142772b621e74f",
+      "bytes": 6019
+    },
+    "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/premerge-review/ui-fixes/save-extraction-proof.json": {
+      "sha256": "2553df2f1135de454dfbf13cbbe0e10045f09f7a360c9a51d2dca7b825131052",
+      "git_blob": "b2629046ffac9c386969b1c3bb6a3f65d2ab2de8",
+      "bytes": 281
+    },
+    "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/premerge-review/ui-fixes/source-proof-validation.json": {
+      "sha256": "9c7c456c38c8d00121daaa97bdaafe933c081b8ba5c0385ff68fb6d1dd026422",
+      "git_blob": "4f6063d73c854c36e8d9e4a65be79fc1a88e3721",
+      "bytes": 1772
+    },
+    "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/premerge-review/ui-fixes/visual-capture-inventory.json": {
+      "sha256": "df8fbedb605462d0a751e220960539b9f01c0b7f2e6fd694aa993f40bbf7882f",
+      "git_blob": "a0ee6a4e0a69f5f2b8e0234b1703e9871d96737f",
+      "bytes": 1060
+    },
     "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/private-log-locations.json": {
       "sha256": "d6af4199ac8222d069e96214b1ae5e2426aa549353afbe534d4f73500fc1ccd9",
       "git_blob": "ee3ae4ee51a5c11ffbb47f6b810ea5d1e5e591ae",
@@ -5267,9 +5917,9 @@
       "bytes": 67218
     },
     "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/product-source-manifest.json": {
-      "sha256": "691908232dabb566f7a782d0432aa335183a159c4ed6c97c90a918d203fb7e7b",
-      "git_blob": "5002d9d1db356b51353f0ed2d3dafb9b6994d579",
-      "bytes": 72677
+      "sha256": "2a55ba4a69a2b5290b71c3e5025ddef7d546e72fa2762087eb80aec6bed0f20f",
+      "git_blob": "ed21cbb9b0681be84d78a32860e6cac05843affe",
+      "bytes": 75685
     },
     "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/rereview-fixes/controls1.json": {
       "sha256": "2eeecd898fac3b39564ad5e05acfab1b45deaf7e2bd198a14d74c0de0f4f87ae",
@@ -6532,9 +7182,9 @@
       "bytes": 141048
     },
     "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/verification.md": {
-      "sha256": "c8d7ae24014d03964e449e6e99ef55934caff044419d7f43fe99bc8fb2a800ef",
-      "git_blob": "01431b204b2fba9c1e90d94ce6ee88ba23a9783b",
-      "bytes": 24380
+      "sha256": "8653436ad34dfbe6e559d1205fe116fc3f866d553efb3ce7c2fe94157bb4b7d2",
+      "git_blob": "ae7a1b7b604c6764d05010255967417b0edef259",
+      "bytes": 24304
     },
     "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/verify_evidence.py": {
       "sha256": "96a565a5f79515602adfaf0020ba416c8b460575884032c2c53af7b31b4e565a",

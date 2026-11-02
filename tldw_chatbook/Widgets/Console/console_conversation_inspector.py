@@ -843,7 +843,11 @@ class ConsoleConversationInspector(SafeModalDismissMixin, ModalScreen[None]):
         ):
             try:
                 snapshot = await self._mixin_snapshot_loader(message_id)
-                mixin_detail = "Original mix-ins\n" + (
+                mixin_detail = (
+                    "Original mix-ins\n"
+                    "This conversation retains exact Retry instructions even with "
+                    "Capture Off; trace purge does not remove them.\n\n"
+                ) + (
                     "\n\n".join(
                         f"{item.definition.placement.title()} · {item.name} · v{item.record_version}\n{item.definition.body}"
                         for item in snapshot.items

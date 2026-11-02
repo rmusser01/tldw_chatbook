@@ -35,7 +35,7 @@ def export_prompts_formatted(
 
     # --- Fetch Prompts Data ---
     # Build base query parts
-    select_fields = ["p.id", "p.name", "p.uuid"]  # Always include id, name, uuid
+    select_fields = ["p.id", "p.name", "p.uuid", "p.artifact_type"]
     if include_author:
         select_fields.append("p.author")
     if include_details:
@@ -49,22 +49,19 @@ def export_prompts_formatted(
     query_params = []
 
     # Keyword filtering
-    if filter_keywords and len(filter_keywords) > 0:
-        normalized_filter_keywords = [
-            db_instance._normalize_keyword(k)
-            for k in filter_keywords
-            if k and k.strip()
-        ]
-        if normalized_filter_keywords:
-            placeholders = ",".join(["?"] * len(normalized_filter_keywords))
-            query_sql += f"""
+    normalized_filter_keywords = [
+        db_instance._normalize_keyword(k)
+        for k in filter_keywords or ()
+        if k and k.strip()
+    ]
+    if normalized_filter_keywords:
+        placeholders = ",".join(["?"] * len(normalized_filter_keywords))
+        query_sql += f"""
                 JOIN PromptKeywordLinks pkl ON p.id = pkl.prompt_id
                 JOIN PromptKeywordsTable pkw ON pkl.keyword_id = pkw.id
                 WHERE p.deleted = 0 AND pkw.deleted = 0 AND pkw.keyword IN ({placeholders})
             """
-            query_params.extend(normalized_filter_keywords)
-        else:  # No valid filter keywords, so just filter active prompts
-            query_sql += " WHERE p.deleted = 0"
+        query_params.extend(normalized_filter_keywords)
     else:  # No keyword filter, just active prompts
         query_sql += " WHERE p.deleted = 0"
 
@@ -76,6 +73,8 @@ def export_prompts_formatted(
 
         if not prompts_data:
             return "No prompts found matching the criteria for export.", "None"
+        if any(prompt["artifact_type"] == "mixin" for prompt in prompts_data):
+            return "Mix-ins are unsupported; use Library or Chatbook export.", "None"
 
         # Fetch associated keywords for each prompt if needed
         if include_associated_keywords:

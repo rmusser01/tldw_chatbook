@@ -21,6 +21,8 @@ Press **Ctrl+3** to open Library, then click **Prompts** in the rail's
 Choose **New mix-in** in the existing Prompts list. Enter a Name and one
 literal Instructions body, then choose **Before** or **After** and save.
 Braces, section headings and whitespace stay literal; there is no variable form.
+Author and Keywords remain available regardless of the view you last used for
+a Prompt or Recipe.
 The type selector filters **All types**, **Prompts**, **Recipes**, or **Mix-ins**
 and keeps the filtered count and pagination together with search and collection.
 
@@ -349,16 +351,18 @@ blocks in a new item.
 
 ### Retained history
 
-Saved local Prompts and Recipes include a collapsed **Retained history (…)**
-disclosure. Selecting an item loads only its exact retained count; opening the
-disclosure lazily loads the newest bounded page. Use **Load older versions** to
+Saved local Prompts, Recipes, and Mix-ins include a collapsed
+**Retained history (…)** disclosure. Selecting an item loads only its exact
+retained count; opening the disclosure lazily loads the newest bounded page.
+Use **Load older versions** to
 request another page. A failed count or page load offers **Retry** without
 changing the editor.
 
-From a clean saved Prompt, choose **More actions → History**. This closes the
-menu and reveals **Info** when you were in Basic; Advanced and Info keep their
-current view. Focus lands on the History title. Press **Tab** to reach version
-rows and **Enter** to select one. Selecting a row keeps keyboard focus there;
+From a clean saved Prompt, Recipe, or Mix-in, choose **More actions → History**.
+This closes the menu. Prompts and Recipes reveal **Info** when you were in Basic;
+Advanced and Info keep their current view. Mix-ins keep their literal editor
+and metadata visible. Focus lands on the History title. Press **Tab** to reach
+version rows and **Enter** to select one. Selecting a row keeps keyboard focus there;
 loading older versions moves it to the first newly loaded row. The live editor
 fields stay mounted while you inspect snapshots.
 
@@ -379,8 +383,8 @@ editor is compatible.
 
 Restore always asks for confirmation and creates a new current version; it
 does not rewrite the retained row. The confirmation also calls out a
-Prompt↔Recipe type change. If the Prompt changed after history was loaded, use
-the editor's **Reload** conflict action before retrying. Restoring content that
+change between Prompt, Recipe, and Mix-in types. If the item changed after history
+was loaded, use the editor's **Reload** conflict action before retrying. Restoring content that
 already matches the current version reports `no_change` and creates no extra
 version. **Cancel** returns focus to Restore. A completed restore returns to
 the History title with its updated retained count; a retryable failure keeps
@@ -674,4 +678,4 @@ No full repository sweep was run.*
 
 ### Saved instructions and chat history
 
-Removing a chat selection leaves the Library record intact. Deleting or editing a Library mix-in does not erase a conversation's original operational Retry snapshot. Those exact bodies are conversation content, retained independently of diagnostic exchange capture, included in conversation backups, and deleted with their owning conversation. Copies/forks can inspect inherited receipts but start without active selections. No cross-device selection or Retry-record sync protocol is provided.
+Removing a chat selection leaves the Library record intact. Deleting or editing a Library mix-in does not erase a conversation's original operational Retry snapshot. Those exact bodies are conversation content, retained independently of diagnostic exchange capture and included in conversation backups. They are removed when the last owning conversation is permanently purged. **Original mix-ins** inspection explains this retention; purging diagnostic traces does not delete the Retry content. Copies/forks can inspect inherited receipts but start without active selections. No cross-device selection or Retry-record sync protocol is provided.

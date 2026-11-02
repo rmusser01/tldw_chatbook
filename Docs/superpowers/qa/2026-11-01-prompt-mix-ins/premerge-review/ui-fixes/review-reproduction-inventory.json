@@ -1,0 +1,102 @@
+{
+  "review_base": "88af9f937908b46e8c5f9f7fddd9e8748c917d46",
+  "review_head": "b1108874cab28d23f660aa22c11c863466a84a8e",
+  "historical_review_report": "/private/tmp/mixins-pr3346-premerge-ui-review.md",
+  "review_probes": [
+    {
+      "case": "real_DB_retained_history",
+      "size": [
+        120,
+        40
+      ],
+      "retained_versions": [
+        [
+          2,
+          true,
+          "mixin"
+        ],
+        [
+          1,
+          true,
+          "mixin"
+        ]
+      ],
+      "selected_eligible": true,
+      "literal_editor_valid": true,
+      "block_state_none": true,
+      "restore_disabled": true,
+      "reason": "This compatibility-only editor cannot restore retained history.",
+      "diagnostic_assertions": "passed",
+      "elapsed_seconds": 5.97
+    },
+    {
+      "case": "actual_Browse_Mixins_Close_event_route",
+      "size": [
+        100,
+        30
+      ],
+      "close_processed_while_read_held": false,
+      "close_processed_after_read_release": true,
+      "diagnostic_assertions": "passed",
+      "elapsed_seconds": 3.57
+    }
+  ],
+  "probe_method": "stdin in-memory pytest plugin replaced selected test callable while retaining existing bootstrap/profile/fixture ownership; no product/test/Git edits during review",
+  "original_targeted_checks": {
+    "passed": 219,
+    "deselected": 1,
+    "elapsed_seconds": 49.06
+  },
+  "discarded_exploration": "Two raw native SQLite write-lock responsiveness probes did not establish a separate product defect and are not used as qualification evidence.",
+  "fix_runs": {
+    "red.log": "7 failed, 2 passed; one unsupported Mix-in-to-Recipe conversion fixture error then removed without changing product policy",
+    "restore-red.log": "corrected permitted-kind fixtures, all 3 fail at valid Restore disabled",
+    "green-initial.log": "5 passed for navigation+inspector; 3 restore tests progressed to missing literal-dirty history refresh, subsequently repaired",
+    "controller-guards.log": "both unchanged ceiling and anti-slack nodes passed, 2 passed in 0.39s",
+    "green-focused.log": "3 failed, 6 passed in 193.66s; redundant second list navigation after Discard caused fixture mounting failures; corrected to press the settled actual row; no product behavior or timeout changed",
+    "info-mode-probe.log": "1 diagnostic passed in 4.80s; production CSS at 120x40 confirmed persisted Info hides author/keywords (display False, height 0) and mode controls on literal mix-in",
+    "metadata-red.log": "1 failed in 5.20s at required visible Author field, confirming Info-mode defect before product fix",
+    "restore-metadata-green.log": "metadata regression passed; one restore failed because old editor-presence wait did not await the restored projection; final wait now requires exact restored body and placement, without loosening version/content assertions",
+    "green-focused-final.log": "10 passed in 38.18s; actual retained restore, live defining-module save callbacks, held Close/Back route, Capture-Off disclosure and Info metadata",
+    "affected-ui.log": "119 passed in 157.52s; ordinary pytest over all three affected UI files; focused ten overlap this run",
+    "original-controls.log": "ordinary existing widget/app selection: 4 widget tests passed, then 1 pre-body RecoveryRequired(raw_source_selection_changed) failure, 312 deselected, 4.62s; no app save/cancellation body reached in failed case",
+    "original-app-controls-profile-owned.log": "28 passed in 107.57s; exact existing test bodies under root-authorized in-memory collection-only bootstrap_profile marker; nodeids and mechanism in original-app-controls-profile-owned-nodes.json; no source/assertion/admission/timeout change; qualified native body evidence, not ordinary CI green",
+    "architecture.log": "115 passed, 2 failed; stale PR field census43 vs45 was root-repaired; five unrelated guarded-modal census entries baseline-qualified identically at base88af/headb110; preserved failed run",
+    "architecture-final.log": "113 passed in 4.69s; final Library wiring + diagnostic-path privacy + exact original controller ceiling/anti-slack nodes after root-owned census repair"
+  },
+  "initial_probe_artifacts": {
+    "persisted_report": "/private/tmp/mixins-pr3346-premerge-ui-review.md",
+    "standalone_probe_source_or_log": null,
+    "qualification": "Initial two diagnostic probes were supplied transiently by stdin/in-memory pytest plugin. Their observations and elapsed times are preserved in the independent review report and this inventory; no standalone script/log path is claimed."
+  },
+  "final_owned_source_proof": {
+    "path": "/private/tmp/mixins-pr3346-ui-fixes/frozen-source-proof.json",
+    "post_performance_phase_validation": "/private/tmp/mixins-pr3346-ui-fixes/source-proof-validation.json",
+    "matches_all_eight_files": true,
+    "cohort_source_proof_json": "Historical earlier seven-file/pre-Info cohort identity only; not the final frozen proof."
+  },
+  "lint_and_format_qualification": {
+    "baseline": "baseline-lint.json (b110)",
+    "current": "current-lint.json",
+    "all_eight_files_no_new_diagnostics": true,
+    "residual_existing_diagnostics": {
+      "controller": 14,
+      "modal": 14,
+      "inspector": 1,
+      "canvas": 1
+    },
+    "helper_and_three_test_files_diagnostics": 0,
+    "format": "Whole helper and three test files, changed source ranges, and owned diff whitespace passed; no claim of unrelated full-file formatting."
+  },
+  "visual_evidence": {
+    "inventory": "/private/tmp/mixins-pr3346-ui-fixes/visual-capture-inventory.json",
+    "count": 6,
+    "scope": "Generated production-CSS SVG captures at 80x24,120x40,170x48 clean/dirty. Not a separate raster inspection, PTY tour or accessibility audit."
+  },
+  "not_run": [
+    "full test suite",
+    "real model/provider inference",
+    "native PTY/accessibility tour"
+  ],
+  "processes": "All UI/native tests ended before root final-five isolation; no further tests run after it. Final-five results belong to root/core report."
+}

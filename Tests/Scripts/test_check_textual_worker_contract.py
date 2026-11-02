@@ -115,6 +115,31 @@ def test_a_lookup_in_the_try_body_is_still_treated_as_guarded():
     assert _w002(_IN_TRY_BODY) == []
 
 
+@pytest.mark.parametrize(
+    ("catcher", "protected"),
+    [
+        ('source_globals["QueryError"]', True),
+        ('source_globals["NoMatches"]', True),
+        ('(source_globals["NoMatches"], source_globals["QueryError"])', True),
+        ('source_globals["ValueError"]', False),
+        ("source_globals[error_name]", False),
+        ("source_globals[0]", False),
+    ],
+)
+def test_w002_literal_dependency_catchers_preserve_lookup_protection(
+    catcher, protected
+):
+    source = _IN_TRY_BODY.replace("except Exception:", f"except {catcher}:")
+    expected = [] if protected else ["tldw_chatbook/UI/sample.py::run"]
+    assert _w002(source) == expected
+
+
+@pytest.mark.parametrize("source", [_IN_EXCEPT, _IN_ELSE, _IN_FINALLY])
+def test_w002_literal_dependency_catchers_do_not_protect_other_clauses(source):
+    source = source.replace("except Exception:", 'except source_globals["QueryError"]:')
+    assert _w002(source) == ["tldw_chatbook/UI/sample.py::run"]
+
+
 def test_an_outer_try_still_protects_an_inner_finally():
     """The ascent must CONTINUE past a non-guarding `Try`, not break out of
     the loop: an enclosing `try` legitimately covers the inner `finally`."""

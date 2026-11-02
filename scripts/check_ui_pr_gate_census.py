@@ -745,8 +745,8 @@ MINIMUM_FILES = 1318
 # 2026-10-30 onto dev 7536ac3b87 (1,163 entries, floor 1,163): the floor is
 # the measured count, 1,165.
 # PR3334 integration: append tag picker after sniff.
-# PR3346: three verified selectors appended; existing shard slots retained.
-MINIMUM_FILES = 1333
+# PR3346: preserve the reviewed 1,333-entry prefix and append two extraction controls.
+MINIMUM_FILES = 1335
 
 
 def read_census(path: Path) -> list[str]:

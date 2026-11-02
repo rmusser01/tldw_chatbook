@@ -310,7 +310,7 @@ _BUDGETS: dict[str, tuple[str, int, int]] = {
     # PR3301, 2026-10-31: user size waiver; exact integrated measurement.
     # Final PR3301 on dev59b8fe0249: explicit owner size waiver, exact measurement.
     # PR3311, 2026-11-01: user size waiver; exact integrated measurement.
-    "tldw_chatbook/UI/Screens/chat_screen.py": ("ChatScreen", 24605, 741),
+    "tldw_chatbook/UI/Screens/chat_screen.py": ("ChatScreen", 24590, 741),
     #: Added 2026-09 by the Library decomposition plan (PR 0b): this row was
     #: missing for the entire month in which library_screen.py tripled from
     #: 15,819 to 46,109 lines while chat_screen.py shrank under its budget.
@@ -1294,7 +1294,7 @@ _BUDGETS: dict[str, tuple[str, int, int]] = {
     #: lines, 1373 methods (measured with ``_measure``).
     #: 2026-10-31, PR #3259: user size waiver; New focus role, exact current measurement.
     #: 2026-10-31 PR3259: exact integrated measurement under the user size-limit waiver.
-    "tldw_chatbook/UI/Screens/library_screen.py": ("LibraryScreen", 38242, 1374),
+    "tldw_chatbook/UI/Screens/library_screen.py": ("LibraryScreen", 38177, 1373),
 }
 
 # Retired 2026-09-19 (core-review TASK-32809.1). This was a one-time guard

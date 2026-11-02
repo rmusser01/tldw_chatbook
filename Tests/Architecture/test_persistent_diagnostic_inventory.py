@@ -24,6 +24,27 @@ from scripts import check_persistent_diagnostic_inventory as diagnostic_inventor
 REPO_ROOT = Path(__file__).resolve().parents[2]
 
 
+@pytest.mark.parametrize(
+    ("receiver", "expected_count"),
+    [
+        ('source_globals["logger"]', 1),
+        ('source_globals["logging"]', 1),
+        ('source_globals["logger"].opt(exception=True)', 1),
+        ('source_globals["caption"]', 0),
+        ("source_globals[logger_key]", 0),
+        ("source_globals[0]", 0),
+    ],
+)
+def test_literal_dependency_loggers_remain_in_the_diagnostic_inventory(
+    receiver, expected_count
+):
+    diagnostics, sinks = diagnostic_inventory.scan_source(
+        f"{receiver}.warning('reviewed metadata only')\n"
+    )
+    assert len(diagnostics) == expected_count
+    assert sinks == []
+
+
 REVIEWED_METADATA_ONLY_DIAGNOSTICS = {
     "tldw_chatbook/Agents/agent_service.py": {
         "autowake_enabled is not boolean; using default": (),
