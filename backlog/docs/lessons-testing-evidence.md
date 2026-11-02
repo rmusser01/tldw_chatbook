@@ -25779,3 +25779,8 @@ configured-enabled read, without replacing policy or admission helpers.
 ### A child loop can still borrow its parent's cancellation
 
 PR3345 native fleet epoch132 (2026-11-02) kept the child thread alive after primary Stop, yet its adapter returned two empty responses and the child became stuck. Native134 proved both directions: parent Stop closed the silent child provider, while child Stop did not. Independent event loops and correct LoopDeps were insufficient because the shared adapter still captured the parent predicate. Carry the exact native run predicate across the model-call boundary and verify silent in-flight cancellation in both directions. If that predicate reads automatic/Goal state on the provider thread, also prove actual same-thread handle retirement;138 exercised accepted wake, Goal and surviving-child storage, and original fleet140 passed.
+
+
+### Isolate scheduler and DOM identity failures before replaying a fleet
+
+PR3345 epochs148/149 (2026-11-02) failed at different fleet stages;149 recorded only ordinary empty-queue cleanup and did not explain148. Two actual-component regressions in150 instead proved independent defects: awaiting callbacks that only use put_nowait can starve an already-waiting receiver until a bounded queue falsely overflows, and an unrelated overview count can replace an active question input between pointer-down/up. Test runnable-consumer fairness and original DOM identity directly. Preserve genuine pressure/stale-target refusals and do not promote component evidence into a historical cause claim. Both-engine controls151 and original unobserved fleet152 passed after the narrow repairs.

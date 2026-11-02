@@ -194,6 +194,9 @@ integration is a separate implementation/qualification boundary.
 run-store identity. Browser disconnect, takeover, revocation and output pressure
 only detach that terminal generation. The child keeps running and draining output;
 its bounded terminal queue (64 frames / 1 MiB) never waits on a browser socket.
+Successful enqueue yields once to runnable consumers, so buffered child output
+does not falsely overflow an already-waiting terminal receiver. A stalled receiver
+still detaches at the same frame/byte bounds; child ownership is unchanged (R186).
 Independent phone observers discover the retained child even with no terminal.
 An explicit phone host bootstrap waits up to 20 seconds for that child's native
 control authentication because process creation precedes App mount. Ordinary
@@ -322,6 +325,11 @@ Snapshots include bounded `command_receipts` and `next_receipt_cursor` fields;
 pass the latter as `receipt_cursor` independently of transcript `cursor`.
 Both page cursors must finish before the native snapshot is acknowledged.
 No subscription or reconnect automatically resends a command.
+The phone keeps current decision controls while their exact target, native round
+metadata and recoveries are unchanged. Other Chats' attention counts update the
+separately keyed overview without discarding answers or an active pointer gesture.
+Identical overview metadata retains its navigation controls; true round or target
+changes still withdraw old answerability and replace the form (R186).
 
 At the 4,096-row bound, authenticated exact native Stop/subagent Stop can still
 request cancellation through the idempotent native path without allocating a
