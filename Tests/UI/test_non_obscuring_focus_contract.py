@@ -44,6 +44,7 @@ class _AgenticFamilySources:
         ROOT / "tldw_chatbook/css/components/_ds_primitives.tcss",
         ROOT / "tldw_chatbook/css/features/_console.tcss",
         ROOT / "tldw_chatbook/css/features/_console_panels.tcss",
+        ROOT / "tldw_chatbook/css/features/_console_inspector.tcss",
         ROOT / "tldw_chatbook/css/features/_library.tcss",
         ROOT / "tldw_chatbook/css/features/_library_panels.tcss",
         ROOT / "tldw_chatbook/css/features/_library_notes_panels.tcss",
@@ -181,6 +182,8 @@ NATIVE_CHOICE_FOCUS_CUE_OVERRIDES = (
     "#console-workspace-tree:focus > .tree--cursor",
     "#settings-workspace-persona-picker:focus > .option-list--option-highlighted",
     "#settings-workspace-profile-picker:focus > .option-list--option-highlighted",
+    # TASK-33621.9: Inspector lists use a content-safe focused-row cue.
+    ".inspector-section-list:focus > .option-list--option-highlighted",
 )
 
 
@@ -1725,6 +1728,7 @@ def test_native_choice_and_tree_states_follow_shared_contracts():
     )
 
 
+@pytest.mark.bootstrap_profile
 def test_bundled_native_choice_and_tree_states_match_source_contracts():
     text = _bundle_union_text()
     for selector in (

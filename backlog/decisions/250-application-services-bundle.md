@@ -229,3 +229,7 @@ The owner answered yes to all five questions on 2026-10-27.
 - [ADR-234: Served mobile companion surface](234-served-mobile-companion-surface.md)
 - [ADR-004: Settings storage defaults restart boundary](004-settings-storage-defaults-restart-boundary.md)
 - [Architecture review 2026-10-25](../../Docs/QA/architecture-review-2026-10-25/report.md)
+
+## CI layer repair (2026-11-02, TASK-38268)
+
+The existing unmount service drain belongs in app_lifecycle.py alongside its caller. Moving only that function out of Utils removes six forbidden upward imports. Cleanup order, lifecycle patch points, worker settlement, and primary-error handling remain unchanged.

@@ -2,6 +2,8 @@
 from pathlib import Path
 from types import SimpleNamespace
 
+import pytest
+
 from tldw_chatbook.Skills_Interop.project_skills_prompt import (
     startup_discovery_for,
 )
@@ -44,6 +46,7 @@ def test_startup_discovery_respects_never(tmp_path):
     )
 
 
+@pytest.mark.bootstrap_profile
 def test_discover_project_skills_for_startup_never_raises(monkeypatch, tmp_path):
     """The worker body must swallow ANY exception, not just OSError on cwd().
 
@@ -61,7 +64,11 @@ def test_discover_project_skills_for_startup_never_raises(monkeypatch, tmp_path)
     import tldw_chatbook.Skills_Interop.project_skills_prompt as prompt_module
     from tldw_chatbook.app import TldwCli
 
+    discovery_calls = 0
+
     def _raise(*_args, **_kwargs):
+        nonlocal discovery_calls
+        discovery_calls += 1
         raise RuntimeError("boom")
 
     monkeypatch.setattr(prompt_module, "startup_discovery_for", _raise)
@@ -70,3 +77,4 @@ def test_discover_project_skills_for_startup_never_raises(monkeypatch, tmp_path)
     stub = SimpleNamespace()
     result = TldwCli._discover_project_skills_for_startup(stub)
     assert result is None
+    assert discovery_calls == 1

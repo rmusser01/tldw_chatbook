@@ -3,6 +3,8 @@
 import pytest
 from textual.widgets import Button, OptionList
 
+from tldw_chatbook.UI.Plugins_Modules.operations import PluginOperations
+
 from Tests.Plugins import platform_support
 from Tests.Plugins.conftest import native_console as _native_console
 from Tests.Plugins.conftest import native_package as _native_package
@@ -1628,6 +1630,12 @@ async def test_declared_value_keyboard_mask_review_and_revoke(
     class App(ConsolidatedCSSApp):
         CSS_PATH = BUNDLED_STYLESHEET
 
+        def __init__(self):
+            super().__init__()
+            self.plugin_operations = PluginOperations(case.service)
+            self.console_runtime = None
+            self.local_mcp_control_service = None
+
         async def on_mount(self):
             await self.push_screen(
                 PluginReviewModal(
@@ -2037,6 +2045,12 @@ async def test_variable_save_prefill_keeps_result_honest_and_newer_draft(
 
     class App(ConsolidatedCSSApp):
         CSS_PATH = BUNDLED_STYLESHEET
+
+        def __init__(self):
+            super().__init__()
+            self.plugin_operations = PluginOperations(case.service)
+            self.console_runtime = None
+            self.local_mcp_control_service = None
 
     app = App()
     async with app.run_test(size=(120, 35)) as pilot:

@@ -24,6 +24,8 @@ from dataclasses import dataclass
 from functools import lru_cache
 from typing import Literal
 
+from .provider_endpoint_contract import ROUTE_SUFFIXES
+
 Locality = Literal["local", "cloud"]
 CheckKind = Literal["model_list", "authenticated", "none"]
 
@@ -128,11 +130,6 @@ LOCAL_PORTS: dict[str, tuple[int, ...]] = {
 ENDPOINT_EXAMPLES: dict[str, str] = {
     "koboldcpp": "http://127.0.0.1:5001/api/v1/generate",
 }
-
-#: Providers whose saved base already ends in its API version, so the chat
-#: route is ``<base>/chat/completions`` -- never ``<base>/v1/chat/completions``
-#: (review provider-20 / task-33621.32: Z.ai's ``/api/paas/v4``).
-ROUTE_SUFFIXES: dict[str, str] = {"zai": "/chat/completions"}
 
 #: Legacy aliases and the '#2' slot: listed by Settings (task-33002.5 AC#6),
 #: kept behind 'Show legacy entries' in first-run setup (review provider-12).

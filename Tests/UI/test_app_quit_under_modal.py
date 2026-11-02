@@ -1041,12 +1041,25 @@ async def test_a_snapshot_preference_edit_is_kept_and_asked_about_from_console(
         )
         settings = app.screen
         assert settings.query_one("#settings-snapshot-keep", Input).value == edited
+        assert settings._snapshot_preferences_dirty()
+        # The background count refresh belongs to Internal Prompts, not this
+        # retained Providers & Models draft or its selected inspector/banner.
+        settings._refresh_internal_prompts_customized_widgets()
+        assert settings._snapshot_preferences_dirty()
         status = settings.query_one("#settings-selected-category-draft-status")
-        assert str(status.render()) == "Unsaved changes"
+        banner = settings.query_one("#settings-category-state-banner", Static)
+        assert (str(status.render()), str(banner.render())) == (
+            "Unsaved changes",
+            settings._category_state_banner_text(SettingsCategoryId.PROVIDERS_MODELS),
+        )
         rail = settings.query_one(
             f"#settings-category-{SettingsCategoryId.PROVIDERS_MODELS.value}"
         )
         assert str(rail.label).endswith(" *"), rail.label
+        # Retire the finite native asset read before the mounted app closes.
+        for worker in tuple(app.workers):
+            if worker.node is app and worker.group == "chachanotes-fts-backfill":
+                await worker.wait()
     assert cleanups == []
 
 

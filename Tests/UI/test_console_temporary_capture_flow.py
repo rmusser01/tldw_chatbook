@@ -33,6 +33,7 @@ from Tests.Chat.test_console_automatic_library_preparation import _pending_image
 from Tests.UI.test_console_hook_review_send_freeze import _key
 from Tests.UI.test_console_library_auto_outcome import _shelf_offers_unsent_turn
 from Tests.UI.test_console_received_intent_feedback import (
+    _install_received_wire_reply,
     _received_console_case,
     _send,
     _until,
@@ -123,6 +124,7 @@ async def test_a_temporary_chat_sends_with_traces_off_and_never_pauses(monkeypat
     async with _received_console_case(
         monkeypatch, "temporary-default", durable=True
     ) as case:
+        _install_received_wire_reply(monkeypatch, case)
         session_id = await _temporary_tab(case)
         await _send_draft(case, "Plain temporary send")
 
@@ -170,6 +172,7 @@ async def test_save_and_send_saves_the_chat_and_its_send_gets_a_reply(monkeypatc
     async with _received_console_case(
         monkeypatch, "temporary-save-send", durable=True
     ) as case:
+        _install_received_wire_reply(monkeypatch, case)
         session_id = await _temporary_tab(case)
         await _turn_capture_on(case, session_id)
         await _send_draft(case, "Keep this one")

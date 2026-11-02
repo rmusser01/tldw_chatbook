@@ -15,6 +15,7 @@ from Tests.UI.consolidated_css import BUNDLED_STYLESHEET, ConsolidatedCSSApp
 from tldw_chatbook.app import TldwCli
 from tldw_chatbook.Plugins.source_service import SourceService
 from tldw_chatbook.UI.Navigation.screen_registry import resolve_screen_route
+from tldw_chatbook.UI.Plugins_Modules.operations import PluginOperations
 
 native_console = _native_console
 native_package = _native_package
@@ -37,6 +38,36 @@ def test_untrusted_display_is_literal_bounded_and_removes_terminal_controls():
     assert len(display_text("x" * 300, limit=256)) <= 256
 
 
+@pytest.mark.unit
+def test_public_plugin_operations_retains_only_its_app_service_and_drafts():
+    from tldw_chatbook.app_skill_wiring import SkillServiceWiringMixin
+
+    first_service, second_service = object(), object()
+    first_app, second_app = SkillServiceWiringMixin(), SkillServiceWiringMixin()
+    first_app._plugin_service = first_service
+    second_app._plugin_service = second_service
+
+    first = first_app.plugin_operations
+    assert isinstance(first, PluginOperations)
+    assert first_app._build_plugin_service() is first_service
+    assert first.service is first_service
+    draft = {"name": "first app draft"}
+    first.drafts["selected"] = draft
+    assert first_app.plugin_operations is first
+    assert first_app.plugin_operations.drafts["selected"] is draft
+
+    second = second_app.plugin_operations
+    assert isinstance(second, PluginOperations)
+    assert second_app._build_plugin_service() is second_service
+    assert second.service is second_service
+    assert second is not first
+    assert second.drafts == {}
+    second.drafts["selected"] = {"name": "second app draft"}
+    assert second_app.plugin_operations is second
+    assert first_app.plugin_operations.drafts["selected"] is draft
+    assert first.drafts["selected"] == {"name": "first app draft"}
+
+
 class BrowseApp(ConsolidatedCSSApp):
     CSS_PATH = BUNDLED_STYLESHEET
     _SCREEN_OWNED_ROUTE_CSS = TldwCli._SCREEN_OWNED_ROUTE_CSS
@@ -44,6 +75,9 @@ class BrowseApp(ConsolidatedCSSApp):
     def __init__(self, rig):
         super().__init__()
         self.plugin_source_service = SourceService(rig.service)
+        self.plugin_operations = PluginOperations(rig.service)
+        self.console_runtime = None
+        self.local_mcp_control_service = None
         self.workspace_registry_service = rig.registry
 
     async def on_mount(self):

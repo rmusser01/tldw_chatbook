@@ -242,12 +242,3 @@ class PluginOperations:
             await callback(identity)
         else:
             raise ValueError("operation_cannot_be_cancelled")
-
-
-def app_operations(app, service):
-    """Retain one lazy UI state object even on embedded/test app shells."""
-    owner = getattr(app, "_plugin_operations", None)
-    if owner is None:
-        owner = PluginOperations(service)
-        app._plugin_operations = owner
-    return owner

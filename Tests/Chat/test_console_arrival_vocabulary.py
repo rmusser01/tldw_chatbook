@@ -47,6 +47,9 @@ def test_library_chip_says_the_agents_access_is_off_not_blocked() -> None:
 def _context(request_tokens, ceiling):
     return SimpleNamespace(
         request_tokens=request_tokens,
+        # This fixture has no remembered tool or system-prompt overhead.
+        next_request_tokens=request_tokens,
+        breakdown_rows=(),
         safe_input_ceiling_tokens=ceiling,
         conversation_tokens=None,
         conversation_budget_tokens=None,
@@ -55,6 +58,9 @@ def _context(request_tokens, ceiling):
         # whether it is verified (TASK-33007 #12 reads both).
         model_window_tokens=ceiling,
         model_window_verified=True,
+        # Match the real context snapshot's no-forecast defaults.
+        forecast_unavailable_reason="",
+        forecast_high_context=False,
         resolved_policy=SimpleNamespace(
             policy=SimpleNamespace(compaction_mode=ContextCompactionMode.OFF)
         ),

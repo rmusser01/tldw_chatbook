@@ -209,7 +209,7 @@ def preimport_first_send_modules(app: Any) -> None:
 def _pause(app: Any, gap: float) -> None:
     """The pass's gap and park, then wait out recent input and park again."""
     app._pause_between_preimports(gap)
-    while not getattr(app, "_shutting_down", False):
+    while not app.is_shutting_down():
         quiet = seconds_since_user_input()
         if quiet >= INPUT_QUIET_SECONDS:
             return
@@ -249,15 +249,5 @@ def _warm_first_send(app: Any) -> None:
 
 
 def _request_idle_heap_refreeze(app: Any) -> None:
-    """Request existing runtime maintenance for the current UI-loop attachment."""
-    if getattr(app, "_shutting_down", False):
-        return
-    runtime = getattr(app, "console_runtime", None)
-    view = runtime.view if runtime is not None else None
-    if view is None:
-        return
-    from tldw_chatbook.UI.Console_Modules.transcript import (
-        request_console_heap_refreeze,
-    )
-
-    request_console_heap_refreeze(view, "first_send_preimport")
+    """Return the UI-loop maintenance request to its application owner."""
+    app.request_console_idle_heap_refreeze()

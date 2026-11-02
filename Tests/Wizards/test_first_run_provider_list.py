@@ -8,6 +8,8 @@ and the '#2' slot looked like duplicates of the real rows) and E2 / coverage-08
 
 from __future__ import annotations
 
+from types import MappingProxyType, SimpleNamespace
+
 import pytest
 from textual import events
 from textual.widgets import Input
@@ -25,6 +27,8 @@ from Tests.Wizards.provider_step_harness import (
     wait_until,
 )
 from tldw_chatbook.Chat.provider_setup_facts import LEGACY_PROVIDER_KEYS
+from tldw_chatbook.UI.Wizards.BaseWizard import WizardStepConfig
+from tldw_chatbook.UI.Wizards.first_run_provider_step import ProviderStep
 from tldw_chatbook.UI.Wizards.first_run_setup_state import STEP_PROVIDER
 from tldw_chatbook.UI.Wizards.first_run_step_guard import first_run_provider_catalog
 
@@ -32,6 +36,43 @@ pytestmark = pytest.mark.bootstrap_profile
 
 _FILTER = "#setup-provider-filter"
 _COUNT = "#setup-provider-count"
+
+
+def test_provider_list_optional_constructor_has_no_app_config():
+    step = ProviderStep(wizard=None, config=None, environ={})
+    assert step.wizard is None
+    assert step._list_app_config() == {}
+
+
+@pytest.mark.parametrize(
+    "wizard",
+    [SimpleNamespace(), SimpleNamespace(app_instance=None)],
+    ids=["missing-app-owner", "none-app-owner"],
+)
+def test_provider_list_wizard_without_app_owner_has_no_config(wizard):
+    step = ProviderStep(
+        wizard=wizard,
+        config=WizardStepConfig(id=STEP_PROVIDER, title="Provider"),
+        environ={},
+    )
+    assert step.wizard is wizard
+    assert step._list_app_config() == {}
+
+
+def test_provider_list_reads_declared_current_config_mapping():
+    config = MappingProxyType({"chat_defaults": {"provider": "openai"}})
+    owner = SimpleNamespace(app_config=config)
+    wizard = SimpleNamespace(app_instance=owner)
+    step = ProviderStep(
+        wizard=wizard,
+        config=WizardStepConfig(id=STEP_PROVIDER, title="Provider"),
+        environ={},
+    )
+    assert step.wizard is wizard
+    assert step._list_app_config() is config
+    replacement = MappingProxyType({"chat_defaults": {"provider": "ollama"}})
+    owner.app_config = replacement
+    assert step._list_app_config() is replacement
 
 
 def _option_ids(step) -> list[str]:

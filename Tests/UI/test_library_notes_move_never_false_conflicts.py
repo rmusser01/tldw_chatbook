@@ -628,6 +628,7 @@ async def test_new_note_keeps_focus_after_a_targeted_notes_refresh(tmp_path) -> 
         await _wait(
             pilot,
             lambda: not previous.is_attached
+            and bool(screen.query("#library-notes-new"))
             and screen.focused is screen.query_one("#library-notes-new"),
             lambda: f"New retains focus after its replacement: {screen.focused!r}",
         )

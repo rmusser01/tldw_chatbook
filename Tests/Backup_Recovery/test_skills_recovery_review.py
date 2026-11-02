@@ -20,7 +20,7 @@ from tldw_chatbook.Skills_Interop.skill_trust_service import SkillTrustService
 from tldw_chatbook.Skills_Interop.skill_trust_store import SkillTrustStore,FileSkillTrustGenerationMarkerStore
 from tldw_chatbook.Skills_Interop.local_skills_service import LocalSkillsService
 base=Path.home();source=base/'source';source.mkdir(mode=0o700)
-selector=Path(os.environ['TLDW_CONFIG_PATH']);selector.write_text('[general]\nusers_name="Local"\n[paths]\ndata_dir="'+str(source)+'"\n')
+selector=Path(os.environ['TLDW_CONFIG_PATH']);selector.write_text('[general]\nusers_name="Local"\n[paths]\ndata_dir='+json.dumps(str(source),ensure_ascii=False)+'\n',encoding='utf-8')
 store_root=source/'Local'/'skills';old=store_root/'trust'
 def service(root):
  trust_root=root/'trust'

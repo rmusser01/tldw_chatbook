@@ -10167,16 +10167,16 @@ class SettingsScreen(BaseAppScreen):
 
     def _update_draft_status_widgets(self, category: SettingsCategoryId) -> None:
         has_unsaved_changes = self._category_has_unsaved_changes(category)
-        status = "Unsaved changes" if has_unsaved_changes else "No unsaved changes"
-        try:
-            self.query_one("#settings-selected-category-draft-status", Static).update(
-                status
-            )
-        except QueryError:
-            pass
-        self._update_category_state_banner(category)
         self._refresh_category_button_label(category)
         if category is self._active_category_id():
+            status = "Unsaved changes" if has_unsaved_changes else "No unsaved changes"
+            try:
+                self.query_one(
+                    "#settings-selected-category-draft-status", Static
+                ).update(status)
+            except QueryError:
+                pass
+            self._update_category_state_banner(category)
             self._update_guided_action_widgets()
         if category is SettingsCategoryId.PROVIDERS_MODELS:
             self._update_provider_return_widgets()

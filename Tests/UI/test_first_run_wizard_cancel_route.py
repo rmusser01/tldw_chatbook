@@ -1,4 +1,4 @@
-"""First-run wizard cancellation routing.
+"""First-run wizard cancellation and pinned-error contracts.
 
 UAT (2026-08-31, TASK-31813 triage): Esc-exiting the boot-offered setup
 wizard left the user on Home -- the screen the wizard was pushed over --
@@ -9,7 +9,9 @@ command-palette RE-RUN must leave the current screen alone.
 
 from __future__ import annotations
 
-from types import SimpleNamespace
+import pytest
+
+from Tests.private_profile import private_profile_test
 
 from tldw_chatbook.app import TldwCli
 from tldw_chatbook.Constants import TAB_CHAT, TAB_HOME, TAB_SETTINGS
@@ -121,3 +123,75 @@ def test_empty_registered_workspace_keeps_its_tree_node() -> None:
     assert len(projection) == 1
     assert projection[0].workspace_id == "ws-empty"
     assert projection[0].conversations == ()
+
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_step_error_keeps_content_alignment_across_repeated_step_changes(request):
+    """The shared strip follows each finite wrapper inset without accumulating it."""
+    from textual.app import ComposeResult
+    from textual.containers import Vertical
+    from textual.widgets import Static
+
+    from Tests.UI.consolidated_css import (
+        BUNDLED_STYLESHEET,
+        CSS_DIR,
+        ConsolidatedCSSApp,
+    )
+    from tldw_chatbook.css.build_css import design_token_preamble
+    from tldw_chatbook.UI.Wizards.first_run_setup_widgets import SetupStep
+
+    class ErrorAlignmentStep(SetupStep):
+        def compose_step(self) -> ComposeResult:
+            with Vertical(id="alignment-wrapper", classes="setup-model"):
+                yield Static("Step content", id="alignment-content")
+
+    class AlignmentApp(ConsolidatedCSSApp):
+        CSS_PATH = str(BUNDLED_STYLESHEET)
+        CSS = (
+            design_token_preamble(CSS_DIR)
+            + """
+        ErrorAlignmentStep { height: $ds-height-fill; }
+        #setup-step-error-pinned { dock: bottom; }
+        """
+        )
+
+        def compose(self) -> ComposeResult:
+            yield ErrorAlignmentStep(classes="active")
+            yield Static(
+                "", id="setup-step-error-pinned", classes="setup-step-error hidden"
+            )
+
+    app = AlignmentApp()
+    async with app.run_test(size=(80, 24)) as pilot:
+        step = app.query_one(ErrorAlignmentStep)
+        wrapper = app.query_one("#alignment-wrapper")
+        content = app.query_one("#alignment-content")
+        strip = app.query_one("#setup-step-error-pinned", Static)
+        for size in ((80, 24), (140, 40)):
+            await pilot.resize_terminal(*size)
+            for wrapper_class, expected_left in (
+                ("setup-welcome", 6),
+                ("setup-provider", 4),
+                ("setup-voice", 4),
+                ("setup-model", 2),
+                ("setup-welcome", 6),
+                ("setup-model", 2),
+            ):
+                wrapper.set_classes(wrapper_class)
+                await pilot.pause()
+                first_geometry = None
+                for message in ("First error", "Retry failed", "Retry failed"):
+                    step.show_step_error(message)
+                    await pilot.pause()
+                    assert not strip.has_class("hidden")
+                    assert str(strip.content) == f"✗ {message}"
+                    assert tuple(strip.styles.padding) == (0, 2, 0, expected_left)
+                    assert strip.content_region.x == content.region.x
+                    geometry = (strip.region, strip.content_region)
+                    if first_geometry is None:
+                        first_geometry = geometry
+                    else:
+                        assert geometry == first_geometry
+                step.clear_step_error()
+                assert strip.has_class("hidden") and str(strip.content) == ""

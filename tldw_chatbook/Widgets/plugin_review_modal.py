@@ -21,7 +21,6 @@ from textual.widgets import (
 from textual.widgets.option_list import Option
 
 from ..UI.Plugins_Modules.details import display_text
-from ..UI.Plugins_Modules.operations import app_operations
 from ..UI.Plugins_Modules.review import (
     PluginConnectionDraft,
     PluginReviewDraft,
@@ -527,7 +526,7 @@ class PluginStatusModal(ModalScreen):
                 yield Button("Close", id="plugin-status-close")
 
     async def on_mount(self):
-        self.operations = app_operations(self.app, self.sources.plugins)
+        self.operations = self.app.plugin_operations
         await self._load()
 
     async def _load(self):
@@ -746,7 +745,7 @@ class PluginReviewModal(ModalScreen):
                 yield Button("Discard draft", id="plugin-review-discard")
 
     def on_mount(self):
-        self.operations = app_operations(self.app, self.service)
+        self.operations = self.app.plugin_operations
         identity = (
             self.installation_id
             or getattr(self.producer, "operation_id", None)
@@ -1270,7 +1269,7 @@ class PluginReviewModal(ModalScreen):
                 self.installation_id, **values
             )
         elif action.startswith("test-"):
-            runtime = getattr(self.app, "console_runtime", None)
+            runtime = self.app.console_runtime
             store = runtime.chat_store if runtime is not None else None
             session = (
                 next(
@@ -1350,7 +1349,7 @@ class PluginReviewModal(ModalScreen):
             else draft.configuration
         )
         try:
-            owner = getattr(self.app, "local_mcp_control_service", None)
+            owner = self.app.local_mcp_control_service
             if owner is None:
                 raise ValueError("mcp_configuration_owner_unavailable")
             result = await self.operations.save_profile(review, owner)

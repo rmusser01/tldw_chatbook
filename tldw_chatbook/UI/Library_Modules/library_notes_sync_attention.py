@@ -128,32 +128,25 @@ def note_file_written_label(path: str) -> str:
 
 
 def _runtime(host: Any) -> Any:
-    app = getattr(host, "app_instance", None)
-    # Listener registration/removal must not invoke the app's lazy property
-    # (or wait on its construction lock). Async readers prepare it below.
-    state = getattr(app, "__dict__", {})
-    if "_notes_sync_runtime_owner" in state:
-        return state["_notes_sync_runtime_owner"]
-    return getattr(app, "notes_sync_runtime_owner", None)
+    """Read the cached owner without invoking its constructing property."""
+    if host is None or host.app_instance is None:
+        return None
+    return host.app_instance.peek_notes_sync_runtime()[0]
 
 
 async def _prepare_runtime(host: Any) -> Any:
     runtime = _runtime(host)
     if runtime is not None:
         return runtime
-    reader = getattr(
-        getattr(host, "app_instance", None), "_read_notes_sync_runtime_owner_safe", None
-    )
+    if host.app_instance is None:
+        return None
+    reader = host.app_instance.read_notes_sync_runtime_owner
     run_service = getattr(host, "_run_library_service_call", None)
     if callable(reader) and callable(run_service):
         # The original app property coalesces construction under its lock;
         # this waiter and its checked config reads stay off the UI loop.
         runtime = await run_service(reader)
-        if (
-            runtime is None
-            and getattr(host.app_instance, "_notes_sync_runtime_build_failure", None)
-            is not None
-        ):
+        if runtime is None and host.app_instance.peek_notes_sync_runtime()[1]:
             return _COULD_NOT_SAY
         return runtime
     return None

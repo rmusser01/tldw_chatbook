@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from datetime import datetime, timezone
 from collections import OrderedDict
 from collections.abc import Mapping
 from dataclasses import dataclass, field, replace
@@ -983,3 +984,37 @@ def _json_default(value: object) -> object:
     if isinstance(value, Mapping):
         return dict(value)
     raise TypeError(f"Object of type {type(value).__name__} is not JSON serializable")
+
+
+def recover_console_trace_calls(
+    database: object,
+    *,
+    occurred_at: str | None = None,
+    repository: object | None = None,
+    recovery_grace_seconds: int = 300,
+) -> tuple[object, ...]:
+    """Close normalized provider calls stale at startup.
+
+    Args:
+        database: Trace database to recover.
+        occurred_at: Optional recovery timestamp override.
+        repository: Optional repository override for tests.
+        recovery_grace_seconds: Minimum inactivity before a call is stale.
+
+    Returns:
+        Calls transitioned by the recovery pass.
+    """
+
+    trace_repository = (
+        repository
+        if isinstance(repository, ConsoleTraceRepository)
+        else ConsoleTraceRepository()
+    )
+    timestamp = occurred_at or datetime.now(timezone.utc).isoformat().replace(
+        "+00:00", "Z"
+    )
+    return ConsoleTraceSettlementCoordinator(trace_repository).recover_open_calls(
+        database,
+        occurred_at=timestamp,
+        recovery_grace_seconds=recovery_grace_seconds,
+    )

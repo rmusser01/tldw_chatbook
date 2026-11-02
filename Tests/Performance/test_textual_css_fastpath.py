@@ -247,17 +247,47 @@ async def test_filter_follows_a_class_added_to_an_ancestor_at_runtime(
     # (TASK-30016) -- far past the poll window below.
     _scratch_env(monkeypatch)
     app = TldwCli()
+
+    def archive_controls_mounted() -> bool:
+        if not app._ui_ready:
+            return False
+        cards = list(app.screen.query("ArchiveRecoveryConfirmCard"))
+        if len(cards) != 1:
+            return False
+        card = cards[0]
+        children = list(card.children)
+        expected_ids = {
+            "recovery-target",
+            "recovery-effects",
+            "recovery-scope",
+            "recovery-confirm",
+            "recovery-cancel",
+            "recovery-rename",
+        }
+        return (
+            card.is_mounted
+            and card.is_attached
+            and len(children) == len(expected_ids)
+            and {child.id for child in children} == expected_ids
+            and all(child.is_mounted and child.is_attached for child in children)
+        )
+
     async with app.run_test(size=(160, 45)) as pilot:
         await pilot.pause()
         for _ in range(60):
             await pilot.pause(0.05)
-            if len(list(app.screen.walk_children(with_self=True))) > 50:
+            if (
+                len(list(app.screen.walk_children(with_self=True))) > 50
+                and archive_controls_mounted()
+            ):
                 break
         nodes = list(app.screen.walk_children(with_self=True))
         assert len(nodes) > 50, (
             f"only {len(nodes)} nodes -- still on the splash screen, so a "
             "passing result would prove nothing"
         )
+
+        assert archive_controls_mounted(), "Console archive controls are still mounting"
 
         target = next(
             (
@@ -394,10 +424,21 @@ async def test_ancestor_scoped_bare_type_rule_count_is_a_ratchet(
             while not app._ui_ready:
                 await pilot.pause(0.05)
         recovery_buttons = list(app.screen.query("#console-trace-actions Button"))
-        # TASK-34350 added the context-limit hold's two actions to this card;
-        # TASK-33621.20 its Library pause's "Send once without Library".
-        assert len(recovery_buttons) == 7 and all(
-            button.is_mounted for button in recovery_buttons
+        # The actual card includes the compaction policy action (TASK-33621.4).
+        expected_recovery_ids = {
+            "console-trace-save-send",
+            "console-trace-retry",
+            "console-trace-compact-send",
+            "console-trace-send-uncompacted",
+            "console-trace-change-policy",
+            "console-trace-send-without",
+            "console-trace-send-without-library",
+            "console-trace-cancel",
+        }
+        assert (
+            len(recovery_buttons) == len(expected_recovery_ids)
+            and {button.id for button in recovery_buttons} == expected_recovery_ids
+            and all(button.is_mounted for button in recovery_buttons)
         ), "CSS census requires fully mounted Console recovery controls"
         rules_map = app.stylesheet.rules_map
 

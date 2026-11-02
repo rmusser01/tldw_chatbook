@@ -49,6 +49,13 @@ if TYPE_CHECKING:  # pragma: no cover - typing only
 class NavigationMixin:
     """``TldwCli`` members moved from ``app.py`` (TASK-33011); see the module docstring."""
 
+    def is_screen_navigation_busy(self) -> bool:
+        """Read queued/current navigation without constructing a service."""
+        if getattr(self, "_screen_navigation_calls", None):
+            return True
+        navigating = getattr(self, "_screen_navigation_in_progress", None)
+        return bool(navigating is not None and navigating())
+
     def _resolve_screen_navigation_target(self, target: str):
         """Normalize navigation aliases to a routed screen id and canonical current_tab value."""
         return resolve_screen_target(target)

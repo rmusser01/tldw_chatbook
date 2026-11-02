@@ -621,6 +621,63 @@ def _real_session_screen(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_closed_session_before_readiness_refresh_settles_and_new_owner_retries(
+    monkeypatch,
+):
+    screen, store, session, tasks = _real_session_screen(monkeypatch)
+    settings = session.settings
+    reads = []
+
+    def read():
+        reads.append(threading.get_ident())
+        return _read_result(dict(screen.app_instance.app_config))
+
+    projection = spend.ConsoleReadinessConfigProjection(screen, read_current=read)
+    screen._console_readiness_config_projection = projection
+    try:
+        assert projection.run(lambda: pytest.fail("cold owner rendered")) is False
+        assert len(tasks) == 1 and not tasks[0].done() and not reads
+        refresh = tasks[0]
+        assert projection.pending and not projection._settled.is_set()
+        # The public queue has accepted A's read, but its worker has not started.
+        store.close_session(session.id)
+        assert not store.sessions() and store.active_session_id is None
+        try:
+            async with asyncio.timeout(1):
+                result = await projection.warm()
+        except TimeoutError:
+            # Preserve the actual failed settings lookup, rather than reporting
+            # only the stranded waiter. This branch provides baseline evidence.
+            if refresh.done() and not refresh.cancelled():
+                error = refresh.exception()
+                if isinstance(error, KeyError):
+                    assert session.id in str(error)
+                    assert projection.pending and not projection._settled.is_set()
+                    raise error
+            raise
+        await refresh
+        assert result is False
+        assert not projection.pending and projection._settled.is_set()
+        assert projection._read_request is None and not projection._reads
+        assert projection.key is None and projection.value is None and not reads
+
+        replacement = store.create_session(
+            settings=settings, canonical_settings_baseline=settings
+        )
+        assert replacement is not session and replacement.id != session.id
+        async with asyncio.timeout(1):
+            assert await projection.warm() is True
+        assert len(reads) == 1 and reads[0] != threading.get_ident()
+        assert store.active_session_id == replacement.id
+        assert projection.key == projection._key()
+        assert projection.value == screen.app_instance.app_config
+        assert not projection.pending and projection._settled.is_set()
+        await asyncio.gather(*tasks)
+    finally:
+        await asyncio.gather(*tasks, return_exceptions=True)
+
+
+@pytest.mark.asyncio
 async def test_expired_presentation_never_converges_real_session_but_fresh_handoff_does(
     monkeypatch,
 ):

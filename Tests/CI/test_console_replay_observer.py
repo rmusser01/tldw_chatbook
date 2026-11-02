@@ -64,6 +64,8 @@ async def test_replay_observer_retires_recycled_frame_addresses():
         contextlib=contextlib,
         inspect=inspect,
         sys=sys,
+        # This synthetic host omits the failure-only timeline collector.
+        observe_hold=lambda _kind, _label, _frame, _value: None,
         # Sequential invocations deliberately share an address. No interpreter
         # allocator behavior or historical Git revision is required.
         id=lambda _frame: 42,

@@ -38,6 +38,7 @@ from tldw_chatbook.Widgets.AppFooterStatus import AppFooterStatus
 from tldw_chatbook.Widgets.Console.console_setup_modal import (
     CONSOLE_SETUP_MODAL_ACTION_ID,
     CONSOLE_SETUP_MODAL_DETECTED_ACTION_ID,
+    CONSOLE_SETUP_MODAL_LOOK_AGAIN_ID,
     CONSOLE_SETUP_MODAL_NOTES_ACTION_ID,
     ConsoleSetupModal,
 )
@@ -45,6 +46,7 @@ from tldw_chatbook.Widgets.Console.console_setup_modal import (
 _PRIMARY = f"#{CONSOLE_SETUP_MODAL_ACTION_ID}"
 _NOTES = f"#{CONSOLE_SETUP_MODAL_NOTES_ACTION_ID}"
 _DETECTED = f"#{CONSOLE_SETUP_MODAL_DETECTED_ACTION_ID}"
+_LOOK_AGAIN = f"#{CONSOLE_SETUP_MODAL_LOOK_AGAIN_ID}"
 
 
 class _StyledCardApp(ConsolidatedCSSApp):
@@ -87,10 +89,10 @@ def _cue(button: Button) -> str:
 @pytest.mark.parametrize(
     ("detected", "stops"),
     [
-        (False, [_PRIMARY, _NOTES]),
+        (False, [_PRIMARY, _NOTES, _LOOK_AGAIN]),
         (True, [_PRIMARY, _NOTES, _DETECTED]),
     ],
-    ids=["two-actions", "with-detected-server"],
+    ids=["with-look-again", "with-detected-server"],
 )
 async def test_tab_and_shift_tab_cycle_every_card_action_with_the_focus_cue(
     detected: bool, stops: list[str]
@@ -106,9 +108,9 @@ async def test_tab_and_shift_tab_cycle_every_card_action_with_the_focus_cue(
         await _until(pilot, lambda: app.focused is buttons[start], "first focus")
 
         def assert_stop(index: int) -> None:
-            assert app.focused is buttons[index], (
-                f"expected {stops[index]}, got {app.focused!r}"
-            )
+            assert (
+                app.focused is buttons[index]
+            ), f"expected {stops[index]}, got {app.focused!r}"
             assert [_cue(button) for button in buttons] == [
                 "heavy" if position == index else "" for position in range(len(stops))
             ]
@@ -333,6 +335,8 @@ async def test_a_guidance_sync_keeps_focus_on_the_action_tab_reached(request) ->
 
         await pilot.press("shift+tab")
         await _card_focus_on(host, console, pilot, _PRIMARY)
+        await pilot.press("shift+tab")
+        await _card_focus_on(host, console, pilot, _LOOK_AGAIN)
         await pilot.press("shift+tab")
         await _card_focus_on(host, console, pilot, _NOTES)
 

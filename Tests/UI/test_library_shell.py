@@ -25805,6 +25805,14 @@ class _LibraryIngestCanvasHarness(LibraryIngestQueueMixin, App):
                 LocalMediaReadingService(media_db), None
             )
 
+    def peek_notes_sync_runtime(self) -> tuple[None, bool]:
+        """This ingest-only app has no Notes sync owner or build failure."""
+        return None, False
+
+    def read_notes_sync_runtime_owner(self) -> None:
+        """Keep Notes preparation inert for this ingest-only app."""
+        return None
+
     def _create_ingest_parse_pool(self, *, processes: int | None = None):
         return _IngestParsePoolResources(
             self._pool_factory(),

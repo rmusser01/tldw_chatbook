@@ -1046,6 +1046,7 @@ def test_inspector_section_css_is_styled_in_source_and_bundle():
         for path in (
             Path("tldw_chatbook/css/features/_console.tcss"),
             Path("tldw_chatbook/css/features/_console_panels.tcss"),
+            Path("tldw_chatbook/css/features/_console_inspector.tcss"),
         )
     )
     for class_name in (

@@ -3885,27 +3885,9 @@ class TldwCli(
         ``call_from_thread`` (can raise if the app is already shutting down
         mid-walk) are all covered by the one try/except below.
         """
-        try:
-            from tldw_chatbook.Skills_Interop.project_skills_prompt import (
-                startup_discovery_for,
-            )
+        from .app_skill_wiring import _discover_project_skills_for_startup
 
-            try:
-                cwd = Path.cwd().resolve()
-            except OSError:
-                return  # launch directory deleted out from under the process
-            discovery = startup_discovery_for(
-                cwd,
-                enabled=bool(
-                    get_cli_setting("skills", "project_skills_prompt_enabled", True)
-                ),
-                ledger_dir=get_user_data_dir(),
-            )
-            if discovery is None:
-                return
-            self.call_from_thread(self._push_project_skills_import_modal, discovery)
-        except Exception:
-            logger.opt(exception=True).debug("project-skills startup discovery failed")
+        return _discover_project_skills_for_startup(self, app_globals=globals())
 
     def _push_project_skills_import_modal(self, discovery) -> None:
         from tldw_chatbook.Widgets.project_skills_import_modal import (

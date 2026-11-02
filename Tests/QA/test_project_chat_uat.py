@@ -208,7 +208,7 @@ async def test_project_chat_uat(
         "phases": [],
         "substitutions": [
             "scripted model HTTP responses",
-            "preconfigured provider/onboarding/read permissions",
+            "preconfigured provider/onboarding/read permissions and full agent tools",
             "root pytest fixtures block unrelated default endpoint discovery",
         ],
     }
@@ -264,7 +264,10 @@ async def test_project_chat_uat(
                         "max_tokens": 256,
                     },
                     "console": console_settings,
-                    "tools": {"list_directory_enabled": variant == "wrong-family"},
+                    "tools": {
+                        "full_agent_tools_enabled": True,
+                        "list_directory_enabled": variant == "wrong-family",
+                    },
                 }
             )
             from tldw_chatbook.app import TldwCli
@@ -445,7 +448,16 @@ async def test_project_chat_uat(
 
                         def listing_approval():
                             capture_progress()
-                            return list(console.query(".approval-row"))
+                            rows = list(console.query(".approval-row"))
+                            return (
+                                rows
+                                if rows
+                                and all(
+                                    row.is_mounted and row.query(".approval-row-header")
+                                    for row in rows
+                                )
+                                else None
+                            )
 
                         rows = await wait_for(
                             pilot,

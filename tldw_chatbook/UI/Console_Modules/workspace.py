@@ -5856,7 +5856,7 @@ class ConsoleWorkspaceController:
         from ...Chat.console_preparation_reads import run_preparation_read
 
         app = self.app_instance
-        registry = getattr(app, "workspace_registry_service", None)
+        registry = app.workspace_registry_service
         database = getattr(registry, "db", None)
         if not (
             type(registry) is LocalWorkspaceRegistryService
@@ -5910,7 +5910,7 @@ class ConsoleWorkspaceController:
             source_current()
             if (
                 self.app_instance is not app
-                or getattr(app, "workspace_registry_service", None) is not registry
+                or app.workspace_registry_service is not registry
                 or self._workspace_availability_runtime() is not runtime
                 or self._screen_lifecycle_token() != lifecycle
                 or not self._screen_running_accessor()

@@ -31,7 +31,7 @@ pytestmark = pytest.mark.bootstrap_profile
 
 MODEL = "local-model"
 NOTICE = f"{MODEL} can't accept images"
-STRIP_REASON = f"Send blocked — {NOTICE}"
+STRIP_REASON = "Send blocked — this model can't accept images"
 
 
 def _image() -> PendingAttachment:
@@ -372,9 +372,7 @@ async def test_a_long_model_id_is_ellipsized_and_both_actions_stay_whole_at_80x2
             "_build_console_provider_selection",
             lambda: replace(selection(), explicit_model=long_model),
         )
-        _composer, _store, _session = await _stage_image(
-            console, pilot, strip_reason=f"Send blocked — {long_model} can't accept images"
-        )
+        _composer, _store, _session = await _stage_image(console, pilot)
         await pilot.pause()
 
         block = console.query_one("#console-attachment-block")

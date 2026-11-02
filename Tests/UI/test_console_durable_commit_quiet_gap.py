@@ -80,7 +80,15 @@ async def test_a_durable_commit_runs_its_first_sync_then_holds_until_the_next_ti
             syncs = _Syncs(monkeypatch, console)
 
             async def settled() -> None:
-                await until(lambda: not console._console_sync_in_progress, timeout=30)
+                # A deferred FULL sync leaves its replay owning the request
+                # after the running pass has cleared its in-progress flag.
+                await until(
+                    lambda: not console._console_sync_in_progress
+                    and not getattr(
+                        console, "_console_control_bar_replay_whole_sync", False
+                    ),
+                    timeout=30,
+                )
 
             async def tick() -> None:
                 await settled()

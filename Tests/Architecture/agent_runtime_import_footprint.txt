@@ -51,16 +51,12 @@ tldw_chatbook.Chat.Chat_Deps
 tldw_chatbook.Chat.Chat_Functions
 tldw_chatbook.Chat.answer_citations
 tldw_chatbook.Chat.assistant_generation_state
-tldw_chatbook.Chat.chat_conversation_scope_service
-tldw_chatbook.Chat.chat_conversation_service
 tldw_chatbook.Chat.chat_handoff_models
-tldw_chatbook.Chat.chat_loop_scope_service
 tldw_chatbook.Chat.citation_evidence_models
 tldw_chatbook.Chat.citation_source_locators
 tldw_chatbook.Chat.citation_trace_builder
 tldw_chatbook.Chat.citation_trace_identity
 tldw_chatbook.Chat.citation_trace_models
-tldw_chatbook.Chat.console_appearance
 tldw_chatbook.Chat.console_chat_models
 tldw_chatbook.Chat.console_context_policy
 tldw_chatbook.Chat.console_endpoint_provenance
@@ -69,7 +65,6 @@ tldw_chatbook.Chat.console_project_instructions
 tldw_chatbook.Chat.console_provider_endpoints
 tldw_chatbook.Chat.console_provider_support
 tldw_chatbook.Chat.console_transaction_contribution
-tldw_chatbook.Chat.conversation_local_marks_service
 tldw_chatbook.Chat.library_activity
 tldw_chatbook.Chat.provider_catalog
 tldw_chatbook.Chat.provider_continuation
@@ -79,8 +74,6 @@ tldw_chatbook.Chat.provider_test_evidence
 tldw_chatbook.Chat.provider_usage
 tldw_chatbook.Chat.rag_scope
 tldw_chatbook.Chat.sampling_params
-tldw_chatbook.Chat.server_chat_conversation_service
-tldw_chatbook.Chat.server_chat_loop_service
 tldw_chatbook.Chat.thinking_blocks
 tldw_chatbook.Chat.trajectory
 tldw_chatbook.Config_Files
@@ -177,7 +170,6 @@ tldw_chatbook.Utils.Utils
 tldw_chatbook.Utils.adaptive_reader_state
 tldw_chatbook.Utils.atomic_file_ops
 tldw_chatbook.Utils.console_background_effects
-tldw_chatbook.Utils.datetime_codec
 tldw_chatbook.Utils.egress
 tldw_chatbook.Utils.fd_protection
 tldw_chatbook.Utils.file_durability
@@ -204,9 +196,7 @@ tldw_chatbook.config
 tldw_chatbook.model_capabilities
 tldw_chatbook.provider_registry
 tldw_chatbook.runtime_policy
-tldw_chatbook.runtime_policy.bootstrap
 tldw_chatbook.runtime_policy.server_credentials
-tldw_chatbook.runtime_policy.source_state
 tldw_chatbook.runtime_policy.types
 textual
 httpx

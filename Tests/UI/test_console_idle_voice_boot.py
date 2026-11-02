@@ -15,6 +15,7 @@ pytestmark = [pytest.mark.asyncio, pytest.mark.bootstrap_profile]
 async def test_coalesced_idle_control_bar_preserves_first_voice_import(
     request, monkeypatch, activate_before_ready
 ):
+    from Tests.app_module_patches import set_app_global
     from Tests.UI.test_console_hook_review_send_freeze import _until
     from Tests.UI.test_console_native_chat_flow import _configure_native_ready_console
     from Tests.UI.test_destination_shells import _build_test_app, _wait_for_selector
@@ -35,6 +36,9 @@ async def test_coalesced_idle_control_bar_preserves_first_voice_import(
 
     monkeypatch.setattr(TldwCli, "_post_mount_setup", held_post_mount)
     app = _build_test_app(configured_default="chat")
+    # Retain the factory's no-profile-DB seam through deferred startup; this
+    # test qualifies original voice/paint ownership, not FTS initialization.
+    set_app_global(monkeypatch, "get_chachanotes_db_lazy", lambda: None)
     _configure_native_ready_console(app)
     calls = []
     dispatched = ChatScreen._run_coalesced_control_bar_sync.__code__

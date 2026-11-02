@@ -4014,9 +4014,7 @@ class PersonasScreen(BaseAppScreen):
         query = fence.query.strip()
         needle = query.lower()
         if kind == "character" and fence.runtime_source == "server":
-            service = getattr(
-                self.app_instance, "character_persona_scope_service", None
-            )
+            service = self.app_instance.character_persona_scope_service
             response = await service.search_characters(
                 query, mode="server", limit=_SERVER_CHARACTER_SEARCH_MAX_RESULTS
             )
@@ -14681,10 +14679,8 @@ class PersonasScreen(BaseAppScreen):
         elif kind == "dictionary":
             await self._import_dictionary_from_path(str(path), intent=intent)
         elif kind == "actor_pack":
-            controller = getattr(
-                self.app_instance, "actor_pack_import_controller", None
-            )
-            importer = getattr(self.app_instance, "actor_pack_import_service", None)
+            controller = self.app_instance.actor_pack_import_controller
+            importer = self.app_instance.actor_pack_import_service
             if controller is None or importer is None:
                 self._notify("Actor Pack import is unavailable.", "error")
                 return False

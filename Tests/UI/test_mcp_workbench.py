@@ -254,6 +254,7 @@ class FakeHubService:
 class WorkbenchApp(ConsolidatedCSSApp):
     def __init__(self) -> None:
         super().__init__()
+        self.app_config: dict[str, Any] = {}
         self.unified_mcp_service = FakeHubService()
 
     def compose(self) -> ComposeResult:
@@ -291,24 +292,29 @@ class HubLocalWorkbenchApp(WorkbenchApp):
         self.unified_mcp_service = HubLocalProjectionService()
 
 
+async def _wait_for_initial_server_rows(app: WorkbenchApp, pilot) -> MCPWorkbench:
+    workbench = app.query_one(MCPWorkbench)
+    # The initial after-refresh dispatch may not have created its worker
+    # yet. An empty worker manager is not evidence that loading finished.
+    # Loading can also finish before the rail's queued replacement mounts.
+    # Ending the pilot then can prune a Select before its overlay composes.
+    rail = workbench.query_one(MCPRail)
+    async with asyncio.timeout(10):
+        while (
+            workbench.is_loading
+            or workbench._reloading
+            or rail.recompose_in_flight
+            or len(list(app.query("Button.mcp-rail-row"))) != 3
+        ):
+            await pilot.pause(0.025)
+    return workbench
+
+
 @pytest.mark.asyncio
 async def test_workbench_mounts_rail_canvas_inspector_and_loads_local_servers():
     app = WorkbenchApp()
     async with app.run_test() as pilot:
-        workbench = app.query_one(MCPWorkbench)
-        # The initial after-refresh dispatch may not have created its worker
-        # yet. An empty worker manager is not evidence that loading finished.
-        # Loading can also finish before the rail's queued replacement mounts.
-        # Ending the pilot then can prune a Select before its overlay composes.
-        rail = workbench.query_one(MCPRail)
-        async with asyncio.timeout(10):
-            while (
-                workbench.is_loading
-                or workbench._reloading
-                or rail.recompose_in_flight
-                or len(list(app.query("Button.mcp-rail-row"))) != 3
-            ):
-                await pilot.pause(0.025)
+        workbench = await _wait_for_initial_server_rows(app, pilot)
         assert workbench.active_mode == "servers"
         # builtin + docs rows (+ "All servers")
         assert len(list(app.query("Button.mcp-rail-row"))) == 3
@@ -1209,7 +1215,7 @@ async def test_tool_gate_checkbox_toggle_saves_setting_and_reloads_catalog(monke
 
     app = WorkbenchApp()
     async with app.run_test(size=(120, 40)) as pilot:
-        await pilot.pause()
+        await _wait_for_initial_server_rows(app, pilot)
         await pilot.click(f"#{MCP_RAIL_ROW_PREFIX}1")  # builtin row
         await pilot.pause()
 
@@ -1342,7 +1348,7 @@ async def test_focus_is_preserved_across_a_gate_toggle_save_and_resync(monkeypat
 
     app = WorkbenchApp()
     async with app.run_test(size=(120, 40)) as pilot:
-        await pilot.pause()
+        await _wait_for_initial_server_rows(app, pilot)
         await pilot.click(f"#{MCP_RAIL_ROW_PREFIX}1")  # builtin row
         await pilot.pause()
 
@@ -1388,7 +1394,7 @@ async def test_double_activation_of_a_gate_row_never_writes_an_mcp_key(monkeypat
 
     app = WorkbenchApp()
     async with app.run_test(size=(120, 40)) as pilot:
-        await pilot.pause()
+        await _wait_for_initial_server_rows(app, pilot)
         await pilot.click(f"#{MCP_RAIL_ROW_PREFIX}1")  # builtin row
         await pilot.pause()
 

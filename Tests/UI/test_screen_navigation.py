@@ -543,6 +543,8 @@ def test_lazy_screen_registry_resolves_visible_shell_destinations(request):
         "llm": "LLMScreen",
         "logs": "LogsScreen",
         "settings": "SettingsScreen",
+        "plugins": "PluginsScreen",
+        "kanban": "KanbanBoardScreen",
     }
 
     resolved = {}
@@ -4167,6 +4169,8 @@ async def test_main_navigation_copy_and_order(request):
         ("nav-settings", "F4 Settings"),
         ("nav-research", "F5 Research"),
         ("nav-meetings", "F7 Meetings"),
+        ("nav-plugins", "F8 Plugins"),
+        ("nav-kanban", "F9 Kanban"),
     ]
 
     class TestApp(ConsolidatedCSSApp):
@@ -4190,7 +4194,7 @@ async def test_main_navigation_copy_and_order(request):
         )
         assert nav_buttons[0].id == "nav-home"
         assert nav_buttons[1].id == "nav-console"
-        assert nav_buttons[-1].id == "nav-meetings"
+        assert nav_buttons[-1].id == "nav-kanban"
         # TASK-2154.21 (NV-01): the static hint is now the overflow menu's
         # compact button (hidden at widths where nothing clips).
         hint = app.query_one("#nav-overflow-hint", Button)

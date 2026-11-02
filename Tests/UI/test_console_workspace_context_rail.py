@@ -1222,6 +1222,7 @@ def test_console_workspace_context_grouped_browser_styles_are_declared() -> None
         for path in (
             Path("tldw_chatbook/css/features/_console.tcss"),
             Path("tldw_chatbook/css/features/_console_panels.tcss"),
+            Path("tldw_chatbook/css/features/_console_inspector.tcss"),
         )
     )
 
@@ -2037,6 +2038,7 @@ def test_console_workspace_conversation_subsection_styles_are_declared() -> None
         for path in (
             Path("tldw_chatbook/css/features/_console.tcss"),
             Path("tldw_chatbook/css/features/_console_panels.tcss"),
+            Path("tldw_chatbook/css/features/_console_inspector.tcss"),
         )
     )
 
@@ -2173,6 +2175,7 @@ def test_conversation_search_input_is_tall_enough_to_show_its_value() -> None:
         for path in (
             Path("tldw_chatbook/css/features/_console.tcss"),
             Path("tldw_chatbook/css/features/_console_panels.tcss"),
+            Path("tldw_chatbook/css/features/_console_inspector.tcss"),
         )
     )
 

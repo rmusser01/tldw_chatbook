@@ -175,7 +175,13 @@ class BusyScreen:
         self._closing = False
         self._closed = False
         self.app_instance = None
-        self.app = SimpleNamespace(screen=self)
+        self.app = SimpleNamespace(
+            screen=self,
+            console_runtime=None,
+            is_shutting_down=lambda: False,
+            is_screen_navigation_busy=lambda: False,
+        )
+        self.app_instance = self.app
         self._console_send_flight = SimpleNamespace(tasks=set(), deferred=None)
         self._console_pending_send = None
         self._console_transcript_sync_timer = None
@@ -222,12 +228,13 @@ async def test_global_foreground_owners_hold_idle_maintenance_before_controller(
 
     class Host(NavigationMixin):
         _screen_navigation_in_progress = TldwCli._screen_navigation_in_progress
+        is_shutting_down = TldwCli.is_shutting_down
 
     screen = BusyScreen()
     app = Host()
     app.screen = screen
     app.console_runtime = ConsoleRuntime(app, canvas_enabled_reader=lambda: False)
-    screen.app = app
+    screen.app = screen.app_instance = app
     assert not console_transcript._console_heap_busy(screen)
     if owner == "admitted":
         # Real admission queues behind a lock owned by another operation.

@@ -514,15 +514,10 @@ def _console_heap_busy(screen: Any) -> bool:
 
     if _console_screen_is_torn_down(screen) or screen.app.screen is not screen:
         return True
-    app = screen.app
-    if getattr(app, "_shutting_down", False) or getattr(
-        app, "_screen_navigation_calls", None
-    ):
+    app = screen.app_instance
+    if app.is_shutting_down() or app.is_screen_navigation_busy():
         return True
-    navigating = getattr(app, "_screen_navigation_in_progress", None)
-    if navigating is not None and navigating():
-        return True
-    runtime = getattr(app, "console_runtime", None)
+    runtime = app.console_runtime
     if runtime is not None and runtime.has_custodied_turns():
         return True
     flight = getattr(screen, "_console_send_flight", None)

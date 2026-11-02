@@ -12,7 +12,9 @@ from unicodedata import category
 from urllib.parse import urlsplit, urlunsplit
 
 from ..provider_registry import ALL_RECORDS, ProviderRecord
-from .provider_setup_facts import ROUTE_SUFFIXES
+
+#: Saved versioned bases use this chat route; setup re-exports the same map.
+ROUTE_SUFFIXES: dict[str, str] = {"zai": "/chat/completions"}
 
 EndpointForm = Literal[
     "origin",

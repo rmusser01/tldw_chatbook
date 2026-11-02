@@ -19,6 +19,7 @@ _STYLESHEETS = (
     (
         Path("tldw_chatbook/css/features/_console.tcss"),
         Path("tldw_chatbook/css/features/_console_panels.tcss"),
+        Path("tldw_chatbook/css/features/_console_inspector.tcss"),
     ),
     _GENERATED,
 )

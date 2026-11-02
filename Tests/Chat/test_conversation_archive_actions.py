@@ -142,6 +142,9 @@ async def test_real_archive_send_guard_restore_resume_keeps_original_id(tmp_path
     app = SimpleNamespace(
         local_chat_conversation_service=service,
         pending_handoffs=PendingHandoffStore(),
+        screen_stack=(),
+        screen=None,
+        workspace_registry_service=None,
         notify=Mock(),
         post_message=Mock(),
         push_screen=lambda dialog, **kw: dialogs.append((dialog, kw)),
