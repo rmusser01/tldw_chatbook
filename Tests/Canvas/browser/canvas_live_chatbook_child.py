@@ -8,8 +8,8 @@ import json
 import os
 import sqlite3
 from collections.abc import Mapping
+from dataclasses import replace
 from pathlib import Path
-from types import SimpleNamespace
 from typing import Any
 
 # Bind the selected profile and guards before importing application owners.
@@ -41,6 +41,7 @@ from tldw_chatbook.Agents.agent_models import FENCE_TOOL_RESULT_PREFIX
 from tldw_chatbook.Chat.console_library_destination import (
     resolve_console_destination,
 )
+from tldw_chatbook.Chat.console_provider_gateway import ConsoleProviderResolution
 from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
 from tldw_chatbook.Widgets.Console.console_canvas_card import ConsoleCanvasCard
 
@@ -213,7 +214,7 @@ class _ScriptedCanvasGateway(_ReadyResolutionGateway):
         return self.cached_context_window(settings)
 
     async def resolve_for_send(self, selection):
-        resolution = SimpleNamespace(
+        resolution = ConsoleProviderResolution(
             provider=selection.provider,
             base_url=selection.base_url or "http://127.0.0.1:9099",
             model=selection.explicit_model
@@ -222,8 +223,9 @@ class _ScriptedCanvasGateway(_ReadyResolutionGateway):
             ready=True,
             visible_copy="",
         )
-        resolution.resolved_destination = resolve_console_destination(resolution)
-        return resolution
+        return replace(
+            resolution, resolved_destination=resolve_console_destination(resolution)
+        )
 
     @staticmethod
     def _json_content(content: str):

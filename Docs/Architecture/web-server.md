@@ -212,8 +212,10 @@ if an observer is cancelled. The service uses its own process group for bounded
 TERM/KILL escalation and waits for actual process exit. A closed host can be
 replaced only after its process reports a return code; a timeout cannot prove
 owner death. The child separately watches genuine private-control loss, closes
-native admission/wakes, invokes native runtime disposal and exits. Disabling Canvas
-alone preserves control and terminal work.
+native admission/wakes, fences the already-installed Console controller and requests
+ordinary App exit in a finally block. Native full shutdown retains the original
+view and execution lease through ordered project-index, view-worker and image
+retirement. Disabling Canvas alone preserves control and terminal work.
 
 Host `reserve_saved_conversation` and `register_saved_conversation` retain native
 identity metadata; the authoritative shared readiness/custody operation lives in
