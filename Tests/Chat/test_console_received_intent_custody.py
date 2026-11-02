@@ -172,3 +172,34 @@ async def test_command_claim_has_no_desktop_draft_transfer(intent_case):
     assert store.session_draft(session.id) == "captured original draft"
     record = runtime._turn_custody[intent.turn_id]
     assert record.request is None and not record.inputs.durable_accepted
+
+
+@pytest.mark.parametrize("failure", ("scheduling", "configuration"))
+async def test_received_early_failure_releases_exact_native_user_proof(
+    intent_case, monkeypatch, failure
+):
+    from dataclasses import replace
+
+    runtime, store, session, _request = intent_case
+    recovery = runtime.ensure_archive_recovery()
+    proof = recovery.issue_user_proof(session.id)
+    intent = replace(_intent(intent_case), recovery_user_origin=proof)
+    assert recovery._proofs[id(proof)] is proof
+    if failure == "scheduling":
+
+        def refuse(_coroutine):
+            raise RuntimeError("native received scheduling refused")
+
+        monkeypatch.setattr(runtime, "_create_custody_task", refuse)
+        with pytest.raises(RuntimeError, match="native received scheduling refused"):
+            runtime.accept_received_intent(intent)
+    else:
+        turn_id = runtime.accept_received_intent(intent)
+        task = runtime._turn_custody[turn_id].task
+        session.settings_revision += 1
+        await asyncio.gather(task, return_exceptions=True)
+        await asyncio.sleep(0)
+    assert not runtime.has_custodied_turns(session.id)
+    assert store.received_turn_for_session(session.id) is None
+    assert id(proof) not in recovery._proofs
+    assert id(proof) not in recovery._accepted_proofs

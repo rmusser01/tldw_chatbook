@@ -353,13 +353,44 @@ class _CapturedSQLite:
         return _plan_content_actors(self)
 
     def retire(self):
+        was_active = self.active
         self.active = False
+        custody = self.custody
+        if custody is None:
+            if self.resources or self.roots:
+                raise ValueError("mobile_sqlite_custody_changed")
+            return  # Initial custody allocation refused before any acquisition.
+        if (
+            type(custody) is not _CaptureFileDescriptors
+            or custody.scope is not self
+            or custody.close_failed
+        ):
+            raise ValueError("mobile_sqlite_custody_changed")
+        if custody not in self.resources:
+            if (
+                not was_active
+                and not self.resources
+                and not self.roots
+                and not custody.fds
+                and not custody.directory_iterators
+            ):
+                return  # Maintenance rechecks an already physically retired scope.
+            raise ValueError("mobile_sqlite_custody_changed")
         for resource in reversed(tuple(self.resources)):
-            resource.retire()
+            if resource is not custody:
+                resource.retire()
+        # Drain existing handles without unregistering the prepaid custodian.
+        # The same owner must retain any uncertain cleanup descriptor below.
+        while custody.directory_iterators:
+            custody.close_directory_iterator(custody.directory_iterators[-1])
+        while custody.fds:
+            custody.close_descriptor(custody.fds[-1])
+            custody.fds.pop()
         for root, identity in self.roots:
             if not root.exists() and identity is None:
                 continue
             _retire_staging(self, root, identity)
+        custody.retire()
         self.roots.clear()
 
 
@@ -416,7 +447,18 @@ def _verify_candidate(scope, restrictions, candidate, digest):
 
 def _retire_staging(scope, root, identity, *, _read_budget=None):
     """Remove only the witnessed private read tree after every reader retired."""
-    custody = _CaptureFileDescriptors(scope)
+    shared_custody = type(scope) is _CapturedSQLite
+    if shared_custody:
+        custody = scope.custody
+        if (
+            type(custody) is not _CaptureFileDescriptors
+            or custody.scope is not scope
+            or custody not in scope.resources
+            or custody.close_failed
+        ):
+            raise ValueError("mobile_sqlite_custody_changed")
+    else:
+        custody = _CaptureFileDescriptors(scope)
 
     def remove_children(parent):
         if _read_budget is None:
@@ -470,7 +512,8 @@ def _retire_staging(scope, root, identity, *, _read_budget=None):
                 raise ValueError("mobile_sqlite_staging_changed")
             os.rmdir(root.name, dir_fd=parent)
     finally:
-        custody.retire()
+        if not shared_custody:
+            custody.retire()
 
 
 def _legacy_absent(reads, purpose, family, table):
@@ -512,37 +555,138 @@ def _native_column_layouts(purpose, family, table, current, version):
         missing = ()
         if (family, table) == ("chat", "conversations") and version in (81, 82, 83, 84):
             missing = ("archived_at",)
-        elif (family, table) == ("workspaces", "workspace_records") and version in (8, 9):
+        elif (family, table) == ("workspaces", "workspace_records") and version in (
+            8,
+            9,
+        ):
             missing = ("archived_at", "archive_revision")
         elif (family, table) == ("runs", "automatic_wake_attempts") and version == 24:
             missing = ("review_boundary_id",)
-        elif (family, table) == ("chat", "character_portrait_performances") and version == 83:
+        elif (family, table) == (
+            "chat",
+            "character_portrait_performances",
+        ) and version == 83:
             missing = ("composition_recipe_json",)
         expected = tuple(c for c in current if c not in missing)
     layouts = [expected]
     if (family, table) == ("runs", "agent_definitions"):
         # Installed upgraded layout appends fallback settings to the old table.
-        upgraded = tuple(c for c in expected if c != "fallback_models_json") + ("fallback_models_json",)
+        upgraded = tuple(c for c in expected if c != "fallback_models_json") + (
+            "fallback_models_json",
+        )
         layouts.append(upgraded)
     elif (family, table) == ("runs", "agent_runs"):
-        upgraded = expected[:-3] + ("work_chain_id", "fallback_targets_json", "active_fallback_index")
+        upgraded = expected[:-3] + (
+            "work_chain_id",
+            "fallback_targets_json",
+            "active_fallback_index",
+        )
         layouts.append(upgraded)
     elif (family, table) == ("runs", "automatic_wake_attempts"):
-        upgraded = expected[:7] + ("state", "created_at", "accepted_at", "completed_at", "cause", "message_ids_json", "attempt_kind")
+        upgraded = expected[:7] + (
+            "state",
+            "created_at",
+            "accepted_at",
+            "completed_at",
+            "cause",
+            "message_ids_json",
+            "attempt_kind",
+        )
         if "review_boundary_id" in expected:
             upgraded += ("review_boundary_id",)
         layouts.append(upgraded)
-    if (family, table) == ("runs", "automatic_wake_attempts") and "review_boundary_id" in expected:
+    if (family, table) == (
+        "runs",
+        "automatic_wake_attempts",
+    ) and "review_boundary_id" in expected:
         # Native fresh25 and upgraded25 append the two fields in opposite orders.
         assert expected[-2:] == ("attempt_kind", "review_boundary_id")
         layouts.append(expected[:-2] + ("review_boundary_id", "attempt_kind"))
     # Other exact pre-fallback native upgrade catalogs retained by recovery.
-    layouts.extend({
-        ('runs', 'agent_definitions'): (('id', 'name', 'description', 'instructions', 'tool_allowlist', 'model', 'enabled', 'deleted', 'created_at', 'updated_at', 'max_wall_seconds', 'provider', 'params_json', 'fallback_models_json'), ('id', 'name', 'description', 'instructions', 'tool_allowlist', 'model', 'enabled', 'max_wall_seconds', 'deleted', 'created_at', 'updated_at', 'provider', 'params_json', 'fallback_models_json')),
-        ('runs', 'agent_runs'): (('id', 'conversation_id', 'parent_run_id', 'agent_kind', 'task', 'status', 'steps', 'result', 'budget', 'created_at', 'updated_at', 'assistant_message_id', 'agent_definition', 'definition_fingerprint', 'wake_delivered_at', 'resumed_from_run_id', 'spawn_event_id', 'budget_tokens', 'work_chain_id', 'resolved_provider', 'resolved_model', 'resolved_base_url', 'resolved_params_json', 'fallback_targets_json', 'active_fallback_index'),),
-    }.get((family, table), ()))
-    if (family, table) == ("runs", "automatic_wake_attempts") and "review_boundary_id" in expected:
-        layouts.append(expected[:7] + ("state", "created_at", "accepted_at", "completed_at", "cause", "message_ids_json", "review_boundary_id", "attempt_kind"))
+    layouts.extend(
+        {
+            ("runs", "agent_definitions"): (
+                (
+                    "id",
+                    "name",
+                    "description",
+                    "instructions",
+                    "tool_allowlist",
+                    "model",
+                    "enabled",
+                    "deleted",
+                    "created_at",
+                    "updated_at",
+                    "max_wall_seconds",
+                    "provider",
+                    "params_json",
+                    "fallback_models_json",
+                ),
+                (
+                    "id",
+                    "name",
+                    "description",
+                    "instructions",
+                    "tool_allowlist",
+                    "model",
+                    "enabled",
+                    "max_wall_seconds",
+                    "deleted",
+                    "created_at",
+                    "updated_at",
+                    "provider",
+                    "params_json",
+                    "fallback_models_json",
+                ),
+            ),
+            ("runs", "agent_runs"): (
+                (
+                    "id",
+                    "conversation_id",
+                    "parent_run_id",
+                    "agent_kind",
+                    "task",
+                    "status",
+                    "steps",
+                    "result",
+                    "budget",
+                    "created_at",
+                    "updated_at",
+                    "assistant_message_id",
+                    "agent_definition",
+                    "definition_fingerprint",
+                    "wake_delivered_at",
+                    "resumed_from_run_id",
+                    "spawn_event_id",
+                    "budget_tokens",
+                    "work_chain_id",
+                    "resolved_provider",
+                    "resolved_model",
+                    "resolved_base_url",
+                    "resolved_params_json",
+                    "fallback_targets_json",
+                    "active_fallback_index",
+                ),
+            ),
+        }.get((family, table), ())
+    )
+    if (family, table) == (
+        "runs",
+        "automatic_wake_attempts",
+    ) and "review_boundary_id" in expected:
+        layouts.append(
+            expected[:7]
+            + (
+                "state",
+                "created_at",
+                "accepted_at",
+                "completed_at",
+                "cause",
+                "message_ids_json",
+                "review_boundary_id",
+                "attempt_kind",
+            )
+        )
     return tuple(layouts)
 
 
@@ -564,11 +708,36 @@ def _check_plan_candidates(reads):
 
 
 _SOURCE_HISTORY_PROBES = (
-    ("chat", "character_portrait_performances", "SELECT id FROM character_portrait_performances LIMIT 1", "mobile_source_portrait_history_unsupported"),
-    ("chat", "character_portrait_performance_frames", "SELECT performance_id FROM character_portrait_performance_frames LIMIT 1", "mobile_source_portrait_history_unsupported"),
-    ("chat", "character_portrait_regions", "SELECT character_id FROM character_portrait_regions LIMIT 1", "mobile_source_portrait_history_unsupported"),
-    ("runs", "automatic_review_boundary_claims", "SELECT substr(boundary_id,1,128) FROM automatic_review_boundary_claims LIMIT 1", "mobile_source_review_boundary_history_unsupported"),
-    ("runs", "automatic_wake_attempts", "SELECT substr(id,1,128) FROM automatic_wake_attempts WHERE review_boundary_id IS NOT NULL LIMIT 1", "mobile_source_review_boundary_history_unsupported"),
+    (
+        "chat",
+        "character_portrait_performances",
+        "SELECT id FROM character_portrait_performances LIMIT 1",
+        "mobile_source_portrait_history_unsupported",
+    ),
+    (
+        "chat",
+        "character_portrait_performance_frames",
+        "SELECT performance_id FROM character_portrait_performance_frames LIMIT 1",
+        "mobile_source_portrait_history_unsupported",
+    ),
+    (
+        "chat",
+        "character_portrait_regions",
+        "SELECT character_id FROM character_portrait_regions LIMIT 1",
+        "mobile_source_portrait_history_unsupported",
+    ),
+    (
+        "runs",
+        "automatic_review_boundary_claims",
+        "SELECT substr(boundary_id,1,128) FROM automatic_review_boundary_claims LIMIT 1",
+        "mobile_source_review_boundary_history_unsupported",
+    ),
+    (
+        "runs",
+        "automatic_wake_attempts",
+        "SELECT substr(id,1,128) FROM automatic_wake_attempts WHERE review_boundary_id IS NOT NULL LIMIT 1",
+        "mobile_source_review_boundary_history_unsupported",
+    ),
 )
 
 
@@ -576,9 +745,14 @@ def _refuse_unmapped_source_history(reads):
     """Identity-only bounded probes; portrait blobs and review bodies stay unread."""
     for family, table, sql, reason in _SOURCE_HISTORY_PROBES:
         key = ("legacy", family)
-        if key not in reads._connections or _legacy_absent(reads, "legacy", family, table):
+        if key not in reads._connections or _legacy_absent(
+            reads, "legacy", family, table
+        ):
             continue
-        if table == "automatic_wake_attempts" and ("legacy", "runs", 24) in reads.versions:
+        if (
+            table == "automatic_wake_attempts"
+            and ("legacy", "runs", 24) in reads.versions
+        ):
             continue
         reads.check()
         connection, restrictions, tables, candidate, digest = reads._connections[key]
@@ -842,8 +1016,9 @@ def _sqlite_reads(captured, *, password, cancel):
     scope.versions = ()
     session._scopes.append(scope)
     _local.mobile_sqlite_scope = scope
-    scope.custody = _CaptureFileDescriptors(scope)
+    scope.custody = None
     try:
+        scope.custody = _CaptureFileDescriptors(scope)
         scope.check()
         with ExitStack() as connections:
             versions = []

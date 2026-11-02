@@ -6880,7 +6880,9 @@ class ConsoleWorkspaceController:
                 target_workspace_id = conversation.get("workspace_id") or None
                 target_scope_type = "workspace" if target_workspace_id else "global"
             session = None
-            cleanup_owner = restore_cleanup_owner if restore_cleanup_owner is not None else object()
+            cleanup_owner = (
+                restore_cleanup_owner if restore_cleanup_owner is not None else object()
+            )
             hydration = self._console_session_settings_for_resume(conversation)
             if not isinstance(hydration, ConsoleGenerationSettingsHydration):
                 raise TypeError(

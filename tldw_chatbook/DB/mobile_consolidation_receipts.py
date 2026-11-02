@@ -823,7 +823,9 @@ def _source_row_digest(reads, table, values, budget):
     # Receipt construction retains its original per-row live-reader proof.
     reads.check()
     version = next(v for p, f, v in reads.versions if (p, f) == ("legacy", spec.family))
-    matches = _native_columns_match("legacy", spec.family, table, columns, spec.columns, version)
+    matches = _native_columns_match(
+        "legacy", spec.family, table, columns, spec.columns, version
+    )
     _, restrictions, _, candidate, digest = reads._connections["legacy", spec.family]
     _verify_candidate(reads, restrictions, candidate, digest)
     reads.check()

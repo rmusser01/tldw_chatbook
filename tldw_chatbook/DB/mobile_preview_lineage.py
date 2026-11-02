@@ -53,20 +53,29 @@ def _reject_preview_connection(connection, family, deadline):
         if time.monotonic() >= deadline:
             raise TimeoutError("preview_preflight_deadline")
         connection.execute("BEGIN")
-        names = {row[0] for row in connection.execute(
-            "SELECT name FROM sqlite_schema WHERE type='table' AND name IN "
-            "('mobile_consolidation_batches','mobile_import_authority_holds',"
-            "'console_command_receipts','schema_version','db_schema_version')"
-        )}
-        mobile = bool(names & {"mobile_consolidation_batches", "mobile_import_authority_holds"})
+        names = {
+            row[0]
+            for row in connection.execute(
+                "SELECT name FROM sqlite_schema WHERE type='table' AND name IN "
+                "('mobile_consolidation_batches','mobile_import_authority_holds',"
+                "'console_command_receipts','schema_version','db_schema_version')"
+            )
+        }
+        mobile = bool(
+            names & {"mobile_consolidation_batches", "mobile_import_authority_holds"}
+        )
         commands = family == "runs" and "console_command_receipts" in names
         if not mobile and not commands:
             return
         if family == "chat" and "db_schema_version" in names:
-            rows = connection.execute("SELECT version FROM db_schema_version WHERE schema_name='rag_char_chat_schema' LIMIT 2").fetchall()
+            rows = connection.execute(
+                "SELECT version FROM db_schema_version WHERE schema_name='rag_char_chat_schema' LIMIT 2"
+            ).fetchall()
             version = rows[0][0] if len(rows) == 1 else None
         elif family != "chat" and "schema_version" in names:
-            version = connection.execute("SELECT MAX(version) FROM schema_version").fetchone()[0]
+            version = connection.execute(
+                "SELECT MAX(version) FROM schema_version"
+            ).fetchone()[0]
         else:
             version = None
         minimum = {"chat": 86, "workspaces": 11, "runs": 27 if mobile else 26}[family]
@@ -83,7 +92,9 @@ def _reject_preview_connection(connection, family, deadline):
 
 
 def reject_incompatible_console_stores(
-    chat_path: str | Path, workspace_path: str | Path, run_path: str | Path,
+    chat_path: str | Path,
+    workspace_path: str | Path,
+    run_path: str | Path,
 ) -> None:
     """Preflight all actual selected stores before any coordinated owner upgrade."""
     from .AgentRuns_DB import reject_incompatible_preview as runs

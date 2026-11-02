@@ -24858,3 +24858,17 @@ journey. A same-target test is not cross-target isolation evidence: use a real
 retained predecessor outcome and an independently confirmed current target, and
 prove both old-outcome visibility and current control/decision behavior. Receipt
 delivery negatives must await the specific response and client processing.
+
+
+## Same owner does not mean the same selected preservation scope
+
+**TASK-36766 PR3345 integration, epochs90–97, 2026-11-01.** Installed rollback
+validation rejected a legitimate imported history tree after physical publication.
+The actual native plan contained six `agents.history` directories but selected
+only the default empty `tool_sandbox` in `safety_scope`; the other five remained
+preserved under ordinary native policy. A direct helper fixture containing only
+the selected root missed this distinction. Filter fixed-disposition routing by
+the actual reviewed scope, then retain every strict check on selected members.
+Include unrelated nonempty same-owner siblings in controls. The fresh unobserved
+original rollback94 and actual edited-row/SafetyCopy97 passed after this correction;
+all failed epochs remain retained.

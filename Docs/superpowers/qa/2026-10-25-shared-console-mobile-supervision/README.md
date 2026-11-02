@@ -320,3 +320,31 @@ The same whole-feature reviewer approved WF-I01, WF-M01 and WF-M02 at
 `whole-feature-fix-rereview-findings.md` records the scoped verdict; the original
 review retains its stated coverage and CV-01–CV-03 qualifications. Completion
 metadata does not change the tested executable source.
+
+
+## Current-dev integration qualification in progress (2026-11-01)
+
+The integration is based on dev `7b3b2371c3141e6168726102496db1d71181adaf`.
+Historical qualification above does not certify this combined source. Exact
+source-bound logs, failed attempts and manifests are retained in the isolated
+implementation evidence directory `dev-integration-2026-11-01`.
+
+The current targeted checks establish native background phone Ask refusal with
+empty/different/equal desktop drafts, late edits/settings revisions and both
+streaming selections; a below-threshold non-streaming phone send succeeds.
+Native queued phone and composer controls retain the exact refused request at
+the paused queue head, with no new provider attempt or desktop attachment,
+prefill or staged-evidence transfer. Opaque provenance is single-use and is
+released after refused promotion; the retained queue body does not reauthorize
+archive recovery. Ordinary desktop Compact/send, bypass and Cancel controls,
+all four transformed action gates, exact Stop, command-origin/summary fences and
+qualified desktop forecast controls have separate targeted evidence.
+
+The expected-directory safety matcher now refuses file/symlink substitutions
+without reading their payload. Real registered-profile metadata checks preserve
+native custody and retain exclusion after ambiguous native close. Ordinary
+builtin and file SafetyCopy publication controls pass. Complete populated mobile
+public rollback remains under qualification; component catalogs or isolated
+metadata controls are not a substitute for it. The final independent integration
+review and whole 15-case served-browser UAT remain pending. No physical phone,
+external provider, real-profile migration or full-suite result is claimed here.

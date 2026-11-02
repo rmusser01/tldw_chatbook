@@ -187,6 +187,25 @@ stamps, and continues rejecting unknown catalogs. This installs receipts and
 quarantine consumers; the preview still performs no import or cutover.
 
 
+Current-dev compatibility preserves canonical portrait, conversation archive,
+Workspace binding/tombstone and automatic review history. Source portrait history
+and source review-boundary claims or non-null wake references remain explicit
+prewrite refusals; importing historical references does not renew live file,
+agent, trigger, binding, indexing or review authority. Native validators and the
+exact versioned table/ordered-column/default catalog remain authoritative.
+
+`DB/mobile_preview_lineage.py` rejects known incompatible unmerged preview
+markers before any of the three selected native owners initializes. Startup uses
+the same authoritative path snapshot as native initialization, including explicit
+path overrides; each direct constructor repeats the guard on its actual path.
+The fixed owner reads use admitted, must-exist, nonimmutable read-only SQLite
+connections and finite metadata transactions so live WAL markers are visible.
+These reads do not create a schema, stamp a version, checkpoint or authorize a
+conversion. SQLite may coordinate SHM and allocate a new empty WAL; existing main
+and WAL contents/identity/modes remain protected. Refusal retains the database and
+sidecars. This is a rejection guard, not schema acceptance or an atomic exclusion
+of an external writer; existing writer-quiescence prerequisites remain.
+
 The Subscription database owner separates inert class/schema imports from its
 actual threshold settings read. That read retains the native configuration
 getter and admission; recovery does not need to initialize application settings
@@ -408,6 +427,34 @@ retires only the native writer staging directory with the exact durable parent
 witness; foreign replacements remain untouched. Empty sources record a native no-data proof, create no
 legacy database and have no source archive. C2 must verify purpose-specific rows,
 references and artifact bytes before import and cutover.
+
+Later canonical rollback has one additional fixed preserve-only disposition
+(ADR244 R176, amending ADR126): the authenticated native default empty
+`agents.history` container. `mobile_empty_history._empty_history_members` derives
+its exact root from the matching selected profile config and checks native
+metadata, dependencies and actual bounded emptiness at each required boundary.
+It is never installed or granted generic deferred-owner restore authority.
+Unselected `agent_history/imports` trees keep their ordinary native disposition;
+installed preservation selects only members in the reviewed `plan.safety_scope`
+and retains all exact preserve-pair and root checks for those selected members.
+
+For that fixed history route, R177 keeps complete proof before Prepared, at the
+actual `MaintenanceSession._replacement_capture_scope`, and after capture.
+`replacement.capture_verify_rollback` consumes the exact inventory yielded by
+that scope and checks the descriptor inside its lifetime. Only the redundant
+separate capture-entry sample is removed; generic/package routes keep their
+existing checks. There is no inventory cache or larger read allowance.
+
+Native config publication legitimately replaces the selected leaf inode.
+`publication._installed_history_preservation` verifies that transition using the
+existing held session/EX, parsed current records, Prepared, receipt and descriptor.
+It checks original ancestors/content, native installed leaf identity/mode/phase,
+and exact private config copies before and after use. The existing preservation
+budget and registered metadata custodian cover that work; only immutable config
+bytes reach pure default-root derivation. Preview/staging/capture retain strict
+original selector witnesses. No caller witness token, fresh current-journal
+parser, new role or cached acceptance is introduced. Ambiguous native close still
+retains custody and the maintenance hold without retry.
 
 `_preview_mobile_credential_issues` performs native disposable capture under the
 same qualified session before actual capture intent. It returns bounded body-free
@@ -728,7 +775,7 @@ dispatch/recovery, holds, receipts, file publication or instruction activation.
 ### Private logical actor planning and complete C2 composition (C2c)
 
 `content_actor_plan()` consumes the real captured workflow plan and completes the
-246-field C2 ownership matrix. Fixed handlers transform the 116 columns of the
+247-field C2 ownership matrix. Fixed handlers transform the 116 columns of the
 portable Actor registry, Buddy profiles and bindings, Persona Visual graph, and
 shared Visual Identity graph. Native decoders validate original and projected
 associations; only declared typed references change. Original manifests, hashes,

@@ -2467,7 +2467,7 @@ def _custom_endpoint_declared_credential(
         when a declared credential resolves, else None (nothing declared, or
         nothing that resolves).
     """
-    from tldw_chatbook.config import is_encrypted_config_value, resolve_provider_api_key
+    from tldw_chatbook.config import resolve_provider_api_key
 
     env = environ if environ is not None else os.environ
     if entry.api_key_env:

@@ -221,41 +221,67 @@ def _seed(
         execution_owner.close()
         if legacy:
             _reconstruct_legacy_stores(
-                stores, legacy_chat_version=legacy_chat_version,
+                stores,
+                legacy_chat_version=legacy_chat_version,
                 legacy_workspace_version=legacy_workspace_version,
                 legacy_runs_version=legacy_runs_version,
             )
 
 
 def _reconstruct_legacy_stores(
-    stores, *, legacy_chat_version=81, legacy_workspace_version=8, legacy_runs_version=25,
+    stores,
+    *,
+    legacy_chat_version=81,
+    legacy_workspace_version=8,
+    legacy_runs_version=25,
 ):
     """Build exact installed predecessors only after fixture owners close."""
     from tldw_chatbook.DB import recovery_core_schema
     from tldw_chatbook.DB.recovery_operations import (
-        _AGENT_RUNS_SCHEMA, _WORKSPACES_SCHEMA,
+        _AGENT_RUNS_SCHEMA,
+        _WORKSPACES_SCHEMA,
     )
 
     assert legacy_runs_version in (24, 25)
     assert legacy_chat_version in (81, 82, 83, 84, 85)
     assert legacy_workspace_version in (8, 9, 10)
     for path, catalog, version in (
-        (stores.chat_path, getattr(recovery_core_schema, f"CHACHANOTES_V{legacy_chat_version}_SCHEMAS")[0], legacy_chat_version),
-        (stores.workspace_path, next(c for v, c in _WORKSPACES_SCHEMA if v == legacy_workspace_version), legacy_workspace_version),
-        (stores.run_path, next(c for v, c in _AGENT_RUNS_SCHEMA if v == legacy_runs_version), legacy_runs_version),
+        (
+            stores.chat_path,
+            getattr(
+                recovery_core_schema, f"CHACHANOTES_V{legacy_chat_version}_SCHEMAS"
+            )[0],
+            legacy_chat_version,
+        ),
+        (
+            stores.workspace_path,
+            next(c for v, c in _WORKSPACES_SCHEMA if v == legacy_workspace_version),
+            legacy_workspace_version,
+        ),
+        (
+            stores.run_path,
+            next(c for v, c in _AGENT_RUNS_SCHEMA if v == legacy_runs_version),
+            legacy_runs_version,
+        ),
     ):
         _reconstruct_predecessor(path, catalog, version)
+
 
 def _reconstruct_predecessor(path, catalog, version):
     """Build an exact installed fixture catalog, preserving compatible seed rows."""
     import sqlite3
     from contextlib import closing
 
-    from tldw_chatbook.DB.ChaChaNotes_DB import _install_canvas_revision_payload_validator
+    from tldw_chatbook.DB.ChaChaNotes_DB import (
+        _install_canvas_revision_payload_validator,
+    )
 
     target = path.with_suffix(".predecessor")
     quote = lambda name: '"' + name.replace('"', '""') + '"'
-    with closing(sqlite3.connect(path)) as source, closing(sqlite3.connect(target)) as dest:
+    with (
+        closing(sqlite3.connect(path)) as source,
+        closing(sqlite3.connect(target)) as dest,
+    ):
         _install_canvas_revision_payload_validator(dest)
         # Virtual tables create their shadow catalog themselves. Ordinary tables
         # must precede inserts; native triggers are installed only after copying
@@ -273,18 +299,39 @@ def _reconstruct_predecessor(path, catalog, version):
         for _, name, kind, *_ in dest.execute("PRAGMA table_list").fetchall():
             if name.startswith("sqlite_") or kind not in ("table", "virtual"):
                 continue
-            columns = tuple(row[1] for row in dest.execute("PRAGMA table_info(" + quote(name) + ")"))
+            columns = tuple(
+                row[1] for row in dest.execute("PRAGMA table_info(" + quote(name) + ")")
+            )
             names = ",".join(map(quote, columns))
             rows = source.execute("SELECT " + names + " FROM " + quote(name)).fetchall()
-            dest.executemany("INSERT INTO " + quote(name) + " (" + names + ") VALUES (" + ",".join("?" for _ in columns) + ")", rows)
-        if dest.execute("SELECT 1 FROM sqlite_schema WHERE name='sqlite_sequence'").fetchone():
+            dest.executemany(
+                "INSERT INTO "
+                + quote(name)
+                + " ("
+                + names
+                + ") VALUES ("
+                + ",".join("?" for _ in columns)
+                + ")",
+                rows,
+            )
+        if dest.execute(
+            "SELECT 1 FROM sqlite_schema WHERE name='sqlite_sequence'"
+        ).fetchone():
             dest.execute("DELETE FROM sqlite_sequence")
-            dest.executemany("INSERT INTO sqlite_sequence VALUES (?,?)", source.execute("SELECT name,seq FROM sqlite_sequence").fetchall())
+            dest.executemany(
+                "INSERT INTO sqlite_sequence VALUES (?,?)",
+                source.execute("SELECT name,seq FROM sqlite_sequence").fetchall(),
+            )
         for sql in catalog:
             if not sql.startswith(("CREATE TABLE", "CREATE VIRTUAL TABLE")):
                 dest.execute(sql)
-        if dest.execute("SELECT 1 FROM sqlite_schema WHERE name='db_schema_version'").fetchone():
-            dest.execute("UPDATE db_schema_version SET version=? WHERE schema_name='rag_char_chat_schema'", (version,))
+        if dest.execute(
+            "SELECT 1 FROM sqlite_schema WHERE name='db_schema_version'"
+        ).fetchone():
+            dest.execute(
+                "UPDATE db_schema_version SET version=? WHERE schema_name='rag_char_chat_schema'",
+                (version,),
+            )
         else:
             dest.execute("DELETE FROM schema_version WHERE version>?", (version,))
         dest.commit()

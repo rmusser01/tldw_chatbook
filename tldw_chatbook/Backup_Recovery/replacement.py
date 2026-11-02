@@ -104,6 +104,17 @@ def _checked_originals(
         or type(plan.target) is not Inventory
     ):
         raise ValueError("rollback_plan_required")
+    mobile_source_options = (
+        _source_read_budget is not None
+        or _source_journal is not None
+        or _source_archive is not None
+    )
+    if mobile_source_options and (
+        _source_read_budget is None
+        or _source_journal is None
+        or _source_archive is None
+    ):
+        raise ValueError("mobile_safety_source_required")
     with journal._locked(exclusive=True) as parent:
         records = journal._records(parent)
         if (
@@ -230,6 +241,37 @@ def _checked_originals(
                         _source_archive,
                         _source_journal,
                         source_budget,
+                        cancel,
+                    )
+                if mobile_members.get(item.logical_id) != item:
+                    raise ValueError("rollback_source_binding_unverified")
+            # R176 never bypasses the ordinary physical-root check above.
+            if (
+                mobile_source_options
+                and plan.local_snapshot is not None
+                and item.owner == "agents.history"
+                and item.logical_id in plan.safety_scope
+                and (item.logical_id, item.path) in plan.preserve
+            ):
+                if (
+                    _source_read_budget is None
+                    or _source_journal is None
+                    or _source_archive is None
+                ):
+                    raise ValueError("mobile_safety_source_required")
+                from .mobile_builtin_preservation import _mobile_safety_members
+
+                if mobile_members is None:
+                    mobile_members = _mobile_safety_members(
+                        plan,
+                        journal,
+                        parent,
+                        prepared,
+                        receipt,
+                        session,
+                        _source_archive,
+                        _source_journal,
+                        _source_read_budget,
                         cancel,
                     )
                 if mobile_members.get(item.logical_id) != item:
@@ -386,9 +428,57 @@ def capture_verify_rollback(
         type(issue) is not str for issue in acknowledged_credential_issues
     ):
         raise ValueError("rollback_credential_acknowledgements_invalid")
-    reader._check(cancel)
+    if (
+        type(plan) is not RestorePlan
+        or plan.mode != "replace"
+        or type(plan.target) is not Inventory
+    ):
+        raise ValueError("rollback_plan_required")
     source_options = {}
-    if _source_read_budget is not None:
+    scope_inventory = False
+    if (
+        _source_archive is not None
+        or _source_read_budget is not None
+        or _source_journal is not None
+    ):
+        from tldw_chatbook.Chat.console_trace_read_budget import _TraceReadBudget
+
+        from .archive_models import SealedArchive
+        from .journal import Journal
+        from .mobile_builtin_preservation import _preservation_budget
+        from .restore_plan import LocalSnapshotSource
+        from .storage_admission import MaintenanceSession
+
+        if (
+            type(_source_archive) is not SealedArchive
+            or type(_source_read_budget) is not _TraceReadBudget
+            or type(_source_journal) is not Journal
+            or type(plan.local_snapshot) is not LocalSnapshotSource
+            or not plan.target.complete
+            or type(session) is not MaintenanceSession
+            or type(cancel) is not Event
+        ):
+            raise ValueError("mobile_safety_source_required")
+        session._check()
+        _preservation_budget(_source_read_budget)
+        reader._check(cancel)
+        # Scheduling only. The actual capture scope must authenticate every
+        # source before this route can consume its freshly checked inventory.
+        _source_read_budget.reserve(1024)
+        for item in plan.target.items:
+            if (
+                item.owner != "agents.history"
+                or item.status != "included_directory"
+                or item.path is None
+                or item.logical_id not in plan.safety_scope
+            ):
+                continue
+            for preserved in plan.preserve:
+                if preserved[0] == item.logical_id and preserved[1] == item.path:
+                    scope_inventory = True
+                    break
+            if scope_inventory:
+                break
         _source_read_budget.reserve(512)
         source_options = {
             "_source_archive": _source_archive,
@@ -396,9 +486,13 @@ def capture_verify_rollback(
             "_source_journal": _source_journal,
             "cancel": cancel,
         }
-    prepared, inventory = _checked_originals(plan, journal, session, **source_options)
-    if prepared.publication.descriptor.path != str(candidate / "candidate.json"):
-        raise ValueError("candidate_receipt_changed")
+    reader._check(cancel)
+    if not scope_inventory:
+        prepared, inventory = _checked_originals(
+            plan, journal, session, **source_options
+        )
+        if prepared.publication.descriptor.path != str(candidate / "candidate.json"):
+            raise ValueError("candidate_receipt_changed")
     limits = ArchiveLimits()
     work_root = Path(work_root)
     destination = Path(destination)
@@ -430,7 +524,6 @@ def capture_verify_rollback(
     total = 0
     captured = {}
     raw_originals = {}
-    entries = [item for item in inventory.items if item.status == "included"]
     groups = []
     with session._replacement_capture_scope(
         plan,
@@ -439,7 +532,14 @@ def capture_verify_rollback(
         limits=limits,
         byte_budget=limits.expanded_bytes,
         **source_options,
-    ):
+    ) as originals:
+        if scope_inventory:
+            prepared, inventory = originals
+            if prepared.publication.descriptor.path != str(
+                candidate / "candidate.json"
+            ):
+                raise ValueError("candidate_receipt_changed")
+        entries = [item for item in inventory.items if item.status == "included"]
         for item in entries:
             reader._check(cancel)
             path = (
@@ -1552,6 +1652,8 @@ def replace(
     reader._check(cancel)
     if type(plan) is not RestorePlan or plan.mode != "replace" or plan.target is None:
         raise ValueError("replacement_plan_required")
+    if (_source_read_budget is None) != (_source_journal is None):
+        raise ValueError("mobile_safety_source_required")
     archive = _acquired_source(candidate, plan, cancel)
     descriptor = _descriptor(candidate, plan)
     if not set(descriptor.get("credential_issues", ())) <= set(
@@ -1694,6 +1796,16 @@ def replace(
             {"config": str(selector), "installation_id": uuid4().hex}
             for selector in selectors
         )
+        preparation_sources = {}
+        if _source_read_budget is not None:
+            _source_read_budget.reserve(1024)
+            preparation_sources = {
+                "_source_archive": archive,
+                "_source_read_budget": _source_read_budget,
+                "_source_journal": _source_journal,
+                "_source_session": session,
+                "_source_cancel": cancel,
+            }
         journal.prepare_publication(
             candidate,
             plan,
@@ -1703,6 +1815,7 @@ def replace(
             generation=operation,
             replacement_profiles=identities,
             incoming_credentials=incoming,
+            **preparation_sources,
         )
         source_options = {}
         if _source_read_budget is not None:

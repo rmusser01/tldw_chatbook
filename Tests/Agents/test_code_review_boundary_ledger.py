@@ -161,9 +161,11 @@ def test_foreign_runtime_recovery_retains_uncertain_evidence(ledger_case):
 
 
 def test_v24_upgrade_and_reopen_preserve_ordinary_history(tmp_path):
+    from Tests.Backup_Recovery.mobile_consolidation_fixture import (
+        _reconstruct_predecessor,
+    )
     from tldw_chatbook.Chat.console_execution_owner import ConsoleExecutionOwner
     from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
-    from Tests.Backup_Recovery.mobile_consolidation_fixture import _reconstruct_predecessor
     from tldw_chatbook.DB.recovery_operations import _AGENT_RUNS_SCHEMA
 
     path = tmp_path / "upgrade.db"

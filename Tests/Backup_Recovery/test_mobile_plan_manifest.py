@@ -38,13 +38,12 @@ def test_fixed_dispositions_cover_native_schemas_and_refuse_pending_handlers(
                 finally:
                     cursor.close()
                 assert observed[purpose, family, table] == columns
+        from tldw_chatbook.Backup_Recovery.mobile_captured_sqlite import _legacy_absent
         from tldw_chatbook.Backup_Recovery.mobile_identity_plan import (
             _CITATION_IDENTITIES,
             _COMPOSITES,
             _DOMAINS,
         )
-
-        from tldw_chatbook.Backup_Recovery.mobile_captured_sqlite import _legacy_absent
 
         for domain in _DOMAINS:
             if ("legacy", domain.family, domain.table) not in observed:
@@ -195,7 +194,11 @@ def test_plan_return_rechecks_candidate_mutated_after_catalog(
                 alter_candidate()
                 return result
 
-            monkeypatch.setattr(mobile_content_graph._GraphBuilder, "close_dependencies", close_dependencies)
+            monkeypatch.setattr(
+                mobile_content_graph._GraphBuilder,
+                "close_dependencies",
+                close_dependencies,
+            )
             operation = lambda: mobile_content_graph._plan_content_graph(reads)
         try:
             with pytest.raises(ValueError, match="mobile_sqlite_candidate_changed"):

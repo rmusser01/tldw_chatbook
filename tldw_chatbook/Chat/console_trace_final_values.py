@@ -21,9 +21,6 @@ from tldw_chatbook.Chat.console_provider_endpoints import (
     adapter_api_base_url,
     meaningful_adapter_base_url,
 )
-from tldw_chatbook.Chat.console_provider_support import (
-    CUSTOM_OPENAI_EXECUTION_KEYS,
-)
 from tldw_chatbook.Chat.console_trace_provenance import (
     DerivedTraceProvenance,
     OmittedTraceProvenance,
