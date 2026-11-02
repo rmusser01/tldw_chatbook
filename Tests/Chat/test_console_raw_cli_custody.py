@@ -137,12 +137,30 @@ async def test_start_refusal_releases_only_after_original_stash_acceptance(raw_h
         observed.append(h.runtime.execution_capacity.snapshot().tool_workers)
         or original_restore(sid, draft)
     )
-    h.controller._start_worker = lambda *args, **kwargs: (_ for _ in ()).throw(
-        RuntimeError("start refused")
-    )
+    finish_sources = []
+
+    def refused(*args, **kwargs):
+        from tldw_chatbook.Agents.activation import _guard
+
+        call = next(iter(h.runtime.raw_cli_source.pending))
+        original = call.operation.finish
+
+        def observe_finish():
+            original()
+            state = _guard.context.get()
+            assert state is not None and state.live
+            assert state.sources == call.sources
+            assert call.scratch_lease is not None and call.snapshot.root.is_dir()
+            finish_sources.append(state)
+
+        call.operation.finish = observe_finish
+        raise RuntimeError("start refused")
+
+    h.controller._start_worker = refused
     draft = stash()
     assert h.controller.start_user_command(draft) is False
     assert observed == [1]
+    assert len(finish_sources) == 1 and not finish_sources[0].live
     assert h.restored == [(h.session.id, draft)]
     assert h.runtime.execution_capacity.snapshot().executions == ()
 
@@ -279,23 +297,67 @@ async def test_disposal_joins_actual_host_return_and_scratch_lease(raw_host):
     assert not scratch.root.exists()
 
 
-async def test_original_operation_finish_return_precedes_claim_retirement(raw_host):
+@pytest.mark.parametrize("cold", [False, True])
+async def test_original_operation_finish_return_precedes_claim_retirement(
+    raw_host, cold
+):
+    from tldw_chatbook.Agents.activation import _guard
+    from tldw_chatbook.Backup_Recovery import storage_admission
+
     h = raw_host
+    if cold:
+        h.runtime._agent_runs_db.close()
+        h.runtime._activity_receipts = None
+        h.runtime._agent_runs_db = None
     assert h.controller.start_user_command(stash())
     call = next(iter(h.runtime.raw_cli_source.pending))
+    scratch = call.snapshot
     entered, release = threading.Event(), threading.Event()
+    observed = {}
+    marker = h.controller._append_starting_marker
+
+    def capture(*args):
+        observed["state"] = _guard.context.get()
+        observed["runs"] = call._db._thread_local.conn
+        observed["chat"] = call.database._local.conn
+        return marker(*args)
+
+    h.controller._append_starting_marker = capture
     original = call.operation.finish
 
     def held():
         original()
+        observed["finish_state"] = _guard.context.get()
+        observed["finish_runs"] = getattr(call._db._thread_local, "conn", None)
+        observed["finish_chat"] = getattr(call.database._local, "conn", None)
         entered.set()
         assert release.wait(15)
 
     call.operation.finish = held
     work, _ = h.workers.pop()
     task = asyncio.create_task(asyncio.to_thread(work))
+    dispose = None
     try:
         await until(entered.is_set)
+        assert observed["finish_state"] is observed["state"], (
+            "original activation exited before finish returned"
+        )
+        assert observed["state"].live
+        assert observed["finish_runs"] is observed["runs"]
+        assert observed["finish_chat"] is observed["chat"]
+        assert call.scratch_lease is not None
+        dispose = asyncio.create_task(h.runtime.dispose())
+        await until(lambda: h.runtime._disposed)
+        dispose.cancel()
+        dispose.cancel()
+        await asyncio.sleep(0.05)
+        assert not dispose.done()
+        assert not h.runtime.scratch_spaces.is_live(scratch)
+        assert scratch.root.is_dir()
+        with storage_admission._lock:
+            assert (
+                set(observed["state"].leases.values()) <= storage_admission._live_leases
+            )
         assert not call.retired.is_set()
         assert call.owner.is_admitted
         with h.runtime.worktree_activity.prelaunch(
@@ -305,15 +367,38 @@ async def test_original_operation_finish_return_precedes_claim_retirement(raw_ho
     finally:
         release.set()
         await task
+        if dispose is not None:
+            try:
+                await dispose
+            except asyncio.CancelledError:
+                pass
     assert call.retired.is_set()
+    assert not observed["state"].live
+    assert not scratch.root.exists()
 
 
 async def test_dispose_unstarted_callback_cannot_later_launch(raw_host):
+    from tldw_chatbook.Agents.activation import _guard
+
     h = raw_host
     assert h.controller.start_user_command(stash())
+    call = next(iter(h.runtime.raw_cli_source.pending))
+    original = call.operation.finish
+    observed = []
+
+    def observe_finish():
+        original()
+        state = _guard.context.get()
+        assert state is not None and state.live
+        assert state.sources == call.sources
+        assert call.scratch_lease is not None and call.snapshot.root.is_dir()
+        observed.append(state)
+
+    call.operation.finish = observe_finish
     work, _ = h.workers.pop()
     await h.runtime.dispose()
     await asyncio.to_thread(work)
+    assert len(observed) == 1 and not observed[0].live
     assert h.session.persisted_conversation_id is None
     assert h.runtime.execution_capacity.snapshot().executions == ()
 

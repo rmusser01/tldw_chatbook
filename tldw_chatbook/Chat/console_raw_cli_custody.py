@@ -9,7 +9,7 @@ from contextvars import ContextVar
 from pathlib import Path
 from threading import Event, Lock
 
-from tldw_chatbook.Agents.activation import _guard, execution
+from tldw_chatbook.Agents.activation import _guard
 from tldw_chatbook.Agents.execution_capacity import CapacityRefused, WorkOrigin
 from tldw_chatbook.DB.base_db import operation_owned_connection
 from tldw_chatbook.Utils.filesystem_identity import capture_directory_chain
@@ -195,7 +195,9 @@ class _UserRawCliCall:
         self.host_proven = True
         self.retired = Event()
         self._start_lock = Lock()
-        self._started = self._cancelled = self._retiring = False
+        self._started = self._cancelled = self._retiring = self._settling = False
+        self._operation_finished = Event()
+        self._storage_stack = None
         self._refuse_unstarted = None
         self.selection_sources = _guard.sources(self)
         self.sources = tuple(
@@ -269,16 +271,18 @@ class _UserRawCliCall:
     @contextmanager
     def activate(self):
         with ExitStack() as stack:
-            stack.enter_context(execution(self, sources=self.sources))
+            stack.enter_context(_guard.execution(self, resolve=lambda _: self.sources))
             if self.owner is not None:
                 stack.enter_context(self.owner.activate())
             for db in dict.fromkeys((self._db, self.database, self.registry_db)):
                 if db is not None:
                     stack.enter_context(operation_owned_connection(db))
+            previous_stack, self._storage_stack = self._storage_stack, stack
             token = _current_call.set(self) if self.request is not None else None
             try:
                 yield
             finally:
+                self._storage_stack = previous_stack
                 if token is not None:
                     _current_call.reset(token)
 
@@ -340,6 +344,10 @@ class _UserRawCliCall:
             self.sources = tuple(
                 dict.fromkeys((*self.sources, *self.selection_sources))
             )
+            self._storage_stack.enter_context(
+                _guard.execution(self, resolve=lambda _: self.sources)
+            )
+            self._storage_stack.enter_context(operation_owned_connection(self._db))
         self.check()
         return self._db
 
@@ -421,16 +429,30 @@ class _UserRawCliCall:
             # No native retry/reaper exists; preserve this worker's original scopes.
             Event().wait()
 
-    def finish(self):
+    def finish_operation(self):
+        """Join the original finish callback before leaving its storage scopes."""
         with self._start_lock:
-            if self._retiring:
-                return
+            first = not self._retiring
             self._retiring = True
+        if not first:
+            self._operation_finished.wait()
+            return
         self.retain_unproven()
+        self.operation.finish()
+        self._operation_finished.set()
+
+    def finish(self):
+        if not self._operation_finished.is_set():
+            # Conclusively never-started/refused calls have no worker activation.
+            with self.activate():
+                self.finish_operation()
+        with self._start_lock:
+            if self._settling:
+                return
+            self._settling = True
         if self.scratch_lease is not None:
             self.scratch_lease.__exit__(None, None, None)
             self.scratch_lease = None
-        self.operation.finish()
         self.owner.finish_root()
         self.claim.settle(durable=True)
         self.issuer.pending.discard(self)

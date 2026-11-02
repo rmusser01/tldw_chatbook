@@ -10,6 +10,7 @@ import threading
 from time import monotonic
 from typing import Any
 import uuid
+from contextlib import nullcontext
 
 from ...Agents.agent_models import STEP_TOOL_CALL, STEP_TOOL_RESULT
 from ...Agents.run_log import (
@@ -446,7 +447,7 @@ class ConsoleRawCliController:
                         runtime, request, session_id, stash, native_anchor, custody
                     )
                 finally:
-                    custody.retain_unproven()
+                    custody.finish_operation()
         except Exception:  # noqa: BLE001 -- failed worker storage admission has no launch
             custody.deliver(self._marshal_to_ui, self._refuse, session_id, stash, _AUTHORITY_CHANGED_REFUSAL, refusal=True)
         finally:
@@ -538,7 +539,7 @@ class ConsoleRawCliController:
 
         # The native command callback owns only the connection it acquires.
         # A pre-existing caller connection remains with its original owner.
-        with operation_owned_connection(db):
+        with operation_owned_connection(db) if custody is None else nullcontext():
             if custody is not None:
                 run_id = uuid.uuid4().hex
                 custody.run_id = run_id

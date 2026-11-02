@@ -282,8 +282,9 @@ qualified native calls. Model and Task7 callers hand off their exact original
 catalog/provider/runtime and already-reserved operation, adding no owner or
 charge. Standalone calls keep bounded helper waits and report missing proof.
 Host custody ends at actual synchronous acceptance or source-validated discard,
-then original storage/scratch release and operation.finish return precede root
-and activity settlement. Cancellation before worker entry seals an original
+and the original source/storage scopes and scratch lease remain live through
+actual operation.finish return. Storage scopes then exit, followed by scratch
+release and root/activity settlement. Cancellation before worker entry seals an original
 start fence; wrapper cancellation alone cannot retire a callback that started.
 Disposal seals new admission and drains original callbacks before storage close.
 Unknown physical cleanup or required-write outcome can retain the worker,
