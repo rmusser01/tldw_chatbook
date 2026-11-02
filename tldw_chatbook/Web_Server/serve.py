@@ -2035,20 +2035,31 @@ class ChatbookWebServerMixin:
         session = request.get("chatbook_browser_session")
         if session is None:
             raise web.HTTPUnauthorized()
+        if not websocket.can_prepare(request).ok:
+            raise web.HTTPBadRequest(text="Invalid websocket upgrade")
         attachment = None
         host = None
         expiry_task = None
         unregister_channel = lambda: None
         try:
+            # Validate the upgrade first, but start heartbeat only after shared startup.
+            stores, _media_path, _source_dir = self._canonical_console_selection()
+            storage_identity = stores.identity
+            hosts = self._served_console_hosts
+            host = await hosts.get_or_start(storage_identity)
+            self._web_auth.touch_session(session)
+            if (
+                self._served_console_hosts is not hosts
+                or hosts._closed
+                or host._closed
+                or hosts.get_existing(storage_identity) is not host
+            ):
+                raise web.HTTPServiceUnavailable(text="Console unavailable")
             await websocket.prepare(request)
             unregister_channel = self._web_auth.register_channel(
                 session, lambda: asyncio.create_task(websocket.close(code=4001))
             )
             expiry_task = asyncio.create_task(self._expire_websocket_session(session))
-            # Server-admitted configuration only; browser parameters never select storage.
-            stores, _media_path, _source_dir = self._canonical_console_selection()
-            storage_identity = stores.identity
-            host = await self._served_console_hosts.get_or_start(storage_identity)
             if session.revoked or websocket.closed:
                 return websocket
             attachment = await host.attach_terminal(
@@ -2070,11 +2081,20 @@ class ChatbookWebServerMixin:
                 browser_session_id, host.service.app_service_id, attachment=attachment
             )
             await self._process_attached_terminal(request, websocket, attachment)
+        except web.HTTPException:
+            raise
+        except AuthenticationError:
+            if not websocket.prepared:
+                raise web.HTTPUnauthorized(text="Authentication denied") from None
+            await websocket.close(code=4001)
         except asyncio.CancelledError:
-            await websocket.close()
+            if websocket.prepared:
+                await websocket.close()
             raise
         except Exception as error:  # noqa: BLE001 - bounded websocket failure, no spawn secrets
             logger.error("Served terminal session failed type={}", type(error).__name__)
+            if not websocket.prepared:
+                raise web.HTTPServiceUnavailable(text="Console unavailable") from None
         finally:
             if expiry_task is not None:
                 expiry_task.cancel()
@@ -2087,7 +2107,8 @@ class ChatbookWebServerMixin:
                     attachment=attachment,
                 )
                 await attachment.detach()
-            await websocket.close()
+            if websocket.prepared:
+                await websocket.close()
         return websocket
 
     @property

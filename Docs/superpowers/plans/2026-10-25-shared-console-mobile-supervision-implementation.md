@@ -1437,3 +1437,32 @@ ADR path: backlog/decisions/244-shared-console-ownership-and-mobile-supervision.
 Reason: Bounded transport fairness and exact current decision interaction through background metadata updates.
 
 Adopt only fleet150-proposed-production-v2.patch plus overview amendment: one successful-enqueue cooperative yield, exact64frames/1MiB and no browser wait; independent existing form/overview signatures, preserving exact native form/answerability/disabled-state identity. No new renderer/persistence/authority/CSS/API/schema/dependency or numeric waiver. Full frontend policy reads precede UI code. Direct both-engine GREEN, slow-pressure/cancellation/generation/target/round/unknown-command controls precede one original unobserved fleet, then focused review/root commit/whole15/PR update. Historical148/149 exact causes stay qualified; no synthetic green total.
+
+
+### R187 initial terminal close diagnosis (before diagnostic154)
+
+ADR required: no new ADR for bounded observation
+ADR path: backlog/decisions/244-shared-console-ownership-and-mobile-supervision.md
+Reason: Identify the native source of an initial retained-terminal WebSocket close before any prompt, without changing behavior.
+
+Whole153 on19504c is14P1F878.53: both cold paths, full fleet, lostACK/security and all4lifecycle cases pass; only initial retention first-output fails. Exact close cause is unobserved. Adopt only retention153-close-diagnostic-proposal.md/retention154-hook-inert.txt after physical closure: THREE original delegate boundaries (detach/directcaller; child_closed/directcaller+existingreturncode; original terminal processor entry/finally with WSclosecode/exceptionTYPEONLY/sessionrevoked/queueflags). Shared8record/4096ASCII cap with complete-envelope preflight, no locals/stackwalk/payloads/IDs/secrets/SQL/request/processprobe/task/sampler, frame immediatelydeleted, no I/O in callback. One deferred privatewrite after original physical cleanup and patch.undo, nativeprocessreturncodes recorded without invented orphan status. Original45s/case/auth/heartbeat15/64frame1MiB limits/guards remain. Backup and byte-exactrestore originaltest only after nativeclosure. ONEoriginalretention node, no blindretry/qualificationcredit. Source proposal precedes anyproductionrepair; heartbeat/queue/nativeexit remain hypotheses. AC1 current qualification reopened while firstpaint fails; Task stays InProgress and allnumericgovernance limits unchanged.
+
+
+### R188 deterministic slow-start transport control (before test155)
+
+ADR required: no new ADR for test-only reproduction
+ADR path: backlog/decisions/244-shared-console-ownership-and-mobile-supervision.md
+Reason: Test the existing authenticated socket/start contract with real heartbeat processing before any production change.
+
+Diagnostic154 passed with normal closures only; historical148/153 cause stays unknown. Adopt retention154-startup-order-component-proposal.md: one existing test_served_tab_isolation _stack/_login/_EchoChild.start gate, real server handler/host registry/authenticated aiohttp socket/Ping/Pong. Hold only awaited child-start25s (15+7.5+native ceiling slack, within original45s); release same child, require native begin/ready/started+echo and exactly one child. Client permits handshake on either side of startup. No server clock/heartbeat/admission/protocol/limit patch, observer expansion, provider/replay, new helper/dependency or production edit. Always release/gather/close original owners. Run only new node once in durable155; actual RED required before minimum repair proposal. This cannot retrospectively classify whole148/153. All numeric limits stay unchanged; AC1 remains open.
+
+
+### R189 authenticated startup before heartbeat (pre-implementation)
+
+ADR required: yes, existing ADR amendment
+ADR path: backlog/decisions/244-shared-console-ownership-and-mobile-supervision.md
+Reason: Correct the existing native terminal upgrade/startup service boundary while preserving current auth and retained-child ownership.
+
+Actual155 reproduces a healthy client answering one native Ping/Pong then closing1006 while awaited startup remains pending, with one child/no ready frames. Adopt only startup155-proposed-production-v2.patch (SHA cc83c412ed07ade7e42fa2fe6c048d1385b1000057f3cc6fc8cee5c28f267c98): native can_prepare rejects malformed upgrade before child effects; same server-admitted profile/shared shielded start precedes prepare; native touch_session and exact registry/host checks precede upgrade. Pre-upgrade auth refusal401, unavailable503, native HTTP exceptions propagate; only prepared sockets are closed. Existing heartbeat15/Pong7.5, sole receive loop, generation/64frame/1MiB limits, established revocation/expiry channels, agent lifetime and permission/admission stay. No retry, timeout increase, input queue, helper or new authority.
+
+Qualify original slow-start node GREEN and minimum malformed-upgrade, revoked/expired pending start, cancelled observer/same-child reconnect, held-start shutdown, and established takeover/logout/expiry/Canvas controls using native fixtures. Historical148/153 causes remain unobserved and154 remains a diagnostic pass without qualification credit. Root review of final diff/evidence and focused independent correction review precede commit and one unchanged original whole15 acceptance. Numeric limits remain unchanged; Task stays In Progress.

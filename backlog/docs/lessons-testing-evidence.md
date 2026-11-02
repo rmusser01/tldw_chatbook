@@ -24927,3 +24927,8 @@ PR3345 native fleet epoch132 (2026-11-02) kept the child thread alive after prim
 ### Isolate scheduler and DOM identity failures before replaying a fleet
 
 PR3345 epochs148/149 (2026-11-02) failed at different fleet stages;149 recorded only ordinary empty-queue cleanup and did not explain148. Two actual-component regressions in150 instead proved independent defects: awaiting callbacks that only use put_nowait can starve an already-waiting receiver until a bounded queue falsely overflows, and an unrelated overview count can replace an active question input between pointer-down/up. Test runnable-consumer fairness and original DOM identity directly. Preserve genuine pressure/stale-target refusals and do not promote component evidence into a historical cause claim. Both-engine controls151 and original unobserved fleet152 passed after the narrow repairs.
+
+
+### A prepared heartbeat needs its receive loop
+
+PR3345 epoch155 (2026-11-02) held one native shared child start for25 seconds under the existing45-second test bound. A real client received Ping and sent Pong, yet closed1006 before startup released: `prepare` had armed the15/7.5-second heartbeat while the only receiver was still behind awaited startup. Validate the handshake before child effects, finish startup and revalidate native auth/host before upgrade.156 passed the same test plus native malformed/auth/shutdown/cancellation controls without raising timeouts. This establishes that ordering defect; it does not retroactively identify the unobserved close causes in148/153, and diagnostic154's pass remains no reproduction.
