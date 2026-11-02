@@ -846,6 +846,7 @@ async def test_original_stock_handler_accepts_b_without_consuming_a_staging(
             15,
         )
         assert runtime.snapshot_console_staged_evidence(second) == (None, 0, None)
+        assert runtime.snapshot_console_staged_evidence(first)[0] is launch
         assert runtime.snapshot_console_staged_evidence(first) == first_state
         strip = console.query_one(STRIP_ID, ConsoleStagedEvidenceStrip)
         assert await _until(lambda: not strip.display, 15)
@@ -916,6 +917,7 @@ async def test_original_stock_handler_accepts_b_without_consuming_a_staging(
             assert len(replies) == 1
             assert replies[0].evidence_source_count is None
             assert "Sources (" not in _citation_notice(replies[0])
+            assert runtime.snapshot_console_staged_evidence(first)[0] is launch
             assert runtime.snapshot_console_staged_evidence(first) == first_state
         finally:
             gateway.release.set()
@@ -923,6 +925,7 @@ async def test_original_stock_handler_accepts_b_without_consuming_a_staging(
             if turn_task is not None:
                 await asyncio.shield(turn_task)
         assert await _until(lambda: not runtime.has_custodied_turns(second), 15)
+        assert runtime.snapshot_console_staged_evidence(first)[0] is launch
         assert runtime.snapshot_console_staged_evidence(first) == first_state
         assert (
             console._ensure_console_chat_controller()._ordinary_native_commit_retirements(
