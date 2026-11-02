@@ -53,7 +53,7 @@ PR #3344's run 41429394025 (its merge commit is dev 88af9f9379) failed exactly t
 
 **How they got there.** Each row went over on 2026-11-01/02 in a backlog integration merged with CI waived. The exception is `app_command_providers`, which went over on 2026-10-21. The owner's 2026-10-31 instruction was "Ignore size limits", recorded in the QA record's "Size waiver" section (`Docs/superpowers/qa/2026-10-31-pr3162-backlog-rebase.md`). Those integrations kept dev's budget rows unchanged, so the rows went red. The three Roleplay rows carry comments recording a raise to 17,505 / 1,318 / 1,578. #3334 kept dev's lower ceilings, and two of those files now measure 4 lines above the recorded figures.
 
-**Overlap.** TASK-36161 lists the 8 rows that were red on 2026-10-22. Six of them are green now; its two still-red rows (`app_command_providers`, `console_transcript`) are in the table above. TASK-33910.21's AC#2-#3 already ask for the whole file to run in a required PR job. This task only makes the rows pass.
+**Overlap.** TASK-36161 lists the 8 rows that were red on 2026-10-22. Six of them are green now; its two still-red rows (`app_command_providers`, `console_transcript`) are in the table above. Meeting this task meets TASK-36161's AC#2, so that task does not need separate work on those rows. TASK-33910.21's AC#2-#3 already ask for the whole file to run in a required PR job. This task only makes the rows pass.
 <!-- SECTION:DESCRIPTION:END -->
 
 ## Acceptance Criteria

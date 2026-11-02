@@ -41,13 +41,18 @@ On dev 5b5920b8e2 locally, a temporary timing probe (since reverted) measured th
 | 41189968143 | 1 | fu/h-railstate (#3225) | 2026-10-31 | green on rerun |
 | 41224394415 | 1 | fu/h-railstate (#3225) | 2026-10-31 | stayed red |
 
-In the same set, 16 other UI (25) logs ran this node and it passed. `[size0]` is not a census entry. Four of the five known failures, counting the first, came from #3225's branch, which changed Console rail-state persistence (TASK-36385). On 2026-10-31 that branch failed the node in 3 of 4 attempts, against 1 of 62 recent UI (25) jobs on other branches. A local paired probe then found no difference that #3225 caused:
+The same set holds 19 UI (25) logs: the 4 above failed this node and 15 passed it. Of the 16 UI (25) jobs on other branches, 1 failed it. `[size0]` is not a census entry. Four of the five known failures, counting the first, came from #3225's branch, which changed Console rail-state persistence (TASK-36385). On 2026-10-31 that branch failed the node in 2 of 4 attempts:
+- 41189968143: attempt 1 failed, attempt 2 passed;
+- 41224394415: attempt 1 failed;
+- 41248007404 (the merge-time run, on d3dc1c99b0): attempt 1 passed, with a 20.14 s call.
+
+A local paired probe found no difference that #3225 caused:
 - The branch added no config writes to this test.
 - The snapshot save took 147-235 ms on the branch and 131-275 ms on dev.
 - The test passed 4 of 4 runs on both trees with all 18 CPUs loaded.
 - The branch's UI (25) shard ran 600 s, inside the 528-814 s of other runs.
 
-The owner then finished #3225 with three more commits (retained rail seeds) and merged it on 2026-10-31. Whether this node still fails on dev after that is unmeasured. If it fails again, instrument it in CI: log the save thread's executor wait and lock wait from a temporary debug commit. Local runs have not reproduced it.
+The owner finished #3225 with three more commits (retained rail seeds: b787009712, d02046bf61, edd6260383) and merged it on 2026-10-31. The final code ran twice in CI: 41224394415 on edd6260383 failed, and the merge-time run passed. No run on dev since then has been checked. If it fails again, instrument it in CI: log the save thread's executor wait and lock wait from a temporary debug commit. Local runs have not reproduced it.
 <!-- SECTION:DESCRIPTION:END -->
 
 ## Acceptance Criteria

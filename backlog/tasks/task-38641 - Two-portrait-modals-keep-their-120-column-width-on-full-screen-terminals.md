@@ -27,7 +27,7 @@ Found by TASK-36382's re-sync (PR #3227, 2026-10-30). The wide-tier reverse swee
 
 Both size their dialog with `$ds-inspector-modal-width`, which is 120 columns. They went into `MODAL_WIDE_TIER_SKIPPED` marked "follow-up wave", which the registry comment calls a queued gap, not a verdict.
 
-The tier's ladder gives a base width of 100 or more a cap of 170 at `WIDE_VIEWPORT_COLUMNS` (150) and above. The app is used full-screen (211x44 and 235x52), where both modals open at 120 columns. Both show artwork: one reviews eye-row pairs and source crops, the other edits regions over the source.
+The tier's ladder (`modal_wide_tier_registry.py`: base width >= 104 -> 170) gives a 120-column base a cap of 170 at `WIDE_VIEWPORT_COLUMNS` (150) and above. The app is used full-screen (211x44 and 235x52), where both modals open at 120 columns. Both show artwork: one reviews eye-row pairs and source crops, the other edits regions over the source.
 
 This is the same work as TASK-36522's ten modals, filed apart so that task's scope stays as triaged.
 <!-- SECTION:DESCRIPTION:END -->

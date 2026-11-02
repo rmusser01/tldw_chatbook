@@ -35,7 +35,7 @@ Found by TASK-36381's implementation and review (branch fu/h-settingsreds, 2026-
 
 <!-- SECTION:NOTES:BEGIN -->
 Won't Do: TASK-36478 removed the trap (2026-11-02, dev 88af9f9379).
-- TASK-36478 (#3254, merged 2026-10-26) handles each bootstrap-profile test in `Tests/conftest.py` (`_restore_bootstrap_profile_config`). It writes the shared `config.toml` back to the bytes the test started with, then drops config.py's caches. The next test's first read therefore rebuilds the dict from the restored file. That is the in-place `app.app_config` edit this task was about; that function's docstring names it.
-- The three tests named above, run in one process with `-p no:randomly` through the scratch-profile wrapper, gave 3 passed.
+- TASK-36478 (#3254, merged 2026-10-26) handles each bootstrap-profile test in `Tests/conftest.py` (`_restore_bootstrap_profile_config`). It writes the shared `config.toml` back to the bytes the test started with, then drops config.py's caches. The next test's first read therefore rebuilds the dict from the restored file. That also undoes an in-place edit of `app.app_config`, the case this task was about; that function's docstring names it.
+- As a smoke run only, the three tests named above, run in one process with `-p no:randomly` through the scratch-profile wrapper, gave 3 passed. They already passed on dev before TASK-36478, so the decision rests on the code above.
 - `Tests/UI/app_factory.py`'s docstring still limits `bootstrap_profile` to tests that neither save config nor assign into `app.app_config`. That rule is now stricter than needed, but it is harmless, so it stays.
 <!-- SECTION:NOTES:END -->
