@@ -566,24 +566,32 @@
   }
   function renderDecisions() {
     const rows = state.snapshot?.decisions || [];
-    const signature = JSON.stringify([state.chat && targetOf(state.chat), rows.map(({answerable, ...round}) => round), state.snapshot?.recoveries, state.chats.map(row => [row.session_id, row.pending_decision_count])]);
+    const overviewSignature = JSON.stringify([state.chat && targetOf(state.chat), state.chat?.title, rows.map(round => round.kind), state.chats]);
+    if (state.decisionOverviewSignature !== overviewSignature) {
+      state.decisionOverviewSignature = overviewSignature;
+      els.approvalsList.replaceChildren();
+      const count = state.chats.reduce((total, row) => total + (row.pending_decision_count || 0), 0);
+      els.approvalsBadge.hidden = !count; els.approvalsBadge.textContent = String(count);
+      for (const row of state.chats.filter(row => row.pending_decision_count && row.session_id !== state.chat?.session_id)) {
+        const overview = node("li"); overview.append(button((row.title || "Chat") + " · " + row.pending_decision_count + " pending decisions", () => openChat(row))); els.approvalsList.append(overview);
+      }
+      for (const round of rows) {
+        const overview = node("li"); overview.append(button((state.chat?.title || "Chat") + " · " + round.kind, () => showView("chat"))); els.approvalsList.append(overview);
+      }
+      els.approvalsEmpty.hidden = els.approvalsList.children.length > 0;
+    }
+    const signature = JSON.stringify([state.chat && targetOf(state.chat), rows.map(({answerable, ...round}) => round), state.snapshot?.recoveries]);
     if (state.decisionSignature === signature) { publishAnswerability(); return; }
     state.decisionSignature = signature;
     // Withdraw old claims before replacing controls or changing the target.
     state.answerabilitySent = null;
     if (state.ws?.readyState === WebSocket.OPEN) for (const target of state.renderedDecisions) state.ws.send(JSON.stringify({type: "answerable", protocol_version: 1, target, answerable: false}));
     state.renderedDecisions = [];
-    els.decisions.replaceChildren(); els.approvalsList.replaceChildren();
-    const count = state.chats.reduce((total, row) => total + (row.pending_decision_count || 0), 0);
-    els.approvalsBadge.hidden = !count; els.approvalsBadge.textContent = String(count);
-    for (const row of state.chats.filter(row => row.pending_decision_count && row.session_id !== state.chat?.session_id)) {
-      const overview = node("li"); overview.append(button((row.title || "Chat") + " · " + row.pending_decision_count + " pending decisions", () => openChat(row))); els.approvalsList.append(overview);
-    }
+    els.decisions.replaceChildren();
     for (const round of rows) {
       const target = {...targetOf(state.chat), run_id: round.run_id, round_id: round.round_id};
       const card = node("details", null, "decision"); card.open = true; card.commandTarget = Object.freeze({...target});
       card.append(node("summary", "Decision · " + round.kind));
-      const overview = node("li"); overview.append(button((state.chat?.title || "Chat") + " · " + round.kind, () => showView("chat"))); els.approvalsList.append(overview);
       const supported = round.supported && ["approval", "question"].includes(round.kind);
       if (!supported) { card.append(node("p", round.reason || "This review requires the terminal.")); const link = node("a", "Open terminal"); link.href = "/"; card.append(link); }
       else {
@@ -618,7 +626,6 @@
       els.decisions.append(card);
     }
     for (const _recovery of state.snapshot?.recoveries || []) { const p = node("p", "Unsent turn needs attention. "); const link = node("a", "Open terminal"); link.href = "/"; p.append(link); els.decisions.append(p); }
-    els.approvalsEmpty.hidden = els.approvalsList.children.length > 0;
     publishAnswerability();
   }
   function showLibrarySection(section) {

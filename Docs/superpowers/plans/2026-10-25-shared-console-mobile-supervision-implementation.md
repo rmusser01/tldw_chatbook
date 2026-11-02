@@ -1414,3 +1414,26 @@ ADR path: backlog/decisions/244-shared-console-ownership-and-mobile-supervision.
 Reason: Explicit first-use startup must allow native child initialization while steady-state discovery/request deadlines remain unchanged.
 
 Native142 proves connection_deadline_exceeded after5.327826 seconds; source shows textual-serve start returns at process spawn while control authentication begins at native App.on_mount. Implement one named fixed20-second wait only for explicit `_owner(start=True)`, retaining ordinary5-second waits and the original30-second UI assertion. Pin and revalidate the actual host/child/broker identity around awaits; successor/disposed/unadmitted owners refuse without effects. No mutation replay, polling, permission/guard/schema/config/dependency or numeric-governance change. Use meaningful delayed native broker/client+App regression RED before production, then positive and exact refusal/lifetime controls, original direct/proxy cold UAT and committed whole15. One scoped independent review and actual PR/QA update follow; no full suite or real profile.
+
+
+### R185 connected terminal first-output investigation (before diagnostic)
+
+ADR required: no new ADR for observational diagnosis
+ADR path: backlog/decisions/244-shared-console-ownership-and-mobile-supervision.md
+Reason: Investigate a failed initial retained-terminal paint inside the existing Console acceptance contract, without changing runtime behavior.
+
+Committed R184 whole148 is14P1F846.43; both original cold paths and all other cases pass. The sole fleet case fails before any Chat/worker/phone action at initial desktop first output: body-loaded becomes closed and no first-byte marker appears. Its own child retired0; the source-cause is unobserved. Preserve full148 evidence and run one original fleet diagnostic149 only after physical closure. Adopt exactly fleet148-detach-diagnostic-proposal.md/fleet149-detach-hook-inert.txt: at most8 records/4096 ASCII bytes, direct allowlisted caller code metadata from one immediately deleted frame, queue/ready/closed/current booleans only, original detach delegation, no file I/O in callback and one deferred private write after native retirement. Original45-second readiness/case180-second guards and64-frame/1MiB caps remain. No payload/IDs/secrets/locals/stack walk/SQL/request/timer/sampler/newtask or source fix. Restore original test bytes after actual closure, report observed cause and minimum repair before production. Hypothesized cooperative-scheduling/overflow is not an established cause. Numeric governance remains unchanged.
+
+
+### R185 deterministic component diagnosis continuation (before tests)
+
+Existing ADR244 applies; no new ADR for tests alone. Diagnostic149 is physically closed and restored: initial output passed; one final empty-queue cleanup detach only. Its later question click produced no ticket/command, so neither historical queue overflow nor a specific frontend cause is established. Preserve this result and verify only two narrow source-backed behaviours on unchanged production: (1) real existing host/attachment producer delivers100 ordered small frames to an already-waiting receiver without falsely detaching it, and (2) shipped mobile question controls retain the same form/answer and dispatch exactly once across an unrelated Chat attention-count refresh during one public pointer gesture. Reuse existing fixtures and original guards; this is component evidence, not native admission or retrospective148/149 causal proof. Run only the two new nodes in epoch150. Read exact RED boundaries, then require minimum cause-backed proposal/precode contract before production. No blind fleet retry, limit increase, permission change, source workaround or broad suite. See fleet148-149-component-regression-proposal.md.
+
+
+### R186 component repair after functional RED150 (before production)
+
+ADR required: yes, amend existing ADR244
+ADR path: backlog/decisions/244-shared-console-ownership-and-mobile-supervision.md
+Reason: Bounded transport fairness and exact current decision interaction through background metadata updates.
+
+Adopt only fleet150-proposed-production-v2.patch plus overview amendment: one successful-enqueue cooperative yield, exact64frames/1MiB and no browser wait; independent existing form/overview signatures, preserving exact native form/answerability/disabled-state identity. No new renderer/persistence/authority/CSS/API/schema/dependency or numeric waiver. Full frontend policy reads precede UI code. Direct both-engine GREEN, slow-pressure/cancellation/generation/target/round/unknown-command controls precede one original unobserved fleet, then focused review/root commit/whole15/PR update. Historical148/149 exact causes stay qualified; no synthetic green total.
