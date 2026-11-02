@@ -369,6 +369,103 @@ async def test_stream_cap_aborts():
         )
 
 
+# --- TASK-38598: pin the connection to the validated addresses ------------
+
+
+class _FakePeerSock:
+    def __init__(self, peer):
+        self._peer = peer
+
+    def getpeername(self):
+        return (self._peer, 443)
+
+
+class _FakeNetworkStream:
+    """Stand-in for the httpcore stream httpx exposes via extensions."""
+
+    def __init__(self, peer):
+        self._sock = _FakePeerSock(peer)
+
+    def get_extra_info(self, info):
+        return self._sock if info == "socket" else None
+
+
+@pytest.mark.asyncio
+async def test_client_is_constructed_with_trust_env_disabled(monkeypatch):
+    """An honored HTTP(S)_PROXY would do its own DNS and connect on this
+    process's behalf, silently bypassing the SSRF guard; the client must
+    opt out (same policy as the MCP streamable_http transport)."""
+    import tldw_chatbook.Skills_Interop.skill_remote_fetch as srf
+
+    captured = {}
+    real_async_client = httpx.AsyncClient
+
+    class _CapturingClient(real_async_client):
+        def __init__(self, **kwargs):
+            captured.update(kwargs)
+            super().__init__(**kwargs)
+
+    monkeypatch.setattr(srf.httpx, "AsyncClient", _CapturingClient)
+
+    def handler(request):
+        return httpx.Response(200, content=b"PK\x03\x04zipbytes")
+
+    out = await fetch_zip_bytes(
+        "https://example.com/x.zip", transport=_transport(handler), resolver=_PUB
+    )
+
+    assert out.startswith(b"PK")
+    assert captured.get("trust_env") is False
+    assert captured.get("follow_redirects") is False
+
+
+@pytest.mark.asyncio
+async def test_plain_http_url_rejected_before_any_fetch():
+    """http:// offers no TLS to anchor host identity, and this layer has no
+    allowlist machinery -- so plain http is rejected outright (fail-closed),
+    before the request is even issued."""
+    attempted = []
+
+    def handler(request):
+        attempted.append(str(request.url))
+        return httpx.Response(200, content=b"PK\x03\x04")
+
+    with pytest.raises(RemoteSkillError, match="https"):
+        await fetch_zip_bytes(
+            "http://example.com/x.zip", transport=_transport(handler), resolver=_PUB
+        )
+    assert attempted == []
+
+
+@pytest.mark.asyncio
+async def test_connected_peer_revalidated_post_connect():
+    """DNS can rebind between the pre-flight resolve and httpx's own
+    connection; when the connected peer address is available it must pass
+    the same fetchable predicate (a rebound private peer rejects)."""
+    rebind_handler = lambda request: httpx.Response(  # noqa: E731
+        200,
+        content=b"PK\x03\x04zipbytes",
+        extensions={"network_stream": _FakeNetworkStream("10.0.0.5")},
+    )
+
+    with pytest.raises(RemoteSkillError, match="not reachable"):
+        await fetch_zip_bytes(
+            "https://rebind.example/x.zip",
+            transport=_transport(rebind_handler),
+            resolver=_PUB,  # pre-flight resolution says public
+        )
+
+    ok_handler = lambda request: httpx.Response(  # noqa: E731
+        200,
+        content=b"PK\x03\x04zipbytes",
+        extensions={"network_stream": _FakeNetworkStream("93.184.216.34")},
+    )
+    out = await fetch_zip_bytes(
+        "https://steady.example/x.zip", transport=_transport(ok_handler), resolver=_PUB
+    )
+    assert out.startswith(b"PK")
+
+
 @pytest.mark.asyncio
 async def test_fetch_total_deadline_aborts_slow_drip():
     # A server that never trips the per-hop httpx.Timeout (each individual
