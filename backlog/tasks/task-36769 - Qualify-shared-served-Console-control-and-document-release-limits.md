@@ -17,7 +17,7 @@ documentation:
 - backlog/decisions/244-shared-console-ownership-and-mobile-supervision.md
 assignee:
 - '@codex'
-updated_date: 2026-11-02 05:50
+updated_date: 2026-11-02 17:38
 ---
 
 ## Description
@@ -28,14 +28,14 @@ Demonstrate the full phone-to-existing-Console workflow through real served proc
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 A real served child with isolated SQLite and a controlled agent/tool sequence keeps the same process, session and run across terminal closure, phone reconnection and terminal reattachment; mouse, multiline paste and resize work afterward.
+- [x] #1 A real served child with isolated SQLite and a controlled agent/tool sequence keeps the same process, session and run across terminal closure, phone reconnection and terminal reattachment; mouse, multiline paste and resize work afterward.
 - [ ] #2 Cold explicit Create/Open selection and immediate Send, multi-chat and multi-subagent correction, background decisions, command acknowledgement loss, expiry, stale attachment races and projection overflow are verified through production routes with honest outcomes.
 - [ ] #3 Migration crash/retry, populated conflicts, cross-config source claims and completed-result quarantine have current targeted evidence; retired mobile engine constructors are absent from the shared path.
-- [ ] #4 Authentication, revocation, Canvas-disabled operation, same-origin protections and inert content hold in real browser journeys without granting authority from VPN access.
-- [ ] #5 User and architecture documentation describe actual shared behavior, migration/recovery instructions and the native-attachment limit; automated/emulated evidence is distinct from an actual phone/VPN receipt and unavailable checks remain explicitly open.
-- [ ] #6 Canonical/recovery SQLite access is qualified through existing native module ownership and documented roles; source-inventory checks pass without widened permission, guard exemptions or loss of read restrictions, custody or budgets.
-- [ ] #7 Reopened canonical saved chats retain reachable Canvas revisions and pinned selection without provider replay; temporary, unknown, stale and changed native ownership/classification remain fenced.
-- [ ] #8 Each real native model call observes its own run cancellation: configured survivor workers complete after parent Stop, while exact child Stop, coupled/inline behavior, automatic cancellation and physical shutdown remain enforced.
+- [x] #4 Authentication, revocation, Canvas-disabled operation, same-origin protections and inert content hold in real browser journeys without granting authority from VPN access.
+- [x] #5 User and architecture documentation describe actual shared behavior, migration/recovery instructions and the native-attachment limit; automated/emulated evidence is distinct from an actual phone/VPN receipt and unavailable checks remain explicitly open.
+- [x] #6 Canonical/recovery SQLite access is qualified through existing native module ownership and documented roles; source-inventory checks pass without widened permission, guard exemptions or loss of read restrictions, custody or budgets.
+- [x] #7 Reopened canonical saved chats retain reachable Canvas revisions and pinned selection without provider replay; temporary, unknown, stale and changed native ownership/classification remain fenced.
+- [x] #8 Each real native model call observes its own run cancellation: configured survivor workers complete after parent Stop, while exact child Stop, coupled/inline behavior, automatic cancellation and physical shutdown remain enforced.
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -137,12 +137,20 @@ ADR required:no new ADR; existing backlog/decisions/244-shared-console-ownership
 Fresh user-requested UAT on8491688b000f2f12aa9fb55ffe183f016983ba5f closed13P1F783.26s with8655 source/config bindings unchanged. All four physical lifecycle cases and the other browser flows passed; retention mouse coordinate was not observed at its original F11 assertion. Exact run/session/incarnation/turn/input Thread were retained, but paste/Canvas-off/post-exit durable checks in that case were not reached. Cause remains unclassified. Perform one failed-retention-only bounded passive pointer/WS/public-terminal-mode/native-receipt diagnostic, preserving native methods/guards/assertion/deadlines; any temporary test edit must restore exact original bytes after its source-bound epoch. No production fix without concrete cause/proposal. ADR required:no new ADR; validation of244.
 Fresh UAT evidence complete at8491688b: full targeted14-case run13P1F783.26s; one passive diagnostic1P69.15s; unchanged original-source confirmation1P70.59s. All8655 release bindings restored/current and300 artifact hashes verified by root; original prior packets preserved. The first reattachment mouse assertion failure remains UNCLASSIFIED and the overall fresh UAT is not green; no production repair was justified or made. Follow-ups reached original mouse/paste/Canvas-off/exact4rows with physical child exit0. Keep task In Progress/AC1 open for stability triage; draft PR may be reviewed with this limitation and current-dev integration conflicts explicitly disclosed.
 Mouse continuation R167 verified before dev integration: bounded original-assertion reproduction1F59.83 identifies mixed native grid/layout causing an off-terminal click. Meaningful real-native width-only RED1F1.70, final coherent-layout regression plus actual retention2P72.94, child52551exit0/sameThread/mouse/paste/Canvas-off/provider2/exact4rows. Root independently verified99artifacts/all8655current source bindings. Only2testfiles changed; no production mouse repair/guard change. Task remains In Progress with all AC reopened for current-dev integration and final UAT. Existing source-bound original packets remain intact.
+
+Final current-source qualification (2026-11-02):
+
+Tested source46f0800 on native dev88a completed the original whole15 UAT: 14 passed, one failed in 784.03 seconds, with no skips or retries. Pytest5805 was reaped with exit1; all38,286 tracked hashes and index entries matched. Retention/mouse/paste/resize/Canvas-off, proxy cold Create/Send, full fleet, lost-ACK/security and all four lifecycle cases passed. The direct cold case returned host-bootstrap503 before any ticket/Create command; its original30-second disabled-composer assertion failed. The underlying503reason remains unknown. AC2 stays open, with no second correction wave or synthetic passing total. AC3 also stays open as an aggregate reopened migration criterion; targeted storage receipts remain separate.
+
+Source-bound Canvas and native cancellation/automatic-handle controls qualify AC7/8. Native inventory and living/user/QA documentation qualify AC5/6. Independent scoped review closed FI001/FI002 and R179/R180 through95b48a09. Later R181 received source advice and root actual-code/test review, without fresh independent post-implementation whole-head review. Current-head GitHub review/CI and actual phone/VPN/live-provider checks remain open.
+
+All limits stay unchanged:24 size-pin violations and UI-ready1044/1031 fail; app import683/686 passes with warning. Inherited lint debt remains. Existing ADR244 applies; the publication commit changes documentation only. Task stays In Progress; authorized publication is draftPR3345/base dev/noauto.
 <!-- SECTION:IMPLEMENTATION_NOTES:END -->
 
 ## Final Summary
 
 <!-- SECTION:FINAL_SUMMARY:BEGIN -->
-User-requested dev conflict resolution and integrated UAT are active. Mouse test synchronization defect reproduced and corrected with native RED/GREEN plus real retained browser pass; this before-integration evidence does not qualify dev. Draft PR3345 update follows integrated checks/review/UAT; physical phone/VPN remains unverified.
+Source46f0800 is rebased onto dev88a. Final UAT:14 passed, one failed in784.03 seconds. Direct cold host-bootstrap503 before Create remains a functional draft blocker. Mouse, fleet and all four lifecycle cases pass. Unwaived size/UI-ready failures, current-head GitHub review/CI and actual phone/VPN qualification remain open. AC2/3 stay unchecked; status In Progress. DraftPR3345 update is authorized; no merge or auto-merge.
 <!-- SECTION:FINAL_SUMMARY:END -->
 
 ## Definition of Done

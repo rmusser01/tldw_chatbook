@@ -1,20 +1,14 @@
 # Shared served Console and mobile qualification
 
-The current candidate integrates dev `62a169f906508ed02bd7546ab278d916638d1607`.
-Independent integration review requested two corrections. The integrated
-15-case UAT (epoch112) returned **12 passed, 3 failed**; the correction wave has
-separate targeted evidence below. Scoped rereview and a fresh complete15-case
-UAT remain pending. Native size/import ratchets fail and are explicitly unwaived
-by the owner. This is not a whole-branch release qualification.
+The current executable/test candidate is `46f0800c7c506eb827020d9e63dbbd0e2adc4d63`, properly rebased onto native `dev` `88af9f937908b46e8c5f9f7fddd9e8748c917d46`. The final complete 15-case automated UAT returned **14 passed, 1 failed in 784.03 seconds**. The direct cold-start host bootstrap returned 503 before Create, leaving the phone composer unselected; its underlying native reason remains unknown. The proxy cold path, retained mouse/paste/resize, full fleet, lost-ack/security and all process lifecycle cases passed. See the [current UAT receipt](uat-2026-11-02.md).
 
-The original feature UAT was **13 passed / 1 failed**. The mouse failure was later
-traced to a mixed native size/layout test receipt; the two-test R167 correction
-passed its regression and actual retention journey, with no production mouse
-change. R169 Canvas/tab ownership has a separate scoped review closure and
-38-pass transport/security epoch. Those scoped results do not replace final
-integrated UAT. See the [original UAT and later receipts](uat-2026-11-01.md).
-Physical phone/VPN qualification remains open. Earlier sections describe their
-recorded historical source, not the current integrated candidate.
+Populated public rollback and the separate actual post-import edit/exact encrypted SafetyCopy readback passed against the new native database implementation. The mouse failure was reproduced as mixed native grid/compositor geometry in the test and corrected without production mouse changes. Native ordered shutdown, actual saved-Canvas classification and exact native-run cancellation corrections have separate source-bound regression evidence.
+
+The independent scoped rereview closed the integration corrections through `95b48a09e72ef4478eb1ff22a137379e28b9de31`. Later R181 had source-design advice and root actual-code/test/evidence review, not a fresh independent post-implementation whole-head review. Current-head GitHub review/CI remains pending.
+
+**Draft blockers remain:** the direct cold-bootstrap failure, 24 touched owners over size pins, and UI-ready census 1044/1031. All numeric limits remain unchanged under the owner's explicit instruction. App import passes 683/686 with a low-headroom/snapshot-drift warning. Diagnostic inventory and UI gate census pass (1331/floor 1331); zero introduced scoped lint/format findings do not erase inherited debt. Tasks remain In Progress; there is no merge-readiness claim.
+
+Physical iPhone/Safari, Android/Chrome, actual VPN reconnect and live providers remain unverified. No full repository sweep or real-profile migration ran; native-terminal phone attachment remains phase 2. The [2026-11-01 receipt](uat-2026-11-01.md) and all sections below retain their historical source and results. Passing scoped epochs are never combined into a synthetic passing final UAT.
 
 ## Actual served-browser evidence
 
