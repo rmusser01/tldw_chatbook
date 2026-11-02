@@ -26,7 +26,7 @@ from ...Widgets.recompose_capture_guard import RecomposeCaptureGuard
 from .bulk_sources_modal import OpenBulkSourcesRequested
 from .humane_time import humane_timestamp
 from .inspector_pane import CheckNowRequested, PreviewRequested
-from .table_selection import IdSelectionModel, row_with_id
+from .table_selection import IdSelectionModel, highlight_is_user_driven, row_with_id
 
 try:  # Private Textual name, pinned by a test; without it a list loses its highlight.
     from textual.widgets._select import SelectOverlay
@@ -233,6 +233,10 @@ class SourcesPane(RecomposeCaptureGuard, Vertical):
     # to revert without re-deriving it from `selected_source`'s OLD value
     # (a one-argument `watch_selected_source` only ever sees the new one).
     _highlighted_source_key: str | None = None
+
+    #: TASK-38586: whether `compose()` has already armed the first-row
+    #: arrival selection. Once per pane instance — see `compose()`.
+    _arrival_selection_seeded: bool = False
 
     #: The create form's focusable controls, in visual order (TASK-1035).
     #: `compose()` yields them in this order and the form is a plain
@@ -539,6 +543,25 @@ class SourcesPane(RecomposeCaptureGuard, Vertical):
             pass
 
     def compose(self):
+        # TASK-38586. The focus gate on the highlight handlers also filters
+        # the row-0 announcement a freshly built table posts, which until
+        # now was what selected the first source on arrival — TASK-1100's
+        # "Preview and Check now armed on arrival". Arm it here instead,
+        # before the toolbar below reads `selected_source` for its
+        # `disabled=` values, so the first paint is already correct rather
+        # than waiting for an announcement the gate now blocks.
+        #
+        # Once per pane instance ONLY. A later recompose (filter editor,
+        # create form, a sources reload) must not bring a selection back:
+        # the screen clears this pane's selection on purpose when the tree
+        # moves to another scope (`_apply_tree_scope` →
+        # `_clear_pane_selections`), and a rebuild resurrecting it is
+        # exactly the phantom-selection class TASK-38586 closes.
+        if not self._arrival_selection_seeded and self.selected_source is None:
+            first_visible = next(iter(self._filtered_sources()), None)
+            if first_visible is not None:
+                self._arrival_selection_seeded = True
+                self.selected_source = first_visible
         with Vertical(id="sources-toolbar"):
             # TASK-995: `compact=True` on every Input/Select in a
             # `.destination-filter-strip` row. That class pins `height: 1`
@@ -1798,14 +1821,30 @@ class SourcesPane(RecomposeCaptureGuard, Vertical):
         2026-07-28 live UAT — verified against real feeds, zero runs and zero
         items, with the scrape backend itself working perfectly when driven
         directly.
+
+        TASK-38586. A rebuild of this table also posts a highlight for
+        whatever row the cursor falls back on — `_refresh_table_rows` clears
+        and re-adds rows on every filter keystroke, and the `sources`
+        reactive recomposes the whole table. Acting on those let typing in
+        the search box re-select the first filtered row, and the resulting
+        `SourceSelected` retarget the Inspector — Check now/Preview/Delete
+        could then act on a row the user never chose. Gate on focus exactly
+        like the five sibling panes (`highlight_is_user_driven`): user input
+        always arrives at a table that owns focus, a rebuild's announcement
+        does not. (TASK-1100's own "first row armed on arrival" relied on
+        that announcement; `compose()` now arms it explicitly instead.)
         """
         event.stop()
+        if not highlight_is_user_driven(event):
+            return
         if event.row_key is not None and event.row_key.value is not None:
             self.select_source_by_id(str(event.row_key.value))
 
     def on_data_table_cell_highlighted(self, event: DataTable.CellHighlighted) -> None:
         """Same, for a table whose cursor is cell-shaped rather than row-shaped."""
         event.stop()
+        if not highlight_is_user_driven(event):
+            return
         row_key = getattr(event.cell_key, "row_key", None)
         if row_key is not None and row_key.value is not None:
             self.select_source_by_id(str(row_key.value))
