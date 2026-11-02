@@ -381,8 +381,8 @@ def _ephemeral_promotion_global_lifecycle(
     return transitioned
 
 
-class _StaleContinuationSeal(RuntimeError):
-    """A managed seal's inputs changed before the locked write used it."""
+class _GenerationOwnerBusy(RuntimeError):
+    """Another thread holds a generation owner taken without waiting."""
 
 
 def _continuation_event_owner_scope(
@@ -407,19 +407,12 @@ def _continuation_event_owner_scope(
         if owner_id not in self._message_session_index:
             return method(self, event, *args, **kwargs)
         finalizer = kwargs.get("checkpoint_finalizer")
-        for attempt in (1, 2):
-            if finalizer is not None:
-                kwargs["checkpoint_finalizer"] = self._presealed_continuation_finalizer(
-                    event, kwargs.get("continuation_target"), finalizer
-                )
-            try:
-                with self._generation_owner_scope(owner_id):
-                    return method(self, event, *args, **kwargs)
-            except _StaleContinuationSeal:
-                # A Stop may persist the owner mid-seal, giving it a durable
-                # id: seal once more over the fresh inputs, then refuse.
-                if attempt == 2:
-                    raise
+        if finalizer is not None:
+            kwargs["checkpoint_finalizer"] = self._presealed_continuation_finalizer(
+                event, kwargs.get("continuation_target"), finalizer
+            )
+        with self._generation_owner_scope(owner_id):
+            return method(self, event, *args, **kwargs)
 
     return transitioned
 
@@ -5109,21 +5102,38 @@ class ConsoleChatStore(ConsoleReceivedTurnAdmissionMixin, ConsoleReceivedIntentI
         # write, may persist this session, and the purge re-enters every owner.
         # Claim them first or close and that worker deadlock (TASK-37653 review).
         # Index order puts a parent before descendants, as the edit path nests.
-        claimed = [
-            message_id
-            for message_id, owner in list(self._message_session_index.items())
-            if owner == session_id
-        ]
-        with ExitStack() as owners:
-            for message_id in claimed:
-                owners.enter_context(self._generation_owner_scope(message_id))
-            with self._first_persistence_lock:
-                self.invalidate_response_rule_source(session_id, "closed")
-                return self._close_session_locked(session_id, frozenset(claimed))
+        claimed: set[str] = set()
 
-    def _close_session_locked(
-        self, session_id: str, claimed_owner_ids: frozenset[str]
-    ) -> ConsoleChatSession | None:
+        def unclaimed() -> list[str]:
+            return [
+                message_id
+                for message_id, owner in list(self._message_session_index.items())
+                if owner == session_id and message_id not in claimed
+            ]
+
+        with ExitStack() as owners:
+            while True:
+                for message_id in unclaimed():
+                    owners.enter_context(self._generation_owner_scope(message_id))
+                    claimed.add(message_id)
+                with self._first_persistence_lock:
+                    # A message can join after the claim (the shielded agent
+                    # worker's TOOL marker). Take it without waiting -- waiting
+                    # here could deadlock -- or, if another thread holds it,
+                    # wait above, before anything irreversible: a refusal now
+                    # would latch the controller's close ticket for good.
+                    try:
+                        for message_id in unclaimed():
+                            owners.enter_context(
+                                self._generation_owner_scope(message_id, blocking=False)
+                            )
+                            claimed.add(message_id)
+                    except _GenerationOwnerBusy:
+                        continue
+                    self.invalidate_response_rule_source(session_id, "closed")
+                    return self._close_session_locked(session_id)
+
+    def _close_session_locked(self, session_id: str) -> ConsoleChatSession | None:
         """Close while excluding first persistence and temporary promotion."""
 
         session = self._session_or_raise(session_id)
@@ -5165,7 +5175,7 @@ class ConsoleChatStore(ConsoleReceivedTurnAdmissionMixin, ConsoleReceivedIntentI
                     result.pending_count,
                 )
             self._library_activity_buffer.discard_session(session_id)
-            self._purge_session_runtime_state(session_id, claimed_owner_ids)
+            self._purge_session_runtime_state(session_id, owners_claimed=True)
 
         if self.active_session_id != session_id:
             return self._sessions.get(self.active_session_id or "")
@@ -5181,27 +5191,10 @@ class ConsoleChatStore(ConsoleReceivedTurnAdmissionMixin, ConsoleReceivedIntentI
         return next_session
 
     def _purge_session_runtime_state(
-        self, session_id: str, claimed_owner_ids: frozenset[str] | None = None
+        self, session_id: str, *, owners_claimed: bool = False
     ) -> None:
         """Delete one session's exact process-local ownership without DB writes."""
         self._session_or_raise(session_id)
-        # Purge EVERY message the session owns, not just the active-path view:
-        # off-path tree nodes and dropped display-only TOOL markers both live in
-        # ``_message_session_index`` (a superset of ``_nodes_by_session`` for the
-        # session), so it is the authoritative set of owned ids to sweep.
-        owned_message_ids = [
-            message_id
-            for message_id, owner in list(self._message_session_index.items())
-            if owner == session_id
-        ]
-        # Close holds these owners' scopes; invalidating a later one without
-        # its scope would reopen the owner/first-persistence deadlock.
-        if claimed_owner_ids is not None and not claimed_owner_ids.issuperset(
-            owned_message_ids
-        ):
-            raise RuntimeError(
-                "A message joined this chat while closing; close it again."
-            )
         if self.response_rule_store is not None:
             self.response_rule_store.discard_temporary(session_id)
 
@@ -5213,16 +5206,28 @@ class ConsoleChatStore(ConsoleReceivedTurnAdmissionMixin, ConsoleReceivedIntentI
         ):
             self.canvas_turn_controller.discard_session(session_id)
 
+        # Purge EVERY message the session owns, not just the active-path view:
+        # off-path tree nodes and dropped display-only TOOL markers both live in
+        # ``_message_session_index`` (a superset of ``_nodes_by_session`` for the
+        # session), so it is the authoritative set of owned ids to sweep.
+        owned_message_ids = [
+            message_id
+            for message_id, owner in list(self._message_session_index.items())
+            if owner == session_id
+        ]
         with self._fence_provider_trace_settlement_registrations(owned_message_ids):
             self._purge_claimed_session_runtime_state(
                 session_id,
                 owned_message_ids,
+                wait_for_owners=not owners_claimed,
             )
 
     def _purge_claimed_session_runtime_state(
         self,
         session_id: str,
         owned_message_ids: Sequence[str],
+        *,
+        wait_for_owners: bool = True,
     ) -> None:
         """Purge one session after late trace handoffs have been fenced."""
 
@@ -5232,7 +5237,14 @@ class ConsoleChatStore(ConsoleReceivedTurnAdmissionMixin, ConsoleReceivedIntentI
 
         self._settle_provider_trace_settlements_for_messages(owned_message_ids)
         for message_id in owned_message_ids:
-            self._invalidate_generation_attempt(message_id)
+            if not self._invalidate_generation_attempt(
+                message_id, blocking=wait_for_owners
+            ):
+                # ponytail: close holds every owner it claimed; one that joined
+                # after its last claim and is held elsewhere keeps its runtime
+                # state (its holder then fails on the closed session) rather
+                # than wait under first persistence. Purge it later if it leaks.
+                continue
             self.clear_terminal_citation_state(message_id)
             self._message_session_index.pop(message_id, None)
             self._stream_chunks_by_message.pop(message_id, None)
@@ -15315,7 +15327,7 @@ class ConsoleChatStore(ConsoleReceivedTurnAdmissionMixin, ConsoleReceivedIntentI
         return self._snapshot(message)
 
     @contextmanager
-    def _generation_owner_scope(self, message_id: str):
+    def _generation_owner_scope(self, message_id: str, *, blocking: bool = True):
         """Hold one generation owner and its fork source-transition boundary.
 
         Promotion admission precedes generation ownership, which precedes the
@@ -15329,15 +15341,18 @@ class ConsoleChatStore(ConsoleReceivedTurnAdmissionMixin, ConsoleReceivedIntentI
                     entry = _GenerationOwnerLockEntry()
                     self._generation_owner_locks[message_id] = entry
                 entry.users += 1
-            entry.lock.acquire()
+            acquired = entry.lock.acquire(blocking)
             try:
+                if not acquired:
+                    raise _GenerationOwnerBusy(message_id)
                 if session_id is None:
                     yield
                 else:
                     with self._fork_source_transition_admitted(session_id):
                         yield
             finally:
-                entry.lock.release()
+                if acquired:
+                    entry.lock.release()
                 with self._generation_owner_locks_guard:
                     entry.users -= 1
                     if (
@@ -16527,10 +16542,19 @@ class ConsoleChatStore(ConsoleReceivedTurnAdmissionMixin, ConsoleReceivedIntentI
         if not self._generation_attempt_is_current(message_id, generation_token):
             raise RuntimeError("Generation attempt changed before mutation.")
 
-    def _invalidate_generation_attempt(self, message_id: str) -> None:
-        """Fence every detached worker for one owner without reviving a prior one."""
-        with self._generation_owner_scope(message_id):
-            self._invalidate_generation_attempt_locked(message_id)
+    def _invalidate_generation_attempt(
+        self, message_id: str, *, blocking: bool = True
+    ) -> bool:
+        """Fence every detached worker for one owner without reviving a prior one.
+
+        Returns ``False`` only when ``blocking`` is false and the owner is busy.
+        """
+        try:
+            with self._generation_owner_scope(message_id, blocking=blocking):
+                self._invalidate_generation_attempt_locked(message_id)
+        except _GenerationOwnerBusy:
+            return False
+        return True
 
     def _invalidate_generation_attempt_locked(self, message_id: str) -> None:
         """Invalidate one attempt while the caller holds its owner scope."""
@@ -21085,6 +21109,8 @@ class ConsoleChatStore(ConsoleReceivedTurnAdmissionMixin, ConsoleReceivedIntentI
         loop waits for that scope (TASK-37653 review). The seal is a pure
         signature over its four arguments, so the locked write gets it back
         only for identical arguments; an owner that moved meanwhile refuses.
+        Managed owners are pre-persisted (durable acceptance keeps native id ==
+        persisted id), so a changed message id is a racing writer, not a Stop.
         """
         sealed: list[tuple[tuple[Any, ...], ProviderContinuationCheckpoint]] = []
 
@@ -21096,7 +21122,7 @@ class ConsoleChatStore(ConsoleReceivedTurnAdmissionMixin, ConsoleReceivedIntentI
 
         def presealed(*inputs: Any) -> ProviderContinuationCheckpoint:
             if not sealed or sealed[0][0] != inputs:
-                raise _StaleContinuationSeal(
+                raise RuntimeError(
                     "Continuation owner changed while sealing; reload and retry."
                 )
             return sealed[0][1]

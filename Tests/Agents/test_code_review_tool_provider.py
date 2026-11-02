@@ -1,6 +1,7 @@
 """Real public schema, canonical response packing and original path controls."""
 
 import json
+import os
 
 import pytest
 
@@ -327,7 +328,12 @@ def test_public_authority_failures_do_not_produce_paths(review_case, failure):
         if failure == "absent_actor":
             provider.service.actor = c.actor
         if failure == "symlink":
-            (c.root / "alias").symlink_to("helpers.py")
+            try:
+                (c.root / "alias").symlink_to("helpers.py")
+            except OSError as exc:
+                if os.name == "nt" and getattr(exc, "winerror", None) == 1314:
+                    pytest.skip("Windows host does not grant symlink creation")
+                raise
             args = {
                 "review_id": prepared.review_id,
                 "view": "source",

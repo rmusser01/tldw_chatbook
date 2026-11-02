@@ -844,6 +844,8 @@ _BUDGETS: dict[str, int] = {
     # 2026-10-31, TASK-37655 round 2 (owner rule: a fix over a size ratchet
     # raises the row with a dated comment): 5738 -> 5741 (+3). The remote
     # preflight mirror folds Unicode normalization like the worker.
+    # raises the row with a dated comment): dev 0d05d27fa1's 5,750 + 3 = 5,753.
+    # The remote preflight mirror folds Unicode normalization like the worker.
     "tldw_chatbook/Agents/local_tool_provider.py": 5854,
     # 2026-10-31, TASK-37655 (owner rule: a fix over a size ratchet raises
     # the row with a dated comment): 5706 -> 5950. +16 is this fix (the

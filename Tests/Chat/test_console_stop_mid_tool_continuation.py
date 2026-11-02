@@ -403,21 +403,19 @@ def test_managed_seal_runs_outside_the_owner_scope_and_rechecks_its_owner(
                 continuation_target=_MOONSHOT_RUN_TARGET,
                 checkpoint_finalizer=finalize_while_owner_changes,
             )
-        assert moves == [0, 1]  # one fresh re-seal, then the refusal
+        assert moves == [0]  # refused, not re-sealed
     finally:
         database.close_connection()
 
 
-def test_stop_persisting_the_owner_during_the_seal_reseals_once_and_writes(
-    tmp_path,
-):
-    """TASK-37653 review: a Stop may give the owner its durable id mid-seal.
+def test_stop_persisting_the_owner_during_the_seal_refuses_cleanly(tmp_path):
+    """TASK-37653 review: a changed seal input refuses; it is not re-sealed.
 
-    The seal covers ``persisted_message_id or message.id``. A Stop that
-    persists the still-unpersisted assistant while the seal runs outside the
-    owner scope changes that input, and the recheck surfaced "Provider
-    continuation could not be persisted". The write now re-seals once over
-    the fresh inputs.
+    The seal covers ``persisted_message_id or message.id``, and the real
+    managed finalizer accepts only the native assistant id. A Stop that
+    persists a still-unpersisted owner mid-seal (impossible for managed runs,
+    whose owners are pre-persisted with native id == persisted id) must end
+    in the clean "changed while sealing" refusal, with nothing written.
     """
     from Tests.Chat.test_console_provider_continuation import (
         _MOONSHOT_RUN_TARGET,
@@ -427,16 +425,16 @@ def test_stop_persisting_the_owner_during_the_seal_reseals_once_and_writes(
         ContinuationEventContext,
         ToolBatchReady,
     )
-    from tldw_chatbook.Chat.provider_continuation import (
-        parse_provider_continuation_json,
-    )
 
     database, store, _session, owner = _continuation_store(
         tmp_path, persist_owner=False, content="partial answer"
     )
     sealed_for: list[str] = []
 
-    def finalize_while_stop_persists(checkpoint, conversation_id, message_id, run_id):
+    def finalize_managed_checkpoint(checkpoint, conversation_id, message_id, run_id):
+        # console_agent_bridge.finalize_managed_checkpoint's owner rule.
+        if message_id != owner.id:
+            raise PermissionError("Managed continuation durable owner changed.")
         if not sealed_for:
             # The Stop's terminal write, on the owner loop, while this seal
             # runs outside the owner scope: the row gets a DB-assigned id.
@@ -445,52 +443,138 @@ def test_stop_persisting_the_owner_during_the_seal_reseals_once_and_writes(
         return _sealed(checkpoint, message_id)
 
     try:
-        store.persist_provider_continuation_event(
-            ToolBatchReady(
-                ContinuationEventContext(owner.id, "run-1", "primary", "persistent"),
-                _active_checkpoint(),
-                None,
-            ),
-            continuation_target=_MOONSHOT_RUN_TARGET,
-            checkpoint_finalizer=finalize_while_stop_persists,
-        )
+        with pytest.raises(RuntimeError, match="changed while sealing"):
+            store.persist_provider_continuation_event(
+                ToolBatchReady(
+                    ContinuationEventContext(
+                        owner.id, "run-1", "primary", "persistent"
+                    ),
+                    _active_checkpoint(),
+                    None,
+                ),
+                continuation_target=_MOONSHOT_RUN_TARGET,
+                checkpoint_finalizer=finalize_managed_checkpoint,
+            )
         durable_id = store.get_message(owner.id).persisted_message_id
         assert durable_id not in {None, owner.id}
-        assert sealed_for == [owner.id, durable_id]
-        stored = parse_provider_continuation_json(
-            database.get_message_by_id(durable_id)["provider_continuation_json"]
-        )
-        assert json.loads(stored.managed_resume)["message_id"] == durable_id
+        assert sealed_for == [owner.id]
+        assert not database.get_message_by_id(durable_id)["provider_continuation_json"]
     finally:
         database.close_connection()
 
 
-def test_close_refuses_a_message_that_joined_after_its_owners_were_claimed(
+class _JoinOnFirstPersistence:
+    """Run ``join`` once as close reaches first persistence, after its claims."""
+
+    def __init__(self, lock, join):
+        self.lock, self._join = lock, join
+
+    def __enter__(self):
+        join, self._join = self._join, None
+        if join is not None:
+            join()
+        return self.lock.__enter__()
+
+    def __exit__(self, *exc):
+        return self.lock.__exit__(*exc)
+
+
+def test_close_purges_a_marker_that_joined_after_its_owners_were_claimed(
     tmp_path,
 ):
-    """TASK-37653 review: close invalidates only owners whose scope it holds.
+    """TASK-37653 review: a late TOOL marker no one holds closes normally.
 
-    Close claims the session's owner scopes from one snapshot; a message that
-    joins afterwards would be invalidated by the purge without its scope
-    (re-opening the lock-order deadlock for it), so close refuses instead.
+    The close drain never awaits the shielded agent worker, so its TOOL
+    marker can join between close's owner claims and first persistence. Close
+    claims it without waiting and purges it; it used to refuse after side
+    effects, leaving the close generation latched for good.
     """
     from tldw_chatbook.Chat.console_chat_models import ConsoleMessageRole
 
-    database, store, session, owner = _continuation_store(tmp_path, persist_owner=True)
+    database, store, session, _owner = _continuation_store(tmp_path, persist_owner=True)
+    late: list[str] = []
+
+    def join():
+        marker = store.append_message(
+            session.id, role=ConsoleMessageRole.TOOL, content="late tool"
+        )
+        late.append(marker.id)
+
+    store._first_persistence_lock = _JoinOnFirstPersistence(
+        store._first_persistence_lock, join
+    )
+    try:
+        store.close_session(session.id)
+        assert late and session.id not in {item.id for item in store.sessions()}
+        assert late[0] not in store._message_session_index
+    finally:
+        database.close_connection()
+
+
+def test_close_waits_for_a_late_owner_another_thread_holds(tmp_path):
+    """TASK-37653 review: a late joiner whose owner is held is waited for.
+
+    Close may not wait under first persistence (the holder may need it), and a
+    refusal after the controller's irreversible close ticket latches the
+    close for the process. So close waits outside first persistence, does
+    nothing irreversible meanwhile, and completes once the owner is free.
+    """
+    from tldw_chatbook.Chat.console_chat_models import ConsoleMessageRole
+
+    database, store, session, _owner = _continuation_store(tmp_path, persist_owner=True)
+    late: list[str] = []
+    held, release = threading.Event(), threading.Event()
+    side_effects: list[str] = []
+    outcome: dict[str, object] = {}
     original_invalidate = store.invalidate_response_rule_source
 
-    def join_after_claims(session_id, reason):
-        if reason == "closed":
-            store.append_message(
-                session_id, role=ConsoleMessageRole.TOOL, content="late tool"
-            )
+    def hold(message_id):
+        with store._generation_owner_scope(message_id):
+            held.set()
+            release.wait(10)
+
+    def join():
+        marker = store.append_message(
+            session.id, role=ConsoleMessageRole.TOOL, content="late tool"
+        )
+        late.append(marker.id)
+        threading.Thread(target=hold, args=(marker.id,), daemon=True).start()
+        assert held.wait(5)
+
+    def recording_invalidate(session_id, reason):
+        side_effects.append(reason)
         return original_invalidate(session_id, reason)
 
-    store.invalidate_response_rule_source = join_after_claims
+    def close():
+        try:
+            outcome["closed"] = store.close_session(session.id)
+        except BaseException as exc:  # noqa: BLE001 - asserted below
+            outcome["error"] = exc
+        finally:
+            database.close_connection()
+
+    first_persistence = store._first_persistence_lock
+    store._first_persistence_lock = _JoinOnFirstPersistence(first_persistence, join)
+    store.invalidate_response_rule_source = recording_invalidate
+    closer = threading.Thread(target=close, daemon=True)
     try:
-        with pytest.raises(RuntimeError, match="joined this chat while closing"):
-            store.close_session(session.id)
+        closer.start()
+        deadline = time.monotonic() + 5
+        while not late or store._generation_runtime_counts(late[0])[1] < 2:
+            assert "error" not in outcome, outcome
+            assert time.monotonic() < deadline, "close never waited for the owner"
+            time.sleep(0.001)
+        # Waiting: nothing irreversible yet, and first persistence is free.
+        assert side_effects == []
         assert session.id in {item.id for item in store.sessions()}
-        assert store.get_message(owner.id) is not None
+        assert first_persistence.acquire(timeout=1)
+        first_persistence.release()
+        release.set()
+        closer.join(10)
+        assert not closer.is_alive() and "error" not in outcome, outcome
+        assert side_effects == ["closed"]
+        assert session.id not in {item.id for item in store.sessions()}
+        assert late[0] not in store._message_session_index
     finally:
+        release.set()
         database.close_connection()
