@@ -1,6 +1,5 @@
 # Lessons: what counts as evidence a change works
 
-<<<<<<< HEAD
 ## Observe Hub bytes before assuming a completed blob survives (PR3332, 2026-11-01)
 
 The Windows integration's tiny real Hub download completed correctly, but an
@@ -218,7 +217,6 @@ it resets both.
 `ResourceTracker()` (`Tests/Chat/model_download_support.py`), and keep a negative
 control that an unguarded construction raises. Check a lock is free from a thread
 that has never touched it, not from the next worker.
-=======
 ## A mounted send held at provider validation is not accepted yet, and a queued turn needs the archive check (TASK-36610, 2026-10-30)
 
 **Incident.** A test needed a prompt queued behind a running Console send.
@@ -241,7 +239,6 @@ runtime's `_finish_custodied_turn` and print the custody task's exception
 before you lengthen a wait. The queued-dispatch case in
 `Tests/UI/test_console_send_start_window.py` holds in the stream and stubs
 only the archive check.
->>>>>>> cc6eb56c4a (docs(backlog): lessons from the send-start window rework (TASK-36610))
 
 ## A child kept across its parent's rebuild defeats an "every child is unlaid" guard (TASK-33622.6, 2026-10-29)
 

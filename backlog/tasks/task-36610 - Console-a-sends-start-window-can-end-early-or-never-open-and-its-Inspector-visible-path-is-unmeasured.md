@@ -1,19 +1,18 @@
 ---
 id: TASK-36610
-title: >-
-  Console: a send's start window can end early or never open, and its
-  Inspector-visible path is unmeasured
+title: 'Console: a send''s start window can end early or never open, and its Inspector-visible
+  path is unmeasured'
 status: Done
 assignee:
-  - '@claude'
-created_date: '2026-10-24 07:50'
-updated_date: '2026-10-31 14:57'
+- '@claude'
+created_date: 2026-10-24 07:50
+updated_date: 2026-11-02 08:20
 labels:
-  - console
-  - performance
-  - ux-review-2026-09-29
+- console
+- performance
+- ux-review-2026-09-29
 dependencies:
-  - TASK-33620.15.4
+- TASK-33620.15.4
 priority: medium
 ---
 
@@ -48,11 +47,11 @@ The live measurement (2026-10-23, Anthropic claude-haiku-4-5, 160x45, dev 1381e7
 4. Remove the screen-level acceptance note and the process-wide provider-request mark.
 5. Live, paired and interleaved against dev with the pf2probe kit (relay timing outside the app): Inspector open, >=30 sends per arm (AC#3); first sends, >=30 per arm (AC#4).
 6. Rebase onto newest dev, gates by test id against dev, preflight, notes.
+PR3338 integration: retain current runtime and acknowledgement ownership while pinning no-provider custody completion and exceptional submission cleanup. ADR required: no new ADR; existing ADR-094, ADR-219 and ADR-230 govern the existing boundaries.
 <!-- SECTION:PLAN:END -->
-
 ## Implementation Notes
 
-<!-- SECTION:NOTES:BEGIN -->
+<!-- SECTION:IMPLEMENTATION_NOTES:BEGIN -->
 Each Console send now owns its start window, from its own acceptance to its own provider request (3 s at most). Another session's provider request no longer ends it. A queued prompt's dispatch, an agent wake, a goal iteration and an agent's chat start each open one. Live and paired against dev, sends with the Inspector open reach the provider no later (64 pairs: paired median -1.4 ms). First sends show no detectable difference (60 pairs: paired median +15.9 ms, 95% CI -7.6 to +38.4; mean -6.1 ms). That did not meet AC#4 as first written; the owner accepted it within the measured bound on 2026-10-31, and AC#4 is reworded to that bound.
 
 **AC#4: accepted within the measured bound by the owner (2026-10-31).** The owner's decision, quoted: "Accept within +38 ms": "Reword AC#4 to 'no detectable difference (95% CI upper bound ≤ ~38 ms)' with today's date, and close the task." AC#4 is reworded to that bound and ticked on the evidence already recorded here (B+E, 60 pairs: paired median +15.9 ms, 95% CI -7.6 to +38.4 ms; mean -6.1 ms). No new measurement was run for the tick.
@@ -121,4 +120,5 @@ All times are ms. Every send's request reached the relay, and every response was
 **Close-out (2026-10-31).** Only the owner's AC#4 decision changed after review. The close-out commit edits only this task file; the code is as it was at b937de1a27. origin/dev was still 804dc00231, so no rebase was needed. On that head, `Tests/UI/test_console_send_start_window.py` passed 7 of 7 again (24 s, load1 6.9), and `./scripts/preflight.sh` passes.
 
 Evidence: kept on the measuring host, outside the repo, at `~/.claude/projects/-Users-macbook-dev-Documents-GitHub-tldw-chatbook/c28a6a75-4221-4434-989d-fbf24a73c96b/tools/evidence/bd5/P10/` (driver and relay logs, probe captures, REPORT.txt, and the kit that produced them). The diagnostic launch's requests went through another agent's relay on 8797, which had taken the port; see the new lesson in lessons-live-verification.md.
-<!-- SECTION:NOTES:END -->
+PR3338 integration adds direct lifecycle cleanup cases and preserves current custody, acknowledgement and display owners. The existing agent chat-start ownership test uses the extended test limit; the production three-second cap is unchanged. Historical performance acceptance remains reported only; raw receipts and sign-off are unavailable. TASK-38460 and TASK-38461 remain open.
+<!-- SECTION:IMPLEMENTATION_NOTES:END -->

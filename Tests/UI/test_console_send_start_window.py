@@ -350,7 +350,7 @@ def test_a_send_start_ends_on_its_own_after_its_limit():
 
 @pytest.mark.asyncio
 @pytest.mark.requires_cleanup
-async def test_an_agents_chat_start_opens_a_send_start_until_it_is_done(tmp_path):
+async def test_an_agents_chat_start_opens_a_send_start_until_it_is_done(tmp_path, no_limit):
     """An agent's chat start is an automatic submission too.
 
     It submits its opening prompt straight to the controller
@@ -463,3 +463,96 @@ async def test_an_agents_chat_start_opens_a_send_start_until_it_is_done(tmp_path
         await controller.shutdown()
         runs.close()
         store.persistence.db.close_connection()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("mode", ["cancel_before_first_step", "return_without_provider", "raise_without_provider"])
+async def test_custody_task_completion_retires_only_its_send_start(mode):
+    from tldw_chatbook.Chat.console_send_start import (
+        send_start_open, start_custody_task, submission_send_start,
+    )
+
+    class Owner:
+        pass
+
+    class ExpectedError(Exception):
+        pass
+
+    owner, other_owner = Owner(), Owner()
+    long_limit = 600.0
+    entered = False
+    sentinel = object()
+    release = asyncio.Event()
+    subject_done, sibling_done = asyncio.Event(), asyncio.Event()
+    subject = sibling = None
+
+    async def subject_work():
+        nonlocal entered
+        entered = True
+        if mode == "raise_without_provider":
+            raise ExpectedError("expected")
+        return sentinel
+
+    async def sibling_work():
+        await release.wait()
+        return sentinel
+
+    try:
+        with submission_send_start(other_owner):
+            assert send_start_open(other_owner, long_limit)
+            subject = start_custody_task(owner, subject_work())
+            assert send_start_open(owner, long_limit)
+            if mode == "cancel_before_first_step":
+                subject.cancel()
+            sibling = start_custody_task(owner, sibling_work())
+            subject.add_done_callback(lambda _: subject_done.set())
+            sibling.add_done_callback(lambda _: sibling_done.set())
+            if mode == "cancel_before_first_step":
+                with pytest.raises(asyncio.CancelledError):
+                    await subject
+                assert not entered
+            elif mode == "raise_without_provider":
+                with pytest.raises(ExpectedError, match="expected"):
+                    await subject
+            else:
+                assert await subject is sentinel
+            await asyncio.wait_for(subject_done.wait(), 5)
+            assert send_start_open(owner, long_limit)
+            assert send_start_open(other_owner, long_limit)
+            release.set()
+            assert await asyncio.wait_for(sibling, 5) is sentinel
+            await asyncio.wait_for(sibling_done.wait(), 5)
+            assert not send_start_open(owner, long_limit)
+            assert send_start_open(other_owner, long_limit)
+        assert not send_start_open(other_owner, long_limit)
+    finally:
+        release.set()
+        tasks = [task for task in (subject, sibling) if task is not None]
+        for task in tasks:
+            if not task.done():
+                task.cancel()
+        if tasks:
+            await asyncio.wait_for(asyncio.gather(*tasks, return_exceptions=True), 5)
+
+
+@pytest.mark.asyncio
+async def test_exceptional_submission_retires_only_its_send_start():
+    from tldw_chatbook.Chat.console_send_start import send_start_open, submission_send_start
+
+    class Owner:
+        pass
+
+    class ExpectedError(Exception):
+        pass
+
+    owner, other_owner = Owner(), Owner()
+    long_limit = 600.0
+    with submission_send_start(other_owner):
+        assert send_start_open(other_owner, long_limit)
+        with pytest.raises(ExpectedError, match="expected"):
+            with submission_send_start(owner):
+                assert send_start_open(owner, long_limit)
+                raise ExpectedError("expected")
+        assert not send_start_open(owner, long_limit)
+        assert send_start_open(other_owner, long_limit)
+    assert not send_start_open(other_owner, long_limit)
