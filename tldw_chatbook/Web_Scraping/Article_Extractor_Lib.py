@@ -466,6 +466,15 @@ async def scrape_article(
             "web_scraper_retry_count", 3
         )
         retries = scrape_retry_count
+        # TASK-38603: ``retries = 0`` used to make ``range(0)`` skip the
+        # loop entirely and fall through to ``return ""`` -- a config typo
+        # masquerading as an empty page. Fail loudly instead: the retry
+        # count must be an integer >= 1.
+        if not isinstance(retries, int) or retries < 1:
+            raise ValueError(
+                "web_scraper.web_scraper_retry_count must be an integer >= 1, "
+                f"got {scrape_retry_count!r}"
+            )
         # Load retry timeout value from config
         web_scraper_retry_timeout = loaded_config["web_scraper"].get(
             "web_scraper_retry_timeout", 60
@@ -540,6 +549,21 @@ async def scrape_article(
                 )
                 error_type = "timeout"
                 last_error = ScrapingTimeoutError(f"Page load timeout for {url}")
+
+                # TASK-38603: this branch used to fall through to the next
+                # attempt with no backoff and, after the final timeout,
+                # silently ``return ""`` from the bottom of the loop. Back
+                # off and raise exactly like the generic error branch so a
+                # timed-out URL reports failure instead of empty content.
+                if attempt < retries - 1:
+                    logging.info(f"Retrying in {2 * (attempt + 1)} seconds...")
+                    await asyncio.sleep(2 * (attempt + 1))  # Exponential backoff
+                else:
+                    logging.error("Max retries reached, giving up on this URL.")
+                    log_counter(
+                        "html_fetch_error", labels={"url": url, "error": error_type}
+                    )
+                    raise MaxRetriesExceededError(url, retries, last_error)
 
             except EgressBlockedError as e:
                 logging.warning(f"Navigation blocked by egress policy: {e}")
