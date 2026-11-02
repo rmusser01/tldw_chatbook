@@ -578,7 +578,18 @@ def _openai_embedder(
                 )  # CHANGED: Use dynamic endpoint
                 resp.raise_for_status()
                 data = resp.json()["data"]
-                arr = np.asarray([d["embedding"] for d in data], dtype=np.float32)
+                # TASK-38590: OpenAI-compatible endpoints (vLLM / LM Studio)
+                # may return the embedding items out of order; each item
+                # carries the request position in its "index" field, so map
+                # by that. Lenient boundary: if "index" is missing or
+                # malformed, fall back to the response list order.
+                try:
+                    ordered = sorted(data, key=lambda d: d["index"])
+                except (KeyError, TypeError, ValueError, IndexError):
+                    ordered = data
+                arr = np.asarray(
+                    [d["embedding"] for d in ordered], dtype=np.float32
+                )
                 latency = time.perf_counter() - t0
                 logger.debug(
                     "openai_embed[{}] {} texts in {:.3f}s via {}",
