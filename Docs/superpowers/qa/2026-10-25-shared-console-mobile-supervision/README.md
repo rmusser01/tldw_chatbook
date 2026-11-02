@@ -1,6 +1,6 @@
 # Shared served Console and mobile qualification
 
-The current candidate integrates dev `2acbcd42f3e7b07fd122f5f6dc6b22e7385f10c5`.
+The current candidate integrates dev `62a169f906508ed02bd7546ab278d916638d1607`.
 Targeted storage and runtime evidence is recorded below; final independent
 integration review and the complete 15-case served-browser UAT are still pending.
 Native size/import ratchets currently fail and are not waived. This is not a
@@ -366,3 +366,12 @@ Final independent integration review and the whole 15-case served-browser UAT
 remain pending. Physical phone/VPN, external providers, real-profile migration
 and a full repository test suite remain unverified. Task completion and PR update
 await the remaining gates.
+
+
+The subsequent normal rebase onto native dev62a preserves all qualified storage
+and mobile runtime bytes. Its only executable delta is the exact native video
+Stop implementation and tests: cancelled/refused/deleted/unconfirmed outcomes
+remain distinct, with existing operation cleanup and honest remote-state copy.
+Both native video and mobile trace tests remain in the UI census (floor1,318).
+Connected native video checks, the final independent review and15-case UAT are
+pending on this frozen candidate; no new green result is inferred from rebase.
