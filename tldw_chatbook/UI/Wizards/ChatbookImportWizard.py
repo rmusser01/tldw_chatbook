@@ -689,7 +689,6 @@ class ConflictResolutionStep(WizardStep):
                 RadioButton("Skip existing items", value=True, id="strategy-skip"),
                 RadioButton("Rename imported items", id="strategy-rename"),
                 RadioButton("Replace existing items", id="strategy-replace"),
-                RadioButton("Merge where possible", id="strategy-merge"),
                 id="resolution-strategy",
             )
 
@@ -706,10 +705,10 @@ class ConflictResolutionStep(WizardStep):
                 "Replace: Overwrite existing items with imported versions",
                 classes="strategy-description",
             )
-            yield Static(
-                "Merge: Combine content intelligently (conversations append messages)",
-                classes="strategy-description",
-            )
+            # No "Merge" option: the importer never implemented it (it used
+            # to be silently rewritten to rename) and now rejects the
+            # strategy value outright -- a wizard radio button that can only
+            # fail the import is not offered (TASK-38594).
 
         # Conflicts the scan found. Hidden until the scan reports findings;
         # ``_apply_scan_result`` is the code path that reveals it.
@@ -788,11 +787,13 @@ class ConflictResolutionStep(WizardStep):
 
     def get_step_data(self) -> Dict[str, Any]:
         """Get selected resolution strategy."""
+        # Only the implemented strategies are offered (TASK-38594); an
+        # unknown id falls back to SKIP rather than smuggling a strategy
+        # the importer would reject.
         strategy_map = {
             "strategy-skip": ConflictResolution.SKIP,
             "strategy-rename": ConflictResolution.RENAME,
             "strategy-replace": ConflictResolution.REPLACE,
-            "strategy-merge": ConflictResolution.MERGE,
         }
 
         selected_strategy = ConflictResolution.SKIP  # default

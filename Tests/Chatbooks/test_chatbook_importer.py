@@ -1228,12 +1228,17 @@ def test_import_conflict_skip_preserves_existing_console_project_context(
     [
         ConflictResolution.REPLACE,
         ConflictResolution.RENAME,
-        ConflictResolution.MERGE,
     ],
 )
 def test_import_non_skip_conflicts_create_null_local_state_and_preserve_existing(
     tmp_path, monkeypatch, resolution
 ) -> None:
+    # MERGE is no longer parametrized here: the strategy is unimplemented
+    # and import_chatbook now rejects it up front (TASK-38594; pinned in
+    # test_chatbook_import_conflict_strategies.py). REPLACE now soft-deletes
+    # the existing conversation before creating the imported one, so the raw
+    # table keeps both rows -- the retired one still carries its encoded
+    # local state, the new one a null one.
     user_data = tmp_path / "user-data"
     monkeypatch.setattr(importer_module, "get_user_data_dir", lambda: user_data)
     db_path = tmp_path / "chachanotes.db"
