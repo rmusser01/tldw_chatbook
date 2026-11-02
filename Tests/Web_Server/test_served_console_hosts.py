@@ -97,6 +97,87 @@ async def test_concurrent_start_survives_cancelled_browser():
         await registry.get_or_start("admitted-profile")
 
 
+async def test_buffered_output_yields_to_already_waiting_receiver(recording_host):
+    host, service = recording_host
+    attachment = await host.attach_terminal("receiving-browser", 80, 24)
+    for _ in range(2):
+        assert (await attachment.receive())[0] == "str"
+    assert attachment.begun and attachment.ready
+    entered = asyncio.Event()
+    frames = [f"paint-{index:03d}".encode() for index in range(100)]
+
+    async def receive_frames():
+        entered.set()
+        return [await attachment.receive() for _ in frames]
+
+    receiver = asyncio.create_task(receive_frames())
+    try:
+        await entered.wait()
+        # Buffered native output can call this callback repeatedly without I/O.
+        # The already-waiting consumer must get a chance to drain its queue.
+        for frame in frames:
+            await service.write_bytes(frame)
+        assert not attachment.closed.is_set()
+        assert host.current_attachment is attachment
+        assert await asyncio.wait_for(receiver, 5) == [
+            ("bytes", frame) for frame in frames
+        ]
+        assert attachment._queued_bytes == 0
+        assert service.stop_calls == 0
+    finally:
+        receiver.cancel()
+        await asyncio.gather(receiver, return_exceptions=True)
+
+
+@pytest.mark.parametrize("limit", ["frames", "bytes"])
+async def test_stalled_receiver_keeps_exact_output_limits(recording_host, limit):
+    host, service = recording_host
+    attachment = await host.attach_terminal("stalled-browser", 80, 24)
+    for _ in range(2):
+        await attachment.receive()
+    frames = [b"x"] * 64 if limit == "frames" else [b"x" * (1024 * 1024)]
+    for frame in frames:
+        await service.write_bytes(frame)
+    assert not attachment.closed.is_set()
+    assert attachment.output.qsize() == len(frames)
+    assert attachment._queued_bytes == sum(map(len, frames))
+    await service.write_bytes(b"overflow")
+    assert attachment.closed.is_set()
+    assert host.current_attachment is None
+    assert attachment.output.empty() and attachment._queued_bytes == 0
+    assert service.stop_calls == 0
+
+
+@pytest.mark.parametrize("interruption", ["cancel", "replace"])
+async def test_output_yield_cannot_retire_successor(recording_host, interruption):
+    host, service = recording_host
+    previous = await host.attach_terminal("previous-browser", 80, 24)
+    for _ in range(2):
+        await previous.receive()
+    publisher = asyncio.create_task(service.write_bytes(b"old paint"))
+    try:
+        await asyncio.sleep(0)
+        assert previous.output.qsize() == 1
+        assert not publisher.done()
+        if interruption == "cancel":
+            publisher.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await publisher
+        successor = await host.attach_terminal("successor-browser", 80, 24)
+        if interruption == "replace":
+            await publisher
+        await previous.detach()
+        assert host.current_attachment is successor
+        assert not successor.closed.is_set()
+        assert successor.begun and successor.ready
+        await successor.send_bytes(b"current input")
+        assert service.input_bytes == [b"current input"]
+        assert service.stop_calls == 0
+    finally:
+        publisher.cancel()
+        await asyncio.gather(publisher, return_exceptions=True)
+
+
 async def test_output_pressure_detaches_browser_without_stopping_child(recording_host):
     host, service = recording_host
     attachment = await host.attach_terminal("slow-browser", 80, 24)

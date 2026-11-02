@@ -70,6 +70,8 @@ class TerminalAttachment:
             return
         self._queued_bytes += len(value)
         self.output.put_nowait((kind, value))
+        # Buffered child output must let an already-ready receiver run.
+        await asyncio.sleep(0)
 
 
 class ServedConsoleHost:

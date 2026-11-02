@@ -651,6 +651,108 @@ async def test_replaced_incarnation_keeps_original_draft_until_explicit_choice(
     assert not case.commands
 
 
+async def test_unrelated_attention_refresh_preserves_question_pointer_gesture(
+    mobile_browser_case,
+):
+    case = mobile_browser_case
+    service, page = case.service, case.page
+    service.decisions = [
+        dict(
+            service.row("chat-a"),
+            kind="question",
+            round_id="stable-question",
+            supported=True,
+            questions=[
+                {
+                    "question": "Which branch?",
+                    "options": [{"label": "Main", "description": "Current branch"}],
+                    "multiSelect": False,
+                }
+            ],
+        )
+    ]
+    await case.open_chat("chat-a")
+    answer = page.get_by_label("Main · Current branch")
+    extra = page.get_by_label("Additional answer for Which branch?")
+    await answer.check()
+    await extra.fill("Keep this exact answer")
+    original_input = await answer.element_handle()
+    submit = page.get_by_role("button", name="Submit decision", exact=True)
+    await expect(submit).to_be_enabled()
+    await submit.scroll_into_view_if_needed()
+    box = await submit.bounding_box()
+    assert box is not None
+    await page.mouse.move(box["x"] + box["width"] / 2, box["y"] + box["height"] / 2)
+    await page.mouse.down()
+    try:
+        # Only another Chat's attention count changes, not this native round.
+        service.attention_b = 1
+        await service.events_queue.put(MobileEvent("console.changed", "", {}, 2))
+        await expect(page.locator("#approvals-badge")).to_have_text("2")
+    finally:
+        await page.mouse.up()
+    assert await original_input.evaluate("input => input.isConnected")
+    await expect(answer).to_be_checked()
+    await expect(extra).to_have_value("Keep this exact answer")
+    await case.release_receipt("accepted")
+    await expect(page.locator("#command-status")).to_contain_text("decision: accepted")
+    assert len(service.tickets) == len(service.commands) == 1
+    command = service.commands[0]
+    assert command["target"].run_id == "run-chat-a"
+    assert command["target"].round_id == "stable-question"
+    assert command["payload"] == {
+        "kind": "question",
+        "answer": {
+            "answers": [
+                {
+                    "question": "Which branch?",
+                    "selected": ["Main"],
+                    "other_text": "Keep this exact answer",
+                    "unanswered": False,
+                }
+            ]
+        },
+    }
+
+
+async def test_identical_refresh_preserves_overview_pointer_navigation(
+    mobile_browser_case,
+):
+    case = mobile_browser_case
+    service, page = case.service, case.page
+    service.attention_b = 1
+    await case.open_chat("chat-a")
+    await page.locator("#approvals-button").click()
+    overview = page.get_by_role("button", name="Planning · 1 pending decisions")
+    await expect(overview).to_be_visible()
+    original_button = await overview.element_handle()
+    box = await overview.bounding_box()
+    assert box is not None
+    await page.mouse.move(box["x"] + box["width"] / 2, box["y"] + box["height"] / 2)
+    await page.mouse.down()
+    try:
+        async with page.expect_response(
+            lambda response: (
+                "/api/v1/mobile/console/snapshot?" in response.url
+                and response.request.method == "GET"
+            )
+        ) as refreshed:
+            await service.events_queue.put(MobileEvent("console.changed", "", {}, 2))
+        assert (await refreshed.value).status == 200
+        await (await refreshed.value).finished()
+        # Allow the fetched metadata to finish its normal public render turn.
+        await page.evaluate(
+            "() => new Promise(resolve => requestAnimationFrame(() => "
+            "requestAnimationFrame(resolve)))"
+        )
+        assert await original_button.evaluate("button => button.isConnected")
+    finally:
+        await page.mouse.up()
+    await expect(page.locator("#chat-title")).to_have_text("Planning")
+    await expect(page.locator("#chat-draft")).to_be_enabled()
+    assert not service.tickets and not service.commands
+
+
 async def test_long_unicode_tool_html_and_supported_native_decisions(
     mobile_browser_case,
 ):
