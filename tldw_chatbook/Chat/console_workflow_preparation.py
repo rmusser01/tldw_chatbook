@@ -13,8 +13,6 @@ from tldw_chatbook.Agents.workflow_task_scope import (
     _prepare_workflow_task,
     _runtime,
 )
-from tldw_chatbook.Utils.filesystem_identity import capture_directory_chain
-from tldw_chatbook.Workspaces.worktree_activity import WorktreeFootprint, WorktreeScope
 
 from .console_goal_runs import goal_provider_ref
 from .console_preparation_reads import run_preparation_read
@@ -100,12 +98,9 @@ class _PreparedWorkflowReply:
                     self.check()
                     # shortcut: finite preflight serializes against all root writes;
                     # batch eligible preparations before launching disjoint tasks.
-                    chain = (
-                        capture_directory_chain(self.binding.root) if roots else None
-                    )
                     footprint = (
-                        WorktreeFootprint(
-                            reads=(WorktreeScope(chain.canonical_root, True, chain),)
+                        self.service._preparation_read_footprint(
+                            self.phase, self.task_id, self.binding
                         )
                         if roots
                         else None
@@ -132,6 +127,16 @@ class _PreparedWorkflowReply:
                             if claim is not None:
                                 claim.bind_owner(owner)
                             with owner.activate():
+                                if (
+                                    roots
+                                    and footprint
+                                    != self.service._preparation_read_footprint(
+                                        self.phase, self.task_id, self.binding
+                                    )
+                                ):
+                                    raise ValueError(
+                                        "freshness_source_identity_changed"
+                                    )
                                 result = callback()
                                 self.check()
                                 return result

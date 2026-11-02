@@ -100,6 +100,110 @@ def _shell_manifest(path):
     return _manifest("/", (str(Path(path).absolute()).lstrip("/"),))
 
 
+def _checkpoint(db, workflow_id, attempt_id):
+    with db.connection() as conn:
+        row = conn.execute(
+            "SELECT payload_hash,payload_json FROM workflow_checkpoints WHERE workflow_id=? AND attempt_id=?",
+            (workflow_id, attempt_id),
+        ).fetchone()
+    if row is None or digest(row[1]) != row[0]:
+        raise ValueError("native_checkpoint_missing")
+    checkpoint = WorkflowCheckpoint.model_validate_json(row[1])
+    result = db.workflow_runs.read_result(workflow_id, attempt_id)
+    if checkpoint.run_id != result.run_id or checkpoint.result_digest != digest(
+        result.canonical_json()
+    ):
+        raise ValueError("native_checkpoint_result_changed")
+    return checkpoint
+
+
+def _task_record(db, snapshot, task, *, partial=False):
+    """Select the same durable predecessor for scope derivation and collection."""
+    with db.connection() as conn:
+        row = conn.execute(
+            "SELECT id,retirement,run_id FROM workflow_task_attempts WHERE workflow_id=? AND plan_revision=? AND task_id=? ORDER BY ordinal DESC LIMIT 1",
+            (snapshot.id, len(snapshot.plans), task.id),
+        ).fetchone()
+    if partial and (row is None or row["run_id"] is None):
+        return None
+    if row is None or row["retirement"] != "drained":
+        raise ValueError("native_checkpoint_missing")
+    return (
+        _checkpoint(db, snapshot.id, row["id"]),
+        db.workflow_runs.read_result(snapshot.id, row["id"]),
+    )
+
+
+def _read_scope(binding, root, relative):
+    from tldw_chatbook.Utils.filesystem_identity import capture_directory_chain
+    from tldw_chatbook.Workspaces.worktree_activity import WorktreeScope
+
+    path = _bound_path(binding, root, relative)
+    # The collector opens the original components with O_NOFOLLOW.
+    if path != Path(root) / relative or path.resolve() != path:
+        raise ValueError("freshness_source_identity_changed")
+    return WorktreeScope(path, path.is_dir(), capture_directory_chain(Path(root)))
+
+
+def _dependency_read_scopes(db, snapshot, tasks, binding):
+    from tldw_chatbook.Tools.raw_cli_executor import resolve_shell_argv
+    from tldw_chatbook.Utils.filesystem_identity import capture_directory_chain
+    from tldw_chatbook.Workspaces.worktree_activity import WorktreeScope
+
+    root = Path(snapshot.request.binding.locator)
+    scopes = []
+    for task in tasks:
+        checkpoint, result = _task_record(db, snapshot, task)
+        if result.status != "completed":
+            raise ValueError("task_not_completed")
+        paths = [*task.outputs, *(p.split(":", 1)[-1] for p in task.inputs)]
+        for check_id in task.expected_checks:
+            spec = next((v for v in task.verifiers if v.id == check_id), None)
+            native = next(
+                (
+                    v
+                    for v in reversed(checkpoint.verifiers)
+                    if v.verifier_id == check_id
+                ),
+                None,
+            )
+            if spec is None or native is None:
+                raise ValueError("native_check_missing_or_stale")
+            paths.extend(
+                (str(Path(spec.verifier_path).relative_to(root)), *spec.input_paths)
+            )
+            shell = Path(native.shell_path)
+            if (
+                native.shell_path
+                != resolve_shell_argv(
+                    "bash", shlex.join((spec.verifier_path, *spec.arguments))
+                )[0]
+                or not shell.is_absolute()
+                or shell.resolve(strict=True) != shell
+                or not shell.is_file()
+            ):
+                raise ValueError("freshness_shell_identity_changed")
+            if shell.is_relative_to(root):
+                scopes.append(_read_scope(binding, root, str(shell.relative_to(root))))
+            else:
+                scopes.append(
+                    WorktreeScope(shell, False, capture_directory_chain(shell.parent))
+                )
+        scopes.extend(_read_scope(binding, root, path) for path in paths)
+    return tuple(scopes)
+
+
+def _task_freshness_reads(db, snapshot, task, binding):
+    """Derive host read scopes from collector metadata without opening file bodies."""
+    root = snapshot.request.binding.locator
+    definitions = {t.id: t for p in snapshot.plans[-1].phases for t in p.tasks}
+    return tuple(
+        _read_scope(binding, root, path.split(":", 1)[-1]) for path in task.inputs
+    ) + _dependency_read_scopes(
+        db, snapshot, (definitions[i] for i in task.dependencies), binding
+    )
+
+
 @dataclass
 class _ShellObservation:
     spec: object
@@ -309,6 +413,33 @@ class WorkflowRunService:
         """Read saved workflow state without dispatch or startup recovery."""
         return self.db.workflow_runs.get(workflow_id)
 
+    def _preparation_read_footprint(self, phase, task_id, binding):
+        """Cover the existing review collector and task seed in one finite claim."""
+        from tldw_chatbook.Utils.filesystem_identity import capture_directory_chain
+        from tldw_chatbook.Workspaces.worktree_activity import (
+            WorktreeFootprint,
+            WorktreeScope,
+        )
+
+        if phase._ledger._db is not self.db:
+            raise ValueError("native_task_custody_required")
+        snapshot = self.get(phase.attempt.workflow_id)
+        plan = snapshot.plans[phase.attempt.revision_id - 1]
+        index = next(
+            i for i, p in enumerate(plan.phases) if p.id == phase.attempt.phase_id
+        )
+        task = next(t for t in plan.phases[index].tasks if t.id == task_id)
+        definitions = {t.id: t for p in plan.phases for t in p.tasks}
+        required = {t.id: t for p in plan.phases[:index] for t in p.tasks}
+        required.update((i, definitions[i]) for i in task.dependencies)
+        chain = capture_directory_chain(binding.root)
+        return WorktreeFootprint(
+            reads=(
+                WorktreeScope(chain.canonical_root, True, chain),
+                *_dependency_read_scopes(self.db, snapshot, required.values(), binding),
+            )
+        )
+
     @goal_storage_operation
     def prepare_task_inputs(
         self, authorization: WorkflowTaskAuthorization
@@ -402,6 +533,10 @@ class WorkflowRunService:
         ):
             raise ValueError("required_task_seed_changed")
         snapshot = self.get(authorization.claim.workflow_id)
+        if authorization._freshness_reads != _task_freshness_reads(
+            self.db, snapshot, authorization.task, authorization.binding
+        ):
+            raise ValueError("freshness_source_identity_changed")
         paths = tuple(path.split(":", 1)[-1] for path in authorization.task.inputs)
         if tracker.inputs != _manifest(
             snapshot.request.binding.locator, paths, authorization=authorization
@@ -611,20 +746,7 @@ class WorkflowRunService:
         return snapshot
 
     def _checkpoint(self, workflow_id, attempt_id):
-        with self.db.connection() as conn:
-            row = conn.execute(
-                "SELECT payload_hash,payload_json FROM workflow_checkpoints WHERE workflow_id=? AND attempt_id=?",
-                (workflow_id, attempt_id),
-            ).fetchone()
-        if row is None or digest(row[1]) != row[0]:
-            raise ValueError("native_checkpoint_missing")
-        checkpoint = WorkflowCheckpoint.model_validate_json(row[1])
-        result = self.db.workflow_runs.read_result(workflow_id, attempt_id)
-        if checkpoint.run_id != result.run_id or checkpoint.result_digest != digest(
-            result.canonical_json()
-        ):
-            raise ValueError("native_checkpoint_result_changed")
-        return checkpoint
+        return _checkpoint(self.db, workflow_id, attempt_id)
 
     @goal_storage_operation
     def prepare_decision(self, workflow_id: str, *, phase_id: str) -> WorkflowDecision:
@@ -730,17 +852,10 @@ class WorkflowRunService:
         )
 
     def _fresh_task_result(self, snapshot, task, *, partial=False):
-        with self.db.connection() as conn:
-            row = conn.execute(
-                "SELECT id,retirement,run_id FROM workflow_task_attempts WHERE workflow_id=? AND plan_revision=? AND task_id=? ORDER BY ordinal DESC LIMIT 1",
-                (snapshot.id, len(snapshot.plans), task.id),
-            ).fetchone()
-        if partial and (row is None or row["run_id"] is None):
+        record = _task_record(self.db, snapshot, task, partial=partial)
+        if record is None:
             return None
-        if row is None or row["retirement"] != "drained":
-            raise ValueError("native_checkpoint_missing")
-        checkpoint = self._checkpoint(snapshot.id, row["id"])
-        result = self.db.workflow_runs.read_result(snapshot.id, row["id"])
+        checkpoint, result = record
         if result.status != "completed" and not partial:
             raise ValueError("task_not_completed")
         if (

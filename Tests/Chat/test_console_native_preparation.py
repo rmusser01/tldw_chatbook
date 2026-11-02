@@ -34,7 +34,8 @@ pytestmark = [pytest.mark.bootstrap_profile, pytest.mark.asyncio]
 
 
 @pytest.fixture
-async def native_host(tmp_path, monkeypatch):
+async def native_host(tmp_path, monkeypatch, request):
+    plan_edit = getattr(request, "param", None)
     monkeypatch.setenv("TLDW_AGENTS_WORKFLOW_RUNS_ENABLED", "true")
     monkeypatch.setenv("TLDW_AGENTS_AUTOWAKE_ENABLED", "false")
     db = AgentRunsDB(tmp_path / "runs.db")
@@ -109,6 +110,8 @@ async def native_host(tmp_path, monkeypatch):
         outputs=[],
         expected_checks=[],
     )
+    if plan_edit is not None:
+        plan_edit(data, root)
     workflow = db.workflow_runs.save_plan(
         workflow.id,
         WorkflowPlan.model_validate_json(json.dumps(data)),

@@ -4772,10 +4772,6 @@ class AgentService:
                     return result
                 raise PermissionError("workflow child launch already claimed")
             prepared = prepared[0]
-            for tracker in authorization._required_evidence:
-                tracker.service.validate_task_inputs(
-                    authorization, json.loads(prepared.messages_json)
-                )
             # Original resource retirement uses this same claim lock.
             authorization.check_preparation()
             authorization._native_launch.append(None)
@@ -4803,6 +4799,11 @@ class AgentService:
                     claim.bind_owner(owner)
                     prepared.activity_claims.append(claim)
                     bound = True
+                    with owner.activate():
+                        for tracker in authorization._required_evidence:
+                            tracker.service.validate_task_inputs(
+                                authorization, json.loads(prepared.messages_json)
+                            )
                     kwargs = dict(prepared.kwargs)
                     kwargs["messages"] = json.loads(prepared.messages_json)
                     kwargs["workflow_task_authorization"] = authorization

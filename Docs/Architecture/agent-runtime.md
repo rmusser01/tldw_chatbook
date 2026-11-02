@@ -352,7 +352,7 @@ service; another preparation or later `run_turn` cannot replace its tree state.
 The earlier direct `_run_owned` workflow seam also seals this ownership and
 retains its supported no-log path. Task8B's private Console preparation consumer
 now supplies the real bridge result (see [console.md](./console.md#shared-native-preparation-adr-285));
-phase snapshot ownership, launch freshness read admission and the public
+phase snapshot ownership and the public
 coordinator remain separate integration work. These seams do not enable scheduling.
 Preparation detaches the task-only native message seed, including bounded
 required inputs/handoffs, and requires the approved instruction row exactly
@@ -361,7 +361,16 @@ The shared producer constructs that seed from Task7-validated results.
 
 `launch_workflow_task` acquires the complete activity footprint before native
 child capacity and passes the **same** task reservation and run ID through the
-shared launcher. `_run_owned` still owns the final allowance commit and
+shared launcher. The original authorization captures separate host-only reads
+from the actual freshness collector's metadata: task inputs and direct dependency
+inputs, outputs, verifier inputs/wrappers and saved native shell references.
+Directory sources cover recursive collection. Shell references must still match
+the native resolved bash executable; wrappers remain inside the selected binding.
+These scopes never expand model tools or paths. Final freshness validation runs
+under the complete claim and actual child owner, after checking current source
+identities and exclusions, before any child row or allowance commit. A known
+predispatch refusal drains that finite owner and settles its claim while retaining
+the original unconsumed reservation. `_run_owned` still owns the final allowance commit and
 `_run_one` still binds the actual owner/run. Concurrent duplicate launch claims
 refuse before touching rows, capacity or clients; completed duplicate delivery
 returns the same `WorkflowChildReceipt`. Capacity/activity waits keep original
@@ -413,6 +422,13 @@ ADR-285. Its finite `call` owns the complete callback through the existing
 preflight. `prepare_task_inputs` supplies source references and complete saved
 handoffs; it does not authorize file-body reads. Native preparation and launch
 revalidate the exact seed, current binding and dependency evidence.
+Metadata-only preparation refuses missing/failed predecessor checkpoints before
+issuing task custody or reserving a child launch; phase approval still defers
+future same-phase output references. The private Console preparation callback
+claims its selected root plus external native shell reads from all prior-phase
+review sources and the selected task's direct dependencies before reading bodies.
+It rechecks source identities after acquisition and releases only after callback
+return. Human review and phase settlement still need coordinator-owned admission.
 
 Only the original `WorkflowChildReceipt` retained on the private task
 authorization can bind settlement. The service observes its actual owner's drain

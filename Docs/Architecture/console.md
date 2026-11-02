@@ -284,7 +284,9 @@ startup instructions are read under the finite root claim, confirmed outside
 the claim, and revalidated before `_prepare_workflow_child` captures them.
 
 Each finite callback uses `run_preparation_read`, fresh owned database/activation
-scopes and an actual execution owner. Root READ claims end with the callback;
+scopes and an actual execution owner. The complete finite READ claim includes
+the selected root and metadata-derived external native shell sources consumed by
+predecessor review/freshness. It rechecks identities after acquisition and ends with the callback;
 later scheduling must batch eligible preparation before disjoint writes or
 derive narrower complete read scopes. Cancellation/profile shutdown waits for
 physical callback retirement. The returned original object must be retained
@@ -296,10 +298,10 @@ and source while preserving native task/run ownership.
 
 This is an internal preparation slice. Capture-enabled task entry refuses until
 the phase snapshot window and its worker ownership are integrated; ordinary
-capture is unchanged. The later coordinator must also move final Task7 freshness
-reads under the actual launch owner and complete host physical read footprint,
-before run-row creation/dispatch/allowance commit. The current launcher still
-performs that validation before activity acquisition. These private seams do not
+capture is unchanged. Final Task7 launch freshness reads now run under the actual
+native owner and complete host-only footprint before child row creation,
+dispatch or allowance commit (see [agent-runtime.md](./agent-runtime.md#native-workflow-admission-adr-285)).
+Human approval/review and phase settlement admission remain coordinator work. These private seams do not
 enable the public workflow coordinator or complete Task38531.
 
 ## Run states and gating

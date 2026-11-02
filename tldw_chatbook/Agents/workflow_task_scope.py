@@ -90,6 +90,7 @@ class WorkflowTaskAuthorization:
     registry: ToolCatalogRegistry = field(repr=False)
     footprint: WorktreeFootprint = field(repr=False)
     physical_footprint: WorktreeFootprint = field(repr=False)
+    _freshness_reads: tuple[WorktreeScope, ...] = field(repr=False)
     _runtime: ConsoleRuntime = field(repr=False)
     _binding_state: list = field(repr=False)
     _native_preparation: list = field(repr=False)
@@ -110,6 +111,7 @@ class WorkflowTaskAuthorization:
         registry,
         footprint,
         physical_footprint,
+        _freshness_reads,
         runtime,
         _key,
     ):
@@ -388,6 +390,16 @@ def _prepare_task(
         physical_footprint = _physical_footprint(
             footprint, binding, chain, mkdir_enabled="fs_mkdir" in task.allowed_tools
         )
+        from .workflow_run_service import _task_freshness_reads
+
+        freshness_reads = _task_freshness_reads(
+            phase._ledger._db, snapshot, task, binding
+        )
+        physical_footprint = WorktreeFootprint(
+            physical_footprint.reads + freshness_reads,
+            physical_footprint.writes,
+            physical_footprint.opaque,
+        )
         claim = phase._ledger.claim_workflow_task(
             phase.attempt.id, task_id=task_id, owner_id=phase.attempt.owner_id
         )
@@ -406,6 +418,7 @@ def _prepare_task(
         registry=registry,
         footprint=footprint,
         physical_footprint=physical_footprint,
+        _freshness_reads=freshness_reads,
         runtime=runtime,
         _key=_KEY,
     )

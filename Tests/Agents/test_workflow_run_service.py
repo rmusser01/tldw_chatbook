@@ -535,10 +535,10 @@ def test_same_phase_outputs_defer_at_approval_but_require_fresh_native_handoff(
         service.checkpoint_task(result, drained=True)
     if producer_state == "stale":
         (host.root / "artifact.txt").write_text("external edit")
-    consumer = _prepare_workflow_task(
-        host.phase, task_id="task-2", registry=host.registry, binding=host.binding
-    )
     if producer_state == "completed":
+        consumer = _prepare_workflow_task(
+            host.phase, task_id="task-2", registry=host.registry, binding=host.binding
+        )
         seed = service.prepare_task_inputs(consumer)
         assert json.loads(seed[1]["content"])[0]["handoff"] == result.handoff
         assert "native artifact" not in json.dumps(seed)
@@ -547,7 +547,24 @@ def test_same_phase_outputs_defer_at_approval_but_require_fresh_native_handoff(
             ValueError,
             match="native_checkpoint_missing|task_not_completed|stale_task_output",
         ):
+            consumer = _prepare_workflow_task(
+                host.phase,
+                task_id="task-2",
+                registry=host.registry,
+                binding=host.binding,
+            )
             service.prepare_task_inputs(consumer)
+        if producer_state in {"failed", "model_only"}:
+            assert "task-2" not in host.phase._task_scopes
+            with host.db.connection() as conn:
+                assert tuple(
+                    conn.execute(
+                        "SELECT t.status,c.child_reservation_id,t.run_id FROM workflow_task_attempts t "
+                        "JOIN workflow_task_claims c ON c.task_attempt_id=t.id "
+                        "WHERE t.workflow_id=? AND t.task_id='task-2'",
+                        (workflow_id,),
+                    ).fetchone()
+                ) == ("prepared", None, None)
 
 
 @pytest.mark.parametrize("failure", ["no_row", "uncertain", "durable_setup"])
