@@ -105,6 +105,129 @@ async def test_real_expansion_worker_is_native_before_file_read(
     assert h.runtime.execution_capacity.snapshot().executions == ()
 
 
+@pytest.mark.parametrize("refuse", [False, True])
+async def test_custom_parser_reads_only_under_original_opaque_custody(
+    reference_host, monkeypatch, refuse
+):
+    from tldw_chatbook.Utils.filesystem_identity import capture_directory_chain
+    from tldw_chatbook.Workspaces.worktree_activity import (
+        WorktreeFootprint,
+        WorktreeScope,
+    )
+
+    h = reference_host
+    original = refs.find_reference_candidates
+    other = h.tmp_path / "unrelated"
+    other.mkdir()
+    scope = WorktreeScope(other, True, capture_directory_chain(other))
+    observations = []
+
+    def custom_parser(text):
+        body = (h.root / "visible.txt").read_text()
+        with h.runtime.worktree_activity.prelaunch(
+            footprint=WorktreeFootprint(reads=(scope,))
+        ) as claim:
+            observations.append(
+                (
+                    current_execution_owner() is not None,
+                    threading.current_thread() is not threading.main_thread(),
+                    bool(h.runtime._preparation_reads),
+                    h.runtime.execution_capacity.snapshot().tool_workers,
+                    claim is None,
+                    body.strip(),
+                )
+            )
+        if refuse:
+            raise RuntimeError("parser refused after its read")
+        return original(text)
+
+    monkeypatch.setattr(refs, "find_reference_candidates", custom_parser)
+    try:
+        result = await h.controller.submit_draft(
+            "read @visible.txt", session_id=h.session.id
+        )
+    except RuntimeError as error:
+        result = error
+    assert observations == [(True, True, True, 1, True, "VISIBLE-REFERENCE")]
+    assert result.accepted
+    assert ("VISIBLE-REFERENCE" in str(h.gateway.payloads)) is not refuse
+    if refuse:
+        assert h.gateway.payloads[-1][-1]["content"] == "read @visible.txt"
+        assert any(
+            "refused" in row.content.lower()
+            for row in h.store.messages_for_session(h.session.id)
+        )
+    assert h.runtime.execution_capacity.snapshot().executions == ()
+    assert not h.runtime._preparation_reads
+
+
+@pytest.mark.parametrize("blocked", ["no-roots", "activity"])
+async def test_unadmitted_reference_never_calls_custom_parser(
+    reference_host, monkeypatch, blocked
+):
+    from contextlib import ExitStack
+
+    from tldw_chatbook.Tools import file_operation_tools
+    from tldw_chatbook.Workspaces.worktree_activity import WorktreeFootprint
+
+    h = reference_host
+    original = refs.find_reference_candidates
+    reads = []
+
+    def custom_parser(text):
+        reads.append((h.root / "visible.txt").read_text())
+        return original(text)
+
+    monkeypatch.setattr(refs, "find_reference_candidates", custom_parser)
+    with ExitStack() as stack:
+        if blocked == "no-roots":
+            missing = h.tmp_path / "missing-reference-sandbox"
+            monkeypatch.setattr(
+                file_operation_tools, "_sandbox_config_path", lambda settings: missing
+            )
+            stack.enter_context(roots_api.run_workspace("workspace-default"))
+            stack.enter_context(roots_api.run_file_sandbox(None))
+        else:
+            claim = stack.enter_context(
+                h.runtime.worktree_activity.prelaunch(
+                    footprint=WorktreeFootprint(opaque=True)
+                )
+            )
+            assert claim is not None
+        result = await h.controller.submit_draft(
+            "read @visible.txt", session_id=h.session.id
+        )
+    assert reads == [], "failed admission still invoked the effectful parser"
+    assert result.accepted
+    assert h.gateway.payloads[-1][-1]["content"] == "read @visible.txt"
+    assert any(
+        "refused" in row.content.lower()
+        for row in h.store.messages_for_session(h.session.id)
+    )
+    assert h.runtime.execution_capacity.snapshot().executions == ()
+    assert not h.runtime._preparation_reads
+
+
+@pytest.mark.parametrize("draft", ["plain text", "mail bob@example.com", "literal @."])
+async def test_native_no_candidate_preflight_never_calls_custom_parser(
+    reference_host, monkeypatch, draft
+):
+    h = reference_host
+    original = refs.find_reference_candidates
+    reads = []
+
+    def custom_parser(text):
+        reads.append((h.root / "visible.txt").read_text())
+        return original(text)
+
+    monkeypatch.setattr(refs, "find_reference_candidates", custom_parser)
+    result = await h.controller.submit_draft(draft, session_id=h.session.id)
+    assert reads == [], "literal/email text invoked the effectful parser"
+    assert result.accepted
+    assert h.gateway.payloads[-1][-1]["content"] == draft
+    assert not h.runtime._preparation_reads
+
+
 async def test_folder_excluded_child_name_is_not_exposed(reference_host):
     h = reference_host
     result = refs.build_console_reference_resolver()(str(h.root))

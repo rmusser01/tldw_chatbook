@@ -66,8 +66,8 @@ class ReferenceExpansion:
     records: List[ReferenceRecord] = field(default_factory=list)
 
 
-def find_reference_candidates(text: str) -> List[ReferenceCandidate]:
-    """Return every ``@`` reference candidate in ``text`` (AC#7 aware)."""
+def _native_reference_candidates(text: str) -> List[ReferenceCandidate]:
+    """Scan native syntax for preflight/refusal without invoking callbacks."""
     out: List[ReferenceCandidate] = []
     for m in _REFERENCE_RE.finditer(text or ""):
         # Trim trailing punctuation that is clearly not part of a path.
@@ -83,6 +83,11 @@ def find_reference_candidates(text: str) -> List[ReferenceCandidate]:
             )
         )
     return out
+
+
+def find_reference_candidates(text: str) -> list[ReferenceCandidate]:
+    """Return every ``@`` reference candidate in ``text`` (AC#7 aware)."""
+    return _native_reference_candidates(text)
 
 
 #: resolve(token) -> None (not a reference / leave literal)

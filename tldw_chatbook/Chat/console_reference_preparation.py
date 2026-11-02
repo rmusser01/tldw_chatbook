@@ -224,7 +224,7 @@ def _session_identity(session):
 class _ReferenceRead:
     required_writes = ()
 
-    def __init__(self, controller, session, origin, text):
+    def __init__(self, controller, session, origin, text, candidates):
         from . import console_references as refs
         from .console_workflow_runs import native_workflow_qualified
 
@@ -248,11 +248,11 @@ class _ReferenceRead:
         self.activity = getattr(self.runtime, "_worktree_activity", None)
         self.origin = WorkOrigin.AUTOMATIC if origin.automatic else WorkOrigin.MANUAL
         self.text, self.authority = text, None
+        self.candidates = candidates
         self.owner = self.operation = self.claim = None
         self.callbacks = refs.reference_callbacks()
         self.opaque = self.callbacks != refs._STOCK_REFERENCE_CALLBACKS or any(
-            c.token.lower() in refs._SPECIAL_TOKENS
-            for c in refs._STOCK_REFERENCE_CALLBACKS[0][0](text)
+            c.token.lower() in refs._SPECIAL_TOKENS for c in candidates
         )
 
     def check_memory(self):
@@ -373,7 +373,7 @@ class _ReferenceRead:
                             False,
                             "no allowed workspace roots are configured",
                         )
-                        for c in refs.find_reference_candidates(self.text)
+                        for c in self.candidates
                     ],
                 )
             result = refs.expand_references(
@@ -396,9 +396,9 @@ class _ReferenceRead:
 
 
 @asynccontextmanager
-async def prepare_reference_expansion(controller, session, origin, text):
+async def prepare_reference_expansion(controller, session, origin, text, candidates):
     """Retain the original worker and native operation through host assignment."""
-    request = _ReferenceRead(controller, session, origin, text)
+    request = _ReferenceRead(controller, session, origin, text, candidates)
     read = ConsolePreparationRead(
         controller,
         request.expand,
