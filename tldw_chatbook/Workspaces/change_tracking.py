@@ -35,7 +35,6 @@ import asyncio
 import hashlib
 import locale
 import os
-import re
 import shutil
 import subprocess
 import sys
@@ -109,71 +108,6 @@ _GIT_TIMEOUT_SECONDS = 120.0
 
 #: Maximum user-visible tracking-error length stored by this module.
 _TRACKING_ERROR_MAX_CHARS = 400
-
-
-async def _run_native_git(ticket, cmd, env, payload):
-    """Join the original worker's streams and managed tree before it may return."""
-    from tldw_chatbook.Notes.git_process_containment import (
-        ProcessTreeAdmissionError,
-        ProcessTreeController,
-    )
-
-    controller = ProcessTreeController()
-    tree = communication = None
-    try:
-        try:
-            tree = await controller.spawn(
-                *cmd,
-                cwd=os.getcwd(),
-                environment=env,
-                stdin=True if payload is not None else None,
-            )
-        except ProcessTreeAdmissionError as error:
-            tree = error.tree
-            raise
-        communication = asyncio.create_task(tree.process.communicate(payload))
-        deadline = asyncio.get_running_loop().time() + _GIT_TIMEOUT_SECONDS
-        try:
-            stdout, stderr = await asyncio.wait_for(
-                asyncio.shield(communication), _GIT_TIMEOUT_SECONDS
-            )
-        except TimeoutError:
-            raise subprocess.TimeoutExpired(cmd, _GIT_TIMEOUT_SECONDS) from None
-        if not await controller.wait(
-            tree, timeout=max(0, deadline - asyncio.get_running_loop().time())
-        ):
-            raise subprocess.TimeoutExpired(cmd, _GIT_TIMEOUT_SECONDS)
-        controller.close(tree)
-        return tree.process.returncode, stdout, stderr
-    except BaseException:
-        if tree is None:
-            raise
-        ticket.operation.mark_stopping()
-        if communication is None:
-            communication = asyncio.create_task(tree.process.communicate(payload))
-        try:
-            for stop in (controller.terminate, controller.kill):
-                try:
-                    stop(tree)
-                except OSError:
-                    pass  # The same retained tree still needs positive wait proof.
-                if await controller.wait(tree, timeout=0.25):
-                    break
-            else:
-                if not await controller.wait(tree, timeout=float("inf")):
-                    raise OSError("native Git cleanup proof unavailable")
-            await asyncio.shield(asyncio.gather(communication, return_exceptions=True))
-            controller.close(tree)
-        except BaseException:  # noqa: BLE001 -- no proof permits original scopes to return
-            ticket.owner.mark_cleanup_unproven()
-            # No proof mechanism remains: keep this original worker/storage alive.
-            never = asyncio.get_running_loop().create_future()
-            while True:
-                try:
-                    await asyncio.shield(never)
-                except asyncio.CancelledError:
-                    continue
-        raise
 
 
 class ChangeTrackingError(Exception):
@@ -423,9 +357,18 @@ class ShadowRepo:
             input_data.encode(encoding) if isinstance(input_data, str) else input_data
         )
         # Only process transport enters this loop; guarded storage stays synchronous.
+        from .native_git import run_native_git
+
         with asyncio.Runner() as runner:
             returncode, stdout, stderr = runner.run(
-                _run_native_git(ticket, cmd, env, payload)
+                run_native_git(
+                    ticket,
+                    cmd,
+                    env,
+                    payload,
+                    cwd=os.getcwd(),
+                    timeout=_GIT_TIMEOUT_SECONDS,
+                )
             )
         if not binary:
             stdout, stderr = (
@@ -435,93 +378,17 @@ class ShadowRepo:
         return subprocess.CompletedProcess(cmd, returncode, stdout, stderr)
 
     def _native_command(self, args, env):
-        """Apply native Git version/config policy without exposing private config."""
-        allowed = {
-            "init",
-            "config",
-            "rev-parse",
-            "cat-file",
-            "update-index",
-            "ls-files",
-            "ls-tree",
-            "add",
-            "rm",
-            "diff",
-            "commit",
-            "show",
-            "check-ignore",
-        }
-        if not args or args[0] not in allowed:
-            raise ChangeTrackingUnavailableError(
-                "native change-review Git command unsupported"
-            )
-        pins = (
-            "core.hooksPath=" + os.devnull,
-            "commit.gpgsign=false",
-            "tag.gpgsign=false",
-            "log.showsignature=false",
-            "core.fsmonitor=false",
-            "gc.auto=0",
-            "gc.autoDetach=false",
-            "maintenance.auto=false",
-            "maintenance.autoDetach=false",
-        )
-        prefix = [
+        """Apply the shared native policy to this actual shadow repository."""
+        from .native_git import qualified_git_command
+
+        return qualified_git_command(
             self._git,
-            "--no-pager",
-            "--git-dir",
-            str(self.git_dir),
-            "--work-tree",
-            str(self.root),
-        ]
-        for pin in pins:
-            prefix.extend(("-c", pin))
-        try:
-            version = self._run_process([self._git, "--version"], env)
-            match = re.match(r"git version (\d+)\.(\d+)", version.stdout)
-            if (
-                version.returncode
-                or match is None
-                or tuple(map(int, match.groups())) < (2, 36)
-            ):
-                raise ChangeTrackingUnavailableError(
-                    "native change review requires Git >=2.36"
-                )
-            config = self._run_process(
-                [
-                    *prefix,
-                    "config",
-                    "--includes",
-                    "--null",
-                    "--name-only",
-                    "--get-regexp",
-                    r"^(filter\..*\.(clean|process|smudge)|remote\..*\.promisor|extensions\.partialclone)$",
-                ],
-                env,
-                binary=True,
-            )
-        except (OSError, subprocess.TimeoutExpired) as error:
-            raise ChangeTrackingUnavailableError(
-                "native change-review Git qualification unavailable"
-            ) from error
-        if config.returncode == 0:
-            # Names stay private; even cat-file -e may lazily spawn a fetch.
-            if not any(
-                name.startswith(b"filter.") for name in config.stdout.split(b"\0")
-            ):
-                raise ChangeTrackingUnavailableError(
-                    "native change review unavailable: configured partial-clone remotes"
-                )
-            raise ChangeTrackingUnavailableError(
-                "native change review unavailable: configured filters"
-            )
-        if config.returncode != 1:
-            raise ChangeTrackingUnavailableError(
-                "native change-review Git configuration unavailable"
-            )
-        if args[0] in {"diff", "show"}:
-            args = (args[0], "--no-ext-diff", "--no-textconv", *args[1:])
-        return [*prefix, *args]
+            ["--git-dir", str(self.git_dir), "--work-tree", str(self.root)],
+            args,
+            env,
+            self._run_process,
+            ChangeTrackingUnavailableError,
+        )
 
     def _locked(self):
         """Context manager: in-process lock + portable cross-process lockdir."""

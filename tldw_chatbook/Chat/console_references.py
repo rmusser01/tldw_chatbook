@@ -17,7 +17,10 @@ Two invariants carry the safety (AC#7 + AC#3):
 
 from __future__ import annotations
 
+import asyncio
+import os
 import re
+import shutil
 import subprocess
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -230,13 +233,23 @@ def _looks_binary(data: bytes) -> bool:
     return False
 
 
-def _expand_path(path: "Path", line_range, max_bytes: int):
+def _expand_path(path: "Path", line_range, max_bytes: int, *, roots=(), context=None):
+    from ..Utils.path_validation import validate_path_multi
+    from ..Utils.sensitive_paths import is_sensitive_path
+
+    def visible(child):
+        try:
+            validated = Path(validate_path_multi(str(child), list(roots or (path,))))
+        except ValueError:
+            return False
+        return not is_sensitive_path(validated, context=context)
+
     if path.is_dir():
         try:
             entries = sorted(
                 x.name + ("/" if x.is_dir() else "")
                 for x in path.iterdir()
-                if not x.name.startswith(".")  # hidden entries are refused by the tools
+                if not x.name.startswith(".") and visible(x)
             )
         except OSError as exc:
             return ("refused", f"could not list folder: {exc}", None)
@@ -285,6 +298,7 @@ def resolve_reference(
     *,
     roots: Iterable[Path],
     max_bytes: int = MAX_REFERENCE_BYTES,
+    context=None,
 ) -> ResolvedReference:
     """Resolve one reference token against the allowed roots (impure).
 
@@ -320,25 +334,24 @@ def resolve_reference(
             return ("refused", "outside the allowed workspace roots, hidden, or a sensitive path", None)
         return None
 
-    if is_sensitive_path(validated):
+    if is_sensitive_path(validated, context=context):
         return ("refused", "a protected/sensitive path", None)
     if not validated.exists():
         return None  # validated but nonexistent -> literal (AC#7)
-    return _expand_path(validated, line_range, max_bytes)
+    return _expand_path(validated, line_range, max_bytes, roots=roots, context=context)
 
 
-def build_console_reference_resolver() -> Resolver:
-    """Build a resolver bound to the file tools' allowed roots + sensitive set."""
-    from ..Tools.file_operation_tools import _tool_sandbox_root
-    from ..Tools.workspace_file_roots import allowed_file_roots
+def build_console_reference_resolver(*, authority=None) -> Resolver:
+    """Bind file reads to one original explicit-reference authority."""
+    from .console_reference_preparation import ReferenceAuthority
 
-    try:
-        roots = allowed_file_roots(write=False, sandbox_root=_tool_sandbox_root())
-    except Exception:  # noqa: BLE001 - fail safe to no roots
-        roots = ()
+    authority = authority or ReferenceAuthority()
 
     def _resolve(token: str):
-        return resolve_reference(token, roots=roots)
+        authority.check()
+        result = resolve_reference(token, roots=authority.roots, context=authority.context)
+        authority.check()
+        return result
 
     return _resolve
 
@@ -362,58 +375,143 @@ def _cwd_within_roots(cwd: "Path", roots) -> bool:
     return False
 
 
-def run_git_reference(kind: str, *, roots=None, timeout: float = 5.0) -> str:
-    """Run ``git diff`` / ``git diff --staged`` for @diff/@staged (AC#2/#3).
+def run_git_reference(
+    kind: str,
+    *,
+    roots=None,
+    timeout: float = 5.0,
+    cwd=None,
+    context=None,
+    producer=None,
+    executable=None,
+    require_current=None,
+    environment=None,
+) -> str:
+    """Read the whole repository diff only inside the original readable maximum."""
+    from ..Tools.git_tool_impls import _denylist_pathspecs
+    from ..Workspaces.native_git import qualified_git_command, run_native_git
 
-    Lane-8 review I1: the diff is confined to a repo INSIDE the allowed roots
-    (so it can't surface a repo the file tools can't reach), and the sensitive
-    -path denylist is spliced in as git ``:(exclude)`` pathspecs -- exactly as
-    ``git_tool_impls`` does -- so a tracked ``.env``/``~/.ssh/*`` never leaks
-    its diff content.
-    """
-    cwd = _git_reference_cwd()
-    if roots is not None and not _cwd_within_roots(cwd, roots):
+    cwd = Path(cwd) if cwd is not None else _git_reference_cwd()
+    if roots is None or not _cwd_within_roots(cwd, roots):
         raise RuntimeError("the git repository is outside the allowed workspace roots")
+    if kind not in _SPECIAL_TOKENS:
+        raise RuntimeError("unsupported git reference")
+    executable = executable or shutil.which("git")
+    if executable is None:
+        raise RuntimeError("git executable unavailable")
+    environment = (
+        dict(environment)
+        if environment is not None
+        else {k: v for k, v in os.environ.items() if not k.upper().startswith("GIT_")}
+    )
+    environment["GIT_TERMINAL_PROMPT"] = "0"
 
-    try:
-        from ..Tools.git_tool_impls import _denylist_pathspecs
-        excludes = list(_denylist_pathspecs(cwd))
-    except Exception:  # noqa: BLE001 - if we can't build excludes, fail closed
-        raise RuntimeError("could not build the sensitive-path exclusion list")
+    def run_process(cmd, env, *, binary=False):
+        if require_current is not None:
+            require_current()
+        if producer is None:
+            return subprocess.run(
+                cmd,
+                cwd=str(cwd),
+                env=env,
+                capture_output=True,
+                timeout=timeout,
+                text=not binary,
+                check=False,
+            )
+        from ..Agents.execution_capacity import current_execution_owner
 
-    args = ["git", "diff"]
-    if kind == "staged":
-        args.append("--staged")
-    if excludes:
-        args.append("--")
-        args.extend(excludes)
-    try:
-        proc = subprocess.run(  # noqa: S603 - fixed argv, no shell
+        if (
+            producer.operation is None
+            or current_execution_owner() is not producer.owner
+        ):
+            raise RuntimeError("original reference Git custody unavailable")
+        producer.check()
+        with asyncio.Runner() as runner:
+            code, stdout, stderr = runner.run(
+                run_native_git(
+                    producer,
+                    cmd,
+                    env,
+                    None,
+                    cwd=str(cwd),
+                    timeout=timeout,
+                )
+            )
+        producer.check()
+        if not binary:
+            stdout, stderr = (
+                data.decode("utf-8", errors="replace") for data in (stdout, stderr)
+            )
+        return subprocess.CompletedProcess(cmd, code, stdout, stderr)
+
+    def run_at(root, args):
+        cmd = qualified_git_command(
+            executable,
+            ["-C", str(root)],
             args,
-            cwd=str(cwd),
-            capture_output=True,
-            text=True,
-            timeout=timeout,
+            environment,
+            run_process,
+            RuntimeError,
         )
-    except Exception as exc:  # noqa: BLE001 - a git failure is a refusal upstream
-        raise RuntimeError(str(exc))
-    out = proc.stdout or ""
+        result = run_process(cmd, environment)
+        if result.returncode:
+            raise RuntimeError("git reference command failed")
+        return result.stdout
+
+    top = Path(run_at(cwd, ("rev-parse", "--show-toplevel")).strip()).resolve(
+        strict=True
+    )
+    if not _cwd_within_roots(top, roots):
+        raise RuntimeError("the git repository is outside the allowed workspace roots")
+    excludes = _denylist_pathspecs(top, context=context)
+    cwd = top
+    args = ("diff", "--staged") if kind == "staged" else ("diff",)
+    out = run_at(top, (*args, "--", *excludes))
     if len(out) > MAX_REFERENCE_BYTES:
         out = out[:MAX_REFERENCE_BYTES] + "\n… (diff truncated)"
     return out
 
 
-def build_console_git_runner() -> GitRunner:
-    """Build a git_runner bound to the allowed roots (for the send-path wiring)."""
-    from ..Tools.file_operation_tools import _tool_sandbox_root
-    from ..Tools.workspace_file_roots import allowed_file_roots
+def build_console_git_runner(*, authority=None, producer=None) -> GitRunner:
+    """Bind Git to the same roots, cwd and denials as this expansion's files."""
+    from .console_reference_preparation import ReferenceAuthority
 
-    try:
-        roots = allowed_file_roots(write=False, sandbox_root=_tool_sandbox_root())
-    except Exception:  # noqa: BLE001
-        roots = ()
+    authority = authority or ReferenceAuthority()
+    executable = authority.executable
 
     def _run(kind: str) -> str:
-        return run_git_reference(kind, roots=roots)
+        authority.check()
+        result = run_git_reference(
+            kind,
+            roots=authority.roots,
+            cwd=authority.cwd,
+            context=authority.context,
+            producer=producer,
+            executable=executable,
+            require_current=authority.check_git,
+            environment=authority.environment,
+        )
+        authority.check()
+        return result
 
     return _run
+
+
+def reference_callbacks():
+    """Pin the actual parser, factories and body callables used by this worker."""
+    return tuple(
+        (globals()[name], getattr(globals()[name], "__code__", None))
+        for name in (
+            "find_reference_candidates",
+            "expand_references",
+            "resolve_reference",
+            "_expand_path",
+            "build_console_reference_resolver",
+            "build_console_git_runner",
+            "run_git_reference",
+        )
+    )
+
+
+_STOCK_REFERENCE_CALLBACKS = reference_callbacks()

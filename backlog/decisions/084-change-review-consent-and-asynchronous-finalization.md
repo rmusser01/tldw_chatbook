@@ -273,3 +273,10 @@ and lifecycle facts.
 - [ADR-300: Local agent tool permission boundary](300-local-agent-tool-permission-boundary.md)
 - [ADR-046: Visible bounded Console prompt queue](046-visible-bounded-console-prompt-queue.md)
 - [ADR-317: Console project-instruction local state and preflight](317-console-project-instruction-local-state-and-preflight.md)
+
+Task8D2C reuses the native Git qualification and physical transport described in
+ADR285 for explicit references through an explicit executable/repository prefix
+and original producer. ShadowRepo remains the original Change Review consumer;
+its helper policy, storage/source/host contract, timeouts and ordinary unsupported
+platform behavior are unchanged. Reference reads create no Change Review repo,
+consent state, snapshot or durable publication obligation.

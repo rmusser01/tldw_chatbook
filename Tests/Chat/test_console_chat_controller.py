@@ -11666,22 +11666,22 @@ class _PayloadCapturingGateway(StreamingGateway):
 
 
 @pytest.mark.asyncio
-async def test_reference_expansion_reaches_provider_but_echo_stays_raw(monkeypatch):
+async def test_reference_expansion_reaches_provider_but_echo_stays_raw(
+    monkeypatch, tmp_path
+):
     """27021 AC#1 + 26020 AC#6: the provider sees the expanded text; the user
     echo keeps the raw draft; a compact system row records the expansion."""
-    from tldw_chatbook.Chat import console_references as refs
 
-    monkeypatch.setattr(
-        refs, "build_console_reference_resolver",
-        lambda: (lambda token: ("file", "FILE-CONTENT-MARKER", None) if token == "a.py" else None),
-    )
-    monkeypatch.setattr(refs, "run_git_reference", lambda kind, **k: "")
+    from tldw_chatbook.Tools.workspace_file_roots import run_file_sandbox
+
+    (tmp_path / "a.py").write_text("FILE-CONTENT-MARKER")
 
     store = ConsoleChatStore()
     gateway = _PayloadCapturingGateway()
     controller = ConsoleChatController(store=store, provider_gateway=gateway)
 
-    result = await controller.submit_draft("see @a.py please")
+    with run_file_sandbox(tmp_path):
+        result = await controller.submit_draft("see @a.py please")
     assert result.accepted is True
 
     sent_user = [m for m in (gateway.messages or []) if m.get("role") == "user"]
@@ -11716,10 +11716,14 @@ async def test_email_at_sign_is_not_expanded(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_expansion_failure_sends_raw_draft(monkeypatch):
+async def test_expansion_failure_sends_raw_draft(monkeypatch, tmp_path):
     from tldw_chatbook.Chat import console_references as refs
+    from tldw_chatbook.Tools.workspace_file_roots import run_file_sandbox
 
-    def _boom():
+    called = []
+
+    def _boom(**kwargs):
+        called.append(True)
         raise RuntimeError("resolver construction exploded")
     monkeypatch.setattr(refs, "build_console_reference_resolver", _boom)
 
@@ -11727,29 +11731,29 @@ async def test_expansion_failure_sends_raw_draft(monkeypatch):
     gateway = _PayloadCapturingGateway()
     controller = ConsoleChatController(store=store, provider_gateway=gateway)
 
-    result = await controller.submit_draft("see @a.py please")
+    with run_file_sandbox(tmp_path):
+        result = await controller.submit_draft("see @a.py please")
+    assert called == [True]
     assert result.accepted is True, "expansion failure must never block the send"
     sent_user = [m for m in (gateway.messages or []) if m.get("role") == "user"]
     assert sent_user[-1]["content"] == "see @a.py please"
 
 
 @pytest.mark.asyncio
-async def test_leading_reference_draft_still_gets_audit_row(monkeypatch):
+async def test_leading_reference_draft_still_gets_audit_row(monkeypatch, tmp_path):
     """Qodo #7 (PR #2313): a draft STARTING with @ is excluded from ordinary
     library preparation, but its expansion must still leave the audit row."""
-    from tldw_chatbook.Chat import console_references as refs
 
-    monkeypatch.setattr(
-        refs, "build_console_reference_resolver",
-        lambda: (lambda token: ("file", "LEADER-MARKER", None) if token == "a.py" else None),
-    )
-    monkeypatch.setattr(refs, "run_git_reference", lambda kind, **k: "")
+    from tldw_chatbook.Tools.workspace_file_roots import run_file_sandbox
+
+    (tmp_path / "a.py").write_text("LEADER-MARKER")
 
     store = ConsoleChatStore()
     gateway = _PayloadCapturingGateway()
     controller = ConsoleChatController(store=store, provider_gateway=gateway)
 
-    result = await controller.submit_draft("@a.py explain this")
+    with run_file_sandbox(tmp_path):
+        result = await controller.submit_draft("@a.py explain this")
     assert result.accepted is True
     sent_user = [m for m in (gateway.messages or []) if m.get("role") == "user"]
     assert "LEADER-MARKER" in sent_user[-1]["content"]

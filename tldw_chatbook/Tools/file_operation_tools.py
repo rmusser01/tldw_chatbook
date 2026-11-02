@@ -57,6 +57,16 @@ READ_FILE_MAX_BYTES = 10 * 1024 * 1024
 DIFF_CONTENT_KEYS = ("old_content", "new_content")
 
 
+def _sandbox_config_path(settings) -> Path:
+    """Select the configured sandbox without provisioning app or tool storage."""
+    from ..Backup_Recovery import profile_paths
+
+    default = profile_paths.user_data_dir(settings) / "tool_sandbox"
+    return Path(
+        settings.get("tools", {}).get("file_sandbox_root") or default
+    ).expanduser()
+
+
 def _resolve_sandbox_config() -> str:
     """Return the configured sandbox root string (indirection for tests)."""
     from ..config import get_cli_setting, get_user_data_dir

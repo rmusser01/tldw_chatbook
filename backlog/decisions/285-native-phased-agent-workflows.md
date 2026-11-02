@@ -418,3 +418,30 @@ and the positively observed token. No new permission store/ledger or passive-mod
 flag. Cost is bounded original-policy reads per passive preparation and
 conservative refusal during concurrent mutation. ADR required: no new ADR;
 existing ADR-285/163 source-revocation qualification governs this correction.
+
+### Finite explicit-reference custody (Task 8D2C)
+
+The original Console expansion worker freezes its existing explicit-reference
+readable roots, launch cwd, registry/workspace/run-scope selection and merged
+sensitive/exclusion policy once. A missing configured sandbox is not created and
+contributes no root; independently authorized existing folders remain. Captured
+absence never falls back to a newly selected workspace. Root/source/selection
+changes refuse; exclusions can narrow but removals cannot widen the capture.
+Stock file/folder reads claim complete bounded READ roots. Reachable Git and
+unknown effectful callbacks use initially OPAQUE coverage. The single finite
+non-child tool operation owns the real preparation worker and original host
+acceptance/discard through operation.finish return. No model or durable event
+row is introduced. Later ordinary producers must consume their original covering
+claim before enqueue; no unused borrowing API is added at this stage.
+
+Reference Git shares the gated native qualification and managed-tree transport
+over its actual executable/repository prefix, without constructing a shadow repo.
+Both captured cwd and actual canonical repository top-level must fit the same
+readable maximum before body output. Whole-repo diff and existing literal
+exclusion pathspecs run at that top-level. Version/config/command processes all
+retain the same original worker/source/storage through tree and stream proof,
+host return and operation.finish return. Unsupported platforms preserve ordinary
+behavior; qualified source loss never downgrades. No proof retains original
+custody, potentially indefinitely. Costs are source/metadata checks, qualification
+and containment overhead and coarse Git contention. Ordinary-tree borrowing,
+Undo, RawCLI and phase/wave/window/coordinator integration remain separate work.

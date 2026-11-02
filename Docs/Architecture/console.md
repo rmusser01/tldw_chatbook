@@ -264,6 +264,31 @@ per-session lookup have retired (TASK-35311).
 
 Streaming details, transforms (skills → chat dictionaries → world info), swipes/branching, and the non-agent plain path are covered in [chat-pipeline.md](./chat-pipeline.md).
 
+## Finite explicit references (ADR-285)
+
+`console_reference_preparation.prepare_reference_expansion` wraps the original
+controller's first-pass expansion in `run_preparation_read`. It freezes existing
+explicit-reference registry/workspace/run-scope roots, launch cwd and exclusions;
+this authority is separate from model tools and per-Chat scratch. A missing
+configured reference sandbox contributes no root and is never created. Stock
+file/folder reads hold complete READ roots; reachable Git or custom callbacks
+hold initially OPAQUE activity. One non-child native tool operation survives
+actual worker return, original controller assignment/discard and operation.finish
+return. Runtime/controller read observers retain original close custody through
+repeated cancellation; there are no required durable writes for this finite read.
+
+File validation remains first, including for enumerated child names. Captured
+exclusions never widen on live removal; changed roots, selections or added
+exclusions refuse stale output. Git uses `Workspaces/native_git.py` qualification
+and physical transport shared with real ShadowRepo. It checks both captured cwd
+and actual repo top-level inside the same roots, then renders existing exclusion
+pathspecs and whole-repo diff at the top-level. Every version/config/command launch
+retains managed-tree and stream proof; unavailable cleanup can retain original
+worker/storage and block disposal indefinitely. Raw draft/refusal records remain,
+and received/voice/queued consumers use the same seam without duplicate expansion.
+Later ordinary tree admission must consume its original covering claim before
+reference enqueue; no unused future borrowing API or workflow entry is enabled.
+
 ## Shared native preparation (ADR-285)
 
 App-owned Change Review uses the existing coordinator's fixed filesystem workers
