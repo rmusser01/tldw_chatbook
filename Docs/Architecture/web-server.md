@@ -195,6 +195,13 @@ run-store identity. Browser disconnect, takeover, revocation and output pressure
 only detach that terminal generation. The child keeps running and draining output;
 its bounded terminal queue (64 frames / 1 MiB) never waits on a browser socket.
 Independent phone observers discover the retained child even with no terminal.
+An explicit phone host bootstrap waits up to 20 seconds for that child's native
+control authentication because process creation precedes App mount. Ordinary
+nonstarting discovery and broker requests retain their 5-second deadlines. Bootstrap
+revalidates the exact host and broker generation across awaited work, then requires
+a matching native execution-admitted snapshot before returning its identity. A
+successor, shutdown or unproved admission refuses the original action; no host POST
+or command is replayed (ADR-244 R184).
 Canvas capabilities remain scoped to the exact attached browser; takeover revokes
 the old binding rather than transferring its preview capabilities.
 

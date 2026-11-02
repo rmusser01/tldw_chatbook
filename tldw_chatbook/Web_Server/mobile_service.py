@@ -21,6 +21,7 @@ from tldw_chatbook.DB.Client_Media_DB_v2 import MediaDatabase, get_media_transcr
 from tldw_chatbook.DB.console_command_receipts import ConsoleCommandReceipt
 
 _NOTES_PREVIEW_CHARS = 200
+_BOOTSTRAP_CONNECTION_TIMEOUT_SECONDS = 20
 
 
 def _wire_safe(value):
@@ -386,18 +387,33 @@ class MobileChatService:
     async def _owner(self, *, start=False):
         if self._closed or self.broker is None:
             raise MobileOwnerUnavailable("console_unavailable")
+        host = self._host
         if start:
             await asyncio.to_thread(self.require_cutover)
-            self._host = await self.hosts.get_or_start(self.storage_identity)
+            host = await self.hosts.get_or_start(self.storage_identity)
         getter = getattr(self.hosts, "get_existing", None)
         if getter is not None:
             # Discovery follows the registry's current owner, including a
             # terminal-started successor; it never bootstraps or replays.
-            self._host = getter(self.storage_identity)
-        if self._host is None or self._host._closed:
+            current = getter(self.storage_identity)
+            if start and current is not host:
+                raise MobileOwnerUnavailable("console_unavailable")
+            host = current
+        self._host = host
+        if host is None or host._closed:
             raise MobileOwnerUnavailable("console_unavailable")
-        child_id = self._host.service.app_service_id
-        await self.broker.wait_connected(child_id, timeout=5)
+        child_id = host.service.app_service_id
+        identity = self.broker.console_identity(child_id) if start else None
+        # Process creation precedes native App mount and control authentication.
+        timeout = _BOOTSTRAP_CONNECTION_TIMEOUT_SECONDS if start else 5
+        await self.broker.wait_connected(child_id, timeout=timeout)
+        if start and (
+            self._closed
+            or host._closed
+            or (getter is not None and getter(self.storage_identity) is not host)
+            or self.broker.console_identity(child_id) != identity
+        ):
+            raise MobileOwnerUnavailable("console_unavailable")
         return child_id
 
     async def _request(self, message_type, request, *, start=False):
@@ -409,13 +425,26 @@ class MobileChatService:
 
     async def bootstrap_host(self) -> ConsoleHostIdentity:
         """Explicit first use, with positive native execution admission."""
-        await self._owner(start=True)
+        child_id = await self._owner(start=True)
+        host = self.hosts.get_existing(self.storage_identity)
+        identity = self.broker.console_identity(child_id)
         snapshot = await self.snapshot()
         if snapshot.get("execution_admitted") is not True:
             raise MobileOwnerUnavailable("execution_owner_unavailable")
-        return ConsoleHostIdentity.model_validate(
+        observed = ConsoleHostIdentity.model_validate(
             {key: snapshot[key] for key in ("server_epoch", "console_id")}
         )
+        if (
+            self._closed
+            or host is None
+            or host._closed
+            or host.service.app_service_id != child_id
+            or self.hosts.get_existing(self.storage_identity) is not host
+            or self.broker.console_identity(child_id) != identity
+            or observed != identity
+        ):
+            raise MobileOwnerUnavailable("console_unavailable")
+        return identity
 
     async def snapshot(
         self, *, target=None, cursor=None, limit=50, receipt_cursor=None
