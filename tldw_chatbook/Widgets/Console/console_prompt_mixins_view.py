@@ -69,6 +69,9 @@ class ConsolePromptMixinsView(Vertical):
     def __init__(self, projection: MixinWorkbenchProjection, **kwargs: Any) -> None:
         super().__init__(**kwargs)
         self.projection = projection
+        self._enabled_values = {
+            row.source: row.enabled for row in projection.preferences.entries
+        }
         self._ready = False
         self.editor_record = None
         self.editor_initial = None
@@ -199,11 +202,12 @@ class ConsolePromptMixinsView(Vertical):
         if self._ready:
             index = int(event.checkbox.id.rsplit("-", 1)[1])
             row = self.projection.preferences.entries[index]
-            if event.value != row.enabled:
+            enabled = self._enabled_values.get(row.source, False)
+            if event.value != enabled:
                 # The control proposes an intent; only accepted preferences change
                 # its displayed state. Reverting must not emit another intent.
                 with event.checkbox.prevent(Checkbox.Changed):
-                    event.checkbox.value = row.enabled
+                    event.checkbox.value = enabled
                 self.post_message(
                     self.IntentRequested(self.intent("toggle", row.source))
                 )
@@ -219,6 +223,10 @@ class ConsolePromptMixinsView(Vertical):
     def restore_enabled(self, preferences: MixinPreferences) -> None:
         """Reconcile controls without replacing a dirty editor or its intent."""
         enabled = {row.source: row.enabled for row in preferences.entries}
+        self._enabled_values = enabled
+        counts = self.query("#console-mixins-count")
+        if counts:
+            counts.first(Static).update(f"Mix-ins · {sum(enabled.values())} enabled")
         for index, row in enumerate(self.projection.preferences.entries):
             controls = self.query(f"#console-mixin-enabled-{index}")
             if controls:

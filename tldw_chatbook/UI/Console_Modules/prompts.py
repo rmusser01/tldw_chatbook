@@ -1064,7 +1064,10 @@ class _ConsolePromptMixinsFlow:
                         row.source, record["version"], record["name"], definition
                     )
                 )
-                if definition.placement != row.placement:
+                if (
+                    definition.placement != row.placement
+                    and row.last_used_version != record["version"]
+                ):
                     updated.add(row.source)
             except Exception:  # noqa: BLE001 - disabled unavailable choices remain removable.
                 unavailable.add(row.source)

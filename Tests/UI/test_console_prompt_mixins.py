@@ -1003,3 +1003,125 @@ async def test_artifact_event_keeps_confirmation_pump_responsive(runtime, scope_
         assert finished == [None]
         assert not host.calls
         assert app.screen is app.modal
+
+
+@pytest.mark.asyncio
+async def test_accepted_toggle_preserves_editor_dirtied_during_apply(
+    runtime, monkeypatch
+):
+    import asyncio
+
+    from textual.widgets import Checkbox, TextArea
+
+    _, scope, _, origin, _, service = runtime
+    await seed(scope)
+    app = WorkbenchHarness(runtime)
+    async with app.run_test(size=(100, 30)) as pilot:
+        app.pilot = pilot
+        await ready(app)
+        await add(app, "Style")
+        app.screen.query_one("#console-mixin-inspect-0", Button).press()
+        await ready(app)
+        entered, release = asyncio.Event(), asyncio.Event()
+        apply = app.flow.apply
+
+        async def held(intent):
+            entered.set()
+            await release.wait()
+            return await apply(intent)
+
+        monkeypatch.setattr(app.flow, "apply", held)
+        editor = app.screen.query_one("#mixin-body", TextArea)
+        checkbox = app.screen.query_one("#console-mixin-enabled-0", Checkbox)
+        checkbox.focus()
+        await pilot.press("space")
+        try:
+            await asyncio.wait_for(entered.wait(), 5)
+            editor.load_text("newer unsaved {body}")
+        finally:
+            release.set()
+        await ready(app)
+        assert not service.preferences(origin.id).entries[0].enabled
+        assert checkbox.value is False
+        assert "0 enabled" in str(
+            app.screen.query_one("#console-mixins-count").render()
+        )
+        assert app.screen.query_one("#mixin-body", TextArea) is editor
+        assert editor.text == "newer unsaved {body}"
+        checkbox.focus()
+        await pilot.press("space")
+        await pilot.pause()
+        assert checkbox.value is False
+        assert app.screen.query_one("#console-prompts-dirty-guard").display
+        assert not service.preferences(origin.id).entries[0].enabled
+        assert editor.text == "newer unsaved {body}"
+
+
+@pytest.mark.asyncio
+async def test_usage_facts_leave_layout_revision_to_workbench_projection(runtime):
+    from dataclasses import replace
+
+    from tldw_chatbook.Chat.console_prompt_mixins import MixinSourceChangedError
+    from tldw_chatbook.Widgets.Console.console_prompt_mixins_view import (
+        MixinWorkbenchIntent,
+    )
+
+    _, scope, _, origin, _, service = runtime
+    await seed(scope)
+    flow = _ConsolePromptMixinsFlow(
+        service=service, session_id=origin.id, is_current=lambda: True
+    )
+    for name in ("Style", "Summary"):
+        projection = await flow.project()
+        source = next(
+            source for label, source in projection.candidates if label == name
+        )
+        await flow.apply(
+            MixinWorkbenchIntent(
+                origin.id,
+                origin.incarnation_id,
+                projection.preferences.revision,
+                "add",
+                source,
+            )
+        )
+    before = service.preferences(origin.id)
+    source = before.entries[0].source
+    old_intent = MixinWorkbenchIntent(
+        origin.id, origin.incarnation_id, before.revision, "down", source
+    )
+    await scope.save_prompt(
+        mode="local",
+        prompt_identifier=source.record_uuid,
+        expected_version=1,
+        name="Style moved",
+        artifact_type="mixin",
+        prompt_format="structured",
+        prompt_schema_version=3,
+        prompt_definition={
+            "kind": "text_mixin",
+            "schema_version": 3,
+            "body": "new body",
+            "placement": "after",
+        },
+    )
+    current = service._capture_currentness(origin.id, expected_revision=before.revision)
+    snapshot = await service.capture(origin.id, expected_revision=before.revision)
+    assert snapshot.items[-1].source == source
+    assert snapshot.items[-1].definition.placement == "after"
+    service.publish_accepted_usage(origin.id, snapshot)
+    current()
+    facts = service.preferences(origin.id)
+    assert facts.revision == before.revision
+    assert (
+        tuple(replace(row, last_used_version=None) for row in facts.entries)
+        == before.entries
+    )
+    assert facts.entries[0].last_used_version == 2
+    projected = await flow.project()
+    assert projected.preferences.revision > before.revision
+    assert projected.preferences.entries[-1].source == source
+    assert projected.preferences.entries[-1].name == "Style moved"
+    assert source not in projected.updated
+    with pytest.raises(MixinSourceChangedError):
+        await flow.apply(old_intent)

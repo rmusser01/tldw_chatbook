@@ -1817,9 +1817,9 @@
       "bytes": 266
     },
     "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/review-fixes/commands.json": {
-      "sha256": "86916608cb8c756613162a52af46bfd6c539370ba7a71bf4444a31cf23dc6076",
-      "git_blob": "6a9e2dbc1e16d3a425ec3e527bd2f205fa4d209e",
-      "bytes": 3797
+      "sha256": "3f305be0414eb74c45e7319291811eb94bee3d53b3e7d6d8bc30247ffb404398",
+      "git_blob": "f0a7c5abc115158bf12366ee8ff4a7857137ea5c",
+      "bytes": 6358
     },
     "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/review-fixes/covering-map.json": {
       "sha256": "26ae93693b05b33cac724f62b524e241fd7057382e58aa073d88919a7b026da4",
@@ -1851,6 +1851,16 @@
       "git_blob": "27533d0f5b86ca53ac7fed984fcb33d3444213b7",
       "bytes": 207
     },
+    "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/review-fixes/final-followup-result.json": {
+      "sha256": "e8125db37c6119043443c8670bcc20faa84a258f6c815550e5f6117d166fd908",
+      "git_blob": "f285750ba167866021bff447ea0e9130b43ac186",
+      "bytes": 1821
+    },
+    "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/review-fixes/final-followup.log": {
+      "sha256": "277a3757a3fd12619dd38927a4c19acd54100b63e9433204adc9afa4c4506d1d",
+      "git_blob": "26ad776ebd889ebc1888e094ca67486114ae8fc7",
+      "bytes": 698
+    },
     "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/review-fixes/first-accept.log": {
       "sha256": "235ad0eb09663409c67ba0eacdc70e70a214b4b7de02dbb22c0b8e898234221c",
       "git_blob": "343373c888ecba4bdacc4d3c43bd95cce8fdd54c",
@@ -1860,6 +1870,26 @@
       "sha256": "ac6f529be14cac75c785e9b00c7b16c82c616a7496aa313735e42937890362d9",
       "git_blob": "07ea774797ca3884e475773f5c1aae84adfb2853",
       "bytes": 443
+    },
+    "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/review-fixes/held-toggle-final-result.json": {
+      "sha256": "17698cabb51c9b65888303077e637d7368007adcad03e23024c33273304bcd58",
+      "git_blob": "f7841d4978c8687d15e9baea82fe937009f417a7",
+      "bytes": 601
+    },
+    "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/review-fixes/held-toggle-final.log": {
+      "sha256": "a67b0f60883f4e8a29dd97785e0db34ce64314b63bd08367f071d2211b130b98",
+      "git_blob": "cc8f3cce272a22c66e5fe0d8a048674233b7120e",
+      "bytes": 438
+    },
+    "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/review-fixes/held-toggle-red.log": {
+      "sha256": "c0ab1f09beaa0aac6377623cee9db12fe1c93bcd236b0a7ccd9d71ffa6bdac7c",
+      "git_blob": "cbc0fc81d10968c8f449b7ee320faab24274b351",
+      "bytes": 820
+    },
+    "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/review-fixes/layout-red.log.json": {
+      "sha256": "3a237996aba0b6d33da35ff2ce8309914cffd7d6e5bdeb65de1a25c1c4084d80",
+      "git_blob": "a7250620700ca6a8c2e42619b354209646087f37",
+      "bytes": 2575
     },
     "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/review-fixes/lint-final.log": {
       "sha256": "0eaa3d63a71770b91c9d0e4df778d5ecd248a9d5cab359a516120d0e2d52d22a",
@@ -1961,10 +1991,15 @@
       "git_blob": "b0c120570261eca3e8e8875565a28fb9ed7bc274",
       "bytes": 759
     },
+    "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/review-fixes/repeated-toggle-red.log": {
+      "sha256": "a1b78caa32fde090f7fd68882111adbac6e41ee920993d7cc9cf6dd057bf9158",
+      "git_blob": "1d8b677696a2628a805f8f699ac9aec1840eb173",
+      "bytes": 934
+    },
     "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/review-fixes/review-fix-report.md": {
-      "sha256": "25d76cd2bfb99013e36ecdf7a7055538b9418e95b21575f05e17e1904adef2ab",
-      "git_blob": "c84d9793db649abcca25e63c1b7b939728dafdd3",
-      "bytes": 6912
+      "sha256": "3e3ae8a4d92a3ecd8d14baf4b48333f56547c1f92e9e86720d21335ff562b807",
+      "git_blob": "c33ad40ca51cf226246487960a138b01713e754f",
+      "bytes": 8208
     },
     "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/review-fixes/run.py": {
       "sha256": "06a5ebf9942778fb76d0ba4b0fba5137344b96f5c19ae1f225c41bc314f9be8b",
@@ -1982,9 +2017,9 @@
       "bytes": 1587
     },
     "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/review-fixes/static.py": {
-      "sha256": "ba8dbc08a82036357171b56d75bdee6f1202c02211167ea98f1351e20bb9dda3",
-      "git_blob": "b699e8801ebe2119b350e5ab9c97dec0058d0010",
-      "bytes": 1581
+      "sha256": "65e93156d2c841fdac377bdd29989ba82fb857a9ffb961e04215ced51dc8302a",
+      "git_blob": "8c866ab67d2d9cd1e4d7df730af4be5cfc32b1a0",
+      "bytes": 1579
     },
     "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/review-fixes/storage-result.json": {
       "sha256": "60721a5096ca420ada38c609f61ed1884500fe4826150cece53d058aed8c1562",
@@ -2015,6 +2050,21 @@
       "sha256": "bd0399d05e4616194a745be95186304fd8f3d0261d8cfe676729731f815a83a8",
       "git_blob": "ecc254bbb6bd1cd1e2f443d4f7ca756e5395b5cf",
       "bytes": 2447
+    },
+    "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/review-fixes/verify-fresh-clone.json": {
+      "sha256": "713f9623d48842cc08dcdb2f7631ff4e09450a51ca8222c3f99646ec47a25c0a",
+      "git_blob": "f3f7ca3f9fbd27eac982cc6bd5a31f86576ba909",
+      "bytes": 1340
+    },
+    "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/review-fixes/verify-fresh-clone.log": {
+      "sha256": "03e8e049bc8f45996943475844a7a16047e5984dafcf6ab8e45e423b3d4f4ad7",
+      "git_blob": "3b86d2e43dce03f4f853d6c0f70809bbef641471",
+      "bytes": 686
+    },
+    "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/review-fixes/verify-index.log": {
+      "sha256": "d4edb8bdaaaae5c6a82afb7fea748dd8c7980bca4c9e06482d1514cd86f726f2",
+      "git_blob": "60fc979e0db1e0d0794be2b8cffe22cd6b41ee50",
+      "bytes": 529
     },
     "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/review-fixes/worker-guard.log": {
       "sha256": "a3f2b226537b637a657ff22c94fd8c4ed23d0a2ad078cb6d85c7d616f4bd3992",

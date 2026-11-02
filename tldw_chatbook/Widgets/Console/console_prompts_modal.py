@@ -487,6 +487,7 @@ class ConsolePromptsModal(
             await self._mixin_flow.apply(intent)
             if not self._mixin_ui_current(generation, view):
                 return
+            self._restore_mixin_enabled(view)
             refreshed = await self._refresh_mixins()
             if refreshed is None:
                 return

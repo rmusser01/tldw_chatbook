@@ -460,15 +460,15 @@ class ConsolePromptMixinService:
     def publish_accepted_usage(
         self, session_id: str, snapshot: MixinAttemptSnapshot
     ) -> None:
-        """Publish accepted facts for surviving choices without reading sources.
+        """Publish accepted versions for surviving choices without reading sources.
 
-        Unsupported/retired preferences cannot block accepted custody. Reconcile
-        never re-adds removed choices and does not advance the intent revision.
+        Unsupported/retired preferences cannot block accepted custody. Usage
+        neither changes layout nor advances its intent revision. Workbench
+        observation separately reconciles names/placement/order with a new revision.
         """
         from .console_prompt_mixins import (
             MixinPreferenceConflictError,
             MixinPreferenceRead,
-            reconcile_mixin_placements,
         )
 
         try:
@@ -478,7 +478,19 @@ class ConsolePromptMixinService:
         preferences = session.prompt_mixin_preferences.preferences
         if preferences is None:
             return
-        reconciled = reconcile_mixin_placements(preferences, snapshot.items)
+        from dataclasses import replace
+
+        versions = {item.source: item.record_version for item in snapshot.items}
+        reconciled = replace(
+            preferences,
+            entries=tuple(
+                replace(
+                    row,
+                    last_used_version=versions.get(row.source, row.last_used_version),
+                )
+                for row in preferences.entries
+            ),
+        )
         if reconciled == preferences:
             return
         session.prompt_mixin_preferences = MixinPreferenceRead(

@@ -3,7 +3,7 @@ import subprocess,json,collections,ast,re
 base='963fe12e87ae4d2fb415bff3814943ca448cb0e0'
 root=Path.cwd();private=Path('/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/prompt-mixins-pr-d18dfic_/review-fixes')
 ruff='/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/ruff'
-paths=[p for p in subprocess.check_output(['git','diff','HEAD','--name-only'],text=True).splitlines() if p.endswith('.py') and not p.startswith('Docs/')]
+paths=[p for p in subprocess.check_output(['git','diff',base,'--name-only'],text=True).splitlines() if p.endswith('.py') and not p.startswith('Docs/')]
 results={}
 for path in paths:
  old=subprocess.run(['git','show',f'{base}:{path}'],capture_output=True).stdout

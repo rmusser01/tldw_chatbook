@@ -1540,7 +1540,8 @@ async def test_refused_native_send_keeps_usage_facts_until_acceptance(
     facts = service.preferences("session-1")
     assert facts.revision == before.revision
     assert facts.entries[0].last_used_version == 2
-    assert facts.entries[0].placement == "after"
+    assert facts.entries[0].placement == "before"
+    assert h.entries[-1][-1]["content"] == "input\n\nbody A"
 
 
 @pytest.mark.asyncio
@@ -1682,3 +1683,90 @@ async def test_first_native_acceptance_publishes_usage(
     assert (
         session.prompt_mixin_preferences.preferences.entries[0].last_used_version == 1
     )
+
+
+@pytest.mark.asyncio
+async def test_used_revision_flush_reopen_and_racing_selection_cas(
+    trace_harness, monkeypatch
+):
+    import asyncio
+    from threading import Event
+
+    from Tests.Chat.test_console_turn_resend import _restore
+    from tldw_chatbook.Chat.console_settings_durability import (
+        ConsoleSettingsDurabilityOwner,
+    )
+    from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
+
+    h = trace_harness
+    capture_mode(monkeypatch, False)
+    service, scope = select(h, monkeypatch)
+    await h.store.persist_prompt_mixin_preferences("session-1")
+    intent_revision = service.preferences("session-1").revision
+    accepted = await h.controller.submit_draft("input", session_id="session-1")
+    assert accepted.accepted
+    assert service.preferences("session-1").revision == intent_revision
+    await h.store.persist_prompt_mixin_preferences("session-1")
+    database = CharactersRAGDB(h.db.db_path, "review-reopen")
+    restored = _restore(
+        database, h.store._sessions["session-1"].persisted_conversation_id
+    )
+    owner = ConsoleSettingsDurabilityOwner()
+    next_service = ConsolePromptMixinService(
+        store=restored.store,
+        prompt_scope_service=scope,
+        persistence=restored.store.persistence,
+        settings_durability_owner=owner,
+    )
+    entered, release = Event(), Event()
+    try:
+        prefs = next_service.preferences(restored.session_id)
+        assert prefs.entries[0].last_used_version == 1
+        assert prefs.revision > intent_revision
+        scope.records[A.record_uuid]["version"] = 2
+        snapshot = await next_service.capture(
+            restored.session_id, expected_revision=prefs.revision
+        )
+        original = restored.store.persistence.save_conversation_mixin_preferences
+        writes = []
+
+        def held(**kwargs):
+            writes.append(kwargs["value"])
+            if len(writes) == 1:
+                entered.set()
+                assert release.wait(5)
+            return original(**kwargs)
+
+        monkeypatch.setattr(
+            restored.store.persistence, "save_conversation_mixin_preferences", held
+        )
+        next_service.publish_accepted_usage(restored.session_id, snapshot)
+        assert await asyncio.to_thread(entered.wait, 5)
+        current = next_service.preferences(restored.session_id)
+        assert current.revision == prefs.revision
+        next_service.replace_preferences(
+            restored.session_id,
+            expected_revision=current.revision,
+            value=replace(
+                current, entries=(replace(current.entries[0], enabled=False),)
+            ),
+        )
+        release.set()
+        await owner.close_and_drain()
+        assert len(writes) == 2
+        saved = restored.store.persistence.get_conversation_mixin_preferences(
+            restored.store._sessions[restored.session_id].persisted_conversation_id
+        ).preferences
+        assert saved.entries[0].last_used_version == 2 and not saved.entries[0].enabled
+        assert next_service.preferences(restored.session_id).entries == saved.entries
+        # The earlier same-intent save and later CAS each advanced SQL's own
+        # durable revision without overwriting the newer live selection.
+        assert saved.revision == prefs.revision + 2
+    finally:
+        release.set()
+        await owner.close_and_drain()
+        await restored.controller.shutdown()
+        for session in restored.store.sessions():
+            restored.store.close_session(session.id)
+        restored.store.end_app_runtime()
+        database.close()
