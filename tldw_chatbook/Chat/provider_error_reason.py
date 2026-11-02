@@ -231,7 +231,7 @@ def attach_provider_reason(
     reason = reason_from_error_body(body)
     try:
         status = getattr(response, "status_code", None)
-        if type(status) is int and status in IMAGE_REFUSAL_STATUSES:
+        if type(status) is int and status in IMAGE_REFUSAL_STATUSES:  # noqa: E721 -- integer statuses exclude bool/coercions
             exc.image_input_rejected = _body_mentions_image(body)  # type: ignore[attr-defined]
     except Exception:  # noqa: BLE001 -- optional classification, no retained body
         pass
@@ -390,13 +390,6 @@ def is_image_input_rejection(exc: BaseException) -> bool:
 
 
 def _is_image_input_rejection(exc: BaseException) -> bool:
-    try:
-        return _is_image_input_rejection(exc)
-    except Exception:  # noqa: BLE001 -- unusable optional evidence is unknown
-        return False
-
-
-def _is_image_input_rejection(exc: BaseException) -> bool:
     seen: set[int] = set()
     status: int | None = None
     current: BaseException | None = exc
@@ -406,9 +399,9 @@ def _is_image_input_rejection(exc: BaseException) -> bool:
             return True
         response: Any = getattr(current, "response", None)
         raw_status = getattr(current, "status_code", None)
-        if type(raw_status) is not int:
+        if type(raw_status) is not int:  # noqa: E721 -- integer statuses exclude bool/coercions
             raw_status = getattr(response, "status_code", None)
-        if status is None and type(raw_status) is int:
+        if status is None and type(raw_status) is int:  # noqa: E721 -- integer statuses exclude bool/coercions
             status = raw_status
         if status in IMAGE_REFUSAL_STATUSES:
             reason = getattr(current, "provider_reason", None)

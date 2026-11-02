@@ -256,7 +256,7 @@ def test_each_readiness_blocker_names_its_own_send_strip(build, strip):
     assert _strip(reason) == strip
     # The sentence -- a plain str, the code beside it -- is what the tooltip
     # and a refused Enter show.
-    assert type(console_setup_blocked_reason(readiness)) is str
+    assert type(console_setup_blocked_reason(readiness)) is str  # noqa: E721 -- exact plain payload/terminal type contract
     assert console_setup_blocked_reason(readiness) == reason.text
     assert reason.text.endswith(".")
 

@@ -15,13 +15,28 @@ from __future__ import annotations
 import pytest
 from textual.widgets import Button, Static
 
-from Tests.UI.test_console_dictation import _mounted_console, _ready_host
+from Tests.UI.test_console_dictation import (
+    _mounted_console as _base_mounted_console,
+    _ready_host,
+)
 from tldw_chatbook.Chat.attachment_core import PendingAttachment
 from tldw_chatbook.Widgets.Console import ConsoleComposerBar
 
 pytestmark = pytest.mark.bootstrap_profile
 
 MODEL = "local-model"
+
+
+async def _mounted_console(host, pilot):
+    from Tests.UI.test_console_hook_review_send_freeze import _until
+
+    console = await _base_mounted_console(host, pilot)
+    assert await _until(
+        lambda: console._console_attach_reconciled
+        and not console._console_attach_reconcile_running,
+        15,
+    )
+    return console
 
 
 def _image() -> PendingAttachment:
@@ -69,7 +84,10 @@ async def test_a_staged_image_the_model_cannot_take_names_the_image_not_setup():
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("width", [160, 235])
-async def test_long_model_image_strip_keeps_the_limitation_visible(width):
+async def test_long_model_image_strip_keeps_the_limitation_visible(
+    width, record_property
+):
+    import json
     from rich.cells import cell_len
     from textual.geometry import Region
 
@@ -94,7 +112,7 @@ async def test_long_model_image_strip_keeps_the_limitation_visible(width):
         painted = "".join(
             line.text
             for line in strip.render_lines(
-                Region(0, 0, strip.size.width, strip.size.height)
+                Region(0, 0, strip.region.width, strip.region.height)
             )
         ).strip()
         assert painted == strip.content.plain
@@ -104,24 +122,65 @@ async def test_long_model_image_strip_keeps_the_limitation_visible(width):
         )
         assert not composer.has_class("console-composer-setup-blocked")
         assert send.disabled and long_model in send.tooltip
+        measurements = []
         for resized in (110, 80):
             await pilot.resize_terminal(resized, 30)
             await pilot.pause()
             assert composer.draft_text() == "what colour is this leaf?"
             assert store.pending_attachments(session_id) == [image]
             assert long_model in send.tooltip
-            assert composer.query_one("#console-command-visible-text").region.width >= (
-                32 if resized > 80 else 8
+            measurements.append(
+                {
+                    "app": resized,
+                    "row": composer.query_one(
+                        "#console-composer-expanded"
+                    ).content_region.width,
+                    "draft": composer.query_one(
+                        "#console-command-visible-text"
+                    ).region.width,
+                    "draft_content": composer.query_one(
+                        "#console-command-visible-text"
+                    ).content_region.width,
+                    "draft_displayed": bool(
+                        composer.query_one("#console-command-visible-text").display
+                    ),
+                    "draft_in_row": composer.query_one(
+                        "#console-composer-expanded"
+                    ).region.contains_region(
+                        composer.query_one("#console-command-visible-text").region
+                    ),
+                    "strip": strip.region.width,
+                    "content": strip.content_region.width,
+                    "cap": composer._send_reason_width_cap(),
+                    "display": bool(strip.display),
+                    "painted": "".join(
+                        line.text
+                        for line in strip.render_lines(
+                            Region(0, 0, strip.region.width, strip.region.height)
+                        )
+                    ).strip()
+                    if strip.display
+                    else "",
+                }
             )
             if strip.display:
                 painted = "".join(
                     line.text
                     for line in strip.render_lines(
-                        Region(0, 0, strip.size.width, strip.size.height)
+                        Region(0, 0, strip.region.width, strip.region.height)
                     )
                 ).strip()
                 assert cell_len(painted) <= strip.region.width
                 assert strip.region.width <= composer._send_reason_width_cap()
+                if cell_len(strip.content.plain) > strip.content_region.width:
+                    assert "…" in painted
+            else:
+                assert composer._send_reason_width_cap() == 0
+        record_property("pr3330_geometry", json.dumps(measurements))
+        for measured in measurements:
+            assert (
+                measured["draft_displayed"] and measured["draft_in_row"]
+            ), measurements
 
 
 # --- Review of TASK-33621.11: the code rides beside the sentence -----------

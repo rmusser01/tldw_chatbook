@@ -52,6 +52,7 @@ async def _composer_parts(host, pilot):
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_narrow_composer_keeps_the_draft_visible_beside_a_reason():
     """At 80 columns the draft must lay out with visible width, not zero.
 
@@ -71,6 +72,7 @@ async def test_narrow_composer_keeps_the_draft_visible_beside_a_reason():
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_wide_composer_keeps_reason_strip_capped_and_draft_floor():
     """At wide sizes the strip stays within its 52-cell cap and the draft
     keeps its promised 32-cell floor."""
@@ -87,6 +89,7 @@ async def test_wide_composer_keeps_reason_strip_capped_and_draft_floor():
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_resize_from_wide_to_narrow_reapplies_the_strip_budget():
     """The clamp is a function of the live row width: shrinking the terminal
     must retract the strip rather than the draft."""

@@ -278,10 +278,15 @@ async def _row_for(tmp_path, hooks, call, *, image_turn: bool, agent: bool = Tru
 
 
 def _anthropic_sentence(status: int, message: str) -> str:
-    return (
+    from tldw_chatbook.Chat.refused_stream import REFUSED_STREAM_ADVICE
+
+    copy = (
         f"Provider error from Anthropic: bad request. Status: {status}. "
         f"Anthropic says: “{message}”."
     )
+    # These fixtures stream without delivering content. Preserve the current
+    # base's conditional streaming advice before any image recovery hint.
+    return copy + (f" {REFUSED_STREAM_ADVICE}" if status in {400, 415, 422} else "")
 
 
 def _raw_http_error(status: int, message: str) -> httpx.HTTPStatusError:
@@ -456,7 +461,10 @@ async def test_tool_schema_image_name_is_not_an_image_rejection(
     prepare = gateway.prepare_chat_request
 
     def prepared(*args, **kwargs):
-        kwargs["tools"] = [
+        from dataclasses import replace
+        from tldw_chatbook.Chat.console_prepared_request import PreparedConsoleRequest
+
+        tools = [
             {
                 "type": "function",
                 "function": {
@@ -466,6 +474,11 @@ async def test_tool_schema_image_name_is_not_an_image_rejection(
                 },
             }
         ]
+        if isinstance(args[1], PreparedConsoleRequest):
+            args = (args[0], replace(args[1], tools=tuple(tools)), *args[2:])
+            kwargs.pop("tools", None)
+        else:
+            kwargs["tools"] = tools
         return prepare(*args, **kwargs)
 
     monkeypatch.setattr(gateway, "prepare_chat_request", prepared)
@@ -494,10 +507,20 @@ async def test_tool_schema_image_name_is_not_an_image_rejection(
     sent = json.dumps(calls[0], default=str)
     assert "generate_image" in sent and "image" in sent
     assert any(isinstance(m.get("content"), list) for m in calls[0]["messages_payload"])
+    assert any(
+        block.get("type") in {"image", "image_url", "input_image"}
+        for message in calls[0]["messages_payload"]
+        if isinstance(message.get("content"), list)
+        for block in message["content"]
+        if isinstance(block, dict)
+    )
     visible = _system_row(store, session)
     assert "tool" in visible.lower() and "generate_image" in visible
     assert IMAGE_HINT not in visible
     assert not any(hint in visible for hint in MODEL_HINTS)
+    from tldw_chatbook.Chat.refused_stream import REFUSED_STREAM_ADVICE
+
+    assert REFUSED_STREAM_ADVICE not in visible  # tool-schema guard
     if agent:
         assert outcomes and outcomes[-1].console_image_rejection is False
     projected = await _projected(gateway)

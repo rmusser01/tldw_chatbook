@@ -1,5 +1,16 @@
 # Lessons: what counts as evidence a change works
 
+## Crop a padded widget's painted outer region (PR3330,2026-11-01)
+
+The PR3330 long-model strip test initially cropped `Static.render_lines()` to
+`widget.size`. After the notice was correctly shortened, that test still reported
+“accept image” because the crop omitted the final character beside the padding.
+Using the actual outer `region` produced the complete sentence at160/235 widths;
+separate resize metadata then exposed the real existing110/80 layout limits.
+Verify painted output with its actual padded region, and measure content-region
+geometry separately; stored `.content` alone proves neither fit nor visibility.
+
+
 ## A supplied app monitor is not a per-turn cleanup seam (PR3320,2026-11-01)
 
 The old Connecting-tools test waited for `UIResponsivenessMonitor.close`, but the

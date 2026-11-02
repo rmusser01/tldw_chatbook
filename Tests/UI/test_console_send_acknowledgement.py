@@ -790,10 +790,12 @@ async def test_a_refused_acknowledged_enter_repaints_its_refusal(
     app, gateway = _console_app(tmp_path)
     async with app.run_test(size=(160, 45), notifications=True) as pilot:
         chat = await _reach_console(app, pilot, "explore_home")
+        await until(lambda: chat._console_attach_reconciled and not chat._console_attach_reconcile_running)
         monkeypatch.setattr(
             ChatScreen, "_console_send_gate", lambda _screen: ConsoleBlockedReason(refusal, code=CONSOLE_BLOCKER_ARCHIVE_INFLIGHT)
         )
         composer = chat.query_one("#console-native-composer", ConsoleComposerBar)
+        assert chat._hooks._permissions().snapshot().ready
         composer.focus()
         await pilot.pause(0.2)
         composer.load_draft("say refused")

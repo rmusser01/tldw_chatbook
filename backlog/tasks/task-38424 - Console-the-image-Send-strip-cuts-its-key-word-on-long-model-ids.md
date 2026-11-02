@@ -1,7 +1,7 @@
 ---
 id: TASK-38424
 title: 'Console: the image Send strip cuts its key word on long model ids'
-status: To Do
+status: In Progress
 assignee: []
 created_date: '2026-10-31 03:31'
 labels:
@@ -20,7 +20,7 @@ A staged image the selected model cannot take reads 'Send blocked — <model> ca
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
 - [ ] #1 The image Send strip shows its whole meaning at the narrowest supported composer width with the longest catalog model ids
-- [ ] #2 The Send tooltip still names the model
+- [x] #2 The Send tooltip still names the model
 - [ ] #3 A mounted test asserts the strip at that width
 <!-- AC:END -->
 
@@ -32,4 +32,6 @@ Use model-independent strip copy while retaining the full model in the tooltip. 
 
 ## Implementation Notes
 
-PR3330 current-base integration shortens the image notice to “this model can't accept images”; full model-specific refusal remains in the tooltip. TASK38424 stays open: existing dynamic width policy can hide/ellipsize below its legibility budget, so AC1 (whole meaning at narrowest width) is not fulfilled by this scoped copy change. Mounted evidence pending; no geometry or size budget changed.
+PR3330 current-base integration shortens the image notice to “this model can't accept images”; full model-specific refusal remains in the tooltip. TASK38424 stays open: existing dynamic width policy can hide/ellipsize below its legibility budget, so AC1 (whole meaning at narrowest width) is not fulfilled by this scoped copy change. Mounted ordinary160/235 exact painted-copy, full-tooltip and resize disclosure evidence passed; no geometry or size budget changed.
+
+Measured current narrow limitation: at110, row107/draft13(content11), strip18(content16), cap18, painted “Send blocked — …”; at80 row77/draft2(content0), cap0, strip hidden. The80 draft region is padding-only; this copy-only repair does not claim narrow editor usability. Existing layout helpers/CSS are compared against actual dev base; no geometry change.
