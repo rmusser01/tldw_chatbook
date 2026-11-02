@@ -687,8 +687,12 @@ async def _capture_hook(
                     "Hook authority unavailable at launch."
                 ) from None
             if native is not None:
+                from tldw_chatbook.Chat.console_workflow_runs import (
+                    native_workflow_qualified,
+                )
+
                 native.event.source.check()
-                if sys.platform == "win32":
+                if not native_workflow_qualified():
                     raise RuntimeError("native hook group proof unavailable")
                 native.process_attempted()
             try:

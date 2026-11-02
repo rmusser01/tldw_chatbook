@@ -23,7 +23,10 @@ from tldw_chatbook.Chat.console_project_instructions import (
 )
 from tldw_chatbook.Chat.console_provider_gateway import ConsoleProviderGateway
 from tldw_chatbook.Chat.console_runtime import ConsoleRuntime
-from tldw_chatbook.Chat.console_workflow_runs import _accept_workflow_phase
+from tldw_chatbook.Chat.console_workflow_runs import (
+    _accept_workflow_phase,
+    native_workflow_qualified,
+)
 from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
 from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
 from tldw_chatbook.DB.Workspace_DB import WorkspaceDB
@@ -35,6 +38,8 @@ pytestmark = [pytest.mark.bootstrap_profile, pytest.mark.asyncio]
 
 @pytest.fixture
 async def native_host(tmp_path, monkeypatch, request):
+    if not native_workflow_qualified():
+        pytest.skip("native workflow platform qualification required")
     plan_edit = getattr(request, "param", None)
     monkeypatch.setenv("TLDW_AGENTS_WORKFLOW_RUNS_ENABLED", "true")
     monkeypatch.setenv("TLDW_AGENTS_AUTOWAKE_ENABLED", "false")

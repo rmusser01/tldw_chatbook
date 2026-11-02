@@ -344,6 +344,14 @@ and original host handoffs completed: an ordinary finite event's empty durable
 payload obligation set does not invent a successful journal write. Physical
 cleanup remains mandatory, and workflow durability/accounting is unchanged.
 
+D2B1 review fix 1 qualifies native hook attachment and actual process-local phase
+authority with one metadata-only platform gate before acceptance/effects.
+Unsupported platforms retain ordinary granted hooks and passive workflow history;
+the workflow flag cannot grant unqualified native execution. Public planning,
+Start and Resume must reuse this gate before billable work when those consumers
+land. ADR required: no new ADR; ADR285/148 record this compatibility boundary.
+Policy simulation tests are not live Windows physical-cleanup evidence.
+
 - [ ] **1. Build failing integration journeys around real native owners.** In `Tests/Chat/workflow_rig.py`, provide `build_workflow_rig(tmp_path, monkeypatch, provider) -> WorkflowRig`, using existing isolated store/controller/gateway fixture construction and the Task 1 request factory. Its fields are `workflow`, `service`, `coordinator`, `controller`, `store`, `gateway`; methods are `wait_for_status(status, *, timeout=5)`, `close()`, `provider_release()` and `wait_for_provider_entry()`. Native owners must positively drain in cleanup. The test provider addresses roles/task IDs independently so concurrent agents cannot consume each other's scripted replies.
 - [ ] **2. Run red:** `.venv/bin/python -m pytest -q Tests/Chat/test_console_workflow_dispatch.py Tests/Chat/test_console_workflow_scheduling.py Tests/Chat/test_workflow_activity_admission.py Tests/Chat/test_workflow_settlement_delivery.py`.
 - [ ] **3. Admit read-only planning through typed custody and native per-session acceptance before billable preparation.** Persist the exact chosen existing chat and binding; an unsaved chat uses the current persistence owner before execution, not a second provisioning store. Plan review/approval validates exact control revision, target, inputs and remaining limits; repeated command IDs reuse receipts. Snapshot provider/preset/fallback choices and inherit current project-instruction/permission narrowing for each task.

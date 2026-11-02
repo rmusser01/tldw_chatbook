@@ -66,3 +66,10 @@ engine return; optional transcript storage is not a new universal hook journal.
 Shutdown retains existing workers/handoffs after sealing and capacity closure.
 No new executor, process poller or persistence is added. V2 ownership is separate
 mandatory D2B2 work; this amendment does not enable workflows with hooks.
+
+D2B1 review qualification: native attachment uses ADR-285's shared metadata-only
+platform capability. On unqualified platforms, including Windows, ordinary app
+hooks preserve their existing granted execution path and shutdown limits; no
+unsupported native cleanup claim is attached. Native workflow authority refuses
+before phase acceptance even when its feature flag is enabled. Passive saved
+workflow history remains available. This does not qualify Windows native groups.

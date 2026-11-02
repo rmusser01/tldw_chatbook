@@ -222,6 +222,17 @@ ordinary-tree admission must replace independent event acquisition with original
 covering-tree borrowing before enqueue, alongside D2A initializer borrowing.
 Workflow capture/planning/coordinator admission remains closed.
 
+Native workflow execution requires the presently qualified POSIX process-group
+custody capability. One metadata-only qualification predicate governs native hook
+attachment and the process-local phase authority factory, which refuses before
+phase acceptance or attributable work on unqualified platforms. Enabling the
+workflow setting cannot bypass this boundary. Ordinary Windows hooks retain their
+existing granted execution path and its limits, without new native custody or an
+invented cleanup guarantee; passive workflow storage/history remains portable.
+Future public planning, Start and Resume must use the same qualification before
+billable preparation or acceptance. Task 9 will surface the refusal reason. This
+is a platform capability boundary, not a new user setting or permission grant.
+
 ## Task 7 producer and storage contracts
 
 Task 7 uses additive AgentRuns schema v27 for immutable required checkpoint

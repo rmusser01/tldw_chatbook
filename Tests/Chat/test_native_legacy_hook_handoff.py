@@ -11,10 +11,17 @@ from Tests.Agents.test_hook_permissions import hook_file as _hook_file
 from Tests.Agents.test_native_legacy_hooks import opaque_busy
 from Tests.Chat.test_console_first_send_atomicity import _controller
 from tldw_chatbook.Chat.console_runtime import ConsoleRuntime
+from tldw_chatbook.Chat.console_workflow_runs import native_workflow_qualified
 
 hook_file = _hook_file
 
-pytestmark = [pytest.mark.asyncio, pytest.mark.bootstrap_profile]
+pytestmark = [
+    pytest.mark.asyncio,
+    pytest.mark.bootstrap_profile,
+    pytest.mark.skipif(
+        not native_workflow_qualified(), reason="native POSIX group custody required"
+    ),
+]
 
 
 @pytest.fixture

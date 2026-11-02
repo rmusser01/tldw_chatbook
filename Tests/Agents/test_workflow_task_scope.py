@@ -23,9 +23,14 @@ def task_host(tmp_path, monkeypatch):
     from tldw_chatbook.Agents import automatic_work_runtime, run_log
     from tldw_chatbook.Agents.workflow_models import WorkflowPlan
     from tldw_chatbook.Chat.console_runtime import ConsoleRuntime
-    from tldw_chatbook.Chat.console_workflow_runs import _accept_workflow_phase
+    from tldw_chatbook.Chat.console_workflow_runs import (
+        _accept_workflow_phase,
+        native_workflow_qualified,
+    )
     from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
 
+    if not native_workflow_qualified():
+        pytest.skip("native workflow platform qualification required")
     setting = lambda key, default: True if key == "workflow_runs_enabled" else default
     monkeypatch.setattr(run_log, "_setting", setting)
     monkeypatch.setattr(automatic_work_runtime, "_setting", setting)

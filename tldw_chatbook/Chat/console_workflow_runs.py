@@ -2,12 +2,18 @@
 
 from __future__ import annotations
 
+import os
 from threading import RLock
 
 from tldw_chatbook.Agents.automatic_work_budget import AutomaticWorkRefused
 from tldw_chatbook.Agents.automatic_work_runtime import AutomaticWorkContext
 
 _KEY = object()
+
+
+def native_workflow_qualified() -> bool:
+    """Return the metadata-only platform qualification for native group custody."""
+    return os.name == "posix" and hasattr(os, "killpg")
 
 
 def _live_owner(controller, session_id, attempt):
@@ -81,6 +87,8 @@ def _accept_workflow_phase(controller, attempt_id: str, *, session_id: str):
     Duplicate accepted IDs return no capability. The later phase coordinator keeps
     the original process-local object; reload/import cannot recreate it.
     """
+    if not native_workflow_qualified():
+        raise AutomaticWorkRefused("workflow_platform_unqualified")
     owner_id = controller._fleet_wake.runtime_owner_id
     ledger = controller._agent_bridge.runs_db.automatic_work
     attempt = ledger.read_workflow_attempt(attempt_id, owner_id=owner_id)

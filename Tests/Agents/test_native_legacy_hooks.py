@@ -14,11 +14,17 @@ from Tests.Agents.test_hook_permissions import hook_file as _hook_file
 from tldw_chatbook.Agents.execution_capacity import WorkOrigin
 from tldw_chatbook.Chat.console_chat_store import ConsoleChatStore
 from tldw_chatbook.Chat.console_runtime import ConsoleRuntime
+from tldw_chatbook.Chat.console_workflow_runs import native_workflow_qualified
 from tldw_chatbook.Workspaces.worktree_activity import WorktreeFootprint
 
 hook_file = _hook_file
 
-pytestmark = pytest.mark.bootstrap_profile
+pytestmark = [
+    pytest.mark.bootstrap_profile,
+    pytest.mark.skipif(
+        not native_workflow_qualified(), reason="native POSIX group custody required"
+    ),
+]
 
 
 def wait_until(predicate, seconds=5):

@@ -290,8 +290,13 @@ def test_private_custody_issues_once_after_exact_live_owner_acceptance(workflow)
     from threading import Event
     from types import SimpleNamespace
 
-    from tldw_chatbook.Chat.console_workflow_runs import _accept_workflow_phase
+    from tldw_chatbook.Chat.console_workflow_runs import (
+        _accept_workflow_phase,
+        native_workflow_qualified,
+    )
 
+    if not native_workflow_qualified():
+        pytest.skip("native workflow platform qualification required")
     db, snap, clock = workflow
     a = prepare(db, snap)
     session = SimpleNamespace(

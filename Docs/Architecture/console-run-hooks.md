@@ -77,8 +77,14 @@ work until retry/discard. Runtime shutdown permanently retires non-resumable hos
 continuations and joins original callbacks before disposing storage, even when a
 shutdown waiter is cancelled. An expired process/group proof remains explicitly
 unresolved; no new poller or executor claims later success.
-Native command admission currently requires POSIX process-group proof; on Windows
-it refuses before spawn under the same event policy. Standalone behavior remains.
+Native attachment requires the metadata-only `native_workflow_qualified()` POSIX
+group capability in `Chat/console_workflow_runs.py`. Unqualified platforms,
+including Windows, retain ordinary granted app hooks and existing shutdown limits
+without native attachment. The same predicate refuses actual workflow authority
+before phase acceptance, regardless of the workflow feature flag. Passive saved
+workflow history/storage stays available. Future public planning, Start and Resume
+must reuse it before billable preparation; Task 9 will surface the reason. Policy
+simulation tests do not qualify Windows physical cleanup.
 
 This is Task 8D2B1's legacy-only boundary. V2 planned/MCP/nested/SessionEnd native
 custody remains the mandatory D2B2 integration, and ordinary covering-tree

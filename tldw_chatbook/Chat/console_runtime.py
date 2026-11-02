@@ -5592,11 +5592,14 @@ class ConsoleRuntime:
                 _NativeLegacyHookSource,
             )
 
-            self._legacy_hooks_source = _NativeLegacyHookSource(
-                self, self._run_hooks_engine, owner
-            )
-            self._run_hooks_engine._native_source = self._legacy_hooks_source
-            self._run_hooks_engine._native_attached = True
+            from .console_workflow_runs import native_workflow_qualified
+
+            if native_workflow_qualified():
+                self._legacy_hooks_source = _NativeLegacyHookSource(
+                    self, self._run_hooks_engine, owner
+                )
+                self._run_hooks_engine._native_source = self._legacy_hooks_source
+                self._run_hooks_engine._native_attached = True
             return self._run_hooks_engine
 
     async def _drain_legacy_hooks(self) -> bool:
