@@ -20262,6 +20262,7 @@ class ChatScreen(BaseAppScreen):
         return CanvasScope(
             session_id=session_id,
             conversation_id=session.persisted_conversation_id or session_id,
+            ephemeral=session.ephemeral,
             active_message_ids=active_ids,
             selected_canvas_id=None,
             selected_revision_id=None,
@@ -20300,6 +20301,7 @@ class ChatScreen(BaseAppScreen):
             )
             if (
                 session is None
+                or session.ephemeral != target.ephemeral
                 or (session.persisted_conversation_id or session.id)
                 != target.conversation_id
             ):
@@ -20345,6 +20347,7 @@ class ChatScreen(BaseAppScreen):
         )
         if (
             session is None
+            or session.ephemeral != target.ephemeral
             or (session.persisted_conversation_id or session.id)
             != target.conversation_id
             or active_ids != target.active_message_ids
@@ -20376,6 +20379,7 @@ class ChatScreen(BaseAppScreen):
                 current_store.active_session_id != target.session_id
                 or current is not composer
                 or live_session is None
+                or live_session.ephemeral != target.ephemeral
                 or (live_session.persisted_conversation_id or live_session.id)
                 != target.conversation_id
                 or live_ids != target.active_message_ids
@@ -20426,6 +20430,8 @@ class ChatScreen(BaseAppScreen):
             None,
         )
         if session is None:
+            return False
+        if session.ephemeral != getattr(scope, "ephemeral", None):
             return False
         if (session.persisted_conversation_id or session.id) != conversation_id:
             return False
@@ -20503,7 +20509,7 @@ class ChatScreen(BaseAppScreen):
         canvas_controller = runtime.canvas_controller
         if canvas_controller is None:
             raise RuntimeError("Canvas source message is no longer current")
-        temporary = captured_scope.conversation_id == captured_scope.session_id
+        temporary = captured_scope.ephemeral
         captured_owner = canvas_controller.capture_interactive_owner(
             captured_scope, temporary=temporary
         )

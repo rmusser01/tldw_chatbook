@@ -56,6 +56,7 @@ class ChildRuntime:
             selected_canvas_id=None,
             selected_revision_id=None,
             run_id="run-create",
+            ephemeral=True,
         )
         self.authority = NativeConsoleCanvasAuthority(
             scope_resolver=self._resolve_scope,

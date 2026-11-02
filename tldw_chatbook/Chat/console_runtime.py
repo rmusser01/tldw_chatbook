@@ -4026,6 +4026,7 @@ class ConsoleRuntime:
         return CanvasScope(
             session_id=session_id,
             conversation_id=session.persisted_conversation_id or session_id,
+            ephemeral=session.ephemeral,
             active_message_ids=active_ids,
             selected_canvas_id=None,
             selected_revision_id=None,

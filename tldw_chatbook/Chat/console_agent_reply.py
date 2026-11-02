@@ -715,6 +715,7 @@ async def _run_agent_reply(
                 selected_canvas_id=None,
                 selected_revision_id=None,
                 run_id=canvas_run_id,
+                ephemeral=session.ephemeral,
             )
             canvas_scope = canvas_controller.capture_selected_scope(canvas_scope)
             canvas_run = canvas_controller.register_run(

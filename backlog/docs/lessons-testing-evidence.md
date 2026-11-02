@@ -24904,3 +24904,16 @@ harness writes one fixed lifecycle-output filename outside pytest basetemp.
 Per-epoch stdout/source/wait receipts survived, but older bounded lifecycle
 arrays were overwritten before separate archival. Preserve fixed-output
 artifacts before each new scenario, not only each private pytest directory.
+
+
+In shared-Console integration125, saved Canvas reopened under deliberately
+canonical session IDs, but an older `conversation_id == session_id` heuristic
+classified the durable session as temporary. F12 reached its native handler and
+raised `canvas_base_unavailable`; the later missing acknowledgement was only the
+test symptom. Read the retained native traceback before adding input retries.
+R180 carries the actual native session state and checks it across captured
+operations;130 then passed the unchanged full generic journey.128 separately
+showed that real guarded config readers need the existing exact-node private
+bootstrap profile contract: per-test redirection caused source-selection refusal
+and native fail-closed Canvas disable.129 qualified that setup through the public
+configured-enabled read, without replacing policy or admission helpers.

@@ -34,6 +34,7 @@ Demonstrate the full phone-to-existing-Console workflow through real served proc
 - [ ] #4 Authentication, revocation, Canvas-disabled operation, same-origin protections and inert content hold in real browser journeys without granting authority from VPN access.
 - [ ] #5 User and architecture documentation describe actual shared behavior, migration/recovery instructions and the native-attachment limit; automated/emulated evidence is distinct from an actual phone/VPN receipt and unavailable checks remain explicitly open.
 - [ ] #6 Canonical/recovery SQLite access is qualified through existing native module ownership and documented roles; source-inventory checks pass without widened permission, guard exemptions or loss of read restrictions, custody or budgets.
+- [ ] #7 Reopened canonical saved chats retain reachable Canvas revisions and pinned selection without provider replay; temporary, unknown, stale and changed native ownership/classification remain fenced.
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -95,6 +96,16 @@ ADR path: backlog/decisions/244-shared-console-ownership-and-mobile-supervision.
 Reason: Preserve the approved shared ownership/canonical data contract while incorporating current upstream implementations; upstream SQLite kernel and native display scheduling contracts remain authoritative.
 
 After independently gating checkpoint5deaeb339aa856957d948b3d015fb219889f874c (14 named paths,122 exclusions,841 source/evidence bindings and1484 retained private entries), preserve a named backup and properly rebase the existing feature commits from62a169f906508ed02bd7546ab278d916638d1607 onto current dev88af9f937908b46e8c5f9f7fddd9e8748c917d46. Inspect actual conflicts and connected native delta; retain canonical schema86/11/27, new public managed_transaction_depth, native Dreams SQLiteStoreKernel admission/deadlines/ownership and per-send display-start accounting. Preserve both native and mobile census entries, never raise or waive this feature's numeric ceilings. Keep source/evidence and original branches; no merge/GC/cleanup/full suite. After source freeze, rerun the actual whole15 served acceptance file and minimum newly affected native send-start/heap/Dreams/transaction/rollback controls. Source-bind prior unchanged qualifications, and explicitly requalify affected public populated rollback/edited SafetyCopy rows because native DB implementation changed. The same final reviewer gets ONE scoped rereview of the existing correction wave plus concrete conflict resolutions/new integration breakage, not a second broad review. New125 Canvas temporary/durable composition defect remains separately held for precode proposal; no speculative production correction is released here.
+
+
+
+### R180 correction before final integrated acceptance (2026-11-02)
+
+ADR required: yes, amend existing ADR
+ADR path: backlog/decisions/244-shared-console-ownership-and-mobile-supervision.md
+Reason: Existing canonical session IDs expose an incorrect temporary-storage inference; immutable native scope and bridge captures need the actual native session classification and matching revalidation.
+
+Within the single existing final correction wave, preserve canonical IDs and implement the reviewed explicit ephemeral fact at all four native CanvasScope factories. Data-only positional constructors may retain unknown state, but native authority must refuse missing/non-bool truth with no fallback. Retain the exact state in all three _Selection constructors and both native bridge constructors, partial scope/publication/import/render/controller/repair/prepare/apply guards and existing owner-proven promotion. Adapt only existing native-authority fixtures to their actual session or explicitly proven durable/temporary setup; do not stamp a blanket False or weaken native owners. Use original125 as functional RED, add meaningful real SQLite temporary import/promotion/canonical hydration/read/rename plus unknown/stale/same-ID incarnation controls, preserve all existing native promotion/branch/bridge/async tests, and pass the original served normal-False saved-load/F12/pinned/zero-provider/two-row/oldURL/physical-cleanup journey. No new architecture role, client field, transport schema, permission, path, fallback, dependency, budget or numeric exception. Root then independently gates the exact source/evidence manifest, normal commits and obtains the already planned ONE same-reviewer scoped rereview plus final whole15 UAT. No second broad review or full repository sweep.
 
 <!-- SECTION:PLAN:END -->
 

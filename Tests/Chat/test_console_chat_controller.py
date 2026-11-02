@@ -9211,6 +9211,7 @@ async def test_next_canvas_turn_reads_and_branches_from_native_historical_select
             selected_canvas_id=None,
             selected_revision_id=None,
             run_id="native-selection",
+            ephemeral=session.ephemeral,
         )
 
     authority = runtime.ensure_canvas_native_authority(scope_resolver=live_scope)

@@ -430,3 +430,19 @@ retain their source-bound prior qualification. Final correction report/manifest
 live in the existing local dev-integration-2026-11-01 evidence directory. No
 whole15 rerun, full repository sweep, physical phone/VPN or real-profile migration
 is claimed by this correction wave.
+
+
+R180 follow-up on native88a (frozen base36f9): original125's retained traceback
+proved F12 reached native Canvas but canonical durable IDs were misclassified as
+temporary. Explicit native session state now replaces that heuristic, with
+classification included in stale-scope and bridge checks.128 passed55 controls
+including real temporary promotion, canonical hydration/read/rename and awaited
+classification races; ten fixture prerequisites failed. Exact-node existing
+bootstrap-profile selection and positive native configured-enabled assertions
+qualified all ten in129 (10P5.21s), without weakening a guard.130 passed the entire
+original generic normal-False journey (1P26.22s), including saved load/F12/pinned
+restoration/zero-provider/two revisions/old-URL denial. Its lifecycle array was
+archived immediately.124's cause remains unknown. These targeted passes do not
+replace the pending scoped rereview and fresh whole15 on the committed candidate.
+Native88 dependency controls126 and actual rollback/SafetyCopy127 are separate
+root-owned evidence. All numeric limits remain unchanged; draft blockers remain.
