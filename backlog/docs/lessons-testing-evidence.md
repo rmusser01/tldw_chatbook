@@ -26792,3 +26792,13 @@ and keep the first run and repeat beside the instrumented comparison.
 - Before blaming a branch for a flake, run the two trees in strictly alternating pairs and count failures per arm, and run enough of them: six pairs still read 5 against 2. Sequential batches confound the tree with whatever the host was doing at the time.
 - Check whether the test can reach the changed code at all: a probe in the changed function settles it faster than more samples.
 - Record the dev rate in the follow-up task, so the next reader does not rediscover it as a regression.
+### Trace recovery needs one real gateway continuation check
+
+During PR3345 dev integration, the native missing-request tests replaced the
+whole response stream and passed Retry, while the saved-workspace phone case
+(epoch102) rebuilt its request and immediately paused again at the real gateway.
+The controller had passed its pre-reservation failure marker as an owned gateway
+boundary. Epoch109's actual gateway/controlled-adapter continuation passed after
+exact marker consumption; stale/unknown marker controls still refused. Keep a
+real gateway continuation case when testing recovery across that boundary: a
+stream double cannot establish reservation ownership or provider entry.

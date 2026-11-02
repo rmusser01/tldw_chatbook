@@ -155,3 +155,62 @@ async def test_a_retry_that_still_cannot_build_keeps_the_card(
     assert still.pause_kind is ConsolePreparationPauseKind.TRACE_CALL
     cancelled = controller.cancel_library_preparation(paused.preparation_id)
     assert cancelled.visible_copy == "Trace-captured send canceled."
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "mutation",
+    [
+        "unknown",
+        "established",
+        "boundary",
+        "missing",
+        "replaced_marker",
+        "replaced_continuation",
+    ],
+)
+async def test_missing_request_retry_refuses_changed_or_unproven_marker(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, mutation: str
+) -> None:
+    """Rebuilding cannot consume another failure or replace a newer continuation."""
+    from dataclasses import replace
+
+    from tldw_chatbook.Chat.console_trace_errors import TraceCallPersistenceError
+
+    store, controller, entries, paused = await _paused_on_a_missing_request(
+        tmp_path, monkeypatch, _never_builds
+    )
+    key = paused.preparation_id
+    markers = controller._trace_call_boundaries_by_preparation
+    continuations = controller._durable_postcommit_continuations
+    original = continuations[key]
+    if mutation in {"unknown", "established"}:
+        markers[key] = TraceCallPersistenceError(reservation_status=mutation)
+    elif mutation == "boundary":
+        markers[key] = TraceCallPersistenceError(
+            reservation_status="not_established", boundary=object()
+        )
+    elif mutation == "missing":
+        markers.pop(key)
+
+    def build(**kwargs):
+        rebuilt = type(controller)._build_durable_trace_request(controller, **kwargs)
+        assert rebuilt is not None
+        if mutation == "replaced_marker":
+            markers[key] = TraceCallPersistenceError(
+                reservation_status="not_established"
+            )
+        elif mutation == "replaced_continuation":
+            continuations[key] = replace(original)
+        return rebuilt
+
+    monkeypatch.setattr(controller, "_build_durable_trace_request", build)
+    refused = await controller.retry_library_preparation(key)
+    assert not refused.accepted and not refused.provider_started
+    assert entries == []
+    still = store.preparation_for_session("session-1")
+    assert still is not None and still.preparation_id == key
+    assert still.state is ConsoleTurnPreparationState.PAUSED
+    assert continuations[key].trace_request is None
+    if mutation != "missing":
+        assert key in markers

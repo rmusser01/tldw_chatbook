@@ -11,6 +11,17 @@ Implementation: Not started; existing production behavior remains until verified
 
 ## Context
 
+### 2026-11-23 integration amendment: retain native trace-child version 87
+
+Native dev b31e3e9 owns ChaChaNotes version 87 for ADR337 child trace segments.
+Move the unmerged mobile receipt migration to version 88, after that migration.
+Retain every exact native87 catalog and its86→87 migration, compose receipts
+with each lineage for87→88, and preserve subscription shared-file version stamps
+and all earlier native recovery lineages. Unmerged mobile87 test artifacts remain
+archived evidence, following the same policy as the earlier unmerged mobile86
+artifacts. Their conflicting version number grants no native87 schema authority.
+No real-profile migration is authorized by this continuation.
+
 The operator needs to inspect and correct existing Console agents from a phone
 over VPN, including individual subagents, and switch between existing chats.
 Work must survive browser closure and network loss while `--serve` remains alive.
@@ -3247,13 +3258,16 @@ Final upstream DOES NOT override HF_HUB_DISABLE_XET; preserve the user's environ
 
 Merge native diagnostic entries with current feature entries (voice input42/digest527c446b948fe052faf5, model_download_guard1/digestc816a93c2246acba0b5a), then validate final actual source. After rebase run selected installed-stack private/no-download/no-microphone physical preparation/cancel/cleanup/readiness/source/diagnostic controls from the audit, plus existing phone detach/reconnect/exact Stop controls. Prior source audit is not runtime evidence. Final static/review/15UAT gates remain; no full sweep/dependency install or real profile.
 
-### 2026-11-23 integration amendment: retain native trace-child version 87
 
-Native dev b31e3e9 owns ChaChaNotes version 87 for ADR337 child trace segments.
-Move the unmerged mobile receipt migration to version 88, after that migration.
-Retain every exact native87 catalog and its86→87 migration, compose receipts
-with each lineage for87→88, and preserve subscription shared-file version stamps
-and all earlier native recovery lineages. Unmerged mobile87 test artifacts remain
-archived evidence, following the same policy as the earlier unmerged mobile86
-artifacts. Their conflicting version number grants no native87 schema authority.
-No real-profile migration is authorized by this continuation.
+### Current-dev missing trace-request Retry composition (before code)
+
+ADR required: no new ADR; direct implementation correction under existing ADR094/230/244. The actual named-workspace phone/native gateway path rebuilds the frozen Capture-On request, then rejects the controller's retained missing-request error as if it were a gateway boundary. Source inspection and bounded post-outcome104 confirm: resume raises exact TraceCallPersistenceError(reservation_status=not_established) with boundary=None before gateway binding; the pause stores that object; successful _restore_missing_trace_request replaces its continuation without consuming that marker. Gateway correctly requires exact accepted-preparation ownership for every non-None recovery boundary.
+
+Only the current missing-request TRACE_CALL/Capture-On continuation may consume its exact controller refusal marker. Before rebuild require exact TraceCallPersistenceError, reservation_status not_established and boundary None from that preparation's existing map. Use unchanged frozen continuation/provider/destination validation and request builder. Under the existing durable preparation lock require original continuation identity AND the same marker identity, publish the rebuilt continuation, then remove ONLY that marker. Failed rebuild or missing/replaced/unknown/established/foreign marker refuses and retains the pause/current evidence. No gateway change, rearmed user proof, borrowed boundary, new token/admission, dispatch replay or retry policy; normal native fresh reservation follows. Genuine gateway construction_failure/unknown-contact/established-boundary verification remains unchanged.
+
+Add actual named-workspace phone Retry and failed-rebuild/Cancel draft-text+revision controls through the real gateway, exact-marker identity/status/missing/replaced negatives, and retain native desktop/unknown-contact boundaries. 102/104 are reached failure evidence; controlled setup is labeled. Native DISCARD on this first newly saved send removes its transient current-session user row and rebinds pre_send_conversation_id=None, so tests must follow that actual contract rather than demand retention; unrelated saved history is unaffected. Root source/proposal review precedes the edit; no new architectural ruling or permission is required within the authorized current-dev integration.
+
+
+### Native dev62a video Stop preservation
+
+The final dev integration preserves PR3333 typed video cancellation: cancelled, refused, deleted and unconfirmed stay distinct, and refusal alone proves neither remote running state nor billing. Native generation/Regenerate retain draft handling, publication fencing and physical cleanup. The independent phone Stop remains exact turn/run; no new phone video API, provider policy, storage/schema contract or physical-exit promise is introduced. Retain both native and feature diagnostic/census entries. This is direct accepted-native composition, not a new architectural decision.

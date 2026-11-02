@@ -3992,6 +3992,9 @@ Tests/UI/test_console_library_auto_outcome.py::test_shelf_action_on_a_timed_out_
 Tests/UI/test_console_library_auto_outcome.py::test_a_timed_out_send_says_why_and_each_card_action_does_what_it_says[retry-library-search]
 Tests/UI/test_console_library_auto_outcome.py::test_a_timed_out_send_says_why_and_each_card_action_does_what_it_says[send-once-without-library]
 Tests/UI/test_console_library_auto_outcome.py::test_a_timed_out_send_says_why_and_each_card_action_does_what_it_says[cancel-send]
+
+# Shared mobile integration: real native phone trace Retry/Cancel preservation.
+Tests/UI/test_console_phone_trace_recovery.py
 # TASK-33620.7, TASK-33620.15.25 (2026-11-21): the staged-evidence sessions
 # file, on no lane before (3 of 26 red on dev dc371f0842: its reply wait
 # counted footers a sourceless reply no longer mounts, and one revision
