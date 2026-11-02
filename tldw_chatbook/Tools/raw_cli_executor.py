@@ -1178,7 +1178,7 @@ class RawShellExecutor:
         """Retain native callers through the actual returns of existing helpers."""
         helpers: list[threading.Thread] = []
         try:
-            result = self._execute(
+            result, output_complete = self._execute(
                 request,
                 cancel_event=cancel_event,
                 on_event=on_event,
@@ -1194,7 +1194,7 @@ class RawShellExecutor:
             not helper.is_alive() for helper in helpers
         )
         if required_output is not None:
-            required_output.sealed = required_output.sealed and proven
+            required_output.sealed = output_complete and proven
         return replace(result, cleanup_proven=proven)
 
     def _execute(
@@ -1206,7 +1206,7 @@ class RawShellExecutor:
         admit_worker: RawCliAdmissionCallback,
         required_output: RequiredCliOutput | None = None,
         _helpers: list[threading.Thread],
-    ) -> RawCliResult:
+    ) -> tuple[RawCliResult, bool]:
         """Execute once; ``admit_worker``'s return value is ignored.
 
         The callback must call ``tree.admit()`` and then ``commit_launch()`` while
@@ -1278,7 +1278,7 @@ class RawShellExecutor:
                             exit_code,
                             terminal_state,
                             cleanup_proven,
-                        )
+                        ), False
             _safe_close(identity_send)
             identity_send = None
 
@@ -1300,7 +1300,7 @@ class RawShellExecutor:
                     exit_code,
                     terminal_state,
                     cleanup_proven,
-                )
+                ), False
 
             tree = ExecutorProcessTree(process, admission_event, identity)
             launch_commit = _LaunchCommit(tree, launch_event, cancel_event)
@@ -1350,7 +1350,7 @@ class RawShellExecutor:
                     exit_code,
                     terminal_state,
                     cleanup_proven,
-                )
+                ), False
 
             output_relay = _QueueRelay(output_queue)
             _helpers.append(output_relay._thread)
@@ -1376,13 +1376,12 @@ class RawShellExecutor:
                 cleanup_proven = _cleanup_tree(tree, terminate=False)
             streams_complete = accumulator._finished == {"stdout", "stderr"}
             accumulator.finish_all(on_event)
-            if required_output is not None:
-                required_output.sealed = (
-                    terminal_state == "exited"
-                    and cleanup_proven
-                    and not triggered
-                    and streams_complete
-                )
+            output_complete = (
+                terminal_state == "exited"
+                and cleanup_proven
+                and not triggered
+                and streams_complete
+            )
             return self._result(
                 request,
                 accumulator,
@@ -1391,7 +1390,7 @@ class RawShellExecutor:
                 exit_code,
                 terminal_state,
                 cleanup_proven,
-            )
+            ), output_complete
         finally:
             if launch_commit is not None:
                 launch_commit.close()

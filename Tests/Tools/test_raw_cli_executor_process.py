@@ -1889,3 +1889,79 @@ def test_standalone_held_admission_return_cannot_claim_cleanup(tmp_path):
         assert result.cleanup_proven is False, "admission helper is still executing"
     finally:
         release.set()
+
+
+@pytest.mark.bootstrap_profile
+@pytest.mark.parametrize("join_helpers", [True, False])
+@pytest.mark.parametrize("helper_kind", ["relay", "admission"])
+def test_required_output_stays_unsealed_until_actual_helper_return(
+    tmp_path, monkeypatch, helper_kind, join_helpers
+):
+    entered, release, body_returned = (threading.Event() for _ in range(3))
+    original_relay = raw_cli._QueueRelay._run
+    original_body = raw_cli.RawShellExecutor._execute
+    output = raw_cli.RequiredCliOutput()
+    results, errors, helpers = [], [], []
+
+    def held_relay(relay):
+        original_relay(relay)
+        entered.set()
+        assert release.wait(15)
+
+    def held_admission(tree, commit):
+        _admit(tree, commit)
+        entered.set()
+        assert release.wait(15)
+
+    def observed_body(self, *args, **kwargs):
+        result = original_body(self, *args, **kwargs)
+        helpers.extend(kwargs["_helpers"])
+        body_returned.set()
+        return result
+
+    if helper_kind == "relay":
+        monkeypatch.setattr(raw_cli._QueueRelay, "_run", held_relay)
+    monkeypatch.setattr(raw_cli.RawShellExecutor, "_execute", observed_body)
+
+    def execute():
+        try:
+            results.append(
+                _executor().execute(
+                    _request(tmp_path, "printf original-output"),
+                    cancel_event=threading.Event(),
+                    on_event=lambda event: None,
+                    admit_worker=held_admission
+                    if helper_kind == "admission"
+                    else _admit,
+                    required_output=output,
+                    _join_helpers=join_helpers,
+                )
+            )
+        except BaseException as exc:  # noqa: BLE001 -- report worker failure to the test
+            errors.append(repr(exc))
+
+    worker = threading.Thread(target=execute)
+    worker.start()
+    try:
+        assert body_returned.wait(15), errors
+        assert entered.is_set()
+        assert output.stdout == "original-output"
+        assert output.sealed is False, "required output sealed before helper returned"
+        if join_helpers:
+            assert worker.is_alive() and not results
+        else:
+            worker.join(15)
+            assert not worker.is_alive()
+            assert len(results) == 1 and results[0].cleanup_proven is False
+            assert output.sealed is False
+    finally:
+        release.set()
+        worker.join(15)
+        for helper in helpers:
+            helper.join(15)
+        assert not worker.is_alive() and all(
+            not helper.is_alive() for helper in helpers
+        )
+        assert not errors, errors
+    assert len(results) == 1 and results[0].cleanup_proven is join_helpers
+    assert output.sealed is join_helpers
