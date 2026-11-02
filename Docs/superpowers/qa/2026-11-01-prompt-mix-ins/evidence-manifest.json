@@ -317,9 +317,9 @@
       "bytes": 7278
     },
     "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/integration/report.md": {
-      "sha256": "95985d8a55538655bc1a14ed0177f777f4c10579ae599f68cb965410220c5610",
-      "git_blob": "ed6a58dba84e74cd996e9aed92ce7e6598a66228",
-      "bytes": 11174
+      "sha256": "11ff6f4a710667391270ca889130eacc6b88e9ac35aa57295b5a5769de9648fb",
+      "git_blob": "bf9436057df885799d50ac18067593dda5f1f6b7",
+      "bytes": 11958
     },
     "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/integration/save-ack.log": {
       "sha256": "1cd280c8de7f1e1f998b64b08003d7f0dd1a2904eb9a2fd3c9ebf5df2317b071",
@@ -345,6 +345,11 @@
       "sha256": "61547d428797c1599dccb6fbca1cd393a7740480a0fb44071ca695b62070a527",
       "git_blob": "b08b93754aeeb92033b3c063d397ad96df340a44",
       "bytes": 20
+    },
+    "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/integration/static-scope.json": {
+      "sha256": "003c2228421468f22740844fd726a8491a2e4f4cf0dd388e930219d992db4c7e",
+      "git_blob": "3e00689cc6a66262d2e4ee9f8c2f35807dd814f7",
+      "bytes": 289
     },
     "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/integration/static.py": {
       "sha256": "2aa0931f214875a5a4cbbe5f63a9e278fc020b43bc05ee3fe9a0d165a95f37fb",
@@ -400,6 +405,21 @@
       "sha256": "a189f0e8f350a86bc41253e16cf888fc67cff16fa7110d43227510d3ed31145b",
       "git_blob": "abce4aeb48e47ea567fd49e5d9a80e2be299b40d",
       "bytes": 3962
+    },
+    "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/integration/verify-fresh-clone.json": {
+      "sha256": "02de69dabda39b20bb50113fe1c9aef31d54b50cca673b2a3d63e9107e1877b8",
+      "git_blob": "95dc6b6d72b3ba928104bc583274ebd215dae7cb",
+      "bytes": 995
+    },
+    "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/integration/verify-fresh-clone.log": {
+      "sha256": "1e020cdbf3f7677310ca5f558eb2958e2de6bb310b9741f13cb673965844b5bd",
+      "git_blob": "87981e65606d7771e52b37f7390171b52960690e",
+      "bytes": 395
+    },
+    "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/integration/verify-index.log": {
+      "sha256": "1a4b5432aa660a1a4698f4bad39a5e64d833a36b74b8a0fce8bf54cf3d6a6ee3",
+      "git_blob": "187983d09d9480358dc18f8526b5a364dfbcce0f",
+      "bytes": 342
     },
     "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/live/app.log": {
       "sha256": "740dd8e60eb3036572eb68c0fc9d88cd14033eaa2d8623dcc84a63c40fce5ec4",
