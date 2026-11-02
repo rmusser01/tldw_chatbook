@@ -32,6 +32,11 @@ from .artifact_share_manifest import (
 
 _CHILD_READY_TIMEOUT_SECONDS = 15.0
 
+#: Bind values that reach only the local machine. Anything else serves the
+#: network and requires credentials (TASK-38608); this mirrors the loopback
+#: set ``compute_display_urls`` already uses.
+_LOOPBACK_BINDS = ("127.0.0.1", "localhost", "::1")
+
 
 @dataclass(frozen=True)
 class ShareStatus:
@@ -123,8 +128,9 @@ class ArtifactShareController:
 
         Raises:
             ArtifactShareError: Web extras missing, no records, an invalid
-                username, staging failure, or the child failed/was too slow
-                to report readiness (staging is cleaned in every case).
+                username, an unauthenticated non-loopback bind, staging
+                failure, or the child failed/was too slow to report
+                readiness (staging is cleaned in every case).
         """
         if not is_web_server_available():
             raise ArtifactShareError(
@@ -136,6 +142,15 @@ class ArtifactShareController:
             # Defensive twin of the dialog's check (Qodo #14): Basic auth
             # splits on the first ':', so a colon username can never match.
             raise ArtifactShareError("Username cannot contain ':'.")
+        if bind not in _LOOPBACK_BINDS and not (username and password):
+            # TASK-38608: a non-loopback bind serves user artifacts to the
+            # network; without credentials that is an open drop of private
+            # data. The dialog used to be the only gate (a typed
+            # confirmation); the controller fails closed on its own.
+            raise ArtifactShareError(
+                f"Non-loopback bind {bind!r} requires a username and password; "
+                "enable the shared login or bind to 127.0.0.1."
+            )
         with self._lock:
             self.stop_share()  # single active share; starting a new one stops the old
             auth = (
