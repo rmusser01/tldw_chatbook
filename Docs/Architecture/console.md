@@ -264,6 +264,44 @@ per-session lookup have retired (TASK-35311).
 
 Streaming details, transforms (skills → chat dictionaries → world info), swipes/branching, and the non-agent plain path are covered in [chat-pipeline.md](./chat-pipeline.md).
 
+## Shared native preparation (ADR-285)
+
+`ConsoleAgentBridge.run_reply` keeps its ordinary execution/generation guards and
+consumes `_prepare_native_reply`, the shared native preparation/finalizer frame.
+The frame yields `_PreparedNativeReply` before its once-only `run_primary` call.
+It retains the original service, first request plan, session/progress owner,
+provider adapter, client lifeline, instruction/review callbacks and optional log
+writer. No transaction, active review scope or context-variable token crosses
+that yield; ordinary cleanup and Change Review still use the original frame.
+
+The private `_prepare_workflow_reply(phase, task_id, binding, resolution, ...)`
+consumer in `console_workflow_preparation.py` uses the same catalog composition
+once, then original task authorization and Task7's complete task-only seed,
+then the same first-request planner/service. It never consumes a draft, creates
+a primary message/run/marker, starts the primary model loop, or publishes over
+the ordinary latest-service slot. A seed that cannot fit is refused. Native
+startup instructions are read under the finite root claim, confirmed outside
+the claim, and revalidated before `_prepare_workflow_child` captures them.
+
+Each finite callback uses `run_preparation_read`, fresh owned database/activation
+scopes and an actual execution owner. Root READ claims end with the callback;
+later scheduling must batch eligible preparation before disjoint writes or
+derive narrower complete read scopes. Cancellation/profile shutdown waits for
+physical callback retirement. The returned original object must be retained
+until the native child drains and its required durable checkpoint exists, then
+`await prepared.close()` retires the original resources once. This does not
+assert snapshot workers have drained. The existing gateway provider worker
+re-enters workflow activation through `worker_guard` using the original ledger
+and source while preserving native task/run ownership.
+
+This is an internal preparation slice. Capture-enabled task entry refuses until
+the phase snapshot window and its worker ownership are integrated; ordinary
+capture is unchanged. The later coordinator must also move final Task7 freshness
+reads under the actual launch owner and complete host physical read footprint,
+before run-row creation/dispatch/allowance commit. The current launcher still
+performs that validation before activity acquisition. These private seams do not
+enable the public workflow coordinator or complete Task38531.
+
 ## Run states and gating
 
 `ConsoleRunStatus`: idle / validating / streaming / checking_citations / completed / blocked / stopped / failed / retrying. New sends are only allowed from idle/blocked/completed/failed/stopped; Stop is only allowed during streaming/citation-checking. `_set_run_state` is the single writer of run state.

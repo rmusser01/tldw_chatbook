@@ -96,6 +96,7 @@ class WorkflowTaskAuthorization:
     _native_launch: list = field(repr=False)
     _native_dispatch: list = field(repr=False)
     _required_evidence: list = field(repr=False)
+    _bridge_preparation: list = field(repr=False)
     _lock: Lock = field(repr=False)
     _owners: tuple = field(repr=False)
 
@@ -123,6 +124,7 @@ class WorkflowTaskAuthorization:
         object.__setattr__(self, "_native_launch", [])
         object.__setattr__(self, "_native_dispatch", [])
         object.__setattr__(self, "_required_evidence", [])
+        object.__setattr__(self, "_bridge_preparation", [])
         object.__setattr__(self, "_lock", Lock())
         object.__setattr__(
             self,
@@ -150,6 +152,8 @@ class WorkflowTaskAuthorization:
 
     def check_preparation(self) -> None:
         """Revalidate accepted custody and current binding without granting dispatch."""
+        for preparation in self._bridge_preparation:
+            preparation._check_task_source(self)
         self.phase.check()
         if _runtime(self.phase) is not self._runtime:
             _refuse("runtime_changed")

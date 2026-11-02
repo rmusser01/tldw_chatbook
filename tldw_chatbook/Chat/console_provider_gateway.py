@@ -7473,6 +7473,11 @@ class ConsoleProviderGateway:
             finally:
                 _local_reasoning_sink.reset(token)
 
+        automatic = current_automatic_work()
+        if automatic is not None and automatic.workflow is not None:
+            from tldw_chatbook.Agents.activation import worker_guard
+
+            worker = worker_guard(automatic.ledger)(worker)
         worker_task = asyncio.create_task(asyncio.to_thread(worker))
         provider_work_owned = bool(
             signals is not None

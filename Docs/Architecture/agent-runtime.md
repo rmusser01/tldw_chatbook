@@ -350,12 +350,14 @@ the original task/phase, database, registry and runtime. Its frozen preparation
 lives on that original task authorization. Each workflow task owns one native
 service; another preparation or later `run_turn` cannot replace its tree state.
 The earlier direct `_run_owned` workflow seam also seals this ownership and
-retains its supported no-log path. Task8 supplies the real bridge/coordinator
-caller; these seams do not enable scheduling themselves.
+retains its supported no-log path. Task8B's private Console preparation consumer
+now supplies the real bridge result (see [console.md](./console.md#shared-native-preparation-adr-285));
+phase snapshot ownership, launch freshness read admission and the public
+coordinator remain separate integration work. These seams do not enable scheduling.
 Preparation detaches the task-only native message seed, including bounded
 required inputs/handoffs, and requires the approved instruction row exactly
 once. It never borrows the parent chat or silently truncates mandatory context;
-Task8 constructs that seed from Task7-validated results.
+The shared producer constructs that seed from Task7-validated results.
 
 `launch_workflow_task` acquires the complete activity footprint before native
 child capacity and passes the **same** task reservation and run ID through the
