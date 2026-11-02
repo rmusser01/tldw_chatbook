@@ -153,9 +153,9 @@ async def test_a_sends_start_ends_at_its_own_provider_request_not_another_sessio
 
                 gateway.gates[0].set()  # A reaches its provider; B has not.
                 await until(lambda: gateway.stream_calls == 1, timeout=30)
-                assert _in_progress(console), (
-                    "another session's provider request ended this send's start"
-                )
+                assert _in_progress(
+                    console
+                ), "another session's provider request ended this send's start"
                 assert console._library_activity.live_reads() is True
 
                 gateway.gates[1].set()  # B's own provider request ends it.
@@ -218,9 +218,9 @@ async def test_a_queued_prompts_dispatch_opens_its_send_start_at_acceptance(
                     controller.prompt_queue_registry.snapshot(session_id).total_count
                     == 0
                 )
-                assert _in_progress(console), (
-                    "a queued prompt's dispatch opened no send start"
-                )
+                assert _in_progress(
+                    console
+                ), "a queued prompt's dispatch opened no send start"
                 assert console._library_activity.live_reads() is True
 
                 gateway.gates[1].set()
@@ -280,9 +280,9 @@ async def test_an_automatic_submissions_acceptance_opens_its_send_start(
                     await until(
                         lambda: runtime.has_custodied_turns(session_id), timeout=30
                     )
-                assert _in_progress(console), (
-                    f"an accepted {origin} submission opened no send start"
-                )
+                assert _in_progress(
+                    console
+                ), f"an accepted {origin} submission opened no send start"
             finally:
                 gateway.release_all()
                 await _settle_custody(console)
@@ -327,9 +327,9 @@ async def test_a_received_sends_start_ends_at_its_own_real_provider_request(
         assert case.console._library_activity.live_reads() is True
         case.probe.release.set()
         await until(lambda: bool(case.provider_calls), timeout=30)
-        assert seen_in_call == [False], (
-            "the send's own provider request did not end its start"
-        )
+        assert seen_in_call == [
+            False
+        ], "the send's own provider request did not end its start"
 
 
 def test_a_send_start_ends_on_its_own_after_its_limit():
@@ -350,7 +350,9 @@ def test_a_send_start_ends_on_its_own_after_its_limit():
 
 @pytest.mark.asyncio
 @pytest.mark.requires_cleanup
-async def test_an_agents_chat_start_opens_a_send_start_until_it_is_done(tmp_path, no_limit):
+async def test_an_agents_chat_start_opens_a_send_start_until_it_is_done(
+    tmp_path, no_limit
+):
     """An agent's chat start is an automatic submission too.
 
     It submits its opening prompt straight to the controller
@@ -456,9 +458,9 @@ async def test_an_agents_chat_start_opens_a_send_start_until_it_is_done(tmp_path
             "the chat start's own provider request did not end its send start "
             f"(open before and after that request: {around_entry})"
         )
-        assert not config_sync.send_start_in_progress(screen), (
-            "the chat start's send start outlived its submission"
-        )
+        assert not config_sync.send_start_in_progress(
+            screen
+        ), "the chat start's send start outlived its submission"
     finally:
         await controller.shutdown()
         runs.close()
@@ -466,10 +468,15 @@ async def test_an_agents_chat_start_opens_a_send_start_until_it_is_done(tmp_path
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("mode", ["cancel_before_first_step", "return_without_provider", "raise_without_provider"])
+@pytest.mark.parametrize(
+    "mode",
+    ["cancel_before_first_step", "return_without_provider", "raise_without_provider"],
+)
 async def test_custody_task_completion_retires_only_its_send_start(mode):
     from tldw_chatbook.Chat.console_send_start import (
-        send_start_open, start_custody_task, submission_send_start,
+        send_start_open,
+        start_custody_task,
+        submission_send_start,
     )
 
     class Owner:
@@ -537,7 +544,10 @@ async def test_custody_task_completion_retires_only_its_send_start(mode):
 
 @pytest.mark.asyncio
 async def test_exceptional_submission_retires_only_its_send_start():
-    from tldw_chatbook.Chat.console_send_start import send_start_open, submission_send_start
+    from tldw_chatbook.Chat.console_send_start import (
+        send_start_open,
+        submission_send_start,
+    )
 
     class Owner:
         pass
