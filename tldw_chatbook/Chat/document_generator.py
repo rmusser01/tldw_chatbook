@@ -21,33 +21,10 @@ from loguru import logger
 # Local imports
 from ..config import get_cli_setting, load_console_library_migration_seed
 from ..Metrics.metrics_logger import log_counter, log_histogram
-from ..LLM_Calls.LLM_API_Calls import (
-    chat_with_openai,
-    chat_with_anthropic,
-    chat_with_cohere,
-    chat_with_groq,
-    chat_with_openrouter,
-    chat_with_deepseek,
-    chat_with_mistral,
-    chat_with_huggingface,
-    chat_with_google,
-)
-from ..LLM_Calls.LLM_API_Calls_Local import (
-    chat_with_aphrodite,
-    chat_with_local_llm,
-    chat_with_ollama,
-    chat_with_kobold,
-    chat_with_llama,
-    chat_with_oobabooga,
-    chat_with_tabbyapi,
-    chat_with_vllm,
-    chat_with_custom_openai,
-    chat_with_custom_openai_2,
-    chat_with_mlx_lm,
-)
 from ..DB.ChaChaNotes_DB import CharactersRAGDB
 from ..Internal_Prompts import get_internal_prompt
 from ..Provider_Contract import ChatAPIError
+from .Chat_Functions import chat_api_call
 from .assistant_generation_state import render_exported_assistant_content
 from tldw_chatbook.Utils.timestamps import utc_now_iso
 
@@ -99,35 +76,6 @@ class DocumentGenerator:
                 "max_tokens": 2500,
             },
         )
-
-        # Provider mapping
-        self.provider_functions = {
-            "openai": chat_with_openai,
-            "anthropic": chat_with_anthropic,
-            "cohere": chat_with_cohere,
-            "groq": chat_with_groq,
-            "openrouter": chat_with_openrouter,
-            "deepseek": chat_with_deepseek,
-            "mistral": chat_with_mistral,
-            "mistralai": chat_with_mistral,
-            "huggingface": chat_with_huggingface,
-            "google": chat_with_google,
-            "aphrodite": chat_with_aphrodite,
-            "local-llm": chat_with_local_llm,
-            "ollama": chat_with_ollama,
-            "koboldcpp": chat_with_kobold,
-            "llama.cpp": chat_with_llama,
-            "llama_cpp": chat_with_llama,
-            "oobabooga": chat_with_oobabooga,
-            "tabbyapi": chat_with_tabbyapi,
-            "vllm": chat_with_vllm,
-            "custom": chat_with_custom_openai,
-            "custom_openai": chat_with_custom_openai,
-            "custom_2": chat_with_custom_openai_2,
-            "custom_openai_2": chat_with_custom_openai_2,
-            "mlx": chat_with_mlx_lm,
-            "mlx_lm": chat_with_mlx_lm,
-        }
 
     def get_conversation_context(
         self, conversation_id: str, limit: int = 20
@@ -507,10 +455,17 @@ class DocumentGenerator:
         stream: bool = False,
     ) -> Union[str, Generator[str, None, None]]:
         """
-        Call the appropriate LLM provider.
+        Call the appropriate LLM provider via the unified chat dispatcher.
+
+        TASK-38602: dispatch goes through ``chat_api_call`` (the
+        ``API_CALL_HANDLERS`` registry) instead of a hand-maintained
+        provider-function dict that went stale -- it rejected every provider
+        registered after it was written (moonshot, zai, qwencloud, hosted
+        presets) with ``ChatAPIError("Unknown provider: ...")``. The
+        dispatcher accepts any registered provider name.
 
         Args:
-            provider: Provider name
+            provider: Provider name (an ``API_CALL_HANDLERS`` key)
             model: Model name
             api_key: API key
             system_prompt: System prompt
@@ -521,34 +476,39 @@ class DocumentGenerator:
 
         Returns:
             Generated content or stream generator
+
+        Raises:
+            ValueError: If the provider is not in ``API_CALL_HANDLERS``
+                (raised by ``chat_api_call``).
+            ChatAPIError: Provider failures propagate unchanged; unexpected
+                non-Chat errors are wrapped as ``ChatAPIError``.
         """
-        provider_lower = provider.lower()
-        chat_function = self.provider_functions.get(provider_lower)
-
-        if not chat_function:
-            raise ChatAPIError(f"Unknown provider: {provider}")
-
         messages = [
             {"role": "system", "content": system_prompt},
             {"role": "user", "content": user_prompt},
         ]
 
         try:
-            response = chat_function(
-                messages=messages,
+            return chat_api_call(
+                api_endpoint=provider,
+                messages_payload=messages,
                 api_key=api_key,
+                temp=temperature,
+                system_message=system_prompt,
+                streaming=stream,
                 model=model,
-                temperature=temperature,
                 max_tokens=max_tokens,
-                stream=stream,
-                system_prompt=system_prompt,
             )
-
-            return response
-
+        except ChatAPIError:
+            # Already a classified provider failure; surface it unchanged
+            # instead of re-wrapping (which erased the error type).
+            raise
+        except ValueError:
+            # Unknown provider from the dispatcher; surface as-is.
+            raise
         except Exception as e:
-            logger.error(f"Error calling {provider} API: {e}")
-            raise ChatAPIError(f"Failed to generate document: {str(e)}")
+            logger.error(f"Error calling {provider} API: {type(e).__name__}")
+            raise ChatAPIError(f"Failed to generate document: {type(e).__name__}") from e
 
     def copy_to_clipboard(self, content: str) -> bool:
         """
