@@ -10,8 +10,6 @@ from tldw_chatbook.UI.Screens.artifact_share_dialog import ArtifactShareDialog
 
 pytestmark = pytest.mark.ui
 
-_CONFIRM_PHRASE = "share"
-
 
 class _DialogHost(App[None]):
     def __init__(self, dialog: ArtifactShareDialog) -> None:
@@ -94,9 +92,12 @@ async def test_valid_submission_returns_options(
 
 @pytest.mark.asyncio
 @private_profile_test
-async def test_lan_without_password_requires_typed_confirmation(
+async def test_lan_without_password_is_refused(
     request,
 ):
+    # TASK-38608: the controller now fails closed for unauthenticated
+    # non-loopback binds, so the dialog refuses the start outright instead
+    # of offering a typed confirmation for it.
     dialog = ArtifactShareDialog(_records())
     app = _DialogHost(dialog)
     async with app.run_test(size=(100, 60)) as pilot:
@@ -105,20 +106,38 @@ async def test_lan_without_password_requires_typed_confirmation(
         await pilot.pause()
         await pilot.click("#share-bind-lan")
         await pilot.pause()
-        await pilot.click("#share-start")
+        dialog.query_one("#share-start", Button).press()
         await pilot.pause()
-        assert app.result == "unset"  # blocked: confirmation required
-        confirm = dialog.query_one("#share-confirm")
-        assert confirm.display
-        confirm.value = _CONFIRM_PHRASE
-        # A second rapid pilot.click on the same Button is swallowed: press() adds
-        # the -active animation class and Button._on_click no-ops while it is set.
-        # Button.press() posts the same Button.Pressed message deterministically.
+        assert app.result == "unset"  # blocked: password required
+        status = dialog.query_one("#share-dialog-status", Static)
+        assert "password" in str(status.renderable).lower()
+
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_lan_with_password_still_starts(
+    request,
+):
+    # TASK-38608: the legitimate LAN flow (bind all interfaces WITH the
+    # shared login) is unaffected by the new gate.
+    dialog = ArtifactShareDialog(_records())
+    app = _DialogHost(dialog)
+    async with app.run_test(size=(100, 60)) as pilot:
+        options = dialog.query_one("#share-artifact-list", SelectionList)
+        options.select(options.get_option_at_index(0).value)
+        await pilot.pause()
+        await pilot.click("#share-auth-toggle")
+        await pilot.pause()
+        dialog.query_one("#share-username").value = "alice"
+        dialog.query_one("#share-password").value = "secret-pass"
+        await pilot.click("#share-bind-lan")
+        await pilot.pause()
         dialog.query_one("#share-start", Button).press()
         await pilot.pause()
     assert isinstance(app.result, dict)
     assert app.result["bind"] == "0.0.0.0"
-    assert app.result["password"] == ""
+    assert app.result["username"] == "alice"
+    assert app.result["password"] == "secret-pass"
 
 
 @pytest.mark.asyncio
