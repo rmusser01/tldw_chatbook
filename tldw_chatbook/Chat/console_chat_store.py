@@ -5242,9 +5242,11 @@ class ConsoleChatStore(ConsoleReceivedTurnAdmissionMixin, ConsoleReceivedIntentI
                 message_id, blocking=wait_for_owners
             ):
                 # ponytail: close holds every owner it claimed; one that joined
-                # after its last claim and is held elsewhere keeps its index
-                # entry until process exit (its holder fails on the closed
-                # session) rather than wait under first persistence.
+                # after its last claim and is held elsewhere skips all of the
+                # per-message cleanup below (index entry, stream/receipt maps,
+                # rule evidence, caches, trajectory buffers) until process exit
+                # (its holder fails on the closed session) rather than wait
+                # under first persistence.
                 continue
             self.clear_terminal_citation_state(message_id)
             self._message_session_index.pop(message_id, None)
@@ -21163,15 +21165,17 @@ class ConsoleChatStore(ConsoleReceivedTurnAdmissionMixin, ConsoleReceivedIntentI
         )
 
         checkpoint, content = continuation_event_value(message, event)
+        session_id = self._message_session_index.get(message.id)
+        if session_id is None:
+            raise RuntimeError("Durable continuation owner is unavailable.")
         validate_durable_continuation_binding(
             message,
             checkpoint,
             continuation_target,
-            self.dispatch_recovery_for_session(self._message_session_index[message.id]),
+            self.dispatch_recovery_for_session(session_id),
             has_finalizer=checkpoint_finalizer is not None,
         )
         if checkpoint_finalizer is not None:
-            session_id = self._message_session_index[message.id]
             conversation_id = self.persist_session_if_needed(session_id)
             if not conversation_id:
                 raise RuntimeError("Durable managed continuation owner is unavailable.")
@@ -21217,7 +21221,7 @@ class ConsoleChatStore(ConsoleReceivedTurnAdmissionMixin, ConsoleReceivedIntentI
             return
         message, checkpoint, content = resolved
         persistence = self.persistence
-        database = persistence.db
+        database = getattr(persistence, "db", None)
         private_json = dump_provider_continuation_json(checkpoint)
         if private_json is None:
             raise RuntimeError("Durable continuation state is unavailable.")
