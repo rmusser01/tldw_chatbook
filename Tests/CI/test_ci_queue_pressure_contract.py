@@ -1441,9 +1441,21 @@ def _files_loaded_by_pytest_steps(workflow_name: str) -> set[str]:
                 found += module_files(module)
                 for alias in node.names:
                     found += module_files(f"{module}.{alias.name}")
-            elif isinstance(node, ast.Constant) and "import" in str(node.value):
-                try:  # A subprocess script's imports load too.
-                    found += imported_files(ast.parse(node.value), package)
+            elif isinstance(node, (ast.Constant, ast.JoinedStr)):
+                # A subprocess script's imports load too. An f-string script
+                # reads each replacement field as ``None`` so it parses whole.
+                script = (
+                    "".join(
+                        v.value if isinstance(v, ast.Constant) else "None"
+                        for v in node.values
+                    )
+                    if isinstance(node, ast.JoinedStr)
+                    else node.value
+                )
+                if not isinstance(script, str) or "import" not in script:
+                    continue
+                try:
+                    found += imported_files(ast.parse(script), package)
                 except (SyntaxError, ValueError):
                     pass  # Prose, not a script.
         return found
@@ -1471,21 +1483,33 @@ def _files_loaded_by_pytest_steps(workflow_name: str) -> set[str]:
 
 
 def _in_tree_package_modules() -> set[str]:
-    """One module (``__init__.py``) per package pyproject builds from this tree.
+    """One module per top-level package pyproject builds from this tree.
 
-    Every top-level package under a ``[tool.setuptools.packages.find]``
-    ``where`` root that ``include`` names. A Perf Guard step that imports the
+    Every directory under a ``[tool.setuptools.packages.find]`` ``where`` root
+    that ``include`` names and ``exclude`` does not. ``namespaces`` defaults to
+    true, so a package needs no ``__init__.py``; like setuptools, a name with
+    a ``.`` (``tldw_chatbook.egg-info``) is not a package. The module is its
+    ``__init__.py``, else its first ``.py``. A Perf Guard step that imports the
     app loads them all, so each needs a trigger glob of its own.
     """
     pyproject = tomllib.loads((PROJECT_ROOT / "pyproject.toml").read_text(encoding="utf-8"))
     find = pyproject["tool"]["setuptools"]["packages"]["find"]
+
+    def named(name: str, key: str) -> bool:
+        return any(fnmatch.fnmatchcase(name, p) for p in find.get(key, ()))
+
     modules: set[str] = set()
     for root in find["where"]:
-        found = {
-            init.relative_to(PROJECT_ROOT).as_posix()
-            for init in (PROJECT_ROOT / root).glob("*/__init__.py")
-            if any(fnmatch.fnmatchcase(init.parent.name, p) for p in find["include"])
-        }
+        found = set()
+        for package in (PROJECT_ROOT / root).iterdir():
+            if not package.is_dir() or "." in package.name:
+                continue
+            if not named(package.name, "include") or named(package.name, "exclude"):
+                continue
+            init = package / "__init__.py"
+            module = init if init.is_file() else min(package.rglob("*.py"), default=None)
+            if module is not None:
+                found.add(module.relative_to(PROJECT_ROOT).as_posix())
         assert found, f"pyproject's packages.find root {root!r} holds no included package"
         modules |= found
     return modules
@@ -1500,8 +1524,9 @@ PERF_GUARD_DATA_DEPENDENCIES = ("Tests/Plugins/fixtures/native",)
 def _github_paths_match(pattern: str, path: str) -> bool:
     """GitHub's ``paths`` glob, for the ``*``/``**`` subset only.
 
-    ``**`` crosses ``/`` and ``*`` does not. ``?``, ``+``, ``[]``, a leading
-    ``!`` and a leading ``**/`` would not match as GitHub does, so
+    ``**`` crosses ``/`` and ``*`` does not. ``?``, ``+``, ``[]``, ``!`` and
+    ``**/`` anywhere (GitHub lets ``docs/**/*.md`` match ``docs/hello.md``)
+    would not match as GitHub does, so
     ``test_perf_guard_runs_when_a_file_its_steps_load_changes`` refuses them.
     """
     regex = "".join(
@@ -1535,7 +1560,7 @@ def test_perf_guard_runs_when_a_file_its_steps_load_changes() -> None:
         unmodelled = [
             p
             for p in triggers[event]["paths"]
-            if set(p) & set("?+[]!") or p.startswith("**/")
+            if set(p) & set("?+[]!") or "**/" in p
         ]
         assert not unmodelled, (
             f"perf-guard.yml {event} paths use glob syntax _github_paths_match "

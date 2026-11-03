@@ -4,7 +4,7 @@ title: Perf Guard ignores changes to the test helpers its steps import, and two 
 status: Done
 assignee: ['@claude']
 created_date: 2026-10-24 00:26
-updated_date: 2026-11-03 11:01
+updated_date: 2026-11-03 11:09
 labels:
 - follow-up
 - ci
@@ -67,6 +67,10 @@ Perf Guard's triggers now cover every file its steps load, a contract test deriv
   - The walk now also follows the imports of any string constant that parses as a script, such as a `python -c` body. A temporary `from Tests.UI.app_factory import _build_test_app` in `test_ui_ready_module_census.py`'s script string passed the old walk (1 passed). The new walk failed on it, naming `Tests/UI/app_factory.py` and `Tests/app_module_patches.py`; reverted. No real script import was missing.
   - `test_app_import_weight.py` copies `Tests/Plugins/fixtures/native` and asserts on its `plugin.json`. It is now in `PERF_GUARD_DATA_DEPENDENCIES`, a hand-kept list the test expands to files and checks, and `'Tests/Plugins/fixtures/native/**'` is in both triggers. Red before the glob: it listed the fixture's 2 files.
   - AC#1's example list no longer names `Tests/UI/app_factory.py` as imported, and the workflow comment states the 45-55 s cost.
+- **Round 2 (79488614d0 re-review, 2 Minor + 1 recommendation):**
+  - f-string scripts: `_MEASURE_SNIPPET` in `test_app_import_weight.py` is a `JoinedStr`, and its fragments do not parse alone. The walk now joins the fragments, reading each replacement field as `None`, and parses the result. A planted `from Tests.UI.app_factory import ...` in that snippet passed at 79488614d0 (1 passed). It failed here, naming `Tests/UI/app_factory.py` and `Tests/app_module_patches.py`; reverted.
+  - A `**/` anywhere in a pattern is now refused, not only a leading one; GitHub lets `docs/**/*.md` match `docs/hello.md`. A temporary `'Tests/**/conftest.py'` failed the test; reverted.
+  - `_in_tree_package_modules` now lists the included directories under each `where` root rather than `*/__init__.py`, because `namespaces` defaults to true. It skips names containing a `.` as setuptools does (the main checkout has a `tldw_chatbook.egg-info`), and honours `exclude`. A temporary namespace dir `tldw_chatbook_nsprobe/sub/mod.py` (no `__init__.py`) failed the new test but passed the 79488614d0 version. A temporary `tldw_chatbook.egg-info/fake.py` alongside it was correctly ignored. Both removed.
 - **Checks:** `Tests/CI` 1177 passed, 1 skipped (again after the review round, and preflight passed again). The five census nodes passed twice (5 passed, 34 s each, `-n 4`). preflight passed. ruff check is clean.
 - **Pre-existing failure:** `test_console_storage_units_stay_within_their_ratchets` fails locally with `trace GC pass os_opens: 57 > ceiling 54 x 1.05`. It fails the same way at dev with the same command. The wrapper's deeper basetemp adds 3 opens per extra path component, as that pin's comment says.
 - **Files:** `.github/workflows/perf-guard.yml`, `Tests/CI/test_ci_queue_pressure_contract.py`, `Tests/Performance/test_console_keystroke_work_census.py`.
