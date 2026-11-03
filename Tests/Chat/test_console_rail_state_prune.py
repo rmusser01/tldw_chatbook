@@ -5,12 +5,13 @@ from tldw_chatbook.Chat.console_rail_state import collect_prunable_console_rail_
 
 def test_prunes_conversation_keys():
     """TASK-718: preferences are per-workspace now; every per-conversation key
-    is stale, whether or not its conversation still exists."""
-    stored_keys = ["console_rail_state:ws:live-conv"]
+    (sanitized ids included) is stale, whether or not its conversation still
+    exists."""
+    stored_keys = ["console_rail_state:ws:live-conv", "console_rail_state:ws:conv_1"]
 
     prunable = collect_prunable_console_rail_keys(stored_keys)
 
-    assert prunable == ["console_rail_state:ws:live-conv"]
+    assert prunable == stored_keys
 
 
 def test_keeps_layout_scope_key():
@@ -21,7 +22,7 @@ def test_keeps_layout_scope_key():
     assert prunable == []
 
 
-def test_keeps_global_scope_key_even_with_no_live_scopes():
+def test_keeps_global_scope_key():
     stored_keys = ["console_rail_state:ws:global"]
 
     prunable = collect_prunable_console_rail_keys(stored_keys)
@@ -29,7 +30,7 @@ def test_keeps_global_scope_key_even_with_no_live_scopes():
     assert prunable == []
 
 
-def test_keeps_reserved_shared_layout_scope_even_with_no_live_scopes():
+def test_keeps_reserved_shared_layout_scope():
     stored_keys = ["console_rail_state:global:shared-layout-v1"]
 
     prunable = collect_prunable_console_rail_keys(stored_keys)
@@ -49,16 +50,6 @@ def test_keeps_malformed_and_foreign_keys():
     prunable = collect_prunable_console_rail_keys(stored_keys)
 
     assert prunable == []
-
-
-def test_sanitized_conversation_keys_are_prunable():
-    # Under the per-workspace scheme (TASK-718) sanitized conversation keys
-    # are stale like any other conversation-scoped entry.
-    stored_keys = ["console_rail_state:ws:conv_1"]
-
-    prunable = collect_prunable_console_rail_keys(stored_keys)
-
-    assert prunable == ["console_rail_state:ws:conv_1"]
 
 
 def test_mixed_stored_keys_keeps_only_layout_legacy_and_shared_scopes():
@@ -92,7 +83,7 @@ _CURRENT_KEYS = (
 _LEGACY_KEYS = ("console_rail_state:ws:conv-1", "console_rail_state:ws:session-2")
 
 
-def _launch(monkeypatch, rail_state):
+def _launch(monkeypatch, rail_state, *, delete_succeeds=True):
     """Run Console's prune dispatch, its worker body inline, against a fake app."""
     from types import SimpleNamespace
 
@@ -107,7 +98,7 @@ def _launch(monkeypatch, rail_state):
 
     def delete_settings(section, keys):
         seen.deleted.append((section, list(keys)))
-        return True
+        return delete_succeeds
 
     monkeypatch.setattr(chat_screen, "delete_settings_from_cli_config", delete_settings)
     screen = SimpleNamespace(
@@ -156,3 +147,20 @@ def test_launch_with_legacy_keys_deletes_exactly_them_once(monkeypatch):
     assert list(rail_state) == list(_CURRENT_KEYS)
     # The next launch finds nothing left to prune.
     assert _launch(monkeypatch, rail_state).started == []
+
+
+def test_failed_delete_starts_one_worker_per_launch_and_retries_next_launch(
+    monkeypatch,
+):
+    """TASK-36518: a launch starts the worker once, however many syncs follow;
+    a failed write keeps the legacy keys for the next launch to retry."""
+    rail_state = {key: {} for key in (*_CURRENT_KEYS, *_LEGACY_KEYS)}
+
+    seen = _launch(monkeypatch, rail_state, delete_succeeds=False)
+
+    assert len(seen.started) == 1
+    assert list(rail_state) == [*_CURRENT_KEYS, *_LEGACY_KEYS]
+    retry = _launch(monkeypatch, rail_state)
+    assert retry.deleted == [("console.rail_state", list(_LEGACY_KEYS))]
+    assert list(rail_state) == list(_CURRENT_KEYS)
+

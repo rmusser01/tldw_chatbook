@@ -4,7 +4,7 @@ title: Console's rail-preference prune reads every active conversation on each l
 status: Done
 assignee: ['@claude']
 created_date: 2026-10-24 00:26
-updated_date: 2026-11-03 12:38
+updated_date: 2026-11-03 12:53
 labels:
 - follow-up
 - console
@@ -96,6 +96,11 @@ The other startup writers on TASK-36385's list were checked too, and each writes
 - `backlog/docs/lessons-testing-evidence.md`: a census row looked dead locally because its worker started after the window.
 
 No User Guide change: nothing visible changed.
+
+**Review round 1 (2 Minor).**
+- The second dispatch in `_launch` could not catch a missing latch: the inline worker had already deleted the keys. `test_failed_delete_starts_one_worker_per_launch_and_retries_next_launch` makes the fake deleter fail. It asserts one worker start across both dispatches, the legacy keys kept in memory, and the next launch deleting them. With the latch temporarily removed it failed `assert 2 == 1`; source reverted, 9 passed.
+- `test_sanitized_conversation_keys_are_prunable` is folded into `test_prunes_conversation_keys`. The two `..._even_with_no_live_scopes` tests are renamed `test_keeps_global_scope_key` and `test_keeps_reserved_shared_layout_scope`; nothing else referenced the old names.
+- Preflight passed.
 
 **Coordination with TASK-34406.** TASK-34406 (In Progress) moves this worker into a `console-rail-prune` group with a finite preparation-read helper for its database connection. That custody work is moot now, because the worker reads no database. Whichever task lands second takes the other's shape.
 
