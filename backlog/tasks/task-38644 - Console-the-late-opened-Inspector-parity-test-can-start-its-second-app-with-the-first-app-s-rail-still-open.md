@@ -5,7 +5,7 @@ status: Done
 assignee:
   - '@claude'
 created_date: 2026-11-02 21:52
-updated_date: 2026-11-03 01:14
+updated_date: 2026-11-03 01:41
 labels:
 - follow-up
 - tests
@@ -73,7 +73,13 @@ In production, a started save thread completes before the process exits, so the 
 
 **Fix** (`Tests/UI/test_console_collapsed_inspector_send_layout.py`): a new `_leave_collapsed` helper collapses the rail and waits until `load_settings()`, which is what the next app loads, records `right_open = False` under the rail's persistence key. Both arms that leave the rail for a next app use it, replacing the 0.3 s pause. The witness-row, fold-hint and painted-frame comparisons are unchanged.
 
-**Red/green.** The slowed-save run failed 4 of 4 at dev and passed 4 of 4 with the fix. With every rail save dropped, the new wait fails ("the collapse never reached the config the next app loads"), so it cannot pass vacuously.
+**Red/green.** The slowed-save run failed 4 of 4 at dev and passed 4 of 4 with the fix. With every rail save dropped, the new wait fails ("the collapse never reached the config the next app loads").
+
+**Review fix (vacuous pass).** `app.app_config` is `load_settings()`'s cached dict, by reference, until a config write republishes the cache. So the first version's wait could be met by the UI thread's in-memory collapse alone, with no write landed. The wait now also requires `load_settings()` to be a republished dict (`is not console.app_instance.app_config`), so it cannot pass vacuously. Control: the scratch probe held each arm's open save in flight until 2 s after the rail closed in memory (2 reps).
+- With the first version, the late arm's wait returned 0 ms after the in-memory close, and both saves landed about 2 s later, after the test had ended.
+- With the fix, every arm's wait returned only after the collapse save had written and republished (about 2.3 s after the close; 4 of 4 arms), and the next app loaded `right_open = False`.
+
+The file then passed 18 of 18 in 6 repeats under `-n 4`.
 
 **Runs at this head** (`-n 4`, load 15-50):
 - The target test: 12 of 12, 24 of 24, and 7 of 8 in 8 whole-file repeats. All 44 started collapsed. The one failure was the painted-frame check (`set(frames)`: the opened rail's first two frames showed the pre-send rows); see the follow-up below.

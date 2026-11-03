@@ -165,13 +165,18 @@ async def _leave_collapsed(console, pilot) -> None:
     await console.action_toggle_console_inspector_rail()
     await _wait_for(pilot, lambda: not rail.display, "the Inspector never closed")
 
-    def stored_right_open():
-        records = load_settings().get("console", {}).get("rail_state", {})
-        return records.get(key, {}).get("right_open")
+    def collapse_saved() -> bool:
+        settings = load_settings()
+        # Until a config write republishes the cache, ``load_settings()`` IS
+        # this app's ``app_config``, whose in-memory collapse proves no write.
+        if settings is console.app_instance.app_config:
+            return False
+        records = settings.get("console", {}).get("rail_state", {})
+        return records.get(key, {}).get("right_open") is False
 
     await _wait_for(
         pilot,
-        lambda: stored_right_open() is False,
+        collapse_saved,
         "the collapse never reached the config the next app loads",
     )
 
