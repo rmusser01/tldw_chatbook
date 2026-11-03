@@ -10713,3 +10713,31 @@ class AgentService:
             return False
         self._cancel_fleet_handles([handle_id])
         return True
+
+
+# Finite original workflow fence receivers; captured when these definitions load.
+_WORKFLOW_NATIVE_RECORDS = tuple(
+    (
+        name,
+        method,
+        tuple(
+            (
+                function,
+                function.__code__,
+                function.__defaults__,
+                function.__kwdefaults__,
+                tuple((function.__kwdefaults__ or {}).items()),
+                function.__closure__,
+                tuple(
+                    (cell, cell.cell_contents) for cell in function.__closure__ or ()
+                ),
+            )
+            for function in (
+                method,
+                *([method.__wrapped__] if hasattr(method, "__wrapped__") else []),
+            )
+        ),
+    )
+    for name in ("_run_owned",)
+    for method in (vars(AgentService)[name],)
+)

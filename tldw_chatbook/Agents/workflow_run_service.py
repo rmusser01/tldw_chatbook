@@ -758,6 +758,7 @@ class WorkflowRunService:
         phase: WorkflowPhaseAuthorization,
         *,
         outcome: Literal["completed", "failed", "cancelled"] = "completed",
+        _remaining_read=None,
     ) -> WorkflowSnapshot:
         """Settle original returned native custody, never a caller drain assertion.
 
@@ -782,13 +783,26 @@ class WorkflowRunService:
             or outcome not in {"completed", "failed", "cancelled"}
         ):
             raise ValueError("original_execution_phase_required")
-        phase._check_owner()
+        if _remaining_read is None:
+            phase._check_owner()
+        else:
+            from tldw_chatbook.Chat.console_workflow_runs import _check_remaining_unused
+
+            if outcome != "cancelled":
+                raise ValueError("original_unused_cancellation_required")
+            _check_remaining_unused(_remaining_read, self, phase)
         runtime = _runtime(phase)
         if (
             any(w.phase is phase for w in runtime._workflow_waves)
             or any(p.phase is phase for p in runtime._workflow_preparations)
             or any(
                 getattr(r.source, "phase", None) is phase
+                and not (
+                    _remaining_read is not None
+                    and r.source is _remaining_read
+                    and r.callback is _remaining_read.terminal_callback
+                    and r.task is _remaining_read.issuing
+                )
                 for r in runtime._preparation_reads
             )
         ):

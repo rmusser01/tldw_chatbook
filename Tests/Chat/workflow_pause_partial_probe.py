@@ -187,6 +187,46 @@ async def exercise():
                 controller, attempt.id, session_id=session.id
             )
         assert phase is not None
+        if mode == "replaced-producer":
+            from tldw_chatbook.Chat.console_workflow_runs import (
+                WorkflowPhaseAuthorization,
+            )
+
+            original_control = WorkflowPhaseAuthorization._control
+            grants, policy_calls = [], []
+            from tldw_chatbook.Chat import console_workflow_runs as workflow_source
+
+            policy_code = workflow_source._policy_identity.__code__
+
+            def observe_policy(frame, event, _argument):
+                if event == "call" and frame.f_code is policy_code:
+                    policy_calls.append(True)
+
+            def replacement(self, _decision):
+                with self._fence("control") as fence:
+                    grants.append(fence)
+                    with self._ledger.transaction(_native=fence) as conn:
+                        conn.execute("SELECT 1")
+
+            WorkflowPhaseAuthorization._control = replacement
+            error = None
+            sys.setprofile(observe_policy)
+            try:
+                phase._control(None)
+            except RuntimeError as caught:
+                error = str(caught)
+            finally:
+                sys.setprofile(None)
+                WorkflowPhaseAuthorization._control = original_control
+            await service.call(
+                service.settle_execution_phase, phase, outcome="cancelled"
+            )
+            assert not grants, "replacement producer received native fence and SQL"
+            assert not policy_calls, "replacement reached native policy preflight"
+            assert error == "workflow_original_fence_producer_required"
+            assert not calls
+            print("E_FIX1_REPLACED_PRODUCER_REFUSED_BEFORE_NATIVE_FENCE", flush=True)
+            return
         item = await bridge._prepare_workflow_reply(
             phase=phase,
             task_id="left",
@@ -292,7 +332,7 @@ async def exercise():
         print("E_NATIVE_ORIGINAL_CONTINUATION_AND_REQUIRED_WAVE_RETURN", flush=True)
         if mode == "live-limit":
             os.environ.pop("TLDW_AGENTS_MAX_WORKFLOW_OUTPUT_TOKENS")
-        if mode in {"remaining", "remaining-cancel"}:
+        if mode.startswith("remaining"):
             settle = getattr(service, "settle_execution_phase", None)
             assert callable(settle), "missing exact original drained partial settlement"
             partial = await service.call(settle, phase, outcome="cancelled")
@@ -327,7 +367,169 @@ async def exercise():
                 _accept_remaining_workflow_phase,
             )
 
-            if mode == "remaining-cancel":
+            if mode == "remaining-prepared-stale":
+                with owned_goal_storage(service):
+                    saved = db.automatic_work._prepare_workflow(
+                        decision.workflow_id,
+                        revision_id=decision.plan_revision,
+                        phase_id=decision.phase_id,
+                        purpose="execution",
+                        owner_id=phase.attempt.owner_id,
+                        session_id=session.id,
+                        command_id="prepared-stale",
+                        _remaining=decision,
+                    )
+                assert saved.state == "prepared"
+                (root / "left.txt").write_text(
+                    "external change after saved preparation\n"
+                )
+                delivered, refusal = None, None
+                try:
+                    delivered = await _accept_remaining_workflow_phase(
+                        controller,
+                        decision,
+                        command_id="prepared-stale",
+                        session_id=session.id,
+                        binding=binding,
+                    )
+                except RuntimeError as caught:
+                    refusal = str(caught)
+                if delivered is not None:
+                    await service.call(
+                        service.settle_execution_phase, delivered, outcome="cancelled"
+                    )
+                with owned_goal_storage(service):
+                    after = service.get(snapshot.id)
+                assert delivered is None, (
+                    "stale PREPARED retry minted execution custody"
+                )
+                assert refusal == "workflow_remaining_prepared_retry_requires_review"
+                assert after.accounting.used == partial.accounting.used
+                assert calls == {"left": 3}
+                print(
+                    "E_FIX1_PREPARED_STALE_RETRY_REFUSED_WITHOUT_NEW_CHARGE", flush=True
+                )
+                return
+
+            if mode == "remaining-close-fault":
+                import sqlite3
+
+                from tldw_chatbook.DB import private_sqlite
+                from tldw_chatbook.DB.store_kernel import SQLiteStoreKernel
+
+                original_close = SQLiteStoreKernel.close.__code__
+                workspace_db = registry.db
+                fault, fault_attempts, cells = [], [], []
+                injected_error = OSError("native remaining workspace close refused")
+
+                def fail_original_close(frame, event, argument):
+                    if (
+                        event == "call"
+                        and frame.f_code.co_qualname
+                        == "_accept_remaining_workflow_phase.<locals>.handoff"
+                    ):
+                        cells.append(frame.f_locals["cell"])
+                    if (
+                        not cells
+                        or event != "c_call"
+                        or getattr(argument, "__name__", None) != "close"
+                    ):
+                        return
+                    receiver = getattr(argument, "__self__", None)
+                    current = frame
+                    while current is not None:
+                        if (
+                            current.f_code is original_close
+                            and current.f_locals.get("self") is workspace_db
+                        ):
+                            if (
+                                receiver is not current.f_locals.get("conn")
+                                or fault
+                                and receiver is not fault[0][0]
+                            ):
+                                return
+                            lease = private_sqlite._ordinary_connections.get(receiver)
+                            if not fault:
+                                fault.append(
+                                    (
+                                        receiver,
+                                        vars(workspace_db._thread_local),
+                                        lease,
+                                        getattr(lease, "resource_participant", None),
+                                    )
+                                )
+                            fault_attempts.append(threading.get_ident())
+                            raise injected_error
+                        current = current.f_back
+
+                def rearm(frame, event, argument):
+                    if (
+                        frame.f_code is original_close
+                        and event == "exception"
+                        and argument[1] is injected_error
+                    ):
+                        sys.setprofile(fail_original_close)
+                    return rearm
+
+                threading.settrace_all_threads(rearm)
+                threading.setprofile_all_threads(fail_original_close)
+                delivered, outcome = None, None
+                try:
+                    delivered = await _accept_remaining_workflow_phase(
+                        controller,
+                        decision,
+                        command_id="close-fault",
+                        session_id=session.id,
+                        binding=binding,
+                    )
+                except BaseException as caught:  # noqa: BLE001 - record the isolated native fault outcome.
+                    outcome = (type(caught).__name__, str(caught))
+                finally:
+                    threading.setprofile_all_threads(None)
+                    threading.settrace_all_threads(None)
+                facts = {
+                    "fault_count": len(fault),
+                    "fault_attempts": len(fault_attempts),
+                    "cells": len(cells),
+                    "delivered": delivered is not None,
+                    "outcome": outcome,
+                    "calls": calls,
+                }
+                if fault and cells:
+                    connection, local_values, lease, participant = fault[0]
+                    try:
+                        sqlite3.Connection.in_transaction.__get__(connection)
+                        live = True
+                    except sqlite3.ProgrammingError:
+                        live = False
+                    cell = cells[0]
+                    facts.update(
+                        live_handle=live,
+                        cached_original=local_values.get("conn") is connection,
+                        retained_lease=lease is not None
+                        and private_sqlite._ordinary_connections.get(connection)
+                        is lease,
+                        retained_participant=participant is not None
+                        and connection in participant.connections,
+                        owner_retained=cell.owner.is_admitted,
+                        cell_retained=getattr(
+                            cell.owner, "_workflow_remaining_acceptance", None
+                        )
+                        is cell,
+                        claim_retained=(
+                            runtime.worktree_activity._claims.get(cell.claim.id)
+                            is not None
+                            and runtime.worktree_activity._claims[cell.claim.id].custody
+                            is cell.claim
+                        ),
+                        phase_retained=cell.phase is not None,
+                    )
+                print("E_FIX1_OWNED_CLOSE_FACTS " + json.dumps(facts), flush=True)
+                # Isolation contains the real unclosed handle; this is not drain.
+                os._exit(0 if len(fault) == len(cells) == 1 else 2)
+
+            if mode in {"remaining-cancel", "remaining-shutdown"}:
+                shutdown_tasks, accepted_cells = [], []
 
                 def cancel_host(frame, event, _arg):
                     if (
@@ -336,7 +538,14 @@ async def exercise():
                         == "_accept_remaining_workflow_phase.<locals>.handoff"
                     ):
                         assert frame.f_locals["cell"].phase is not None
-                        frame.f_locals["issuing"].cancel()
+                        accepted_cells.append(frame.f_locals["cell"])
+                        if mode == "remaining-shutdown":
+                            controller.begin_shutdown()
+                            shutdown_tasks.append(
+                                asyncio.create_task(runtime.dispose())
+                            )
+                        else:
+                            frame.f_locals["issuing"].cancel()
 
                 sys.setprofile(cancel_host)
                 try:
@@ -349,14 +558,21 @@ async def exercise():
                             binding=binding,
                         )
                     )
-                except asyncio.CancelledError:
-                    pass
+                except (asyncio.CancelledError, RuntimeError) as caught:
+                    refusal = type(caught).__name__
                 else:
                     raise AssertionError(
                         "host cancellation delivered execution custody"
                     )
                 finally:
                     sys.setprofile(None)
+                if shutdown_tasks:
+                    await asyncio.gather(*shutdown_tasks)
+                    assert controller._disposed and runtime._disposed
+                assert accepted_cells and accepted_cells[0].phase is None, (
+                    "shutdown discarded the accepted cell before unused settlement",
+                    refusal,
+                )
                 assert (
                     not controller._preparation_reads and not runtime._preparation_reads
                 )

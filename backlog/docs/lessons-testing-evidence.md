@@ -25048,3 +25048,18 @@ Check schema probes separately too: they run after bind but before the run-ID
 ContextVar, so a full executing-run check is not a valid metadata probe. Preserve
 both failed receipts instead of treating a producer-missing test as continuation
 proof or weakening the shared phase check.
+
+
+**Task8E review FIX1, 2026-11-03.** A native remaining-acceptance close-fault RED
+reached the original WorkspaceDB C-close and left its exact cache, handle, lease
+and participant live, while the reader returned execution custody. Check original
+worker-local handles after every source/storage scope, including the separate
+required settlement offload. Actual runtime shutdown then exposed a different
+boundary: repeated `begin_shutdown` cancelled the tracked terminal reader after
+its original SQL and all scopes had returned. The observed native attempt was
+completed/closed, but a catch-all cancellation branch retained its owner forever.
+A private same-cell fact produced only after all terminal scopes, combined with
+the tracked reader's actual worker return, permits proven retirement before
+rethrowing cancellation. This is neither cancellation reset nor permission to
+retire an unknown handle. The original diagnostic1F32.86 and final uninstrumented
+shutdown positive are separate receipts.

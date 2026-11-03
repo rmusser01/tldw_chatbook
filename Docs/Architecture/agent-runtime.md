@@ -502,6 +502,9 @@ Pause revision, including the prebind interval. New preparation and commits rema
 strict. Stop revokes this in-memory continuation and requests original cancellation
 outside the finite mutex. The fence preloads live policy and the activated SQLite
 handle; the original FULL SQL transaction and storage guards remain authoritative.
+Definition-time function records bind the finite producer and receiver chain to
+its original control or child-commit operation; current replacement methods cannot
+become native issuers.
 
 `WorkflowRunService.settle_execution_phase` consumes original returned task, wave,
 frame and required checkpoint evidence. Only conclusively never-run claims may
@@ -512,7 +515,16 @@ validates the complete remaining decision under an original current OPAQUE read
 claim and native nonchild operation. Its worker retains source/storage custody
 through host acceptance/discard and actual finish RETURN; new custody is delivered
 only after physical retirement. Repeated-phase ID acceptance cannot bypass that
-receiver. Caller command identity is stored verbatim; the unique decision at R and
+receiver. A saved PREPARED retry refuses new custody after comparing the complete
+original command and decision; an accepted exact duplicate remains inert. Each
+read proves its original worker-local DB handles returned after every native
+scope, retaining the same owner/claim/cell if native close is uncertain. During
+shutdown, the same accepted but unused cell performs only its required cancelled
+settlement through the existing tracked reader. It keeps its original root/claim
+until terminal SQL, source/storage/handle and physical worker return are proven.
+Known post-return cancellation preserves that proof and is re-raised after
+retirement; missing proof never releases custody.
+Caller command identity is stored verbatim; the unique decision at R and
 attempt at R+1 are committed together. Only the never-run complement gets new
 ordinals/charges, and final quality checks retained plus new results. Planning and
 public coordinator/UI integration remain separate work; no scheduler or restored

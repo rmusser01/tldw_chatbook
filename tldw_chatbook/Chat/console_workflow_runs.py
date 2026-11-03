@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import contextlib
 import inspect
 import os
 import threading
@@ -16,6 +17,8 @@ from tldw_chatbook.Agents.automatic_work_budget import (
     AutomaticWorkRefused,
 )
 from tldw_chatbook.Agents.automatic_work_runtime import AutomaticWorkContext
+
+from .console_ordinary_tree import _function_record, _function_unchanged
 
 _KEY = object()
 _CONFIG_IDENTITY = config.current_config_identity
@@ -36,6 +39,51 @@ def _policy_identity():
     return _CONFIG_IDENTITY(), tuple(os.environ.get(name) for name in _POLICY_ENV)
 
 
+def _native_fence_sources(phase, ledger):
+    """Inspect only the finite definition-time native producer/receiver records."""
+    from tldw_chatbook.DB.automatic_work import (
+        _WORKFLOW_NATIVE_RECORDS,
+        AutomaticWorkLedger,
+    )
+
+    # Check the metadata checker itself without invoking a replacement first.
+    original = _FUNCTION_CHECK
+    if (
+        _function_unchanged is not original[0]
+        or _function_unchanged.__code__ is not original[1]
+        or _function_unchanged.__defaults__ is not original[2]
+        or _function_unchanged.__kwdefaults__ is not original[3]
+        or _function_unchanged.__closure__ is not original[5]
+    ):
+        raise AutomaticWorkRefused("workflow_original_fence_producer_required")
+    if (
+        type(phase) is not WorkflowPhaseAuthorization
+        or type(ledger) is not AutomaticWorkLedger
+    ):
+        raise AutomaticWorkRefused("workflow_original_fence_producer_required")
+    for cls, instance, records in (
+        (WorkflowPhaseAuthorization, phase, _PHASE_NATIVE_RECORDS),
+        (AutomaticWorkLedger, ledger, _WORKFLOW_NATIVE_RECORDS),
+    ):
+        for name, method, functions in records:
+            if (
+                vars(cls).get(name) is not method
+                or name in vars(instance)
+                or any(not _function_unchanged(record) for record in functions)
+                or len(functions) == 2
+                and vars(method).get("__wrapped__") is not functions[1][0]
+            ):
+                raise AutomaticWorkRefused("workflow_original_fence_producer_required")
+    if any(
+        globals().get(name) is not record[0] or not _function_unchanged(record)
+        for name, record in _LOCAL_NATIVE_RECORDS
+    ):
+        raise AutomaticWorkRefused("workflow_original_fence_producer_required")
+    if not _function_unchanged(_CONFIG_NATIVE_RECORD):
+        raise AutomaticWorkRefused("workflow_policy_source_changed")
+    return _WORKFLOW_NATIVE_RECORDS
+
+
 @dataclass(frozen=True)
 class _WorkflowFence:
     phase: object
@@ -49,6 +97,56 @@ class _WorkflowFence:
 
 def _fence_connection(fence, ledger):
     """Consume only the exact active original invocation, without source I/O."""
+    if (
+        _native_fence_sources is not _NATIVE_SOURCE_CHECK[0]
+        or _native_fence_sources.__code__ is not _NATIVE_SOURCE_CHECK[1]
+    ):
+        raise AutomaticWorkRefused("workflow_original_fence_producer_required")
+    if type(fence) is not _WorkflowFence:
+        raise AutomaticWorkRefused("workflow_native_fence_changed")
+    receivers = _native_fence_sources(fence.phase, ledger)
+    # Only the closed original call chain may consume this one operation.
+    caller = inspect.currentframe().f_back
+    control, commit = _PHASE_PRODUCERS
+    producer = (
+        commit
+        if fence.operation == "child_commit"
+        else control
+        if fence.operation == "control"
+        else None
+    )
+    allowed = {record[1] for _name, _method, records in receivers for record in records}
+    allowed.update(_CONTEXT_CODES)
+    allowed.add(_FENCE_BODY_CODE)
+    first = caller
+    for _ in range(10):
+        if caller is None:
+            break
+        if caller.f_code is producer:
+            if caller.f_locals.get("self") is not fence.phase:
+                break
+            break
+        if caller.f_code not in allowed:
+            break
+        if caller.f_code not in _CONTEXT_CODES and (
+            caller.f_locals.get("self") is not fence.phase
+            and caller.f_locals.get("self") is not ledger
+        ):
+            break
+        caller = caller.f_back
+    if (
+        caller is None
+        or caller.f_code is not producer
+        or caller.f_locals.get("self") is not fence.phase
+        or first.f_code
+        not in {
+            record[1] for _name, _method, records in receivers for record in records
+        }
+        | {_FENCE_BODY_CODE}
+        or fence.operation == "control"
+        and first.f_code not in (_FENCE_BODY_CODE, receivers[0][2][-1][1])
+    ):
+        raise AutomaticWorkRefused("workflow_native_fence_operation_changed")
     if (
         type(fence) is not _WorkflowFence
         or fence.key is not _KEY
@@ -181,17 +279,23 @@ class WorkflowPhaseAuthorization:
         from tldw_chatbook.Agents.activation import execution
 
         caller = inspect.currentframe().f_back.f_back
+        if (
+            _native_fence_sources is not _NATIVE_SOURCE_CHECK[0]
+            or _native_fence_sources.__code__ is not _NATIVE_SOURCE_CHECK[1]
+        ):
+            raise AutomaticWorkRefused("workflow_original_fence_producer_required")
+        _native_fence_sources(self, self._ledger)
         producer = (
-            WorkflowPhaseAuthorization._commit_task_launch
+            _PHASE_PRODUCERS[1]
             if operation == "child_commit"
-            else WorkflowPhaseAuthorization._control
+            else _PHASE_PRODUCERS[0]
             if operation == "control"
             else None
         )
         if (
             producer is None
             or caller is None
-            or caller.f_code is not producer.__code__
+            or caller.f_code is not producer
             or caller.f_locals.get("self") is not self
         ):
             raise AutomaticWorkRefused("workflow_original_fence_producer_required")
@@ -219,12 +323,29 @@ class WorkflowPhaseAuthorization:
                     self._active_fence = None
 
     def _commit_task_launch(self, task, owner, activity, service):
-        from tldw_chatbook.Agents.agent_service import AgentService
+        from tldw_chatbook.Agents.agent_service import (
+            _WORKFLOW_NATIVE_RECORDS,
+            AgentService,
+        )
         from tldw_chatbook.Agents.execution_capacity import current_execution_owner
 
+        if (
+            _native_fence_sources is not _NATIVE_SOURCE_CHECK[0]
+            or _native_fence_sources.__code__ is not _NATIVE_SOURCE_CHECK[1]
+        ):
+            raise AutomaticWorkRefused("workflow_original_fence_producer_required")
+        _native_fence_sources(self, self._ledger)
+        name, method, records = _WORKFLOW_NATIVE_RECORDS[0]
+        if (
+            type(service) is not AgentService
+            or vars(AgentService).get(name) is not method
+            or name in vars(service)
+            or any(not _function_unchanged(record) for record in records)
+        ):
+            raise AutomaticWorkRefused("workflow_native_commit_required")
         caller = inspect.currentframe().f_back
         if (
-            caller.f_code is not AgentService._run_owned.__code__
+            caller.f_code is not records[0][1]
             or caller.f_locals.get("self") is not service
             or caller.f_locals.get("workflow_task_authorization") is not task
             or current_execution_owner() is not owner
@@ -381,6 +502,75 @@ class _RemainingAcceptance:
     host: bool = False
     returned: bool = False
     scopes_returned: bool = False
+    host_returned: bool = False
+    worker_returned: bool = False
+    check_source: object = None
+    terminal_callback: object = None
+    terminal_scopes_returned: bool = False
+    issuing: object = None
+    service: object = None
+
+
+@contextmanager
+def _remaining_storage_return(databases):
+    """Observe these original worker handles before and after every native scope."""
+    originals = []
+    for database in dict.fromkeys(db for db in databases if db is not None):
+        namespace = vars(database)
+        if namespace.get("is_memory_db") is True:
+            continue
+        slot = "_local" if namespace.get("_local") is not None else "_thread_local"
+        local = namespace.get(slot)
+        if local is None:
+            raise RuntimeError("original source database local unavailable")
+        originals.append((database, slot, local, getattr(local, "conn", None)))
+    try:
+        yield
+    finally:
+        if not all(
+            vars(database).get(slot) is local
+            and getattr(local, "conn", None) is original
+            for database, slot, local, original in originals
+        ):
+            raise RuntimeError("original source database handle did not return")
+
+
+def _check_remaining_unused(read, service, phase):
+    """Admit only the original returned read's required unused terminal write."""
+    from tldw_chatbook.Agents.execution_capacity import current_execution_owner
+
+    from .console_preparation_reads import preparation_source_for
+
+    if (
+        type(read) is not _RemainingAcceptance
+        or read.key is not _KEY
+        or read.service is not service
+        or read.phase is not phase
+        or read.controller is not phase._controller
+        or phase._ledger._db is not service.db
+        or not read.scopes_returned
+        or not read.host_returned
+        or not read.worker_returned
+        or read.returned
+        or not read.owner.is_admitted
+        or current_execution_owner() is not read.owner
+        or getattr(read.owner, "_workflow_remaining_acceptance", None) is not read
+        or preparation_source_for(read.controller) is not read
+        or phase._task_scopes
+        or phase._committed_tasks
+        or phase._paused_tasks
+    ):
+        raise AutomaticWorkRefused("workflow_original_unused_acceptance_required")
+    read.check_source()
+    runtime = read.controller.app.console_runtime
+    runtime.worktree_activity.validate_opaque_claim(read.claim, owner=read.owner)
+    if not any(
+        record.source is read
+        and record.callback is read.terminal_callback
+        and record.task is read.issuing
+        for record in runtime._preparation_reads
+    ):
+        raise AutomaticWorkRefused("workflow_original_unused_acceptance_required")
 
 
 def _accept_workflow_phase(
@@ -489,15 +679,18 @@ async def _accept_remaining_workflow_phase(
     policy, sources = _policy_identity(), _guard.captured_sources(bridge)
     loop, issuing = asyncio.get_running_loop(), asyncio.current_task()
     # This one invocation's original cap remains here on cancellation as well.
-    cell = _RemainingAcceptance(controller, decision, _KEY)
+    cell = _RemainingAcceptance(
+        controller, decision, _KEY, issuing=issuing, service=service
+    )
+    databases = (
+        database,
+        getattr(persistence, "db", None),
+        getattr(registry, "db", None),
+    )
 
-    def current():
+    def originals():
         if (
-            controller._disposed
-            or controller._shutdown_requested.is_set()
-            or runtime._disposed
-            or session_id in runtime._admission_fenced_sessions
-            or controller.app.console_runtime is not runtime
+            controller.app.console_runtime is not runtime
             or runtime.chat_controller is not controller
             or runtime.agent_bridge is not bridge
             or controller._agent_bridge is not bridge
@@ -523,18 +716,34 @@ async def _accept_remaining_workflow_phase(
         ):
             raise AutomaticWorkRefused("workflow_native_source_changed")
 
+    cell.check_source = originals
+
+    def current():
+        originals()
+        if (
+            controller._disposed
+            or controller._shutdown_requested.is_set()
+            or runtime._disposed
+            or runtime._workflow_closing
+            or session_id in runtime._admission_fenced_sessions
+        ):
+            raise AutomaticWorkRefused("workflow_native_source_changed")
+
     async def handoff():
-        # This coroutine runs on the original host loop while the worker waits
-        # with its original source, storage, operation and OPAQUE claim retained.
-        current()
-        if issuing.cancelling():
-            return
-        cell.host = True
+        # The worker waits with its original scopes through actual host discard.
+        try:
+            current()
+            if issuing.cancelling():
+                return
+            cell.host = True
+        finally:
+            cell.host_returned = True
 
     def read():
         owner = operation = claim = None
         try:
             with (
+                _remaining_storage_return(databases),
                 execution(bridge, sources=sources),
                 owned_goal_storage(service),
             ):
@@ -599,6 +808,10 @@ async def _accept_remaining_workflow_phase(
                             command_id=command_id,
                             _remaining=decision,
                         )
+                        if prior is not None and attempt.state == "prepared":
+                            raise AutomaticWorkRefused(
+                                "workflow_remaining_prepared_retry_requires_review"
+                            )
                         current()
                         cell.attempt = attempt
                         cell.phase = _accept_workflow_phase(
@@ -637,23 +850,113 @@ async def _accept_remaining_workflow_phase(
             current()
         except BaseException as caught:  # noqa: BLE001 - preserve cancellation through original physical retirement.
             error = caught
-        # run_preparation_read has now observed actual native worker RETURN.
-        # A failed source/finish unwind has no release proof, even on cancellation.
-        if cell.scopes_returned:
+        # The tracked reader has consumed the actual worker result, including
+        # repeated cancellation. Scope-return proof is separate from that fact.
+        cell.worker_returned = True
+        if not cell.scopes_returned:
+            if error is not None:
+                raise error
+            raise AutomaticWorkRefused("workflow_original_storage_return_required")
+        if (error is not None or not cell.host) and cell.phase is not None:
+            from tldw_chatbook.Backup_Recovery.participants import _core_operation
+
+            def settle_unused():
+                with (
+                    _remaining_storage_return(databases),
+                    execution(bridge, sources=sources),
+                    cell.owner.activate(),
+                    owned_goal_storage(service),
+                    _core_operation(database),
+                ):
+                    originals()
+                    if _guard.captured_sources(bridge) != sources:
+                        raise AutomaticWorkRefused("workflow_native_source_changed")
+                    if not binding.guard(False):
+                        raise AutomaticWorkRefused("workflow_task_binding_changed")
+                    service.settle_execution_phase(
+                        cell.phase, outcome="cancelled", _remaining_read=cell
+                    )
+                # Produced only by this original callback, after ALL native
+                # source/storage/handle scopes have actually returned.
+                cell.terminal_scopes_returned = True
+
+            cell.terminal_callback = settle_unused
             try:
-                cell.owner.finish_root()
-                cell.claim.settle(durable=True)
-                cell.returned = True
-                del cell.owner._workflow_remaining_acceptance
+                # SAME owner/cell and existing physical read observations; no
+                # cancellation can release the original source ahead of SQL.
+                await run_preparation_read(
+                    settle_unused,
+                    creator=controller,
+                    session_id=session_id,
+                    reads=controller._preparation_reads,
+                    observers=(runtime._preparation_reads,),
+                    require_current=originals,
+                    source=cell,
+                )
+            except asyncio.CancelledError as cancelled:
+                # The tracked reader consumes the physical worker result before
+                # re-delivery. Only its original positive scope return settles.
+                if not cell.terminal_scopes_returned:
+                    cell.owner.mark_cleanup_unproven()
+                    raise
+                error = cancelled
             except BaseException:
                 cell.owner.mark_cleanup_unproven()
                 raise
-        if error is not None or not cell.host:
-            if cell.returned and cell.phase is not None:
-                await service.call(
-                    service.settle_execution_phase, cell.phase, outcome="cancelled"
-                )
+            if not cell.terminal_scopes_returned:
+                cell.owner.mark_cleanup_unproven()
+                raise AutomaticWorkRefused("workflow_original_storage_return_required")
+        try:
+            originals()
+            activity.validate_opaque_claim(cell.claim, owner=cell.owner)
+            cell.owner.finish_root()
+            cell.claim.settle(durable=True)
+            cell.returned = True
+            if cell.terminal_scopes_returned:
                 cell.phase = None
-            if error is not None:
-                raise error
+            del cell.owner._workflow_remaining_acceptance
+        except BaseException:
+            cell.owner.mark_cleanup_unproven()
+            raise
+        if error is not None:
+            raise error
         return cell.phase
+
+
+# Captured beside the definitions, never from a phase's current mutable methods.
+_FUNCTION_CHECK = _function_record(_function_unchanged)
+_CONFIG_NATIVE_RECORD = _function_record(_CONFIG_IDENTITY)
+_PHASE_NATIVE_RECORDS = tuple(
+    (
+        name,
+        method,
+        tuple(
+            _function_record(function)
+            for function in (
+                method,
+                *([method.__wrapped__] if hasattr(method, "__wrapped__") else []),
+            )
+        ),
+    )
+    for name in ("_fence", "_control", "_commit_task_launch", "_check_owner")
+    for method in (vars(WorkflowPhaseAuthorization)[name],)
+)
+_LOCAL_NATIVE_RECORDS = tuple(
+    (name, _function_record(globals()[name]))
+    for name in (
+        "_native_fence_sources",
+        "_fence_connection",
+        "_policy_identity",
+        "_live_owner",
+    )
+)
+_NATIVE_SOURCE_CHECK = _LOCAL_NATIVE_RECORDS[0][1]
+_PHASE_PRODUCERS = (
+    _PHASE_NATIVE_RECORDS[1][2][0][1],
+    _PHASE_NATIVE_RECORDS[2][2][0][1],
+)
+_FENCE_BODY_CODE = _PHASE_NATIVE_RECORDS[0][2][-1][1]
+_CONTEXT_CODES = (
+    contextlib._GeneratorContextManager.__enter__.__code__,
+    contextlib._GeneratorContextManager.__exit__.__code__,
+)

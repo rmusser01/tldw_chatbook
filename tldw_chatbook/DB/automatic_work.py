@@ -329,6 +329,10 @@ class AutomaticWorkLedger:
         _dispatch=None,
         _native=None,
     ) -> None:
+        if _native is not None:
+            from tldw_chatbook.Chat.console_workflow_runs import _fence_connection
+
+            _fence_connection(_native, self)
         self._check_unconfirmed_starts(conn, chain_id)
         snapshot = self._snapshot(conn, chain_id)
         if snapshot.status == "review_required":
@@ -2243,6 +2247,10 @@ class AutomaticWorkLedger:
         _dispatch=None,
         _native=None,
     ):
+        if _native is not None:
+            from tldw_chatbook.Chat.console_workflow_runs import _fence_connection
+
+            _fence_connection(_native, self)
         self._check_runtime_owner(conn, owner_id)
         if (
             conn.execute(
@@ -2676,6 +2684,10 @@ class AutomaticWorkLedger:
         self, conn, chain_id, owner_id, *, _dispatch=None, _native=None
     ) -> bool:
         """Reopen workflow time inside the same transaction as native dispatch."""
+        if _native is not None:
+            from tldw_chatbook.Chat.console_workflow_runs import _fence_connection
+
+            _fence_connection(_native, self)
         root = self._allowance_chain(conn, chain_id)["id"]
         workflow = conn.execute(
             "SELECT id FROM workflow_runs WHERE chain_id=?", (root,)
@@ -2908,3 +2920,39 @@ class AutomaticWorkLedger:
                 "UPDATE workflow_task_attempts SET run_id=? WHERE id=?",
                 (run_id, row["id"]),
             )
+
+
+# Finite original workflow fence receivers; captured when these definitions load.
+_WORKFLOW_NATIVE_RECORDS = tuple(
+    (
+        name,
+        method,
+        tuple(
+            (
+                function,
+                function.__code__,
+                function.__defaults__,
+                function.__kwdefaults__,
+                tuple((function.__kwdefaults__ or {}).items()),
+                function.__closure__,
+                tuple(
+                    (cell, cell.cell_contents) for cell in function.__closure__ or ()
+                ),
+            )
+            for function in (
+                method,
+                *([method.__wrapped__] if hasattr(method, "__wrapped__") else []),
+            )
+        ),
+    )
+    for name in (
+        "transaction",
+        "_admission_transaction",
+        "commit",
+        "_check_admission",
+        "_workflow_enabled",
+        "_workflow_current",
+        "_resume_workflow_dispatch",
+    )
+    for method in (vars(AutomaticWorkLedger)[name],)
+)
