@@ -1,11 +1,11 @@
 ---
 id: TASK-38651
 title: First-mount two-launch tests can boot the next app before load_settings carries the saved rail state
-status: In Progress
+status: Won't Do
 assignee:
   - '@claude'
 created_date: 2026-11-03 05:51
-updated_date: 2026-11-03 06:15
+updated_date: 2026-11-03 06:50
 labels:
 - follow-up
 - tests
@@ -69,4 +69,5 @@ TASK-38644 fixed this same mechanism in the late-opened Inspector parity test by
 **One theoretical case remains.** On an event-loop thread, `_posture_unchanged` checks the path once per loop batch. So between the file replace and the cache drop, a read in the same batch as an earlier check can return the old dict. Neither test builds its next app in such a batch: the build follows awaits and a synchronous save that republishes.
 
 **Why TASK-38644 differs.** That test paused a fixed 0.3 s, so its save had not reached the file at all. That is Delay C's case, not a file-to-cache lag.
+**Closed as Won't Do (coordinator, 2026-11-03).** The window this task was filed for does not exist on dev 18482c1cf7. Once the file on disk shows a save, `load_settings()` returns the saved settings, so the existing on-disk poll is already a sufficient wait. The criteria assumed the window and stay unticked; no test or source changed. The investigation found a separate Console product race, filed as TASK-38652.
 <!-- SECTION:NOTES:END -->
