@@ -11,23 +11,33 @@ task-1343: the eight read-only domain stub categories collapsed into the
 single "Domain Ownership" category, so the sweep derives its list from the
 sidebar summaries (12 categories) instead of the enum (which keeps the
 retired stub ids as contract keys and legacy deep-link targets).
+
+TASK-36525: the test builds app config in its body (``_build_test_app()``
+runs ``load_settings()``), so it runs under ``@private_profile_test``; under
+the per-test config redirect it raises ``RecoveryRequired`` (TASK-36381).
 """
 
 import pytest
-from textual.widgets import Button
 
+from Tests.private_profile import private_profile_test
 from Tests.UI.test_destination_shells import (
     DestinationHarness,
     _active_destination_screen,
     _visible_text,
 )
 from Tests.UI.test_screen_navigation import _build_test_app
-from tldw_chatbook.UI.Screens.settings_screen import SettingsScreen
+from tldw_chatbook.UI.Screens.settings_screen import SettingsCategoryId, SettingsScreen
 
 ALL_CATEGORY_IDS = tuple(
     summary.category.value
     for summary in SettingsScreen(_build_test_app())._category_summaries()
 )
+
+#: Categories whose rail press lands focus somewhere other than their own
+#: rail button. Theme lands in its list, where its c/t/e and j/k keys act
+#: (TASK-33072, pinned by test_settings_theme_picker_screen.py's
+#: test_rail_click_and_open_theme_focus_the_theme_list).
+_FOCUS_AFTER_SELECT = {SettingsCategoryId.THEME.value: "settings-theme-list"}
 
 
 async def _settle_settings(pilot) -> None:
@@ -60,7 +70,8 @@ async def _click_settings_category(pilot, category_value: str) -> None:
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("size", [(120, 35), (80, 24)])
-async def test_every_settings_category_renders_and_restores_focus(size):
+@private_profile_test
+async def test_every_settings_category_renders_and_restores_focus(size, request):
     # Upstream keeps the per-domain rail slots (our task-1343 collapse was
     # superseded by the collapsible Domain Defaults rail), so pin a floor,
     # not an exact count.
@@ -90,9 +101,9 @@ async def test_every_settings_category_renders_and_restores_focus(size):
             assert focused is not None, (
                 f"Focus lost after selecting {category_value} at {size}"
             )
-            assert isinstance(focused, Button) and focused.id == (
-                f"settings-category-{category_value}"
-            ), (
-                f"Expected focus on settings-category-{category_value}, "
-                f"got {focused!r} at {size}"
+            expected = _FOCUS_AFTER_SELECT.get(
+                category_value, f"settings-category-{category_value}"
+            )
+            assert focused.id == expected, (
+                f"Expected focus on {expected}, got {focused!r} at {size}"
             )

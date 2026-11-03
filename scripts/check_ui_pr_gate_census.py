@@ -769,6 +769,9 @@ MINIMUM_FILES = 1362
 MINIMUM_FILES = 1363
 # TASK-36524 (2026-11-03): append the skill-eval panel file at the tail.
 MINIMUM_FILES = 1364
+# TASK-36525 (2026-11-03): append the Settings category sweep's two size
+# nodes at the tail.
+MINIMUM_FILES = 1366
 
 
 def read_census(path: Path) -> list[str]:
