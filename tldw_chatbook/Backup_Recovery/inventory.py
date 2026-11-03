@@ -15,10 +15,10 @@ from pathlib import Path
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from tldw_chatbook.Chat.console_trace_read_budget import _TraceReadLimit
 from tldw_chatbook.Utils.platform_files import os
 
 from . import bootstrap, profile_paths
+from .limits import _TraceReadLimit
 from .models import (
     DISCOVERY_CONTEXT_KEY,
     DiscoveryContext,

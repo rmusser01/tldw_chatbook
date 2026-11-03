@@ -1037,147 +1037,12 @@ def test_native_unrepresentable_trace_refuses_before_first_effect(
             assert tuple(captured.journal._records(fd)) == records
 
 
-def test_real_chat_commit_resumes_receipt_first_after_next_owner_rollback(
-    tmp_path, monkeypatch
+@pytest.mark.parametrize("interruption", ["workspace-rollback", "chat", "runs"])
+def test_public_worker_faults_finish_receipt_first_in_fresh_process(
+    tmp_path, monkeypatch, interruption
 ):
-    from Tests.Backup_Recovery import mobile_consolidation_fixture
-    from Tests.Backup_Recovery.test_mobile_consolidation_lifecycle import (
-        _capture_fixture,
-    )
-    from tldw_chatbook.Backup_Recovery import mobile_native_rows
-    from tldw_chatbook.Backup_Recovery.mobile_consolidation_apply import (
-        _captured_mobile,
-        _resume_captured_mobile,
-    )
-
-    monkeypatch.setattr(mobile_consolidation_fixture, "_seed", _small_native_seed)
-    destination = tmp_path / "archives"
-    destination.mkdir(mode=0o700)
-    insert = mobile_native_rows._insert_row
-
-    def fail_workspace(connection, row, values, detach=False):
-        if row.table == "workspace_records":
-            raise OSError("native workspace transaction interrupted")
-        return insert(connection, row, values, detach=detach)
-
-    with _capture_fixture(tmp_path, monkeypatch) as (  # noqa: SIM117 -- Native resource lifetime boundary.
-        session,
-        journal,
-        _config,
-        _legacy,
-        preview,
-        inventory,
-        authority,
-    ):
-        with _captured_mobile(
-            session,
-            journal,
-            preview,
-            inventory.scope_digest,
-            destination=destination,
-            password=b"test-private-mobile-rollback",
-            cancel=Event(),
-        ) as captured:
-            with monkeypatch.context() as fault:
-                fault.setattr(mobile_native_rows, "_insert_row", fail_workspace)
-                with pytest.raises(OSError, match="workspace transaction interrupted"):
-                    captured.consolidate(
-                        password=b"test-private-mobile-rollback", cancel=Event()
-                    )
-            with pytest.raises(ValueError, match="already_attempted"):
-                captured.consolidate(
-                    password=b"test-private-mobile-rollback", cancel=Event()
-                )
-            with (
-                captured.owner("db.chachanotes.primary") as chat,
-                chat.transaction() as conn,
-            ):
-                before = tuple(
-                    tuple(row)
-                    for row in conn.execute(
-                        "SELECT * FROM mobile_consolidation_batches ORDER BY batch_key"
-                    )
-                )
-                assert (
-                    before
-                    and conn.execute(
-                        "SELECT count(*) FROM conversations WHERE title='Retained title'"
-                    ).fetchone()[0]
-                    == 2
-                )
-            with (
-                captured.owner("db.workspaces") as workspace,
-                workspace.transaction() as conn,
-            ):
-                assert (
-                    conn.execute(
-                        "SELECT count(*) FROM mobile_consolidation_batches"
-                    ).fetchone()[0]
-                    == 0
-                )
-                assert (
-                    conn.execute(
-                        "SELECT count(*) FROM workspace_records WHERE name='Imported project'"
-                    ).fetchone()[0]
-                    == 0
-                )
-
-    def reject_chat_replay(connection, row, values, detach=False):
-        if row.table == "conversations":
-            raise AssertionError(
-                "committed Chat was replayed before receipt verification"
-            )
-        return insert(connection, row, values, detach=detach)
-
-    with monkeypatch.context() as fault:
-        fault.setattr(mobile_native_rows, "_insert_row", reject_chat_replay)
-        with authority.maintenance(("bootstrap.unbound", "mobile.profile"), 2) as fresh:  # noqa: SIM117 -- Keep the explicit native resource/fault lifetime boundary.
-            with _resume_captured_mobile(
-                fresh,
-                journal,
-                destination=destination,
-                password=b"test-private-mobile-rollback",
-                cancel=Event(),
-            ) as captured:
-                with _native_terminal_interruption(monkeypatch):
-                    captured.consolidate(
-                        password=b"test-private-mobile-rollback", cancel=Event()
-                    )
-                for owner_id, key in (
-                    ("db.chachanotes.primary", "chat"),
-                    ("db.workspaces", "workspaces"),
-                    ("db.agent_runs", "runs"),
-                ):
-                    with captured.owner(owner_id) as owner, owner.transaction() as conn:
-                        assert (
-                            conn.execute(
-                                "SELECT count(*) FROM mobile_consolidation_batches WHERE operation_id=? AND batch_key=?",
-                                (journal.operation_id, key),
-                            ).fetchone()[0]
-                            == 1
-                        )
-                        if key == "chat":
-                            assert (
-                                tuple(
-                                    tuple(row)
-                                    for row in conn.execute(
-                                        "SELECT * FROM mobile_consolidation_batches ORDER BY batch_key"
-                                    )
-                                )
-                                == before
-                            )
-                            assert (
-                                conn.execute(
-                                    "SELECT count(*) FROM conversations WHERE title='Retained title'"
-                                ).fetchone()[0]
-                                == 2
-                            )
-
-
-@pytest.mark.parametrize("crash_owner", ["chat", "runs"])
-def test_cold_commit_before_retirement_uses_original_capture_and_receipt(
-    tmp_path, monkeypatch, crash_owner
-):
+    """Qualify actual public workers; private component limits remain separate."""
+    import inspect
     import os
     import subprocess
     import sys
@@ -1187,132 +1052,233 @@ def test_cold_commit_before_retirement_uses_original_capture_and_receipt(
     from Tests.Backup_Recovery.test_mobile_consolidation_lifecycle import (
         _capture_fixture,
     )
-    from tldw_chatbook.Backup_Recovery import profile_paths, storage_admission
-    from tldw_chatbook.Backup_Recovery.journal import observe_artifact
-    from tldw_chatbook.Backup_Recovery.mobile_consolidation_apply import (
-        _captured_mobile,
+    from Tests.network_guard import blocked_attempts
+    from Tests.real_profile_guard import take_violations
+    from tldw_chatbook.Backup_Recovery import (
+        mobile_native_operation,
+        mobile_native_rows,
+        profile_paths,
+        storage_admission,
     )
+    from tldw_chatbook.Backup_Recovery.journal import observe_artifact
+    from tldw_chatbook.Backup_Recovery.recovery_service import RecoveryService
+    from tldw_chatbook.Chat.console_trace_read_budget import _mobile_budget_pair
 
-    marker = os.environ.get("TLDW_OWNING_COLD_CRASH_MARKER")
+    marker = os.environ.get("TLDW_PUBLIC_OWNING_RECOVERY_MARKER")
     if marker:
         monkeypatch.setattr(mobile_consolidation_fixture, "_seed", _small_native_seed)
-        destination = tmp_path / "archives"
-        destination.mkdir(mode=0o700)
-        with _capture_fixture(tmp_path, monkeypatch) as (  # noqa: SIM117 -- Native resource lifetime boundary.
-            session,
-            journal,
-            config,
-            _,
-            preview,
-            inventory,
-            authority,
-        ):
-            with _captured_mobile(
-                session,
-                journal,
-                preview,
-                inventory.scope_digest,
-                destination=destination,
-                password=b"test-private-mobile-rollback",
-                cancel=Event(),
-            ) as captured:
-                retire = storage_admission._MobileScope.retire
-                receipts = []
+        with _capture_fixture(tmp_path, monkeypatch) as values:
+            _, fixture_journal, config, stores, preview, _, authority = values
+        monkeypatch.setenv("TLDW_CONFIG_PATH", str(config))
+        source_before = mobile_consolidation_fixture.fingerprints(preview.source_dir)
+        default_before = observe_artifact(profile_paths.default_config_path().parent)
+        original_consolidate = mobile_native_operation._consolidate
+        original_insert = mobile_native_rows._insert_row
+        original_retire = storage_admission._MobileScope.retire
+        evidence, faulted, receipts, pairs = {}, [], [], []
 
-                def die_after_commit(scope):
-                    if scope.owner["owner_id"] == "db.chachanotes.primary":
-                        with scope.repository.transaction() as conn:
-                            receipts.extend(
-                                tuple(row)
-                                for row in conn.execute(
-                                    "SELECT * FROM mobile_consolidation_batches ORDER BY batch_key"
-                                )
-                            )
-                            assert (
-                                receipts
-                                and conn.execute(
-                                    "SELECT count(*) FROM conversations WHERE title='Retained title'"
-                                ).fetchone()[0]
-                                == 2
-                            )
-                    if (
-                        scope.owner["owner_id"]
-                        == {"chat": "db.chachanotes.primary", "runs": "db.agent_runs"}[
-                            crash_owner
-                        ]
-                    ):
-                        with scope.repository.transaction() as conn:
-                            assert (
-                                conn.execute(
-                                    "SELECT count(*) FROM mobile_consolidation_batches WHERE batch_key=?",
-                                    (crash_owner,),
-                                ).fetchone()[0]
-                                == 1
-                            )
-                        Path(marker).write_text(
-                            json.dumps(
-                                {
-                                    "bootstrap": str(authority.control_root.parent),
-                                    "control": str(journal.root.parent),
-                                    "config": str(config),
-                                    "destination": str(destination),
-                                    "default": str(profile_paths.default_config_path()),
-                                    "effective": str(
-                                        profile_paths.effective_config_path()
-                                    ),
-                                    "source": observe_artifact(captured.source.path),
-                                    "canonical": observe_artifact(
-                                        captured.canonical.path
-                                    ),
-                                    "receipts": receipts,
-                                    "sandbox_environment": {
-                                        key: os.environ[key]
-                                        for key in (
-                                            "HOME",
-                                            "USERPROFILE",
-                                            "XDG_DATA_HOME",
-                                            "XDG_CONFIG_HOME",
-                                            "TLDW_CONFIG_PATH",
-                                            "TLDW_TEST_CONFIG_ROOT",
-                                            "TLDW_TEST_CONFIG_ROOT_OWNER",
-                                        )
-                                        if key in os.environ
-                                    },
-                                }
-                            )
+        def observed_consolidate(captured, *, password, cancel):
+            admission = storage_admission._mobile_admission(captured.session)
+            pair = admission[4], admission[2]
+            assert _mobile_budget_pair(*pair)
+            assert not pairs
+            pairs.append(pair)
+            evidence.update(
+                interruption=interruption,
+                operation_id=captured.journal.operation_id,
+                bootstrap=str(authority.control_root.parent),
+                control=str(captured.journal.root.parent),
+                config=str(config),
+                default=str(profile_paths.default_config_path()),
+                effective=str(profile_paths.effective_config_path()),
+                default_directory=default_before,
+                source_dir=str(captured.preview.source_dir),
+                target_paths=[str(path) for path in stores.paths],
+                source=observe_artifact(captured.source.path),
+                canonical=observe_artifact(captured.canonical.path),
+                claim=observe_artifact(captured.claim.path),
+                source_before=source_before,
+                sandbox_environment={
+                    key: os.environ[key]
+                    for key in (
+                        "HOME",
+                        "USERPROFILE",
+                        "XDG_DATA_HOME",
+                        "XDG_CONFIG_HOME",
+                        "TLDW_CONFIG_PATH",
+                        "TLDW_TEST_CONFIG_ROOT",
+                        "TLDW_TEST_CONFIG_ROOT_OWNER",
+                    )
+                    if key in os.environ
+                },
+            )
+            try:
+                return original_consolidate(captured, password=password, cancel=cancel)
+            except OSError as error:
+                if interruption != "workspace-rollback" or str(error) != (
+                    "native workspace transaction interrupted"
+                ):
+                    raise
+                with (
+                    captured.owner("db.chachanotes.primary") as chat,
+                    chat.transaction() as conn,
+                ):
+                    before = tuple(
+                        tuple(row)
+                        for row in conn.execute(
+                            "SELECT * FROM mobile_consolidation_batches ORDER BY batch_key"
                         )
-                        os._exit(73)
-                    return retire(scope)
+                    )
+                    assert (
+                        before
+                        and conn.execute(
+                            "SELECT count(*) FROM conversations WHERE title='Retained title'"
+                        ).fetchone()[0]
+                        == 2
+                    )
+                with (
+                    captured.owner("db.workspaces") as workspace,
+                    workspace.transaction() as conn,
+                ):
+                    assert (
+                        conn.execute(
+                            "SELECT count(*) FROM mobile_consolidation_batches"
+                        ).fetchone()[0]
+                        == 0
+                    )
+                    assert (
+                        conn.execute(
+                            "SELECT count(*) FROM workspace_records WHERE name='Imported project'"
+                        ).fetchone()[0]
+                        == 0
+                    )
+                assert faulted == ["workspace_records"]
+                evidence.update(receipts=before, workspace_fault_reached=True)
+                raise
 
-                monkeypatch.setattr(
-                    storage_admission._MobileScope, "retire", die_after_commit
+        def fail_workspace(connection, row, values, detach=False):
+            if row.table == "workspace_records":
+                faulted.append(row.table)
+                raise OSError("native workspace transaction interrupted")
+            return original_insert(connection, row, values, detach=detach)
+
+        def die_after_commit(scope):
+            if scope.owner["owner_id"] == "db.chachanotes.primary":
+                with scope.repository.transaction() as conn:
+                    receipts.extend(
+                        tuple(row)
+                        for row in conn.execute(
+                            "SELECT * FROM mobile_consolidation_batches ORDER BY batch_key"
+                        )
+                    )
+                    assert (
+                        receipts
+                        and conn.execute(
+                            "SELECT count(*) FROM conversations WHERE title='Retained title'"
+                        ).fetchone()[0]
+                        == 2
+                    )
+            if (
+                scope.owner["owner_id"]
+                == {"chat": "db.chachanotes.primary", "runs": "db.agent_runs"}[
+                    interruption
+                ]
+            ):
+                with scope.repository.transaction() as conn:
+                    assert (
+                        conn.execute(
+                            "SELECT count(*) FROM mobile_consolidation_batches WHERE batch_key=?",
+                            (interruption,),
+                        ).fetchone()[0]
+                        == 1
+                    )
+                assert len(pairs) == 1 and _mobile_budget_pair(*pairs[0])
+                evidence.update(
+                    receipts=receipts,
+                    pair={
+                        "coupled": True,
+                        "aggregate_remaining": pairs[0][0]._remaining,
+                        "native_remaining": pairs[0][1]._remaining,
+                    },
                 )
-                captured.consolidate(
-                    password=b"test-private-mobile-rollback", cancel=Event()
+                assert not take_violations()
+                assert not blocked_attempts()
+                Path(marker).write_text(json.dumps(evidence))
+                os._exit(73)
+            return original_retire(scope)
+
+        monkeypatch.setattr(
+            mobile_native_operation, "_consolidate", observed_consolidate
+        )
+        if interruption == "workspace-rollback":
+            monkeypatch.setattr(mobile_native_rows, "_insert_row", fail_workspace)
+        else:
+            monkeypatch.setattr(
+                storage_admission._MobileScope, "retire", die_after_commit
+            )
+        service = RecoveryService(fixture_journal.root.parent)
+        try:
+            reviewed = service.preview_mobile_consolidation(config, config)
+            assert reviewed.source_fingerprint == preview.source_fingerprint
+            assert (
+                mobile_consolidation_fixture.fingerprints(preview.source_dir)
+                == source_before
+            )
+            operation = service.start_mobile_consolidation(
+                reviewed,
+                destination_confirmed=True,
+                rollback_password=b"test-private-mobile-rollback",
+            )
+            state = service.wait(operation)
+            if interruption != "workspace-rollback":
+                pytest.fail(
+                    "actual public committed-owner crash was not reached: "
+                    + str(dict(state))
                 )
-        pytest.fail("actual commit crash was not reached")
-    marker = tmp_path / "cold-commit.json"
+            assert state["state"] == "recovery_required", dict(state)
+            assert evidence["operation_id"] == operation
+            assert evidence["workspace_fault_reached"]
+            assert "finish" in service.status(operation)["actions"]
+        finally:
+            service.close()
+        assert len(pairs) == 1 and _mobile_budget_pair(*pairs[0])
+        evidence["pair"] = {
+            "coupled": True,
+            "aggregate_remaining": pairs[0][0]._remaining,
+            "native_remaining": pairs[0][1]._remaining,
+        }
+        assert (
+            mobile_consolidation_fixture.fingerprints(preview.source_dir)
+            == source_before
+        )
+        assert not take_violations()
+        assert not blocked_attempts()
+        Path(marker).write_text(json.dumps(evidence))
+        return
+
+    marker = tmp_path / "public-owning-recovery.json"
     child = subprocess.run(
         [
             sys.executable,
             "-m",
             "pytest",
-            f"{__file__}::test_cold_commit_before_retirement_uses_original_capture_and_receipt[{crash_owner}]",
+            f"{__file__}::test_public_worker_faults_finish_receipt_first_in_fresh_process[{interruption}]",
             "-q",
             "--no-cov",
             "--basetemp",
             str(tmp_path / "child"),
         ],
-        env={**os.environ, "TLDW_OWNING_COLD_CRASH_MARKER": str(marker)},
+        env={**os.environ, "TLDW_PUBLIC_OWNING_RECOVERY_MARKER": str(marker)},
         capture_output=True,
         text=True,
         timeout=180,
         check=False,
     )
-    assert child.returncode == 73, child.stdout + child.stderr
+    assert child.returncode == (0 if interruption == "workspace-rollback" else 73), (
+        child.stdout + child.stderr
+    )
     evidence = json.loads(marker.read_text())
-    import inspect
-
+    assert evidence["interruption"] == interruption and evidence["pair"]["coupled"]
     script = (
         """
 import json, sys, traceback
@@ -1323,10 +1289,10 @@ from Tests import real_profile_guard, network_guard
 real_profile_guard.install()
 network_guard.install()
 """
-        + inspect.getsource(_resume_crashed_import)
+        + inspect.getsource(_finish_public_owning_import)
         + """
 try:
-    _resume_crashed_import(json.loads(Path(sys.argv[1]).read_text()))
+    _finish_public_owning_import(json.loads(Path(sys.argv[1]).read_text()))
 except BaseException:
     traceback.print_exc()
     raise
@@ -1349,25 +1315,31 @@ finally:
     assert resumed.returncode == 0, resumed.stdout + resumed.stderr
 
 
-def _resume_crashed_import(evidence):
-    """Cold native process using the same isolated profile/default locations."""
+def _finish_public_owning_import(evidence):
+    """Use the actual public finish worker in the original isolated fixture."""
     from pathlib import Path
 
+    from Tests.Backup_Recovery.mobile_consolidation_fixture import fingerprints
     from Tests.Backup_Recovery.test_mobile_owning_transactions import (
-        _native_terminal_interruption,
+        _ordinary_imported_owner,
     )
     from tldw_chatbook.Backup_Recovery import (
         bootstrap,
         config_adapter,
+        mobile_native_operation,
         mobile_native_rows,
         profile_paths,
+        storage_admission,
     )
-    from tldw_chatbook.Backup_Recovery.control_records import admission_authority
     from tldw_chatbook.Backup_Recovery.journal import observe_artifact
-    from tldw_chatbook.Backup_Recovery.mobile_consolidation_apply import (
-        _resume_captured_mobile,
+    from tldw_chatbook.Backup_Recovery.mobile_consolidation import (
+        CanonicalConsoleStores,
+        require_mobile_cutover,
     )
     from tldw_chatbook.Backup_Recovery.recovery_copies import _journal
+    from tldw_chatbook.Backup_Recovery.recovery_service import RecoveryService
+    from tldw_chatbook.Chat.console_trace_read_budget import _mobile_budget_pair
+    from tldw_chatbook.DB.mobile_import_authority import authority_allowed
 
     monkeypatch = pytest.MonkeyPatch()
     monkeypatch.setenv("TLDW_CONFIG_PATH", evidence["effective"])
@@ -1380,62 +1352,99 @@ def _resume_crashed_import(evidence):
     monkeypatch.setattr(
         config_adapter, "default_config_path", profile_paths.default_config_path
     )
-    from tldw_chatbook.Backup_Recovery.owner_registry import install_adapters
-
-    install_adapters()
-    journal = _journal(Path(evidence["control"]), "mobile-test")
+    journal = _journal(Path(evidence["control"]), evidence["operation_id"])
     with journal._locked(exclusive=False) as fd:
-        assert journal._records(fd)[-1].event == "mobile_owner_opened"
-    insert = mobile_native_rows._insert_row
+        expected_event = (
+            "mobile_owner_retired"
+            if evidence["interruption"] == "workspace-rollback"
+            else "mobile_owner_opened"
+        )
+        assert journal._records(fd)[-1].event == expected_event
+    source = Path(evidence["source_dir"])
+    assert fingerprints(source) == evidence["source_before"]
+    original_insert = mobile_native_rows._insert_row
+    original_consolidate = mobile_native_operation._consolidate
+    pairs = []
 
-    def reject_replay(conn, row, values, detach=False):
+    def reject_replay(connection, row, values, detach=False):
         if row.table == "conversations":
             raise AssertionError("committed Chat insertion replayed")
-        return insert(conn, row, values, detach=detach)
+        return original_insert(connection, row, values, detach=detach)
+
+    def observed_consolidate(captured, *, password, cancel):
+        admission = storage_admission._mobile_admission(captured.session)
+        pair = admission[4], admission[2]
+        assert _mobile_budget_pair(*pair)
+        assert not pairs
+        pairs.append(pair)
+        assert captured.journal.operation_id == evidence["operation_id"]
+        assert observe_artifact(captured.source.path) == evidence["source"]
+        assert observe_artifact(captured.canonical.path) == evidence["canonical"]
+        assert observe_artifact(captured.claim.path) == evidence["claim"]
+        return original_consolidate(captured, password=password, cancel=cancel)
 
     monkeypatch.setattr(mobile_native_rows, "_insert_row", reject_replay)
-    with admission_authority(Path(evidence["bootstrap"])).maintenance(  # noqa: SIM117 -- Native resource lifetime boundary.
-        ("bootstrap.unbound", "mobile.profile"), 2
-    ) as fresh:
-        with _resume_captured_mobile(
-            fresh,
-            journal,
-            destination=Path(evidence["destination"]),
-            password=b"test-private-mobile-rollback",
-            cancel=Event(),
-        ) as captured:
-            assert observe_artifact(captured.source.path) == evidence["source"]
-            assert observe_artifact(captured.canonical.path) == evidence["canonical"]
-            with _native_terminal_interruption(monkeypatch):
-                captured.consolidate(
-                    password=b"test-private-mobile-rollback", cancel=Event()
-                )
-            for owner_id, key in (
-                ("db.chachanotes.primary", "chat"),
-                ("db.workspaces", "workspaces"),
-                ("db.agent_runs", "runs"),
-            ):
-                with captured.owner(owner_id) as owner, owner.transaction() as conn:
-                    assert (
-                        conn.execute(
-                            "SELECT count(*) FROM mobile_consolidation_batches WHERE operation_id=? AND batch_key=?",
-                            (journal.operation_id, key),
-                        ).fetchone()[0]
-                        == 1
+    monkeypatch.setattr(mobile_native_operation, "_consolidate", observed_consolidate)
+    service = RecoveryService(Path(evidence["control"]))
+    try:
+        assert "finish" in service.status(evidence["operation_id"])["actions"]
+        resumed = service.start_recovery(
+            evidence["operation_id"],
+            action="finish",
+            rollback_password=b"test-private-mobile-rollback",
+        )
+        state = service.wait(resumed)
+        assert state["state"] == "succeeded", dict(state)
+        assert service.pending_operations() == ()
+    finally:
+        service.close()
+    assert len(pairs) == 1 and _mobile_budget_pair(*pairs[0])
+    stores = CanonicalConsoleStores(*(Path(path) for path in evidence["target_paths"]))
+    assert require_mobile_cutover(source, stores) is None
+    for owner_id, key in (
+        ("db.chachanotes.primary", "chat"),
+        ("db.workspaces", "workspaces"),
+        ("db.agent_runs", "runs"),
+    ):
+        with (
+            _ordinary_imported_owner(stores, owner_id) as owner,
+            owner.transaction() as conn,
+        ):
+            assert (
+                conn.execute(
+                    "SELECT count(*) FROM mobile_consolidation_batches WHERE operation_id=? AND batch_key=?",
+                    (journal.operation_id, key),
+                ).fetchone()[0]
+                == 1
+            )
+            if key == "chat":
+                assert [
+                    list(row)
+                    for row in conn.execute(
+                        "SELECT * FROM mobile_consolidation_batches ORDER BY batch_key"
                     )
-                    if key == "chat":
-                        assert [
-                            list(row)
-                            for row in conn.execute(
-                                "SELECT * FROM mobile_consolidation_batches ORDER BY batch_key"
-                            )
-                        ] == evidence["receipts"]
-                        assert (
-                            conn.execute(
-                                "SELECT count(*) FROM conversations WHERE title='Retained title'"
-                            ).fetchone()[0]
-                            == 2
-                        )
+                ] == evidence["receipts"]
+                assert (
+                    conn.execute(
+                        "SELECT count(*) FROM conversations WHERE title='Retained title'"
+                    ).fetchone()[0]
+                    == 2
+                )
+            else:
+                holds = conn.execute(
+                    "SELECT authority_kind,authority_id,reviewed_at FROM mobile_import_authority_holds"
+                ).fetchall()
+                assert all(row[2] is None for row in holds)
+                if key == "runs":
+                    assert holds
+                assert all(not authority_allowed(conn, row[0], row[1]) for row in holds)
+    assert fingerprints(source) == evidence["source_before"]
+    assert observe_artifact(Path(evidence["claim"]["path"])) == evidence["claim"]
+    assert (
+        observe_artifact(Path(evidence["default"]).parent)
+        == evidence["default_directory"]
+    )
+    monkeypatch.undo()
 
 
 def test_imported_run_cannot_stamp_notes_but_fresh_manual_send_keeps_exact_pending_ids(

@@ -71,6 +71,13 @@ SUBSCRIPTION_SOURCE = "subscription:claude_code"
 KNOWN_PROVIDER_KEYS = PROVIDERS_REQUIRING_API_KEY_KEYS | KEYLESS_PROVIDER_KEYS
 
 
+def is_valid_provider_api_key(value: object) -> bool:
+    """Keep the public validator lazy and share config's credential policy."""
+    from ..config import is_valid_provider_api_key as validate
+
+    return validate(value)
+
+
 def is_self_hosted_provider(provider: str | None) -> bool:
     """Whether ``provider`` names a self-hosted endpoint (TASK-34100.5).
 

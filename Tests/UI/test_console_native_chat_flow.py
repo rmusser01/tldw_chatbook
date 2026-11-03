@@ -9214,6 +9214,7 @@ async def test_console_edit_resend_clears_replaced_descendant_original_attempt()
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_console_selected_message_edit_action_cancel_preserves_content():
     app = _build_test_app()
     host = ConsoleHarness(app)
@@ -9373,6 +9374,7 @@ async def test_console_sync_reconciles_hydrated_fork_eligibility(monkeypatch):
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_console_selected_message_save_as_action_opens_modal():
     app = _build_test_app()
     host = ConsoleHarness(app)

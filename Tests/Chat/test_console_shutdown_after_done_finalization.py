@@ -28,11 +28,11 @@ from tldw_chatbook.Chat.console_chat_controller import ConsoleChatController
 from tldw_chatbook.Chat.console_chat_models import ConsoleMessageRole
 from tldw_chatbook.Chat.console_chat_store import ConsoleChatStore
 from tldw_chatbook.Chat.chat_persistence_service import ChatPersistenceService
-from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
 from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
 
 from tldw_chatbook.Agents.agent_models import RUN_DONE, RunOutcome
 
+from Tests.agent_runs_owner import owned_agent_runs_db
 from Tests.Chat.test_console_agent_swap import _Gateway
 
 # bootstrap_profile: keep the collection-time config profile so send
@@ -50,7 +50,7 @@ def _controller(tmp_path: Path, name: str) -> tuple:
             CharactersRAGDB(str(tmp_path / f"{name}-chacha.sqlite"), client_id="t")
         )
     )
-    db = AgentRunsDB(tmp_path / f"{name}-runs.db", client_id="t")
+    db = owned_agent_runs_db(tmp_path / f"{name}-runs.db", client_id="t")
     bridge = ConsoleAgentBridge(agent_runs_db=db, store=store, provider_gateway=gateway)
     controller = ConsoleChatController(
         store=store,

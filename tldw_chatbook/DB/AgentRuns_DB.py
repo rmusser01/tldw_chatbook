@@ -330,14 +330,18 @@ class AgentRunsDB(SQLiteStoreKernel, BaseDB):
             reject_incompatible_preview(self.db_path_str)
             self._initialize_schema()
         else:
-            with self.connection() as conn:
-                self.receipt_capability_available = (
-                    conn.execute(
-                        "SELECT 1 FROM sqlite_master WHERE type='table' "
-                        "AND name='console_activity_receipts'"
-                    ).fetchone()
-                    is not None
-                )
+            try:
+                with self.connection() as conn:
+                    self.receipt_capability_available = (
+                        conn.execute(
+                            "SELECT 1 FROM sqlite_master WHERE type='table' "
+                            "AND name='console_activity_receipts'"
+                        ).fetchone()
+                        is not None
+                    )
+            except BaseException:
+                self.close()
+                raise
         # A writable owner has initialized schema; read-only handles never do.
         # Reconcile once per
         # file per process so a crash mid-run doesn't leave a 'running' row
@@ -2230,22 +2234,9 @@ class AgentRunsDB(SQLiteStoreKernel, BaseDB):
             if not enabled_only:
                 rows = conn.execute(query).fetchall()
             else:
-                from tldw_chatbook.Chat.console_trace_read_budget import (
-                    _TraceReadBudget,
-                )
+                from .mobile_consolidation_receipts import _enabled_definition_rows
 
-                from .mobile_consolidation_receipts import _imported_definition_ids
-
-                if conn.in_transaction:
-                    raise ValueError("mobile_owner_receipt_committed_snapshot_required")
-                conn.execute("BEGIN")
-                try:
-                    imported = _imported_definition_ids(conn, _TraceReadBudget())
-                    rows = [
-                        row for row in conn.execute(query) if row["id"] not in imported
-                    ]
-                finally:
-                    conn.rollback()
+                rows = _enabled_definition_rows(self, conn, query)
         return [self._definition_row_to_dict(row) for row in rows]
 
     def get_agent_definition(self, definition_id: str) -> dict | None:

@@ -163,6 +163,7 @@ def test_level_up_xp_bar_changes_every_frame(cards):
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.bootstrap_profile
 async def test_keypress_skips_splash():
     from textual.app import App
 

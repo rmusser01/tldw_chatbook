@@ -40,6 +40,15 @@ db.close()
 
 
 def _drop_workflow_schema(conn):
+    # Remove only empty v32/v33 additions before reconstructing older storage.
+    for table in (
+        "console_command_receipts",
+        "mobile_consolidation_batches",
+        "mobile_import_authority_holds",
+    ):
+        assert conn.execute(f"SELECT count(*) FROM {table}").fetchone()[0] == 0
+        conn.execute(f"DROP TABLE {table}")
+
     # A pre-workflow fixture must remove the later feature, not just its version.
     objects = conn.execute(
         "SELECT type,name FROM sqlite_schema WHERE name GLOB 'workflow_*' "

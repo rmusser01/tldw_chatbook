@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import sqlite3
 import struct
 
 from tldw_chatbook.Backup_Recovery.mobile_identity_plan import _COMPOSITES, _DOMAINS
@@ -970,3 +971,38 @@ def _imported_note_ids(connection, budget):
     finally:
         cursor.close()
     return result
+
+
+def _enabled_definition_rows(database, connection, query):
+    """Filter execution-bearing definitions from one committed native snapshot."""
+    if connection.in_transaction:
+        from .AgentRuns_DB import AgentRunsDB
+
+        if (
+            type(database) is not AgentRunsDB
+            or database.is_memory_db
+            or database._read_only
+        ):
+            raise ValueError("mobile_owner_receipt_committed_snapshot_required")
+        database._require_execution_owner()
+        reader = AgentRunsDB.open_read_only(database.db_path)
+        owned = reader._thread_local.conn
+        try:
+            with reader.connection() as committed:
+                rows = _enabled_definition_rows(reader, committed, query)
+        finally:
+            reader.close()
+            try:
+                sqlite3.Connection.in_transaction.__get__(owned)
+            except sqlite3.ProgrammingError:
+                pass
+            else:
+                raise ValueError("mobile_owner_receipt_reader_not_retired")
+        database._require_execution_owner()
+        return rows
+    connection.execute("BEGIN")
+    try:
+        imported = _imported_definition_ids(connection, _TraceReadBudget())
+        return [row for row in connection.execute(query) if row["id"] not in imported]
+    finally:
+        connection.rollback()
