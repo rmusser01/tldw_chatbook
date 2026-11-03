@@ -45,7 +45,7 @@ from tldw_chatbook.Workspaces.display_state import (
 )
 from tldw_chatbook.Workspaces.models import DEFAULT_WORKSPACE_ID
 from tldw_chatbook.Widgets.recompose_capture_guard import RecomposeCaptureGuard
-from tldw_chatbook.UI.character_display_text import sanitize_character_display_label
+from tldw_chatbook.Utils.character_display_text import sanitize_character_display_label
 from tldw_chatbook.Workspaces.conversation_attention import (
     present_conversation_attention,
 )

@@ -567,7 +567,6 @@ tldw_chatbook.UI.Views.RAGSearch.search_handoff
 tldw_chatbook.UI.Workbench
 tldw_chatbook.UI.Workbench.help
 tldw_chatbook.UI.Workbench.workbench_state
-tldw_chatbook.UI.character_display_text
 tldw_chatbook.UI.console_command_provider
 tldw_chatbook.UI.destination_recovery
 tldw_chatbook.UI.image_gen_command_provider
@@ -583,6 +582,7 @@ tldw_chatbook.Utils.adaptive_reader_state
 tldw_chatbook.Utils.app_shutdown
 tldw_chatbook.Utils.atomic_file_ops
 tldw_chatbook.Utils.boot_worker_policy
+tldw_chatbook.Utils.character_display_text
 tldw_chatbook.Utils.console_background_effects
 tldw_chatbook.Utils.custom_tokenizers
 tldw_chatbook.Utils.datetime_codec

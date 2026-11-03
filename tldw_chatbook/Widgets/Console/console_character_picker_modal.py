@@ -22,7 +22,7 @@ from textual.screen import ModalScreen
 from textual.timer import Timer
 from textual.widgets import Button, Input, Static
 
-from ...UI.character_display_text import sanitize_character_display_label
+from tldw_chatbook.Utils.character_display_text import sanitize_character_display_label
 from tldw_chatbook.Widgets.modal_dismissal import SafeModalDismissMixin
 
 CharacterPlacement = Literal["swap", "new"]

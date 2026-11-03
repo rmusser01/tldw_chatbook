@@ -73,7 +73,7 @@ from ...Chat.console_settings_defaults import (
 from ...Widgets.glyph_fallback import resolve_glyph
 from ...Chat.console_session_settings import ConsoleSettingsSummaryState
 from ...UI.Navigation.surface_swap_guard import finish_removal
-from ...UI.character_display_text import sanitize_character_display_label
+from tldw_chatbook.Utils.character_display_text import sanitize_character_display_label
 from ...Widgets.Console import (
     ConsoleBoundedSection,
     ConsoleWorkspaceContextTray,

@@ -34,7 +34,7 @@ from tldw_chatbook.RAG_Search.local_citation_capture import (
     format_console_evidence_context,
     normalize_console_evidence_references,
 )
-from tldw_chatbook.UI.character_display_text import sanitize_character_display_label
+from tldw_chatbook.Utils.character_display_text import sanitize_character_display_label
 from tldw_chatbook.Utils.token_counter import count_tokens_messages
 
 if TYPE_CHECKING:

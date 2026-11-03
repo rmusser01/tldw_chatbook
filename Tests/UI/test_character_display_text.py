@@ -363,3 +363,11 @@ async def test_ccp_fallback_display_handles_malformed_collection_shapes_without_
 
     assert source == original
     assert calls == []
+
+
+def test_old_ui_import_path_still_resolves_to_utils_module() -> None:
+    from tldw_chatbook.UI import character_display_text as old
+    from tldw_chatbook.Utils import character_display_text as new
+
+    assert old.sanitize_character_display_text is new.sanitize_character_display_text
+    assert old.sanitize_character_display_label is new.sanitize_character_display_label

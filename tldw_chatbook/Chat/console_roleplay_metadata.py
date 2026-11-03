@@ -12,7 +12,7 @@ from tldw_chatbook.Chat.console_roleplay_identity import (
     ChatDisplayNameError,
     normalize_chat_display_name,
 )
-from tldw_chatbook.UI.character_display_text import sanitize_character_display_label
+from tldw_chatbook.Utils.character_display_text import sanitize_character_display_label
 
 
 ROLEPLAY_CONTEXT_METADATA_KEY = "console_roleplay_context"

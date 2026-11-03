@@ -15,7 +15,7 @@ from tldw_chatbook.Chat.console_chat_models import (
     ConsoleMessageRole,
 )
 from tldw_chatbook.Chat.message_metadata import MessageMetadata
-from tldw_chatbook.UI.character_display_text import sanitize_character_display_label
+from tldw_chatbook.Utils.character_display_text import sanitize_character_display_label
 
 
 CHAT_DISPLAY_NAME_MAX_CELLS = 48

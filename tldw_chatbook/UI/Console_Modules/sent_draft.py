@@ -37,7 +37,7 @@ from collections.abc import Callable
 from dataclasses import replace
 from typing import Any
 
-from tldw_chatbook.UI.character_display_text import sanitize_character_display_label
+from tldw_chatbook.Utils.character_display_text import sanitize_character_display_label
 from tldw_chatbook.Utils.input_validation import escape_markup
 from tldw_chatbook.Widgets.Console.console_composer_bar import (
     ConsoleDraftStash,

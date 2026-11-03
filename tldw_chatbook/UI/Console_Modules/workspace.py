@@ -133,7 +133,7 @@ from ...Workspaces.registry_service import (
     WorkspaceRegistryServiceError,
     binding_exclusion_entries,
 )
-from ..character_display_text import sanitize_character_display_label
+from tldw_chatbook.Utils.character_display_text import sanitize_character_display_label
 
 if TYPE_CHECKING:
     from ...Chat.console_chat_controller import ConsoleChatController

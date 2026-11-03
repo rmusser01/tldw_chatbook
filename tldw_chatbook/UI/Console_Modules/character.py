@@ -36,7 +36,7 @@ from ...Widgets.Console.console_character_picker_modal import (
     ConsoleCharacterChoice,
     ConsoleCharacterOption,
 )
-from ..character_display_text import sanitize_character_display_label
+from tldw_chatbook.Utils.character_display_text import sanitize_character_display_label
 from .session import (
     _canonical_card_character_id,
     _character_session_prompt_seed,
