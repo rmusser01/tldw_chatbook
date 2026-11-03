@@ -70,7 +70,12 @@ if route=='unsupported':
 if route=='disjoint':
  ordinary=base/'ordinary';ordinary.mkdir(mode=0o700)
  other=ordinary/'config.toml';other.write_text('[general]\n');other.chmod(0o600)
- os.environ['TLDW_CONFIG_PATH']=str(other)
+ # TASK-36945.3: rag_service reads [rag.service] when used, so re-select the
+ # config source for it (the repo's select_config_source) instead of only
+ # changing the env var under its bound reader.
+ import pytest
+ from Tests.Backup_Recovery.config_test_support import select_config_source
+ select_config_source(pytest.MonkeyPatch(),other,sys.modules['tldw_chatbook.RAG_Search.simplified.rag_service'].__dict__)
  ordinary_media=MediaDatabase(ordinary/'media.db',client_id='ordinary')
  ordinary_media.add_media_with_keywords(url='https://example.invalid/b',title='Independent',media_type='document',content='Independent ordinary source documents remain searchable.',keywords=['fixture'],overwrite=True)
  ordinary_config=RAGConfig.from_dict({'embedding':{'model':'mock'},'vector_store':{'type':'chroma','persist_directory':str(ordinary/'vectors')},'search':{'media_db_path':str(ordinary/'media.db'),'chachanotes_db_path':str(ordinary/'notes.db'),'prompts_db_path':str(ordinary/'prompts.db')},'chunking':{'chunk_size':400,'chunk_overlap':0,'min_chunk_size':1}})
