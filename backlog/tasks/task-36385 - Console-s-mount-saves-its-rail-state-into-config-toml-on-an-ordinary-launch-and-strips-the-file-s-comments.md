@@ -1,11 +1,11 @@
 ---
 id: TASK-36385
 title: Console's mount saves its rail state into config.toml on an ordinary launch and strips the file's comments
-status: In Progress
+status: Done
 assignee:
   - '@claude'
 created_date: 2026-10-22 23:58
-updated_date: 2026-10-30 04:13
+updated_date: 2026-11-03 11:29
 labels:
 - follow-up
 - console
@@ -223,3 +223,5 @@ baseline-attributed, not reported as passing.
 
 Independent review approved the full production change and the fixture
 correction. Required CI and resolved threads remain merge gates.
+
+2026-11-03 (bookkeeping): set Done. PR #3225 merged into dev on 2026-10-31T22:24Z (merge commit de2fac839f, an ancestor of dev 9bbd5c2515). All four criteria were already ticked.

@@ -2,11 +2,11 @@
 id: TASK-36381
 title: Settings provider and discovery test files that no PR lane runs are red on
   dev
-status: In Progress
+status: Done
 assignee:
 - '@claude'
 created_date: 2026-10-22 23:58
-updated_date: 2026-11-01 12:31
+updated_date: 2026-11-03 11:29
 labels:
 - follow-up
 - tests
@@ -132,4 +132,6 @@ The full hub run, at a load average of 145-177 on 18 CPUs, gave 450 passed and 8
 
 <!-- SECTION:IMPLEMENTATION_NOTES:BEGIN -->
 2026-11-01 final integration onto dev3e55f1f3: preserved current-dev stronger assertions, exact census prefix and all source profile/JSON/DNS repairs. The234-case focused run had229 passes and5 failures; affected reruns pass all59 discovery tests, appearance persistence and both schedule viewports, with all other passing definitions unchanged. Census83 passed. Production remains the14-line Tools guidance entry. Final keyboard recovery follows the real Button.Pressed and persistence path; the logging run did not prove a production mouse cause. See Docs/superpowers/qa/2026-11-01-pr3315-backlog-integration.md for receipts, earlier failures and local-only limits. No new ADR underADR126/240. Final independent commit review and publication follow; hosted CI and size limits are explicitly waived.
+
+2026-11-03 (bookkeeping): set Done. PR #3315 merged into dev on 2026-11-01T12:35Z (merge commit de5dec02b1, an ancestor of dev 9bbd5c2515). All three criteria were already ticked.
 <!-- SECTION:IMPLEMENTATION_NOTES:END -->
