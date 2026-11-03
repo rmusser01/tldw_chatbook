@@ -1996,9 +1996,13 @@ Tests/UI/test_console_readiness_config_projection.py::test_a_retry_delivered_aft
 # TASK-36527 (2026-11-03): the File Notes git panel's worker renders (rows,
 # commit-review notes) and its deferred commit and push focus stop quietly
 # when they land after quit's App._exit fence or during a removal (_pruning).
-# Eight cases, about 6 s locally; appended at the tail, so no slot moves.
+# Round 3 adds every workspace-reachable panel entry point and the deferred
+# refresh targets. 37 cases, about 15 s locally; appended at the tail, so no
+# slot moves.
 Tests/UI/test_library_file_notes_git.py::test_a_git_render_resuming_after_quit_does_nothing
 Tests/UI/test_library_file_notes_git.py::test_a_git_render_resuming_during_removal_ends_quietly
 Tests/UI/test_library_file_notes_git.py::test_a_commit_focus_landing_during_removal_ends_quietly
 Tests/UI/test_library_file_notes_git.py::test_a_commit_notes_render_removed_during_its_mount_ends_quietly
 Tests/UI/test_library_file_notes_git.py::test_a_push_focus_landing_during_removal_ends_quietly
+Tests/UI/test_library_file_notes_git.py::test_a_panel_entry_called_during_removal_does_nothing
+Tests/UI/test_library_file_notes_git.py::test_a_deferred_panel_refresh_landing_during_removal_does_nothing
