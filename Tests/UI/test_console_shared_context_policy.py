@@ -43,6 +43,9 @@ def _screen(tmp_path):
         _console_derivation_scope=lambda: _empty_scope(),
         _sync_native_console_chat_ui=refresh,
         run_worker=schedule,
+        # TASK-38649: a refused readiness refresh schedules a retry on these.
+        _request_console_control_bar_sync=lambda **_kwargs: None,
+        set_timer=lambda *_args, **_kwargs: None,
     )
     return database, store, controller, screen, tasks
 
