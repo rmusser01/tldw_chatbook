@@ -539,8 +539,11 @@ async def test_an_unparseable_config_leaves_an_idle_console_idle(request):
     stays cold for good. Deferring every cold read replayed the idle Console
     5 full syncs a second (26 cold core-state reads a second) and re-armed the
     identity refresh every 0.2 s without running it. Each owner now defers
-    once per cold episode: the core-state push and the identity refresh run
-    within one replay or retry, and the idle Console goes quiet again.
+    once per cold episode: the core-state push and the identity refresh run,
+    and the idle Console goes quiet again. Under load the first runs can take
+    seconds (a retry also waits out the off-loop read's locks), so the test
+    polls for them and then judges the steady state, which is what tells a
+    bounded deferral from a replay loop.
     """
     from tldw_chatbook import config
     from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
@@ -580,16 +583,23 @@ async def test_an_unparseable_config_leaves_an_idle_console_idle(request):
                         group="console-sync",
                     )
                     console._sync_console_identity_surfaces()
-                    await pilot.pause(1.0)
-                    first = starts.take()
+                    first = dict.fromkeys(idle, 0)
+                    deadline = asyncio.get_running_loop().time() + 10.0
+                    while not (first["core_push"] and first["identity"]):
+                        if asyncio.get_running_loop().time() > deadline:
+                            break  # The steady state below names the loop.
+                        await pilot.pause(0.1)
+                        for name, count in starts.take().items():
+                            first[name] += count
+                    await pilot.pause(0.5)  # The single replay's own pass.
+                    starts.take()
                     await pilot.pause(2.0)
                     later = starts.take()
                 finally:
                     path.write_bytes(original)
                     await asyncio.to_thread(config.load_settings, True)
-    assert first["core_push"] >= 1, f"the full sync never pushed: {first}"
-    assert first["identity"] >= 1, f"the identity refresh never ran: {first}"
     assert later["full_sync"] <= idle["full_sync"] + 1, (
         f"the idle Console kept replaying: idle {idle}, cold config {later}"
     )
-
+    assert first["core_push"] >= 1, f"the full sync never pushed: {first}"
+    assert first["identity"] >= 1, f"the identity refresh never ran: {first}"
