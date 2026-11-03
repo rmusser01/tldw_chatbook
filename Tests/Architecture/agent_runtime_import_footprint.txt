@@ -20,6 +20,7 @@ tldw_chatbook.Tools.tool_executor
 tldw_chatbook.Utils
 tldw_chatbook.Utils.filesystem_identity
 tldw_chatbook.Utils.input_validation
+tldw_chatbook.Utils.path_validation
 tldw_chatbook.Utils.reasoning_config
 tldw_chatbook.Utils.tiktoken_runtime
 tldw_chatbook.model_capabilities
