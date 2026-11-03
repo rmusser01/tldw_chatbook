@@ -1,0 +1,4 @@
+{
+  "sha256": "8b1346d48692a2e49790158573dfceda0943f9af3d247610bee8ceb469a9aef5",
+  "raw_text": ".                                                                        [100%]\n- generated xml file: /private/tmp/mixins-f70-ui19-diagnosis/owner-green/owner-probe.xml -\n============================= slowest 25 durations =============================\n31.36s call     Tests/UI/test_library_note_links_picker_and_preview.py::test_typing_two_brackets_opens_a_keyboard_picker_that_inserts_a_real_link\n\n(2 durations < 1s hidden.)\n1 passed in 34.35s\n"
+}

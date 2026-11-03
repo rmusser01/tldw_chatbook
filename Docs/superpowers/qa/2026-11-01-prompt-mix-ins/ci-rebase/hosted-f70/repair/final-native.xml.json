@@ -1,0 +1,4 @@
+{
+  "sha256": "389e53c95fe5b1bcf2133e2b7ec7796d39693cb11f0790d0c8e74f5a5de11968",
+  "raw_text": "<?xml version=\"1.0\" encoding=\"utf-8\"?><testsuites name=\"pytest tests\"><testsuite name=\"pytest\" errors=\"0\" failures=\"0\" skipped=\"0\" tests=\"3\" time=\"33.614\" timestamp=\"2026-11-02T18:11:04.407815-08:00\" hostname=\"Roberts-MacBook-Pro-2.local\"><testcase classname=\"Tests.UI.test_library_landing_recompose_publication\" name=\"test_landing_recompose_publishes_latest_state_and_finishes_once[pending]\" time=\"0.425\" /><testcase classname=\"Tests.UI.test_library_landing_recompose_publication\" name=\"test_landing_recompose_publishes_latest_state_and_finishes_once[mounting]\" time=\"0.241\" /><testcase classname=\"Tests.UI.test_library_note_links_picker_and_preview\" name=\"test_typing_two_brackets_opens_a_keyboard_picker_that_inserts_a_real_link\" time=\"30.410\" /></testsuite></testsuites>"
+}

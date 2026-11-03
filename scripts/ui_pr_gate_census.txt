@@ -1966,3 +1966,5 @@ Tests/UI/test_screen_derivation_helpers.py
 Tests/UI/test_library_prompt_browse_controller.py::test_controller_live_reads_replaced_screen_worker
 # PR3346: reader regressions use the existing whole-file slot; append closed-owner coverage.
 Tests/UI/test_response_rules_end_to_end.py::test_close_during_resume_retires_the_old_visible_draft
+# PR3346: pending/active landing recomposition must retain snapshot completion.
+Tests/UI/test_library_landing_recompose_publication.py

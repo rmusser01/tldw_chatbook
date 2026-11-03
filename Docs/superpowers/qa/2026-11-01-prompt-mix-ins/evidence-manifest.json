@@ -2536,6 +2536,391 @@
       "git_blob": "c7264127a136db40e5a09ca1cc00de1d287f62e1",
       "bytes": 2988
     },
+    "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/ci-rebase/hosted-f70/artifact-map.json": {
+      "sha256": "9eafdc5d2295a21cb04e66cdd9076decd8143375c8608c4e3c0c3af929bc1e07",
+      "git_blob": "9fae482b191a296eaa88d28305bcfe5b29625ea1",
+      "bytes": 32794
+    },
+    "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/ci-rebase/hosted-f70/hosted/mixins-f70-ui19-local-proof.json": {
+      "sha256": "395d14d4484b43718ec7d208cdb70e34b3b08f0b2795583ea9464e000839ad38",
+      "git_blob": "410bfd3c152e3373e9bb8134d6070f5a9e103f03",
+      "bytes": 755
+    },
+    "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/ci-rebase/hosted-f70/hosted/mixins-f70-ui19-local.log.json": {
+      "sha256": "3341d791965f8dd4699294b00c11490733450b15c2e010859a847dc4c05aff98",
+      "git_blob": "8ab6b720512a81da697ff944714d9fb3d8049e88",
+      "bytes": 461
+    },
+    "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/ci-rebase/hosted-f70/hosted/mixins-f70-ui19-origin.json": {
+      "sha256": "bd78dc44f2820a6d5b3c0ee1133c1d9fe48e371453c1b40136be3035dd3cbb32",
+      "git_blob": "41d5d436588b184e091f0d0319bb28efe978ac48",
+      "bytes": 529
+    },
+    "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/ci-rebase/hosted-f70/hosted/mixins-f70-ui19.log.json.gz": {
+      "sha256": "4caac328a69be3e5404ad32e6f87a81f70458af587a91adfc662e1c84088c4fa",
+      "git_blob": "f295cba417d3db6a655d35a18cb6ec7ffd5905d1",
+      "bytes": 59150
+    },
+    "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/ci-rebase/hosted-f70/repair/artifact-map.json": {
+      "sha256": "41e5f07b59f2b812b5253b778e8b6eef91c836e7bf18690a1737df7e1fdfc239",
+      "git_blob": "67ba97d945551848e8f77c2c898e4b1df07a3fed",
+      "bytes": 6509
+    },
+    "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/ci-rebase/hosted-f70/repair/baseline-library_entry_canvases.py": {
+      "sha256": "20c2b3254062022297a366c4f224071e5822223b99429198ef59788b3bf0f073",
+      "git_blob": "0b3f63d97a2e42c224aa9a69224e681c2e6ea767",
+      "bytes": 23385
+    },
+    "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/ci-rebase/hosted-f70/repair/baseline-ruff.json": {
+      "sha256": "8968932e7f4de94f1b56896db1f31f459b61186ada9805cf37455a092b3ac632",
+      "git_blob": "ad9550729206491398a46ef729d6c60c8b789601",
+      "bytes": 2478
+    },
+    "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/ci-rebase/hosted-f70/repair/bootstrap_selected.py": {
+      "sha256": "469fd1a6191c34f26044c8ef423660f47a23af0ddd5a1be52d889d9a1291fbbd",
+      "git_blob": "bbc38e718d98115c1757eaaa7393d8440bd057ca",
+      "bytes": 219
+    },
+    "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/ci-rebase/hosted-f70/repair/commands.json": {
+      "sha256": "4e0f59bd3aa91e94658e089aa4f476e5f4268a6ed2669313e731888c99cf5bc9",
+      "git_blob": "e910efceaa3a0d2cb08fc199a9ea5575fd7fe240",
+      "bytes": 7515
+    },
+    "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/ci-rebase/hosted-f70/repair/evidence-summary.json": {
+      "sha256": "6c3e30a11517925a337da5ab8e79ff60cf39c6f959335208d0d4c19ea9b02325",
+      "git_blob": "39dbdef06fa6c082424fde02afe4b2cb74f3418c",
+      "bytes": 7306
+    },
+    "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/ci-rebase/hosted-f70/repair/final-format.log.json": {
+      "sha256": "a8d55ae5575deb094e7cc8b22aec510097d0990071d9eacf12cbdf2b9c5b6813",
+      "git_blob": "bd4486cb7390b9b030e114ae740491ad2993b122",
+      "bytes": 128
+    },
+    "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/ci-rebase/hosted-f70/repair/final-native.log.json": {
+      "sha256": "123a90f7a0732da6d310847915ff971fd7df2ce6fddd881ac0022f20ea7ef047",
+      "git_blob": "a6dcc0731b4daa1997f635e362dd0cec3691e03a",
+      "bytes": 543
+    },
+    "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/ci-rebase/hosted-f70/repair/final-native.xml.json": {
+      "sha256": "404ecb49a0b61e088ad8732c59a5502f433bc972498f1bc17c9e422fb2c7c581",
+      "git_blob": "64783a186d4a04bec97ef7b84423d806b2949d1c",
+      "bytes": 915
+    },
+    "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/ci-rebase/hosted-f70/repair/final-red.log.json": {
+      "sha256": "6ad295eed1ca17fe52de97897229ec344cce00386cddba4a94c1aec937eb5de5",
+      "git_blob": "e26c812ffa0e45365a8b4869fe93f60ce08ae8da",
+      "bytes": 42647
+    },
+    "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/ci-rebase/hosted-f70/repair/final-red.xml.json": {
+      "sha256": "353a67f38923579ebbac93b23ac98592ffc28109d95ddc20c5b683dcf96784d7",
+      "git_blob": "9415a0c98a4c804fa009d1cd3b5a267441f02201",
+      "bytes": 15144
+    },
+    "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/ci-rebase/hosted-f70/repair/final-ruff.json": {
+      "sha256": "5619600d3a1b085f4c6a9344cc599500bdc93e7b7e6cc39f1d6b03667eaf53a1",
+      "git_blob": "e1477be9fad29127aeaa43a4f9ce8f0a8ca531ff",
+      "bytes": 2572
+    },
+    "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/ci-rebase/hosted-f70/repair/final-source.json": {
+      "sha256": "9c23c59f0192b4f27f219dccd9daa861dd0d857d7c540033dcfda90824787f9a",
+      "git_blob": "ba4ffa49082b67e69701f5f1182429593e5e3a23",
+      "bytes": 458
+    },
+    "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/ci-rebase/hosted-f70/repair/final-static-proof.json": {
+      "sha256": "c8bc2a1ad1564e9660090180f28d1d967c78b59fca75abfc7d3e5066bcb60f79",
+      "git_blob": "0faa7cd1a8adefb68d3b3b1a96a612bff67737e6",
+      "bytes": 1338
+    },
+    "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/ci-rebase/hosted-f70/repair/frozen-green.log.json": {
+      "sha256": "514a7e0a896c8b29db9cfa99c5f75cbb18d2ce5142667639c269144a12d76894",
+      "git_blob": "387418122df43e5712d1dabcde23943c7075435b",
+      "bytes": 30927
+    },
+    "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/ci-rebase/hosted-f70/repair/frozen-green.xml.json": {
+      "sha256": "8501b5b79915bd698dd114bebee626ce5dc44accb48a2ed75c2a8a00eee372d8",
+      "git_blob": "a5e4f9b6ae56a407c995eae1eec40e545d9a495d",
+      "bytes": 32352
+    },
+    "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/ci-rebase/hosted-f70/repair/frozen-red.log.json": {
+      "sha256": "ab6b79bdc2b3c3d291156955ede93e399afdca9425880707ccd054f1fea5bb57",
+      "git_blob": "88c8edeb80483602080000aa0a694f5124ee29ce",
+      "bytes": 42647
+    },
+    "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/ci-rebase/hosted-f70/repair/frozen-red.xml.json": {
+      "sha256": "9240fe926606c1de072c1793c8de8b3302e6b58e1ab39c4cbc9079d9f81568b9",
+      "git_blob": "600babd435facbd2dc8e7ae1b03e259693f69186",
+      "bytes": 15144
+    },
+    "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/ci-rebase/hosted-f70/repair/implementation-report.md": {
+      "sha256": "10067c1a2a98cecf41dee82ec3228879fd203ad85c24cc3c406028e8ce03c939",
+      "git_blob": "c43ed9639096efd88f15cfdaee3e50212454b08a",
+      "bytes": 5511
+    },
+    "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/ci-rebase/hosted-f70/repair/inherited-bootstrap.log.json": {
+      "sha256": "c2408e71212bf19c3180378d1360a8d36942a40ec5b76cc13dae395b6e0eafa5",
+      "git_blob": "5ef7dbd59691a583971cd0fd0d95371b9e1d65ba",
+      "bytes": 1360
+    },
+    "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/ci-rebase/hosted-f70/repair/inherited-bootstrap.xml.json": {
+      "sha256": "0e812aa461f283348e752a4cdec3ef36209d880f45bdf4f0e22c3dd0a959fa6a",
+      "git_blob": "c63bcb3fcc7b162ff6586adf308465457e3884e2",
+      "bytes": 1584
+    },
+    "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/ci-rebase/hosted-f70/repair/new-test-ruff.json": {
+      "sha256": "34e056623da663ad0272bdfe04ad65067ce744cf77b220bff5ce5d0318843136",
+      "git_blob": "68cd20fd34a971c1798d05370e5f3b56055e6e05",
+      "bytes": 1331
+    },
+    "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/ci-rebase/hosted-f70/repair/owner-events.jsonl.json": {
+      "sha256": "a47a504c6d76897e5ae36b06ddc13976a5bac647f820f369d75dd45f4074a852",
+      "git_blob": "352271dc0c84b6f00b1337b43f4b220cb3f26c23",
+      "bytes": 1083
+    },
+    "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/ci-rebase/hosted-f70/repair/owner-green/owner-events.jsonl.json": {
+      "sha256": "0d4ff02b54155278f85dff13d9d92ef6aa44819dfaf6903081e583aa13164f66",
+      "git_blob": "8729ea76f302183e15d8f7a6b84061922ca47ec8",
+      "bytes": 1112
+    },
+    "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/ci-rebase/hosted-f70/repair/owner-green/owner-probe.log.json": {
+      "sha256": "4fbc19d3d5c56eb33235d426cb6888ad5701ee80d4fe7c9782bf7f5f5457ac84",
+      "git_blob": "dcb6fb08cf378f91e0c5b616aa27d76a0f8579ab",
+      "bytes": 553
+    },
+    "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/ci-rebase/hosted-f70/repair/owner-green/owner-probe.xml.json": {
+      "sha256": "4b165298401a16b3856cc27802d3ae481fdb34a372ad698de2a763d7e0d6276f",
+      "git_blob": "2114ce4b5f3086ac334537eeadb135c67304ada7",
+      "bytes": 564
+    },
+    "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/ci-rebase/hosted-f70/repair/owner-green/owner_probe.py": {
+      "sha256": "3f5ddf50a926a16a602e99f4712bfc8f9f82d4e9c0e316be29aa1d343f2e1011",
+      "git_blob": "150b0e690d3214436fa8497e851af02310ed8d6b",
+      "bytes": 3155
+    },
+    "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/ci-rebase/hosted-f70/repair/owner-probe.log.json.gz": {
+      "sha256": "cc175c08cc279a00f0d0e1e162709f8c5aec9ebecc1ebc29ed973876d5a7caf3",
+      "git_blob": "bb688d7b3fd58efd08df5f6ae539b3f45d53b584",
+      "bytes": 28145
+    },
+    "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/ci-rebase/hosted-f70/repair/owner-probe.xml.json": {
+      "sha256": "bdd5cc5faac09093af60ea4f0d879a0275c3edcaabaf70b241775d1164775b25",
+      "git_blob": "92ad86d91c6dc467b525cc521ad6419d8b6e4efe",
+      "bytes": 8135
+    },
+    "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/ci-rebase/hosted-f70/repair/owner_probe.py": {
+      "sha256": "3f5ddf50a926a16a602e99f4712bfc8f9f82d4e9c0e316be29aa1d343f2e1011",
+      "git_blob": "150b0e690d3214436fa8497e851af02310ed8d6b",
+      "bytes": 3155
+    },
+    "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/ci-rebase/hosted-f70/repair/permanent-red.log.json": {
+      "sha256": "8a8f007a86ca0c8f1efd748c390faf9ac14dabb920c719008cd53fa24c751df3",
+      "git_blob": "9584228579586c7c952b24770ba0bea2b8e5f18c",
+      "bytes": 42613
+    },
+    "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/ci-rebase/hosted-f70/repair/permanent-red.xml.json": {
+      "sha256": "bb4be8fa2fc50ee98e7c7178c58706d800829c4d72ad8cb087daebde65801afa",
+      "git_blob": "2cd8bd4489730959d70b9a0a8d9d1d99974ec9a9",
+      "bytes": 15110
+    },
+    "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/ci-rebase/hosted-f70/repair/report.md": {
+      "sha256": "00544bd11adabeac044da78685943c6a4915030c1c3f48e8c132e9e966352397",
+      "git_blob": "ae728505577da58fc55500324e28a2bc32338841",
+      "bytes": 6737
+    },
+    "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/ci-rebase/hosted-f70/repair/source-proof.json": {
+      "sha256": "57eab5b15331d042a16c32a371149de84f48895f462d8d0f8b0f3736a3eebb09",
+      "git_blob": "1e1e5f65c4b1376df1b02b24d640a88b86a5696b",
+      "bytes": 2683
+    },
+    "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/ci-rebase/hosted-f70/review/candidate-review.md": {
+      "sha256": "13e2ee036c2fcb049eefcd1f69499dad15acff0cb15d5d333d51d4c1763bf125",
+      "git_blob": "6790a3ad48edfedcbaaae4c407fad75c862bd36d",
+      "bytes": 6838
+    },
+    "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/ci-rebase/hosted-f70/review/final-review-proof.json": {
+      "sha256": "07b20b9d2512041d37a3022d3ce19eb649be3bdd11725b20d1140ca7e609d926",
+      "git_blob": "9a92eecb3763572a0b28cfdedbcef60e51410a56",
+      "bytes": 1713
+    },
+    "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/ci-rebase/hosted-f70/review/report.md": {
+      "sha256": "fc9f245ffdb3272f6bed5ef9d1c35c2826e414614b12faf429ed2517a8579fe1",
+      "git_blob": "1224bb2e0ea8fb5aaa54d7641898cb60850addca",
+      "bytes": 6803
+    },
+    "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/ci-rebase/hosted-f70/review/reviewed-candidate-sources.json": {
+      "sha256": "291c7897e176595bf55e040bddd94f8ad7edf601be952d48c1e9b5f5ef21a257",
+      "git_blob": "e9334a90c42d3b0e21fd74be7e59f286afc8055b",
+      "bytes": 875
+    },
+    "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/ci-rebase/hosted-f70/review/reviewed-evidence.json": {
+      "sha256": "d66be809479ffb220154530165f00389ce797dd78060b7fb37aab6d7b079ac34",
+      "git_blob": "10631468afa17d81bbddf3f0f569034abeff2c8e",
+      "bytes": 3844
+    },
+    "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/ci-rebase/hosted-f70/review/reviewed-root-evidence.json": {
+      "sha256": "50c22f6ef062287d8759e65ac23601744292c71be2f67c740815638cf458752d",
+      "git_blob": "e2cab0c999630da381f2b867fcd180d8813aa762",
+      "bytes": 4423
+    },
+    "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/ci-rebase/hosted-f70/review/reviewed-sources-before.json": {
+      "sha256": "810e2da90f16091205fb1a141ed498dc0f94ceb8cb4153724f2c39e9c1024191",
+      "git_blob": "670b7a31469b0fad38f177ad256f3effc02e8298",
+      "bytes": 1536
+    },
+    "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/ci-rebase/hosted-f70/review/reviewer-artifact-map.json": {
+      "sha256": "85a177f3b69bbb1569d8c1f953f75560bf30ebf88efe4dede34e4dd94d541221",
+      "git_blob": "a14fa3eb3c18e2fc0fddf06fb4882865ae4326d7",
+      "bytes": 1761
+    },
+    "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/ci-rebase/hosted-f70/review/root-gates-addendum.md": {
+      "sha256": "b1497f698e7fe0b1794c831a42860c91c47c0870ad66021b16400bdf7544b77b",
+      "git_blob": "4caa87067a769a89288d82f7f7e43916b41e00e4",
+      "bytes": 5268
+    },
+    "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/ci-rebase/hosted-f70/root-checks/artifact-inventory.json": {
+      "sha256": "1881bc7f3229ba3feef86ac74f72b4b86ae4c6ef9b3513602c5e5de1842e7531",
+      "git_blob": "e2f028bc2cfcc6e96f3a3db47e23978f6274c808",
+      "bytes": 3997
+    },
+    "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/ci-rebase/hosted-f70/root-checks/baseline-census.py": {
+      "sha256": "8c086e0280b84572d724b304a9da8ac8bad9d1c897dfc86752f1b3998a24756e",
+      "git_blob": "c11cefe96652b09b4b357cf1b849a63b0da88822",
+      "bytes": 74249
+    },
+    "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/ci-rebase/hosted-f70/root-checks/census-lint-delta.json": {
+      "sha256": "fe00e720b70baa724ca99f8520cd38f935ccc5b98b4496140ce21e7da93ee909",
+      "git_blob": "ad7695b24f572c4f4ec811cd2f9ff35eddf41b13",
+      "bytes": 369
+    },
+    "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/ci-rebase/hosted-f70/root-checks/census-proof.json": {
+      "sha256": "d267ceaa98fb43128285f96b9b84a9b108011bada78dc8522c32f4f301d982e8",
+      "git_blob": "16455b8a20b8c0303a144f9e6467226327418198",
+      "bytes": 285
+    },
+    "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/ci-rebase/hosted-f70/root-checks/census-ruff-baseline.json": {
+      "sha256": "4bd3067ae55d7271c1bd005befde034ff612873cfabd3996d6afcf61fe6fa72b",
+      "git_blob": "485285432a603bc492f0fea80f64d123e9dfe24a",
+      "bytes": 1358
+    },
+    "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/ci-rebase/hosted-f70/root-checks/census-ruff-current.json": {
+      "sha256": "1abd3bfa16edbf3b6120c17fb82154325fe82aac19fb8ac0cbbf06cc760f0248",
+      "git_blob": "ffc5361fbbf824f6f9e4044435ba515125e51492",
+      "bytes": 1460
+    },
+    "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/ci-rebase/hosted-f70/root-checks/ci-contracts-0.log.json": {
+      "sha256": "af855a90be2b91989f25fc97936d453b9b2142d8a391b5e23036e400d1b9ea1c",
+      "git_blob": "57e0642df2e324c7102880e4cdb5a9eca6aa413a",
+      "bytes": 1933
+    },
+    "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/ci-rebase/hosted-f70/root-checks/ci-contracts-commands-results.json": {
+      "sha256": "fc00b8b117fb964959199086ed7a25bf8c3fa74be66f2f47a30ac34f6ba07b4a",
+      "git_blob": "13ccbb515038384193baca4ddac898e1246ba6ee",
+      "bytes": 588
+    },
+    "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/ci-rebase/hosted-f70/root-checks/final-five-proof.json": {
+      "sha256": "f1fd3e3d2727cb1f041949f1b1b56fe7403d606cdc4ceff23605b057f12a5680",
+      "git_blob": "9f14e9205aee180a1db435e26e668e942a2db69d",
+      "bytes": 552
+    },
+    "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/ci-rebase/hosted-f70/root-checks/final-five.log.json": {
+      "sha256": "be746310da113bafaa62b130394fda830f822b0a7b490f1e839bb32f8d1c7e52",
+      "git_blob": "56beeae96fef79da76d0b1188151a70505202298",
+      "bytes": 2188
+    },
+    "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/ci-rebase/hosted-f70/root-checks/mixins-package-hostedf70.py": {
+      "sha256": "583be896355bb362427c391005555f4be542f749340dd980fa08416211f70042",
+      "git_blob": "a7276991b436496fd89f0a6e2d388d147aa305e7",
+      "bytes": 4236
+    },
+    "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/ci-rebase/hosted-f70/root-checks/perf-source-after.json.gz": {
+      "sha256": "235055f06d56f4903c4846e6165b2831e96b6d410d5fba1857bc98825b9fbc49",
+      "git_blob": "ea8e3256a2c4ea0141662eb5d783696755f54b35",
+      "bytes": 171408
+    },
+    "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/ci-rebase/hosted-f70/root-checks/perf-source-before.json.gz": {
+      "sha256": "6cba21eff5c7f5da0ecb4b3347e80feb9a0ae30e13fce190029bd0e0339fbafe",
+      "git_blob": "59a47e2d1ba4653f4a2ec8be344cf15e0c56c490",
+      "bytes": 171407
+    },
+    "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/ci-rebase/hosted-f70/root-checks/planned-commands.json": {
+      "sha256": "3bce86fcc4f2fb523ea7058d0d96afbd25483a7b062c13b2746ae2e5dd232ead",
+      "git_blob": "d66c9a6fa5b965d62e8baca26c882a4e2cbdfd16",
+      "bytes": 1338
+    },
+    "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/ci-rebase/hosted-f70/root-checks/preflights-0.log.json": {
+      "sha256": "93aacd96ec0246d0e94c5732d7f7f8eab04ac2b24b7bc28db1e444042faba962",
+      "git_blob": "f712576a0ba1eb7437a26ffd45e2aa8c299619ea",
+      "bytes": 368
+    },
+    "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/ci-rebase/hosted-f70/root-checks/preflights-1.log.json": {
+      "sha256": "76fc908b0796aa51fef08486c59ed22a921faeef6c9bc8907c654901dff22f36",
+      "git_blob": "13c090d26704f2516262eb7970ae9f2b8464b089",
+      "bytes": 245
+    },
+    "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/ci-rebase/hosted-f70/root-checks/preflights-2.log.json": {
+      "sha256": "ccb9279946fd928ae99756027535962248eb27aea6054db4dd0054ef05d44c90",
+      "git_blob": "a2e28f5a040518d18e1b453d4559f1c2b182ef72",
+      "bytes": 222
+    },
+    "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/ci-rebase/hosted-f70/root-checks/preflights-3.log.json": {
+      "sha256": "7ad2fa9f72357bd9a8efe45961da7d77f93322790cbca28a278288028ba5112c",
+      "git_blob": "4efdec5795f1f93c681199b341f4023d24cba4f3",
+      "bytes": 183
+    },
+    "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/ci-rebase/hosted-f70/root-checks/preflights-commands-results.json": {
+      "sha256": "743a606d9196892336bae35cb5e055c97d3f27145986023611ee920cc634ee45",
+      "git_blob": "9586447359d4594ac748d4edc63f9dffe285a89c",
+      "bytes": 1347
+    },
+    "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/ci-rebase/hosted-f70/root-checks/run-checks.py": {
+      "sha256": "d30cb916d1f9f9599fe2488fde2653da45155f070a73343297760696ade588db",
+      "git_blob": "9cfcd23411bdf111b8c2920e47f2728c4643c461",
+      "bytes": 702
+    },
+    "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/ci-rebase/hosted-f70/root-checks/run-final-five.py": {
+      "sha256": "dc3f1697c95ccf2297014e1336f9599412543cbd11c4dfb69b22be679c7b76ab",
+      "git_blob": "f2a7daaba301a8783e39584bbabdae78e144d368",
+      "bytes": 2225
+    },
+    "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/ci-rebase/hosted-f70/root-checks/static-0.log.json": {
+      "sha256": "d2315ed5239fd9269e9ffc143006d088b88bd6b936b80535ddc706a652a9d0c7",
+      "git_blob": "88b93b264c9f821d39c059822e62bf770fa9f359",
+      "bytes": 1318
+    },
+    "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/ci-rebase/hosted-f70/root-checks/static-commands-results.json": {
+      "sha256": "53402013f03eb9edf12db764ca885f90b54a18f2aa730bf25aa2303bf3b5e77f",
+      "git_blob": "b1729603160cce8b9c2c62b0b5b4141a8332de92",
+      "bytes": 534
+    },
+    "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/ci-rebase/hosted-f70/startup-results/mixins-perf-pr3346-landing-final-test_boot_worker_census-_boot_and_census.json": {
+      "sha256": "ca02faf784ce37e05cc58e0145ef196f83bb32a925482960336873deaeb65046",
+      "git_blob": "21bcf2a1ab74cfddb60187202aa38deb9816ba29",
+      "bytes": 5319
+    },
+    "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/ci-rebase/hosted-f70/startup-results/mixins-perf-pr3346-landing-final-test_screen_preimport_payload_budget-_run_census.json": {
+      "sha256": "b86ee81989fd1fc8656b118466aa6771b55c9d27dd4fa818395bc87f6a8a0b05",
+      "git_blob": "5a3a9fdfb7828d2d6339758e059236ec1b7e6d3f",
+      "bytes": 35127
+    },
+    "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/ci-rebase/hosted-f70/startup-results/mixins-perf-pr3346-landing-final-test_screen_preimport_payload_budget-warmup.json": {
+      "sha256": "08210bc96a9ec8f51a5b8a55feb3f7f2b3deab4bb6f3e493203733b7d6206c26",
+      "git_blob": "c05a6e478be85c9055ce3118b3fe1339aad42fe3",
+      "bytes": 24403
+    },
+    "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/ci-rebase/hosted-f70/startup-results/mixins-perf-pr3346-landing-final-test_ui_ready_module_census-_boot_and_census.json": {
+      "sha256": "3d37e781185d322dd492b622984fb27ca34fbd7cd56d8a16b73371eff50f7792",
+      "git_blob": "9ba067f31eade128177f57f809a2030833ca8957",
+      "bytes": 49847
+    },
+    "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/ci-rebase/hosted-f70/startup-results/probe.py": {
+      "sha256": "0e671fdc3e15b81d7d06a185610de510d45640aedfa8c195131656e4c0d4dd1c",
+      "git_blob": "79ea4da436cdda022f9bd15d836c50b0c1b2e522",
+      "bytes": 1590
+    },
+    "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/ci-rebase/hosted-f70/summary.md": {
+      "sha256": "279842865c48cda1b1fef7b0bd303d0659cf6ff9b2d0881b54b1674e1df7a7b1",
+      "git_blob": "f2d062bc63a727269aeaafad567fd404a77e448f",
+      "bytes": 6770
+    },
     "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/ci-rebase/investigation-context.json": {
       "sha256": "d1b312c59ffbd9dd33d4bb808fd5c4f167a5278c15b5ae620d4a2d828f5419b7",
       "git_blob": "3ed47fb2d77d927bc8b5cfd6663ad6519e1615f8",
@@ -6952,9 +7337,9 @@
       "bytes": 67218
     },
     "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/product-source-manifest.json": {
-      "sha256": "2e1ade6c5a62e483098e55d69a96895a98bdd36d3620575d0bf2e5c36ee9f48f",
-      "git_blob": "e7827a962e4d1af6357707c44176c3f6eb80b466",
-      "bytes": 76854
+      "sha256": "6765111f0dce095172c2b2a5eadcb15880213f316a4773667244c38449832aff",
+      "git_blob": "d62e42f2d05211aa89db25e62cfdfcebe2689400",
+      "bytes": 77330
     },
     "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/rereview-fixes/controls1.json": {
       "sha256": "2eeecd898fac3b39564ad5e05acfab1b45deaf7e2bd198a14d74c0de0f4f87ae",
@@ -8217,9 +8602,9 @@
       "bytes": 141048
     },
     "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/verification.md": {
-      "sha256": "e7fe01875a5ff75d1608b79e903e16d33a27df6821e70ce9e6270265c43c6290",
-      "git_blob": "a5666f23a23e7b0f083efaf62180c66ec4634ab9",
-      "bytes": 23979
+      "sha256": "f3aed519f86988fc0ebd4c859147474712755c2711b779474a1e1552a0ad9bff",
+      "git_blob": "3a6352b1bf2a9222ab141d3c8b576e465f8b16a2",
+      "bytes": 24093
     },
     "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/verify_evidence.py": {
       "sha256": "96a565a5f79515602adfaf0020ba416c8b460575884032c2c53af7b31b4e565a",

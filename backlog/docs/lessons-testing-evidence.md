@@ -24366,3 +24366,19 @@ also returns two rows and deliberately wrong header text after mounting, so
 readiness cannot hide the existing cardinality/content assertions. All four
 native UAT variants and the unchanged complete-receipt validator pass. See
 `Docs/superpowers/qa/2026-11-01-prompt-mix-ins/ci-rebase/hosted-4b1/summary.md`.
+
+PR3346's f70 UI19 failure finally exposed the earlier unexplained landing
+generation mismatch. A bounded native mount-boundary probe retained the original
+current snapshot-finish callback, invoked the original onboarding sync while the
+attached canvas had no children, and observed that same callback cleared by the
+shared failure path. The original readiness wait then failed at rendered0/state1
+with reconciliation still dirty. This demonstrates callback loss for that system
+event schedule; the hosted log corroborates the same missing-child failure but
+does not timestamp the injected ordering.
+
+Keep publication ownership with the landing canvas: if recomposition is already
+requested or active, adopt the newest state and use the existing recompose handoff.
+The pending-before-start window matters too: stored widget-set metadata can
+already describe new children while the DOM still contains the old set. Permanent
+tests cover both windows and exactly-once completion. Generic callback cleanup,
+route/generation fences and the original readiness deadline remain unchanged.

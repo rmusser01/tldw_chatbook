@@ -1,0 +1,70 @@
+{
+  "base": "2dcf038cb8be0af991f92c43b0c262f02471c51d",
+  "head": "f70eb635f5991d25b7cd5d32d789406d837be32b",
+  "all_owner_functions_unchanged": true,
+  "owners": [
+    {
+      "file": "tldw_chatbook/UI/Screens/library_screen.py",
+      "symbol": "LibraryScreen._sync_library_landing_lifecycle_presentation",
+      "same_ast": true,
+      "head_line": 22287,
+      "head_ast_sha256": "ba8c407964e20a36123a0b00d5c76a01841e96c44ff1e40b74646d0b52322b57"
+    },
+    {
+      "file": "tldw_chatbook/UI/Screens/library_screen.py",
+      "symbol": "LibraryScreen._reconcile_library_entry_state",
+      "same_ast": true,
+      "head_line": 13153,
+      "head_ast_sha256": "98fa6bd2779c6365dbc145b090e942407a10c627211d8c7f1522fff97091e5f2"
+    },
+    {
+      "file": "tldw_chatbook/UI/Screens/library_screen.py",
+      "symbol": "LibraryScreen._schedule_library_entry_reconcile",
+      "same_ast": true,
+      "head_line": 12389,
+      "head_ast_sha256": "2a495e181a336a112d850a944f231779110c2c24af8ea5cedc3fd58a2f21e944"
+    },
+    {
+      "file": "tldw_chatbook/UI/Screens/library_screen.py",
+      "symbol": "LibraryScreen._complete_library_entry_reconcile",
+      "same_ast": true,
+      "head_line": 12399,
+      "head_ast_sha256": "30645d9bcb25e13be5f025ba8f24554436c55900fd4ba6f72a81e1ba2e078213"
+    },
+    {
+      "file": "tldw_chatbook/UI/Screens/library_screen.py",
+      "symbol": "LibraryScreen._apply_local_source_snapshot",
+      "same_ast": true,
+      "head_line": 13519,
+      "head_ast_sha256": "f6fb8c0cb2b09a1e2ddfaea67060df95b36ecfca5796639ba569bd9ed60b2a31"
+    },
+    {
+      "file": "tldw_chatbook/UI/Library_Modules/canvas_sync.py",
+      "symbol": "_sync_library_canvas",
+      "same_ast": true,
+      "head_line": 661,
+      "head_ast_sha256": "fac2ff263ff1c52981bf2a63a580ddd62ebef0a8c07e898ba849a35b7b2f8bfc"
+    },
+    {
+      "file": "tldw_chatbook/Widgets/Library/library_entry_canvases.py",
+      "symbol": "LibraryLandingCanvas.sync_state",
+      "same_ast": true,
+      "head_line": 429,
+      "head_ast_sha256": "e89ca90c2124150f2986c8c46c57438c32da587ed240820572c929fd3a78b324"
+    },
+    {
+      "file": "tldw_chatbook/Widgets/Library/library_entry_canvases.py",
+      "symbol": "_RetainedSyncCallback._complete_targeted_sync",
+      "same_ast": true,
+      "head_line": 103,
+      "head_ast_sha256": "e83dad9bf92ef401b59e34155809729f06947ef9701095927d472c775e5319ad"
+    },
+    {
+      "file": "tldw_chatbook/Widgets/Library/library_canvas_sync.py",
+      "symbol": "PostRecomposeCallback.recompose",
+      "same_ast": true,
+      "head_line": 178,
+      "head_ast_sha256": "9c4213f9b943e0e2ec61b3168781aea42982eeba51c108b57fa141556a455585"
+    }
+  ]
+}

@@ -747,7 +747,8 @@ MINIMUM_FILES = 1318
 # PR3334 integration: append tag picker after sniff.
 # PR3346: preserve the reviewed 1,333-entry prefix and append two extraction controls.
 # PR3346: reader cases use their existing whole-file slot; append closed-owner coverage.
-MINIMUM_FILES = 1336
+# PR3346: append both native landing recomposition windows through one file.
+MINIMUM_FILES = 1337
 
 
 def read_census(path: Path) -> list[str]:

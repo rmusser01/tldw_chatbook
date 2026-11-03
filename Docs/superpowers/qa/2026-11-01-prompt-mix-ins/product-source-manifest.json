@@ -38,9 +38,9 @@
       "bytes": 14243
     },
     "Docs/Architecture/library-shell.md": {
-      "sha256": "30c3ede3d0e56a906d866955d8f71f7a426e0091d1d392f9649246cda0bd4569",
-      "git_blob": "b457202f912eba9dccfd7936a3d6111aff78039d",
-      "bytes": 16254
+      "sha256": "9294e9bd8d7b3fd95cd404fa736d507b511a6490695a9a6113d0ca5f2a7902ba",
+      "git_blob": "534bb22df5d051a13664e3df8131b53160015eee",
+      "bytes": 16736
     },
     "Docs/Architecture/llm-providers.md": {
       "sha256": "643777c2a63a3c7abf97f365b60cf0614f36a50b610d828e0a40e78d6d95d9e0",
@@ -587,6 +587,11 @@
       "git_blob": "5f696bb982f41e7c2a8a7ccc76bc2754930d8422",
       "bytes": 21323
     },
+    "Tests/UI/test_library_landing_recompose_publication.py": {
+      "sha256": "1df458ff1671866b57e7a1530170850d81d13805fc5f93215a0d6efb75d166a1",
+      "git_blob": "43010a1a41795f065f954dd7a4e129c2359d2b0c",
+      "bytes": 3325
+    },
     "Tests/UI/test_library_note_links_readiness_diagnostics.py": {
       "sha256": "546fe8e103474859902128bccca92e0d040d55b089a51385492a455b51a558b9",
       "git_blob": "690c48622c525011e81d702ad1058b5b1bb76e68",
@@ -693,9 +698,9 @@
       "bytes": 376813
     },
     "backlog/docs/lessons-testing-evidence.md": {
-      "sha256": "96d5e07d9d7d177d3824f80b88b9bb465f26b0010b31f5790fa09151c10ad79e",
-      "git_blob": "ad60e86d823797f8468a596d9ac730b8d233dab0",
-      "bytes": 1663569
+      "sha256": "94bef0d3cc2b01fd4e9180597914bc550b7b0c6628ee61149bb7dcae8c40e7c4",
+      "git_blob": "c5273c18e66328914e1ffbebdfb23028affc66b3",
+      "bytes": 1664650
     },
     "backlog/tasks/task-38534 - Design-prompt-mix-ins-for-Console-sends.md": {
       "sha256": "c3eb8b840aa0a1079fb2d108dc754cd0b18f6a9c4251c2a4a5c0bda1a37cd637",
@@ -748,9 +753,9 @@
       "bytes": 6141
     },
     "backlog/tasks/task-38544 - Qualify-the-integrated-prompt-mix-in-lifecycle-and-document-delivery.md": {
-      "sha256": "fb424361cb05311d55beb10635ae162bfb9817cc6d233bdafafa82c3c66c7cf5",
-      "git_blob": "8b4444eddef879e5f9d6602058341fc1ce1d2c07",
-      "bytes": 61393
+      "sha256": "0018ba1cbaffc7cc76af475dd01ca9602c4b40787909c93e77e981986cd10925",
+      "git_blob": "c6bbf9f612a896c405c1d333cc755416b13f56d6",
+      "bytes": 64177
     },
     "scripts/check_persistent_diagnostic_inventory.py": {
       "sha256": "f566be19b5c2cff9b3bd04725b32201ab254c359d4ea3346573a97224e4685ab",
@@ -763,9 +768,9 @@
       "bytes": 111666
     },
     "scripts/check_ui_pr_gate_census.py": {
-      "sha256": "8c086e0280b84572d724b304a9da8ac8bad9d1c897dfc86752f1b3998a24756e",
-      "git_blob": "c11cefe96652b09b4b357cf1b849a63b0da88822",
-      "bytes": 74249
+      "sha256": "b7c341300b76f672ef31b72d4e80e01bb4fc1d02b37919f87766a0dadebac480",
+      "git_blob": "64053c5b1fd7c09dd3a0459527c8eae85131deb2",
+      "bytes": 74326
     },
     "scripts/index_plan_pin_census.tsv": {
       "sha256": "d3ed18bf7bd7246b8e92c7ab95ed159b5151668294f1fb58fd99c99b90be9c16",
@@ -778,9 +783,9 @@
       "bytes": 42386
     },
     "scripts/ui_pr_gate_census.txt": {
-      "sha256": "58561a8e9d9e369e41fb7c74a240da87fc2b4ac8d3c349a4a39b48f9adacb8d3",
-      "git_blob": "d0c1b54498a06dd139b280fff6711089f667c9a1",
-      "bytes": 182027
+      "sha256": "d3fc6e8dfbb6764738580a76fa0338279965f0ce4dae9ea96b4855055cad3201",
+      "git_blob": "b21b0cc62bbf886db34823ed4534cbbdf2905e40",
+      "bytes": 182162
     },
     "tldw_chatbook/Agents/agent_service.py": {
       "sha256": "c5e1afbf7c48dd5f7be1fb40183a5d8bba16b9c886d60ccc6bfc8691843da616",
@@ -1476,6 +1481,11 @@
       "sha256": "a43566021fd66c5c638e93631d9ed2513dbd69806d03415090ec06b6ded04c57",
       "git_blob": "e148635ae744d1c38c63d15124bd02702db6a359",
       "bytes": 18966
+    },
+    "tldw_chatbook/Widgets/Library/library_entry_canvases.py": {
+      "sha256": "01dbbc0878d70bfb2ea6eac16c255c8a4f6176461ae2349a4758e6d015a66d35",
+      "git_blob": "52608921c431cf38f12146bdf9feca05f65d3342",
+      "bytes": 23556
     },
     "tldw_chatbook/Widgets/Library/library_prompts_canvas.py": {
       "sha256": "e03ea4457e4607ef787b49ba464566dffb4ba204b7f63a686f2db2bfaae31f9c",

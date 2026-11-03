@@ -23,6 +23,13 @@ This document describes the Library destination: the rail/canvas navigation mode
 4. Leaving side-effects: media browse invalidates unless the target is media; collections capture unmounts unless the target is collections. When mounted, context application runs as a worker that first flushes pending editor saves — a save-guard refusal aborts the switch and keeps the current route.
 5. Row selection → `build_library_shell_state` → one canvas child (conversations / media / notes / prompts / skills / export / search / ingest / landing). **Collections is the exception** — it changes whole-route topology (rail scopes + Items + Work panes) and goes through the central recompose path instead of the one-child seam.
 
+`LibraryLandingCanvas.sync_state` adopts the latest display state before deciding
+how to publish it. Pending recomposition or the native recompose lock uses the
+existing recompose path, preserving the queued snapshot completion while children
+are absent or still describe the older widget set. Settled canvases retain the
+in-place patch path. This keeps the current generation/route completion fence
+intact when onboarding refreshes the retained landing during snapshot rendering.
+
 ## Notes-sync preparation
 
 Library construction reuses an already-built Notes-sync owner without invoking
