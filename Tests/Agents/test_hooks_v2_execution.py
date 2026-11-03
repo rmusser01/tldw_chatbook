@@ -265,6 +265,69 @@ async def test_sealed_engine_authorized_teardown_and_other_runtime():
     await other.close()
 
 
+def test_notify_teardown_survives_owner_loop_closing_mid_reservation():
+    # TASK-38610: the budget reserve above the submission only checks the
+    # owner loop while it runs, so a close racing _notify reaches the bare
+    # call_soon_threadsafe. notify_teardown must return instead of raising
+    # (lifecycle.seal calls it uncaught), and the reservations the half
+    # admission made must roll back rather than leak into cleanup_pending.
+    import threading
+
+    from tldw_chatbook.Agents.hooks_v2.budgets import HookBudgetOwner
+    from tldw_chatbook.Agents.hooks_v2.engine import HookEngine
+
+    class MidCloseOwner(HookBudgetOwner):
+        """Close the owner loop between ticket reservation and submission."""
+
+        def __init__(self):
+            super().__init__()
+            self.closed = threading.Event()
+
+        def reserve(self, runtime_id, observation):
+            ticket = super().reserve(runtime_id, observation)
+            self.loop.call_soon_threadsafe(self.loop.stop)
+            assert self.closed.wait(5), "worker loop failed to close"
+            return ticket
+
+    holder = {}
+    worker_ready = threading.Event()
+
+    def run_owner_loop():
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+
+        async def build():
+            owner = MidCloseOwner()
+            holder["engine"] = HookEngine(
+                (command(name="SessionEnd", id="end"),),
+                lambda *_: True,
+                owner,
+            )
+            holder["owner"] = owner
+
+        loop.run_until_complete(build())
+        worker_ready.set()
+        loop.run_forever()
+        loop.close()
+        holder["owner"].closed.set()
+        asyncio.set_event_loop(None)
+
+    worker = threading.Thread(target=run_owner_loop)
+    worker.start()
+    try:
+        assert worker_ready.wait(5), "engine construction stalled"
+        engine = holder["engine"]
+        owner = holder["owner"]
+        engine.begin_close()
+        assert engine.notify_teardown(event("SessionEnd")) is False
+        assert engine.notification_omissions == 1
+        assert not engine._deliveries
+        assert owner.snapshot()["observations"] == 0
+    finally:
+        worker.join(5)
+    assert not worker.is_alive()
+
+
 @pytest.mark.asyncio
 async def test_configuration_refusal_is_scoped_and_never_activates_batch():
     from tldw_chatbook.Agents.hooks_v2.budgets import HookBudgetOwner

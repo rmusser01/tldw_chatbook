@@ -904,8 +904,31 @@ class HookEngine:
                     )
                     d.task.add_done_callback(self._consume_notification)
 
-                self.loop.call_soon_threadsafe(submit)
-                admitted = True
+                # Mirror of the begin_close guard: a teardown notification
+                # can reach the engine after the owner loop has closed (the
+                # budget reserve above only checks the loop while it is
+                # running, so a close racing this submission slips past it).
+                # notify()/notify_teardown() must never raise out of that
+                # race -- lifecycle.seal() calls notify_teardown uncaught --
+                # so refuse the admission, count the omission, and roll back
+                # the reservations this iteration already made (ticket and
+                # pending-delivery bookkeeping) instead of leaking them into
+                # cleanup_pending forever.
+                submitted = False
+                if not self.loop.is_closed():
+                    try:
+                        self.loop.call_soon_threadsafe(submit)
+                        submitted = True
+                    except RuntimeError:
+                        # Closed between the guard and the submission -- the
+                        # same window begin_close accepts.
+                        submitted = False
+                if submitted:
+                    admitted = True
+                else:
+                    self.notification_omissions += 1
+                    delivery.ticket.release()
+                    self._deliveries.discard(delivery)
         return admitted
 
     def _consume_notification(self, task) -> None:
