@@ -44,6 +44,10 @@ on:
       - 'Tests/UI/console_controller_stubs.py'
       - 'Tests/UI/css_cache.py'
       - 'Tests/Utils/__init__.py'
+      # The plugin fixture test_app_import_weight.py copies, and the second
+      # in-tree package the app imports (TASK-36529 review).
+      - 'Tests/Plugins/fixtures/native/**'
+      - 'packages/tldw_profile_core/src/**'
       - 'pyproject.toml'
       - '.github/workflows/perf-guard.yml'
   push:
@@ -76,6 +80,10 @@ on:
       - 'Tests/UI/console_controller_stubs.py'
       - 'Tests/UI/css_cache.py'
       - 'Tests/Utils/__init__.py'
+      # The plugin fixture test_app_import_weight.py copies, and the second
+      # in-tree package the app imports (TASK-36529 review).
+      - 'Tests/Plugins/fixtures/native/**'
+      - 'packages/tldw_profile_core/src/**'
       - 'pyproject.toml'
       - '.github/workflows/perf-guard.yml'
   # For manual runs; the merge queue approves the held pull_request run instead (ADR-218 amendment 2026-10-06).
@@ -168,7 +176,7 @@ jobs:
 
       # TASK-36390: typing must not snapshot the transcript (TASK-24300) or
       # cost more in a long chat. Both are call counts, not wall clock.
-      # TASK-36529 added the last two (about 40 s): no full sync or history
+      # TASK-36529 added the last two (45-55 s on CI): no full sync or history
       # rows in long-chat typing, and no provider re-derivation per key.
       - name: Run Console keystroke work census
         run: |
