@@ -5,7 +5,7 @@ status: Done
 assignee:
   - '@claude'
 created_date: 2026-11-03 05:51
-updated_date: 2026-11-03 08:55
+updated_date: 2026-11-03 09:12
 labels:
 - follow-up
 - console
@@ -58,7 +58,7 @@ If the race is real, a user who opens the Inspector right after a first send und
 - **Ceiling.** The widget's pump can drop its release. If any callback on that pump raises, including the recompose, `MessagePump._flush_next_callbacks` reports the error and discards the callbacks behind it, the release among them, and TldwCli keeps the app alive after a widget pump's error (TASK-32533). A pump whose mount raised never runs at all. In either case the 1 s net ends the hold. The worst case is a 1 s pause in painting, or, if a pump is busy past 1 s, one frame of the held rows; never a freeze. Round 2's first version had no net, and the reviewer's probe (`raise` mode) left the batch open for good, with no paint even after a forced refresh.
 - **The first fix (60e8db5578).** It called `app.delay_update()` (50 ms) in each widget. An earlier version of this note said the opening was not slower because "the recompose under load already takes 0.15-1.5 s". That was wrong: the 0.15-1.5 s was the full app's time from the opening to its first frame, while the recompose itself runs about 10 ms.
 - **Review round 1 found that the 50 ms hold made `test_run_inspector_holds_a_rebuild_for_the_rails_opening` flaky** (3 of 32). While a batch is open, `Screen._on_idle` runs `call_after_refresh` callbacks before any layout, and the helper sampled after three fixed pauses.
-- **The requested smallest-positive delay would have frozen the app.** `set_timer` skips a one-shot timer's only tick when its first two clock reads straddle the delay. Probe results: `delay_update(1e-6)` and `delay_update(1e-9)` left `_batch_count` at 1 for good; 1e-4 through 0.05 ended normally; 0.05 with a patched 60 ms stall between those reads stayed at 1. That is why the hold is now ended by the pump, not by a timer.
+- **The requested smallest-positive delay would have frozen the app.** `set_timer` skips a one-shot timer's only tick when its first two clock reads straddle the delay. Probe results: `delay_update(1e-6)` and `delay_update(1e-9)` left `_batch_count` at 1 for good; 1e-4 through 0.05 ended normally; 0.05 with a patched 60 ms stall between those reads stayed at 1. That is why the shipped hold ends on the widget's pump as its fast path, with an asyncio `call_later` net that releases it once. Only Textual's `set_timer`/`delay_update` must not end it.
 
 **AC#1, reproduction (dev 18482c1cf7, `-n 4`).** The instrumentation was temporary and is reverted. It recorded the frame facts, the held flags, the batch count and the paint's caller.
 - Natural runs did not reproduce it: 130 frame checks, 0 failures. These were 1 single run, 24 + 90 repeats of the node (load 24-46), and 15 in 16 whole-file repeats (load 27-37).
@@ -75,6 +75,11 @@ If the race is real, a user who opens the Inspector right after a first send und
   - The frame test with the helper call removed: red 16 of 16.
   - The deferral file, 16 whole-file repeats at `-n 4`, load about 16: 144 of 144 passed.
   - The parity file, 4 whole-file repeats at load 16-19: 12 of 12 passed.
+- Review round 3, the once-only guard:
+  - `test_the_held_rebuild_lands_before_the_openings_first_paint` now also waits 1.2 s, past the net.
+  - It then asserts the batch count is 0 and that a frame paints after `screen.refresh()`.
+  - With `release`'s `ended` guard removed, both params failed (`assert -1 == 0`): the pump and the net each ended the batch. With the guard, both passed.
+  - The deferral file, 12 whole-file repeats at `-n 4`, load about 11: 108 of 108 passed. The parity file, 4 whole-file repeats at load 11-19: 12 of 12 passed. Preflight passed.
   - `Tests/Architecture` size ratchets 205/205. Preflight passed.
 - New head, with the pump-ended hold:
   - The new test, with the cascade's two hold lines removed: red 16 of 16. With them: green 16 of 16.
@@ -94,7 +99,7 @@ If the race is real, a user who opens the Inspector right after a first send und
 
 **Not changed.** `Tests/UI/test_console_collapsed_inspector_send_layout.py` is untouched (PR #3358 edits it). No User Guide page describes this one-frame glitch.
 
-**Lesson:** `lessons-textual.md`, on `Timer.pause()` not stopping an already woken screen tick. It also covers why the hold must not end on a timer, and why a test must not sample after fixed pauses while a batch may be open.
+**Lesson:** `lessons-textual.md`, on `Timer.pause()` not stopping an already woken screen tick. It also covers the shipped hold: the pump fast path plus a once-only asyncio `call_later` net. It explains why only Textual's `set_timer`/`delay_update` must not end it, and why a test must not sample after fixed pauses while a batch may be open.
 
 **Files:** `UI/Screens/chat_screen.py` (the cascade; its size row was raised 24590 -> 24596, then to 24613 for the end-once release and the 1 s net, each with a dated comment in `Tests/Architecture/test_screen_size_ratchet.py`), `Widgets/Console/console_run_inspector.py`, `Widgets/Console/console_inspector_section.py`, `Tests/UI/test_console_inspector_rail_deferral.py`, `backlog/docs/lessons-textual.md`.
 <!-- SECTION:NOTES:END -->
