@@ -15,7 +15,16 @@ from functools import cache
 from dataclasses import dataclass, field, replace
 from enum import Enum
 from types import MappingProxyType
-from typing import TYPE_CHECKING, Any, Literal, Self, TypeAlias
+from pathlib import Path
+from typing import (
+    TYPE_CHECKING,
+    Any,
+    Literal,
+    Protocol,
+    Self,
+    TypeAlias,
+    runtime_checkable,
+)
 
 from pydantic import (
     BaseModel,
@@ -48,6 +57,23 @@ class WorkOrigin(Enum):
 
     MANUAL = "manual"
     AUTOMATIC = "automatic"
+
+
+@dataclass(frozen=True, slots=True)
+class ToolPathTarget:
+    """One provider-validated path relevant to instruction discovery."""
+
+    path: Path | None
+    kind: Literal["exact", "directory", "repository", "outside"]
+
+
+@runtime_checkable
+class PathAwareToolProvider(Protocol):
+    """Optional structural path mapping implemented by local file providers."""
+
+    def path_targets(
+        self, tool_id: str, args: Mapping[str, Any]
+    ) -> tuple[ToolPathTarget, ...]: ...
 
 
 RUN_RUNNING = "running"

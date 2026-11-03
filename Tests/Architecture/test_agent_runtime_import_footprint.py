@@ -56,6 +56,39 @@ def test_agent_runtime_import_footprint_only_shrinks():
     )
 
 
+RUNTIME_FORBIDDEN = (
+    "tldw_chatbook.DB", "tldw_chatbook.Chat", "tldw_chatbook.UI", "tldw_chatbook.config",
+    "textual", "httpx", "sqlite3",
+)
+
+
+def test_agent_runtime_import_loads_no_ui_db_http_or_config():
+    loaded = _probe(
+        "import json, sys\n"
+        "import tldw_chatbook.Agents.agent_runtime\n"
+        "print('LOADED=' + json.dumps(sorted(sys.modules)))\n",
+        "LOADED=",
+    )
+    forbidden = sorted(
+        m for m in loaded
+        if any(m == p or m.startswith(p + ".") for p in RUNTIME_FORBIDDEN)
+    )
+    assert not forbidden, f"agent_runtime import loads (TASK-36944.10): {forbidden[:20]}"
+
+
+def test_old_ephemeral_origin_and_tool_catalog_paths_still_resolve():
+    same = _probe(
+        "import json\n"
+        "from tldw_chatbook.Chat.console_project_instructions import EPHEMERAL_ORIGIN_KEY as a\n"
+        "from tldw_chatbook.Provider_Contract.provider_continuation import EPHEMERAL_ORIGIN_KEY as b\n"
+        "from tldw_chatbook.Agents.tool_catalog import PathAwareToolProvider as c, ToolPathTarget as d\n"
+        "from tldw_chatbook.Agents import agent_models as m\n"
+        "print('SAME=' + json.dumps(a == b and c is m.PathAwareToolProvider and d is m.ToolPathTarget))\n",
+        "SAME=",
+    )
+    assert same is True
+
+
 # The package's modules, and the old Chat module each one used to be (TASK-36944.1).
 PROVIDER_CONTRACT_MOVES = {
     "tldw_chatbook.Provider_Contract": "tldw_chatbook.Chat.Chat_Deps",

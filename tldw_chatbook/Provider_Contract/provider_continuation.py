@@ -76,6 +76,9 @@ ContinuationProtocol = Literal["chat_completions", "responses"]
 ContinuationState = Literal["active", "complete"]
 ContinuationCallState = Literal["pending", "executing", "completed", "failed"]
 
+# Row key marking ephemeral (non-persisted) project-instruction rows; never sent to providers.
+EPHEMERAL_ORIGIN_KEY = "_chatbook_ephemeral_origin"
+
 _MAX_PAYLOAD_BYTES = 8 * 1024 * 1024
 _MAX_ROUNDS = 128
 _MAX_CALLS = 128

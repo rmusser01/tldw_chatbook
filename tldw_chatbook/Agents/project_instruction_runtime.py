@@ -10,11 +10,15 @@ from copy import deepcopy
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path, PurePosixPath, PureWindowsPath
-from typing import Any, Literal
+from typing import TYPE_CHECKING, Any, Literal
 
-from tldw_chatbook.Chat.console_project_instructions import EPHEMERAL_ORIGIN_KEY
 
-from .agent_models import ToolCall
+from tldw_chatbook.Provider_Contract.provider_continuation import EPHEMERAL_ORIGIN_KEY
+
+from .agent_models import (
+    PathAwareToolProvider,
+    ToolCall,
+)
 from .project_instruction_resolver import (
     InstructionPromotionSnapshot,
     InstructionPromotionSnapshotError,
@@ -37,7 +41,8 @@ __all__ = [
     "build_project_instruction_deferral_rows",
     "path_is_excluded",
 ]
-from .tool_catalog import PathAwareToolProvider, ToolCatalogRegistry
+if TYPE_CHECKING:
+    from .tool_catalog import ToolCatalogRegistry
 
 PROJECT_INSTRUCTION_ROW_KEY = "_chatbook_project_instruction_row_key"
 _PROJECT_INSTRUCTION_ORIGIN = "project_instructions"

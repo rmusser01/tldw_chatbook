@@ -43,7 +43,9 @@ from tldw_chatbook.Tools.tool_executor import CalculatorTool, DateTimeTool
 
 from .library_rag_tool_provider import LibraryRagToolProvider, RAG_TOOL_NAME
 from .library_tool_provider import BuiltinLibraryAuthority, LibraryToolProvider
-from .agent_models import (
+from .agent_models import (  # noqa: F401  (PathAwareToolProvider, ToolPathTarget re-exported)
+    PathAwareToolProvider,
+    ToolPathTarget,
     AgentDefinition,
     MESSAGE_TOOL_NAMES,
     CHECK_AGENTS_TOOL_NAME,
@@ -1084,23 +1086,6 @@ class ToolRecordProjectionProvider(Protocol):
         call: ToolCall,
         result: ToolResult | None,
     ) -> ToolRecordProjection: ...
-
-
-@dataclass(frozen=True, slots=True)
-class ToolPathTarget:
-    """One provider-validated path relevant to instruction discovery."""
-
-    path: Path | None
-    kind: Literal["exact", "directory", "repository", "outside"]
-
-
-@runtime_checkable
-class PathAwareToolProvider(Protocol):
-    """Optional structural path mapping implemented by local file providers."""
-
-    def path_targets(
-        self, tool_id: str, args: Mapping[str, Any]
-    ) -> tuple[ToolPathTarget, ...]: ...
 
 
 @dataclass(frozen=True, slots=True)
