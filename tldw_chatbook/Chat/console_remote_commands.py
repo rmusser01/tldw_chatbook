@@ -53,7 +53,10 @@ class ConsoleRemoteCommands:
         _validate_identifier(command_id, "command ID")
         _validate_identifier(workspace_id, "workspace ID")
         if workspace_id != CONSOLE_GLOBAL_WORKSPACE_ID:
-            registry = getattr(self.runtime.app, "workspace_registry_service", None)
+            try:
+                registry = self.runtime.app.workspace_registry_service
+            except AttributeError:
+                registry = None
             if registry is None or registry.get_workspace(workspace_id) is None:
                 raise ValueError("Unknown workspace.")
         controller = _ensure_launch_runtime(self.runtime.app)

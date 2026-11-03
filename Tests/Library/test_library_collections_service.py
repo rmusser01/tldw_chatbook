@@ -719,3 +719,34 @@ def test_get_library_collection_members_expose_no_content_fields(
         "title",
         "title_truncated",
     }
+
+
+@pytest.mark.parametrize(
+    ("export_name", "module_name"),
+    [
+        (
+            "LibraryCollectionRecord",
+            "tldw_chatbook.Library.library_collections_service",
+        ),
+        (
+            "LibraryCollectionsService",
+            "tldw_chatbook.Library.library_collections_service",
+        ),
+        (
+            "LocalLibraryCollectionsService",
+            "tldw_chatbook.Library.library_collections_service",
+        ),
+        ("LocalLibraryToolService", "tldw_chatbook.Library.local_library_tool_service"),
+    ],
+)
+def test_library_package_service_exports_keep_canonical_identity(
+    export_name: str, module_name: str
+) -> None:
+    from importlib import import_module
+
+    import tldw_chatbook.Library as library
+
+    canonical = getattr(import_module(module_name), export_name)
+    assert export_name in library.__all__
+    assert export_name in dir(library)
+    assert getattr(library, export_name) is canonical

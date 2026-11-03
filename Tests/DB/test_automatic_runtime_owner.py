@@ -109,6 +109,14 @@ def test_v17_to_v18_migration_preserves_history_and_does_not_recover(
     context = context_for(db)
     assert db.automatic_work.complete_wake("attempt", owner_id="owner")
     with db.transaction() as conn:
+        # Remove only empty v26/v27 additions before reconstructing older storage.
+        for table in (
+            "console_command_receipts",
+            "mobile_consolidation_batches",
+            "mobile_import_authority_holds",
+        ):
+            assert conn.execute(f"SELECT count(*) FROM {table}").fetchone()[0] == 0
+            conn.execute(f"DROP TABLE {table}")
         conn.execute("DROP TABLE agent_worktrees")
         conn.execute("ALTER TABLE agent_definitions DROP COLUMN max_wall_seconds")
         conn.execute("DROP TABLE IF EXISTS automatic_work_runtime_owner")

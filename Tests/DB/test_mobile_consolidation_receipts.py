@@ -354,3 +354,270 @@ def test_runs_owner_and_passive_component_share_complete_native_snapshot(
                 db.list_agent_definitions(enabled_only=True)
     finally:
         db.close()
+
+
+def test_enabled_roster_ignores_borrowed_uncommitted_authority_and_row_edits(tmp_path):
+    db = owned_agent_runs_db(tmp_path / "runs.db")
+    try:
+        imported = db.create_agent_definition(
+            AgentDefinition(name="imported", instructions="Imported")
+        )
+        current = db.create_agent_definition(
+            AgentDefinition(name="current", instructions="Committed")
+        )
+        run = db.create_run(conversation_id="c", agent_kind="primary")
+        _install(db, (_identity("old", imported, "agent_definition"),))
+        with db.transaction() as connection:
+            db.hold_imported_authority(connection, "operation", [("run", run)])
+        with db.connection() as borrowed:
+            borrowed.execute("BEGIN IMMEDIATE")
+            try:
+                borrowed.execute("DELETE FROM mobile_consolidation_batches")
+                borrowed.execute("DELETE FROM mobile_import_authority_holds")
+                borrowed.execute(
+                    "UPDATE agent_definitions SET instructions='Uncommitted' WHERE id=?",
+                    (current,),
+                )
+                changes = borrowed.total_changes
+                rows = db.list_agent_definitions(enabled_only=True)
+                assert [row["id"] for row in rows] == [current]
+                assert rows[0]["instructions"] == "Committed"
+                assert db._thread_local.conn is borrowed and borrowed.in_transaction
+                assert borrowed.total_changes == changes
+                assert (
+                    borrowed.execute(
+                        "SELECT count(*) FROM mobile_consolidation_batches"
+                    ).fetchone()[0]
+                    == 0
+                )
+                assert (
+                    borrowed.execute(
+                        "SELECT count(*) FROM mobile_import_authority_holds"
+                    ).fetchone()[0]
+                    == 0
+                )
+                assert (
+                    borrowed.execute(
+                        "SELECT instructions FROM agent_definitions WHERE id=?",
+                        (current,),
+                    ).fetchone()[0]
+                    == "Uncommitted"
+                )
+            finally:
+                borrowed.rollback()
+        assert not db.imported_authority_allowed("run", run)
+        assert [row["id"] for row in db.list_agent_definitions(enabled_only=True)] == [
+            current
+        ]
+    finally:
+        db.close()
+
+
+@pytest.mark.parametrize("failure", ["receipt", "reader_close"])
+def test_borrowed_roster_retires_its_exact_reader_or_refuses(
+    tmp_path, monkeypatch, failure
+):
+    import sqlite3
+
+    from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
+
+    db = owned_agent_runs_db(tmp_path / "runs.db")
+    opened = []
+    original_open = AgentRunsDB.open_read_only.__func__
+    real_close = AgentRunsDB.close
+
+    def observe(cls, path):
+        reader = original_open(cls, path)
+        opened.append((reader, reader._thread_local.conn))
+        assert reader._read_only
+        assert reader._thread_local.conn.execute("PRAGMA query_only").fetchone()[0] == 1
+        if failure == "reader_close":
+            monkeypatch.setattr(reader, "close", lambda: None)
+        return reader
+
+    monkeypatch.setattr(AgentRunsDB, "open_read_only", classmethod(observe))
+    try:
+        definition = db.create_agent_definition(
+            AgentDefinition(name="imported", instructions="Imported")
+        )
+        _install(db, (_identity("old", definition, "agent_definition"),))
+        if failure == "receipt":
+            with db.transaction() as connection:
+                connection.execute(
+                    "UPDATE mobile_consolidation_batches SET mapping_json='{}' WHERE batch_key='runs'"
+                )
+        with db.connection() as borrowed:
+            borrowed.execute("BEGIN")
+            try:
+                changes = borrowed.total_changes
+                with pytest.raises(
+                    ValueError,
+                    match="reader_not_retired"
+                    if failure == "reader_close"
+                    else "receipt",
+                ):
+                    db.list_agent_definitions(enabled_only=True)
+                assert borrowed.in_transaction and db._thread_local.conn is borrowed
+                assert borrowed.total_changes == changes
+                assert borrowed.execute("SELECT 1").fetchone()[0] == 1
+                assert len(opened) == 1
+                reader, connection = opened[0]
+                assert connection is not borrowed
+                if failure == "reader_close":
+                    assert connection.execute("SELECT 1").fetchone()[0] == 1
+                    real_close(reader)
+                with pytest.raises(sqlite3.ProgrammingError, match="closed database"):
+                    connection.execute("SELECT 1")
+            finally:
+                borrowed.rollback()
+    finally:
+        for reader, _ in opened:
+            real_close(reader)
+        db.close()
+
+
+@pytest.mark.parametrize("mode", ["memory", "read_only", "subclass"])
+def test_enabled_roster_preserves_unqualified_borrowed_snapshot_refusal(tmp_path, mode):
+    from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
+
+    class DerivedAgentRunsDB(AgentRunsDB):
+        pass
+
+    writer = (
+        AgentRunsDB(":memory:")
+        if mode == "memory"
+        else owned_agent_runs_db(tmp_path / "runs.db")
+    )
+    reader = None
+    try:
+        imported = writer.create_agent_definition(
+            AgentDefinition(name="imported", instructions="Imported")
+        )
+        current = writer.create_agent_definition(
+            AgentDefinition(name="current", instructions="Current")
+        )
+        _install(writer, (_identity("old", imported, "agent_definition"),))
+        if mode == "subclass":
+            writer.close()
+            reader = owned_agent_runs_db(
+                writer.db_path, _db_class=DerivedAgentRunsDB, reconcile_on_init=False
+            )
+        elif mode == "read_only":
+            reader = AgentRunsDB.open_read_only(writer.db_path)
+        else:
+            reader = writer
+        assert [
+            row["id"] for row in reader.list_agent_definitions(enabled_only=True)
+        ] == [current]
+        with reader.connection() as borrowed:
+            borrowed.execute("BEGIN")
+            try:
+                with pytest.raises(ValueError, match="committed_snapshot_required"):
+                    reader.list_agent_definitions(enabled_only=True)
+                assert borrowed.in_transaction and reader._thread_local.conn is borrowed
+                assert borrowed.execute("SELECT 1").fetchone()[0] == 1
+            finally:
+                borrowed.rollback()
+    finally:
+        if reader is not None and reader is not writer:
+            reader.close()
+        writer.close()
+
+
+def test_read_only_roster_constructor_error_closes_actual_connection(
+    tmp_path, monkeypatch
+):
+    import sqlite3
+
+    from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
+
+    writer = owned_agent_runs_db(tmp_path / "runs.db")
+    configure = AgentRunsDB._configure_connection
+    opened = []
+
+    def deny_select(reader, connection):
+        connection = configure(reader, connection)
+        if reader._read_only:
+            opened.append((reader, connection))
+            connection.set_authorizer(
+                lambda action, *_: (
+                    sqlite3.SQLITE_DENY
+                    if action == sqlite3.SQLITE_SELECT
+                    else sqlite3.SQLITE_OK
+                )
+            )
+        return connection
+
+    monkeypatch.setattr(AgentRunsDB, "_configure_connection", deny_select)
+    try:
+        with pytest.raises(sqlite3.DatabaseError):
+            AgentRunsDB.open_read_only(writer.db_path)
+        assert len(opened) == 1
+        with pytest.raises(sqlite3.ProgrammingError, match="closed database"):
+            opened[0][1].execute("SELECT 1")
+    finally:
+        for reader, _ in opened:
+            reader.close()
+        writer.close()
+
+
+@pytest.mark.parametrize("phase", ["codec", "after_reader_close"])
+def test_borrowed_roster_rechecks_selected_native_owner_before_publication(
+    tmp_path, monkeypatch, phase
+):
+    import sqlite3
+
+    from tldw_chatbook.Backup_Recovery.bootstrap import RecoveryRequired
+    from tldw_chatbook.Chat.console_execution_owner import ConsoleExecutionUnavailable
+    from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
+
+    db = owned_agent_runs_db(tmp_path / "runs.db")
+    original = _codec()._imported_definition_ids
+    real_close = AgentRunsDB.close
+    path = db.db_path
+    reached = []
+    advertised = []
+
+    def change_selection(connection, budget):
+        result = original(connection, budget)
+        reached.append("codec")
+        db.db_path = tmp_path / "another.db"
+        return result
+
+    def close_then_change_selection(reader):
+        connection = reader._thread_local.conn
+        real_close(reader)
+        if reader is not db and reader._read_only:
+            with pytest.raises(sqlite3.ProgrammingError, match="closed database"):
+                connection.execute("SELECT 1")
+            reached.append("after_reader_close")
+            db.db_path = tmp_path / "another.db"
+
+    if phase == "codec":
+        monkeypatch.setattr(_codec(), "_imported_definition_ids", change_selection)
+    else:
+        monkeypatch.setattr(AgentRunsDB, "close", close_then_change_selection)
+    error_type = RecoveryRequired if phase == "codec" else ConsoleExecutionUnavailable
+    reason = (
+        "operation_path_outside_scope"
+        if phase == "codec"
+        else "execution_resource_changed"
+    )
+    try:
+        with db.connection() as borrowed:
+            borrowed.execute("BEGIN")
+            changes = borrowed.total_changes
+            try:
+                with pytest.raises(error_type, match=f"^{reason}$"):
+                    advertised.extend(db.list_agent_definitions(enabled_only=True))
+            finally:
+                db.db_path = path
+            assert reached == [phase]
+            assert advertised == []
+            assert borrowed.in_transaction and db._thread_local.conn is borrowed
+            assert borrowed.total_changes == changes
+            assert borrowed.execute("SELECT 1").fetchone()[0] == 1
+            borrowed.rollback()
+    finally:
+        db.db_path = path
+        db.close()

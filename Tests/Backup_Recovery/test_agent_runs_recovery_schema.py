@@ -319,12 +319,12 @@ def test_native_receipt_migration_rolls_back_table_before_version_stamp(
     from tldw_chatbook.DB import console_command_receipts
 
     path = tmp_path / "interrupted-v25.db"
-    schema = next(sql for version, sql in _AGENT_RUNS_SCHEMA if version == 24)
+    schema = next(sql for version, sql in _AGENT_RUNS_SCHEMA if version == 25)
     with closing(sqlite3.connect(path)) as connection:
         for sql in sorted(schema, key=lambda sql: not sql.startswith("CREATE TABLE")):
             if not sql.startswith("CREATE TABLE sqlite_sequence"):
                 connection.execute(sql)
-        connection.execute("INSERT INTO schema_version VALUES (24)")
+        connection.execute("INSERT INTO schema_version VALUES (25)")
         connection.commit()
     path.chmod(0o600)
     monkeypatch.setattr(
@@ -340,7 +340,7 @@ def test_native_receipt_migration_rolls_back_table_before_version_stamp(
     with closing(sqlite3.connect(path)) as connection:
         assert connection.execute(
             "SELECT MAX(version) FROM schema_version"
-        ).fetchone() == (24,)
+        ).fetchone() == (25,)
         assert (
             connection.execute(
                 "SELECT name FROM sqlite_master WHERE name='console_command_receipts'"

@@ -602,9 +602,13 @@ def _notes_sync_boot_start_evidence(app: Any) -> bool:
     if legacy_sync_directory_configured(app.app_config):
         return True
     state_path = get_notes_sync_state_db_path()
-    return _notes_sync_state_db_has_configured_roots(
-        state_path
-    ) or _notes_sync_state_has_imports(state_path, getattr(app, "chachanotes_db", None))
+    if _notes_sync_state_db_has_configured_roots(state_path):
+        return True
+    try:
+        core = app.chachanotes_db
+    except AttributeError:
+        core = None
+    return _notes_sync_state_has_imports(state_path, core)
 
 
 def _wire_notes_sync_services(app: Any) -> None:

@@ -766,10 +766,10 @@ async def test_ui_ready_before_nonessential_startup_services_finish(
     """Optional audio/DB/cleanup startup work should not gate initial UI readiness."""
 
     from Tests.UI.app_factory import _build_test_app
-    from tldw_chatbook.Utils.db_status_manager import DBStatusManager
-    from tldw_chatbook.Event_Handlers.TTS_Events.tts_events import TTSEventHandler
-    from tldw_chatbook.Event_Handlers.STTS_Events.stts_events import STTSEventHandler
     from tldw_chatbook.app import TldwCli
+    from tldw_chatbook.Event_Handlers.STTS_Events.stts_events import STTSEventHandler
+    from tldw_chatbook.Event_Handlers.TTS_Events.tts_events import TTSEventHandler
+    from tldw_chatbook.Utils.db_status_manager import DBStatusManager
 
     tts_started = asyncio.Event()
     stts_started = asyncio.Event()
@@ -810,6 +810,46 @@ async def test_ui_ready_before_nonessential_startup_services_finish(
 
     app = _build_test_app()
 
+    def startup_failure_context():
+        # Read retained state only: do not resolve app properties/lazy owners.
+        fields = app.__dict__
+
+        def task_state(task):
+            if not isinstance(task, asyncio.Task):
+                return {"present": task is not None}
+            done, cancelled = task.done(), task.cancelled()
+            error = task.exception() if done and not cancelled else None
+            return {
+                "present": True,
+                "name": task.get_name()[:96],
+                "done": done,
+                "cancelled": cancelled,
+                "error_class": None if error is None else type(error).__name__,
+            }
+
+        children = fields.get("_speech_initialization_children", {})
+        return {
+            "ui_ready": fields.get("_ui_ready") is True,
+            "tts_initializer_entered": tts_started.is_set(),
+            "stts_initializer_entered": stts_started.is_set(),
+            "db_size_entered": db_size_started.is_set(),
+            "media_cleanup_entered": media_cleanup_started.is_set(),
+            "speech_paused": fields.get("_speech_initialization_paused") is True,
+            "speech_closed": fields.get("_speech_initialization_closed") is True,
+            "speech_deferred": [
+                kind
+                for kind in ("tts", "stts")
+                if kind in fields.get("_speech_initialization_deferred", ())
+            ],
+            "tasks": {
+                "tts_wrapper": task_state(fields.get("_tts_initialization_task")),
+                "stts_wrapper": task_state(fields.get("_stts_initialization_task")),
+                "tts_child": task_state(children.get("tts")),
+                "stts_child": task_state(children.get("stts")),
+            },
+            "admission_observation": "retained flags/tasks only; allowed result not retained",
+        }
+
     async with app.run_test(size=(120, 36)) as pilot:
         try:
             await _wait_until(lambda: app._ui_ready, pause=pilot.pause)
@@ -825,6 +865,18 @@ async def test_ui_ready_before_nonessential_startup_services_finish(
 
             await asyncio.sleep(0.2)
             assert media_cleanup_started.is_set() is False
+        except AssertionError as error:
+            try:
+                error.add_note(
+                    "optional_startup_diagnostic="
+                    + json.dumps(startup_failure_context(), sort_keys=True)
+                )
+            except Exception as diagnostic_error:  # noqa: BLE001 -- Preserve the original assertion.
+                error.add_note(
+                    "optional_startup_diagnostic_error="
+                    + type(diagnostic_error).__name__
+                )
+            raise
         finally:
             release_optional_work.set()
             await pilot.pause(0.05)

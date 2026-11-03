@@ -2507,8 +2507,12 @@ class ConsoleRuntime:
             if tree is None:
                 raise ValueError("Saved conversation is unavailable.")
             conversation = tree["conversation"]
+            try:
+                app_config = self._app.app_config
+            except AttributeError:
+                app_config = {}
             settings = hydrate_console_generation_settings(
-                getattr(self._app, "app_config", {}) or {}, conversation
+                app_config or {}, conversation
             )
             session = await _hydrate_console_session(
                 app=self._app,
@@ -4898,7 +4902,10 @@ class ConsoleRuntime:
             from tldw_chatbook.config import preflight_selected_console_stores
             from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
 
-            workspace_db = getattr(self._app, "local_workspace_db", None)
+            try:
+                workspace_db = self._app.local_workspace_db
+            except AttributeError:
+                workspace_db = None
             preflight_selected_console_stores(
                 chat_path=db_path,
                 workspace_path=getattr(workspace_db, "db_path", None),

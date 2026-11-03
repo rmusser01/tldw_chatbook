@@ -202,6 +202,9 @@ def test_runtime_owned_custody_tracks_only_lifetime_handles():
         "configuration",
         "attachment_ids",
         "staged_evidence_launch",
+        "input_origin",
+        "command_id",
+        "command_inputs",
         "one_shot_prefill",
         "one_shot_prefill_revision",
         "draft_revision",
@@ -210,7 +213,10 @@ def test_runtime_owned_custody_tracks_only_lifetime_handles():
         "_pressed_stash",
         "_pressed_attachment_generation",
     }
+    assert request.input_origin == "composer"
+    assert request.command_id is None
     private_witnesses = {
+        "command_inputs",
         "_pressed_inputs",
         "_pressed_stash",
         "_pressed_attachment_generation",
@@ -987,10 +993,16 @@ async def test_project_binding_selection_closes_when_owning_session_closes(
 
 @pytest.mark.asyncio
 async def test_project_binding_selection_fails_closed_on_app_dispose():
+    closed = []
+
+    async def close_saved_session_operations():
+        closed.append(True)
+
     runtime = ConsoleRuntime(SimpleNamespace())
     runtime._chat_store = SimpleNamespace(
         active_session_id="session-a",
         sessions=lambda: [SimpleNamespace(id="session-a")],
+        close_saved_session_operations=close_saved_session_operations,
     )
     task = asyncio.create_task(
         runtime._select_project_instruction_binding(
@@ -1000,6 +1012,7 @@ async def test_project_binding_selection_fails_closed_on_app_dispose():
     await asyncio.sleep(0)
     await runtime.dispose()
     assert await asyncio.wait_for(task, timeout=1) == ("cancel", None)
+    assert closed == [True]
 
 
 def _project_notice_runtime() -> ConsoleRuntime:

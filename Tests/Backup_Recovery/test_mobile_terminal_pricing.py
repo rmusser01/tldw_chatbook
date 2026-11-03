@@ -131,6 +131,10 @@ def test_private_original_allowance_preprices_before_native_receipts(
                 captured.consolidate(
                     password=b"test-private-mobile-rollback", cancel=Event()
                 )
+            with pytest.raises(ValueError, match="already_attempted"):
+                captured.consolidate(
+                    password=b"test-private-mobile-rollback", cancel=Event()
+                )
             assert len(priced) == 1 and priced[0][1] < priced[0][0] <= 16 * 1024**2
             for owner_id, family in (
                 ("db.chachanotes.primary", "chat"),

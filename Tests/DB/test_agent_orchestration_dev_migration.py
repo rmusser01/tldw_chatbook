@@ -58,6 +58,14 @@ def _upstream_v15_database(path):
         run_id=run_id,
     )
     with db.transaction() as conn:
+        # Remove only empty v26/v27 additions before reconstructing older storage.
+        for table in (
+            "console_command_receipts",
+            "mobile_consolidation_batches",
+            "mobile_import_authority_holds",
+        ):
+            assert conn.execute(f"SELECT count(*) FROM {table}").fetchone()[0] == 0
+            conn.execute(f"DROP TABLE {table}")
         # Remove later feature shape as well as version rows: this fixture
         # must actually enter the v19/v20 upgrade path when reopened.
         # v24 Goal triggers depend on wake tables that this v15 fixture removes.

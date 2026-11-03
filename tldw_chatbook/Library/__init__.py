@@ -3,17 +3,11 @@
 from importlib import import_module
 from typing import TYPE_CHECKING
 
-from .library_collections_service import (
-    LibraryCollectionRecord,
-    LibraryCollectionsService,
-    LocalLibraryCollectionsService,
-)
 from .library_tool_contract import (
     LIBRARY_TOOL_DESCRIPTORS,
     LibraryToolDescriptor,
     LibraryToolError,
 )
-from .local_library_tool_service import LocalLibraryToolService
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
     from .collections_capture_repository import CollectionsCaptureRepository
@@ -25,10 +19,20 @@ if TYPE_CHECKING:  # pragma: no cover - typing only
     )
     from .collections_legacy_recovery import LegacyCollectionsRecovery
     from .collections_offline_store import CollectionsOfflineStore
+    from .library_collections_service import (
+        LibraryCollectionRecord,
+        LibraryCollectionsService,
+        LocalLibraryCollectionsService,
+    )
+    from .local_library_tool_service import LocalLibraryToolService
     from .server_collections_capture_service import ServerCollectionsCaptureService
 
 
 _LAZY_CAPTURE_EXPORTS = {
+    "LibraryCollectionRecord": ".library_collections_service",
+    "LibraryCollectionsService": ".library_collections_service",
+    "LocalLibraryCollectionsService": ".library_collections_service",
+    "LocalLibraryToolService": ".local_library_tool_service",
     "CollectionsCaptureRepository": ".collections_capture_repository",
     "CollectionsCaptureScopeService": ".collections_capture_service",
     "CollectionsOfflineStore": ".collections_offline_store",
@@ -41,7 +45,7 @@ _LAZY_CAPTURE_EXPORTS = {
 
 
 def __getattr__(name: str) -> object:
-    """Resolve capture implementation exports only when a caller needs them."""
+    """Resolve implementation exports only when a caller needs them."""
     module_name = _LAZY_CAPTURE_EXPORTS.get(name)
     if module_name is None:
         raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
@@ -52,7 +56,7 @@ def __getattr__(name: str) -> object:
 
 def __dir__() -> list[str]:
     """List eager and deferred Library exports."""
-    return sorted(set(globals()) | _LAZY_CAPTURE_EXPORTS)
+    return sorted(set(globals()) | set(_LAZY_CAPTURE_EXPORTS))
 
 __all__ = [
     "LIBRARY_TOOL_DESCRIPTORS",
