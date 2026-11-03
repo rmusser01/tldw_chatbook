@@ -39,7 +39,7 @@ def test_captured_actors_map_native_identity_and_complete_c2_ownership(
         buddy = next(dict(r.values) for r in plan.rows if r.table == "buddy_profiles")
         assert buddy["id"] == plan.identities.mapped("buddy", "buddy-one")
         assert buddy["version"] == 3
-        assert sum(len(columns) for _, columns in plan.field_ownership) == 247
+        assert sum(len(columns) for _, columns in plan.field_ownership) == 248
         assert len(plan.source_rows) == 2
         assert not any(s.handler in {"C2b", "C2c"} for s in plan.successors)
         assert plan.pending_handlers == ("C3", "T", "S", "A-runs")
@@ -798,3 +798,32 @@ def test_captured_complete_c2_preserves_native_emote_fallback_and_legacy_express
                 None,
                 None,
             )
+
+
+def test_c2_ownership_names_the_native_checkpoint_snapshot_field():
+    from tldw_chatbook.Backup_Recovery.mobile_content_actors import _field_ownership
+    from tldw_chatbook.Backup_Recovery.mobile_plan_manifest import _TABLES
+
+    ownership = _field_ownership({s.table: s for s in _TABLES if s.family == "chat"})
+    assert len(ownership) == 22
+    assert sum(len(columns) for _, columns in ownership) == 248
+    assert dict(ownership)["console_dispatch_checkpoints"][-1] == (
+        "mixin_snapshot_schema_version"
+    )
+
+
+@pytest.mark.parametrize("change", ("missing", "extra", "substituted"))
+def test_c2_ownership_rejects_unclassified_checkpoint_fields(change):
+    from tldw_chatbook.Backup_Recovery.mobile_content_actors import _field_ownership
+    from tldw_chatbook.Backup_Recovery.mobile_plan_manifest import _TABLES
+
+    specs = {s.table: s for s in _TABLES if s.family == "chat"}
+    checkpoint = specs["console_dispatch_checkpoints"]
+    columns = checkpoint.columns[:-1]
+    if change == "extra":
+        columns = checkpoint.columns + ("unclassified_snapshot_field",)
+    elif change == "substituted":
+        columns += ("unclassified_snapshot_field",)
+    specs[checkpoint.table] = replace(checkpoint, columns=columns)
+    with pytest.raises(ValueError, match="mobile_c2_ownership_mismatch"):
+        _field_ownership(specs)

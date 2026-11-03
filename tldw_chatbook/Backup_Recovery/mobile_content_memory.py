@@ -26,6 +26,59 @@ _TABLES = _SEARCH_TABLES + (
 )
 
 
+# Destination-owned snapshots are preserved in place, never read/emitted as legacy rows.
+_CANONICAL_PRESERVED_FIELDS = (
+    (
+        "console_prompt_mixin_attempt_items",
+        (
+            "conversation_id",
+            "attempt_id",
+            "ordinal",
+            "snapshot_id",
+        ),
+    ),
+    (
+        "console_prompt_mixin_attempts",
+        (
+            "conversation_id",
+            "attempt_id",
+            "schema_version",
+            "user_message_id",
+            "assistant_message_id",
+            "retry_of_attempt_id",
+            "replaces_attempt_id",
+            "result_revision_id",
+            "trace_call_id",
+            "expected_item_count",
+        ),
+    ),
+    (
+        "console_prompt_mixin_preferences",
+        (
+            "conversation_id",
+            "schema_version",
+            "revision",
+            "selection_json",
+        ),
+    ),
+    (
+        "console_prompt_mixin_revisions",
+        (
+            "conversation_id",
+            "snapshot_id",
+            "digest",
+            "authority_key",
+            "backend",
+            "record_uuid",
+            "record_version",
+            "name",
+            "placement",
+            "body",
+        ),
+    ),
+)
+
+
 @dataclass(frozen=True)
 class _OperationalProvenance:
     table: str
@@ -284,6 +337,18 @@ def _ownership(builder, actors):
         if set(fields.get(table, ())) & set(columns):
             raise ValueError("mobile_c_field_ownership_duplicate")
         fields[table] = fields.get(table, ()) + columns
+    for table, columns in _CANONICAL_PRESERVED_FIELDS:
+        spec = builder.specs.get(table)
+        if (
+            spec is None
+            or spec.family != "chat"
+            or spec.handler != "C"
+            or spec.canonical_only is not True
+            or spec.columns != columns
+            or table in fields
+        ):
+            raise ValueError("mobile_c_canonical_preservation_mismatch")
+        fields[table] = columns
     expected = {s.table: s.columns for s in builder.specs.values() if s.handler == "C"}
     if set(fields) != set(expected) or any(
         set(fields[t]) != set(expected[t]) for t in fields

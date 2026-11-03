@@ -93,8 +93,15 @@ def test_captured_complete_content_preserves_native_context_and_accounting(
         assert (
             ProviderUsage.from_json(attempt["provider_usage_json"]).total_tokens == 907
         )
-        assert sum(len(columns) for _, columns in plan.field_ownership) == 580
-        assert len(plan.field_ownership) == 61
+        assert sum(len(columns) for _, columns in plan.field_ownership) == 610
+        assert len(plan.field_ownership) == 65
+        from tldw_chatbook.Backup_Recovery.mobile_content_memory import (
+            _CANONICAL_PRESERVED_FIELDS,
+        )
+
+        preserved = dict(_CANONICAL_PRESERVED_FIELDS)
+        assert dict(plan.field_ownership).items() >= preserved.items()
+        assert not preserved.keys() & {r.table for r in plan.rows + plan.source_rows}
         assert plan.pending_handlers == ("T", "S", "A-runs")
         assert {r.table for r in plan.operational_provenance} >= {
             "character_conversation_search_state",
@@ -1011,3 +1018,103 @@ def test_captured_content_schema_subset_preserves_live_metadata_and_retained_fen
         assert changed
         with pytest.raises(ValueError, match="candidate_changed"):
             subset(selected)
+
+
+def _manifest_content_ownership(specs):
+    from types import SimpleNamespace
+
+    from tldw_chatbook.Backup_Recovery.mobile_content_actors import _field_ownership
+    from tldw_chatbook.Backup_Recovery.mobile_content_memory import _ownership
+
+    # Only the pure schema-ledger calculation; no captured reader or authority is forged.
+    return _ownership(
+        SimpleNamespace(specs=specs),
+        SimpleNamespace(field_ownership=_field_ownership(specs)),
+    )
+
+
+def test_content_ownership_covers_61_legacy_and_four_preserved_native_tables():
+    from tldw_chatbook.Backup_Recovery.mobile_content_actors import _TABLES as actors
+    from tldw_chatbook.Backup_Recovery.mobile_content_canvas import _CANVAS_TABLES
+    from tldw_chatbook.Backup_Recovery.mobile_content_core import _CORE_TABLES
+    from tldw_chatbook.Backup_Recovery.mobile_content_memory import _TABLES as memory
+    from tldw_chatbook.Backup_Recovery.mobile_content_rules import _RULE_TABLES
+    from tldw_chatbook.Backup_Recovery.mobile_content_settings import (
+        _TABLES as settings,
+    )
+    from tldw_chatbook.Backup_Recovery.mobile_content_workflows import (
+        _TABLES as workflows,
+    )
+    from tldw_chatbook.Backup_Recovery.mobile_plan_manifest import _TABLES
+
+    specs = {s.table: s for s in _TABLES if s.family == "chat"}
+    ownership = dict(_manifest_content_ownership(specs))
+    expected = {s.table: s.columns for s in specs.values() if s.handler == "C"}
+    assert ownership == expected
+    assert len(ownership) == 65
+    assert sum(map(len, ownership.values())) == 610
+    transferable = {
+        s.table for s in specs.values() if s.handler == "C" and not s.canonical_only
+    }
+    assert len(transferable) == 61
+    assert sum(len(specs[t].columns) for t in transferable) == 582
+    assert transferable == set(
+        _CORE_TABLES
+        + _CANVAS_TABLES
+        + _RULE_TABLES
+        + settings
+        + workflows
+        + actors
+        + memory
+    )
+    assert set(ownership) - transferable == {
+        "console_prompt_mixin_attempt_items",
+        "console_prompt_mixin_attempts",
+        "console_prompt_mixin_preferences",
+        "console_prompt_mixin_revisions",
+    }
+
+
+@pytest.mark.parametrize(
+    "table",
+    (
+        "console_prompt_mixin_attempt_items",
+        "console_prompt_mixin_attempts",
+        "console_prompt_mixin_preferences",
+        "console_prompt_mixin_revisions",
+    ),
+)
+@pytest.mark.parametrize(
+    "change", ("missing", "extra", "substituted", "family", "handler", "legacy")
+)
+def test_content_ownership_rejects_changed_native_preservation_contract(table, change):
+    from tldw_chatbook.Backup_Recovery.mobile_plan_manifest import _TABLES
+
+    specs = {s.table: s for s in _TABLES if s.family == "chat"}
+    spec = specs[table]
+    if change == "missing":
+        del specs[table]
+    elif change == "extra":
+        specs[table] = replace(spec, columns=spec.columns + ("unclassified",))
+    elif change == "substituted":
+        specs[table] = replace(spec, columns=spec.columns[:-1] + ("unclassified",))
+    elif change == "family":
+        specs[table] = replace(spec, family="runs")
+    elif change == "handler":
+        specs[table] = replace(spec, handler="T")
+    else:
+        specs[table] = replace(spec, canonical_only=False)
+    with pytest.raises(ValueError, match="mobile_c_canonical_preservation_mismatch"):
+        _manifest_content_ownership(specs)
+
+
+def test_content_ownership_rejects_an_unknown_canonical_only_table():
+    from tldw_chatbook.Backup_Recovery.mobile_plan_manifest import _TABLES
+
+    specs = {s.table: s for s in _TABLES if s.family == "chat"}
+    unknown = replace(
+        specs["console_prompt_mixin_preferences"], table="unclassified_mixin_table"
+    )
+    specs[unknown.table] = unknown
+    with pytest.raises(ValueError, match="mobile_c_field_ownership_incomplete"):
+        _manifest_content_ownership(specs)
