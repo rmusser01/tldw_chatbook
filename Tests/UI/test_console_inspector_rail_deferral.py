@@ -309,9 +309,18 @@ async def test_the_held_rebuild_lands_before_the_openings_first_paint(
         for _ in range(6):
             await pilot.pause(0.05)
         rebuilt = facts(host.screen)
+        opening = list(frames)
+        # The hold's 1 s net releases it a second time; the release ends the
+        # batch only once, so the count stays 0 and painting carries on.
+        await pilot.pause(1.2)
+        assert host._batch_count == 0, "the hold ended its batch twice"
+        frames.clear()
+        host.screen.refresh(layout=True)
+        await pilot.pause(0.1)
+        assert frames, "nothing painted after the hold's net"
     assert rebuilt != held_rows
-    assert frames, "the opening painted no frame"
-    assert set(frames) == {rebuilt}, frames
+    assert opening, "the opening painted no frame"
+    assert set(opening) == {rebuilt}, opening
 
 
 class _KeepAliveRailHost(_RailHost):
