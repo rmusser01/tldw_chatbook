@@ -11883,71 +11883,30 @@ class ChatScreen(BaseAppScreen):
             self.app.call_from_thread(self._notify_console_rail_preference_save_failure)
 
     def _dispatch_console_rail_preference_prune(self) -> None:
-        """Queue the one-shot orphaned rail-preference cleanup after mount."""
+        """Queue the one-time cleanup of legacy rail-preference keys (TASK-718).
+
+        TASK-36518: prunability depends only on a key's shape, so the
+        in-memory keys decide on the UI thread; a profile holding no legacy
+        per-conversation/per-session key starts no worker at all.
+        """
         if self._console_rail_prune_dispatched:
             return
-        store = self._console_chat_store
-        if store is None:
-            # Sessions not restored yet; retry on a later sync so open
-            # unsaved sessions are never mistaken for orphans.
-            return
-        if getattr(self.app_instance, "chachanotes_db", None) is None:
-            # Conversation liveness cannot be established yet; retry on a
-            # later sync rather than latching and never pruning this session.
-            return
         self._console_rail_prune_dispatched = True
-        live_scope_ids: set[str] = set()
-        for session in store.sessions():
-            live_scope_ids.add(str(session.id))
-            persisted_id = getattr(session, "persisted_conversation_id", None)
-            if persisted_id:
-                live_scope_ids.add(str(persisted_id))
-        self._prune_console_rail_preferences(live_scope_ids)
+        # Peek without _console_rail_state_config(): this is a read path and
+        # must not materialize an empty rail_state table.
+        config = getattr(self.app_instance, "app_config", None)
+        console = config.get("console") if isinstance(config, dict) else None
+        rail_state = console.get("rail_state") if isinstance(console, dict) else None
+        prunable = collect_prunable_console_rail_keys(
+            list(rail_state) if isinstance(rail_state, dict) else ()
+        )
+        if prunable:
+            self._prune_console_rail_preferences(prunable)
 
     @work(thread=True)
-    def _prune_console_rail_preferences(self, live_scope_ids: set[str]) -> None:
-        """Drop rail preference sections whose conversation/session is gone.
-
-        Rail preferences accumulate one config section per scope forever
-        (deleted conversations included); this best-effort pass bounds the
-        namespace to live scopes. It refuses to prune when conversation
-        liveness cannot be established.
-        """
+    def _prune_console_rail_preferences(self, prunable: list[str]) -> None:
+        """Delete the given legacy rail-preference keys from config.toml."""
         try:
-            # Peek without _console_rail_state_config(): this is a read path
-            # and must not materialize an empty rail_state table.
-            app_config = getattr(self.app_instance, "app_config", None)
-            if not isinstance(app_config, dict):
-                return
-            console_config = app_config.get("console")
-            if not isinstance(console_config, dict):
-                return
-            rail_state_config = console_config.get("rail_state")
-            if not isinstance(rail_state_config, dict) or not rail_state_config:
-                return
-            stored_keys = list(rail_state_config.keys())
-            db = getattr(self.app_instance, "chachanotes_db", None)
-            if db is None:
-                return
-            live = set(live_scope_ids)
-            offset = 0
-            page_size = 1000
-            from tldw_chatbook.DB.base_db import operation_owned_connection
-
-            with operation_owned_connection(db):
-                while True:
-                    rows = db.list_all_active_conversations(
-                        limit=page_size, offset=offset
-                    )
-                    live.update(str(row["id"]) for row in rows if row.get("id"))
-                    if len(rows) < page_size:
-                        break
-                    offset += page_size
-            prunable = collect_prunable_console_rail_keys(
-                stored_keys, live_scope_ids=live
-            )
-            if not prunable:
-                return
             if delete_settings_from_cli_config("console.rail_state", prunable):
                 # The in-memory config dict is shared with UI-thread readers
                 # and writers; mutate it back on the UI thread, not here.

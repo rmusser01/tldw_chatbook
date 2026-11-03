@@ -363,12 +363,8 @@ def take_console_rail_seed_flush(
     ]
 
 
-def collect_prunable_console_rail_keys(
-    stored_keys: Any,
-    *,
-    live_scope_ids: Any,
-) -> list[str]:
-    """Return stored rail-preference keys whose scope is no longer live.
+def collect_prunable_console_rail_keys(stored_keys: Any) -> list[str]:
+    """Return stored rail-preference keys left over from the per-chat scheme.
 
     TASK-718: preferences are per-workspace (``:layout`` scope) with the
     legacy ``:global`` scope kept as the migration source, so every other
@@ -379,13 +375,10 @@ def collect_prunable_console_rail_keys(
     Args:
         stored_keys: Iterable of stored config key strings (non-string
             entries are ignored). ``None`` is treated as empty.
-        live_scope_ids: Accepted for API compatibility; conversation/session
-            liveness no longer affects prunability.
 
     Returns:
         The subset of ``stored_keys`` safe to delete, order-preserved.
     """
-    del live_scope_ids
     prunable: list[str] = []
     for key in stored_keys or ():
         if not isinstance(key, str):
