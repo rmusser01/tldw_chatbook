@@ -656,6 +656,12 @@ async def test_folder_files_shared_shell_retains_state_across_breakpoints(
             "Folder Files did not mount",
         )
         assert await workspace.open_path("folder/draft.md")
+        # Opening holds a path transition, which moves the session owner's
+        # revision. The next refresh then rehydrates Git state and resets
+        # the push phase this test sets below. Left to the 10 s poll tick,
+        # that refresh can land inside the resize loop under load, so run
+        # it now, before any state is set (TASK-38648).
+        assert await workspace.refresh_files()
 
         shell = workspace.query_one(
             "#library-file-notes-reader-shell", LibraryAdaptiveReaderShell
