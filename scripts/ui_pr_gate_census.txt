@@ -1968,3 +1968,9 @@ Tests/UI/test_library_prompt_browse_controller.py::test_controller_live_reads_re
 Tests/UI/test_response_rules_end_to_end.py::test_close_during_resume_retires_the_old_visible_draft
 # PR3346: pending/active landing recomposition must retain snapshot completion.
 Tests/UI/test_library_landing_recompose_publication.py
+# TASK-38643 (2026-11-03): the Console Inspector and Context rails' compact
+# access below 150 columns, and the rail-scope seeding rules (ADR-083: a
+# retained first-use seed wins over a source record that appears later).
+# Twelve cases, about 90 s serially at load 30; appended at the tail, so no
+# slot moves.
+Tests/UI/test_console_inspector_compact_access.py
