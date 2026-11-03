@@ -886,8 +886,8 @@ _BUDGETS: dict[str, int] = {
     # 2026-10-31 PR3259: exact integrated measurement under the user size-limit waiver.
     "tldw_chatbook/Widgets/Library/library_notes_canvas.py": 4738,
     "tldw_chatbook/Web_Scraping/WebSearch_APIs.py": 4611,
-    # 2026-11-03 TASK-36945.3: +10, [rag.service] constants read when used.
-    "tldw_chatbook/RAG_Search/simplified/rag_service.py": 4517,
+    # 2026-11-03 TASK-36945.3: +9, [rag.service] constants read when used.
+    "tldw_chatbook/RAG_Search/simplified/rag_service.py": 4516,
     # owner decision 2026-10-04 (expand limits): TASK-34100.4 +2 (remote
     # Whisper never sends an enc: key).
     "tldw_chatbook/Local_Ingestion/transcription_service.py": 4496,

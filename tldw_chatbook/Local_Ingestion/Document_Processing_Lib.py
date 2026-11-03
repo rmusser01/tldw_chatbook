@@ -75,21 +75,12 @@ from loguru import logger  # noqa: E402
 # Constants
 def _document_chunk_defaults() -> dict:
     """Default chunk options from the CLI settings, read when used (hot-reload safe).
-
-    A failed settings read (e.g. RecoveryRequired under a re-selected profile)
-    falls back to the shipped defaults, as the frozen import-time read did.
     """
     section = "media_processing.document"
-    try:
-        method = get_cli_setting(section, "chunk_method", "sentences")
-        size = get_cli_setting(section, "chunk_size", 1500)
-        overlap = get_cli_setting(section, "chunk_overlap", 100)
-    except Exception:
-        method, size, overlap = "sentences", 1500, 100
     return {
-        "method": method,
-        "max_size": size,
-        "overlap": overlap,
+        "method": get_cli_setting(section, "chunk_method", "sentences"),
+        "max_size": get_cli_setting(section, "chunk_size", 1500),
+        "overlap": get_cli_setting(section, "chunk_overlap", 100),
         "adaptive": True,
         "language": "en",
     }

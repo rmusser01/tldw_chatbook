@@ -3288,9 +3288,6 @@ class TldwCli(
 
     def on_mount(self) -> None:
         """Configure logging and schedule post-mount setup."""
-        from .Utils.optional_deps import apply_config_eager_dependency_check
-
-        apply_config_eager_dependency_check()
         self._start_persona_buddy_overlay()
         runtime = self.console_runtime
         if runtime is not None:

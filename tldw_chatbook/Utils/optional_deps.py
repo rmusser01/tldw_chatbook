@@ -1526,7 +1526,7 @@ eager_check = False
 
 # The environment variable is the only import-time signal (no config file I/O).
 # The config-file flag is read when the app starts: see
-# ``apply_config_eager_dependency_check``.
+# ``apply_config_eager_flags``.
 if os.environ.get("TLDW_EAGER_DEPENDENCY_CHECK", "").lower() == "true":
     eager_check = True
     logger.info(
@@ -1534,10 +1534,10 @@ if os.environ.get("TLDW_EAGER_DEPENDENCY_CHECK", "").lower() == "true":
     )
 
 
-def apply_config_eager_dependency_check() -> None:
+def apply_config_eager_flags() -> None:
     """Run the dependency checks now if ``[rag] performance.eager_dependency_check`` is set.
 
-    Called once from app start-up (not at import, so importing this module
+    Called once from each entry point (app_entry, tldw-serve, MCP server) before the UI loop (not at import, so importing this module
     performs no config I/O). Skipped under pytest, as the import-time path was.
     """
     global _initialized

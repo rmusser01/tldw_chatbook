@@ -73,6 +73,7 @@ from tldw_chatbook.Canvas.config_policy import (
 )
 from ..Utils.input_validation import validate_number_range
 from ..Utils.optional_deps import (
+    apply_config_eager_flags,
     DEPENDENCIES_AVAILABLE,
     check_web_server_deps,
     require_dependency,
@@ -2606,6 +2607,7 @@ def main():
     )
 
     args = parser.parse_args()
+    apply_config_eager_flags()
 
     # Run the web server with provided arguments
     run_web_server(

@@ -125,12 +125,7 @@ def _rag_const(name: str):
     # ``load_settings()`` has no top-level "rag" key (the import-time read of
     # ``.get("rag")`` always fell back to the defaults); ``[rag.service]`` is
     # read the way ``active_config`` reads it.
-    # A failed settings read (e.g. RecoveryRequired under a re-selected
-    # profile) falls back to the shipped default, as the frozen read did.
-    try:
-        return (get_cli_setting("rag", "service", {}) or {}).get(key, default)
-    except Exception:
-        return default
+    return (get_cli_setting("rag", "service", {}) or {}).get(key, default)
 
 
 def __getattr__(name: str):
@@ -3399,14 +3394,15 @@ class RAGService:
         # single-token case (and the old whole-query lookup) produced.
         selected: List[Tuple[int, int, frozenset]] = []
         covered_tokens: set = set()
+        max_matches = _rag_const("MAX_CITATION_MATCHES")
         for span in spans:
-            if len(selected) >= _rag_const("MAX_CITATION_MATCHES"):
+            if len(selected) >= max_matches:
                 break
             if span[2] - covered_tokens:
                 selected.append(span)
                 covered_tokens |= span[2]
         for span in spans:
-            if len(selected) >= _rag_const("MAX_CITATION_MATCHES"):
+            if len(selected) >= max_matches:
                 break
             if span not in selected:
                 selected.append(span)
@@ -3414,9 +3410,11 @@ class RAGService:
 
         citations = []
         all_token_indices = frozenset(range(len(tokens)))
+        context_chars = _rag_const("CITATION_CONTEXT_CHARS")
+        partial_confidence = _rag_const("PARTIAL_CITATION_CONFIDENCE")
         for start, end, span_tokens in selected:
-            start_context = max(0, start - _rag_const("CITATION_CONTEXT_CHARS"))
-            end_context = min(len(full_content), end + _rag_const("CITATION_CONTEXT_CHARS"))
+            start_context = max(0, start - context_chars)
+            end_context = min(len(full_content), end + context_chars)
             whole_query = span_tokens == all_token_indices
 
             citation = Citation(
@@ -3429,7 +3427,7 @@ class RAGService:
                 # A span covering every query token is the exact match the
                 # pre-implicit-AND builder used to emit; a span covering
                 # only some of them is real but weaker evidence.
-                confidence=1.0 if whole_query else _rag_const("PARTIAL_CITATION_CONFIDENCE"),
+                confidence=1.0 if whole_query else partial_confidence,
                 match_type=CitationType.EXACT if whole_query else CitationType.KEYWORD,
                 metadata={
                     "query": query,
@@ -4203,12 +4201,13 @@ class RAGService:
             return []
 
         merged: List[Tuple[int, int, set]] = []
+        merge_gap = _rag_const("CITATION_SPAN_MERGE_GAP_CHARS")
         for start, end, index in sorted(raw_spans):
             if merged:
                 previous_start, previous_end, covered = merged[-1]
                 gap = content[previous_end:start] if start > previous_end else ""
                 if start <= previous_end or (
-                    len(gap) <= _rag_const("CITATION_SPAN_MERGE_GAP_CHARS")
+                    len(gap) <= merge_gap
                     and not any(ch.isalnum() for ch in gap)
                 ):
                     # Overlapping, or separated only by a little
