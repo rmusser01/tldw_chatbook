@@ -36,7 +36,7 @@ from tldw_chatbook.Model_Artifacts.service import (
     ModelArtifactService,
 )
 from tldw_chatbook.Model_Artifacts.store import managed_service
-from tldw_chatbook.UI.Screens.model_browser_state import (
+from tldw_chatbook.Model_Artifacts.model_browser_state import (
     VariantGuidance,
     filter_variant_guidance,
     format_mib,

@@ -112,11 +112,11 @@ prefixes = (
     "tldw_chatbook.UI.Plugins_Modules",
     "tldw_chatbook.Agents.agent_presets",
     "tldw_chatbook.Terminal",
-    "tldw_chatbook.UI.Screens.settings_advanced_config",
+    "tldw_chatbook.UI.Settings_Modules.settings_advanced_config",
     "tldw_chatbook.UI.Screens.settings_appearance_defaults",
     "tldw_chatbook.UI.Screens.settings_privacy_security",
     "tldw_chatbook.UI.Screens.settings_provider_view_model",
-    "tldw_chatbook.UI.Screens.settings_web_search",
+    "tldw_chatbook.UI.Settings_Modules.settings_web_search",
     "tldw_chatbook.Video_Generation.video_templates",
     "tldw_chatbook.Web_Scraping",
     "tldw_chatbook.Widgets.settings_advanced_config_panel",
@@ -190,7 +190,7 @@ from tldw_chatbook.UI.Screens import settings_screen as settings
 prefixes = tuple("tldw_chatbook.Widgets." + name for name in (
     "settings_advanced_config_panel", "settings_agents_panel", "settings_image_gen_panel",
     "settings_splash_screen_viewer", "settings_video_gen_panel", "settings_web_search_panel",
-)) + ("tldw_chatbook.UI.Screens.settings_advanced_config", "tldw_chatbook.UI.Screens.settings_web_search")
+)) + ("tldw_chatbook.UI.Settings_Modules.settings_advanced_config", "tldw_chatbook.UI.Settings_Modules.settings_web_search")
 def absent(stage):
     loaded = [name for name in sys.modules if name in prefixes]
     assert not loaded, (stage, loaded)

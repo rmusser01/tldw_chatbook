@@ -37,7 +37,7 @@ from tldw_chatbook.STT.parakeet_sources import ParakeetSourceKey
 from tldw_chatbook.UI.Library_Modules.parakeet_install_selection import (
     capture_selection,
 )
-from tldw_chatbook.UI.Screens.model_browser_state import install_failure_message
+from tldw_chatbook.Model_Artifacts.model_browser_state import install_failure_message
 from tldw_chatbook.UI.Screens.library_screen import (
     LibraryIngestState,
     LibraryScreen,

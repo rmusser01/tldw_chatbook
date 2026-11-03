@@ -334,7 +334,7 @@ REVIEWED_METADATA_ONLY_DIAGNOSTICS = {
     "tldw_chatbook/UI/Wizards/FirstRunSetupWizard.py": {
         "Wizard commit rejected non-owned sections": (),
     },
-    "tldw_chatbook/UI/Screens/settings_video_gen_defaults.py": {
+    "tldw_chatbook/UI/Settings_Modules/settings_video_gen_defaults.py": {
         "could not resolve config path": ("type(exc).__name__",),
         "could not parse video-generation config": ("type(exc).__name__",),
     },

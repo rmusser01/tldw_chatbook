@@ -783,10 +783,10 @@ tldw_chatbook.UI.Navigation.vllm_handoff
 tldw_chatbook.UI.Screens
 tldw_chatbook.UI.Screens.chat_screen
 tldw_chatbook.UI.Screens.chat_screen_state
-tldw_chatbook.UI.Screens.provider_model_resolution
-tldw_chatbook.UI.Screens.settings_config_models
+tldw_chatbook.LLM_Provider_Catalog.provider_model_resolution
+tldw_chatbook.UI.Settings_Modules.settings_config_models
 tldw_chatbook.UI.Screens.settings_library_rag_defaults
-tldw_chatbook.UI.Screens.settings_speech_tts
+tldw_chatbook.UI.Settings_Modules.settings_speech_tts
 tldw_chatbook.UI.Screens.study_scope_models
 tldw_chatbook.UI.Speech
 tldw_chatbook.UI.Speech.speech_settings_contracts

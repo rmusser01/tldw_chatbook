@@ -37,7 +37,7 @@ from tldw_chatbook.Chat.console_provider_support import (
 from tldw_chatbook.Chat.console_session_settings import (
     build_default_console_session_settings,
 )
-from tldw_chatbook.UI.Screens.settings_config_models import SettingsCategoryId
+from tldw_chatbook.UI.Settings_Modules.settings_config_models import SettingsCategoryId
 from tldw_chatbook.UI.Screens.settings_screen import (
     CONSOLE_PIN_BUILT_IN_HINT,
     MODEL_PROFILE_STREAMING_SELECT_OPTIONS,
@@ -791,7 +791,7 @@ async def test_saving_global_streaming_off_reaches_a_new_chat_and_model_defaults
     from Tests.UI.test_destination_shells import _wait_for_selector
     from tldw_chatbook import config as config_module
     from tldw_chatbook.UI.Navigation.main_navigation import NavigateToScreen
-    from tldw_chatbook.UI.Screens.settings_config_adapter import SettingsConfigAdapter
+    from tldw_chatbook.UI.Settings_Modules.settings_config_adapter import SettingsConfigAdapter
 
     config_module.load_cli_config_and_ensure_existence(force_reload=True)
     adapter = SettingsConfigAdapter()
@@ -897,7 +897,7 @@ async def test_choosing_streaming_on_saves_true_over_a_saved_legacy_or_unset_val
     from Tests.UI.test_destination_shells import _wait_for_selector
     from tldw_chatbook import config as config_module
     from tldw_chatbook.UI.Navigation.main_navigation import NavigateToScreen
-    from tldw_chatbook.UI.Screens.settings_config_adapter import SettingsConfigAdapter
+    from tldw_chatbook.UI.Settings_Modules.settings_config_adapter import SettingsConfigAdapter
 
     config_module.load_cli_config_and_ensure_existence(force_reload=True)
     adapter = SettingsConfigAdapter()

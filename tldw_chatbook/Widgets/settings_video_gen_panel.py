@@ -22,7 +22,7 @@ from textual.app import ComposeResult
 from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.widgets import Button, Collapsible, Input, Select, Static
 
-from tldw_chatbook.UI.Screens.settings_video_gen_defaults import (
+from tldw_chatbook.UI.Settings_Modules.settings_video_gen_defaults import (
     BACKEND_IDS,
     BACKEND_LABELS,
     DEFAULT_BACKEND_SELECT_ID,
@@ -421,7 +421,7 @@ def _draft_values_for_save(panel, values) -> VideoGenDraftValues:
         ).value
     )
     # bool-kind backend fields (e.g. minimax allow_uploads) read live too.
-    from tldw_chatbook.UI.Screens.settings_video_gen_defaults import (
+    from tldw_chatbook.UI.Settings_Modules.settings_video_gen_defaults import (
         FIELD_SCHEMA as VIDEO_GEN_FIELD_SCHEMA,
     )
 

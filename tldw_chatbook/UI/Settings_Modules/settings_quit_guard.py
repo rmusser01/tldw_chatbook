@@ -23,7 +23,7 @@ from ...Constants import TAB_SETTINGS
 from ...Widgets.confirmation_dialog import confirm_quit_discarding_edits
 from ...Widgets.settings_theme_editor import ThemeLeaveModal
 from ..Navigation.main_navigation import NavigateToScreen
-from ..Screens.settings_config_models import SettingsCategoryId
+from ..Settings_Modules.settings_config_models import SettingsCategoryId
 
 if TYPE_CHECKING:
     from ..Screens.settings_screen import SettingsScreen

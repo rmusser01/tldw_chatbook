@@ -113,7 +113,7 @@ async def test_appearance_keyboard_preview_revert_and_real_save(request, theme):
 
     from Tests.UI.test_settings_provider_keyboard_journeys import _edit, _revert
     from tldw_chatbook import config
-    from tldw_chatbook.UI.Screens.settings_config_models import SettingsCategoryId
+    from tldw_chatbook.UI.Settings_Modules.settings_config_models import SettingsCategoryId
 
     app = _build_test_app()
     host = _StyledDestinationHarness(app, "settings")

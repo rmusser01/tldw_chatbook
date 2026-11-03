@@ -1050,7 +1050,7 @@ async def test_skip_leaves_an_untouched_console_chat_on_the_saved_defaults(
     from tldw_chatbook.Chat.console_session_settings import (
         blank_console_session_settings,
     )
-    from tldw_chatbook.UI.Screens.settings_config_adapter import (
+    from tldw_chatbook.UI.Settings_Modules.settings_config_adapter import (
         SettingsConfigAdapter,
     )
 

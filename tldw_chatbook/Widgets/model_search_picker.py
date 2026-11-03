@@ -30,7 +30,7 @@ from tldw_chatbook.LLM_Provider_Catalog.model_catalog_settings import (
     load_model_catalog_settings,
 )
 from tldw_chatbook.Utils.input_validation import sanitize_string, validate_text_input
-from tldw_chatbook.UI.Screens.provider_model_resolution import (
+from tldw_chatbook.LLM_Provider_Catalog.provider_model_resolution import (
     ConsoleModelProvenance,
     ResolvedProviderModelOption,
 )
@@ -429,7 +429,7 @@ class ModelSearchPicker(Widget):
         self._set_status(LOADING_STATUS)
         self._load_counts[cache_key] = self._load_counts.get(cache_key, 0) + 1
         try:
-            from tldw_chatbook.UI.Screens.provider_model_resolution import (
+            from tldw_chatbook.LLM_Provider_Catalog.provider_model_resolution import (
                 resolve_provider_model_options,
             )
 

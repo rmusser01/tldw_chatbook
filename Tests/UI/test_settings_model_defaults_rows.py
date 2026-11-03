@@ -33,7 +33,7 @@ from tldw_chatbook.Chat.console_provider_support import (
 from tldw_chatbook.Chat.console_session_settings import (
     build_default_console_session_settings,
 )
-from tldw_chatbook.UI.Screens.settings_config_models import SettingsCategoryId
+from tldw_chatbook.UI.Settings_Modules.settings_config_models import SettingsCategoryId
 from tldw_chatbook.UI.Screens.settings_screen import MODEL_PROFILE_INPUT_PLACEHOLDERS
 from tldw_chatbook.UI.Settings_Modules.settings_field_rows import (
     inherited_values,

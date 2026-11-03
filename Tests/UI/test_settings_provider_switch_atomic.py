@@ -24,7 +24,7 @@ from tldw_chatbook.config import ConfigMutationResult
 from tldw_chatbook.UI.Screens import (
     settings_endpoint_probe as settings_endpoint_probe_module,
 )
-from tldw_chatbook.UI.Screens.settings_config_models import SettingsCategoryId
+from tldw_chatbook.UI.Settings_Modules.settings_config_models import SettingsCategoryId
 from tldw_chatbook.UI.Screens.settings_endpoint_probe import (
     SettingsEndpointProbeOutcome,
 )

@@ -154,7 +154,7 @@ for expected in (
     # The pure settings model the payload seam depends on -- already on the
     # boot path via Event_Handlers/STTS_Events/stts_events, which is why the
     # seam costs nothing. If this leaves, the seam starts ADDING boot cost.
-    "tldw_chatbook.UI.Screens.settings_speech_tts",
+    "tldw_chatbook.UI.Settings_Modules.settings_speech_tts",
     # The package whose init the voice-bundle facade defers out of.
     "tldw_chatbook.TTS",
     # app.py still wires notes scopes eagerly; only the sync runtime moved.

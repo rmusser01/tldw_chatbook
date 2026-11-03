@@ -542,7 +542,7 @@ from ..destination_recovery import (
     policy_denied_recovery_state,
     sync_load_failure_callout,
 )
-from .model_browser_state import install_failure_message
+from ...Model_Artifacts.model_browser_state import install_failure_message
 from ..Library_Modules.skills_trust_modals import (
     SkillRecoveryReviewModal,
 )

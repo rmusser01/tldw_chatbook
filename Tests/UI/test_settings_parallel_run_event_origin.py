@@ -16,8 +16,8 @@ from Tests.UI.test_settings_configuration_hub import (
     _visible_text,
     _wait_for_settings_text,
 )
-from tldw_chatbook.UI.Screens.settings_config_adapter import SettingsConfigAdapter
-from tldw_chatbook.UI.Screens.settings_config_models import (
+from tldw_chatbook.UI.Settings_Modules.settings_config_adapter import SettingsConfigAdapter
+from tldw_chatbook.UI.Settings_Modules.settings_config_models import (
     SettingsCategoryId,
     SettingsDraft,
 )

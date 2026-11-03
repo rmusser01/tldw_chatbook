@@ -287,8 +287,9 @@ from ...Utils.os_notifications import normalize_console_os_notifications
 from ...Utils.path_validation import validate_path_simple
 from ...Utils.timestamps import parse_utc, utc_now, utc_now_iso
 from ..Navigation.base_app_screen import BaseAppScreen
-from .provider_model_resolution import resolve_effective_provider_model
-from .settings_config_adapter import (
+from ...Widgets.rag_profile_name_modal import RagProfileNameModal  # noqa: F401
+from ...LLM_Provider_Catalog.provider_model_resolution import resolve_effective_provider_model
+from ..Settings_Modules.settings_config_adapter import (
     SettingsConfigAdapter,
     failure_status_text,
     redact_secret_text,
@@ -326,7 +327,7 @@ from ...model_capabilities import (
     reload_capabilities,
     zai_model_supports_reasoning_effort,
 )
-from .settings_config_models import (
+from ..Settings_Modules.settings_config_models import (
     LISTED_SAVE_MODELS,
     SettingsCategoryId,
     SettingsCategorySummary,
@@ -378,7 +379,7 @@ from ...Internal_Prompts import authoring as internal_prompts_authoring
 from .settings_category_exports import (
     CATEGORY_EXPORTS as _CATEGORY_EXPORTS,  # noqa: F401 -- private compatibility alias
 )
-from .settings_image_gen_defaults import (
+from ..Settings_Modules.settings_image_gen_defaults import (
     BACKEND_IDS as IMAGE_GEN_BACKEND_IDS,
     FIELD_SCHEMA as IMAGE_GEN_FIELD_SCHEMA,
     ImageGenDraftValues,
@@ -391,7 +392,7 @@ from .settings_image_gen_defaults import (
     unsaved_field_count,
     validate_draft as validate_image_gen_draft,
 )
-from .settings_video_gen_defaults import (
+from ..Settings_Modules.settings_video_gen_defaults import (
     BACKEND_IDS as VIDEO_GEN_BACKEND_IDS,
     DEFAULT_BACKEND_SELECT_ID as VIDEO_GEN_DEFAULT_BACKEND_SELECT_ID,
     RETENTION_SELECT_ID as VIDEO_GEN_RETENTION_SELECT_ID,
@@ -443,7 +444,7 @@ from .settings_storage_defaults import (
     load_storage_defaults,
     validate_storage_defaults,
 )
-from .settings_speech_tts import (
+from ..Settings_Modules.settings_speech_tts import (
     BUILT_IN_TTS_PROVIDER_ORDER,
     GlobalSpeechTTSState,
     load_global_speech_tts_state,
@@ -488,11 +489,11 @@ if TYPE_CHECKING:
     # Type-only: the create dialog is a shared modal imported locally at its
     # one call site (handle_workspace_create) to avoid a real import cycle.
     from ...Widgets.workspace_create_modal import WorkspaceCreateResult
-    from .settings_advanced_config import AdvancedConfigSettings
+    from ..Settings_Modules.settings_advanced_config import AdvancedConfigSettings
     from .settings_endpoint_probe import SettingsEndpointProbeOutcome
     from .settings_hooks import HooksSettingsPanel
     from .settings_network_defaults import SettingsNetworkTLS
-    from .settings_web_search import WebSearchSettings
+    from ..Settings_Modules.settings_web_search import WebSearchSettings
 
 
 logger = logging.getLogger(__name__)
@@ -2995,100 +2996,6 @@ def _apply_sparse_config_mutation_in_memory(
                 current[part] = next_level
             current = next_level
         current.update(copy.deepcopy(dict(values)))
-
-
-class RagProfileNameModal(ModalScreen[str | None]):
-    """Minimal name-prompt modal for the RAG profile-manager Clone/Rename actions.
-
-    No existing text-prompt modal precedent lives in this screen (task-2
-    brief) -- this follows the same dismiss-with-a-value + push_screen(modal,
-    callback) shape as ``ConsoleSystemPromptModal``. Dismisses with the
-    trimmed name, or ``None`` on Cancel/Escape/a blank submission.
-
-    TASK-33070: ``validate`` (optional) is called with the trimmed value on
-    submit; a returned reason is shown inside the dialog and the typed value
-    kept, ``None`` dismisses as before.
-    """
-
-    BINDINGS = [Binding("escape", "cancel", "Cancel", show=False)]
-
-    def __init__(
-        self,
-        *,
-        title: str,
-        initial: str = "",
-        confirm_label: str = "Save",
-        validate: Callable[[str], str | None] | None = None,
-    ) -> None:
-        super().__init__()
-        self._modal_title = title
-        self._initial = initial
-        self._confirm_label = confirm_label
-        self._validate = validate
-
-    def compose(self) -> ComposeResult:
-        with Vertical(
-            id="settings-rag-profile-name-modal", classes="settings-rag-profile-modal"
-        ):
-            yield Static(self._modal_title, classes="destination-section")
-            yield Input(value=self._initial, id="settings-rag-profile-name-input")
-            # Untrusted text (a file's reason, a typed path): never markup.
-            error = Static(
-                "",
-                id="settings-rag-profile-name-error",
-                classes="settings-rag-profile-name-error",
-                markup=False,
-            )
-            error.display = False
-            yield error
-            with Horizontal(classes="settings-action-row"):
-                yield Button("Cancel", id="settings-rag-profile-name-cancel")
-                yield Button(
-                    self._confirm_label,
-                    id="settings-rag-profile-name-confirm",
-                    variant="primary",
-                )
-
-    def on_mount(self) -> None:
-        try:
-            self.query_one("#settings-rag-profile-name-input", Input).focus()
-        except QueryError:
-            pass
-
-    def action_cancel(self) -> None:
-        self.dismiss(None)
-
-    @on(Button.Pressed, "#settings-rag-profile-name-cancel")
-    def _handle_cancel(self, event: Button.Pressed) -> None:
-        event.stop()
-        self.dismiss(None)
-
-    @on(Button.Pressed, "#settings-rag-profile-name-confirm")
-    def _handle_confirm(self, event: Button.Pressed) -> None:
-        event.stop()
-        self._submit_current_value()
-
-    @on(Input.Submitted, "#settings-rag-profile-name-input")
-    def _handle_submit(self, event: Input.Submitted) -> None:
-        event.stop()
-        self._submit_current_value()
-
-    def _submit_current_value(self) -> None:
-        try:
-            value = self.query_one("#settings-rag-profile-name-input", Input).value
-        except QueryError:
-            value = ""
-        value = value.strip()
-        reason = self._validate(value) if value and self._validate is not None else None
-        if reason:
-            from ...css.Themes.themes import printable
-
-            error = self.query_one("#settings-rag-profile-name-error", Static)
-            error.update(printable(reason))
-            error.display = True
-            self.query_one("#settings-rag-profile-name-input", Input).focus()
-            return
-        self.dismiss(value or None)
 
 
 class RagProfileSwitchConfirmModal(ModalScreen[str]):

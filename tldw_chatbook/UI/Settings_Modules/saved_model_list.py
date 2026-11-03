@@ -27,7 +27,7 @@ from textual.widgets import Button, Input, SelectionList, Static
 
 from ...Chat.provider_readiness import provider_config_key
 from ...config import SHIPPED_SAMPLE_MODEL_IDS
-from ..Screens.provider_model_resolution import MODEL_CAPABILITY_UNKNOWN_WARNING
+from ...LLM_Provider_Catalog.provider_model_resolution import MODEL_CAPABILITY_UNKNOWN_WARNING
 from ..Screens.settings_screen import INSTANT_APPLY_BEHAVIOR_COPY
 
 if TYPE_CHECKING:

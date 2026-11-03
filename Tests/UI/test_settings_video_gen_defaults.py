@@ -5,7 +5,7 @@ from types import SimpleNamespace
 import pytest
 
 from Tests.private_profile import private_profile_test
-from tldw_chatbook.UI.Screens import settings_video_gen_defaults as d
+from tldw_chatbook.UI.Settings_Modules import settings_video_gen_defaults as d
 
 
 def _cfg(**overrides):
@@ -214,8 +214,8 @@ async def test_video_gen_opens_clean_on_a_fresh_profile(request, monkeypatch):
         _build_test_app,
         _wait_for_selector,
     )
-    from tldw_chatbook.UI.Screens.settings_config_adapter import SettingsConfigAdapter
-    from tldw_chatbook.UI.Screens.settings_config_models import SettingsCategoryId
+    from tldw_chatbook.UI.Settings_Modules.settings_config_adapter import SettingsConfigAdapter
+    from tldw_chatbook.UI.Settings_Modules.settings_config_models import SettingsCategoryId
 
     real_load = SettingsConfigAdapter.load
 

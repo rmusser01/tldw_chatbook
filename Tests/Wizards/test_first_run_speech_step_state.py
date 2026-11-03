@@ -493,7 +493,7 @@ class TestSpeechInstallStatus:
         OmniVoice voice model download to finish…" -- the same sentence
         twice. The widget names what it waits for; the status line says
         what is queued."""
-        from tldw_chatbook.UI.Screens.model_browser_state import waiting_for_copy
+        from tldw_chatbook.Model_Artifacts.model_browser_state import waiting_for_copy
 
         queued = SimpleNamespace(phase="queued", waiting_for="OmniVoice voice model")
         text = speech_state.speech_install_status(

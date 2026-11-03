@@ -6,7 +6,7 @@ from Tests.private_profile import private_profile_test
 
 pytestmark = pytest.mark.bootstrap_profile
 
-from tldw_chatbook.UI.Screens.settings_config_adapter import SettingsConfigAdapter
+from tldw_chatbook.UI.Settings_Modules.settings_config_adapter import SettingsConfigAdapter
 from tldw_chatbook.UI.Screens.settings_screen import SettingsScreen
 
 

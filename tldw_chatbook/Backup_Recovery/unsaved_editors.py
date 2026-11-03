@@ -30,7 +30,7 @@ def _text(value: object) -> bool:
 
 
 def _settings_drafts_dirty(drafts) -> bool:
-    from tldw_chatbook.UI.Screens.settings_config_models import (
+    from tldw_chatbook.UI.Settings_Modules.settings_config_models import (
         SettingsCategoryId,
         SettingsDraft,
     )
@@ -246,7 +246,7 @@ def _settings_snapshot_dirty(state: dict) -> bool:
     dirty = _settings_drafts_dirty(state.get("settings_drafts", {}))
     dirty = _speech_snapshot_dirty(state.get("speech_tts_panel_draft")) or dirty
     if "web_search_session" in state:
-        from tldw_chatbook.UI.Screens.settings_config_models import SettingsCategoryId
+        from tldw_chatbook.UI.Settings_Modules.settings_config_models import SettingsCategoryId
 
         session = state["web_search_session"]
         if not _exact(session, "UI.Screens.settings_web_search", "WebSearchSettings"):

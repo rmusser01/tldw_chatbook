@@ -21,7 +21,7 @@ from textual.widgets import (
     TextArea,
 )
 
-from tldw_chatbook.UI.Screens.settings_config_models import SettingsDraft
+from tldw_chatbook.UI.Settings_Modules.settings_config_models import SettingsDraft
 from tldw_chatbook.Utils.input_validation import (
     CONSOLE_HOOK_DEFAULT_TIMEOUT_S as HOOK_DEFAULT_TIMEOUT_S,
 )

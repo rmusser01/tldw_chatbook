@@ -13,11 +13,11 @@ from Tests.private_profile import is_private_profile_child, private_profile_test
 from Tests.UI.consolidated_css import APP_STYLESHEETS
 from Tests.UI.test_destination_shells import DestinationHarness
 from tldw_chatbook import config
-from tldw_chatbook.UI.Screens.settings_config_models import (
+from tldw_chatbook.UI.Settings_Modules.settings_config_models import (
     SettingsCategoryId,
     SettingsDraft,
 )
-from tldw_chatbook.UI.Screens.settings_web_search import WebSearchSettings
+from tldw_chatbook.UI.Settings_Modules.settings_web_search import WebSearchSettings
 from tldw_chatbook.Web_Scraping import search_backend_settings as catalog
 
 

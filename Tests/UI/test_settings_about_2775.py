@@ -14,7 +14,7 @@ import pytest
 from textual.widgets import Markdown
 
 from Tests.UI.test_destination_shells import DestinationHarness, _build_test_app
-from tldw_chatbook.UI.Screens.settings_config_models import SettingsCategoryId
+from tldw_chatbook.UI.Settings_Modules.settings_config_models import SettingsCategoryId
 from tldw_chatbook.UI.Screens.settings_screen import SettingsScreen
 from tldw_chatbook.Utils.about_text import ABOUT_MARKDOWN, get_app_version
 

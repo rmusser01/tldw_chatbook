@@ -357,7 +357,7 @@ def open_provider_setup(
     )
     from ..Navigation.main_navigation import NavigateToScreen
     from ..Navigation.pending_handoff_store import HandoffChannel, PendingHandoffStore
-    from ..Screens.settings_config_models import SettingsCategoryId
+    from ..Settings_Modules.settings_config_models import SettingsCategoryId
 
     if field is None:
         readiness = screen._console_default_readiness(provider, model)
@@ -423,7 +423,7 @@ async def load_provider_catalog(
     Returns:
         The provider's model ids.
     """
-    from ..Screens.provider_model_resolution import resolve_provider_model_options
+    from ...LLM_Provider_Catalog.provider_model_resolution import resolve_provider_model_options
 
     options = await asyncio.to_thread(
         asyncio.run,

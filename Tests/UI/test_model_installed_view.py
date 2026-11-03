@@ -150,7 +150,7 @@ def _import_reference(character: str = "a") -> ArtifactRef:
 
 
 def _unmanaged_inventory(source: Path):
-    from tldw_chatbook.UI.Screens.model_browser_state import (
+    from tldw_chatbook.Model_Artifacts.model_browser_state import (
         UnmanagedRow,
         inventory_rows,
     )
@@ -163,7 +163,7 @@ def _unmanaged_inventory(source: Path):
 
 
 def _managed_inventory_row(tmp_path: Path, reference: ArtifactRef):
-    from tldw_chatbook.UI.Screens.model_browser_state import InventoryRow
+    from tldw_chatbook.Model_Artifacts.model_browser_state import InventoryRow
 
     return InventoryRow(
         path=tmp_path / reference.artifact_id,
@@ -791,7 +791,7 @@ async def test_picker_reserves_lane_and_blocks_second_selection_and_lifecycle(
 ) -> None:
     """Picker ownership disables every competing Installed-view mutation."""
     from Tests.Model_Artifacts.test_acquisition_types import make_descriptor
-    from tldw_chatbook.UI.Screens.model_browser_state import inventory_rows
+    from tldw_chatbook.Model_Artifacts.model_browser_state import inventory_rows
     from tldw_chatbook.UI.Screens.model_installed_view import InstalledView
 
     source = tmp_path / "outside.gguf"
@@ -1103,7 +1103,7 @@ async def test_mounted_dependency_row_labels_ownership_and_omits_activate(
 
     from Tests.Model_Artifacts.test_acquisition_types import make_descriptor
     from tldw_chatbook.Model_Artifacts.service import ArtifactRole, InstalledArtifact
-    from tldw_chatbook.UI.Screens.model_browser_state import inventory_rows
+    from tldw_chatbook.Model_Artifacts.model_browser_state import inventory_rows
     from tldw_chatbook.UI.Screens.model_installed_view import InstalledView
 
     descriptor = replace(make_descriptor(), role=ArtifactRole.DEPENDENCY)
@@ -1872,7 +1872,7 @@ async def test_mounted_idle_recycle_state_is_distinct_and_path_private(
     tmp_path: Path,
 ) -> None:
     """The matching row paints checking and retrying while controls stay pending."""
-    from tldw_chatbook.UI.Screens.model_browser_state import InventoryRow
+    from tldw_chatbook.Model_Artifacts.model_browser_state import InventoryRow
     from tldw_chatbook.UI.Screens.model_installed_view import InstalledView
 
     reference = ArtifactRef("parakeet-v2", "immutable-revision", "int8")
@@ -2819,7 +2819,7 @@ async def test_import_lane_disables_every_lifecycle_action_at_80_columns(
 ) -> None:
     """One active import owns all managed mutations while controls remain visible."""
     from Tests.Model_Artifacts.test_acquisition_types import make_descriptor
-    from tldw_chatbook.UI.Screens.model_browser_state import inventory_rows
+    from tldw_chatbook.Model_Artifacts.model_browser_state import inventory_rows
     from tldw_chatbook.UI.Screens.model_installed_view import InstalledView
 
     source = tmp_path / "outside.gguf"

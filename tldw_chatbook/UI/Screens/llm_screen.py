@@ -138,7 +138,7 @@ from ..Navigation.vllm_handoff import (
 )
 from ..Workbench.workbench_state import WorkbenchHeaderState
 from .lab_frame import LabInspectorRow, LabScreen, LabStatusChip
-from .model_browser_state import install_failure_message
+from ...Model_Artifacts.model_browser_state import install_failure_message
 from .model_curated_view import CuratedView
 from .model_external_view import ExternalModelView
 from .model_installed_view import InstalledView

@@ -45,7 +45,7 @@ from tldw_chatbook.Model_Artifacts.service import (
     ACQUISITION_SESSION_LEASE_KEY,
     ModelArtifactService,
 )
-from tldw_chatbook.UI.Screens.model_browser_state import install_failure_message
+from tldw_chatbook.Model_Artifacts.model_browser_state import install_failure_message
 
 pytestmark = pytest.mark.allow_network
 

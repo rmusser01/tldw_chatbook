@@ -122,7 +122,7 @@ from tldw_chatbook.UI.Console_Modules.session import (
 )
 from tldw_chatbook.UI.Console_Modules.workspace import ConsoleWorkspaceController
 from tldw_chatbook.UI.Screens.chat_screen_state import TaskResumeState
-from tldw_chatbook.UI.Screens.settings_config_models import SettingsCategoryId
+from tldw_chatbook.UI.Settings_Modules.settings_config_models import SettingsCategoryId
 from tldw_chatbook.Widgets.Console import (
     ConsoleComposerBar,
     ConsolePromptsModal,

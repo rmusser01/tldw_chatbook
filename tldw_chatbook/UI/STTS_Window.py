@@ -68,7 +68,7 @@ from tldw_chatbook.UI.Speech.speech_settings_contracts import (
     SpeechTTSConfigurationState,
     SpeechTTSNavigationTarget,
 )
-from tldw_chatbook.UI.Screens.settings_speech_tts import (
+from tldw_chatbook.UI.Settings_Modules.settings_speech_tts import (
     BUILT_IN_TTS_PROVIDER_ORDER,
     global_speech_tts_provider_configuration_state,
     load_global_speech_tts_state,

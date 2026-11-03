@@ -15,7 +15,7 @@ from textual.widgets import Collapsible, Input
 
 from ...Widgets.settings_image_gen_panel import ImageGenSettingsPanel
 from ...Widgets.settings_video_gen_panel import VideoGenSettingsPanel
-from ..Screens.settings_config_models import SettingsCategoryId, SettingsDraft
+from ..Settings_Modules.settings_config_models import SettingsCategoryId, SettingsDraft
 
 if TYPE_CHECKING:
     from ..Screens.settings_screen import SettingsScreen

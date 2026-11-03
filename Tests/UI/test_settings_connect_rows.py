@@ -496,7 +496,7 @@ async def test_provider_and_model_read_edited_only_when_their_own_value_is(reque
     """Captures 03 and 04 (fix 2): the draft pins provider and model beside
     any edit, so staging only a Temperature made both rows read edited *,
     and staging only a model made Provider read it too."""
-    from tldw_chatbook.UI.Screens.settings_config_models import SettingsCategoryId
+    from tldw_chatbook.UI.Settings_Modules.settings_config_models import SettingsCategoryId
 
     app = _build_test_app()
     app.app_config["chat_defaults"] = {"provider": "openai", "model": "gpt-4.1"}
@@ -620,7 +620,7 @@ async def test_the_revert_dialog_leaves_focus_off_the_navigation_bar(
     from Tests.UI.test_markup_interpolation_widget_pins import (
         _wait_for_notification_message,
     )
-    from tldw_chatbook.UI.Screens.settings_config_models import SettingsCategoryId
+    from tldw_chatbook.UI.Settings_Modules.settings_config_models import SettingsCategoryId
     from tldw_chatbook.Widgets.confirmation_dialog import ConfirmationDialog
 
     host = _anthropic_host()

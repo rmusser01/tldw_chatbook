@@ -10792,7 +10792,7 @@ class TestPreviewIntegration:
         from textual.widgets import Button
 
         from tldw_chatbook.UI.Navigation.main_navigation import NavigateToScreen
-        from tldw_chatbook.UI.Screens.settings_config_models import (
+        from tldw_chatbook.UI.Settings_Modules.settings_config_models import (
             SettingsCategoryId,
         )
 

@@ -26,7 +26,7 @@ from __future__ import annotations
 
 import pytest
 
-from tldw_chatbook.UI.Screens import (
+from tldw_chatbook.UI.Settings_Modules import (
     settings_image_gen_defaults as image_defaults,
     settings_video_gen_defaults as video_defaults,
 )

@@ -428,7 +428,7 @@ def test_persist_library_rag_save_writes_console_section_after_profile(
     """Profile save lands first; the [console] section follows in the same
     logical save, deep-merged so unrelated Console keys survive."""
     from Tests.UI.test_settings_configuration_hub import _wire_rag_profile_adapter
-    from tldw_chatbook.UI.Screens.settings_config_adapter import (
+    from tldw_chatbook.UI.Settings_Modules.settings_config_adapter import (
         SettingsConfigAdapter,
     )
     from tldw_chatbook.UI.Screens.settings_library_rag_defaults import (
@@ -470,7 +470,7 @@ def test_persist_library_rag_save_skips_console_write_when_profile_refuses(
     """Read-only (builtin) profile: the whole save is refused -- the console
     section is NOT written on its own (all-or-nothing)."""
     from Tests.UI.test_settings_configuration_hub import _wire_rag_profile_adapter
-    from tldw_chatbook.UI.Screens.settings_config_adapter import (
+    from tldw_chatbook.UI.Settings_Modules.settings_config_adapter import (
         SettingsConfigAdapter,
     )
     from tldw_chatbook.UI.Screens.settings_library_rag_defaults import (
@@ -504,7 +504,7 @@ def test_persist_library_rag_save_skips_console_write_when_profile_refuses(
 def test_persist_library_rag_save_reports_console_write_failure(monkeypatch, tmp_path):
     """A failed config write surfaces as an unsuccessful save (draft stays)."""
     from Tests.UI.test_settings_configuration_hub import _wire_rag_profile_adapter
-    from tldw_chatbook.UI.Screens.settings_config_adapter import (
+    from tldw_chatbook.UI.Settings_Modules.settings_config_adapter import (
         SettingsConfigAdapter,
     )
     from tldw_chatbook.UI.Screens.settings_library_rag_defaults import (

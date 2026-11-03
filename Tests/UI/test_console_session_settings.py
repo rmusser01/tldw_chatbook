@@ -94,7 +94,7 @@ from tldw_chatbook.UI.Navigation.pending_handoff_store import (
     ConsoleFirstChatIntent,
     HandoffChannel,
 )
-from tldw_chatbook.UI.Screens import provider_model_resolution
+from tldw_chatbook.LLM_Provider_Catalog import provider_model_resolution
 from tldw_chatbook.UI.Screens.chat_screen import (
     CONSOLE_PROVIDER_CONFIGURE_API_KEY_LABEL,
     ChatScreen,
@@ -12451,7 +12451,7 @@ async def test_real_journey_settings_save_unblocks_console_without_restart(
     from tldw_chatbook import config as config_module
     from tldw_chatbook.Chat.console_chat_models import ConsoleMessageRole
     from tldw_chatbook.UI.Navigation.main_navigation import NavigateToScreen
-    from tldw_chatbook.UI.Screens.settings_config_adapter import SettingsConfigAdapter
+    from tldw_chatbook.UI.Settings_Modules.settings_config_adapter import SettingsConfigAdapter
     from tldw_chatbook.Widgets.Console import ConsoleSetupModal
 
     monkeypatch.delenv("OPENAI_API_KEY", raising=False)

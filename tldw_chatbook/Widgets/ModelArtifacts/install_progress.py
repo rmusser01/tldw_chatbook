@@ -12,7 +12,7 @@ from textual.message import Message
 from textual.widget import Widget
 from textual.widgets import Button, ProgressBar, Static
 
-from tldw_chatbook.UI.Screens.model_browser_state import (
+from tldw_chatbook.Model_Artifacts.model_browser_state import (
     TransferRateEstimator,
     transfer_summary,
     waiting_for_copy,

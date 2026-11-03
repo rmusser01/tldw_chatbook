@@ -188,7 +188,7 @@ async def test_ctrl_l_on_the_api_key_field_clears_the_saved_key_until_revert_or_
         _capture_provider_settings_mutations,
     )
     from Tests.UI.test_settings_provider_keyboard_journeys import _revert, _settle
-    from tldw_chatbook.UI.Screens.settings_config_models import SettingsCategoryId
+    from tldw_chatbook.UI.Settings_Modules.settings_config_models import SettingsCategoryId
 
     category = SettingsCategoryId.PROVIDERS_MODELS
     monkeypatch.delenv("OPENAI_API_KEY", raising=False)

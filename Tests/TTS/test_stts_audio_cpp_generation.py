@@ -54,7 +54,7 @@ from tldw_chatbook.TTS.studio_preferences import (
     StudioTTSPreferencesSnapshot,
     StudioTTSPreferenceStore,
 )
-from tldw_chatbook.UI.Screens.settings_speech_tts import (
+from tldw_chatbook.UI.Settings_Modules.settings_speech_tts import (
     build_provider_test_fingerprint,
     load_global_speech_tts_state,
 )

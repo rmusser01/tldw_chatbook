@@ -509,7 +509,7 @@ def external_vad_install_status(progress: Any) -> str:
         The status text.
     """
     if getattr(progress, "phase", None) == "queued":
-        from tldw_chatbook.UI.Screens.model_browser_state import waiting_for_copy
+        from tldw_chatbook.Model_Artifacts.model_browser_state import waiting_for_copy
 
         return waiting_for_copy(getattr(progress, "waiting_for", None))
     return (

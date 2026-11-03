@@ -43,7 +43,7 @@ from Tests.UI.test_settings_category_sweep import (
     _click_settings_category,
     _settle_settings,
 )
-from tldw_chatbook.UI.Screens.settings_config_models import SettingsCategoryId
+from tldw_chatbook.UI.Settings_Modules.settings_config_models import SettingsCategoryId
 from tldw_chatbook.UI.Screens.settings_search_index import (
     FIELD_SEARCH_INDEX,
     SPEECH_TTS_PROVIDER_FORM_FIELDS,

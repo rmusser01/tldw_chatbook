@@ -12,7 +12,7 @@ from pathlib import Path
 from typing import Any, Mapping
 
 from ...Utils.path_validation import validate_path_simple
-from .settings_config_models import SettingsValidationResult
+from ..Settings_Modules.settings_config_models import SettingsValidationResult
 
 _TRUE_STRINGS = frozenset({"true", "1", "on"})
 _FALSE_STRINGS = frozenset({"false", "0", "no", "off"})

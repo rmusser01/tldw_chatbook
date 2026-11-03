@@ -43,9 +43,9 @@ from tldw_chatbook.Image_Generation.config import (
 )
 from tldw_chatbook.config import ConfigMutationResult
 from tldw_chatbook.UI.Navigation.main_navigation import NavigateToScreen
-from tldw_chatbook.UI.Screens.settings_config_models import SettingsCategoryId
-from tldw_chatbook.UI.Screens import settings_video_gen_defaults as video_defaults
-from tldw_chatbook.UI.Screens.settings_image_gen_defaults import (
+from tldw_chatbook.UI.Settings_Modules.settings_config_models import SettingsCategoryId
+from tldw_chatbook.UI.Settings_Modules import settings_video_gen_defaults as video_defaults
+from tldw_chatbook.UI.Settings_Modules.settings_image_gen_defaults import (
     BACKEND_IDS,
     BACKEND_LABELS,
     ImageGenProbeResult,

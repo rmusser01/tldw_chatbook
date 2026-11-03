@@ -39,7 +39,7 @@ from tldw_chatbook.UI.Console_Modules.connection_probe import (
     switcher_connection_prober,
 )
 from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
-from tldw_chatbook.UI.Screens.settings_config_adapter import SettingsConfigAdapter
+from tldw_chatbook.UI.Settings_Modules.settings_config_adapter import SettingsConfigAdapter
 from tldw_chatbook.Widgets.Console.console_model_popover import ConsoleModelPopover
 from tldw_chatbook.Widgets.Console.console_settings_modal import ConsoleSettingsModal
 from tldw_chatbook.Widgets.Console.console_setup_modal import (

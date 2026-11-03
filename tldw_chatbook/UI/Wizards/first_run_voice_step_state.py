@@ -28,7 +28,7 @@ from tldw_chatbook.TTS.pocket_tts_native import (
     repair_streamed_wav,
 )
 from tldw_chatbook.TTS.preferences import TTSPreferencesSnapshot
-from tldw_chatbook.UI.Screens.settings_speech_tts import (
+from tldw_chatbook.UI.Settings_Modules.settings_speech_tts import (
     ProcessProviderTestEvidenceStore,
 )
 from tldw_chatbook.UI.Speech.speech_settings_contracts import (

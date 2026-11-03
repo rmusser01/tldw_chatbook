@@ -553,7 +553,7 @@ tldw_chatbook.UI.Navigation.shell_destinations
 tldw_chatbook.UI.Navigation.shortcut_context
 tldw_chatbook.UI.Navigation.vllm_handoff
 tldw_chatbook.UI.Screens
-tldw_chatbook.UI.Screens.settings_speech_tts
+tldw_chatbook.UI.Settings_Modules.settings_speech_tts
 tldw_chatbook.UI.Screens.study_scope_models
 tldw_chatbook.UI.Speech
 tldw_chatbook.UI.Speech.speech_settings_contracts

@@ -17,7 +17,7 @@ from Tests.UI.test_settings_provider_keyboard_journeys import (
     _revert,
     _settle,
 )
-from tldw_chatbook.UI.Screens.provider_model_resolution import provider_config_key
+from tldw_chatbook.LLM_Provider_Catalog.provider_model_resolution import provider_config_key
 from tldw_chatbook.UI.Screens.settings_screen import SettingsScreen
 
 

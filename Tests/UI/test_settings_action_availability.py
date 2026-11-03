@@ -3,7 +3,7 @@
 from types import SimpleNamespace
 
 from Tests.private_profile import private_profile_test
-from tldw_chatbook.UI.Screens.settings_config_models import SettingsCategoryId
+from tldw_chatbook.UI.Settings_Modules.settings_config_models import SettingsCategoryId
 from tldw_chatbook.UI.Screens.settings_screen import (
     GUIDED_SETTINGS_MUTATION_CATEGORIES,
     SettingsScreen,

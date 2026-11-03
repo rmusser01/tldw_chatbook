@@ -9,7 +9,7 @@ from textual.app import ComposeResult
 from textual.containers import Vertical
 from textual.widgets import Collapsible, Static
 
-from tldw_chatbook.UI.Screens.model_browser_state import (
+from tldw_chatbook.Model_Artifacts.model_browser_state import (
     PlanRow,
     display_license,
     format_free_space,

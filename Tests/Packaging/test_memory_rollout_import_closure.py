@@ -38,8 +38,8 @@ if sys.argv[1] == "chat":
 elif sys.argv[1] == "settings":
     from tldw_chatbook.UI.Screens import settings_screen
     for name in (
-        "tldw_chatbook.UI.Screens.settings_web_search",
-        "tldw_chatbook.UI.Screens.settings_advanced_config",
+        "tldw_chatbook.UI.Settings_Modules.settings_web_search",
+        "tldw_chatbook.UI.Settings_Modules.settings_advanced_config",
         "tldw_chatbook.Widgets.settings_web_search_panel",
         "tldw_chatbook.Widgets.settings_advanced_config_panel",
     ):

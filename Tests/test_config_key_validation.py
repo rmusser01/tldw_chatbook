@@ -71,7 +71,7 @@ def test_report_formatting_is_human_readable():
 def test_adapter_surfaces_findings_but_stays_valid(tmp_path):
     """AC#1 + AC#4: unknown/deprecated keys are reported to the user via the
     Settings diagnostics validator, but never make the config invalid."""
-    from tldw_chatbook.UI.Screens.settings_config_adapter import SettingsConfigAdapter
+    from tldw_chatbook.UI.Settings_Modules.settings_config_adapter import SettingsConfigAdapter
 
     target = tmp_path / "config.toml"
     target.write_text(

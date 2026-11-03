@@ -79,7 +79,7 @@ from tldw_chatbook.Widgets.Home.home_rail import HOME_RAIL_ROW_PREFIX, HomeRail
 from ..Navigation.base_app_screen import BaseAppScreen
 from ..Navigation.main_navigation import NavigateToScreen
 from ..Navigation.screen_state_store import RuntimeIdentity
-from .settings_config_models import SettingsCategoryId
+from ..Settings_Modules.settings_config_models import SettingsCategoryId
 
 
 HOME_CONTROL_METHODS = {

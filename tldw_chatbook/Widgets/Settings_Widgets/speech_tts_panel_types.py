@@ -32,7 +32,7 @@ import math
 from dataclasses import dataclass, field, replace
 from typing import cast
 
-from tldw_chatbook.UI.Screens.settings_speech_tts import (
+from tldw_chatbook.UI.Settings_Modules.settings_speech_tts import (
     BUILT_IN_TTS_PROVIDER_ORDER,
     GLOBAL_TTS_PROVIDER_FIELD_IDS,
     GlobalSpeechTTSCredentialState,

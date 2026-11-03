@@ -20,7 +20,7 @@ from tldw_chatbook.LLM_Provider_Catalog.model_catalog_settings import SELECTOR_M
 from tldw_chatbook.LLM_Provider_Catalog.model_discovery_contracts import (
     MergedModelEntry,
 )
-from tldw_chatbook.UI.Screens.provider_model_resolution import (
+from tldw_chatbook.LLM_Provider_Catalog.provider_model_resolution import (
     ConsoleModelProvenance,
     ResolvedProviderModelOption,
 )

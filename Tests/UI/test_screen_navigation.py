@@ -4771,7 +4771,7 @@ async def test_boot_with_mcp_default_tab_lands_on_settings_tools_hub(request):
     real-app construction outside a private profile, see
     baseline-failures.txt).
     """
-    from tldw_chatbook.UI.Screens.settings_config_models import SettingsCategoryId
+    from tldw_chatbook.UI.Settings_Modules.settings_config_models import SettingsCategoryId
     from tldw_chatbook.UI.Screens.settings_tools_hub import ToolsHubPanel
 
     app = _build_test_app(configured_default="mcp")
@@ -4828,7 +4828,7 @@ async def test_mcp_deep_link_with_explicit_context_lands_on_tools_hub(request):
     pins the bare-route boot side; private-profile marker for the same
     real-app reason).
     """
-    from tldw_chatbook.UI.Screens.settings_config_models import SettingsCategoryId
+    from tldw_chatbook.UI.Settings_Modules.settings_config_models import SettingsCategoryId
     from tldw_chatbook.UI.Screens.settings_tools_hub import ToolsHubPanel
 
     app = _build_test_app()
@@ -4873,7 +4873,7 @@ async def test_tools_settings_deep_link_with_profile_payload_lands(request):
     payload must land in the hub pane's initial view state (mode
     "permissions" plus the profile link), not be dropped by replacement.
     """
-    from tldw_chatbook.UI.Screens.settings_config_models import SettingsCategoryId
+    from tldw_chatbook.UI.Settings_Modules.settings_config_models import SettingsCategoryId
     from tldw_chatbook.UI.Screens.settings_tools_hub import ToolsHubPanel
 
     app = _build_test_app()

@@ -392,7 +392,7 @@ async def test_saving_default_b_states_its_reach_and_a_new_chat_takes_it(
     from tldw_chatbook.Chat.console_chat_models import ConsoleMessageRole
     from tldw_chatbook.Chat.provider_readiness import provider_config_key
     from tldw_chatbook.UI.Navigation.main_navigation import NavigateToScreen
-    from tldw_chatbook.UI.Screens.settings_config_adapter import SettingsConfigAdapter
+    from tldw_chatbook.UI.Settings_Modules.settings_config_adapter import SettingsConfigAdapter
     from Tests.UI.test_console_session_settings import (
         _build_live_config_test_app,
         _wait_for_screen,

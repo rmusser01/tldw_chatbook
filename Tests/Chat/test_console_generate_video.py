@@ -814,7 +814,7 @@ def test_successful_settings_save_rebuilds_adapter_and_console_uses_same_instanc
     tmp_path, monkeypatch
 ):
     from tldw_chatbook.UI.Screens import settings_screen as settings_screen_module
-    from tldw_chatbook.UI.Screens.settings_video_gen_defaults import (
+    from tldw_chatbook.UI.Settings_Modules.settings_video_gen_defaults import (
         VideoGenDraftValues,
     )
     from tldw_chatbook.Video_Generation import adapter_registry
