@@ -1483,6 +1483,7 @@ async def _run_fleet(root):
 
 def test_phone_lost_ack_queries_original_commands_without_replay(live_mobile_console):
     root, environment = live_mobile_console.root, live_mobile_console.environment
+    environment = dict(environment, TLDW_SECURITY_FIXTURE="1")
     with (root / "transport.log").open("w") as output:
         result = subprocess.run(
             [
@@ -1727,11 +1728,91 @@ async def _run_transport(root):
                     )
                     assert not witness.exists()
                     await expect(phone.locator("#chat-draft")).to_have_value(prompt)
+                    await expect(phone.locator("#command-status")).to_contain_text(
+                        "Response lost"
+                    )
+                    await expect(phone.locator("#send-command")).to_be_disabled()
                 else:
                     assert (
                         response.status == 200
                         and row["queried_receipt"]["state"] == "accepted"
                     )
+                    if fault == "after-acceptance":
+                        await expect(phone.locator("#command-status")).to_contain_text(
+                            "send: accepted"
+                        )
+                        assert not row["target"].get("run_id")
+                        assert not row["target"].get("turn_id")
+                        assert int((data / "console-gateway-calls").read_text()) == 1
+                        await phone.locator("#chat-draft").fill(
+                            "new draft after expiry"
+                        )
+                        (data / "fixture-command-clock-offset-ns").write_text(
+                            str(301 * 1_000_000_000)
+                        )
+                        csrf = await phone.locator(
+                            'meta[name="chatbook-csrf"]'
+                        ).get_attribute("content")
+                        headers = {"Origin": stack.origin, "X-Chatbook-CSRF": csrf}
+                        refused_payload = {"text": "MUST_NOT_QUEUE_EXPIRED_RECEIPT"}
+                        trigger = await phone.request.post(
+                            stack.origin + "/api/v1/mobile/commands/tickets",
+                            headers=headers,
+                            data={
+                                "protocol_version": 1,
+                                "action": "steer",
+                                "target": dict(
+                                    row["target"],
+                                    run_id="stale-expiry-" + row["command_id"],
+                                ),
+                                "payload": refused_payload,
+                            },
+                        )
+                        assert trigger.status == 200, await trigger.text()
+                        trigger_ticket = await trigger.json()
+                        assert trigger_ticket["command_id"] != row["command_id"]
+                        trigger = await phone.request.post(
+                            stack.origin + "/api/v1/mobile/commands",
+                            headers=headers,
+                            data={
+                                "protocol_version": 1,
+                                "ticket": trigger_ticket["ticket"],
+                                "payload": refused_payload,
+                            },
+                        )
+                        assert trigger.status == 200, await trigger.text()
+                        trigger_receipt = await trigger.json()
+                        assert trigger_receipt["state"] == "refused", trigger_receipt
+                        pruned = await phone.request.get(
+                            stack.origin
+                            + "/api/v1/mobile/commands/"
+                            + row["command_id"]
+                        )
+                        assert pruned.status == 404, await pruned.text()
+                        assert (await pruned.json())["error"] == "unknown_command"
+                        await phone.locator("#back-button").click()
+                        await phone.locator(
+                            f'#chat-list button[data-session-id="{create_receipt["native_id"]}"]'
+                        ).click()
+                        await expect(phone.locator("#command-status")).to_contain_text(
+                            "Historical command " + row["command_id"]
+                        )
+                        await expect(phone.locator("#command-status")).to_contain_text(
+                            "send: accepted"
+                        )
+                        await expect(phone.locator("#chat-draft")).to_have_value(
+                            "new draft after expiry"
+                        )
+                        await expect(phone.locator("#send-command")).to_be_enabled()
+                        await expect(phone.locator("#stop-command")).to_be_enabled()
+                        assert len(attempts) == 1
+                        assert int((data / "console-gateway-calls").read_text()) == 1
+                        row["expired_receipt"] = {
+                            "query_status": pruned.status,
+                            "pruning_command": trigger_receipt,
+                            "provider_calls": 1,
+                            "original_send_posts": len(attempts),
+                        }
                     release.touch()
                     await expect(phone.locator("#chat-transcript")).to_contain_text(
                         "EXACT_REPLY:" + prompt, timeout=30000

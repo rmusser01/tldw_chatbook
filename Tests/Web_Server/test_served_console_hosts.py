@@ -342,8 +342,188 @@ async def test_service_does_not_signal_an_already_reaped_child(monkeypatch):
     def unexpected_signal(*args):
         pytest.fail("an already reaped child must never be signalled")
 
-    monkeypatch.setattr(serve.os, "killpg", unexpected_signal)
+    monkeypatch.setattr(serve.os, "killpg", unexpected_signal, raising=False)
     service = serve.build_chatbook_app_service_class(ReapedService)(
         canvas_control_broker=None
     )
     await service.stop()
+
+
+async def test_served_spawn_uses_exact_argv_and_interactive_stdin(tmp_path):
+    """The retained process is the app, even when command metadata uses a shell."""
+    import os
+    import shlex
+    import subprocess
+    import sys
+
+    from textual_serve.app_service import AppService
+
+    from tldw_chatbook.Web_Server import serve
+
+    child = r"""
+import json, os, sys
+print(json.dumps([os.getpid(), sys.argv[1:]]), flush=True)
+while header := sys.stdin.buffer.read(5):
+    if len(header) != 5:
+        break
+    payload = sys.stdin.buffer.read(int.from_bytes(header[1:], 'big'))
+    print(json.dumps([header[:1].decode(), payload.decode()]), flush=True)
+"""
+    argv = (sys.executable, "-I", "-S", "-u", "-c", child, "two words", "literal '$;&")
+    command = (
+        subprocess.list2cmdline(argv) if os.name == "nt" else shlex.join(argv) + "; :"
+    )
+
+    async def ignore(*args, **kwargs):
+        pass
+
+    service = serve.build_chatbook_app_service_class(AppService)(
+        command,
+        write_bytes=ignore,
+        write_str=ignore,
+        close=ignore,
+        download_manager=None,
+        canvas_control_broker=None,
+    )
+    # This lets the test-only RED packet exercise the old implementation too.
+    service._app_argv = argv
+    process = await service._open_app_process()
+    try:
+        async with asyncio.timeout(2):
+            pid, arguments = json.loads(await process.stdout.readline())
+            assert pid == process.pid
+            assert arguments == list(argv[6:])
+            for payload in (b"first", b"second"):
+                assert await service.send_bytes(payload)
+                assert json.loads(await process.stdout.readline()) == [
+                    "D",
+                    payload.decode(),
+                ]
+    finally:
+        if process.returncode is None:
+            if os.name == "posix":
+                os.killpg(process.pid, __import__("signal").SIGKILL)
+            else:
+                process.kill()
+        await asyncio.wait_for(process.wait(), 2)
+
+
+async def test_served_retirement_windows_never_evaluates_sigkill_or_killpg(monkeypatch):
+    from types import SimpleNamespace
+
+    from tldw_chatbook.Web_Server import serve
+
+    operations = []
+
+    class Process:
+        pid = 123456
+        returncode = None
+
+        async def wait(self):
+            operations.append("wait")
+            if self.returncode is None:
+                raise TimeoutError
+            return self.returncode
+
+        def terminate(self):
+            operations.append("terminate")
+
+        def kill(self):
+            operations.append("kill")
+            self.returncode = 1
+
+    class Base:
+        def __init__(self):
+            self._process = Process()
+
+        async def stop(self):
+            pass
+
+    monkeypatch.setattr(serve, "os", SimpleNamespace(name="nt"))
+    monkeypatch.setattr(serve, "signal", SimpleNamespace(SIGTERM=15))
+    service = serve.build_chatbook_app_service_class(Base)(canvas_control_broker=None)
+    await service.stop()
+    assert operations == ["wait", "terminate", "wait", "kill", "wait"]
+    assert service._process.returncode == 1
+
+
+@pytest.mark.skipif(
+    __import__("os").name != "posix", reason="POSIX shell/group witness"
+)
+async def test_served_retirement_reaps_actual_app_before_revoking_broker():
+    import os
+    import shlex
+    import signal
+    import sys
+
+    from textual_serve.app_service import AppService
+
+    from tldw_chatbook.Web_Server import serve
+
+    child = r"""
+import os, signal, time
+signal.signal(signal.SIGTERM, lambda *_: None)
+print(os.getpid(), flush=True)
+time.sleep(20)
+"""
+    argv = (sys.executable, "-I", "-S", "-u", "-c", child)
+    pid = None
+    revoked = []
+
+    async def ignore(*args, **kwargs):
+        pass
+
+    class Broker:
+        async def revoke_child(self, child_id):
+            assert process.returncode is not None
+            with pytest.raises(ProcessLookupError):
+                os.kill(pid, 0)
+            revoked.append(child_id)
+
+    service = serve.build_chatbook_app_service_class(AppService)(
+        shlex.join(argv) + "; :",
+        write_bytes=ignore,
+        write_str=ignore,
+        close=ignore,
+        download_manager=None,
+        canvas_control_broker=Broker(),
+    )
+    service._app_argv = argv
+    process = await service._open_app_process()
+    try:
+        pid = int(await asyncio.wait_for(process.stdout.readline(), 2))
+        service._canvas_control_started = True
+        # AppService.stop has no pipe observer here: its completion cannot prove exit.
+        await service.stop()
+        assert revoked == [service.app_service_id]
+        assert process.returncode is not None
+    finally:
+        if process.returncode is None or (pid is not None and pid != process.pid):
+            try:
+                os.killpg(process.pid, signal.SIGKILL)
+            except ProcessLookupError:
+                pass
+        await asyncio.wait_for(process.wait(), 2)
+        if pid is not None:
+            async with asyncio.timeout(2):
+                while True:
+                    try:
+                        os.kill(pid, 0)
+                    except ProcessLookupError:
+                        break
+                    await asyncio.sleep(0.01)
+
+
+async def test_served_spawn_without_argv_refuses_before_creating_process(monkeypatch):
+    from tldw_chatbook.Web_Server import serve
+
+    class Base:
+        pass
+
+    async def unexpected_spawn(*args, **kwargs):
+        pytest.fail("missing argv must not create a process")
+
+    monkeypatch.setattr(serve.asyncio, "create_subprocess_exec", unexpected_spawn)
+    service = serve.build_chatbook_app_service_class(Base)(canvas_control_broker=None)
+    with pytest.raises(RuntimeError, match="launch argv is unavailable"):
+        await service._open_app_process()
