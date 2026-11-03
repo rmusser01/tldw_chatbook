@@ -24,9 +24,9 @@ that coordinator.
   generation provenance, legacy exchange capture, or trajectory diagnostics.
   These values do not change the provider-neutral message envelope.
 
-The structural test records 41 live SQL sink identities and 62 boundary call
-identities: 64 model-visible, 13 visibility/ownership-only, and 26
-presentation-only identities in total. These are route-layer identities, not 103
+The structural test records 43 live SQL sink identities and 65 boundary call
+identities: 67 model-visible, 13 visibility/ownership-only, and 28
+presentation-only identities in total. These are route-layer identities, not 108
 distinct user actions; a public action appears once at its boundary and again at
 the SQL sink it reaches.
 
@@ -49,7 +49,7 @@ user-facing ownership chain and must be reviewed when a route changes.
 | Classic character create/post/edit | model-visible | `Character_Chat_Lib.create_conversation`, `start_new_chat_session`, `add_message_to_conversation`, `post_message_to_conversation`, `edit_message_content` | `add_message` or semantic `update_message` |
 | Character API create/update | model-visible | `LocalCharacterPersonaService.create_character_chat_message`, `update_character_chat_message` | `add_message` or semantic `update_message` |
 | Console character-greeting projection and repair | model-visible | `ConsoleChatStore.persist_roleplay_projection_plan`; producer `_snapshot_roleplay_message_projection_write` | frozen `_RoleplayMessageProjectionWrite.writer` invokes `ChatPersistenceService.update_message_content` |
-| Import | model-visible plus visibility | `ChatbookImporter.import_chatbook` via `_import_conversations`; `Character_Chat_Lib.load_chat_history_from_file_and_save_to_db` | creates messages/attachments; V2 graph restoration writes variant/selection/tombstone fields |
+| Import | model-visible plus visibility | `ChatbookImporter.import_chatbook` via `_import_conversations` / `_import_conversations_with_database`; `Character_Chat_Lib.load_chat_history_from_file_and_save_to_db` | creates messages/attachments; V2 graph restoration writes variant/selection/tombstone fields |
 | Provider-continuation fallback create/update/discard | model-visible | `ConsoleChatStore.persist_provider_continuation_event`, `ConsoleChatStore.discard_provider_continuation` | `CharactersRAGDB.create_assistant_with_continuation` or `update_provider_continuation` through the persistence DB handle |
 | Sync create/update/delete | model-visible plus visibility | `SyncEnvelopeApplier.apply` → `ChatSyncAdapter.apply` → `_ContinuationValidatingChatStore` → `CharactersRAGDB.append_chat_message`/`delete_chat_message` | create/update changes the canonical envelope; delete retains those bytes and changes only tombstone visibility/ownership plus graph epoch |
 | Regeneration variants in legacy DB API | model-visible plus visibility | `CharactersRAGDB.create_message_variant`, `select_message_variant` | new variant row plus selected/total flags |
@@ -116,14 +116,19 @@ instead of being silently ignored; this includes a dynamic schema in
 `UPDATE {schema}.messages`, which is not assumed safe merely because the final
 table component is literal.
 
-The test contains an exact, self-checking allowlist for 20 existing dynamic
+The test contains an exact, self-checking allowlist for 52 dynamic
 executor call sites. Each review pins the normalized call template and source,
 its proven non-chat domain, and an exact target set that the test mechanically
-re-derives from the current production AST. The 20 sites form 18 target-evidence
+re-derives from the current production AST. The 52 sites form 40 target-evidence
 families. Their deliberately narrow evidence forms are literal arguments at
-private helper call sites, literal list/tuple/map table producers, and local or
+private helper call sites, literal list/tuple/map table producers, local or
 imported string constants (including a literal f-string derived from an imported
-constant). A normalized SHA-256 fingerprint pins the complete selected
+constant), a loop that binds the interpolated target itself while iterating an
+inline tuple/list of literal tables or a local literal-keyed dict's `items()`,
+and the literal table fields that every direct construction of a frozen per-host
+spec passes (`KeywordStoreSpec` for the shared keyword store). The spec form
+follows direct constructions, an import alias, and a literal `getattr`; it does
+not follow a runtime-computed `getattr` name elsewhere in the package. A normalized SHA-256 fingerprint pins the complete selected
 producer/caller/import evidence, so changing its structure requires review even
 when the resulting table names do not change. The derived set must exactly equal
 the recorded `exact_targets`; adding `messages`, another non-chat table, or only
@@ -131,7 +136,8 @@ claiming a runtime-supplied table fails. It is not a function-wide exemption:
 literal canonical actions in the same function remain in the census, and a
 second dynamic call, changed template/source, canonical retarget, stale review,
 or changed target evidence fails. The reviewed domains cover keyword/library,
-media, evaluation, notification, research, TTS, and writing tables.
+media, evaluation, notification, research, TTS, writing, workspace project
+index, goal-run payload, and plugin authority tables.
 
 This evidence check is a deterministic structural contract, not general
 interprocedural dataflow. It follows only the explicitly declared literal helper
@@ -156,7 +162,8 @@ module-scope binding at every resolved step. Every load of a reviewed private
 helper symbol must be the function of its recognized direct call; capturing a
 bound method in a variable/container or passing it as a callback fails. `getattr`
 names formed entirely from literal strings (including static f-strings and
-concatenation) are resolved and checked. A truly runtime-dynamic `getattr` name
+concatenation) are resolved and checked, as is every name a conditional
+expression or a subscript of an inline literal dict can choose. A truly runtime-dynamic `getattr` name
 cannot prove that it excludes a reviewed helper, so it also fails closed anywhere
 this target-evidence audit applies. Targets assembled at runtime, forwarded
 through unspecified helpers, or supplied only by annotations/review metadata are
@@ -218,8 +225,13 @@ boundary unless a similarly narrow scanner contract and its limitations are
 deliberately updated in the same change. Historical
 `_migrate_from_*` bodies, schema DDL/triggers, and SQL
 migration files are excluded because they are not live application mutation
-routes and have their own migration/packaging tests. FTS and Sync-log triggers
-are derived indexes/logs, not canonical semantic owners.
+routes and have their own migration/packaging tests. The backup archive staging
+rewrite `credentials._rewrite_database` is excluded for the same reason: it
+copies one staged member's whole catalog (for ChaChaNotes, `messages` included)
+into a fresh uuid-named private file that then replaces the staged member, and
+opens no live profile database. Its two dynamic sites stay pinned exactly, and
+each must execute on the connection the function opened on that destination.
+FTS and Sync-log triggers are derived indexes/logs, not canonical semantic owners.
 
 ## Exact live SQL sink census
 
@@ -232,10 +244,10 @@ are derived indexes/logs, not canonical semantic owners.
 - `tldw_chatbook/Chat/console_dispatch_repository.py::ConsoleDispatchRepository._settle_with_assistant_uncoordinated::sql:update:messages` — model-visible
 - `tldw_chatbook/Chat/console_semantic_revision.py::SemanticRevisionCoordinator._mutate_message::sql:delete:messages` — model-visible
 - `tldw_chatbook/Canvas/repository.py::CanvasRepository.hard_purge_conversation::sql:delete:conversations(cascades-messages)` — visibility/ownership-only
-- `tldw_chatbook/Chat/console_trace_maintenance.py::LegacyTraceMaintenance.run_batch::sql:delete:message_exchanges` — presentation-only
+- `tldw_chatbook/Chat/console_trace_maintenance.py::LegacyTraceMaintenance._run_admitted_batch::sql:delete:message_exchanges` — presentation-only
 - `tldw_chatbook/Chat/library_activity.py::LibraryActivityContribution.write::sql:insert:message_trajectory_metadata` — presentation-only
 - `tldw_chatbook/Chat/library_preparation.py::LibraryPreparationContribution.write::sql:insert:message_trajectory_metadata` — presentation-only
-- `tldw_chatbook/Chatbooks/chatbook_importer.py::ChatbookImporter._import_conversations::sql:update:messages` — visibility/ownership-only
+- `tldw_chatbook/Chatbooks/chatbook_importer.py::ChatbookImporter._import_conversations_with_database::sql:update:messages` — visibility/ownership-only
 - `tldw_chatbook/DB/ChaChaNotes_DB.py::CharactersRAGDB._messages_insert_statement::sql:insert:messages` — model-visible
 - `tldw_chatbook/DB/ChaChaNotes_DB.py::CharactersRAGDB._update_message_uncoordinated::sql:update:messages` — model-visible
 - `tldw_chatbook/DB/ChaChaNotes_DB.py::CharactersRAGDB.append_chat_message.apply_sync_message::sql:update:messages` — model-visible
@@ -264,6 +276,8 @@ are derived indexes/logs, not canonical semantic owners.
 - `tldw_chatbook/DB/ChaChaNotes_DB.py::CharactersRAGDB.update_message_usage_local::sql:update:messages` — presentation-only
 - `tldw_chatbook/DB/ChaChaNotes_DB.py::CharactersRAGDB._update_provider_continuation_uncoordinated::sql:update:messages` — model-visible
 - `tldw_chatbook/DB/ChaChaNotes_DB.py::CharactersRAGDB.upsert_trajectory_rows::sql:insert:message_trajectory_metadata` — presentation-only
+- `tldw_chatbook/DB/console_prompt_mixins.py::_mark_assistant::sql:update:messages` — presentation-only
+- `tldw_chatbook/DB/console_prompt_mixins.py::write_fork_state::sql:update:messages` — presentation-only
 
 ## Exact boundary-call census
 
@@ -276,11 +290,14 @@ are derived indexes/logs, not canonical semantic owners.
 - `tldw_chatbook/Character_Chat/Character_Chat_Lib.py::set_message_ranking::call:db:update_message` — presentation-only
 - `tldw_chatbook/Character_Chat/Character_Chat_Lib.py::start_new_chat_session::call:db:add_message` — model-visible
 - `tldw_chatbook/Character_Chat/local_character_persona_service.py::LocalCharacterPersonaService.create_character_chat_message::call:db:add_message` — model-visible
-- `tldw_chatbook/Character_Chat/local_character_persona_service.py::LocalCharacterPersonaService.delete_character_chat_message::call:db:soft_delete_message` — visibility/ownership-only
+- `tldw_chatbook/Character_Chat/local_character_persona_service.py::LocalCharacterPersonaService._delete_character_chat_message::call:db:soft_delete_message` — visibility/ownership-only
 - `tldw_chatbook/Character_Chat/local_character_persona_service.py::LocalCharacterPersonaService.update_character_chat_message::call:db:update_message` — model-visible
 - `tldw_chatbook/Chat/chat_persistence_service.py::ChatPersistenceService.append_message_attachment::call:db:append_message_attachment_with_metadata` — model-visible
 - `tldw_chatbook/Chat/chat_persistence_service.py::ChatPersistenceService.append_message_exchanges::call:db:append_message_exchanges_local` — presentation-only
 - `tldw_chatbook/Chat/chat_persistence_service.py::ChatPersistenceService.commit_durable_turn::call:dispatch:insert_with_messages` — model-visible
+- `tldw_chatbook/Chat/chat_persistence_service.py::ChatPersistenceService.commit_completed_voice_pair::call:db:add_message` — model-visible
+- `tldw_chatbook/Chat/chat_conversation_service.py::ChatConversationService.copy_conversation_active_path::call:db:add_message` — model-visible
+- `tldw_chatbook/Chat/chat_persistence_service.py::ChatPersistenceService.save_conversation_mixin_attempt::call:persistence:create_message` — model-visible
 - `tldw_chatbook/Chat/chat_persistence_service.py::ChatPersistenceService.create_message::call:db:add_message_with_semantic_sidecars` — model-visible
 - `tldw_chatbook/Chat/chat_persistence_service.py::ChatPersistenceService.delete_full_exchanges_for_conversation::call:db:delete_full_exchanges_for_conversation` — presentation-only
 - `tldw_chatbook/Chat/chat_persistence_service.py::ChatPersistenceService.delete_message_subtree::call:db:soft_delete_message_subtree` — visibility/ownership-only
@@ -305,7 +322,7 @@ are derived indexes/logs, not canonical semantic owners.
 - `tldw_chatbook/Chat/console_chat_store.py::ConsoleChatStore._persist_new_message::call:persistence:create_message` — model-visible
 - `tldw_chatbook/Chat/console_chat_store.py::ConsoleChatStore._persist_usage_only::call:persistence:update_message_usage` — presentation-only
 - `tldw_chatbook/Chat/console_chat_store.py::ConsoleChatStore._promote_ephemeral_session_atomically::call:persistence:promote_console_conversation_bundle` — model-visible
-- `tldw_chatbook/Chat/console_chat_store.py::ConsoleChatStore._settle_dispatch_recovery::call:dispatch:settle_with_assistant` — model-visible
+- `tldw_chatbook/Chat/console_native_commit.py::_store_settle_dispatch_recovery::call:dispatch:settle_with_assistant` — model-visible
 - `tldw_chatbook/Chat/console_chat_store.py::ConsoleChatStore._append_generation_variant::call:persistence:append_message_attachment` — model-visible
 - `tldw_chatbook/Chat/console_chat_store.py::ConsoleChatStore.commit_durable_turn::call:persistence:commit_durable_turn` — model-visible
 - `tldw_chatbook/Chat/console_chat_store.py::ConsoleChatStore.commit_full_capture_purge::call:persistence:delete_full_exchanges_for_conversation` — presentation-only
@@ -317,8 +334,8 @@ are derived indexes/logs, not canonical semantic owners.
 - `tldw_chatbook/Chat/console_chat_store.py::ConsoleChatStore.transition_dispatch_recovery_for_retry::call:dispatch:cas_state` — model-visible
 - `tldw_chatbook/Chat/console_chat_store.py::ConsoleChatStore.write_trajectory_rows::call:persistence:write_trajectory_rows` — presentation-only
 - `tldw_chatbook/Chat/console_subtree_delete.py::write_subtree_delete::call:persistence:delete_message_subtree` — visibility/ownership-only
-- `tldw_chatbook/Chatbooks/chatbook_importer.py::ChatbookImporter._import_conversations::call:db:add_message` — model-visible
-- `tldw_chatbook/Chatbooks/chatbook_importer.py::ChatbookImporter._import_conversations::call:db:add_message_with_semantic_sidecars` — model-visible
+- `tldw_chatbook/Chatbooks/chatbook_importer.py::ChatbookImporter._import_conversations_with_database::call:db:add_message` — model-visible
+- `tldw_chatbook/Chatbooks/chatbook_importer.py::ChatbookImporter._import_conversations_with_database::call:db:add_message_with_semantic_sidecars` — model-visible
 - `tldw_chatbook/DB/ChaChaNotes_DB.py::CharactersRAGDB._add_message_with_semantic_sidecars::call:db:set_message_generation_metadata` — presentation-only
 - `tldw_chatbook/DB/ChaChaNotes_DB.py::CharactersRAGDB.append_chat_message::call:db:add_message` — model-visible
 - `tldw_chatbook/DB/ChaChaNotes_DB.py::CharactersRAGDB.delete_chat_message::call:db:soft_delete_message` — visibility/ownership-only
