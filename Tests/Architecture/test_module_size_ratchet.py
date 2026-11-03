@@ -223,7 +223,14 @@ _BUDGETS: dict[str, int] = {
     # console_native_commit.py, so the controller no longer reads the
     # store's private commit-owner maps.
     # PR3309 integration 2026-11-01: user size waiver; 22361 dev + 8 = 22369.
-    "tldw_chatbook/Chat/console_chat_store.py": 22317,
+    # 2026-11-03 (TASK-37653 review rounds 1-4 and the PR #3352 review, owner
+    # rule: raise the row by exactly the fix's own lines): dev 66155632ed pins
+    # 22,317; this branch adds a net +124 -- close claims generation owners
+    # before first persistence (an AB/BA deadlock with a continuation write)
+    # and takes late-joining owners without waiting, the managed seal runs
+    # outside the owner scope with a recheck, and the owner-scope nesting
+    # order is documented: 22,441, the exact measurement.
+    "tldw_chatbook/Chat/console_chat_store.py": 22441,
     # TASK-33622.14: the aggregate Roleplay draft guard moved to
     # UI/Persona_Modules/roleplay_draft_guard.py (dev had grown to 16,533,
     # over this row; the move brings it to 16,397).
