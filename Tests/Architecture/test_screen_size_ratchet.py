@@ -329,7 +329,10 @@ _BUDGETS: dict[str, tuple[str, int, int]] = {
     # call Console_Modules/session.py's settings_revision_held; review rounds,
     # +23: Chat settings reopens on followed_suspended_draft, read after its
     # context preparation with the modal's committed values. Exact measurement.
-    "tldw_chatbook/UI/Screens/chat_screen.py": ("ChatScreen", 24603, 741),
+    # +21: Chat settings reopens on followed_suspended_draft, read after its
+    # context preparation, and refuses a follow the chat moved past while its
+    # models were listed (re-read at construction). Exact measurement.
+    "tldw_chatbook/UI/Screens/chat_screen.py": ("ChatScreen", 24601, 741),
     #: Added 2026-09 by the Library decomposition plan (PR 0b): this row was
     #: missing for the entire month in which library_screen.py tripled from
     #: 15,819 to 46,109 lines while chat_screen.py shrank under its budget.

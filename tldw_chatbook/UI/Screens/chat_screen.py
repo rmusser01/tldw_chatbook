@@ -3205,10 +3205,6 @@ class ChatScreen(BaseAppScreen):
                 else store.session_context_policy_overrides(session_id),
                 exposed_fields=FULL_MODEL_DEFAULT_FIELDS,
             )
-            if suspended_draft is not None:  # TASK-35190: and the chat's own pair
-                initial_draft = remember_session_pair(
-                    initial_draft, store.session_settings(session_id)
-                )
         else:
             origin = transfer.origin
             session_id = origin.session_id
@@ -3230,8 +3226,8 @@ class ChatScreen(BaseAppScreen):
         )
         if prepared_context is None:
             return False
-        # TASK-36534: one read of the chat, after preparation, is both what a
-        # suspended draft's untouched fields follow and the modal's committed.
+        # TASK-36534: one read of the chat, after preparation, is what a
+        # suspended draft's untouched fields follow and its pair is kept with.
         committed = store.session_settings(session_id)
         if transfer is None and suspended_draft is not None:
             from ...Widgets.Console.console_settings_unsaved import (
@@ -3241,18 +3237,17 @@ class ChatScreen(BaseAppScreen):
             draft = followed_suspended_draft(suspended_draft, committed)
             if draft is not suspended_draft:
                 settings = draft.settings
-                initial_draft = remember_session_pair(
-                    self._console_settings_initial_draft(
-                        settings,
-                        draft.context_policy_overrides,
-                        exposed_fields=FULL_MODEL_DEFAULT_FIELDS,
-                    ),
-                    committed,
+                initial_draft = self._console_settings_initial_draft(
+                    settings,
+                    draft.context_policy_overrides,
+                    exposed_fields=FULL_MODEL_DEFAULT_FIELDS,
                 )
                 active_provider = settings.provider
                 active_model = draft.provider_model_drafts.get(
                     active_provider, settings.model
                 )
+            # TASK-35190: and the chat's own pair.
+            initial_draft = remember_session_pair(initial_draft, committed)
         effective_thinking_policy, context_owner_current = prepared_context
         context_estimate = self._context_spend._console_settings_context_estimate_for_session(
             session_id,
@@ -3275,6 +3270,7 @@ class ChatScreen(BaseAppScreen):
         modal_contract = _conversation_settings_modal_module()
         from ..Console_Modules.model_switcher import open_model_picker
 
+        current = store.session_settings(session_id)  # discovery above awaits
         modal = modal_contract.ConsoleSettingsModal(
             open_response_rules=lambda: self._response_rules_ui.open_manager(
                 self._console_runtime().ensure_response_rules().scopes(session_id)[0]
@@ -3283,7 +3279,7 @@ class ChatScreen(BaseAppScreen):
             chat_title=next(
                 (s.title for s in store.sessions() if s.id == session_id), ""
             ),
-            settings=committed or settings,  # committed: unsaved-edits baseline
+            settings=current or settings,  # committed: unsaved-edits baseline
             origin=origin,
             initial_draft=initial_draft,
             transfer=transfer,
@@ -3363,7 +3359,9 @@ class ChatScreen(BaseAppScreen):
                 modal.disabled = True
             return transfer_outcome
 
-        if _pre_push_guard is not None and not _pre_push_guard():
+        if (_pre_push_guard is not None and not _pre_push_guard()) or (
+            suspended_draft is not None and current != committed
+        ):  # TASK-36534: the chat moved after the follow; the return retries
             return False
         try:
             await self.app.push_screen(modal, callback=apply_origin_result)

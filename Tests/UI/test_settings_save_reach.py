@@ -514,8 +514,8 @@ async def test_saving_default_b_states_its_reach_and_a_new_chat_takes_it(
 @private_profile_test
 @pytest.mark.parametrize(
     "elsewhere",
-    [None, "settings", "context"],
-    ids=["own-save", "settings-elsewhere", "context-elsewhere"],
+    [None, "settings", "context", "discovery"],
+    ids=["own-save", "settings-elsewhere", "context-elsewhere", "during-discovery"],
 )
 async def test_a_blank_chats_settings_draft_survives_its_own_credential_save(
     request, monkeypatch, elsewhere
@@ -618,6 +618,27 @@ async def test_a_blank_chats_settings_draft_survives_its_own_credential_save(
         )
         saved = config_module.load_settings(force_reload=True)["chat_defaults"]
         assert (saved["provider"], saved["model"]) == ("openai", "gpt-4.1")
+        attempts: list[bool] = []
+        if elsewhere == "discovery":  # the chat moves again while models list
+            discover = console._providers_models_for_console_settings
+            reopen = console._reopen_suspended_console_settings
+
+            async def discovering(*args, **kwargs):
+                if not attempts:
+                    assert adapter.save_values("chat_defaults", {"max_tokens": 1234})
+                    console._session._ensure_active_console_session_settings()
+                return await discover(*args, **kwargs)
+
+            async def recording(*args, **kwargs):
+                attempts.append(await reopen(*args, **kwargs))
+                return attempts[-1]
+
+            monkeypatch.setattr(
+                console, "_providers_models_for_console_settings", discovering
+            )
+            monkeypatch.setattr(
+                console, "_reopen_suspended_console_settings", recording
+            )
         settings.query_one("#settings-provider-return").press()
 
         refused = (
@@ -634,7 +655,7 @@ async def test_a_blank_chats_settings_draft_survives_its_own_credential_save(
             )
 
         await _wait_until(pilot, lambda: was_refused() or reopened(), "Return")
-        if elsewhere:
+        if elsewhere in ("settings", "context"):
             assert was_refused()
             assert not any(
                 isinstance(screen, ConsoleSettingsModal) for screen in app.screen_stack
@@ -666,6 +687,12 @@ async def test_a_blank_chats_settings_draft_survives_its_own_credential_save(
         # Its markers compare with the converged chat: Model now equals the
         # chat's own, so only the Temperature edit is still unsaved.
         assert returned._unsaved_field_labels() == ("Temperature",)
+        if elsewhere == "discovery":
+            # The first try had followed the chat as it was before discovery
+            # moved it, so it did not open; the retry follows it as it is now.
+            assert attempts[0] is False
+            assert returned._build_draft().max_tokens == 1234
+            assert store.session_settings(chat_id).max_tokens == 1234
 
 
 @pytest.mark.asyncio
