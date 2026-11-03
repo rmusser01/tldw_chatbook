@@ -520,7 +520,7 @@ _BUDGETS: dict[str, int] = {
     # 2026-10-23, TASK-36381 (owner decision 2026-10-04: "expand the limits,
     # don't modify other code to make it fit"): Tools & MCP gets the
     # _INSPECTOR_GUIDANCE entry it shipped without (+14).
-    "tldw_chatbook/UI/Screens/settings_screen.py": 35638,
+    "tldw_chatbook/UI/Screens/settings_screen.py": 35642,  # 2026-11-03: +4 capture/canvas policy imports from their new homes (TASK-36945.2)
     # TASK-33007.8: the two Settings region modules Phase 7 created, pinned
     # at birth so the split cannot regrow a god module there. New code for
     # either goes in a sibling module under UI/Settings_Modules/.
