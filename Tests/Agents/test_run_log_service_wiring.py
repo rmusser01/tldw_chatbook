@@ -682,6 +682,14 @@ def test_real_run_log_omits_sensitive_tool_args_and_results(wired, monkeypatch):
     )
     for value in safe_values:
         assert isinstance(on_record("tool_result", {"content": value}), int)
+    from types import SimpleNamespace
+
+    def trajectory_json(loads):
+        # Patch trajectory's own ``json`` name, not the shared stdlib function.
+        return SimpleNamespace(
+            loads=loads, dumps=json.dumps, JSONDecodeError=json.JSONDecodeError
+        )
+
     real_loads = trajectory_module.json.loads
     decode_count = 0
 
@@ -690,7 +698,7 @@ def test_real_run_log_omits_sensitive_tool_args_and_results(wired, monkeypatch):
         decode_count += 1
         return real_loads(value)
 
-    monkeypatch.setattr(trajectory_module.json, "loads", counted_loads)
+    monkeypatch.setattr(trajectory_module, "json", trajectory_json(counted_loads))
     assert isinstance(
         on_record("tool_result", {"content": '{"endpoint":"/api/safe"}'}), int
     )
@@ -699,9 +707,9 @@ def test_real_run_log_omits_sensitive_tool_args_and_results(wired, monkeypatch):
     def exhausted_decoder(_value):
         raise MemoryError
 
-    monkeypatch.setattr(trajectory_module.json, "loads", exhausted_decoder)
+    monkeypatch.setattr(trajectory_module, "json", trajectory_json(exhausted_decoder))
     assert on_record("tool_result", {"content": '{"file_path":"/api/private"}'}) is None
-    monkeypatch.setattr(trajectory_module.json, "loads", real_loads)
+    monkeypatch.setattr(trajectory_module, "json", json)
 
     records = read_all(root)
     persisted = "\n".join(record.content for record in records)

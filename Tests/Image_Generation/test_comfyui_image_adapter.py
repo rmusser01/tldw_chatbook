@@ -11,6 +11,7 @@ import time
 import warnings
 import zlib
 from dataclasses import replace
+from types import SimpleNamespace
 from typing import Any
 
 import httpx
@@ -1029,13 +1030,23 @@ def test_object_info_rejects_missing_classes_inputs_loader_choices_and_png_outpu
     assert calls == ["/object_info"]
 
 
+def _adapter_json(loads):
+    """The adapter's own ``json`` name with ``loads`` replaced.
+
+    ``adapter_module.json.loads`` is the stdlib function every module shares.
+    """
+    return SimpleNamespace(
+        loads=loads,
+        load=json.load,
+        JSONDecodeError=json.JSONDecodeError,
+    )
+
+
 def test_bounded_json_rejects_declared_and_streamed_overflow_before_loads(
     monkeypatch,
 ) -> None:
     loads_calls: list[object] = []
-    monkeypatch.setattr(
-        adapter_module.json, "loads", lambda value: loads_calls.append(value)
-    )
+    monkeypatch.setattr(adapter_module, "json", _adapter_json(loads_calls.append))
     declared = httpx.Response(
         200,
         headers={"content-length": str(adapter_module.COMFYUI_MAX_JSON_BYTES + 1)},
@@ -1063,9 +1074,7 @@ def test_json_rejects_non_identity_content_encoding_before_iteration_or_parse(
 ) -> None:
     stream = GuardedChunkStream([b"{}"])
     loads_calls: list[object] = []
-    monkeypatch.setattr(
-        adapter_module.json, "loads", lambda value: loads_calls.append(value)
-    )
+    monkeypatch.setattr(adapter_module, "json", _adapter_json(loads_calls.append))
     response = httpx.Response(
         200,
         stream=stream,
@@ -1093,9 +1102,7 @@ def test_json_oversized_single_chunk_never_extends_bounded_buffer_or_parses(
             max_buffer_len = max(max_buffer_len, len(self))
 
     monkeypatch.setattr(adapter_module, "bytearray", TrackingBytearray, raising=False)
-    monkeypatch.setattr(
-        adapter_module.json, "loads", lambda value: loads_calls.append(value)
-    )
+    monkeypatch.setattr(adapter_module, "json", _adapter_json(loads_calls.append))
     response = httpx.Response(
         200,
         stream=ChunkStream([b"x" * (adapter_module.COMFYUI_MAX_JSON_BYTES + 1)]),

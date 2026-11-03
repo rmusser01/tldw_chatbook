@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import base64
+import json
+from types import SimpleNamespace
 
 import pytest
 
@@ -58,7 +60,16 @@ def test_decrypt_payload_preserves_unexpected_parser_errors(monkeypatch) -> None
     def raise_unexpected_error(_value):
         raise RuntimeError("unexpected parser bug")
 
-    monkeypatch.setattr(crypto.json, "loads", raise_unexpected_error)
+    # Patch crypto's own ``json`` name; ``crypto.json.loads`` is the stdlib function.
+    monkeypatch.setattr(
+        crypto,
+        "json",
+        SimpleNamespace(
+            loads=raise_unexpected_error,
+            dumps=json.dumps,
+            JSONDecodeError=json.JSONDecodeError,
+        ),
+    )
 
     with pytest.raises(RuntimeError, match="unexpected parser bug"):
         decrypt_sync_payload(encrypted, key=dataset_key)
