@@ -1,5 +1,11 @@
 # Lessons: what counts as evidence a change works
 
+## A held config lock does not defer a Console control-bar sync whose readiness display is current (TASK-38645, 2026-11-03)
+
+The task blamed the nonblocking config-lock probe in `run_console_config_sync` for the deferred control-bar sync behind the Send-readiness flakes. So the first negative control for the fix held `_config_file_lock()` from another thread around a bare `console._sync_console_control_bar()`. Both arms passed. The bare call still returned True, and the control would have "shown" that the wait was unnecessary. The mounted harness's config value is disk-loaded, so the sync runs through the checked readiness display (`ConsoleReadinessConfigProjection.run` / `_run_checked_display_sync`) and never probes the native locks. Setting the projection's `value = None` just before the bare call made it return False with Send stale, `(True, True) == (False, False)`, the CI failure. `_sync_console_control_bar_now` waited and passed. A version that slept 1.1 s to age the proof also passed both arms, because the app re-synced during the sleep.
+
+**What to do:** before you trust a negative control for a deferral, print the call's return value under it. To force a Console control-bar deferral in a mounted test, make the readiness display cold with no await between that step and the sync. In tests, sync the Console's control bar with `_sync_console_control_bar_now`, not a bare call followed by a pause.
+
 ## An Automatic evidence double needs an authorized source (PR3339, 2026-11-02)
 
 The first private cold-import guard returned a fabricated note ID from a Library double with no notes database. Search and prewarm ran, but current canonical capture reauthorized the nonexistent source and the provider received no evidence. A real file-backed note and app-owned conversation services restored the actual authority path. Adding a real DB also enabled the agent dispatcher, which did not reach the provider within the existing bound in that harness; the established provider-direct configuration retained the original route and reached the provider. This qualifies provider-direct only, not agent-runtime behavior.

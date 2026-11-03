@@ -31,6 +31,7 @@ from Tests.UI.test_console_native_chat_flow import (
     DUMMY_OPENAI_API_KEY,
     _build_console_send_test_app,
     _persist_console_provider_config,
+    _sync_console_control_bar_now,
 )
 from Tests.UI.test_product_maturity_gate1_core_loop_screen_adaptation import (
     ConsoleHarness,
@@ -132,7 +133,7 @@ async def test_a_staged_attachment_gets_the_same_send_readiness_from_either_sync
             assert store.add_pending_attachment(session_id, _attachment(name, fields))
 
             composer._sync_current_action_state()
-            console._sync_console_control_bar()
+            await _sync_console_control_bar_now(console)
             screen_last = _send_state(send)
             composer._sync_current_action_state()
             composer_last = _send_state(send)
@@ -162,7 +163,7 @@ async def test_the_composer_resync_reads_what_is_staged_not_the_painted_label(
         )
         image = _attachment("photo.png", _STAGED_KINDS[0][1])
         assert store.add_pending_attachment(session_id, image)
-        console._sync_console_control_bar()
+        await _sync_console_control_bar_now(console)
         assert _send_state(send) == (False, False)
         assert composer._pending_attachment_label is not None
 
@@ -262,7 +263,7 @@ async def test_a_ready_send_with_only_an_image_staged_sends_the_image(monkeypatc
         composer.load_draft("")
         image = _attachment("photo.png", _STAGED_KINDS[0][1])
         assert store.add_pending_attachment(session_id, image)
-        console._sync_console_control_bar()
+        await _sync_console_control_bar_now(console)
         composer._sync_current_action_state()
         assert _send_state(send) == (False, False)
 
