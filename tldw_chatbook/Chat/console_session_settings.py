@@ -128,9 +128,9 @@ CONSOLE_SESSION_SETTINGS_SOURCES = frozenset({"derived", "user"})
 #: Includes the ADR-179 engine-driven cloud presets (databricks, together,
 #: fireworks, cerebras -- TASK-32919): they dispatch through
 #: ``API_CALL_HANDLERS`` like every legacy key, so they are identity keys
-#: here too; only ``custom-hosted`` stays execution-only, which the
-#: registry derivation (every record key and alias but that one) encodes (Phase 2 Task 6
-#: decision 1). Reconciled against the handler map by
+#: here too; only ``custom-hosted`` stays execution-only (Phase 2 Task 6
+#: decision 1). Derived from the registry: the ``RECORDS_BY_KEY`` keys minus
+#: ``custom-hosted`` (aliases such as ``mistralai`` are keys there too). Reconciled against the handler map by
 #: ``test_settings_execution_provider_keys_match_chat_api_handlers``.
 CONSOLE_SETTINGS_EXECUTION_PROVIDER_KEYS = CONSOLE_EXECUTION_PROVIDER_KEYS
 

@@ -169,6 +169,91 @@ def test_continuation_provider_literal_matches_derived_keys():
         CONTINUATION_PROVIDER_KEYS
     )
 
+# Frozen from the hand lists at dc96c947e8: reclassifying a record between cloud
+# and local must update these deliberately.
+_BASE_KEYED = frozenset(
+    {
+        "anthropic",
+        "arcee",
+        "azure",
+        "baseten",
+        "byteplus",
+        "cerebras",
+        "cloudflare",
+        "cohere",
+        "commandcode",
+        "databricks",
+        "deepinfra",
+        "deepseek",
+        "fireworks",
+        "gmi",
+        "google",
+        "groq",
+        "huggingface",
+        "kilo",
+        "meta",
+        "mimo",
+        "minimax",
+        "mistral",
+        "mistralai",
+        "moonshot",
+        "nebius",
+        "nous",
+        "novita",
+        "nvidia",
+        "ollama_cloud",
+        "openai",
+        "opencode_zen",
+        "openrouter",
+        "qianfan",
+        "qwencloud",
+        "sambanova",
+        "siliconflow",
+        "stepfun",
+        "together",
+        "tokenhub",
+        "upstage",
+        "venice",
+        "vercel",
+        "wandb",
+        "zai",
+        "zenmux",
+    }
+)
+_BASE_KEYLESS = frozenset(
+    {
+        "aphrodite",
+        "custom",
+        "custom_2",
+        "custom_openai_api",
+        "custom_openai_api_2",
+        "koboldcpp",
+        "llama_cpp",
+        "local_llamacpp",
+        "local_llamafile",
+        "local_llm",
+        "local_mlx_lm",
+        "local_ollama",
+        "local_onnx",
+        "local_transformers",
+        "local_vllm",
+        "mlx_lm",
+        "ollama",
+        "oobabooga",
+        "polystrata",
+        "strata",
+        "tabbyapi",
+        "vllm",
+    }
+)
+
+
+def test_readiness_key_sets_are_pinned_to_the_base_values():
+    from tldw_chatbook import provider_registry as registry
+
+    assert registry.PROVIDERS_REQUIRING_API_KEY_KEYS == _BASE_KEYED
+    assert registry.KEYLESS_PROVIDER_KEYS == _BASE_KEYLESS
+
 
 def test_readiness_key_sets_are_the_registry_derivations():
     from tldw_chatbook import provider_registry as registry
@@ -243,3 +328,20 @@ def test_custom_slot_keys_come_from_the_custom_records():
     # Hand-kept UI labels/groups must name real providers (no typo'd keys).
     assert PROVIDER_CUSTOM_GROUP_KEYS <= KNOWN_PROVIDER_KEYS
     assert set(PROVIDER_DISPLAY_NAMES) - KNOWN_PROVIDER_KEYS == {"custom_hosted"}
+
+
+def test_display_names_follow_records_and_overrides_are_not_redundant():
+    from tldw_chatbook.Chat.provider_catalog import (
+        _DISPLAY_NAME_OVERRIDES,
+        PROVIDER_DISPLAY_NAMES,
+    )
+    from tldw_chatbook.provider_registry import normalize_provider_config_key as norm
+
+    by_key = {norm(r.key): r.display_name for r in ALL_RECORDS}
+    for key, label in PROVIDER_DISPLAY_NAMES.items():
+        if key in _DISPLAY_NAME_OVERRIDES:
+            assert label == _DISPLAY_NAME_OVERRIDES[key]
+            # An override equal to the record value is dead weight.
+            assert by_key.get(key) != label, key
+        else:
+            assert label == by_key[key], key

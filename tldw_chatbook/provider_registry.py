@@ -276,6 +276,10 @@ class ProviderRecord:
     # ADR-179: the host is per-account (no default URL can ship), so a resolved
     # key alone does not make the provider ready -- a base URL must be set.
     base_url_required: bool = False
+    # Hand-written (non-engine) providers that nonetheless checkpoint tool
+    # continuations (moonshot, zai, deepseek); engine records qualify by
+    # ``continuation_protocol`` alone.
+    checkpoints_continuations: bool = False
 
 
 # --- Databricks (first engine-driven preset; AI Gateway external models) ---
@@ -1599,6 +1603,7 @@ DEEPSEEK = ProviderRecord(
     default_base_url="https://api.deepseek.com",
     native_tools=True, reasoning_effort=True, auto_refresh=False,
     reasoning_effort_values=frozenset({"none", "low", "high", "max"}),
+    checkpoints_continuations=True,
 )
 MISTRAL = ProviderRecord(
     key="mistral", config_key="MistralAI", display_name="Mistral", classification=_CLOUD,
@@ -1627,6 +1632,7 @@ MOONSHOT = ProviderRecord(
     api_key_env_candidates=("MOONSHOT_API_KEY",),
     default_base_url="https://api.moonshot.ai/v1",  # [api_settings.moonshot].api_base_url
     native_tools=True, reasoning_effort=True, auto_refresh=True,
+    checkpoints_continuations=True,
 )
 ZAI = ProviderRecord(
     key="zai", config_key="ZAI", display_name="Z.ai", classification=_CLOUD,
@@ -1634,6 +1640,7 @@ ZAI = ProviderRecord(
     api_key_env_candidates=("ZAI_API_KEY",),
     default_base_url="https://api.z.ai/api/paas/v4",  # [api_settings.zai].api_base_url
     native_tools=True, reasoning_effort=True, auto_refresh=True,
+    checkpoints_continuations=True,
 )
 QWENCLOUD = ProviderRecord(
     key="qwencloud", config_key="QwenCloud", display_name="QwenCloud", classification=_CLOUD,
@@ -1843,14 +1850,14 @@ PROVIDERS_REQUIRING_BASE_URL_KEYS: frozenset[str] = frozenset(
     for record in ALL_RECORDS
     if record.base_url_required
 )
-#: Providers that checkpoint tool continuations: the engine presets that speak
-#: a continuation protocol, plus three hand-written modules (not engine-driven,
-#: so no record field marks them) that predate the engine.
+#: Providers that checkpoint tool continuations: engine presets that speak a
+#: continuation protocol, plus records flagged ``checkpoints_continuations``.
 CONTINUATION_PROVIDER_KEYS: frozenset[str] = frozenset(
     record.key
     for record in ALL_RECORDS
-    if record.engine_driven and record.continuation_protocol is not None
-) | {"moonshot", "zai", "deepseek"}
+    if record.checkpoints_continuations
+    or (record.engine_driven and record.continuation_protocol is not None)
+)
 #: Console-settings identities: every dispatch key and alias except the
 #: execution-only ``custom-hosted`` (it is never a user-selectable identity).
 CONSOLE_EXECUTION_PROVIDER_KEYS: frozenset[str] = frozenset(RECORDS_BY_KEY) - {
