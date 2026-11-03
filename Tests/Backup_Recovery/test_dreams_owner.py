@@ -63,12 +63,12 @@ def test_dreams_participant_preserves_borrower_and_drains_after_explicit_close(t
     import time
 
     from tldw_chatbook.Backup_Recovery.bootstrap import RecoveryRequired
-    from tldw_chatbook.Backup_Recovery.participants import _repository_participant
+    from tldw_chatbook.Backup_Recovery.participants import repository_participant
 
     db = DreamsDB(tmp_path / "dreams.sqlite")
     try:
         connection = db._held_connection()
-        participant = _repository_participant(db)
+        participant = repository_participant(db)
         assert participant.owner_id == "db.dreams"
         assert connection in participant.connections
         connection.execute("BEGIN")

@@ -81,11 +81,11 @@ def test_source_close_cannot_revoke_managed_work(tmp_path, owner_type):
 
 @pytest.mark.parametrize("owner_type", CACHED + FRESH)
 def test_installed_scope_finishes_after_participant_pause(tmp_path, owner_type):
-    from tldw_chatbook.Backup_Recovery.participants import _repository_participant
+    from tldw_chatbook.Backup_Recovery.participants import repository_participant
 
     owner = owner_type(tmp_path / "store.sqlite")
     try:
-        participant = _repository_participant(owner)
+        participant = repository_participant(owner)
         scope = (
             owner.connection
             if owner_type in CACHED + (ScheduledTasksDB,)
@@ -106,11 +106,11 @@ def test_installed_scope_finishes_after_participant_pause(tmp_path, owner_type):
 
 @pytest.mark.parametrize("owner_type", FRESH)
 def test_fresh_raw_getter_refuses_participant_gate(tmp_path, owner_type):
-    from tldw_chatbook.Backup_Recovery.participants import _repository_participant
+    from tldw_chatbook.Backup_Recovery.participants import repository_participant
 
     owner = owner_type(tmp_path / "store.sqlite")
     try:
-        participant = _repository_participant(owner)
+        participant = repository_participant(owner)
         participant.close_admission()
         getter = (
             owner._get_connection if owner_type is ScheduledTasksDB else owner._connect
@@ -267,10 +267,10 @@ def test_participant_pause_during_raw_allocation_refuses_return(
 ):
     import importlib
     from tldw_chatbook.DB.base_db import BaseDB
-    from tldw_chatbook.Backup_Recovery.participants import _repository_participant
+    from tldw_chatbook.Backup_Recovery.participants import repository_participant
 
     owner = owner_type(tmp_path / "store.sqlite")
-    participant = _repository_participant(owner)
+    participant = repository_participant(owner)
     allocated = []
     target, name = (
         (BaseDB, "_get_connection")
@@ -381,8 +381,8 @@ def test_source_thread_retires_after_managed_work_and_raw_borrowers(
 @pytest.mark.parametrize("owner_type", CACHED + FRESH)
 def test_separate_instance_nested_admission_and_association(tmp_path, owner_type):
     from tldw_chatbook.Backup_Recovery.participants import (
-        _repository_participant,
-        _register_core_connection,
+        repository_participant,
+        register_core_connection,
     )
 
     first = owner_type(tmp_path / "same.sqlite")
@@ -393,11 +393,11 @@ def test_separate_instance_nested_admission_and_association(tmp_path, owner_type
         with pytest.raises(
             bootstrap.RecoveryRequired, match="core_connection_provenance_invalid"
         ):
-            _register_core_connection(second, raw)
+            register_core_connection(second, raw)
         with managed_scope(first)() as outer:
             with managed_scope(second)() as inner:
                 assert inner.execute("SELECT 42").fetchone()[0] == 42
-            second_participant = _repository_participant(second)
+            second_participant = repository_participant(second)
             second_participant.close_admission()
             with pytest.raises(
                 bootstrap.RecoveryRequired, match="storage_locally_paused"
@@ -426,7 +426,7 @@ def test_separate_instance_nested_admission_and_association(tmp_path, owner_type
 def test_operation_exit_failed_native_close_retains_live_handle(
     tmp_path, monkeypatch, owner_type, local_root, launch
 ):
-    from tldw_chatbook.Backup_Recovery.participants import _repository_participant
+    from tldw_chatbook.Backup_Recovery.participants import repository_participant
 
     owner = owner_type(tmp_path / "store.sqlite")
     connection = None
@@ -439,7 +439,7 @@ def test_operation_exit_failed_native_close_retains_live_handle(
                     raise sqlite3.OperationalError("injected close failure")
 
                 monkeypatch.setattr(connection, "close", fail_close)
-        participant = _repository_participant(owner)
+        participant = repository_participant(owner)
         participant.close_admission()
         pause = storage._begin_local_pause()
         child = launch(local_root / "admission", "maintenance", ("bootstrap.unbound",))
@@ -466,7 +466,7 @@ def test_operation_exit_failed_native_close_retains_live_handle(
 
 @pytest.mark.parametrize("owner_type", CACHED + FRESH)
 def test_ordinary_subclass_receives_no_installed_participant(tmp_path, owner_type):
-    from tldw_chatbook.Backup_Recovery.participants import _repository_participant
+    from tldw_chatbook.Backup_Recovery.participants import repository_participant
 
     class Ordinary(owner_type):
         pass
@@ -476,20 +476,20 @@ def test_ordinary_subclass_receives_no_installed_participant(tmp_path, owner_typ
         with managed_scope(owner)() as connection:
             assert connection.execute("SELECT 42").fetchone()[0] == 42
         with pytest.raises(ValueError, match="not_installed"):
-            _repository_participant(owner)
+            repository_participant(owner)
     finally:
         owner.close()
 
 
 @pytest.mark.parametrize("owner_type", CACHED + FRESH)
 def test_memory_retains_original_connection_policy_during_pause(owner_type):
-    from tldw_chatbook.Backup_Recovery.participants import _repository_participant
+    from tldw_chatbook.Backup_Recovery.participants import repository_participant
 
     owner = owner_type(":memory:")
     pause = storage._begin_local_pause()
     try:
         with pytest.raises(ValueError, match="not_installed"):
-            _repository_participant(owner)
+            repository_participant(owner)
         if owner_type is ScheduledTasksDB:
             # Original BaseDB policy: each scheduled memory open is a fresh DB.
             with owner.connection() as connection:
@@ -509,14 +509,14 @@ def test_memory_retains_original_connection_policy_during_pause(owner_type):
 
 
 def test_external_research_injection_stays_ordinary_and_uninstalled():
-    from tldw_chatbook.Backup_Recovery.participants import _repository_participant
+    from tldw_chatbook.Backup_Recovery.participants import repository_participant
 
     external = object()
     owner = LocalResearchService(external)
     assert owner.db is external
     assert owner.db_path is None
     with pytest.raises(ValueError, match="not_installed"):
-        _repository_participant(owner)
+        repository_participant(owner)
     with pytest.raises(RuntimeError, match="not configured"):
         owner._connect()
     owner.close()
@@ -570,11 +570,11 @@ def test_previous_raw_allocation_rechecks_participant_before_return(
 ):
     import importlib
     from tldw_chatbook.DB.base_db import BaseDB
-    from tldw_chatbook.Backup_Recovery.participants import _repository_participant
+    from tldw_chatbook.Backup_Recovery.participants import repository_participant
 
     owner = owner_type(tmp_path / "previous.sqlite", "phase5-race")
     owner.close()
-    participant = _repository_participant(owner)
+    participant = repository_participant(owner)
     target, name = (
         (BaseDB, "_get_connection")
         if owner_type
@@ -763,18 +763,18 @@ print("constructors-retired")
 def test_ingest_refusal_only_closes_its_new_allocation(tmp_path, monkeypatch):
     import tldw_chatbook.DB.Library_Ingest_Jobs_DB as module
     from tldw_chatbook.Backup_Recovery.participants import (
-        _register_core_connection,
-        _repository_participant,
+        register_core_connection,
+        repository_participant,
     )
 
     owner = LibraryIngestJobsDB(tmp_path / "ingest.sqlite", "race")
     owner.close()
-    participant = _repository_participant(owner)
+    participant = repository_participant(owner)
     original = module.connect_private_sqlite
     borrowed = original(
         "db.library_ingest_jobs", owner.db_path_str, check_same_thread=False
     )
-    _register_core_connection(owner, borrowed)
+    register_core_connection(owner, borrowed)
     allocated = []
 
     def replacing_cache(*args, **kwargs):

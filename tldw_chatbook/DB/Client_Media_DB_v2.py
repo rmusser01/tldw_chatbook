@@ -59,11 +59,11 @@ from .sql_validation import (
 )
 from .sql_logging import preview_params
 from tldw_chatbook.Backup_Recovery.participants import (
-    _core_cached_connection,
-    _core_closing,
-    _core_getter,
-    _core_transaction,
-    _register_core_connection,
+    core_cached_connection,
+    core_closing,
+    core_getter,
+    core_transaction,
+    register_core_connection,
 )
 from .private_sqlite import backup_connection_to_private, connect_private_sqlite
 from tldw_chatbook.Utils.private_paths import PrivatePathError, lexical_path
@@ -1165,7 +1165,7 @@ class MediaDatabase:
                 )
 
     # --- Connection Management ---
-    @_core_getter
+    @core_getter
     def _get_thread_connection(self) -> sqlite3.Connection:
         """Retrieve or create the current thread's SQLite connection.
 
@@ -1193,11 +1193,11 @@ class MediaDatabase:
         Raises:
             DatabaseError: If connecting to the database fails.
         """
-        from tldw_chatbook.Backup_Recovery.participants import _core_access
+        from tldw_chatbook.Backup_Recovery.participants import core_access
 
-        _core_access(self)
+        core_access(self)
         conn = getattr(self._local, "conn", None)
-        conn = _core_cached_connection(self, conn)
+        conn = core_cached_connection(self, conn)
         is_closed = conn is None
         if conn:
             last_used = getattr(self._local, "conn_last_used", None)
@@ -1228,9 +1228,9 @@ class MediaDatabase:
                     check_same_thread=False,
                     timeout=10,
                 )
-                _register_core_connection(self, conn)
+                register_core_connection(self, conn)
                 try:
-                    _core_access(self)
+                    core_access(self)
                 except BaseException:
                     # Retire only this unpublished allocation; live borrowers stay.
                     conn.close()
@@ -1248,7 +1248,7 @@ class MediaDatabase:
                 conn.execute("PRAGMA synchronous=NORMAL;")
                 conn.execute("PRAGMA foreign_keys = ON;")
                 try:
-                    _core_access(self)
+                    core_access(self)
                 except BaseException:
                     conn.close()
                     raise
@@ -1290,7 +1290,7 @@ class MediaDatabase:
     def close_connection(self):
         """Closes the database connection for the current thread, if open."""
         if hasattr(self._local, "conn") and self._local.conn is not None:
-            with _core_closing(self, self._local.conn) as allowed:
+            with core_closing(self, self._local.conn) as allowed:
                 if not allowed:
                     return
                 try:
@@ -1417,7 +1417,7 @@ class MediaDatabase:
             raise TypeError(f"Parameter list format error: {te}") from te
 
     # --- Transaction Context ---
-    @_core_transaction
+    @core_transaction
     @contextmanager
     def transaction(self, immediate: bool = False):
         """

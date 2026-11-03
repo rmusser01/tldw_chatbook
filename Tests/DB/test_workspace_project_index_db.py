@@ -826,7 +826,7 @@ def test_failed_migration_native_close_retains_count_and_binding_capability(
         ProjectIndexRetirementUnproven,
     )
     from tldw_chatbook.Backup_Recovery import storage_admission as storage
-    from tldw_chatbook.Backup_Recovery.participants import _core_cached_connection
+    from tldw_chatbook.Backup_Recovery.participants import core_cached_connection
 
     namespace = tmp_path / "binding" / "namespace"
     namespace.mkdir(parents=True)
@@ -862,7 +862,7 @@ def test_failed_migration_native_close_retains_count_and_binding_capability(
                 )
         retained_store, lease = factory._unretired[key.binding_namespace]
         assert not lease.closed
-        assert _core_cached_connection(retained_store, held[0]) is held[0]
+        assert core_cached_connection(retained_store, held[0]) is held[0]
         assert any(item.resource_path == path for item in storage._live_leases)
         with pytest.raises(LifetimeBusy):
             BindingLifetime.acquire(namespace.parent / key.lifetime_name)

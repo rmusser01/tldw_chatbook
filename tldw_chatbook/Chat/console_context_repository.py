@@ -1319,7 +1319,7 @@ async def read_context_presentation_inputs(
     from contextlib import ExitStack
     from types import MethodType, SimpleNamespace
 
-    from ..Backup_Recovery.participants import _core_operation
+    from ..Backup_Recovery.participants import core_operation
     from ..DB.base_db import operation_owned_connection
     from .console_context_compaction import (
         NO_LEGACY_MEMORY,
@@ -1410,7 +1410,7 @@ async def read_context_presentation_inputs(
             with ExitStack() as stack:
                 for database in databases:
                     stack.enter_context(operation_owned_connection(database))
-                    stack.enter_context(_core_operation(database))
+                    stack.enter_context(core_operation(database))
                 return read()
         return await run_preparation_read(
             native, creator=controller, session_id=session_id,

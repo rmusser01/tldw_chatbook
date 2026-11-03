@@ -9576,14 +9576,14 @@ class PersonasScreen(BaseAppScreen):
                 return result
             finally:
                 if supported and concrete_db and previous is None:
-                    from ...Backup_Recovery.participants import _repository_participant
+                    from ...Backup_Recovery.participants import repository_participant
 
                     try:
                         db.close_connection()
                         if getattr(db._local, "conn", None) is not None or (
                             not db.is_memory_db
                             and threading.current_thread()
-                            in _repository_participant(db).retiring_threads
+                            in repository_participant(db).retiring_threads
                         ):
                             raise RuntimeError("persona_visual_job_native_not_retired")
                     except BaseException as error:
@@ -12261,14 +12261,14 @@ class PersonasScreen(BaseAppScreen):
                 raise
             finally:
                 if supported and concrete_db and previous is None:
-                    from ...Backup_Recovery.participants import _repository_participant
+                    from ...Backup_Recovery.participants import repository_participant
 
                     try:
                         db.close_connection()
                         if getattr(db._local, "conn", None) is not None or (
                             not db.is_memory_db
                             and threading.current_thread()
-                            in _repository_participant(db).retiring_threads
+                            in repository_participant(db).retiring_threads
                         ):
                             raise RuntimeError("visual_identity_job_native_not_retired")
                     except BaseException as error:

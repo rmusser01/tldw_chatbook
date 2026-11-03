@@ -60,8 +60,8 @@ def worker():
  if outcome=='reopen':get().close()
  operation=None
  if outcome=='operation':
-  from tldw_chatbook.Backup_Recovery.participants import _core_operation
-  operation=_core_operation(db);operation.__enter__()
+  from tldw_chatbook.Backup_Recovery.participants import core_operation
+  operation=core_operation(db);operation.__enter__()
  try:
   if outcome=='error':
    with __import__('pytest').raises(ValueError,match='injected worker error'):

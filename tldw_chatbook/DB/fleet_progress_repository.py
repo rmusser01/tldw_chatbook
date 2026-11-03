@@ -19,7 +19,7 @@ from tldw_chatbook.Agents.fleet_messages import (
     MessageIdentity,
     ProgressMessage,
 )
-from tldw_chatbook.Backup_Recovery.participants import _core_operation
+from tldw_chatbook.Backup_Recovery.participants import core_operation
 
 if TYPE_CHECKING:
     from tldw_chatbook.Chat.console_transaction_contribution import (
@@ -95,7 +95,7 @@ class FleetProgressRepository:
 
     def append(self, conversation_id: str, message: ProgressMessage) -> None:
         """Commit one admitted stable ID before its successful send receipt."""
-        with _core_operation(self.db):
+        with core_operation(self.db):
             if self.db.get_connection().in_transaction:
                 raise MessageError("durable_unavailable")
             with self.db.transaction(immediate=True) as cursor:
@@ -119,7 +119,7 @@ class FleetProgressRepository:
 
     def remove(self, conversation_id: str, message_ids: Sequence[str]) -> None:
         """Commit whole selected reports before returning collection/discard."""
-        with _core_operation(self.db):
+        with core_operation(self.db):
             if self.db.get_connection().in_transaction:
                 raise MessageError("durable_unavailable")
             with self.db.transaction(immediate=True) as cursor:

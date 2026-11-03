@@ -53,13 +53,13 @@ from loguru import logger
 
 # Local Imports
 from tldw_chatbook.Backup_Recovery.participants import (
-    _core_access,
-    _core_cached_connection,
-    _core_closing,
-    _core_getter,
-    _core_operation,
-    _core_transaction,
-    _register_core_connection,
+    core_access,
+    core_cached_connection,
+    core_closing,
+    core_getter,
+    core_operation,
+    core_transaction,
+    register_core_connection,
 )
 
 from .private_sqlite import connect_private_sqlite
@@ -428,8 +428,8 @@ def ensure_site_configs_schema(db_path, *, _source=None) -> None:
         connect_private_sqlite("db.subscriptions.site_configs", db_path)
     ) as conn:
         if _source is not None:
-            _register_core_connection(_source, conn)
-            _core_access(_source)
+            register_core_connection(_source, conn)
+            core_access(_source)
         if str(db_path) != ":memory:":
             conn.execute("PRAGMA journal_mode = WAL")
         # NORMAL is safe under WAL (app-crash-safe; only an OS/power crash can
@@ -633,7 +633,7 @@ class SubscriptionsDB(BaseDB):
             # an in-memory database ceases to exist with its connection.
             self._register_for_exit_checkpoint()
 
-    @_core_getter
+    @core_getter
     def _get_connection(self) -> sqlite3.Connection:
         """Return a connection with foreign-key enforcement enabled.
 
@@ -654,7 +654,7 @@ class SubscriptionsDB(BaseDB):
         flipping requires this file's own commit/write-site census first --
         its own task. Do NOT copy this pattern into new stores.
         """
-        _core_access(self)
+        core_access(self)
         if self._read_only:
             conn = connect_private_sqlite(
                 "db.subscriptions.agent_read",
@@ -665,8 +665,8 @@ class SubscriptionsDB(BaseDB):
         else:
             conn = super()._get_connection()
         try:
-            _register_core_connection(self, conn)
-            _core_access(self)
+            register_core_connection(self, conn)
+            core_access(self)
             conn.row_factory = sqlite3.Row
             conn.create_function(
                 "unicode_casefold", 1, _sqlite_unicode_casefold, deterministic=True
@@ -679,7 +679,7 @@ class SubscriptionsDB(BaseDB):
                 if not self.is_memory_db:
                     conn.execute("PRAGMA journal_mode = WAL;")
                 conn.execute("PRAGMA synchronous = NORMAL;")
-            _core_access(self)
+            core_access(self)
             return conn
         except BaseException:
             conn.close()
@@ -699,7 +699,7 @@ class SubscriptionsDB(BaseDB):
             SubscriptionsDBReadError: If the readiness read fails operationally.
                 The fixed message contains no underlying exception payload.
         """
-        with _core_operation(self):
+        with core_operation(self):
             try:
                 conn = self.conn
                 versions = [
@@ -759,7 +759,7 @@ class SubscriptionsDB(BaseDB):
         fix (e.g. a shared-cache ``file::memory:?cache=shared`` URI plus a
         dedicated keepalive connection).
         """
-        with _core_operation(self):
+        with core_operation(self):
             conn = self.conn
             has_version_table = conn.execute(
                 "SELECT 1 FROM sqlite_schema WHERE type = 'table' AND name = 'schema_version'"
@@ -1165,7 +1165,7 @@ class SubscriptionsDB(BaseDB):
 
     def _ensure_watchlists_schema(self, conn=None):
         """Idempotent migration for watchlists screen schema additions."""
-        with _core_operation(self):
+        with core_operation(self):
             if conn is None:
                 # Same in-memory-safe reasoning as _initialize_schema above: reuse
                 # the thread-local connection rather than opening-and-closing a
@@ -1910,11 +1910,11 @@ class SubscriptionsDB(BaseDB):
         return {row[0]: {"total": row[1] or 0, "unread": row[2] or 0} for row in rows}
 
     @property
-    @_core_getter
+    @core_getter
     def conn(self):
         """Thread-local database connection, registered for shutdown."""
-        _core_access(self)
-        cached = _core_cached_connection(self, getattr(self._local, "conn", None))
+        core_access(self)
+        cached = core_cached_connection(self, getattr(self._local, "conn", None))
         if cached is None:
             connection = self._get_connection()
             self._local.conn = connection
@@ -1932,7 +1932,7 @@ class SubscriptionsDB(BaseDB):
             )
         return self._local.conn
 
-    @_core_transaction
+    @core_transaction
     @contextmanager
     def connection(self) -> Iterator[sqlite3.Connection]:
         """Count a read without adding commit/rollback semantics."""
@@ -2037,7 +2037,7 @@ class SubscriptionsDB(BaseDB):
             )
         return remaining
 
-    @_core_transaction
+    @core_transaction
     @contextmanager
     def transaction(self, *, immediate: bool = False):
         """Context manager for database transactions, safe to nest.
@@ -2311,7 +2311,7 @@ class SubscriptionsDB(BaseDB):
             options["url_provenance"] = "unknown"
         kwargs["processing_options"] = options
 
-        _core_access(self)
+        core_access(self)
         # A cold settings load owns startup/config admission independently.
         # Freeze this input before the database operation; its fresh admission
         # still refuses a pause that arrives after the settings read.
@@ -5361,7 +5361,7 @@ class SubscriptionsDB(BaseDB):
             ).fetchone()
             return dict(published)
 
-    @_core_transaction
+    @core_transaction
     @contextmanager
     def artifact_read_snapshot(self) -> Iterator[sqlite3.Connection]:
         """Borrow an active transaction or own one deferred artifact read snapshot.
@@ -6963,7 +6963,7 @@ class SubscriptionsDB(BaseDB):
         if connection is None:
             return
         cleanup = getattr(local, "connection_cleanup", None)
-        with _core_closing(self, connection) as allowed:
+        with core_closing(self, connection) as allowed:
             if not allowed:
                 return
             if connection:

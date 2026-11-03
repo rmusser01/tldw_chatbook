@@ -8,9 +8,9 @@ from dataclasses import dataclass
 from typing import Any
 
 from ..Backup_Recovery.participants import (
-    _core_cached_connection,
-    _core_closing,
-    _core_operation,
+    core_cached_connection,
+    core_closing,
+    core_operation,
 )
 from ..DB.AgentRuns_DB import (
     _AGENT_RUNS_FACTORY_SLOTS,
@@ -127,12 +127,12 @@ class _MarkerRead:
 
     def read(self):
         self.require_current()
-        previous = _core_cached_connection(
+        previous = core_cached_connection(
             self.database, getattr(self.local, "conn", None)
         )
         connection = None
         try:
-            with _core_operation(self.database):
+            with core_operation(self.database):
                 self.require_current()
                 connection = self.database._held_connection()
                 self.active_connection = connection
@@ -149,7 +149,7 @@ class _MarkerRead:
             # The counted operation exits first. Retire the actual acquired A,
             # even if a callback installed a different cache B in the meantime.
             if connection is not None and connection is not previous:
-                with _core_closing(self.database, connection) as allowed:
+                with core_closing(self.database, connection) as allowed:
                     if not allowed:
                         raise RuntimeError(
                             "change_review_marker_connection_not_retired"

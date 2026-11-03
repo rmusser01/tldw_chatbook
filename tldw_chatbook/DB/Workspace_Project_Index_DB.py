@@ -177,12 +177,12 @@ def _activated(function):
         from tldw_chatbook.Backup_Recovery.activation import execution_scope
         from tldw_chatbook.Backup_Recovery.bootstrap import RecoveryRequired
 
-        from tldw_chatbook.Backup_Recovery.participants import _core_operation
+        from tldw_chatbook.Backup_Recovery.participants import core_operation
 
         # The registry fence may already own a different repository operation.
         # Enter this installed owner's independent provenance before acquiring its
         # activation lease; never borrow the registry's path authority.
-        with _core_operation(store):
+        with core_operation(store):
             with execution_scope((OWNER_ID,), store.db_path) as allowed:
                 if not allowed:
                     raise RecoveryRequired("project_index_activation_required")
@@ -295,9 +295,9 @@ class WorkspaceProjectIndexDB(SQLiteStoreKernel):
 
     def close_native(self) -> None:
         """Confirm exact native/core retirement on the owning thread."""
-        from tldw_chatbook.Backup_Recovery.participants import _core_cached_connection
+        from tldw_chatbook.Backup_Recovery.participants import core_cached_connection
 
-        connection = _core_cached_connection(
+        connection = core_cached_connection(
             self, getattr(self._thread_local, "conn", None)
         )
         self.close()
@@ -305,7 +305,7 @@ class WorkspaceProjectIndexDB(SQLiteStoreKernel):
             try:
                 sqlite3.Connection.in_transaction.__get__(connection)
             except sqlite3.ProgrammingError:
-                if _core_cached_connection(self, connection) is None:
+                if core_cached_connection(self, connection) is None:
                     return
             raise ProjectIndexRetirementUnproven("project_index_connection_not_retired")
 

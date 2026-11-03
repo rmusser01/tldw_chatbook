@@ -12,7 +12,7 @@ _WAIT = (
 import sys,threading,time
 from contextlib import nullcontext
 from tldw_chatbook.Backup_Recovery import storage_admission as storage
-from tldw_chatbook.Backup_Recovery.participants import _core_operation
+from tldw_chatbook.Backup_Recovery.participants import core_operation
 from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
 
 case=sys.argv[1]
@@ -39,7 +39,7 @@ def follower():
  try:
   # The nested acquisition carries a genuinely admitted operation. Its original
   # check performs real parent stat/resolve calls, reproducing the costly loop.
-  with (nullcontext() if case=='pause' else _core_operation(db)):
+  with (nullcontext() if case=='pause' else core_operation(db)):
    admitted.set();assert proceed.wait(10)
    with storage.acquire_storage(path) as lease:
     lease.execution_context(path)

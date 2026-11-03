@@ -63,11 +63,11 @@ def test_live_repository_operation_finishes_exact_descendant_after_pause(
     tmp_path, repository_type
 ):
     from tldw_chatbook.Backup_Recovery import storage_admission as storage
-    from tldw_chatbook.Backup_Recovery.participants import _repository_participant
+    from tldw_chatbook.Backup_Recovery.participants import repository_participant
     from tldw_chatbook.DB.private_sqlite import connect_private_sqlite
 
     repository = repository_type(tmp_path / "state.sqlite")
-    participant = _repository_participant(repository)
+    participant = repository_participant(repository)
     try:
         with participant.operation():
             pause = storage._begin_local_pause()
@@ -259,10 +259,10 @@ def test_operation_provenance_refuses_unrelated_descendants(
     tmp_path, local_root, misuse
 ):
     from tldw_chatbook.Backup_Recovery import bootstrap, storage_admission as storage
-    from tldw_chatbook.Backup_Recovery.participants import _repository_participant
+    from tldw_chatbook.Backup_Recovery.participants import repository_participant
 
     repository = EventStateRepository(tmp_path / "provenance.sqlite")
-    participant = _repository_participant(repository)
+    participant = repository_participant(repository)
     errors = []
 
     def attempt(token, path):
@@ -382,10 +382,10 @@ def test_failed_native_close_retains_actual_handle_and_blocks_drain(
 
 def test_operation_cannot_switch_native_authority(tmp_path, local_root, monkeypatch):
     from tldw_chatbook.Backup_Recovery import bootstrap, storage_admission as storage
-    from tldw_chatbook.Backup_Recovery.participants import _repository_participant
+    from tldw_chatbook.Backup_Recovery.participants import repository_participant
 
     repository = EventStateRepository(tmp_path / "authority.sqlite")
-    with _repository_participant(repository).operation():
+    with repository_participant(repository).operation():
         monkeypatch.setattr(
             bootstrap,
             "default_bootstrap_root",
@@ -421,10 +421,10 @@ def test_participant_pause_resume_and_memory_semantics(
     tmp_path, local_root, repository_type
 ):
     from tldw_chatbook.Backup_Recovery import bootstrap
-    from tldw_chatbook.Backup_Recovery.participants import _repository_participant
+    from tldw_chatbook.Backup_Recovery.participants import repository_participant
 
     repository = repository_type(tmp_path / "resume.sqlite")
-    participant = _repository_participant(repository)
+    participant = repository_participant(repository)
     participant.close_admission()
     assert participant.drain(time.monotonic() + 1)
     with pytest.raises(bootstrap.RecoveryRequired, match="storage_locally_paused"):
@@ -590,12 +590,12 @@ def test_unqualified_startup_cannot_report_native_drain(local_root, monkeypatch)
 
 def test_async_child_cannot_inherit_parent_operation_authority(tmp_path, local_root):
     from tldw_chatbook.Backup_Recovery import bootstrap, storage_admission as storage
-    from tldw_chatbook.Backup_Recovery.participants import _repository_participant
+    from tldw_chatbook.Backup_Recovery.participants import repository_participant
 
     repository = EventStateRepository(tmp_path / "async-parent.sqlite")
 
     async def parent():
-        with _repository_participant(repository).operation():
+        with repository_participant(repository).operation():
             pause = storage._begin_local_pause()
             try:
 
@@ -621,10 +621,10 @@ def test_thread_local_discovery_cannot_supply_a_validation_callback(
     tmp_path, local_root, forgery
 ):
     from tldw_chatbook.Backup_Recovery import bootstrap, storage_admission as storage
-    from tldw_chatbook.Backup_Recovery.participants import _repository_participant
+    from tldw_chatbook.Backup_Recovery.participants import repository_participant
 
     repository = EventStateRepository(tmp_path / "forgery.sqlite")
-    with _repository_participant(repository).operation() as token:
+    with repository_participant(repository).operation() as token:
 
         class ForgedOperation:
             key = None

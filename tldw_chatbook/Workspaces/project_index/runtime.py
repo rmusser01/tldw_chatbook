@@ -45,13 +45,13 @@ def project_index_registry_connections(database):
     own lifetime; a failed newly owned close remains counted by storage admission.
     """
     from tldw_chatbook.DB.Workspace_DB import WorkspaceDB
-    from tldw_chatbook.Backup_Recovery.participants import _core_cached_connection
+    from tldw_chatbook.Backup_Recovery.participants import core_cached_connection
 
     if type(database) is not WorkspaceDB or database.is_memory_db:
         with operation_owned_connection(database):
             yield
         return
-    previous = _core_cached_connection(
+    previous = core_cached_connection(
         database, getattr(database._thread_local, "conn", None)
     )
     owned = None
@@ -65,7 +65,7 @@ def project_index_registry_connections(database):
                     owned = current
     finally:
         if owned is not None:
-            retired = _core_cached_connection(database, owned) is None
+            retired = core_cached_connection(database, owned) is None
             try:
                 sqlite3.Connection.in_transaction.__get__(owned)
             except sqlite3.ProgrammingError:

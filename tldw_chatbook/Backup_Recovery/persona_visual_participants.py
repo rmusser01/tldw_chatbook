@@ -117,7 +117,7 @@ def source_for(profile):
 def bind_repository(repository):
     from ..DB.ChaChaNotes_DB import CharactersRAGDB
     from ..Persona_Visual.repository import PersonaVisualRepository
-    from .participants import _repository_participant
+    from .participants import repository_participant
 
     if repository in _repositories:
         raise bootstrap.RecoveryRequired("persona_visual_repository_reinitialized")
@@ -133,7 +133,7 @@ def bind_repository(repository):
         != db.db_path
     ):
         return
-    _repository_participant(db)
+    repository_participant(db)
     source = source_for(profile_paths.user_data_dir(config._CONFIG_CACHE))
     _repositories[repository] = (db, source)
 
@@ -144,7 +144,7 @@ def repository_source(repository):
         return None
     db, source = binding
     from ..Persona_Visual.repository import PersonaVisualRepository
-    from .participants import _repository_participant
+    from .participants import repository_participant
 
     if type(repository) is not PersonaVisualRepository or repository.db is not db:
         raise bootstrap.RecoveryRequired("persona_visual_repository_changed")
@@ -154,17 +154,17 @@ def repository_source(repository):
         != db.db_path
     ):
         raise bootstrap.RecoveryRequired("persona_visual_repository_changed")
-    _repository_participant(db)
+    repository_participant(db)
     return source
 
 
 def repository_guard(function):
     @wraps(function)
     def guarded(repository, *args, **kwargs):
-        from .participants import _core_operation
+        from .participants import core_operation
 
         repository_source(repository)
-        with _core_operation(repository.db):
+        with core_operation(repository.db):
             return function(repository, *args, **kwargs)
 
     return guarded

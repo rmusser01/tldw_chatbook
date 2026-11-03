@@ -99,7 +99,7 @@ def _operation_owned_connection(
         if type(database) not in owned_types or database.is_memory_db:
             yield
             return
-        from tldw_chatbook.Backup_Recovery.participants import _core_cached_connection
+        from tldw_chatbook.Backup_Recovery.participants import core_cached_connection
 
         # A raw close can leave a stale cache. Use the same native retirement
         # evidence as the getter; a still-live borrowed handle remains owned.
@@ -109,7 +109,7 @@ def _operation_owned_connection(
             else database._thread_local
         )
         close = database.close
-        previous = _core_cached_connection(database, getattr(local, "conn", None))
+        previous = core_cached_connection(database, getattr(local, "conn", None))
         borrowed = previous is not None
     else:
         previous = getattr(local, "conn", None)
@@ -169,9 +169,9 @@ async def run_owned_db_call[**_CallParameters, _CallResult](
             owned_types.add(GuardianDB)
         if type(database) not in owned_types or database.is_memory_db:
             return operation(*args, **kwargs)
-        from tldw_chatbook.Backup_Recovery.participants import _core_operation
+        from tldw_chatbook.Backup_Recovery.participants import core_operation
 
-        with operation_owned_connection(database), _core_operation(database):
+        with operation_owned_connection(database), core_operation(database):
             return operation(*args, **kwargs)
 
     return await asyncio.to_thread(invoke)

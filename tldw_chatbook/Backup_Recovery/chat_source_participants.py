@@ -87,7 +87,7 @@ def _validate(source):
     cls, (_, _, attribute, leaf) = _source_kind(source)
     config = bound.config
     data = config._CONFIG_CACHE
-    from .participants import _repository_participant
+    from .participants import repository_participant
 
     if (
         type(source) is not bound.source_type
@@ -105,7 +105,7 @@ def _validate(source):
         or profile_paths.database_path(data, "chachanotes_db_path") != bound.db.db_path
     ):
         raise bootstrap.RecoveryRequired("chat_source_selection_changed")
-    _repository_participant(bound.db)
+    repository_participant(bound.db)
     if cls.__name__ == "ChatConversationService":
         expected = bound.companions[0]() if bound.companions else None
         if source.citation_legacy_migration is not expected:
@@ -149,7 +149,7 @@ def selection(source, route, target=None):
 
 def _install(source, db, config, selected):
     from ..DB.ChaChaNotes_DB import CharactersRAGDB
-    from .participants import _repository_participant
+    from .participants import repository_participant
 
     # An arbitrary injected DB remains ordinary. No owner/path flag installs it.
     if type(db) is not CharactersRAGDB or db.is_memory_db:
@@ -159,7 +159,7 @@ def _install(source, db, config, selected):
         != db.db_path
     ):
         return
-    _repository_participant(db)
+    repository_participant(db)
     _BINDINGS[source] = _Binding(
         type(source),
         db,
@@ -260,7 +260,7 @@ def drain_ready(source):
 def operation(source):
     """Preadmit the fixed actual pair, then discover both existing scopes."""
     from . import raw_participants as raw
-    from .participants import _core_operation
+    from .participants import core_operation
 
     bound = _validate(source)
     route, _, attribute, _ = _source_kind(source)[1]
@@ -328,7 +328,7 @@ def operation(source):
             from ..DB.ChaChaNotes_DB import CharactersRAGDB
 
             if isinstance(source.db, CharactersRAGDB):
-                scopes.enter_context(_core_operation(source.db))
+                scopes.enter_context(core_operation(source.db))
                 core = getattr(storage._operation_local, "operation", None)
             tokens = []
             for item in members:

@@ -52,7 +52,7 @@ try:
                 original = store_kernel.SQLiteStoreKernel._get_connection.__wrapped__
                 patch.setattr(original, "__defaults__", (object(),))
             elif route == "kernel_global":
-                patch.setattr(store_kernel, "_core_access", changed)
+                patch.setattr(store_kernel, "core_access", changed)
             elif route == "class_hook":
                 patch.setattr(WorkspaceDB, "_configure_connection", changed)
             elif route == "instance_hook":

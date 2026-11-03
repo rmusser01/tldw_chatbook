@@ -7,7 +7,7 @@ import pytest
 
 from tldw_chatbook.Backup_Recovery import bootstrap
 from tldw_chatbook.Backup_Recovery import storage_admission as storage
-from tldw_chatbook.Backup_Recovery.participants import _repository_participant
+from tldw_chatbook.Backup_Recovery.participants import repository_participant
 from tldw_chatbook.Notifications.event_state_repository import EventStateRepository
 
 
@@ -47,7 +47,7 @@ def repository_case(tmp_path, monkeypatch):
     directory.mkdir(mode=0o700)
     repository = EventStateRepository(directory / "state.sqlite")
     try:
-        yield root, repository, _repository_participant(repository)
+        yield root, repository, repository_participant(repository)
     finally:
         repository.close()
 

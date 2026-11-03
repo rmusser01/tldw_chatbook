@@ -190,7 +190,7 @@ def _operation(
     from .. import config as current_config
     from ..DB.ChaChaNotes_DB import CharactersRAGDB
     from . import raw_participants as raw
-    from .participants import _core_operation
+    from .participants import core_operation
 
     previous_plan = getattr(_local, "plan", None)
     previous_raw = getattr(raw._local, "operation", None)
@@ -241,7 +241,7 @@ def _operation(
             _local.plan = plan
             with ExitStack() as scopes:
                 if isinstance(db, CharactersRAGDB):
-                    scopes.enter_context(_core_operation(db))
+                    scopes.enter_context(core_operation(db))
                     plan.core = getattr(storage._operation_local, "operation", None)
                 token = scopes.enter_context(
                     raw._scope(plan.module, ROUTE, writing=output is not None)
@@ -412,11 +412,11 @@ def exporting(function):
 
         from .. import config
         from ..DB.ChaChaNotes_DB import CharactersRAGDB
-        from .participants import _core_operation
+        from .participants import core_operation
 
         with closing(storage._Acquisition()) as attempt:
             with (
-                _core_operation(db)
+                core_operation(db)
                 if isinstance(db, CharactersRAGDB)
                 else nullcontext()
             ):

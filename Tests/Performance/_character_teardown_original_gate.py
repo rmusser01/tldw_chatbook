@@ -117,7 +117,7 @@ class OriginalCharacterTeardownGate(OriginalStorageUnitObserver):
         self.invoke_code = invokes[0]
         self.work_item_code = self._pin(_WorkItem.run)
         self.wait_code = self._pin(worker_module.Worker.wait)
-        self.close_code = self._pin(participants._close_settled_core_cache)
+        self.close_code = self._pin(participants.close_settled_core_cache)
         self.exit_code = self._pin(self.exit_function)
         # The event still belongs to the passed original parent method. A
         # deliberate supported host override is a separate source dependency.
@@ -155,8 +155,8 @@ class OriginalCharacterTeardownGate(OriginalStorageUnitObserver):
                 (worker_module.Worker, "wait", worker_module.Worker.wait),
                 (
                     participants,
-                    "_close_settled_core_cache",
-                    participants._close_settled_core_cache,
+                    "close_settled_core_cache",
+                    participants.close_settled_core_cache,
                 ),
             )
         )

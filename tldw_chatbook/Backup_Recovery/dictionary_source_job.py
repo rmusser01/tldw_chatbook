@@ -155,7 +155,7 @@ class _DictionaryJob:
             from ..Character_Chat.local_chat_dictionary_service import (
                 LocalChatDictionaryService,
             )
-            from .participants import _repository_participant
+            from .participants import repository_participant
 
             if (
                 self._source.db is not self._db
@@ -182,7 +182,7 @@ class _DictionaryJob:
                         raise bootstrap.RecoveryRequired(
                             "dictionary_job_native_not_retired"
                         )
-                    participant = _repository_participant(self._db)
+                    participant = repository_participant(self._db)
                     if threading.current_thread() in participant.retiring_threads:
                         raise bootstrap.RecoveryRequired(
                             "dictionary_job_native_not_retired"

@@ -10,8 +10,8 @@ from pathlib import Path
 from typing import ClassVar, Union
 
 from tldw_chatbook.Backup_Recovery.participants import (
-    _core_access,
-    _core_closing,
+    core_access,
+    core_closing,
 )
 
 from ..Utils.timestamps import utc_now_iso
@@ -317,7 +317,7 @@ class DreamsDB(SQLiteStoreKernel, BaseDB):
                 ).fetchall()
             conn.execute(sql).fetchall()
 
-        _core_access(self)
+        core_access(self)
         if operation_deadline is not None:
             conn.set_progress_handler(
                 lambda: int(time.monotonic() >= operation_deadline), 100
@@ -334,7 +334,7 @@ class DreamsDB(SQLiteStoreKernel, BaseDB):
                 self._enable_wal(conn, operation_deadline=operation_deadline)
             execute("PRAGMA synchronous = NORMAL")
             conn.isolation_level = None
-            _core_access(self)
+            core_access(self)
             if (
                 operation_deadline is not None
                 and time.monotonic() >= operation_deadline
@@ -393,7 +393,7 @@ class DreamsDB(SQLiteStoreKernel, BaseDB):
         """Retire only the calling thread's handle when its owner permits."""
         conn = getattr(self._thread_local, "conn", None)
         if conn is not None:
-            with _core_closing(self, conn) as allowed:
+            with core_closing(self, conn) as allowed:
                 if allowed and self._close_connection(conn):
                     self._thread_local.conn = None
 

@@ -117,7 +117,7 @@ def source_for(profile):
 
 def db_source(db):
     from ..DB.ChaChaNotes_DB import CharactersRAGDB
-    from .participants import _repository_participant
+    from .participants import repository_participant
 
     try:
         old = _repositories.get(db)
@@ -134,7 +134,7 @@ def db_source(db):
             != db.db_path
         ):
             raise bootstrap.RecoveryRequired("visual_identity_repository_changed")
-        _repository_participant(db)
+        repository_participant(db)
         return old
     config = sys.modules.get("tldw_chatbook.config")
     if (
@@ -146,7 +146,7 @@ def db_source(db):
         != db.db_path
     ):
         return None
-    _repository_participant(db)
+    repository_participant(db)
     source = source_for(profile_paths.user_data_dir(config._CONFIG_CACHE))
     _repositories[db] = source
     return source
@@ -168,7 +168,7 @@ def db_guard(function):
         from contextlib import nullcontext
 
         from ..DB.ChaChaNotes_DB import CharactersRAGDB
-        from .participants import _core_operation
+        from .participants import core_operation
 
         with request():
             source = db_source(db) if isinstance(db, CharactersRAGDB) else None
@@ -188,7 +188,7 @@ def db_guard(function):
                     else profile_paths.lexical_path(selected),
                 )
             with (
-                _core_operation(db)
+                core_operation(db)
                 if isinstance(db, CharactersRAGDB)
                 else nullcontext()
             ):
@@ -228,10 +228,10 @@ def repository_guard(function):
                 and callee is function
                 and type(operation) is storage._Operation
             ):
-                from .participants import _repository_participant
+                from .participants import repository_participant
 
                 source = db_source(repository.db)
-                participant = _repository_participant(repository.db)
+                participant = repository_participant(repository.db)
                 if source is not None and operation.participant is participant:
                     storage._check_operation(operation, participant.path)
                     return function(repository, *args, **kwargs)

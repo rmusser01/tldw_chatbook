@@ -225,7 +225,7 @@ def _now_iso() -> str:
     return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%fZ")
 
 
-from tldw_chatbook.Backup_Recovery.participants import _core_operation
+from tldw_chatbook.Backup_Recovery.participants import core_operation
 
 # SQLite caps host parameters per statement. The ceiling is build-dependent:
 # 32766 on SQLite >= 3.32, but 999 on older builds, and this project's floor
@@ -2693,7 +2693,7 @@ class AgentRunsDB(SQLiteStoreKernel, BaseDB):
         """
         if self.is_memory_db:
             return self.get_run(run_id)
-        with _core_operation(self):
+        with core_operation(self):
             conn = self._get_connection()
             try:
                 row = conn.execute(
@@ -2725,7 +2725,7 @@ class AgentRunsDB(SQLiteStoreKernel, BaseDB):
         """
         if self.is_memory_db:
             return self.get_run_metadata(run_id)
-        with _core_operation(self):
+        with core_operation(self):
             conn = self._get_connection()
             try:
                 row = conn.execute(
@@ -3605,10 +3605,10 @@ _AGENT_RUNS_FACTORY_SLOTS = (
     *(
         (vars(_store_kernel), name, vars(_store_kernel)[name])
         for name in (
-            "_core_access",
-            "_core_cached_connection",
-            "_register_core_connection",
-            "_core_closing",
+            "core_access",
+            "core_cached_connection",
+            "register_core_connection",
+            "core_closing",
         )
     ),
 )

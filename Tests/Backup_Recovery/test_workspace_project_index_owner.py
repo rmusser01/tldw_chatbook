@@ -111,18 +111,18 @@ def test_constructor_free_recovery_import_is_inert():
 def test_maintenance_retires_index_cache_after_transaction_settles(tmp_path, request):
     import time
     from tldw_chatbook.Backup_Recovery import storage_admission as storage
-    from tldw_chatbook.Backup_Recovery.participants import _retire_current_thread_caches
+    from tldw_chatbook.Backup_Recovery.participants import retire_current_thread_caches
 
     store = open_index_store(tmp_path)
     connection = store._held_connection()
     connection.execute("BEGIN")
     pause = storage._begin_local_pause()
     try:
-        _retire_current_thread_caches(pause)
+        retire_current_thread_caches(pause)
         assert connection.in_transaction
         assert not pause.drain(time.monotonic())
         connection.rollback()
-        _retire_current_thread_caches(pause)
+        retire_current_thread_caches(pause)
         with pytest.raises(sqlite3.ProgrammingError, match="closed"):
             connection.execute("SELECT 1")
         assert pause.drain(time.monotonic() + 2)

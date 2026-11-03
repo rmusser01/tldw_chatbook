@@ -8,7 +8,7 @@ from contextlib import contextmanager
 from pathlib import Path
 from typing import Iterator, Union
 
-from tldw_chatbook.Backup_Recovery.participants import _core_transaction
+from tldw_chatbook.Backup_Recovery.participants import core_transaction
 
 from .base_db import BaseDB
 from .store_kernel import SQLiteStoreKernel
@@ -529,7 +529,7 @@ class LibraryCollectionsDB(SQLiteStoreKernel, BaseDB):
         conn.isolation_level = None
         return conn
 
-    @_core_transaction
+    @core_transaction
     @contextmanager
     def read_transaction(self) -> Iterator[sqlite3.Connection]:
         """Yield the held connection inside a read-only snapshot.

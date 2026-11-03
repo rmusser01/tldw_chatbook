@@ -261,11 +261,11 @@ class ConsoleCharacterController:
 
             if type(required_database) is CharactersRAGDB and not required_database.is_memory_db:
                 def owned_fetch():
-                    from ...Backup_Recovery.participants import _core_operation
+                    from ...Backup_Recovery.participants import core_operation
 
                     with (
                         operation_owned_connection(required_database),
-                        _core_operation(required_database),
+                        core_operation(required_database),
                     ):
                         return fetch_exact()
 

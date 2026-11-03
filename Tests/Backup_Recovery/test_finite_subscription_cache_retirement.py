@@ -18,14 +18,14 @@ db_a=module.SubscriptionsDB(Path.home()/'subs-A.db',client_id='native-retirement
 db_b=module.SubscriptionsDB(Path.home()/'subs-B.db',client_id='native-retirement')
 main_a,main_b=db_a.conn,db_b.conn
 main_a.execute('SELECT 1');main_b.execute('SELECT 1')
-originals=(participants.run_finite_local_worker,participants._core_closing,
- participants._core_closing.__wrapped__,module.SubscriptionsDB,
+originals=(participants.run_finite_local_worker,participants.core_closing,
+ participants.core_closing.__wrapped__,module.SubscriptionsDB,
  module.SubscriptionsDB.__dict__['close'],module.SubscriptionsDB.__dict__['conn'])
 observer=OriginalStorageUnitObserver({},lambda:True,lambda unit:None)
 for function in (originals[0],originals[1],originals[2],originals[4],originals[5].fget,
  originals[5].fget.__wrapped__):observer._pin(function)
 observer.slots.extend([(participants,'run_finite_local_worker',originals[0]),
- (participants,'_core_closing',originals[1]),(originals[1],'__wrapped__',originals[2]),
+ (participants,'core_closing',originals[1]),(originals[1],'__wrapped__',originals[2]),
  (module,'SubscriptionsDB',originals[3]),(originals[3],'close',originals[4]),
  (originals[3],'conn',originals[5])])
 monitor=sys.monitoring

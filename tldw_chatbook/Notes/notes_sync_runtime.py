@@ -1994,11 +1994,11 @@ class NotesSyncRuntimeOwner:
         close_store = getattr(self._store, "close", None)
         if callable(close_store):
             from tldw_chatbook.Backup_Recovery.participants import (
-                _close_settled_core_cache,
+                close_settled_core_cache,
             )
 
             return await self._maintenance_offload(
-                _close_settled_core_cache, self._store
+                close_settled_core_cache, self._store
             )
         return True
 

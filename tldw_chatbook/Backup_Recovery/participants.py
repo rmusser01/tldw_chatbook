@@ -110,7 +110,7 @@ def run_finite_local_worker(function, /, *args, **kwargs):
             getattr(type(repository), closers[participant.owner_id])(repository)
 
 
-def _retire_current_thread_caches(pause) -> None:
+def retire_current_thread_caches(pause) -> None:
     """Retire installed local caches after producer settlement and local fencing.
 
     This never qualifies runtime coverage or retires startup admission. Unknown,
@@ -169,7 +169,7 @@ def _retire_current_thread_caches(pause) -> None:
             ):
                 continue
         # Original owner API clears its own cache only after native close. Its
-        # _core_closing check retains transactions and uncertain retirement.
+        # core_closing check retains transactions and uncertain retirement.
         closer = closers[participant.owner_id]
         if closer is None:
             _retire_service_thread_cache(repository, participant.owner_id)
@@ -190,14 +190,14 @@ def _retire_service_thread_cache(repository, owner_id):
         connection = getattr(repository._thread_local, "connection", None)
     if connection is None:
         return
-    with _core_closing(repository, connection) as allowed:
+    with core_closing(repository, connection) as allowed:
         if allowed:
             connection.close()
     # Getters clear the source cache only after the native wrapper proves close.
     # A failed close retains the original reference and its outstanding lease.
 
 
-def _close_settled_core_cache(repository):
+def close_settled_core_cache(repository):
     """Use an owner's explicit close only after its native borrowers settle.
 
     Runtime producers call this on their existing worker after draining intake.
@@ -209,7 +209,7 @@ def _close_settled_core_cache(repository):
         return True
     from . import storage_admission as storage
 
-    participant = _repository_participant(repository)
+    participant = repository_participant(repository)
     with storage._lock:
         if (
             participant.closed
@@ -366,7 +366,7 @@ def _repository_types():
     }
 
 
-def _repository_participant(repository):
+def repository_participant(repository):
     """Bind exact installed repository types to their actual selected paths."""
     from . import storage_admission as storage
 
@@ -400,7 +400,7 @@ def _repository_participant(repository):
         return participant
 
 
-def _core_access(repository):
+def core_access(repository):
     """Refuse a new cached-handle borrower while local admission is closed."""
     if repository.is_memory_db:
         return
@@ -408,7 +408,7 @@ def _core_access(repository):
     from .bootstrap import RecoveryRequired
 
     participant = (
-        _repository_participant(repository)
+        repository_participant(repository)
         if type(repository) in _repository_types()
         else None
     )
@@ -429,21 +429,21 @@ def _core_access(repository):
 
 
 @contextmanager
-def _core_operation(repository):
+def core_operation(repository):
     """Count an installed core scope without revoking its native borrowers."""
     if repository.is_memory_db or type(repository) not in _repository_types():
-        _core_access(repository)
+        core_access(repository)
         yield
     else:
-        with _repository_participant(repository).operation():
+        with repository_participant(repository).operation():
             yield
 
 
-def _core_transaction(function):
+def core_transaction(function):
     @wraps(function)
     @contextmanager
     def counted(repository, *args, **kwargs):
-        with _core_operation(repository):
+        with core_operation(repository):
             with function(repository, *args, **kwargs) as native:
                 yield native
 
@@ -461,7 +461,7 @@ def _check_core_retirement(participant):
 
 
 @contextmanager
-def _core_closing(repository, connection):
+def core_closing(repository, connection):
     """Reserve a source cache before explicit native close, outside coordinator locks.
 
     This is not permission to revoke raw borrowers: the actual owner must call it
@@ -473,7 +473,7 @@ def _core_closing(repository, connection):
         return
     from . import storage_admission as storage
 
-    participant = _repository_participant(repository)
+    participant = repository_participant(repository)
     current = threading.current_thread()
     with storage._lock:
         lease = participant.connections.get(connection)
@@ -509,7 +509,7 @@ def _core_closing(repository, connection):
             storage._changed.notify_all()
 
 
-def _register_core_connection(repository, connection):
+def register_core_connection(repository, connection):
     """Retain actual core native handles; caller names never confer authority."""
     if repository.is_memory_db or type(repository) not in _repository_types():
         return connection
@@ -520,7 +520,7 @@ def _register_core_connection(repository, connection):
         _validated_owner_policy,
     )
 
-    participant = _repository_participant(repository)
+    participant = repository_participant(repository)
     with storage._lock:
         # Unwrapped native objects (including non-weakrefable Connection) are
         # never installed core provenance. Their ordinary leases still count.
@@ -565,22 +565,22 @@ def _register_core_connection(repository, connection):
     return connection
 
 
-_retired_core_connections = weakref.WeakSet()
+retired_core_connections = weakref.WeakSet()
 
 
-def _core_cached_connection(repository, connection):
+def core_cached_connection(repository, connection):
     """Invalidate a cache only after the wrapper observed successful native close."""
     if repository.is_memory_db or type(repository) not in _repository_types():
         return connection
     from . import storage_admission as storage
 
     with storage._lock:
-        if connection in _retired_core_connections:
+        if connection in retired_core_connections:
             return None
     return connection
 
 
-def _core_getter(function):
+def core_getter(function):
     """A cross-instance raw getter cannot inherit another owner's operation."""
 
     @wraps(function)
@@ -591,7 +591,7 @@ def _core_getter(function):
         if previous is not None and not repository.is_memory_db:
             with storage._lock:
                 storage._check_operation(previous, previous.path)
-                participant = _repository_participant(repository)
+                participant = repository_participant(repository)
                 independent = previous.participant is not participant
             if independent:
                 with participant.operation():
@@ -599,3 +599,17 @@ def _core_getter(function):
         return function(repository, *args, **kwargs)
 
     return accessed
+
+
+# Private aliases for importers not yet migrated (TASK-36948.2). Remove once none remain.
+_retire_current_thread_caches = retire_current_thread_caches
+_close_settled_core_cache = close_settled_core_cache
+_repository_participant = repository_participant
+_core_access = core_access
+_core_operation = core_operation
+_core_transaction = core_transaction
+_core_closing = core_closing
+_register_core_connection = register_core_connection
+_retired_core_connections = retired_core_connections
+_core_cached_connection = core_cached_connection
+_core_getter = core_getter

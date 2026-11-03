@@ -890,14 +890,14 @@ class ConsoleCharacterContextController:
 
         if type(database) is not CharactersRAGDB or database.is_memory_db:
             return await run_owned_db_call(database, operation, *args, **kwargs)
-        from ...Backup_Recovery.participants import _core_operation
+        from ...Backup_Recovery.participants import core_operation
         from ...Chat.console_preparation_reads import run_preparation_read
         from ...DB.base_db import operation_owned_connection
 
         def invoke():
             # The same scopes as run_owned_db_call, on this exact receiver.
             # A borrower retains its handle; only a newly opened handle retires.
-            with operation_owned_connection(database), _core_operation(database):
+            with operation_owned_connection(database), core_operation(database):
                 return operation(*args, **kwargs)
 
         return await run_preparation_read(

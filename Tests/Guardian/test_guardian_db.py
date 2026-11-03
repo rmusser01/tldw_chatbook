@@ -351,12 +351,12 @@ def test_raw_guardian_connection_rechecks_admission_before_return(
     import sqlite3
 
     from tldw_chatbook.Backup_Recovery.bootstrap import RecoveryRequired
-    from tldw_chatbook.Backup_Recovery.participants import _repository_participant
+    from tldw_chatbook.Backup_Recovery.participants import repository_participant
     from tldw_chatbook.DB.base_db import BaseDB
 
     database = GuardianDB(tmp_path / "guardian-race.sqlite", "admission-race")
     database.close()
-    participant = _repository_participant(database)
+    participant = repository_participant(database)
     original = BaseDB._get_connection
     allocated = []
 

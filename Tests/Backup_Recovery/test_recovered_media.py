@@ -115,10 +115,10 @@ def test_orphan_cleanup_rechecks_references_and_holds(media):
 
 def test_recovered_owner_cannot_open_after_admission_closes(media):
     from tldw_chatbook.Backup_Recovery.bootstrap import RecoveryRequired
-    from tldw_chatbook.Backup_Recovery.participants import _repository_participant
+    from tldw_chatbook.Backup_Recovery.participants import repository_participant
 
     store, source = media
-    participant = _repository_participant(store)
+    participant = repository_participant(store)
     participant.close_admission()
     with pytest.raises(RecoveryRequired, match="paused"):
         retain(store, source)

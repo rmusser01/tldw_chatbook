@@ -18,8 +18,8 @@ Workspace/RAG lineage, whose lessons are load-bearing:
   liveness probe.
 
 Participants observability (Backup_Recovery/participants.py) is built in: the
-getter and transaction entry points carry the ``_core_getter`` /
-``_core_transaction`` decorations and register held connections, so a migrated
+getter and transaction entry points carry the ``core_getter`` /
+``core_transaction`` decorations and register held connections, so a migrated
 store cannot forget the wiring.
 """
 
@@ -32,12 +32,12 @@ from collections.abc import Iterator
 from contextlib import contextmanager
 
 from tldw_chatbook.Backup_Recovery.participants import (
-    _core_access,
-    _core_cached_connection,
-    _core_closing,
-    _core_getter,
-    _core_transaction,
-    _register_core_connection,
+    core_access,
+    core_cached_connection,
+    core_closing,
+    core_getter,
+    core_transaction,
+    register_core_connection,
 )
 from tldw_chatbook.DB.private_sqlite import connect_private_sqlite
 
@@ -112,7 +112,7 @@ class SQLiteStoreKernel:
             self._kernel_sqlite_owner, self.db_path_str, **kwargs
         )
 
-    @_core_getter
+    @core_getter
     def _get_connection(
         self, *, operation_deadline: float | None = None
     ) -> sqlite3.Connection:
@@ -122,7 +122,7 @@ class SQLiteStoreKernel:
         per-connection property lives here or in the store's
         ``_configure_connection`` override.
         """
-        _core_access(self)
+        core_access(self)
         if operation_deadline is not None and time.monotonic() >= operation_deadline:
             raise TimeoutError("Database connection budget exhausted")
         conn = (
@@ -130,7 +130,7 @@ class SQLiteStoreKernel:
             if operation_deadline is None
             else self._open_connection(operation_deadline=operation_deadline)
         )
-        _register_core_connection(self, conn)
+        register_core_connection(self, conn)
         try:
             if operation_deadline is None:
                 return self._configure_connection(conn)
@@ -153,7 +153,7 @@ class SQLiteStoreKernel:
         conn.isolation_level = None
         return conn
 
-    @_core_getter
+    @core_getter
     def _held_connection(
         self, *, operation_deadline: float | None = None
     ) -> sqlite3.Connection:
@@ -163,11 +163,11 @@ class SQLiteStoreKernel:
         component closed (or that SQLite invalidated) is transparently
         replaced.
         """
-        _core_access(self)
+        core_access(self)
         if operation_deadline is not None and time.monotonic() >= operation_deadline:
             raise TimeoutError("Database connection budget exhausted")
         conn = getattr(self._thread_local, "conn", None)
-        conn = _core_cached_connection(self, conn)
+        conn = core_cached_connection(self, conn)
         if conn is not None:
             last_used = getattr(self._thread_local, "conn_last_used", None)
             if (
@@ -226,7 +226,7 @@ class SQLiteStoreKernel:
         """
 
 
-    @_core_transaction
+    @core_transaction
     @contextmanager
     def connection(
         self, *, operation_deadline: float | None = None
@@ -242,7 +242,7 @@ class SQLiteStoreKernel:
             else self._held_connection(operation_deadline=operation_deadline)
         )
 
-    @_core_transaction
+    @core_transaction
     @contextmanager
     def transaction(
         self, *, immediate: bool | None = None
@@ -288,7 +288,7 @@ class SQLiteStoreKernel:
         """Close the current thread's held connection, if any."""
         conn = getattr(self._thread_local, "conn", None)
         if conn is not None:
-            with _core_closing(self, conn) as allowed:
+            with core_closing(self, conn) as allowed:
                 if not allowed:
                     return
                 try:

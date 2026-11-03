@@ -14,12 +14,12 @@ from typing import NamedTuple
 
 from tldw_chatbook.DB.private_sqlite import connect_private_sqlite
 from tldw_chatbook.Backup_Recovery.participants import (
-    _core_access,
-    _core_cached_connection,
-    _core_closing,
-    _core_getter,
-    _core_operation,
-    _register_core_connection,
+    core_access,
+    core_cached_connection,
+    core_closing,
+    core_getter,
+    core_operation,
+    register_core_connection,
 )
 from tldw_chatbook.Backup_Recovery.profile_paths import lexical_path
 
@@ -85,7 +85,7 @@ class FileNotesReplica:
         self.db_path = ":memory:" if self.is_memory_db else lexical_path(Path(db_path).expanduser())
         self._lock = RLock()
         self._connection = None
-        _core_access(self)  # Bind the file selector before either constructor stage.
+        core_access(self)  # Bind the file selector before either constructor stage.
         if not self.is_memory_db:
             from tldw_chatbook.Backup_Recovery.raw_participants import _scope, _mkdirs
 
@@ -98,23 +98,23 @@ class FileNotesReplica:
             self.close()
             raise
 
-    @_core_getter
+    @core_getter
     def _get_connection(self) -> sqlite3.Connection:
-        _core_access(self)
-        conn = _core_cached_connection(self, self._connection)
+        core_access(self)
+        conn = core_cached_connection(self, self._connection)
         if conn is None:
             conn = connect_private_sqlite(
                 "notes.file_notes_replica", self.db_path,
                 isolation_level=None, check_same_thread=False,
             )
             try:
-                _register_core_connection(self, conn)
-                _core_access(self)
+                register_core_connection(self, conn)
+                core_access(self)
                 conn.row_factory = sqlite3.Row
                 if not self.is_memory_db:
                     conn.execute("PRAGMA journal_mode = WAL")
                 conn.execute("PRAGMA synchronous = NORMAL")
-                _core_access(self)
+                core_access(self)
             except BaseException:
                 conn.close()
                 raise
@@ -123,7 +123,7 @@ class FileNotesReplica:
 
     @contextmanager
     def _locked_connection(self) -> Iterator[None]:
-        with _core_operation(self), self._lock:
+        with core_operation(self), self._lock:
             self._get_connection()
             yield
 
@@ -131,7 +131,7 @@ class FileNotesReplica:
         """Retire only on its creating thread after managed borrowers finish."""
         conn = self._connection
         if conn is not None:
-            with _core_closing(self, conn) as allowed:
+            with core_closing(self, conn) as allowed:
                 if allowed:
                     with self._lock:
                         conn.close()

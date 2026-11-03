@@ -27,9 +27,9 @@ def native_owner(owner):
 
 
 def source_participant(owner):
-    from tldw_chatbook.Backup_Recovery.participants import _repository_participant
+    from tldw_chatbook.Backup_Recovery.participants import repository_participant
 
-    return _repository_participant(native_owner(owner))
+    return repository_participant(native_owner(owner))
 
 
 def fresh_scope(owner):
@@ -120,7 +120,7 @@ def test_file_notes_pause_precedes_directory_creation(tmp_path):
 
 @pytest.mark.parametrize("owner_type", CACHED + FRESH)
 def test_real_source_is_bound_to_installed_participant(tmp_path, owner_type):
-    from tldw_chatbook.Backup_Recovery.participants import _repository_participant
+    from tldw_chatbook.Backup_Recovery.participants import repository_participant
 
     owner = make(owner_type, tmp_path / "store.sqlite")
     try:
@@ -138,7 +138,7 @@ def test_real_source_is_bound_to_installed_participant(tmp_path, owner_type):
 
 def test_site_setup_source_refuses_paused_schema_before_allocation(tmp_path):
     from tldw_chatbook.Subscriptions.site_config_manager import SiteConfigManager
-    from tldw_chatbook.Backup_Recovery.participants import _repository_participant
+    from tldw_chatbook.Backup_Recovery.participants import repository_participant
 
     owner = SiteConfigManager(str(tmp_path / "hybrid.sqlite"))
     try:
@@ -169,7 +169,7 @@ def scope(owner):
 def test_fixed_managed_scope_continues_but_new_raw_borrower_refuses(
     tmp_path, owner_type
 ):
-    from tldw_chatbook.Backup_Recovery.participants import _repository_participant
+    from tldw_chatbook.Backup_Recovery.participants import repository_participant
 
     owner = make(owner_type, tmp_path / "scope.sqlite")
     participant = source_participant(owner)
@@ -271,7 +271,7 @@ def test_native_allocation_and_setup_races_retire_only_new_native(
     tmp_path, monkeypatch, owner_type, point
 ):
     import importlib
-    from tldw_chatbook.Backup_Recovery.participants import _repository_participant
+    from tldw_chatbook.Backup_Recovery.participants import repository_participant
     from tldw_chatbook.DB.base_db import BaseDB
 
     owner = make(owner_type, tmp_path / "race.sqlite")
@@ -379,8 +379,8 @@ def test_file_notes_retarget_between_constructor_stages_refuses(tmp_path, monkey
 
 def test_subscriptions_fixed_readonly_mode_and_native_policy(tmp_path):
     from tldw_chatbook.Backup_Recovery.participants import (
-        _repository_participant,
-        _register_core_connection,
+        repository_participant,
+        register_core_connection,
     )
     from tldw_chatbook.DB.private_sqlite import connect_private_sqlite
 
@@ -390,7 +390,7 @@ def test_subscriptions_fixed_readonly_mode_and_native_policy(tmp_path):
     readonly = SubscriptionsDB(path, read_only=True)
     try:
         conn = readonly.conn
-        participant = _repository_participant(readonly)
+        participant = repository_participant(readonly)
         from tldw_chatbook.DB.private_sqlite import _validated_owner_policy
 
         assert participant.connections[conn].resource_policy is _validated_owner_policy(
@@ -401,7 +401,7 @@ def test_subscriptions_fixed_readonly_mode_and_native_policy(tmp_path):
         wrong = connect_private_sqlite("db.base", path)
         try:
             with pytest.raises(bootstrap.RecoveryRequired, match="provenance"):
-                _register_core_connection(readonly, wrong)
+                register_core_connection(readonly, wrong)
         finally:
             wrong.close()
         readonly._read_only = False
@@ -414,7 +414,7 @@ def test_subscriptions_fixed_readonly_mode_and_native_policy(tmp_path):
 
 
 def test_subscriptions_schema_tail_stays_in_original_scope(tmp_path, monkeypatch):
-    from tldw_chatbook.Backup_Recovery.participants import _repository_participant
+    from tldw_chatbook.Backup_Recovery.participants import repository_participant
 
     owner = SubscriptionsDB(tmp_path / "schema.sqlite")
     participant = source_participant(owner)
@@ -436,7 +436,7 @@ def test_subscriptions_schema_tail_stays_in_original_scope(tmp_path, monkeypatch
 def test_actual_worker_retirement_and_escaped_native_reference(
     tmp_path, local_root, launch, owner_type
 ):
-    from tldw_chatbook.Backup_Recovery.participants import _repository_participant
+    from tldw_chatbook.Backup_Recovery.participants import repository_participant
 
     ready, finish = threading.Event(), threading.Event()
     owners, natives, errors = [], [], []
@@ -493,8 +493,8 @@ def test_separate_same_path_sources_cannot_steal_native_association(
     tmp_path, owner_type
 ):
     from tldw_chatbook.Backup_Recovery.participants import (
-        _register_core_connection,
-        _repository_participant,
+        register_core_connection,
+        repository_participant,
     )
 
     path = tmp_path / "shared.sqlite"
@@ -502,7 +502,7 @@ def test_separate_same_path_sources_cannot_steal_native_association(
     conn = native_get(left)
     try:
         with pytest.raises(bootstrap.RecoveryRequired, match="provenance"):
-            _register_core_connection(native_owner(right), conn)
+            register_core_connection(native_owner(right), conn)
         with scope(right) as native:
             assert native.execute("SELECT 42").fetchone()[0] == 42
         with scope(left):
@@ -539,7 +539,7 @@ def test_relative_selector_remains_fixed_after_cwd_change(
 
 @pytest.mark.parametrize("owner_type", CACHED + FRESH)
 def test_memory_remains_ordinary_uninstalled_during_pause(tmp_path, owner_type):
-    from tldw_chatbook.Backup_Recovery.participants import _repository_participant
+    from tldw_chatbook.Backup_Recovery.participants import repository_participant
 
     owner = make(owner_type, ":memory:")
     pause = storage._begin_local_pause()
@@ -560,7 +560,7 @@ def test_memory_remains_ordinary_uninstalled_during_pause(tmp_path, owner_type):
 
 @pytest.mark.parametrize("owner_type", CACHED + FRESH)
 def test_subclass_has_no_installed_source_authority(tmp_path, owner_type):
-    from tldw_chatbook.Backup_Recovery.participants import _repository_participant
+    from tldw_chatbook.Backup_Recovery.participants import repository_participant
 
     class Ordinary(owner_type):
         pass
@@ -572,7 +572,7 @@ def test_subclass_has_no_installed_source_authority(tmp_path, owner_type):
     )
     try:
         with pytest.raises(ValueError, match="not_installed"):
-            _repository_participant(owner)
+            repository_participant(owner)
         with scope(owner) as native:
             assert native.execute("SELECT 42").fetchone()[0] == 42
     finally:
@@ -614,20 +614,20 @@ def test_site_setup_does_not_borrow_core_native_authority(tmp_path):
     from tldw_chatbook.Subscriptions.site_config_manager import SiteConfigManager
     from tldw_chatbook.DB.Subscriptions_DB import ensure_site_configs_schema
     from tldw_chatbook.Backup_Recovery.participants import (
-        _repository_participant,
-        _register_core_connection,
+        repository_participant,
+        register_core_connection,
     )
 
     path = tmp_path / "hybrid.sqlite"
     owner = SiteConfigManager(str(path))
     try:
         setup = source_participant(owner)
-        core = _repository_participant(owner.db)
+        core = repository_participant(owner.db)
         assert setup is not core and setup.path == core.path
         assert not setup.connections
         native = owner.db.get_connection()
         with pytest.raises(bootstrap.RecoveryRequired, match="provenance"):
-            _register_core_connection(owner, native)
+            register_core_connection(owner, native)
         setup.close_admission()
         # Standalone schema helper is an ordinary file operation, with no
         # authority inherited from the manager's matching path.
@@ -858,7 +858,7 @@ def test_subscription_pause_after_config_input_refuses_database_mutation(
     tmp_path, monkeypatch
 ):
     import tldw_chatbook.DB.Subscriptions_DB as module
-    from tldw_chatbook.Backup_Recovery.participants import _repository_participant
+    from tldw_chatbook.Backup_Recovery.participants import repository_participant
 
     owner = SubscriptionsDB(tmp_path / "paused-input.sqlite")
     participant = source_participant(owner)
@@ -881,7 +881,7 @@ def test_subscription_pause_after_config_input_refuses_database_mutation(
 
 
 def test_file_notes_participant_uses_installed_semantic_owner(tmp_path):
-    from tldw_chatbook.Backup_Recovery.participants import _repository_participant
+    from tldw_chatbook.Backup_Recovery.participants import repository_participant
 
     owner = FileNotesReplica(tmp_path / "replica.sqlite")
     try:
@@ -893,7 +893,7 @@ def test_file_notes_participant_uses_installed_semantic_owner(tmp_path):
 def test_kanban_source_pause_after_allocation_precedes_journal_mutation(
     tmp_path, monkeypatch
 ):
-    from tldw_chatbook.Backup_Recovery.participants import _repository_participant
+    from tldw_chatbook.Backup_Recovery.participants import repository_participant
     from tldw_chatbook.Kanban_Interop import local_kanban_db
 
     path = tmp_path / "kanban.sqlite"

@@ -35,11 +35,11 @@ from tldw_chatbook.STT.persistence import dump_failed_transcription_attempt
 
 from .base_db import BaseDB
 from tldw_chatbook.Backup_Recovery.participants import (
-    _core_cached_connection,
-    _core_closing,
-    _core_getter,
-    _core_transaction,
-    _register_core_connection,
+    core_cached_connection,
+    core_closing,
+    core_getter,
+    core_transaction,
+    register_core_connection,
 )
 from .private_sqlite import connect_private_sqlite
 
@@ -60,7 +60,7 @@ class LibraryIngestJobsDB(BaseDB):
         self._conn: sqlite3.Connection | None = None
         super().__init__(db_path, client_id)  # calls _initialize_schema()
 
-    @_core_transaction
+    @core_transaction
     @contextmanager
     def transaction(self) -> Iterator[sqlite3.Connection]:
         """Open a write transaction that rolls back on failure.
@@ -88,21 +88,21 @@ class LibraryIngestJobsDB(BaseDB):
         else:
             conn.commit()
 
-    @_core_getter
+    @core_getter
     def _get_connection(self) -> sqlite3.Connection:
-        from tldw_chatbook.Backup_Recovery.participants import _core_access
+        from tldw_chatbook.Backup_Recovery.participants import core_access
 
-        _core_access(self)
-        self._conn = _core_cached_connection(self, self._conn)
+        core_access(self)
+        self._conn = core_cached_connection(self, self._conn)
         if self._conn is None:
             conn = connect_private_sqlite(
                 "db.library_ingest_jobs",
                 self.db_path_str,
                 check_same_thread=False,
             )
-            _register_core_connection(self, conn)
+            register_core_connection(self, conn)
             try:
-                _core_access(self)
+                core_access(self)
                 conn.row_factory = sqlite3.Row
                 conn.execute("PRAGMA journal_mode=WAL")
                 # NORMAL is safe under WAL and avoids an fsync per commit.
@@ -113,7 +113,7 @@ class LibraryIngestJobsDB(BaseDB):
                 # silently inert.
                 conn.execute("PRAGMA foreign_keys = ON")
                 conn.isolation_level = None
-                _core_access(self)
+                core_access(self)
             except BaseException:
                 # Close this allocation, never a concurrently replaced cache.
                 conn.close()
@@ -123,7 +123,7 @@ class LibraryIngestJobsDB(BaseDB):
 
     def close(self) -> None:
         if self._conn is not None:
-            with _core_closing(self, self._conn) as allowed:
+            with core_closing(self, self._conn) as allowed:
                 if not allowed:
                     return
                 try:

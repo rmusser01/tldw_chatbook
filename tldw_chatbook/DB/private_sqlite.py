@@ -1586,10 +1586,10 @@ def _with_storage_admission(function):
                             participant = getattr(lease, "resource_participant", None)
                             if participant is not None:
                                 from tldw_chatbook.Backup_Recovery.participants import (
-                                    _retired_core_connections,
+                                    retired_core_connections,
                                 )
 
-                                _retired_core_connections.add(self)
+                                retired_core_connections.add(self)
                                 participant.connections.pop(self, None)
                                 lease.resource_participant = None
                             storage._changed.notify_all()

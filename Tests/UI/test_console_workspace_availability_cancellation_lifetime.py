@@ -97,7 +97,7 @@ def main():
         (preparation, preparation, 'run_preparation_read'),
         (preparation, preparation, '_retire'),
         (preparation, preparation, '_observe_locked'),
-        (participants, participants, '_core_operation'),
+        (participants, participants, 'core_operation'),
         (workspace_module, controller_class, '_capture_workspace_files_availability_for_registry'),
         (registry_module, registry_class, '__init__'),
         (registry_module, registry_class, 'list_runtime_bindings'),
@@ -268,7 +268,7 @@ def main():
             and frame.f_locals.get('workspace_ids') == workspace_ids
             and type(operation) is MethodType and operation.__self__ is controller
             and operation.__func__ is reader_function
-            and frame.f_locals.get('_core_operation') is participants._core_operation
+            and frame.f_locals.get('core_operation') is participants.core_operation
             and frame.f_locals.get('operation_owned_connection') is base_db.operation_owned_connection
             and type(current) is FunctionType and current.__code__ is current_code
             and producer.f_code is producer_code

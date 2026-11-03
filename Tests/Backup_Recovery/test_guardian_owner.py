@@ -85,12 +85,12 @@ def test_guardian_maintenance_counts_native_handles_and_preserves_borrower(tmp_p
     import time
 
     from tldw_chatbook.Backup_Recovery.bootstrap import RecoveryRequired
-    from tldw_chatbook.Backup_Recovery.participants import _repository_participant
+    from tldw_chatbook.Backup_Recovery.participants import repository_participant
 
     db = GuardianDB(tmp_path / "guardian.db")
     try:
         connection = db._held_connection()
-        participant = _repository_participant(db)
+        participant = repository_participant(db)
         assert participant.owner_id == "db.guardian"
         assert connection in participant.connections
         connection.execute("BEGIN")

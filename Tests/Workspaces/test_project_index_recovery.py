@@ -289,7 +289,7 @@ def _held_query_recovery_child(base):
     from tldw_chatbook.Workspaces.project_index.models import ProjectIndexPolicy
     from tldw_chatbook.Workspaces.project_index.scanner import ProjectScanner
     from tldw_chatbook.Backup_Recovery import storage_admission as storage
-    from tldw_chatbook.Backup_Recovery.participants import _retire_current_thread_caches
+    from tldw_chatbook.Backup_Recovery.participants import retire_current_thread_caches
     from Tests.Agents.test_project_index_tool import provider, invoke
 
     live = config.get_user_data_dir()
@@ -342,7 +342,7 @@ def _held_query_recovery_child(base):
         scanner = capture[0]
         assert psutil.pid_exists(scanner.worker_pid) and not scanner.retired
         pause = storage._begin_local_pause()
-        _retire_current_thread_caches(pause)
+        retire_current_thread_caches(pause)
         assert not pause.drain(time.monotonic()), "real query lost its storage pin"
         release.set()
         query.join(15)

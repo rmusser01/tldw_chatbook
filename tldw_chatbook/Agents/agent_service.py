@@ -5352,11 +5352,11 @@ class AgentService:
                     ),
                 )
 
-        from tldw_chatbook.Backup_Recovery.participants import _core_operation
+        from tldw_chatbook.Backup_Recovery.participants import core_operation
 
         # Keep this exact parent repository operation admitted until the child
         # owns its independent scope or the parent finishes refused-launch cleanup.
-        @_core_operation(self.db)
+        @core_operation(self.db)
         def _launch_fleet_child(
             spawn_task: str,
             agent_name: "str | None",
