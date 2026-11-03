@@ -6076,7 +6076,13 @@ async def test_conflict_reload_requires_keyboard_confirmation_in_library_shell(
             "Discard the draft in the editor and load the current disk version? "
             "This cannot be undone."
         )
-        assert cancel.has_focus
+        # The confirmation focuses Cancel through `call_later`, after
+        # `reload_confirmation_active` is already true.
+        await _wait_until(
+            pilot,
+            lambda: cancel.has_focus,
+            "destructive reload confirmation did not focus Cancel",
+        )
         assert str(cancel.label) == "Cancel"
         assert str(confirm.label) == "Discard draft and load disk"
         assert copy.region.right <= screen.size.width
@@ -6116,6 +6122,11 @@ async def test_conflict_reload_requires_keyboard_confirmation_in_library_shell(
             pilot,
             lambda: workspace.reload_confirmation_active,
             "third destructive reload confirmation did not open",
+        )
+        await _wait_until(
+            pilot,
+            lambda: cancel.has_focus,
+            "third destructive reload confirmation did not focus Cancel",
         )
         await pilot.press("tab")
         assert confirm.has_focus

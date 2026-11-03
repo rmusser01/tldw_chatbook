@@ -5,7 +5,7 @@ status: Done
 assignee:
 - '@claude'
 created_date: 2026-11-03 05:51
-updated_date: 2026-11-03 06:13
+updated_date: 2026-11-03 06:57
 labels:
 - follow-up
 - tests
@@ -33,6 +33,7 @@ Found while reviewing TASK-38646 (2026-11-03). `Tests/UI/test_library_file_notes
 <!-- AC:BEGIN -->
 - [x] #1 The test passes 10 of 10 runs on its own and 10 of 10 three-test runs with `-n 4`, each its own pytest process, because it waits for Cancel to take focus
 - [x] #2 It still fails if Cancel never takes focus after the confirmation opens (shown under a temporary source edit)
+- [x] #3 Every other test in the file that asserts Cancel focus right after a reload confirmation opens waits for the deferred focus the same way
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -58,6 +59,8 @@ This change touches only the test, in `Tests/UI/test_library_file_notes_workspac
 - 3 of those 10 runs failed only `test_folder_files_capability_inventory_and_modes`, at :1886 (`restore.disabled`). That is TASK-38646's race, which PR #3356 fixes and which is not on dev yet.
 
 **AC#2.** A temporary source edit replaced `self.call_later(cancel.focus)` in `_set_reload_confirmation` with `pass`. The test then failed 2 of 2 runs at the new wait ("destructive confirmation did not focus Cancel"). The edit was reverted with `git checkout`.
+
+**AC#3.** `test_conflict_reload_requires_keyboard_confirmation_in_library_shell` now waits for Cancel focus after its first open, instead of `assert cancel.has_focus`. It also waits before its third open's `tab`, which assumed Cancel already held focus. With focus dropped on every open, the first wait failed (2 of 2 cases). With focus dropped only on the third open, the second wait failed (2 of 2), and the old form failed at `assert confirm.has_focus`. Both edits were reverted. It then passed 5 of 5 `-n 4` runs together with the conflict-discard test (load 23 to 53). No other test in the file asserts Cancel focus right after a confirmation opens.
 
 **Checks.** Preflight passes. Ruff format is clean, and the Ruff lint count is unchanged from base (24).
 
