@@ -5,7 +5,7 @@ status: Done
 assignee:
 - '@claude'
 created_date: 2026-11-03 05:51
-updated_date: 2026-11-03 06:57
+updated_date: 2026-11-03 07:05
 labels:
 - follow-up
 - tests
@@ -33,7 +33,7 @@ Found while reviewing TASK-38646 (2026-11-03). `Tests/UI/test_library_file_notes
 <!-- AC:BEGIN -->
 - [x] #1 The test passes 10 of 10 runs on its own and 10 of 10 three-test runs with `-n 4`, each its own pytest process, because it waits for Cancel to take focus
 - [x] #2 It still fails if Cancel never takes focus after the confirmation opens (shown under a temporary source edit)
-- [x] #3 Every other test in the file that asserts Cancel focus right after a reload confirmation opens waits for the deferred focus the same way
+- [x] #3 Every other test in the file that asserts focus right after a reload confirmation opens or closes waits for the deferred focus the same way
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -60,7 +60,11 @@ This change touches only the test, in `Tests/UI/test_library_file_notes_workspac
 
 **AC#2.** A temporary source edit replaced `self.call_later(cancel.focus)` in `_set_reload_confirmation` with `pass`. The test then failed 2 of 2 runs at the new wait ("destructive confirmation did not focus Cancel"). The edit was reverted with `git checkout`.
 
-**AC#3.** `test_conflict_reload_requires_keyboard_confirmation_in_library_shell` now waits for Cancel focus after its first open, instead of `assert cancel.has_focus`. It also waits before its third open's `tab`, which assumed Cancel already held focus. With focus dropped on every open, the first wait failed (2 of 2 cases). With focus dropped only on the third open, the second wait failed (2 of 2), and the old form failed at `assert confirm.has_focus`. Both edits were reverted. It then passed 5 of 5 `-n 4` runs together with the conflict-discard test (load 23 to 53). No other test in the file asserts Cancel focus right after a confirmation opens.
+**AC#3.** `test_conflict_reload_requires_keyboard_confirmation_in_library_shell` now waits for each deferred focus instead of asserting it at once.
+- Opening: it waits for Cancel focus after the first open, and again before the third open's `tab`, which assumed Cancel already held focus. With focus dropped on every open, the first wait failed (2 of 2 cases). With focus dropped only on the third open, the second wait failed (2 of 2), and the old form failed at `assert confirm.has_focus`.
+- Closing: it waits for `reload_button` focus after Cancel and after Escape. The opener refocus there runs through `call_after_refresh` in `_dismiss_reload_confirmation`. With every refocus dropped, the Cancel wait failed (2 of 2). With only the second dropped, the Escape wait failed (2 of 2).
+- Every edit was reverted. The test then passed 5 of 5 `-n 4` runs after the opening change (with the conflict-discard test, load 23 to 53), and 5 of 5 after the closing change (load 29 to 34).
+- No other test in the file asserts focus right after a confirmation opens or closes. The conflict-discard test's own close already waited for Discard focus.
 
 **Checks.** Preflight passes. Ruff format is clean, and the Ruff lint count is unchanged from base (24).
 

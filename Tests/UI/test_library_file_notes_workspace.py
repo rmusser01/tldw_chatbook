@@ -6099,7 +6099,12 @@ async def test_conflict_reload_requires_keyboard_confirmation_in_library_shell(
         )
         assert editor.text == "draft to preserve"
         assert workspace.save_state == "conflict"
-        assert reload_button.has_focus
+        # Closing refocuses the opener through `call_after_refresh`.
+        await _wait_until(
+            pilot,
+            lambda: reload_button.has_focus,
+            "Cancel did not return focus to Reload from disk",
+        )
 
         await pilot.press("enter")
         await _wait_until(
@@ -6115,7 +6120,11 @@ async def test_conflict_reload_requires_keyboard_confirmation_in_library_shell(
         )
         assert editor.text == "draft to preserve"
         assert workspace.save_state == "conflict"
-        assert reload_button.has_focus
+        await _wait_until(
+            pilot,
+            lambda: reload_button.has_focus,
+            "Escape did not return focus to Reload from disk",
+        )
 
         await pilot.press("enter")
         await _wait_until(
