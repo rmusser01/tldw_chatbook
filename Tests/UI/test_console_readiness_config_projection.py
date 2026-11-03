@@ -838,7 +838,10 @@ async def test_readiness_repeated_cancel_retains_physical_read(monkeypatch, all_
 async def test_closed_readiness_owner_never_reads_or_publishes(monkeypatch, closing):
     screen, _owner, _identity, tasks, published = _screen(monkeypatch)
     entered, release = threading.Event(), threading.Event()
-    reads = []
+    reads, retries = [], []
+    # TASK-38649: a refresh that publishes nothing asks for a retry, but
+    # never for a closing screen.
+    screen._request_console_control_bar_sync = lambda **kwargs: retries.append(kwargs)
 
     def read():
         reads.append(True)
@@ -857,7 +860,7 @@ async def test_closed_readiness_owner_never_reads_or_publishes(monkeypatch, clos
             screen._closing = True
             release.set()
         await asyncio.gather(*tasks)
-        assert projection.value is None and not published
+        assert projection.value is None and not published and not retries
         if closing == "before":
             assert not reads and not tasks
         count = len(reads)

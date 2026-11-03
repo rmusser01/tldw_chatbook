@@ -477,6 +477,7 @@ class ConsoleReadinessConfigProjection:
         )
 
     async def _refresh(self, key: tuple) -> None:
+        retry = True
         try:
             reader = self.read_current
             tokenizer_request = self._tokenizer_request
@@ -609,12 +610,24 @@ class ConsoleReadinessConfigProjection:
                 self.at = proof.at
                 _checked_display_proofs.add(published)
                 self._display_proof = published
+            retry = False
         except Exception:  # noqa: BLE001 - remain cold and retryable.
             return
+        except BaseException:
+            retry = False  # Cancellation belongs to whoever cancelled.
+            raise
         finally:
             self._read_request = None
             self.pending = False
             self._settled.set()
+            if retry and not (
+                getattr(self.screen, "_closing", False)
+                or getattr(_readiness_runtime(self.screen), "_disposed", False)
+            ):
+                # TASK-38649: this read publishes nothing, so a cold caller
+                # that deferred to it converges only through the existing
+                # coalesced retry.
+                self.screen._request_console_control_bar_sync(delayed=True)
         if changed:
             publication = self.screen._sync_native_console_chat_ui()
             try:
