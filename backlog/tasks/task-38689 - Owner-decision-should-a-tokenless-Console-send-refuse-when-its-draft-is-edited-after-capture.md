@@ -5,7 +5,7 @@ status: Done
 assignee:
 - '@claude'
 created_date: 2026-11-03 11:40
-updated_date: 2026-11-03 21:24
+updated_date: 2026-11-03 21:53
 labels:
 - follow-up
 - console
@@ -75,6 +75,8 @@ Owner decision 2026-11-03: TASK-340 wins. A tokenless Console send whose draft i
 
 Declining sends nothing on this path, so it adds no exposure.
 
+**Review fix (spent capture).** The old refusal also covered a capture that another send had already committed (its generation is in the composer's `_spent_generations`). Declining alone sent it again: the ordinary dispatch takes a stash whose text equals the draft as the pressed capture. The decline branch now returns `""` (not sent, no notice, as the token path's `superseded` check does) when `composer.captured_draft_spent(stash)`. The branch also fires on a reload with no edit, which the fallback handles through `commit_capture`; the comment says so.
+
 **Which sends are tokenless.** In production only `handle_console_send_message` is tokenless, called by the spoken "Console, send." (`_run_pending_console_voice_action`). Enter, the Send button and the Workbench "send" all go through `send_acknowledgement.request_visible_send` (TASK-33620.15) with a token and captured inputs, so they already followed TASK-340. The comment in `chat_screen.py` that said "Mouse/Workbench sends have no token" was stale; it is reworded, comment only. So was the one in `console_composer_bar.py` saying Enter calls `handle_console_send_message` directly; it now names `request_visible_send` (comment only, same line count). The window between a tokenless capture and the wiring check is the skill-context await of an armed unknown command.
 
 **Tests** (`Tests/UI/test_console_send_draft_snapshot.py`):
@@ -83,6 +85,7 @@ Declining sends nothing on this path, so it adds no exposure.
   - Green with the fix: one provider call carrying `/nosuchcommand`, and the composer and saved draft both `x`. Passed in 3 repeat runs at load 35-46.
   - Its file is in no PR lane, so its node id is appended at the tail of `scripts/ui_pr_gate_census.txt`, with the floor raised to the measured count.
 - `test_console_armed_unknown_mouse_send_snapshots_before_skill_await`: PR #3376's `stash=None` wiring isolation is removed and the docstring fixed. Red on dev with `['Draft changed; Send again.']`; green with the fix. In a follow-up commit its edit lands as the held skill read returns (as in the new test), so a Changed handler cannot disarm the command first, and its hook-review isolation is dropped: with no hooks configured nothing is reviewed. Without the isolation it passed in 3 runs (load 34-36) and is red with only `wiring.py` reverted to base, `['Draft changed; Send again.']`.
+- New `test_spoken_send_of_a_capture_another_send_took_is_not_sent_again` (the review's probe: another send captures and commits the draft as the skill read returns). Red at 736a33f47d: `['Sent.'] == ['Not sent.']`. Green with the guard: no provider call, nothing sent or queued. It is also appended at the census tail. Both spoken tests now share `_speak_armed_send`.
 - No test pinned the old refusal. A grep of Tests/ for "Draft changed; Send again." finds only the new negative assertion.
 - AC#5: `hooks.py` is untouched. `Tests/Chat/test_console_hook_admission.py::test_late_ready_cannot_send_a_cancelled_or_changed_draft[edit]` (refusal after a review) and `test_a_ready_send_rechecks_its_chat_but_not_text_typed_after_capture` pass.
 

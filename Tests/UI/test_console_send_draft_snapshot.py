@@ -424,75 +424,123 @@ async def test_console_armed_unknown_mouse_send_snapshots_before_skill_await(
         assert store.session_draft(session.id) == " suffix"
 
 
+ARMED = "/nosuchcommand"
+
+
+async def _speak_armed_send(monkeypatch, host, pilot, gateway, as_read_returns):
+    """Speak "Console, send." on an armed unknown command; wait for its ack.
+
+    "Console, send." calls ``handle_console_send_message`` with no pending
+    send token, so ``wiring.receive_console_visible_intent`` gets no captured
+    inputs. Sending an armed unknown command captures the draft, then awaits
+    the skill context: the window between a tokenless capture and that check.
+    ``as_read_returns(composer)`` runs as the held read returns, before the
+    composer's Changed handler can disarm the command (one handled while the
+    read is pending would). Hook review runs live; with no hooks configured
+    nothing is reviewed, so it does not re-check the draft.
+
+    Returns:
+        The console, composer, store, session id, spoken acks and notices.
+    """
+    console, composer = await ready_console(host, pilot, gateway)
+    store = console._ensure_console_chat_store()
+    session_id = store.active_session_id
+    composer.load_draft(ARMED)
+    store.set_session_draft(session_id, ARMED)
+    console._console_unknown_send_armed = ARMED
+    entered, release = asyncio.Event(), asyncio.Event()
+
+    async def held_skill_context():
+        entered.set()
+        await release.wait()
+        as_read_returns(composer)
+        return object()
+
+    async def no_blocked_match(_name, _summaries):
+        return False
+
+    monkeypatch.setattr(
+        console._skill, "_fetch_console_skill_context", held_skill_context
+    )
+    monkeypatch.setattr(
+        console._skill, "_console_skill_blocked_summaries", lambda _c: ()
+    )
+    monkeypatch.setattr(
+        console._skill, "_console_skill_blocked_match_response", no_blocked_match
+    )
+    spoken: list[str] = []
+    monkeypatch.setattr(console, "_speak_status", spoken.append)
+    notices = _record_notices(host)
+    gateway.validation_release.set()
+
+    _speak_send(console, session_id)
+    await until(entered.is_set)
+    release.set()
+    await until(lambda: bool(spoken))
+    return console, composer, store, session_id, spoken, notices
+
+
 @pytest.mark.asyncio
 async def test_spoken_send_sends_its_capture_and_keeps_text_typed_after_it(
     monkeypatch,
 ):
     """TASK-38689: a tokenless send edited after its capture is sent, not refused.
 
-    "Console, send." calls ``handle_console_send_message`` with no pending
-    send token, so ``wiring.receive_console_visible_intent`` gets no captured
-    inputs. Sending an armed unknown command captures the draft, then awaits
-    the skill context; that await is the window between a tokenless capture
-    and the wiring check. A key handled while the read is still pending
-    disarms the command (the composer's Changed handler), so the edit here
-    lands as the read returns, before that handler runs. On dev the
-    function's live-vs-stash check then refused with "Draft changed; Send
+    The edit lands as the skill read returns (``_speak_armed_send``). On dev
+    the wiring's live-vs-stash check then refused with "Draft changed; Send
     again." and nothing was sent. Owner decision 2026-11-03 (TASK-340 wins):
     the captured text reaches the provider and the edit stays as the next
-    draft. Hook review runs live; with no hooks configured nothing is
-    reviewed, so it does not re-check the draft.
+    draft.
     """
     host, gateway, _timeline = build()
     async with host.run_test(size=(160, 45)) as pilot:
         with eager_tasks():
-            console, composer = await ready_console(host, pilot, gateway)
-            store = console._ensure_console_chat_store()
-            session_id = store.active_session_id
-            armed = "/nosuchcommand"
-            composer.load_draft(armed)
-            store.set_session_draft(session_id, armed)
-            console._console_unknown_send_armed = armed
-            entered, release = asyncio.Event(), asyncio.Event()
-
-            async def held_skill_context():
-                entered.set()
-                await release.wait()
-                composer.insert_text("x")  # Typed as the skill read returns.
-                return object()
-
-            async def no_blocked_match(_name, _summaries):
-                return False
-
-            monkeypatch.setattr(
-                console._skill, "_fetch_console_skill_context", held_skill_context
+            console, composer, store, session_id, spoken, notices = (
+                await _speak_armed_send(
+                    monkeypatch, host, pilot, gateway, lambda c: c.insert_text("x")
+                )
             )
-            monkeypatch.setattr(
-                console._skill, "_console_skill_blocked_summaries", lambda _c: ()
-            )
-            monkeypatch.setattr(
-                console._skill,
-                "_console_skill_blocked_match_response",
-                no_blocked_match,
-            )
-            spoken: list[str] = []
-            monkeypatch.setattr(console, "_speak_status", spoken.append)
-            notices = _record_notices(host)
-            gateway.validation_release.set()
-
-            _speak_send(console, session_id)
-            await until(entered.is_set)
-            release.set()
-            await until(lambda: bool(spoken))
             assert spoken == ["Sent."], notices
             await until(lambda: gateway.stream_calls == 1)
             await _idle(host, console, pilot, session_id)
 
-            assert _sent_or_queued(console, session_id) == [armed]
+            assert _sent_or_queued(console, session_id) == [ARMED]
             assert gateway.stream_calls == 1
             assert composer.draft_text() == "x"
             assert store.session_draft(session_id) == "x"
             assert "Draft changed; Send again." not in notices
+
+
+@pytest.mark.asyncio
+async def test_spoken_send_of_a_capture_another_send_took_is_not_sent_again(
+    monkeypatch,
+):
+    """TASK-38689 review: a capture another send already took stays unsent.
+
+    Another send captures and commits the same draft as the spoken send's
+    skill read returns, so the spoken send's capture is spent. The wiring's
+    old refusal of any composer change covered this; declining alone sent
+    the draft a second time through the ordinary dispatch. A spent capture
+    is still not sent: "Not sent." and no provider call.
+    """
+
+    def another_send_takes_it(composer):
+        assert composer.commit_captured_draft(composer.capture_draft_for_send())
+
+    host, gateway, _timeline = build()
+    async with host.run_test(size=(160, 45)) as pilot:
+        with eager_tasks():
+            console, composer, _store, session_id, spoken, notices = (
+                await _speak_armed_send(
+                    monkeypatch, host, pilot, gateway, another_send_takes_it
+                )
+            )
+            assert spoken == ["Not sent."], notices
+            await _idle(host, console, pilot, session_id)
+
+            assert gateway.stream_calls == 0
+            assert _sent_or_queued(console, session_id) == []
+            assert composer.draft_text() == ""
 
 
 @pytest.mark.asyncio
