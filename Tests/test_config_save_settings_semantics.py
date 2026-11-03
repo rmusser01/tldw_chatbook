@@ -97,14 +97,14 @@ def test_safe_capture_settings_publish_before_failed_save(monkeypatch):
         )[-1],
     )
 
-    result = config_module.apply_console_capture_settings(
+    result = capture_policy_module.apply_console_capture_settings(
         enabled=True,
         detail=CaptureDetail.SAFE,
         expected_generation=3,
     )
 
     assert result.failure_phase == "before_replace"
-    assert config_module.runtime_capture_policy().detail is CaptureDetail.SAFE
+    assert capture_policy_module.runtime_capture_policy().detail is CaptureDetail.SAFE
 
 
 def test_full_capture_settings_publish_after_replacement_despite_cache_failure(
@@ -127,7 +127,7 @@ def test_full_capture_settings_publish_after_replacement_despite_cache_failure(
 
     def mutate(*args, **kwargs):
         nonlocal generation
-        assert config_module.runtime_capture_policy().detail is CaptureDetail.SAFE
+        assert capture_policy_module.runtime_capture_policy().detail is CaptureDetail.SAFE
         assert kwargs["locked_snapshot_precondition"](
             config_module.AtomicConfigSnapshot(4, {})
         )
@@ -135,18 +135,18 @@ def test_full_capture_settings_publish_after_replacement_despite_cache_failure(
         generation = 5
         return ConfigMutationResult(True, False, "cache_reload")
 
-    config_module._publish_runtime_capture_policy(True, CaptureDetail.SAFE, 4)
+    capture_policy_module._publish_runtime_capture_policy(True, CaptureDetail.SAFE, 4)
     monkeypatch.setattr(config_module, "_published_runtime_config_snapshot", snapshot)
     monkeypatch.setattr(config_module, "apply_settings_mutation_to_cli_config", mutate)
 
-    result = config_module.apply_console_capture_settings(
+    result = capture_policy_module.apply_console_capture_settings(
         enabled=True,
         detail=CaptureDetail.FULL,
         expected_generation=4,
     )
 
     assert result.file_replaced is True
-    assert config_module.runtime_capture_policy().detail is CaptureDetail.FULL
+    assert capture_policy_module.runtime_capture_policy().detail is CaptureDetail.FULL
 
 
 def test_full_capture_cache_failure_keeps_policy_at_actual_config_generation(
@@ -174,10 +174,10 @@ def test_full_capture_cache_failure_keeps_policy_at_actual_config_generation(
         kwargs["after_replace"]()
         return ConfigMutationResult(True, False, "cache_reload")
 
-    config_module._publish_runtime_capture_policy(True, CaptureDetail.SAFE, 4)
+    capture_policy_module._publish_runtime_capture_policy(True, CaptureDetail.SAFE, 4)
     monkeypatch.setattr(config_module, "apply_settings_mutation_to_cli_config", mutate)
 
-    result = config_module.apply_console_capture_settings(
+    result = capture_policy_module.apply_console_capture_settings(
         enabled=True,
         detail=CaptureDetail.FULL,
         expected_generation=4,
@@ -185,13 +185,13 @@ def test_full_capture_cache_failure_keeps_policy_at_actual_config_generation(
 
     assert result.file_replaced is True
     assert result.fully_applied is False
-    policy = config_module.runtime_capture_policy()
+    policy = capture_policy_module.runtime_capture_policy()
     assert policy.detail is CaptureDetail.FULL
     assert policy.generation == 4
 
 
 def test_stale_safe_capture_generation_does_not_publish(monkeypatch):
-    config_module._publish_runtime_capture_policy(True, CaptureDetail.FULL, 7)
+    capture_policy_module._publish_runtime_capture_policy(True, CaptureDetail.FULL, 7)
     monkeypatch.setattr(
         config_module,
         "_published_runtime_config_snapshot",
@@ -220,18 +220,18 @@ def test_stale_safe_capture_generation_does_not_publish(monkeypatch):
 
     monkeypatch.setattr(config_module, "apply_settings_mutation_to_cli_config", mutate)
 
-    result = config_module.apply_console_capture_settings(
+    result = capture_policy_module.apply_console_capture_settings(
         enabled=True,
         detail=CaptureDetail.SAFE,
         expected_generation=7,
     )
 
     assert result.conflict is True
-    assert config_module.runtime_capture_policy().detail is CaptureDetail.FULL
+    assert capture_policy_module.runtime_capture_policy().detail is CaptureDetail.FULL
 
 
 def test_runtime_capture_policy_rebuilds_from_new_canonical_generation(monkeypatch):
-    config_module._publish_runtime_capture_policy(True, CaptureDetail.FULL, 40)
+    capture_policy_module._publish_runtime_capture_policy(True, CaptureDetail.FULL, 40)
     snapshots = iter(
         [
             config_module.RuntimeConfigSnapshot(
@@ -260,8 +260,8 @@ def test_runtime_capture_policy_rebuilds_from_new_canonical_generation(monkeypat
         lambda: next(snapshots),
     )
 
-    off = config_module.runtime_capture_policy()
-    full = config_module.runtime_capture_policy()
+    off = capture_policy_module.runtime_capture_policy()
+    full = capture_policy_module.runtime_capture_policy()
 
     assert (off.enabled, off.detail, off.generation) == (
         False,
@@ -278,7 +278,7 @@ def test_runtime_capture_policy_rebuilds_from_new_canonical_generation(monkeypat
 def test_runtime_capture_policy_concurrent_generation_refresh_is_equivalent(
     monkeypatch,
 ):
-    config_module._publish_runtime_capture_policy(True, CaptureDetail.FULL, 50)
+    capture_policy_module._publish_runtime_capture_policy(True, CaptureDetail.FULL, 50)
     snapshot = config_module.RuntimeConfigSnapshot(
         51,
         {
@@ -296,11 +296,11 @@ def test_runtime_capture_policy_concurrent_generation_refresh_is_equivalent(
 
     with ThreadPoolExecutor(max_workers=8) as pool:
         policies = list(
-            pool.map(lambda _index: config_module.runtime_capture_policy(), range(32))
+            pool.map(lambda _index: capture_policy_module.runtime_capture_policy(), range(32))
         )
 
     assert set(policies) == {
-        config_module.RuntimeCapturePolicy(False, CaptureDetail.SAFE, 51)
+        capture_policy_module.RuntimeCapturePolicy(False, CaptureDetail.SAFE, 51)
     }
 
 
@@ -321,7 +321,7 @@ def test_legacy_full_capture_never_migrates_to_full_viewer(monkeypatch) -> None:
         ),
     )
 
-    policy = config_module.runtime_capture_policy()
+    policy = capture_policy_module.runtime_capture_policy()
 
     assert policy.detail is CaptureDetail.FULL
     assert policy.viewer_profile == "safe"
@@ -349,7 +349,7 @@ def test_runtime_capture_policy_projects_independent_trace_rollout_gates(
         ),
     )
 
-    policy = config_module.runtime_capture_policy()
+    policy = capture_policy_module.runtime_capture_policy()
 
     assert policy.normalized_writes_enabled is False
     assert policy.normalized_reads_enabled is True
@@ -379,7 +379,7 @@ def test_runtime_capture_policy_prefers_trace_rollout_environment_overrides(
     monkeypatch.setenv("TLDW_CONSOLE_TRACE_NORMALIZED_READS", "false")
     monkeypatch.setenv("TLDW_CONSOLE_TRACE_LEGACY_WRITES", "true")
 
-    policy = config_module.runtime_capture_policy()
+    policy = capture_policy_module.runtime_capture_policy()
 
     assert policy.normalized_writes_enabled is True
     assert policy.normalized_reads_enabled is False
@@ -389,9 +389,9 @@ def test_runtime_capture_policy_prefers_trace_rollout_environment_overrides(
 def test_trace_rollout_settings_use_typed_validation_and_field_defaults() -> None:
     from pydantic import BaseModel
 
-    assert issubclass(config_module.TraceRolloutSettings, BaseModel)
+    assert issubclass(capture_policy_module.TraceRolloutSettings, BaseModel)
 
-    settings = config_module.resolve_trace_rollout_settings(
+    settings = capture_policy_module.resolve_trace_rollout_settings(
         {
             "trace_normalized_writes": "invalid",
             "trace_normalized_reads": "false",
@@ -426,7 +426,7 @@ def test_runtime_capture_policy_coerces_string_true_capture_and_rollout_gates(
         ),
     )
 
-    policy = config_module.runtime_capture_policy()
+    policy = capture_policy_module.runtime_capture_policy()
 
     assert policy.enabled is True
     assert policy.normalized_writes_enabled is True
@@ -448,7 +448,7 @@ def test_runtime_capture_policy_uses_shipping_trace_rollout_defaults(
         ),
     )
 
-    policy = config_module.runtime_capture_policy()
+    policy = capture_policy_module.runtime_capture_policy()
 
     assert policy.normalized_writes_enabled is True
     assert policy.normalized_reads_enabled is True
@@ -475,7 +475,7 @@ def test_versioned_viewer_and_pii_choices_restore_independently(monkeypatch) -> 
         ),
     )
 
-    policy = config_module.runtime_capture_policy()
+    policy = capture_policy_module.runtime_capture_policy()
 
     assert policy.enabled is False
     assert policy.pii_redaction_enabled is True
@@ -514,7 +514,7 @@ def test_runtime_capture_policy_freezes_valid_custom_pii_rules(monkeypatch) -> N
         ),
     )
 
-    policy = config_module.runtime_capture_policy()
+    policy = capture_policy_module.runtime_capture_policy()
 
     assert policy.custom_pii_ruleset is not None
     assert policy.custom_pii_ruleset.revision_id == (
@@ -550,7 +550,7 @@ def test_malformed_privacy_config_falls_back_to_all_safe_defaults(monkeypatch) -
         ),
     )
 
-    policy = config_module.runtime_capture_policy()
+    policy = capture_policy_module.runtime_capture_policy()
 
     assert policy.detail is CaptureDetail.FULL
     assert policy.pii_redaction_enabled is False
@@ -558,7 +558,7 @@ def test_malformed_privacy_config_falls_back_to_all_safe_defaults(monkeypatch) -
 
 
 def test_failed_more_revealing_privacy_change_is_not_published(monkeypatch) -> None:
-    config_module._publish_runtime_capture_policy(
+    capture_policy_module._publish_runtime_capture_policy(
         False,
         CaptureDetail.SAFE,
         70,
@@ -574,7 +574,7 @@ def test_failed_more_revealing_privacy_change_is_not_published(monkeypatch) -> N
 
     monkeypatch.setattr(config_module, "apply_settings_mutation_to_cli_config", mutate)
 
-    result = config_module.apply_console_capture_settings(
+    result = capture_policy_module.apply_console_capture_settings(
         enabled=True,
         detail=CaptureDetail.SAFE,
         expected_generation=70,
@@ -583,7 +583,7 @@ def test_failed_more_revealing_privacy_change_is_not_published(monkeypatch) -> N
     )
 
     assert result.failure_phase == "before_replace"
-    policy = config_module.runtime_capture_policy()
+    policy = capture_policy_module.runtime_capture_policy()
     assert policy.enabled is False
     assert policy.pii_redaction_enabled is True
     assert policy.viewer_profile == "safe"
@@ -611,6 +611,32 @@ def test_config_import_does_not_load_console_capture_chat_modules(tmp_path):
     assert result.returncode == 0, result.stderr
 
 
+def test_config_source_never_imports_console_capture_chat_modules():
+    """No import in config.py, at any depth, names the capture Chat modules."""
+    import ast
+    from pathlib import Path
+
+    forbidden = {
+        "console_exchange_capture",
+        "console_trace_maintenance",
+        "console_trace_custom_pii",
+    }
+    tree = ast.parse(Path(config_module.__file__).read_text(encoding="utf-8"))
+    offenders = []
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            targets = [alias.name for alias in node.names]
+        elif isinstance(node, ast.ImportFrom):
+            base = ("." * node.level) + (node.module or "")
+            targets = [base] + [f"{base}.{alias.name}" for alias in node.names]
+        else:
+            continue
+        for target in targets:
+            if target.rsplit(".", 1)[-1] in forbidden:
+                offenders.append((node.lineno, target))
+    assert not offenders, offenders
+
+
 def test_moved_policy_names_resolve_to_new_module_objects():
     """Old ``tldw_chatbook.config`` names are the very objects in the new homes."""
     for module_name, names in config_module._MOVED_POLICY_MODULES.items():
@@ -620,3 +646,5 @@ def test_moved_policy_names_resolve_to_new_module_objects():
     assert config_module.runtime_capture_policy is (
         capture_policy_module.runtime_capture_policy
     )
+    listed = dir(config_module)
+    assert all(name in listed for name in config_module._MOVED_POLICY_NAMES)

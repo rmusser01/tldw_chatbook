@@ -22,7 +22,7 @@ from tldw_chatbook.Canvas.web_auth import (
     WEBSOCKET_PROTOCOL,
     build_web_auth_policy,
 )
-from tldw_chatbook.config import build_canvas_config_policy
+from tldw_chatbook.Canvas.config_policy import build_canvas_config_policy
 from tldw_chatbook.Web_Server import serve
 from tldw_chatbook.Web_Server.session_store import WebSessionStore
 from tldw_chatbook.Web_Server.webauthn_service import WebAuthnService

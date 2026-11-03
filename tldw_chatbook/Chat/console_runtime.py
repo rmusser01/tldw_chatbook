@@ -164,7 +164,8 @@ if TYPE_CHECKING:
     from tldw_chatbook.Chat.response_rules.resources import RuleHelperPool
 from tldw_chatbook.Chat.console_turn_context import ConsoleTurnCustodyRequest
 from tldw_chatbook.Provider_Contract.thinking_blocks import normalize_thinking_history_policy
-from tldw_chatbook.config import coerce_bool_setting, runtime_capture_policy
+from tldw_chatbook.config import coerce_bool_setting
+from tldw_chatbook.Chat.console_capture_policy import runtime_capture_policy
 from tldw_chatbook.Persona_Buddy.console_adapter import PersonaBuddyConsoleAdapter
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
@@ -1163,7 +1164,7 @@ class ConsoleRuntime:
         self._progress_cleanup_tasks: set[asyncio.Task[Any]] = set()
         self._canvas_settlement_listener = self._forward_canvas_settlement
         if canvas_enabled_reader is None:
-            from tldw_chatbook.config import get_canvas_execution_enabled
+            from tldw_chatbook.Canvas.config_policy import get_canvas_execution_enabled
 
             canvas_enabled_reader = get_canvas_execution_enabled
         self._canvas_enabled_reader = canvas_enabled_reader
@@ -6889,7 +6890,6 @@ class ConsoleRuntime:
             task.add_done_callback(self._consume_task_outcome)
         if cancel_requested or asyncio.current_task().cancelling():
             raise asyncio.CancelledError
-
 
 
 def _attach(app: Any, runtime: ConsoleRuntime | None) -> None:

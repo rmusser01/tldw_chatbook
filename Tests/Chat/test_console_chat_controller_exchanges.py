@@ -78,6 +78,7 @@ from tldw_chatbook.Chat.console_turn_preparation import (
 )
 from tldw_chatbook.config import ConfigMutationResult
 from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
+from tldw_chatbook.Chat import console_capture_policy as capture_policy_module
 
 
 class StreamingGateway:
@@ -1769,7 +1770,7 @@ def test_kill_switch_string_true_enables_capture(monkeypatch):
         ),
     )
 
-    policy = config_module.runtime_capture_policy()
+    policy = capture_policy_module.runtime_capture_policy()
     signals = controller._new_run_stream_signals()
 
     assert policy.enabled is True

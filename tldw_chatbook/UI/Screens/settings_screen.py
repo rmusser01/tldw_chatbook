@@ -237,7 +237,6 @@ from ...config import (
     RuntimeConfigSnapshot,
     _selected_default_base_data_dir,
     apply_settings_mutation_to_cli_config,
-    apply_console_capture_settings,
     coerce_bool_setting,
     coerce_float_setting,
     coerce_int_setting,
@@ -248,9 +247,12 @@ from ...config import (
     get_runtime_config_snapshot,
     load_settings,
     provider_settings_for_key,
-    runtime_capture_policy,
     run_if_runtime_config_generation_current,
     save_settings_to_cli_config,
+)
+from tldw_chatbook.Chat.console_capture_policy import (
+    apply_console_capture_settings,
+    runtime_capture_policy,
 )
 from tldw_chatbook.Canvas.config_policy import (
     CanvasConfigPolicy,

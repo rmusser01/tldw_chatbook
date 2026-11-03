@@ -20433,7 +20433,7 @@ class ChatScreen(BaseAppScreen):
         """Auto-open a created tool Canvas or let its live shell hot-reload."""
 
         def schedule() -> None:
-            from tldw_chatbook.config import get_canvas_config_policy
+            from tldw_chatbook.Canvas.config_policy import get_canvas_config_policy
 
             if not self._console_runtime().canvas_enabled():
                 return

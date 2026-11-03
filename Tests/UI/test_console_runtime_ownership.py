@@ -2649,11 +2649,11 @@ def test_sync_constructed_app_starts_canvas_policy_watch_in_running_lifecycle(
 ):
     """The real app loop observes disable even when no preview was opened."""
     from tldw_chatbook import app as app_module
-    from tldw_chatbook import config as config_module
+    from tldw_chatbook.Canvas import config_policy as canvas_policy_module
 
     canvas_policy = {"enabled": True}
     monkeypatch.setattr(
-        config_module,
+        canvas_policy_module,
         "get_canvas_execution_enabled",
         lambda: canvas_policy["enabled"],
     )

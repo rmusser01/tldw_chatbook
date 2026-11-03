@@ -9,6 +9,7 @@ import pytest
 
 from tldw_chatbook import config as config_module
 from tldw_chatbook.Canvas.limits import CanvasLimits
+from tldw_chatbook.Canvas import config_policy as canvas_config_policy_module
 
 CANVAS_ENVIRONMENT_KEYS = (
     "TLDW_CANVAS_ENABLED",
@@ -25,7 +26,7 @@ def _isolate_canvas_environment(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 def test_canvas_defaults_are_enabled_and_shared_by_both_config_templates() -> None:
-    policy = config_module.build_canvas_config_policy({})
+    policy = canvas_config_policy_module.build_canvas_config_policy({})
 
     assert policy.enabled is True
     assert policy.auto_open_on_create is True
@@ -41,7 +42,7 @@ def test_canvas_defaults_are_enabled_and_shared_by_both_config_templates() -> No
 
 @pytest.mark.parametrize("invalid", ["true", 1, 0, [], {}])
 def test_malformed_canvas_booleans_fail_closed(invalid: object) -> None:
-    policy = config_module.build_canvas_config_policy(
+    policy = canvas_config_policy_module.build_canvas_config_policy(
         {"canvas": {"enabled": invalid, "auto_open_on_create": invalid}}
     )
 
@@ -54,7 +55,7 @@ def test_malformed_canvas_booleans_fail_closed(invalid: object) -> None:
 
 
 def test_malformed_canvas_table_fails_all_execution_preferences_closed() -> None:
-    policy = config_module.build_canvas_config_policy(
+    policy = canvas_config_policy_module.build_canvas_config_policy(
         {"canvas": "enabled"},
         environ={
             "TLDW_CANVAS_ENABLED": "true",
@@ -128,7 +129,7 @@ def test_canvas_environment_preferences_strictly_override_stored_values(
     expected_auto_open: bool,
     expected_diagnostics: tuple[str, ...],
 ) -> None:
-    policy = config_module.build_canvas_config_policy(
+    policy = canvas_config_policy_module.build_canvas_config_policy(
         {"canvas": stored}, environ=environment
     )
 
@@ -150,14 +151,14 @@ def test_canvas_environment_preferences_are_dynamic_and_match_the_cheap_gate(
 
     monkeypatch.setenv("TLDW_CANVAS_ENABLED", " true ")
     monkeypatch.setenv("TLDW_CANVAS_AUTO_OPEN_ON_CREATE", "false")
-    policy = config_module.build_canvas_config_policy(stored)
-    assert policy.enabled is config_module.get_canvas_execution_enabled() is True
+    policy = canvas_config_policy_module.build_canvas_config_policy(stored)
+    assert policy.enabled is canvas_config_policy_module.get_canvas_execution_enabled() is True
     assert policy.auto_open_on_create is False
 
     monkeypatch.setenv("TLDW_CANVAS_ENABLED", "false")
     monkeypatch.setenv("TLDW_CANVAS_AUTO_OPEN_ON_CREATE", "TRUE")
-    policy = config_module.build_canvas_config_policy(stored)
-    assert policy.enabled is config_module.get_canvas_execution_enabled() is False
+    policy = canvas_config_policy_module.build_canvas_config_policy(stored)
+    assert policy.enabled is canvas_config_policy_module.get_canvas_execution_enabled() is False
     assert policy.auto_open_on_create is True
 
 
@@ -173,17 +174,17 @@ def test_accepted_process_disable_latch_is_stronger_than_enabling_environment(
     )
     monkeypatch.setenv("TLDW_CANVAS_ENABLED", "true")
     runtime = ConsoleRuntime(
-        object(), canvas_enabled_reader=config_module.get_canvas_execution_enabled
+        object(), canvas_enabled_reader=canvas_config_policy_module.get_canvas_execution_enabled
     )
 
     assert runtime.canvas_enabled() is True
     runtime.latch_canvas_disabled()
     assert runtime.canvas_enabled() is False
-    assert config_module.get_canvas_execution_enabled() is True
+    assert canvas_config_policy_module.get_canvas_execution_enabled() is True
 
 
 def test_canvas_environment_does_not_create_quota_overrides() -> None:
-    policy = config_module.build_canvas_config_policy(
+    policy = canvas_config_policy_module.build_canvas_config_policy(
         {},
         environ={
             "TLDW_CANVAS_HTML_BYTES": "1",
@@ -202,7 +203,7 @@ def test_canvas_quota_overrides_cannot_raise_or_lower_hard_limits() -> None:
         "max_submit_payload_bytes": "invalid",
     }
 
-    policy = config_module.build_canvas_config_policy({"canvas": requested})
+    policy = canvas_config_policy_module.build_canvas_config_policy({"canvas": requested})
 
     assert policy.limits == CanvasLimits()
     assert "Canvas quota overrides are unsupported; hard limits remain fixed" in (
@@ -255,7 +256,7 @@ def test_canvas_quota_overrides_cannot_raise_or_lower_hard_limits() -> None:
 def test_canvas_remote_status_is_derived_without_exposing_credentials(
     web: dict[str, object], environ: dict[str, str], expected: str
 ) -> None:
-    policy = config_module.build_canvas_config_policy(
+    policy = canvas_config_policy_module.build_canvas_config_policy(
         {"web_server": web}, environ=environ
     )
 
@@ -266,7 +267,7 @@ def test_canvas_remote_status_is_derived_without_exposing_credentials(
 
 
 def test_canvas_remote_status_uses_keyring_and_proxy_exposure_on_loopback() -> None:
-    policy = config_module.build_canvas_config_policy(
+    policy = canvas_config_policy_module.build_canvas_config_policy(
         {
             "web_server": {
                 "host": "127.0.0.1",
@@ -283,7 +284,7 @@ def test_canvas_remote_status_uses_keyring_and_proxy_exposure_on_loopback() -> N
 
 
 def test_canvas_remote_status_rejects_an_invalid_https_origin() -> None:
-    policy = config_module.build_canvas_config_policy(
+    policy = canvas_config_policy_module.build_canvas_config_policy(
         {
             "web_server": {
                 "host": "0.0.0.0",
@@ -311,7 +312,7 @@ def test_canvas_remote_status_accepts_validated_effective_server_policy() -> Non
         allow_insecure_remote_http=True,
     )
 
-    policy = config_module.build_canvas_config_policy(
+    policy = canvas_config_policy_module.build_canvas_config_policy(
         {"web_server": {"host": "127.0.0.1"}},
         environ={},
         web_auth_policy=web_policy,
@@ -342,7 +343,7 @@ def test_execution_kill_switch_reads_do_not_resolve_remote_credentials(
         ),
     )
 
-    assert config_module.get_canvas_execution_enabled() is True
+    assert canvas_config_policy_module.get_canvas_execution_enabled() is True
 
 
 @pytest.mark.parametrize(
@@ -370,7 +371,7 @@ def test_execution_kill_switch_uses_full_policy_strict_boolean_contract(
         lambda: stored,
     )
 
-    assert config_module.get_canvas_execution_enabled() is expected
+    assert canvas_config_policy_module.get_canvas_execution_enabled() is expected
 
 
 def test_canvas_settings_persist_and_reload_from_disk(monkeypatch, tmp_path) -> None:
@@ -383,6 +384,6 @@ def test_canvas_settings_persist_and_reload_from_disk(monkeypatch, tmp_path) -> 
     )
 
     reloaded = config_module.load_cli_config_and_ensure_existence(force_reload=True)
-    policy = config_module.build_canvas_config_policy(reloaded)
+    policy = canvas_config_policy_module.build_canvas_config_policy(reloaded)
     assert policy.enabled is False
     assert policy.auto_open_on_create is False

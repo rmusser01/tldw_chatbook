@@ -154,10 +154,8 @@ def build_settings_privacy_posture(
     trace_privacy = validate_trace_privacy_config(console)
     # Keep this first-paint helper aligned with the runtime policy without
     # adding config.py to the eager Settings import closure.
-    from tldw_chatbook.config import (
-        coerce_bool_setting,
-        resolve_trace_rollout_settings,
-    )
+    from tldw_chatbook.config import coerce_bool_setting
+    from tldw_chatbook.Chat.console_capture_policy import resolve_trace_rollout_settings
 
     rollout = resolve_trace_rollout_settings(console, environ=env)
     from tldw_chatbook.Chat.console_trace_custom_pii import (

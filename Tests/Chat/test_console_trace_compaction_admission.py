@@ -17,7 +17,7 @@ from tldw_chatbook.Chat.console_trace_maintenance import (
 )
 from tldw_chatbook.Chat.console_chat_controller import ConsoleChatController
 from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
-from tldw_chatbook.config import resolve_trace_compaction_policy
+from tldw_chatbook.Chat.console_capture_policy import resolve_trace_compaction_policy
 
 
 @pytest.fixture

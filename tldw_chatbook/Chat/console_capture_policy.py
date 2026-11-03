@@ -464,5 +464,3 @@ def apply_console_capture_settings(
         after_replace=None if privacy_safe else publish_after_replace,
     )
     return result
-
-

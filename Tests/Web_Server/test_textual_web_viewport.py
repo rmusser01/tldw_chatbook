@@ -5,6 +5,7 @@ import pytest
 
 from tldw_chatbook import config
 from tldw_chatbook.Web_Server import serve
+from tldw_chatbook.Canvas import config_policy as canvas_config_policy_module
 
 pytestmark = pytest.mark.skipif(
     not serve.check_web_server_available(),
@@ -50,7 +51,7 @@ class FakeTextualServeServer:
 def _make_test_server(**kwargs):
     kwargs.setdefault(
         "canvas_policy",
-        config.build_canvas_config_policy({"canvas": {"enabled": False}}),
+        canvas_config_policy_module.build_canvas_config_policy({"canvas": {"enabled": False}}),
     )
     server_class = serve.build_chatbook_web_server_class(FakeTextualServeServer)
     return server_class(

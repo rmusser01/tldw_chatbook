@@ -10,6 +10,7 @@ import pytest
 
 from tldw_chatbook import config as config_module
 from tldw_chatbook.Web_Server import serve
+from tldw_chatbook.Canvas import config_policy as canvas_config_policy_module
 
 
 class _BaseAppService:
@@ -128,7 +129,7 @@ def test_create_server_passes_disabled_policy_to_served_owner(monkeypatch) -> No
     monkeypatch.setattr(
         serve,
         "get_canvas_config_policy",
-        lambda **_kwargs: config_module.build_canvas_config_policy(
+        lambda **_kwargs: canvas_config_policy_module.build_canvas_config_policy(
             {"canvas": {"enabled": False}}
         ),
         raising=False,

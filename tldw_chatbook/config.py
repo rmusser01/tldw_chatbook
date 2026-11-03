@@ -8955,3 +8955,7 @@ def __getattr__(name: str) -> Any:
     if module_name is None:
         raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
     return getattr(importlib.import_module(module_name), name)
+
+
+def __dir__() -> list[str]:
+    return sorted({*globals(), *_MOVED_POLICY_NAMES})
