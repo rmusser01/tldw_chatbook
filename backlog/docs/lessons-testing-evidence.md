@@ -24382,3 +24382,16 @@ The pending-before-start window matters too: stored widget-set metadata can
 already describe new children while the DOM still contains the old set. Permanent
 tests cover both windows and exactly-once completion. Generic callback cleanup,
 route/generation fences and the original readiness deadline remain unchanged.
+
+PR3346's next admission-sensitive run failed before the resize journey: a recovery
+sync cleared a queryable confirmation card while its fixed buttons were absent.
+Native Compose and Unmount probes established both sides of the lifecycle;
+`is_mounted` is false inside the parent's mount callback but stays true after
+retirement. A separate real Select Unmount still exposed all six outer controls
+while its internal overlay was already gone. Check the actual typed children
+and native pruning/closing state, retain the newest payload for mount, and
+acknowledge only completed projection. A mounted parent alone proves neither
+child readiness nor continued availability. The original recovery source-remount
+test also queried a removed card inside its wait predicate; presence must precede
+the unchanged display/request conditions, without filtering expected content or
+extending the deadline. Evidence is retained in the hosted-97a QA phase.

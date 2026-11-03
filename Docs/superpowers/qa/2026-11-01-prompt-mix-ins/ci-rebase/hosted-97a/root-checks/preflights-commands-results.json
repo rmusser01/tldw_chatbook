@@ -1,0 +1,42 @@
+[
+  {
+    "argv": [
+      "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python",
+      "scripts/check_textual_worker_contract.py"
+    ],
+    "cwd": "/Users/macbook-dev/.codex/worktrees/prompt-mix-ins/tldw_chatbook",
+    "exit_code": 0,
+    "seconds": 19.672,
+    "log": "/private/tmp/mixins-97a-final/preflights-0.log"
+  },
+  {
+    "argv": [
+      "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python",
+      "scripts/check_markup_interpolation.py"
+    ],
+    "cwd": "/Users/macbook-dev/.codex/worktrees/prompt-mix-ins/tldw_chatbook",
+    "exit_code": 0,
+    "seconds": 8.997,
+    "log": "/private/tmp/mixins-97a-final/preflights-1.log"
+  },
+  {
+    "argv": [
+      "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python",
+      "scripts/check_persistent_diagnostic_inventory.py"
+    ],
+    "cwd": "/Users/macbook-dev/.codex/worktrees/prompt-mix-ins/tldw_chatbook",
+    "exit_code": 0,
+    "seconds": 43.405,
+    "log": "/private/tmp/mixins-97a-final/preflights-2.log"
+  },
+  {
+    "argv": [
+      "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python",
+      "scripts/check_ui_pr_gate_census.py"
+    ],
+    "cwd": "/Users/macbook-dev/.codex/worktrees/prompt-mix-ins/tldw_chatbook",
+    "exit_code": 0,
+    "seconds": 7.059,
+    "log": "/private/tmp/mixins-97a-final/preflights-3.log"
+  }
+]

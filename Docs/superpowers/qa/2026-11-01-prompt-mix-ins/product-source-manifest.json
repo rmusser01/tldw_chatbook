@@ -28,9 +28,9 @@
       "bytes": 13212
     },
     "Docs/Architecture/console.md": {
-      "sha256": "ebeca0c8bbf487005b5540663b50219a8a1067f879f8ef07cf6733e0e7bd1c97",
-      "git_blob": "1c36502d03170d21a131ab834ef76a42c4c713f3",
-      "bytes": 68894
+      "sha256": "d439f22c4070e3044697b259b2efba57f1d858af6f83bc1c54e35b847838f509",
+      "git_blob": "0d481a0bb8b977466ecc2c65ef5b4f100acfb456",
+      "bytes": 69385
     },
     "Docs/Architecture/database-layer.md": {
       "sha256": "d646057a331235b9d89918b028735457b4e9a779a24e2212b213deb60f516a07",
@@ -467,6 +467,16 @@
       "git_blob": "b0465ae95199960601337884bdedfa3af7621f78",
       "bytes": 17143
     },
+    "Tests/UI/test_console_archive_recovery_cards.py": {
+      "sha256": "1eb600b90b9cb7b1ecdefd8a46e6265a0089ec4877cb673b9fbe62f8b112e6ad",
+      "git_blob": "889fba783894da54957bd7d8a5add0c8417b8f35",
+      "bytes": 23980
+    },
+    "Tests/UI/test_console_archive_recovery_flow.py": {
+      "sha256": "61f08968e823054d0b558b0e7341e5f1476a177004df2da2d80944124756bbb6",
+      "git_blob": "25182d73a9ee266e3c13f491d1b5102efab64f4d",
+      "bytes": 78136
+    },
     "Tests/UI/test_console_attachment_vision_block.py": {
       "sha256": "9de710f02e55c57d807481cf97aaf5e4c4668a4fa50ba076190e698b21e91485",
       "git_blob": "ae17ed65939e57807975879284598782aa508d48",
@@ -698,9 +708,9 @@
       "bytes": 376813
     },
     "backlog/docs/lessons-testing-evidence.md": {
-      "sha256": "94bef0d3cc2b01fd4e9180597914bc550b7b0c6628ee61149bb7dcae8c40e7c4",
-      "git_blob": "c5273c18e66328914e1ffbebdfb23028affc66b3",
-      "bytes": 1664650
+      "sha256": "c775bc705969876fe4dbfa6a1583184560b3e7518e6fdd5f46ee5d7f740ea7e1",
+      "git_blob": "0c24451542346b7a7d4ba6a8cbb1ab90f7ec48b7",
+      "bytes": 1665592
     },
     "backlog/tasks/task-38534 - Design-prompt-mix-ins-for-Console-sends.md": {
       "sha256": "c3eb8b840aa0a1079fb2d108dc754cd0b18f6a9c4251c2a4a5c0bda1a37cd637",
@@ -753,9 +763,9 @@
       "bytes": 6141
     },
     "backlog/tasks/task-38544 - Qualify-the-integrated-prompt-mix-in-lifecycle-and-document-delivery.md": {
-      "sha256": "0018ba1cbaffc7cc76af475dd01ca9602c4b40787909c93e77e981986cd10925",
-      "git_blob": "c6bbf9f612a896c405c1d333cc755416b13f56d6",
-      "bytes": 64177
+      "sha256": "94d7998f9a1dddfcf01184d52bf99ec36aed9b07e9a45e42869c755dc942fb0f",
+      "git_blob": "b5088180fbde049cc54f48420fd27c782d28ec04",
+      "bytes": 68479
     },
     "scripts/check_persistent_diagnostic_inventory.py": {
       "sha256": "f566be19b5c2cff9b3bd04725b32201ab254c359d4ea3346573a97224e4685ab",
@@ -1197,6 +1207,11 @@
       "git_blob": "c1ea3ce25d44909f8849355b79bbc925271ae127",
       "bytes": 20053
     },
+    "tldw_chatbook/UI/Console_Modules/archive_recovery.py": {
+      "sha256": "78633b9869709537a3347dac2d946a18a3c8e1229bdd6301bae1b95609456070",
+      "git_blob": "2dd82b143e3b4dfb5bf98e1524333a2a5196aeae",
+      "bytes": 21294
+    },
     "tldw_chatbook/UI/Console_Modules/command_handoff.py": {
       "sha256": "2f34cf636715500bbc85c142f834b9d5b083c8cdfcb0945f36a053dce4eb9480",
       "git_blob": "9773c80795e3a819420b2aaf52321a3da2e43b26",
@@ -1411,6 +1426,11 @@
       "sha256": "a54534dc6103baf1c3433b81766de6e4a0d018b814557e77283236b30424e9ff",
       "git_blob": "ace263b9df41648a268c63a27344be2161ece221",
       "bytes": 23954
+    },
+    "tldw_chatbook/Widgets/Chat_Widgets/archive_recovery_cards.py": {
+      "sha256": "09dbf4d4aa057226bd6413355cb6f36976c918272dee58b70d0ccb4599a93635",
+      "git_blob": "4959c6dd18770642663af1f9d16138591de43604",
+      "bytes": 15179
     },
     "tldw_chatbook/Widgets/Console/__init__.py": {
       "sha256": "0e768e1c52681e1ec05c2cac90778e4b6b2281d8a5976c517cf2ccccc81e85ab",

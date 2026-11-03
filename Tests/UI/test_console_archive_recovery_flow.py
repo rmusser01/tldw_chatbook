@@ -438,7 +438,10 @@ async def test_pending_source_remount_expiry_and_detach_fail_closed(
         await rig.console._sync_native_console_chat_ui()
         await wait_until(
             rig.pilot,
-            lambda: not rig.console.query_one("#recovery-confirm").parent.display,
+            lambda: (
+                bool(rig.console.query("#recovery-confirm"))
+                and not rig.console.query_one("#recovery-confirm").parent.display
+            ),
         )
         assert not rig.console._archive_recovery_view().show_confirmation(card)
         assert rig.recovery.coordinator.snapshot(rig.source.id).confirmation == card
@@ -447,7 +450,8 @@ async def test_pending_source_remount_expiry_and_detach_fail_closed(
         await wait_until(
             rig.pilot,
             lambda: (
-                rig.console.query_one("#recovery-confirm").parent.confirmation
+                bool(rig.console.query("#recovery-confirm"))
+                and rig.console.query_one("#recovery-confirm").parent.confirmation
                 is not None
                 and rig.console.query_one(
                     "#recovery-confirm"

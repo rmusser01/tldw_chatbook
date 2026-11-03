@@ -249,7 +249,8 @@ class ConsoleArchiveRecoveryView:
             return False
         if confirmation is not None and not self.is_answerable(confirmation.session_id):
             return False
-        card.set_confirmation(confirmation)
+        if not card.set_confirmation(confirmation):
+            return False
         surface = self._surface()
         if confirmation is not None and surface is not None:
             surface.display = True

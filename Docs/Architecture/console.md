@@ -259,6 +259,8 @@ Recovery runtime, provider implementation and native cards load on first use, af
 
 The extracted `console_interrupt_rounds.build_tool_review_hook` handles search Persona approvals through the existing per-call review path. Restoration always uses a fresh exact-target/scope confirmation. `UI/Console_Modules/archive_recovery.py` renders trusted cards and receipts; explicit Open navigates only after settled effects and preserves original history and the source draft. Shutdown drains admitted archive work before current native owners close. Chronology appends chat schema85/workspace10 and remains local-only.
 
+Confirmation cards retain the latest payload before their fixed controls mount, and their native mount callback renders that payload. A view acknowledges projection only after all six typed controls are mounted and outside native pruning/closing. Parent and child `is_mounted` flags can remain latched during retirement; a Select may already have lost its internal overlay. Deferred or retiring controls return false without changing exact-request, scope, expiry or one-shot consent gates.
+
 ## Branching, rewind, and variants
 
 - **Regenerate/swipes** fork a sibling node under the same parent; the anchor branch stays stored and resumable. See [chat-pipeline.md](./chat-pipeline.md) for the full mechanism.
