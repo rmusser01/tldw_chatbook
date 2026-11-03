@@ -35,7 +35,12 @@ def _seed_workflows(connection, purpose):
         ),
     )
     connection.execute(
-        "INSERT INTO console_dispatch_checkpoints VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+        "INSERT INTO console_dispatch_checkpoints "
+        "(assistant_message_id,user_message_id,conversation_id,schema_version,"
+        "preparation_id,attempt_id,state,checkpoint_revision,user_message_version,"
+        "assistant_message_version,origin,queue_entry_id,agent_chat_start_attempt_id,"
+        "frozen_authority_json,resolved_destination_json,reconstructability_json,"
+        "created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
         (
             "graph-answer",
             "graph-user",
@@ -218,6 +223,13 @@ def test_captured_workflow_ledgers_map_native_references_and_keep_authority_pend
             "message", "graph-answer"
         )
         assert checkpoint["attempt_id"] == "attempt-1"
+        assert checkpoint["mixin_snapshot_schema_version"] is None
+        original_checkpoint = next(
+            dict(r.values)
+            for r in plan.source_rows
+            if r.table == "console_dispatch_checkpoints"
+        )
+        assert "mixin_snapshot_schema_version" not in original_checkpoint
         authority = json.loads(checkpoint["frozen_authority_json"])
         assert authority["scope_snapshot"]["note_ids"] == [ids.mapped("note", "note-a")]
         assert (
@@ -609,7 +621,12 @@ def test_captured_checkpoint_conflicts_and_checkpoint_free_history(
                 )
                 if not case.endswith("-free"):
                     cursor.execute(
-                        "INSERT INTO console_dispatch_checkpoints VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                        "INSERT INTO console_dispatch_checkpoints "
+                        "(assistant_message_id,user_message_id,conversation_id,schema_version,"
+                        "preparation_id,attempt_id,state,checkpoint_revision,user_message_version,"
+                        "assistant_message_version,origin,queue_entry_id,agent_chat_start_attempt_id,"
+                        "frozen_authority_json,resolved_destination_json,reconstructability_json,"
+                        "created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
                         (
                             assistant,
                             user,
@@ -827,3 +844,93 @@ def test_captured_checkpoint_free_owner_cardinality_matches_native_path(
             assert native_states["legacy", case][1:] == (None, ())
         with pytest.raises(ValueError, match="handlers_pending"):
             plan.require_complete()
+
+
+@pytest.mark.parametrize("legacy_missing_marker", (True, False))
+def test_native_checkpoint_join_defaults_only_the_legacy_missing_mixin_marker(
+    tmp_path, legacy_missing_marker
+):
+    from contextlib import closing
+    from datetime import datetime
+
+    from Tests.ChaChaNotesDB.test_console_dispatch_checkpoint_repository import (
+        _db_and_conversation,
+        _insert,
+    )
+    from Tests.Chat.test_console_transaction_contribution import _acceptance
+    from Tests.DB.test_console_prompt_mixins import attempt
+    from tldw_chatbook.Backup_Recovery.mobile_content_graph import _ContentRow
+    from tldw_chatbook.Backup_Recovery.mobile_content_workflows import _checkpoint_join
+    from tldw_chatbook.Backup_Recovery.mobile_native_rows import (
+        _ROW_INSERTS,
+        _verify_row,
+    )
+    from tldw_chatbook.Chat.console_dispatch_repository import ConsoleDispatchRepository
+    from tldw_chatbook.Chat.console_prompt_mixin_service import MixinAttemptContribution
+
+    db, conversation_id = _db_and_conversation(tmp_path / "checkpoint.sqlite")
+    with closing(db):
+        repository = ConsoleDispatchRepository(db)
+        batch = replace(
+            attempt(), user_message_id="user", assistant_message_id="assistant"
+        )
+        acceptance = _acceptance(conversation_id, MixinAttemptContribution(batch))
+        if legacy_missing_marker:
+            acceptance = replace(acceptance, contributions=())
+        _insert(db, repository, acceptance)
+        with db.transaction() as cursor:
+            source = dict(
+                cursor.execute("SELECT * FROM console_dispatch_checkpoints").fetchone()
+            )
+            assert source["mixin_snapshot_schema_version"] == (
+                None if legacy_missing_marker else 1
+            )
+            native_values = dict(source)
+            raw_timestamps = cursor.execute(
+                "SELECT CAST(created_at AS TEXT), CAST(updated_at AS TEXT) "
+                "FROM console_dispatch_checkpoints WHERE assistant_message_id=?",
+                (source["assistant_message_id"],),
+            ).fetchone()
+            assert raw_timestamps is not None
+            for column, value in zip(
+                ("created_at", "updated_at"), raw_timestamps, strict=True
+            ):
+                assert isinstance(source[column], datetime)
+                assert type(value) is str
+                native_values[column] = value
+            conversations = {
+                r["id"]: dict(r) for r in cursor.execute("SELECT * FROM conversations")
+            }
+            messages = {
+                r["id"]: dict(r) for r in cursor.execute("SELECT * FROM messages")
+            }
+        if legacy_missing_marker:
+            del source["mixin_snapshot_schema_version"]
+        joined = _checkpoint_join(source, conversations, messages)
+        checkpoint, error = repository._checkpoint_from_row(joined)
+        assert error is None
+        assert checkpoint is not None
+        expected = None if legacy_missing_marker else 1
+        assert joined["mixin_snapshot_schema_version"] == expected
+        assert checkpoint.mixin_snapshot_schema_version == expected
+        assert (
+            ":mixin_snapshot_schema_version"
+            in _ROW_INSERTS["console_dispatch_checkpoints"]
+        )
+        imported = _ContentRow(
+            "console_dispatch_checkpoints",
+            (native_values["assistant_message_id"],),
+            tuple(native_values.items()),
+        )
+        with db.transaction() as cursor:
+            _verify_row(cursor.connection, imported, native_values)
+            cursor.execute(
+                "UPDATE console_dispatch_checkpoints SET mixin_snapshot_schema_version=? "
+                "WHERE assistant_message_id=?",
+                (
+                    1 if legacy_missing_marker else None,
+                    native_values["assistant_message_id"],
+                ),
+            )
+            with pytest.raises(ValueError, match="mobile_native_row_changed"):
+                _verify_row(cursor.connection, imported, native_values)
