@@ -1993,3 +1993,10 @@ Tests/UI/test_console_readiness_config_projection.py::test_closed_readiness_owne
 Tests/UI/test_console_readiness_config_projection.py::test_a_failing_cold_refresh_backs_off_and_a_publish_resets_it
 Tests/UI/test_console_readiness_config_projection.py::test_outside_runs_share_one_backed_off_retry_timer
 Tests/UI/test_console_readiness_config_projection.py::test_a_retry_delivered_after_its_tick_keeps_the_newer_timer
+# TASK-36527 (2026-11-03): the File Notes git panel's worker renders (rows,
+# commit-review notes) and its deferred commit focus stop quietly when they
+# land after quit's App._exit fence or during a removal (_pruning). Five
+# cases, about 7 s locally; appended at the tail, so no slot moves.
+Tests/UI/test_library_file_notes_git.py::test_a_git_render_resuming_after_quit_does_nothing
+Tests/UI/test_library_file_notes_git.py::test_a_git_render_resuming_during_removal_ends_quietly
+Tests/UI/test_library_file_notes_git.py::test_a_commit_focus_landing_during_removal_ends_quietly

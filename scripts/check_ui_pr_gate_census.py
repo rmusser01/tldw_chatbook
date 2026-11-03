@@ -758,6 +758,9 @@ MINIMUM_FILES = 1349
 # owner, retry backoff, single retry timer, late delivery). The floor is the
 # measured entry count.
 MINIMUM_FILES = 1353
+# TASK-36527 (2026-11-03): append three File Notes git-panel quit/removal
+# node ids at the tail: 1337 + 3.
+MINIMUM_FILES = 1356
 
 
 def read_census(path: Path) -> list[str]:
