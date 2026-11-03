@@ -6,29 +6,32 @@ import hashlib
 import json
 import re
 import threading
-from copy import deepcopy
 from collections.abc import Callable, Mapping, Sequence
+from copy import deepcopy
 from dataclasses import dataclass, field
 from pathlib import Path, PurePosixPath, PureWindowsPath
 from typing import TYPE_CHECKING, Any, Literal
 
-from tldw_chatbook.Provider_Contract.provider_continuation import EPHEMERAL_ORIGIN_KEY
+from tldw_chatbook.Provider_Contract.provider_continuation import (
+    EPHEMERAL_ORIGIN_KEY,
+    PROJECT_INSTRUCTION_ROW_KEY,
+)
+from tldw_chatbook.Tools.remote_root_types import RemoteRoot
 
 from .agent_models import (
     PathAwareToolProvider,
     ToolCall,
 )
 from .project_instruction_resolver import (
+    InstructionOutcome,
     InstructionPromotionSnapshot,
     InstructionPromotionSnapshotError,
-    InstructionOutcome,
     InstructionSnapshot,
     InstructionSource,
     ProjectInstructionResolver,
     capture_binding_root_identity,
     path_is_excluded,
 )
-from tldw_chatbook.Tools.remote_root_types import RemoteRoot
 
 __all__ = [
     "PROJECT_INSTRUCTION_ROW_KEY",
@@ -43,7 +46,6 @@ __all__ = [
 if TYPE_CHECKING:
     from .tool_catalog import ToolCatalogRegistry
 
-PROJECT_INSTRUCTION_ROW_KEY = "_chatbook_project_instruction_row_key"
 _PROJECT_INSTRUCTION_ORIGIN = "project_instructions"
 _OUTCOME_SEPARATOR = "\x1f"
 _OUTCOME_CODES = {
