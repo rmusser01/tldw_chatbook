@@ -113,16 +113,6 @@ MODAL_WIDE_TIER_SKIPPED: dict[str, str] = {
     "SessionSummaryDialog": "tiny summary dialog (base width 44)",
     "ThemeLeaveModal": "tiny leave confirmation (base width 60)",
     "ResponseRulesModal": "95% of the viewport already, wider than the 85% tier",
-    "ConsoleGoalSetupModal": "goal setup form (base width 76) -- follow-up wave",
-    "ConsoleGoalHistory": "goal history (base width 76) -- follow-up wave",
-    "ConsoleGoalStatus": "goal status (base width 90) -- follow-up wave",
-    "DreamsGoalsModal": "Dreams goals (base width 76) -- follow-up wave",
-    "DreamsStoryModal": "Dreams story (base width 76) -- follow-up wave",
-    "GuardianRuleEditModal": "guardian rule editor (base width 76) -- follow-up wave",
-    "MCPRecoveryReviewDialog": "MCP recovery review (base width 80) -- follow-up wave",
-    "FileNotesHistoryDialog": "File Notes history (base width 90) -- follow-up wave",
-    "WorkflowRunConfirmation": "workflow run confirm (base 90% / 100) -- follow-up wave",
-    "WorkflowRunSetup": "workflow run setup (base 90% / 100) -- follow-up wave",
 }
 
 #: Whole modules whose ModalScreen subclasses are all outside the tier:
@@ -237,6 +227,9 @@ MODAL_WIDE_TIER: tuple[tuple[str, int, str], ...] = (
         170,
         "Widgets/Persona_Widgets/portrait_region_editor.py",
     ),
+    # cap 170 -- TASK-36522: both workflow run modals (base 90% / 100), which
+    # the 2026-10-23 triage (TASK-36382) had skipped as a follow-up wave
+    (".workflow-run-dialog", 170, "UI/Workflows_Modules/run_controls.py"),
     # cap 150 -- base width 84-96
     ("#personal-context-review-modal", 150, "css/components/_profile_interview.tcss"),
     ("#console-scope-picker-modal", 150, "css/features/_console_panels.tcss"),
@@ -290,6 +283,17 @@ MODAL_WIDE_TIER: tuple[tuple[str, int, str], ...] = (
         "#prompt-collection-manager",
         150,
         "UI/Library_Modules/prompt_collection_manager_modal.py",
+    ),
+    # cap 150 -- TASK-36522: goal status and File Notes history (base 90)
+    (
+        "ConsoleGoalStatus > .goal-dialog-panel",
+        150,
+        "Widgets/Console/console_goal_status.py",
+    ),
+    (
+        "#file-notes-history-dialog",
+        150,
+        "Widgets/Library/library_file_notes_workspace.py",
     ),
     # cap 120 -- base width <= 80
     (
@@ -459,6 +463,28 @@ MODAL_WIDE_TIER: tuple[tuple[str, int, str], ...] = (
         "TemplateSelectorDialog .template-selector-dialog",
         120,
         "Widgets/template_selector.py",
+    ),
+    # cap 120 -- TASK-36522: goal setup and history, Dreams goals and story,
+    # the Guardian rule editor (base 76) and MCP recovery review (base 80).
+    # The goal panel class is shared by three goal modals and
+    # #confirmation-dialog by every ConfirmationDialog, so both are type-scoped.
+    (
+        "ConsoleGoalSetupModal > .goal-dialog-panel",
+        120,
+        "Widgets/Console/console_goal_setup_modal.py",
+    ),
+    (
+        "ConsoleGoalHistory > .goal-dialog-panel",
+        120,
+        "Widgets/Console/console_goal_status.py",
+    ),
+    ("#dgm-dialog", 120, "UI/Screens/artifacts_dreams_goals_modal.py"),
+    ("#dsm-dialog", 120, "UI/Screens/artifacts_dreams_modal.py"),
+    ("#grm-dialog", 120, "UI/Screens/settings_screen.py"),
+    (
+        "MCPRecoveryReviewDialog #confirmation-dialog",
+        120,
+        "UI/MCP_Modules/mcp_recovery_review.py",
     ),
 )
 

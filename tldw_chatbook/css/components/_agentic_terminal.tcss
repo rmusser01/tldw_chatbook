@@ -2199,6 +2199,10 @@ ConsoleAgentProgressModal { align: center middle; background: $background 60%; }
  * Chatbook work windows) plus the TemplateSelectorDialog base-rule
  * gap; the skills passphrase dialogs moved to per-class skips
  * (PasswordDialog family, base width 64).
+ *
+ * TASK-36522: the ten modals added after wave 2 joined the tier (goal
+ * setup/status/history, Dreams goals and story, the Guardian rule
+ * editor, MCP recovery review, File Notes history, workflow run).
  * ============================================================ */
 
 /* --- cap 170 -- base width >= 104 columns --- */
@@ -2286,6 +2290,11 @@ App.-wide-viewport .portrait-regions-dialog {
   width: $ds-percent-85;
   max-width: $ds-size-170;
 }
+/* TASK-36522: both workflow run modals (base 90% / 100) */
+App.-wide-viewport .workflow-run-dialog {
+  width: $ds-percent-85;
+  max-width: $ds-size-170;
+}
 
 /* --- cap 150 -- base width 84-96 columns --- */
 App.-wide-viewport #personal-context-review-modal {
@@ -2360,6 +2369,15 @@ App.-wide-viewport #tool-profile-bind-review {
 }
 /* Wave 2 (2026-09-19): skip-list follow-up (base width 96) */
 App.-wide-viewport #prompt-collection-manager {
+  width: $ds-percent-85;
+  max-width: $ds-size-150;
+}
+/* TASK-36522: goal status and File Notes history (base width 90) */
+App.-wide-viewport ConsoleGoalStatus > .goal-dialog-panel {
+  width: $ds-percent-85;
+  max-width: $ds-size-150;
+}
+App.-wide-viewport #file-notes-history-dialog {
   width: $ds-percent-85;
   max-width: $ds-size-150;
 }
@@ -2578,6 +2596,34 @@ App.-wide-viewport #prompt-variables-dialog {
  * width rule at all; its base geometry (76 / 95%) ships in the widget's
  * BUNDLED_CSS with this wave */
 App.-wide-viewport TemplateSelectorDialog .template-selector-dialog {
+  width: $ds-percent-85;
+  max-width: $ds-size-120;
+}
+/* TASK-36522: goal setup and history, Dreams goals and story, the Guardian
+ * rule editor (base width 76) and MCP recovery review (base width 80). The
+ * goal panel class and #confirmation-dialog are shared, so both are
+ * type-scoped. */
+App.-wide-viewport ConsoleGoalSetupModal > .goal-dialog-panel {
+  width: $ds-percent-85;
+  max-width: $ds-size-120;
+}
+App.-wide-viewport ConsoleGoalHistory > .goal-dialog-panel {
+  width: $ds-percent-85;
+  max-width: $ds-size-120;
+}
+App.-wide-viewport #dgm-dialog {
+  width: $ds-percent-85;
+  max-width: $ds-size-120;
+}
+App.-wide-viewport #dsm-dialog {
+  width: $ds-percent-85;
+  max-width: $ds-size-120;
+}
+App.-wide-viewport #grm-dialog {
+  width: $ds-percent-85;
+  max-width: $ds-size-120;
+}
+App.-wide-viewport MCPRecoveryReviewDialog #confirmation-dialog {
   width: $ds-percent-85;
   max-width: $ds-size-120;
 }
