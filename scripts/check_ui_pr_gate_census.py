@@ -749,10 +749,11 @@ MINIMUM_FILES = 1318
 # PR3346: reader cases use their existing whole-file slot; append closed-owner coverage.
 # PR3346: append both native landing recomposition windows through one file.
 MINIMUM_FILES = 1337
-# TASK-38643 (2026-11-03) appends 1 whole-file entry at the tail: the Console
-# rails' compact access and rail-scope seeding (twelve cases). The floor is the
+# TASK-38643 (2026-11-03) appends 12 node ids at the tail, one per test: the
+# Console rails' compact access and rail-scope seeding. The whole file runs
+# about 54-90 s serially, over the 30 s per-file budget. The floor is the
 # measured entry count.
-MINIMUM_FILES = 1338
+MINIMUM_FILES = 1349
 
 
 def read_census(path: Path) -> list[str]:

@@ -1970,7 +1970,18 @@ Tests/UI/test_response_rules_end_to_end.py::test_close_during_resume_retires_the
 Tests/UI/test_library_landing_recompose_publication.py
 # TASK-38643 (2026-11-03): the Console Inspector and Context rails' compact
 # access below 150 columns, and the rail-scope seeding rules (ADR-083: a
-# retained first-use seed wins over a source record that appears later).
-# Twelve cases, about 90 s serially at load 30; appended at the tail, so no
-# slot moves.
-Tests/UI/test_console_inspector_compact_access.py
+# retained first-use seed wins over a source record that appears later), as
+# twelve node entries at the tail. The whole file runs about 54-90 s serially,
+# over the lane's per-file budget; each case takes 5-9 s locally. No slot moves.
+Tests/UI/test_console_inspector_compact_access.py::test_standard_width_keeps_context_and_preserves_its_preference
+Tests/UI/test_console_inspector_compact_access.py::test_context_reveal_switches_from_inspector_at_120_columns
+Tests/UI/test_console_inspector_compact_access.py::test_visible_attach_context_action_switches_rails_without_file_picker
+Tests/UI/test_console_inspector_compact_access.py::test_inspector_handle_opens_and_collapses_rail_at_140_cols
+Tests/UI/test_console_inspector_compact_access.py::test_sources_chip_opens_inspector_at_140_cols
+Tests/UI/test_console_inspector_compact_access.py::test_tools_chip_opens_inspector_at_80x24_single_pane
+Tests/UI/test_console_inspector_compact_access.py::test_left_handle_opens_left_rail_at_90_cols
+Tests/UI/test_console_inspector_compact_access.py::test_section_toggle_preserves_left_open_explicit_marker
+Tests/UI/test_console_inspector_compact_access.py::test_default_layout_unchanged_at_160_cols
+Tests/UI/test_console_inspector_compact_access.py::test_console_rail_scope_seeding_is_lossless_one_time_and_responsive_safe
+Tests/UI/test_console_inspector_compact_access.py::test_console_rail_writes_cannot_finish_with_stale_seed
+Tests/UI/test_console_inspector_compact_access.py::test_console_rail_scope_seed_preserves_explicit_left_open_intent

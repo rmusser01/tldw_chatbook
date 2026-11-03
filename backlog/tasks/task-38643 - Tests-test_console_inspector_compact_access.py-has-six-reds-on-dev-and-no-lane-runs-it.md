@@ -5,7 +5,7 @@ status: Done
 assignee:
   - '@claude'
 created_date: 2026-11-02 21:52
-updated_date: 2026-11-03 00:38
+updated_date: 2026-11-03 01:41
 labels:
 - follow-up
 - tests
@@ -87,7 +87,7 @@ ADR-083's first-use paragraph now states this rule.
 - Census and CI pin tests (7 files, `-n 4`): 422 passed, 1 failed. The failure is `test_ui_lane_shard_count_statements.py`'s ADR-103 statement ("38" against a 39-job matrix). It reads only ADR-103 and the workflow, which this change leaves alone, and it fails at dev too.
 - Preflight passed.
 
-**AC#4:** one whole-file entry appended at the census tail; `MINIMUM_FILES` is now the measured entry count.
+**AC#4:** twelve node-id entries at the census tail, one per test; `MINIMUM_FILES` is the measured entry count. The first version appended the whole file. Review found that over the lane's 30 s per-file budget (about 54 s serially at load 11, 90 s at load 30), so the entry became node ids, following the TASK-33622.3/.4 precedent. Census checker OK. The census and CI pin tests gave 422 passed and 1 failed, the same ADR-103 shard-count red as dev. The 12 node ids plus the send-layout file under `-n 4`: 15 passed.
 
 **Files:** `Tests/UI/test_console_inspector_compact_access.py`, `scripts/ui_pr_gate_census.txt`, `scripts/check_ui_pr_gate_census.py`, `backlog/decisions/083-console-edge-rails-and-workspace-tree-ownership.md`.
 <!-- SECTION:NOTES:END -->
