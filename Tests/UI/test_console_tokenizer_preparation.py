@@ -150,3 +150,32 @@ async def test_custom_backend_keeps_direct_path(monkeypatch):
     )
     assert projection.tokenizer_ready("custom", "provider")
     assert not tasks
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("key", "labels"),
+    [
+        ("openai", ("OpenAI", "openai", " OpenAI ")),
+        ("local_llm", ("local-llm", "Local LLM")),
+    ],
+)
+async def test_provider_label_and_config_key_share_one_preparation(
+    monkeypatch, key, labels
+):
+    """TASK-38703: the cost chip passes the provider's display label ("OpenAI")
+    and the context estimate its config key ("openai"). Read as two owners,
+    each sync recaptured the other's request and refreshed again, so an idle
+    Console never stopped refreshing."""
+    projection, requests, _owner, _identity, tasks, _published = setup_projection(
+        monkeypatch
+    )
+    assert not projection.tokenizer_ready("model", key)
+    requests[0].release.set()
+    await asyncio.gather(*tasks)
+    await asyncio.gather(*tasks)
+    before = len(tasks)
+    for provider in labels:
+        assert projection.tokenizer_ready("model", provider)
+    assert len(requests) == 1
+    assert len(tasks) == before

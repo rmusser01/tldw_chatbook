@@ -449,9 +449,13 @@ class ConsoleReadinessConfigProjection:
         if getattr(self.screen, "_closing", False) or getattr(runtime, "_disposed", False):
             return False
         request = self._tokenizer_request
+        # TASK-38703: callers pass a provider's label ("OpenAI") or its config
+        # key ("openai"); one owner per key, or each recapture re-refreshes.
+        provider_key = _tldw_config.normalize_provider_config_key
         if (
             request is None
-            or (request.model, request.provider) != (model, provider)
+            or request.model != model
+            or provider_key(request.provider) != provider_key(provider)
             or not _tokenizer_display.preparation_current(request)
         ):
             request = _tokenizer_display.capture_tokenizer_preparation(model, provider)
