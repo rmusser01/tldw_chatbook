@@ -583,31 +583,37 @@ def _withheld_names(
     pathspecs: list[str],
     exclusions: tuple[SensitiveExclusion, ...],
     *,
+    scoped: bool,
     cwd: Path,
     executable: Path | None,
     own_process_group: bool,
 ) -> list[str]:
     """Names ``pathspecs`` let into the diff but the folded matcher denies.
 
-    Scans every non-ASCII name (plus, when ``path`` scopes the diff, the names
-    under it). ``--no-renames``: both sides of a rename are listed. ``-z``:
-    names come back as stored, unquoted. A truncated or failed scan refuses.
+    Unscoped, scans every non-ASCII name. ``scoped`` (``pathspecs`` carries
+    the diff's ``path``): scans every name under that scope and nothing else,
+    since git ORs positive pathspecs and the non-ASCII globs would add names
+    from the whole repository. ``--no-renames``: both sides of a rename are
+    listed. ``-z``: names come back as stored, unquoted. A truncated or failed
+    scan refuses.
     """
+    argv = [
+        "git",
+        "--no-pager",
+        "diff",
+        "--no-ext-diff",
+        "--no-textconv",
+        "--no-renames",
+        "--name-only",
+        "-z",
+        *mode_args,
+        "--",
+        *pathspecs,
+    ]
+    if not scoped:
+        argv.extend(_NON_ASCII_PATHSPECS)
     result = _run_git_bytes(
-        [
-            "git",
-            "--no-pager",
-            "diff",
-            "--no-ext-diff",
-            "--no-textconv",
-            "--no-renames",
-            "--name-only",
-            "-z",
-            *mode_args,
-            "--",
-            *pathspecs,
-            *_NON_ASCII_PATHSPECS,
-        ],
+        argv,
         cwd=cwd,
         executable=executable,
         own_process_group=own_process_group,
@@ -1479,6 +1485,7 @@ def git_diff(
             mode_args,
             pathspecs,
             exclusions,
+            scoped=path is not None,
             cwd=cwd,
             executable=executable,
             own_process_group=own_process_group,

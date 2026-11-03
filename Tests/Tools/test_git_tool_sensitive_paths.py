@@ -968,6 +968,49 @@ def test_git_diff_refuses_when_the_withheld_check_cannot_be_bounded(
     assert str(refused.value) == UNVERIFIED_EXCLUSIONS
 
 
+@pytest.mark.parametrize(
+    ("bound", "limit"),
+    (("_WITHHELD_SCAN_MAX_BYTES", 12), ("_WITHHELD_PATHSPEC_BUDGET", 4)),
+)
+def test_a_scoped_git_diff_ignores_withheld_names_outside_its_scope(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, bound: str, limit: int
+) -> None:
+    """git ORs positive pathspecs, so a scan given the scope AND the non-ASCII
+    globs listed every non-ASCII name in the repository: a withheld name
+    outside the scope spent the scan and pathspec bounds and refused a diff
+    that never touched it. ``keep.txt`` scans to 9 bytes and withholds nothing.
+    """
+    import tldw_chatbook.Tools.git_tool_impls as gti
+    from tldw_chatbook.Utils.sensitive_paths import SensitiveExclusion
+
+    repo = _plumbed_repo(tmp_path, precompose="false", stored=_nfc("NAÏVE.TXT"))
+    rules = (SensitiveExclusion("file", _nfc("naïve.txt")),)
+    monkeypatch.setattr(gti, bound, limit)
+
+    out = git_diff(repo, path="keep.txt", sensitive_exclusions=rules)
+
+    assert "+keep.txt v4" in out
+    assert SECRET_38463 not in out
+
+
+@pytest.mark.parametrize("precompose", ("true", "false"))
+def test_a_scoped_git_diff_still_withholds_inside_its_scope(
+    tmp_path: Path, precompose: str
+) -> None:
+    """Fail closed inside the scope: every name under it is scanned."""
+    from tldw_chatbook.Utils.path_validation import fold_path_part
+    from tldw_chatbook.Utils.sensitive_paths import SensitiveExclusion
+
+    stored = "sub/" + _nfd("naïve.txt")
+    repo = _plumbed_repo(tmp_path, precompose=precompose, stored=stored)
+    rules = (SensitiveExclusion("name", _nfc("NAÏVE.TXT")),)
+
+    for kwargs in ({}, {"staged": True}, {"commit_range": "HEAD~1..HEAD"}):
+        out = git_diff(repo, path="sub", sensitive_exclusions=rules, **kwargs)
+        assert SECRET_38463 not in out, kwargs
+        assert fold_path_part("naïve") not in fold_path_part(out), kwargs
+
+
 def test_a_byte_exact_exclusion_re_encodes_names_as_they_were_decoded(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

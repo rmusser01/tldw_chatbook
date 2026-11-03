@@ -3889,14 +3889,20 @@ def _exact_exclude_pathspec(stored: str, *, subtree: bool) -> str:
     pattern = ''.join((_glob_escape(char) if char.isascii() else ''.join((f'[{chr(56320 + byte)}]' for byte in char.encode('utf-8', 'surrogateescape'))) for char in stored))
     return f":(exclude,glob){pattern}{('/**' if subtree else '')}"
 
-def _withheld_names(mode_args: list[str], pathspecs: list[str], exclusions: tuple[SensitiveExclusion, ...], *, cwd: Path, executable: Path | None, own_process_group: bool) -> list[str]:
+def _withheld_names(mode_args: list[str], pathspecs: list[str], exclusions: tuple[SensitiveExclusion, ...], *, scoped: bool, cwd: Path, executable: Path | None, own_process_group: bool) -> list[str]:
     """Names ``pathspecs`` let into the diff but the folded matcher denies.
 
-    Scans every non-ASCII name (plus, when ``path`` scopes the diff, the names
-    under it). ``--no-renames``: both sides of a rename are listed. ``-z``:
-    names come back as stored, unquoted. A truncated or failed scan refuses.
+    Unscoped, scans every non-ASCII name. ``scoped`` (``pathspecs`` carries
+    the diff's ``path``): scans every name under that scope and nothing else,
+    since git ORs positive pathspecs and the non-ASCII globs would add names
+    from the whole repository. ``--no-renames``: both sides of a rename are
+    listed. ``-z``: names come back as stored, unquoted. A truncated or failed
+    scan refuses.
     """
-    result = _run_git_bytes(['git', '--no-pager', 'diff', '--no-ext-diff', '--no-textconv', '--no-renames', '--name-only', '-z', *mode_args, '--', *pathspecs, *_NON_ASCII_PATHSPECS], cwd=cwd, executable=executable, own_process_group=own_process_group, max_output_bytes=_WITHHELD_SCAN_MAX_BYTES)
+    argv = ['git', '--no-pager', 'diff', '--no-ext-diff', '--no-textconv', '--no-renames', '--name-only', '-z', *mode_args, '--', *pathspecs]
+    if not scoped:
+        argv.extend(_NON_ASCII_PATHSPECS)
+    result = _run_git_bytes(argv, cwd=cwd, executable=executable, own_process_group=own_process_group, max_output_bytes=_WITHHELD_SCAN_MAX_BYTES)
     if result.truncated:
         raise LocalToolError(_UNVERIFIED_EXCLUSIONS)
     if result.returncode != 0:
@@ -4373,7 +4379,7 @@ def git_diff(workspace_root: Path, *, staged: bool=False, commit_range: str | No
     exclusions = _repo_exclusions(repo_root, context, workspace_root=workspace_root, sensitive_exclusions=sensitive_exclusions)
 
     def _scan() -> list[str]:
-        return _withheld_names(mode_args, pathspecs, exclusions, cwd=cwd, executable=executable, own_process_group=own_process_group)
+        return _withheld_names(mode_args, pathspecs, exclusions, scoped=path is not None, cwd=cwd, executable=executable, own_process_group=own_process_group)
     pathspecs.extend(_withheld_name_pathspecs(_scan(), exclusions))
     argv.extend(['--', *pathspecs])
     result = _run_git_checked(argv, subcommand='diff', cwd=cwd, executable=executable, own_process_group=own_process_group)
@@ -5796,4 +5802,4 @@ REMOTE_SENSITIVE_PATHS: tuple[str, ...] = (
 #: ``build_remote_worker_bundle.expected_bundle_stamp``. The remote
 #: worker's ``ping`` echoes it so callers can confirm which bundle the
 #: remote actually executed.
-BUNDLE_SHA256 = _enter_worker_exchange("f0b1c448ce09e276d2b4f2ae548c7dc87f80398b6f793a6d78bec5f0c7e70f5b")
+BUNDLE_SHA256 = _enter_worker_exchange("4ace11e1d146fa16391ecc62842e08b8d65443a771574fc5442bd2cf1dc68997")
