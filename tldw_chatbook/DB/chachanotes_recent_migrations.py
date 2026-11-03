@@ -70,7 +70,7 @@ def _migrate_from_v84_to_v85(self, conn) -> None:
 
 
 def _migrate_from_v89_to_v90(self, conn) -> None:
-    """Install durable consolidation batch evidence."""
+    """Install durable consolidation batch evidence after native locator indexing."""
     from tldw_chatbook.DB import ChaChaNotes_DB as host
 
     self._require_migration_entry_version(conn, 89, "V89→V90")
