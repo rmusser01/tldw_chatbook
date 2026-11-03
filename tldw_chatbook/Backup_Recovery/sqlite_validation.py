@@ -417,8 +417,21 @@ class _Restrictions:
                 "db.agent_runs",
             }:
                 tables = {"mobile_consolidation_batches"}
+                locators = set()
                 if self.migration_owner != "db.chachanotes.primary":
                     tables.add("mobile_import_authority_holds")
+                else:
+                    # TASK-36510: v87 also indexes the voice-promotion locators.
+                    locators = {
+                        ("idx_hook_continuation_receipts_assistant_message", "console_hook_continuation_receipts"),
+                        ("idx_hook_continuation_receipts_parent_message", "console_hook_continuation_receipts"),
+                        ("idx_machine_followup_receipts_assistant_message", "console_machine_followup_receipts"),
+                        ("idx_machine_followup_receipts_parent_message", "console_machine_followup_receipts"),
+                        ("idx_response_rule_assessments_message", "console_response_rule_assessments"),
+                        ("idx_response_rule_drafts_message", "console_response_rule_drafts"),
+                        ("idx_response_rule_fixtures_message", "console_response_rule_fixtures"),
+                        ("idx_response_rule_validations_message", "console_response_rule_validations"),
+                    }
                 if (
                     database == "main"
                     and source is None
@@ -427,7 +440,10 @@ class _Restrictions:
                         and first in tables
                         or action == sqlite3.SQLITE_CREATE_INDEX
                         and (first, second)
-                        in {(f"sqlite_autoindex_{table}_1", table) for table in tables}
+                        in locators
+                        | {(f"sqlite_autoindex_{table}_1", table) for table in tables}
+                        or action == sqlite3.SQLITE_REINDEX
+                        and first in {name for name, _table in locators}
                         or action == sqlite3.SQLITE_INSERT
                         and first == "sqlite_master"
                         or action == sqlite3.SQLITE_UPDATE
