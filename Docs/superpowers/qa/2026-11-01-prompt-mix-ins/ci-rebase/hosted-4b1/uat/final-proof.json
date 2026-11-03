@@ -1,0 +1,61 @@
+{
+  "frozen_source_paths": 3026,
+  "changed_source_paths": [],
+  "all_original_native_handlers": true,
+  "callable_wrappers_or_product_monkeypatches": false,
+  "final_receipts": [
+    {
+      "variant": "compact-recovery",
+      "status": "passed",
+      "phase": "complete",
+      "duration_seconds": 33.257,
+      "request_count": 5,
+      "approved_once": null,
+      "model_errors": [],
+      "blocked_destinations": [],
+      "run_id": "2695e683-e84a-494d-88db-b294d390645e",
+      "conversation_id": "822a45e6-66f0-429a-b726-9fc2279f6205",
+      "assistant_message_id": "7aafb218-6758-44f2-bb5a-075865eceb90"
+    },
+    {
+      "variant": "fenced",
+      "status": "passed",
+      "phase": "complete",
+      "duration_seconds": 28.501,
+      "request_count": 5,
+      "approved_once": null,
+      "model_errors": [],
+      "blocked_destinations": [],
+      "run_id": "3d8f452c-adc1-4674-9014-bd273ae8edb1",
+      "conversation_id": "efd0bf21-ef2f-4db2-ac5e-5d0de1a522f6",
+      "assistant_message_id": "a9e002de-504e-46b5-83d4-ad7f01f3fa15"
+    },
+    {
+      "variant": "native",
+      "status": "passed",
+      "phase": "complete",
+      "duration_seconds": 31.1,
+      "request_count": 5,
+      "approved_once": null,
+      "model_errors": [],
+      "blocked_destinations": [],
+      "run_id": "9c8cf32e-637d-4e00-a1e7-a24f9c1cd04a",
+      "conversation_id": "d3d30f0e-1d52-4a3c-b29a-780e60cc9f5c",
+      "assistant_message_id": "936e2780-19cb-4d25-bb99-40a713d12608"
+    },
+    {
+      "variant": "wrong-family",
+      "status": "passed",
+      "phase": "complete",
+      "duration_seconds": 41.642,
+      "request_count": 6,
+      "approved_once": "list_directory",
+      "model_errors": [],
+      "blocked_destinations": [],
+      "run_id": "fc2b3c94-98e5-4a64-ae94-87a63f133550",
+      "conversation_id": "3d1bec7f-e7a4-426e-8162-bbec1cccb07e",
+      "assistant_message_id": "ccc63b93-ce0b-4770-8a59-cfbc73fb0725"
+    }
+  ],
+  "validator_exit": 0
+}

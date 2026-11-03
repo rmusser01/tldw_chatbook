@@ -1,0 +1,48 @@
+{
+  "Tests/QA/test_project_chat_uat.py": {
+    "baseline_sha256": "fac12a11cf27ef3c2b2b40aa4542ffa73f194bbccf0e5df67607718848457e7a",
+    "final_sha256": "bff4182da1994ceb691a644f7c458fd3fc321d64bf58df51be60670eac985681",
+    "baseline_lint": [
+      [
+        "I001",
+        "Import block is un-sorted or un-formatted"
+      ]
+    ],
+    "final_lint": [
+      [
+        "I001",
+        "Import block is un-sorted or un-formatted"
+      ]
+    ],
+    "new_blocks_formatted": true
+  },
+  "Tests/QA/test_project_chat_uat_support.py": {
+    "baseline_sha256": "0fdbe57039b0729d5b70e64b0d8bc189c62fb90fe88abd49c8250046e6c1746d",
+    "final_sha256": "8f22db83a9ebf3e3c5f2921894f838b1e745b181f07d6fa77c2f48c4c5a93329",
+    "baseline_lint": [
+      [
+        "I001",
+        "Import block is un-sorted or un-formatted"
+      ],
+      [
+        "SIM117",
+        "Use a single `with` statement with multiple contexts instead of nested `with` statements"
+      ]
+    ],
+    "final_lint": [
+      [
+        "I001",
+        "Import block is un-sorted or un-formatted"
+      ],
+      [
+        "SIM117",
+        "Use a single `with` statement with multiple contexts instead of nested `with` statements"
+      ]
+    ],
+    "new_blocks_formatted": true
+  },
+  "contract": {
+    "all_original_assertions_ast_identical": true,
+    "all_wait_and_timeout_calls_ast_identical": true
+  }
+}

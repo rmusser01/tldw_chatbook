@@ -1,0 +1,19 @@
+{
+  "head": "4b1e070c972320e1353b6bac7e185035db125571",
+  "argv": [
+    "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python",
+    "-m",
+    "pytest",
+    "Tests/Performance/test_ui_latency_guardrails.py::test_destination_tour_stays_under_switch_budgets",
+    "-q",
+    "--tb=short",
+    "-p",
+    "no:cacheprovider",
+    "--basetemp=/private/tmp/mixins-4b1-latency-local-tmp"
+  ],
+  "exit_code": 0,
+  "result": "1 passed in38.40s",
+  "log": "/private/tmp/mixins-4b1-latency-local.log",
+  "sha256": "4709fb75f337bb398e84c403035f69752167fd1a9e8fed98a801abefd4e52644",
+  "qualification": "One isolated agent-owned local tour; original threshold/source unchanged. Does not establish hosted failure cause or per-hop values."
+}

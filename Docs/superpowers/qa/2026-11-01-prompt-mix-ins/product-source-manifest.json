@@ -1,5 +1,5 @@
 {
-  "target_base": "88af9f937908b46e8c5f9f7fddd9e8748c917d46",
+  "target_base": "2dcf038cb8be0af991f92c43b0c262f02471c51d",
   "review_fix_base": "1a58f0af2cbc5129f9c8f01595d67c330a7defda",
   "schema_versions": {
     "chachanotes": 86,
@@ -383,9 +383,14 @@
       "bytes": 49325
     },
     "Tests/QA/test_project_chat_uat.py": {
-      "sha256": "fac12a11cf27ef3c2b2b40aa4542ffa73f194bbccf0e5df67607718848457e7a",
-      "git_blob": "f705885560f410ac99ea3cbd60ac69756fcccf95",
-      "bytes": 25144
+      "sha256": "bff4182da1994ceb691a644f7c458fd3fc321d64bf58df51be60670eac985681",
+      "git_blob": "099b6aede630ed91485a1eee035d4ce4cc09e212",
+      "bytes": 25367
+    },
+    "Tests/QA/test_project_chat_uat_support.py": {
+      "sha256": "8f22db83a9ebf3e3c5f2921894f838b1e745b181f07d6fa77c2f48c4c5a93329",
+      "git_blob": "5131435216e20afd12be8736ab9cf75f24392b4e",
+      "bytes": 12505
     },
     "Tests/Scripts/test_check_textual_worker_contract.py": {
       "sha256": "bcebed4eb047bdace40e3a4ff59951df824fc7bbf753e0398cfb3a279dcfb086",
@@ -688,9 +693,9 @@
       "bytes": 376813
     },
     "backlog/docs/lessons-testing-evidence.md": {
-      "sha256": "e05a07ab66573a363295bad7224b0214ff8d55c0ef0815d1b27ee14b1d1b0503",
-      "git_blob": "e01dabc0a24faae44377d26e66b2455d7cdaf4a9",
-      "bytes": 1662862
+      "sha256": "96d5e07d9d7d177d3824f80b88b9bb465f26b0010b31f5790fa09151c10ad79e",
+      "git_blob": "ad60e86d823797f8468a596d9ac730b8d233dab0",
+      "bytes": 1663569
     },
     "backlog/tasks/task-38534 - Design-prompt-mix-ins-for-Console-sends.md": {
       "sha256": "c3eb8b840aa0a1079fb2d108dc754cd0b18f6a9c4251c2a4a5c0bda1a37cd637",
@@ -743,9 +748,9 @@
       "bytes": 6141
     },
     "backlog/tasks/task-38544 - Qualify-the-integrated-prompt-mix-in-lifecycle-and-document-delivery.md": {
-      "sha256": "f4b82ae7b9f934ded5b3932268e3bc6770af3db8ecdfc1bb186008e32dd56ad2",
-      "git_blob": "59da63bdb7a6b0b0cdd6f07aacc06b2d75776c94",
-      "bytes": 59029
+      "sha256": "fb424361cb05311d55beb10635ae162bfb9817cc6d233bdafafa82c3c66c7cf5",
+      "git_blob": "8b4444eddef879e5f9d6602058341fc1ce1d2c07",
+      "bytes": 61393
     },
     "scripts/check_persistent_diagnostic_inventory.py": {
       "sha256": "f566be19b5c2cff9b3bd04725b32201ab254c359d4ea3346573a97224e4685ab",

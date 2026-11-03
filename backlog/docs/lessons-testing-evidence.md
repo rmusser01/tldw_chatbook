@@ -24356,3 +24356,13 @@ their file was already selected whole. Preserve that existing coverage and add
 only genuinely uncovered nodes; entry counts are not test counts. Final evidence
 and the corrected enrollment are in
 `Docs/superpowers/qa/2026-11-01-prompt-mix-ins/ci-rebase/hosted-5a8/summary.md`.
+
+PR3346's subsequent wrong-family project-chat UAT found a queryable approval row
+before its header children existed. The original predicate returned that parent
+and the unchanged family/name assertion read an empty string. A native card
+probe confirmed Textual's register-before-Compose window; requiring each row's
+`is_mounted` waits for its child Compose/Mount publication. The permanent control
+also returns two rows and deliberately wrong header text after mounting, so
+readiness cannot hide the existing cardinality/content assertions. All four
+native UAT variants and the unchanged complete-receipt validator pass. See
+`Docs/superpowers/qa/2026-11-01-prompt-mix-ins/ci-rebase/hosted-4b1/summary.md`.
