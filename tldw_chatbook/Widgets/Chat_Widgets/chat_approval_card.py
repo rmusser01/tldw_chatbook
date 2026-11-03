@@ -51,6 +51,26 @@ from tldw_chatbook.Tools.raw_cli_executor import MAX_RAW_COMMAND_BYTES
 # ``tldw_chatbook.Chat.approval_constants``.
 from tldw_chatbook.Chat.approval_constants import TOOL_DESCRIPTION_CAPTURE_CAP  # noqa: F401
 
+# The formatting helpers moved to the Textual-free ``Chat.approval_formatting``
+# (TASK-36944.3); re-exported under their old names for existing importers.
+# Drop a name here once nothing imports it from this module.
+from tldw_chatbook.Chat.approval_formatting import (  # noqa: F401
+    CONTEXT_LABEL,
+    RATIONALE_DISPLAY_CAP,
+    SUMMARY_LABEL,
+    _ARGS_MIN_VALUE_LIMIT,
+    _ARGS_SUMMARY_LIMIT,
+    _ARGS_VALUE_LIMIT,
+    _DESTINATION_TOKENS,
+    _is_destination_key,
+    _snake_case,
+    _summarize_arguments,
+    _summarize_row_arguments,
+    format_context_line,
+    summarize_arguments,
+    summarize_row_arguments,
+)
+
 _APPROVE_ONCE_LABEL = "Approve once"
 _DENY_LABEL = "Deny"
 _RAW_APPROVE_ONCE_LABEL = "Run once"
@@ -367,23 +387,6 @@ def _format_row_header(entry: Mapping[str, Any]) -> str:
         header += _PATH_PRECHECK_SUFFIX
     return header
 
-
-from tldw_chatbook.Chat.approval_formatting import (  # noqa: F401 -- re-exports
-    CONTEXT_LABEL,
-    RATIONALE_DISPLAY_CAP,
-    SUMMARY_LABEL,
-    _ARGS_MIN_VALUE_LIMIT,
-    _ARGS_SUMMARY_LIMIT,
-    _ARGS_VALUE_LIMIT,
-    _DESTINATION_TOKENS,
-    _is_destination_key,
-    _snake_case,
-    _summarize_arguments,
-    _summarize_row_arguments,
-    format_context_line,
-    summarize_arguments,
-    summarize_row_arguments,
-)
 
 
 class ApprovalActionButton(Button):

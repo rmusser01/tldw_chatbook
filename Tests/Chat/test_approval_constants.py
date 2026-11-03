@@ -23,6 +23,7 @@ def test_approval_formatting_importable_without_textual() -> None:
     code = (
         "import sys, tldw_chatbook.Chat.approval_formatting as m;"
         "assert m.summarize_arguments({'a': 1}) == '{\"a\":1}';"
+        "assert m.format_context_line('x') == 'x';"
         "bad = sorted(k for k in sys.modules if k == 'textual' or k.startswith('textual.'));"
         "assert not bad, bad"
     )

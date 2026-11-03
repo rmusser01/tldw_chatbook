@@ -206,8 +206,8 @@ def summarize_row_arguments(entry: Mapping[str, Any]) -> str:
     return "\n".join(unique)
 
 
-# Historical underscore names this module's own code and the existing
-# suites import.
+# Historical underscore names, kept for the widget and the existing suites,
+# which import them (directly or via chat_approval_card's re-exports).
 _summarize_arguments = summarize_arguments
 _summarize_row_arguments = summarize_row_arguments
 
