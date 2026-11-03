@@ -22,7 +22,6 @@ tldw_chatbook.Chat.console_configuration_preparation	tldw_chatbook.UI.Console_Mo
 tldw_chatbook.Chat.console_configuration_preparation	tldw_chatbook.UI.Console_Modules.wiring	lazy
 tldw_chatbook.Chat.console_conversation_hydration	tldw_chatbook.UI.Console_Modules.message	lazy
 tldw_chatbook.Chat.console_display_state	tldw_chatbook.UI.character_display_text	top
-tldw_chatbook.Chat.console_environment_state	tldw_chatbook.Widgets.Console.console_inspector_section	top
 tldw_chatbook.Chat.console_fleet_attention	tldw_chatbook.UI.Navigation.pending_handoff_store	lazy
 tldw_chatbook.Chat.console_glyphs	tldw_chatbook.Widgets.destination_rail	top
 tldw_chatbook.Chat.console_interrupt_rounds	tldw_chatbook.UI.Navigation.main_navigation	lazy

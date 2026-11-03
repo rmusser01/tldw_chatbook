@@ -814,3 +814,36 @@ def test_status_glyph_lives_inside_the_expand_marker_budget():
     # marker) is the shape that could overflow.
     legacy = _with_status_glyph(plain, "blocked")
     assert len(legacy) > SINGLE_LINE_ROW_BUDGET
+
+
+def test_inspector_state_imports_without_textual_or_inspector_widget():
+    import subprocess
+    import sys
+
+    code = (
+        "import sys; "
+        "import tldw_chatbook.Chat.console_inspector_state; "
+        "bad = [m for m in sys.modules if m == 'textual' or m.startswith('textual.') "
+        "or m.startswith('tldw_chatbook.Widgets')]; "
+        "sys.exit(1 if bad else 0)"
+    )
+    env_code = (
+        "import sys; import tldw_chatbook.Chat.console_environment_state; "
+        "sys.exit(1 if 'tldw_chatbook.Widgets.Console.console_inspector_section' "
+        "in sys.modules else 0)"
+    )
+    for snippet in (code, env_code):
+        result = subprocess.run([sys.executable, "-c", snippet], capture_output=True, text=True)
+        assert result.returncode == 0, result.stderr
+
+
+def test_inspector_section_module_still_exports_moved_names():
+    from tldw_chatbook.Widgets.Console import console_inspector_section as old
+    from tldw_chatbook.Chat import console_inspector_state as new
+
+    for name in (
+        "RAIL_CONTENT_WIDTH_MIN", "ROW_INDENT_COLUMNS", "SECTION_TOGGLE_WIDTH",
+        "SINGLE_LINE_ROW_BUDGET", "ConsoleInspectorSectionState",
+        "InspectorSectionRow", "row_fits_one_line",
+    ):
+        assert getattr(old, name) is getattr(new, name)

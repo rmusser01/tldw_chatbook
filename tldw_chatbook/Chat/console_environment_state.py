@@ -250,7 +250,7 @@ def relative_age(then: datetime | None, now: datetime) -> str:
     return f"{seconds // 86400}d ago"
 
 
-from tldw_chatbook.Widgets.Console.console_inspector_section import (
+from tldw_chatbook.Chat.console_inspector_state import (
     RAIL_CONTENT_WIDTH_MIN,
     ROW_INDENT_COLUMNS,
     SECTION_TOGGLE_WIDTH,
