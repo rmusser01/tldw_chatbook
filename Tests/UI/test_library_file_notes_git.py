@@ -7677,6 +7677,455 @@ async def test_focus_moved_inside_the_panel_while_rows_mount_is_not_stolen() -> 
         assert back.has_focus, repr(panel.screen.focused)
 
 
+class _HostedPanelHarness(_PanelHarness):
+    """The panel inside ``#fenced-host``, removable like a Library recomposition."""
+
+    def compose(self) -> ComposeResult:
+        yield Vertical(self.panel, id="fenced-host")
+
+
+class _FencedQuitHarness(_HostedPanelHarness):
+    """Hold one worker render of a hosted panel, and quit like ``TldwCli``.
+
+    ``TldwCli._shutdown`` sets ``App._exit`` -- Textual's mount fence, under
+    which every widget reads ``is_attached`` False -- and then awaits its
+    app-owned drains while every widget is still alive. A plain ``App.exit()``
+    cannot show the quit bug: Textual closes the widgets first, and a closing
+    ListView ignores the mount. Once ``hold`` is set, the panel's
+    ``render_name`` render waits for ``release``; the stand-in drain releases
+    it and waits for it to land.
+    """
+
+    def __init__(self, panel: LibraryFileNotesGitPanel, render_name: str) -> None:
+        super().__init__(panel)
+        self.hold = False
+        self.started = asyncio.Event()
+        self.release = asyncio.Event()
+        #: ``(App._exit, panel._pruning)`` as each held render resumed.
+        self.resumed: list[tuple[bool, bool]] = []
+        self._landed = asyncio.Event()
+        render = getattr(panel, render_name)
+
+        async def held_render(*args) -> None:
+            if not self.hold:
+                await render(*args)
+                return
+            try:
+                self.started.set()
+                await self.release.wait()
+                self.resumed.append((self._exit, panel._pruning))
+                await render(*args)
+            finally:
+                self._landed.set()
+
+        setattr(panel, render_name, held_render)
+
+    async def _shutdown(self) -> None:
+        self._exit = True
+        self.release.set()
+        if self.started.is_set():
+            await asyncio.wait_for(self._landed.wait(), timeout=5)
+        await super()._shutdown()
+
+
+def _render_held_kind(
+    panel: LibraryFileNotesGitPanel, render_name: str, n: int
+) -> None:
+    """Start the panel's ``render_name`` worker render with distinct content."""
+    if render_name == "_render_rows":
+        panel.render_status(_status(_row("unstaged", group_id=n, stage_action="stage")))
+    else:
+        panel.render_commit_review(
+            _commit_review_projection(paths=(("Modified", f"folder/{n}.md"),))
+        )
+
+
+async def _hold_a_second_render(
+    app: _FencedQuitHarness, pilot, render_name: str
+) -> None:
+    """Settle one render (the rescan's rows already on screen), hold the next."""
+    await pilot.pause()
+    _render_held_kind(app.panel, render_name, 1)
+    await pilot.app.workers.wait_for_complete()
+    await pilot.pause()
+    app.hold = True
+    _render_held_kind(app.panel, render_name, 2)
+    await _wait_until(pilot, app.started.is_set, f"{render_name} did not start")
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("render_name", ["_render_rows", "_render_commit_review_notes"])
+async def test_a_git_render_resuming_after_quit_does_nothing(render_name: str) -> None:
+    """TASK-36527: a worker render that lands after quit starts is a no-op.
+
+    The render is held until quit has set the mount fence, then lands during
+    the shutdown drain. RED before the fix: leaving ``run_test`` raises
+    ``WorkerFailed: MountError("Can't mount widget(s) before
+    ListView(id='file-notes-git-rows') is mounted")`` (``...-commit-included-
+    notes`` for the commit review) -- in the app, a worker error ending quit.
+    """
+    panel = LibraryFileNotesGitPanel()
+    panel.styles.display = "block"
+    app = _FencedQuitHarness(panel, render_name)
+    async with app.run_test(size=(120, 40)) as pilot:
+        await _hold_a_second_render(app, pilot, render_name)
+    # Without this, a render cancelled before it resumed would turn the test
+    # green without ever reaching the guard.
+    assert app.resumed == [(True, False)], "the held render never resumed under quit"
+    if render_name == "_render_rows":
+        assert panel._replacing_rows, "the late render still synced the panel"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("render_name", ["_render_rows", "_render_commit_review_notes"])
+async def test_a_git_render_resuming_during_removal_ends_quietly(
+    render_name: str,
+) -> None:
+    """TASK-36527 AC#3: the panel is removed (a Library recomposition) mid-render.
+
+    Removal sets ``_pruning`` on the whole subtree at once, while
+    ``is_attached`` stays True; the children exit first, and the panel's
+    workers are cancelled only at its own Unmount. RED with an
+    ``is_attached``-only guard: ``WorkerFailed: NoMatches`` for
+    ``#file-notes-git-empty`` (rows) or ``#file-notes-git-commit-included-
+    selected`` (commit review), an app exit.
+    """
+    panel = LibraryFileNotesGitPanel()
+    panel.styles.display = "block"
+    app = _FencedQuitHarness(panel, render_name)
+    async with app.run_test(size=(120, 40)) as pilot:
+        await _hold_a_second_render(app, pilot, render_name)
+        removal = app.query_one("#fenced-host").remove()
+        app.release.set()
+        await removal
+        await pilot.app.workers.wait_for_complete()
+        await pilot.pause()
+    assert app.resumed == [(False, True)], "the held render never resumed mid-removal"
+
+
+@pytest.mark.asyncio
+async def test_a_commit_focus_landing_during_removal_ends_quietly() -> None:
+    """TASK-36527: the commit review's deferred focus, panel removed first.
+
+    RED with a phase-only guard: ``NoMatches('#file-notes-git-commit-edit')``
+    out of the ``call_after_refresh`` callback (removing the panel itself; the
+    host's removal happened not to reach the callback). The notes render is
+    held, so only the focus callback can raise here.
+    """
+    panel = LibraryFileNotesGitPanel()
+    panel.styles.display = "block"
+    app = _FencedQuitHarness(panel, "_render_commit_review_notes")
+    app.hold = True
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        panel.render_commit_review(_commit_review_projection())
+        await panel.remove()
+        await pilot.pause()
+    assert not panel.is_attached
+
+
+@pytest.mark.asyncio
+async def test_a_commit_notes_render_removed_during_its_mount_ends_quietly() -> None:
+    """TASK-36527: a removal that starts while the notes mount is awaited.
+
+    The patched ``extend`` mounts the notes, then starts the host's removal
+    and waits for ``#file-notes-git-commit-included-selected`` to exit: the
+    children go first, and the panel's worker is cancelled only at its own
+    Unmount. RED without the post-``extend`` check: ``WorkerFailed:
+    NoMatches`` for that Static, an app exit.
+    """
+    panel = LibraryFileNotesGitPanel()
+    panel.styles.display = "block"
+    app = _FencedQuitHarness(panel, "_render_commit_review_notes")
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        _render_held_kind(panel, "_render_commit_review_notes", 1)
+        await pilot.app.workers.wait_for_complete()
+        await pilot.pause()
+        notes = panel.query_one("#file-notes-git-commit-included-notes", ListView)
+        selected = panel.query_one("#file-notes-git-commit-included-selected", Static)
+        real_extend = notes.extend
+        removals: list[object] = []
+        resumed_pruning: list[bool] = []
+
+        async def extend_then_remove(items) -> None:
+            await real_extend(items)
+            removals.append(app.query_one("#fenced-host").remove())
+            await selected._task
+            resumed_pruning.append(panel._pruning)
+
+        notes.extend = extend_then_remove
+        _render_held_kind(panel, "_render_commit_review_notes", 2)
+        await _wait_until(pilot, lambda: bool(removals), "the notes never mounted")
+        await removals[0]
+        await pilot.app.workers.wait_for_complete()
+        await pilot.pause()
+    assert resumed_pruning == [True], "the render never resumed mid-removal"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("callback", ["list", "operation"])
+async def test_a_push_focus_landing_during_removal_ends_quietly(callback: str) -> None:
+    """TASK-36527: the push list's and push operation's deferred focus.
+
+    ``return_to_push_list`` and ``restore_push_focus`` defer their focus with
+    ``call_after_refresh``; the panel is removed before it lands. RED with an
+    ``is_attached``-only guard: ``NoMatches`` out of the callback.
+    """
+    panel = LibraryFileNotesGitPanel()
+    panel.styles.display = "block"
+    app = _PanelHarness(panel)
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        if callback == "list":
+            panel.return_to_push_list()
+        else:
+            panel.restore_push_focus(
+                panel._push_phase, panel._push_operation_id, "#file-notes-git-back"
+            )
+        await panel.remove()
+        await pilot.pause()
+    assert not panel.is_attached
+
+
+def _push_review(panel: LibraryFileNotesGitPanel) -> None:
+    from Tests.UI.test_library_file_notes_git_push import _push_panel_review_projection
+
+    panel.render_push_review(_push_panel_review_projection(), operation_id=1)
+
+
+def _push_offer(panel: LibraryFileNotesGitPanel) -> None:
+    from Tests.UI.test_library_file_notes_git_push import _push_availability_projection
+
+    panel.render_push_availability(_push_availability_projection())
+
+
+#: Each panel entry point the workspace calls, called mid-removal, and the
+#: state it must still leave behind for the remount to re-project.
+_ENTRY_POINTS: dict[
+    str,
+    tuple[
+        Callable[[LibraryFileNotesGitPanel], object],
+        Callable[[LibraryFileNotesGitPanel], bool],
+    ],
+] = {
+    "render_status": (
+        lambda p: p.render_status(_status(_row("unstaged"))),
+        lambda p: p._status_ready and len(p.rows) == 1,
+    ),
+    "render_untrusted": (
+        lambda p: p.render_untrusted("/canonical/repository"),
+        lambda p: p._trust_available,
+    ),
+    "render_checking": (
+        lambda p: p.render_checking("/canonical/repository"),
+        lambda p: p._trusted,
+    ),
+    "render_unavailable": (
+        lambda p: p.render_unavailable("Git is unavailable."),
+        lambda p: p._repository_text == "Repository: unavailable",
+    ),
+    "mark_stale": (
+        lambda p: p.mark_stale(),
+        lambda p: p._current_status_text.startswith("Status: STALE"),
+    ),
+    "set_mutating": (lambda p: p.set_mutating(True, "Staging…"), lambda p: p._mutating),
+    "set_current_status": (
+        lambda p: p.set_current_status("Status: CHECKING"),
+        lambda p: p._current_status_text == "Status: CHECKING",
+    ),
+    "set_last_action": (
+        lambda p: p.set_last_action("Staged 1 note."),
+        lambda p: p._last_action_text == "Staged 1 note.",
+    ),
+    "clear_last_action": (
+        lambda p: p.clear_last_action(),
+        lambda p: p._last_action_text == "",
+    ),
+    "render_commit_availability": (
+        lambda p: p.render_commit_availability(_commit_draft_projection()),
+        lambda p: p._commit_availability is not None,
+    ),
+    "clear_commit_availability": (
+        lambda p: p.clear_commit_availability(),
+        lambda p: p._commit_availability is None,
+    ),
+    "invalidate_commit_binding": (
+        lambda p: p.invalidate_commit_binding(),
+        lambda p: p.commit_phase == "list",
+    ),
+    "render_commit_form": (
+        lambda p: p.render_commit_form(_commit_draft_projection()),
+        lambda p: p.commit_phase == "form" and p._active_commit_draft is not None,
+    ),
+    "render_commit_checking": (
+        lambda p: p.render_commit_checking(),
+        lambda p: p.commit_phase == "checking",
+    ),
+    "render_commit_review": (
+        lambda p: p.render_commit_review(_commit_review_projection()),
+        lambda p: p.commit_phase == "review" and len(p._commit_notes) == 2,
+    ),
+    "render_commit_confirming": (
+        lambda p: p.render_commit_confirming(),
+        lambda p: p.commit_phase == "confirming",
+    ),
+    "render_commit_executing": (
+        lambda p: p.render_commit_executing(
+            git_panel_module.CommitExecutionProjection(1)
+        ),
+        lambda p: p.commit_phase == "executing",
+    ),
+    "render_commit_recovery_checking": (
+        lambda p: p.render_commit_recovery_checking(),
+        lambda p: p.commit_phase == "executing",
+    ),
+    "render_commit_result": (
+        lambda p: p.render_commit_result(
+            _commit_result_projection(CommitOutcome("cancelled", "Cancelled."))
+        ),
+        lambda p: p.commit_phase == "result" and p._commit_result is not None,
+    ),
+    "return_to_commit_list": (
+        lambda p: p.return_to_commit_list(),
+        lambda p: p.commit_phase == "list" and p._commit_review is None,
+    ),
+    "render_push_availability": (
+        _push_offer,
+        lambda p: p._push_availability is not None,
+    ),
+    "clear_push_availability": (
+        lambda p: p.clear_push_availability(),
+        lambda p: p._push_availability is None,
+    ),
+    "render_push_review": (
+        _push_review,
+        lambda p: p.push_phase == "review" and p._push_operation_id == 1,
+    ),
+    "render_push_progress": (
+        lambda p: p.render_push_progress("checking_remote", operation_id=1),
+        lambda p: p.push_phase == "checking_remote",
+    ),
+    "render_push_result": (
+        lambda p: p.render_push_result(
+            git_panel_module.PushPanelResultProjection(
+                "Pushed", "Done.", "back_to_session"
+            ),
+            operation_id=1,
+        ),
+        lambda p: p.push_phase == "result" and p._push_result is not None,
+    ),
+    "return_to_push_list": (
+        lambda p: p.return_to_push_list(),
+        lambda p: p.push_phase == "list" and p._push_operation_id is None,
+    ),
+    "restore_push_focus": (
+        lambda p: p.restore_push_focus("list", None, "#file-notes-git-back"),
+        lambda p: True,
+    ),
+}
+#: Entry points that leave a state: they start from a commit that is executing
+#: behind a push review, with a last action on screen.
+_LEAVES_A_STATE = {
+    "return_to_commit_list",
+    "invalidate_commit_binding",
+    "return_to_push_list",
+    "clear_last_action",
+}
+
+
+def _show_workflows_and_last_action(panel: LibraryFileNotesGitPanel) -> None:
+    panel.render_commit_executing(git_panel_module.CommitExecutionProjection(1))
+    _push_review(panel)
+    panel.set_last_action("Staged earlier.")
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("removed", [False, True], ids=["mid-removal", "removed"])
+@pytest.mark.parametrize("entry", sorted(_ENTRY_POINTS))
+async def test_a_panel_entry_called_during_removal_does_nothing(
+    entry: str, removed: bool
+) -> None:
+    """TASK-36527 review rounds 3-4: a workspace task outlives a removal.
+
+    The push observer is a plain task, and workspace workers are cancelled
+    only at the workspace's own Unmount, so either can call into the panel
+    after its children are gone but while it is still attached, or after the
+    panel is detached. The call must not raise (RED: ``NoMatches``), and it
+    must still record the state
+    a remount re-projects -- the phase above all (RED at 3efa4df463: a
+    commit that succeeded mid-removal remounted on its "executing" screen).
+    """
+    call, recorded = _ENTRY_POINTS[entry]
+    panel = LibraryFileNotesGitPanel()
+    panel.styles.display = "block"
+    app = _HostedPanelHarness(panel)
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        if entry in _LEAVES_A_STATE:
+            _show_workflows_and_last_action(panel)
+            await pilot.app.workers.wait_for_complete()
+            await pilot.pause()
+            assert not recorded(panel), "the setup already shows the end state"
+        removal = app.query_one("#fenced-host").remove()
+        await asyncio.gather(*(child._task for child in panel.children))
+        assert panel.is_attached and panel._pruning and not panel.children
+        if removed:
+            await removal
+            assert not panel.is_attached
+        call(panel)
+        assert recorded(panel), f"{entry} dropped its state mid-removal"
+        await removal
+        await pilot.app.workers.wait_for_complete()
+        await pilot.pause()
+
+
+@pytest.mark.asyncio
+async def test_a_commit_that_settles_mid_removal_remounts_on_the_list() -> None:
+    """TASK-36527 review round 4: the workspace's commit observer, on success,
+    calls ``invalidate_commit_binding`` and ``return_to_commit_list``. Landing
+    during a Library recomposition, they must still leave the list phase:
+    ``_finish_mount`` re-projects ``commit_phase`` on remount, and nothing
+    else resets it. RED at 3efa4df463: the remounted panel shows "executing".
+    """
+    panel = LibraryFileNotesGitPanel()
+    panel.styles.display = "block"
+    app = _HostedPanelHarness(panel)
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        panel.render_commit_executing(git_panel_module.CommitExecutionProjection(1))
+        await pilot.pause()
+        removal = app.query_one("#fenced-host").remove()
+        await asyncio.gather(*(child._task for child in panel.children))
+        panel.invalidate_commit_binding()
+        panel.return_to_commit_list()
+        await removal
+        await app.screen.mount(Vertical(panel, id="remounted-host"))
+        await pilot.pause()
+        await pilot.pause()
+        assert panel.query_one("#file-notes-git-list-surface").display
+        assert not panel.query_one("#file-notes-git-commit-workflow").display
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("target", ["_finish_mount", "_fit_fixed_regions"])
+async def test_a_deferred_panel_refresh_landing_during_removal_does_nothing(
+    target: str,
+) -> None:
+    """TASK-36527 review round 3: ``on_mount``/``on_resize`` queue these with
+    ``call_after_refresh``, and the panel is removed before they land. RED
+    without the guard: ``NoMatches`` out of the callback.
+    """
+    panel = LibraryFileNotesGitPanel()
+    panel.styles.display = "block"
+    app = _HostedPanelHarness(panel)
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        panel.call_after_refresh(getattr(panel, target))
+        await panel.remove()
+        await pilot.pause()
+
+
 async def _drain_git_row_render(pilot, panel) -> None:
     """Wait until the row-render worker has finished, `finally` included."""
     await pilot.app.workers.wait_for_complete()

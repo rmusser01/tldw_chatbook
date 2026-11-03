@@ -6,6 +6,24 @@ The task blamed the nonblocking config-lock probe in `run_console_config_sync` f
 
 **What to do:** before you trust a negative control for a deferral, print the call's return value under it. To force a Console control-bar deferral in a mounted test, either make the readiness display cold with no await between that step and the sync, or hold `_settings_rebuild_lock()` from another thread across the display proof's 1 s life before the sync (`test_attachment_readiness_waits_for_checked_config_projection` in `Tests/UI/test_console_send_ready_attachment.py`). In tests, sync the Console's control bar with `_sync_console_control_bar_now` or a loop on the sync's return value, not a bare call whose return value is ignored; only a test asserting the deferral itself needs the bare call.
 
+## A bare `App.exit()` in a widget harness cannot reproduce a mount-after-quit race (TASK-36527, 2026-11-03)
+
+**Incident.** The File Notes git-row render raised `MountError` when it landed after
+quit started. The first test held the render in a one-panel `ConsolidatedCSSApp`
+harness, then released it and called `app.exit()`. The render did resume with
+`App._exit` set, but the unfixed code passed: plain Textual starts closing the
+widgets at once, and a closing `ListView` turns the mount into a silent no-op.
+In the real app, `TldwCli._shutdown` sets `_exit` first and then awaits its
+app-owned drains while every widget is still alive. The race lives in that window.
+
+**What to do.** In a minimal harness, model quit the way `TldwCli` does. Override
+`_shutdown` to set `self._exit = True`, await a drain that releases the held work
+and waits for it to land, and then call `super()._shutdown()`. The test reproduced
+the recorded `WorkerFailed: MountError` on the first run
+(`Tests/UI/test_library_file_notes_git.py::_FencedQuitHarness`). Also assert that
+the held work really resumed under `_exit`. Without that check, a worker cancelled
+before it resumed turns the test green without reaching the guard.
+
 ## `gather(..., return_exceptions=True)` hides a production branch dying on an incomplete fake (TASK-38649, 2026-11-03)
 
 A new retry branch in the Console readiness refresh called `screen.set_timer` and `screen._request_console_control_bar_sync`. The fake screen in `test_console_shared_context_policy.py` had neither, so in 9 refusal tests the refresh task died with AttributeError. All 9 stayed green, because their cleanup awaited the tasks with `gather(..., return_exceptions=True)`, and a full covering run showed nothing. A temporary probe in the new branch found them: it logged `PYTEST_CURRENT_TEST` whenever the screen lacked either attribute. It was checked first against the old fake (9 entries), then run across every fake-driven file. When production code starts calling a new method on its owner, look for the fakes that reach that branch and log from inside it; a green test proves nothing about them.
