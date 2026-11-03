@@ -78,6 +78,12 @@ On Windows, Textual runs every timer sleep, and every timer cancellation, as a b
 **Still Windows-only.** Neither the GGUF source evidence job nor any Windows UI job has run on this head yet. They should show (a) no `asyncio_N` thread in `_win_sleep.wait_inner` in the startup-diagnostic dumps, (b) recompose and inventory settles near the macOS numbers, and (c) smooth short-interval animation with the pool's `time.sleep`.
 
 **Files.** `tldw_chatbook/Utils/text_selection_crash_guard.py`, `Tests/App/test_windows_timer_sleep.py`, `Docs/Development/console-optimization-review-list.md` (OPT-78 status) and `backlog/docs/lessons-testing-evidence.md` (an update to the TASK-38206 entry).
+
+**Review round (PR review, 2026-11-03).** Test-only fixes (commit 8b05d8bb22).
+- `test_other_platforms_keep_textuals_sleep` saved `textual.timer.sleep` as its starting value. On real Windows a TldwCli booted earlier in the same process leaves `_windows_timer_sleep` installed process-wide, so the darwin and linux cases failed there. The test now starts from `textual._time.sleep`. A new `earlier_boot` parameter installs the Windows sleep first, as that earlier boot would.
+- RED on macOS: with the old setup line the `earlier_boot` cases failed 2 of 4. The unmodified old module also failed both cases when `install_windows_timer_sleep()` ran under a patched `win32` platform before it, which is the reviewer's reproduction. With the fix, both runs pass 4 of 4.
+- Intervals use `time.perf_counter`. On Windows Python 3.12, `time.monotonic` ticks every 15.625 ms, so `>= 0.025` after a 30 ms sleep could flake. This one cannot be shown as a failing test on macOS.
+- `Tests/App/test_windows_timer_sleep.py`: 10 passed.
 <!-- SECTION:IMPLEMENTATION_NOTES:END -->
 
 ## Final Summary

@@ -98,6 +98,21 @@ No GGUF run happened between that merge and 11-02 17:41Z, because the workflow i
 **Process note.** The fix edit was made just before this file was committed; the plan above was written before any commit.
 
 **Files.** `tldw_chatbook/UI/Console_Modules/console_spend_projection.py`, `Tests/UI/test_console_tokenizer_preparation.py`, `backlog/docs/lessons-testing-evidence.md`, and the TASK-38206 notes.
+
+**Review round (PR review, 2026-11-03).** Commit 27aa494818.
+- **The remaining loop.** The provider-key fix left the model leg on a single slot. The cost chip asks for the selection's model (`explicit_model or configured_model`); the context estimates ask for the session's `settings.model`. When the two differ, each ask recaptured the other's request, and every recapture forced another config read that published another sync.
+- **The fix.** `ConsoleReadinessConfigProjection` now keeps a bounded dict of `_TokenizerSlot`s keyed by `(model, normalized provider key)`. Eviction is oldest-first past `TOKENIZER_SLOTS` (8).
+- **Invalidation is unchanged per slot:**
+  - a slot whose `preparation_current` fails is recaptured on its next ask;
+  - a refresh marks only the slots it captured before its read, each still guarded by the owner key and by retirement;
+  - `tokenizer_ready` still requires the published key and the current runtime;
+  - a failed slot keeps its own `retry_at`, as the single slot did.
+- **Test changes.** Tests that read the old private slot now read the dict. In `test_changed_owner_cannot_publish_tokenizer_readiness[model]`, a model asked mid-read is a second slot, not a new owner: the read prepares only the slot it captured.
+- **RED/GREEN.** `test_differing_models_keep_their_own_preparations` returned `[False, False]` on every sync before the change, because each sync recaptured. After it, both are ready and further syncs add no capture, read or publication. `test_tokenizer_slots_stay_bounded` pins the eviction.
+- **Evidence.**
+  - `Tests/UI/test_console_tokenizer_preparation.py`: 12 passed.
+  - Neighbouring projection suites, including `Tests/Performance/test_console_tokenizer_owned.py` with the real wiring: 206 passed, 4 failed. Three of the four fail identically with HEAD's and with dev 335f984bd2's `console_spend_projection.py`, so they predate this change: `test_actual_mode_bar_defers_cold_config_and_uses_owned_presentation`, `test_active_run_copy_takes_priority_over_an_earlier_rule_verdict` and `test_actual_settings_open_waits_for_shared_cold_checked_policy`. The fourth, `test_console_mount_refreshes_never_wait_for_a_config_rebuild[roleplay]`, passes in isolation and only fails under xdist load.
+  - ruff: no new findings.
 <!-- SECTION:IMPLEMENTATION_NOTES:END -->
 
 ## Final Summary

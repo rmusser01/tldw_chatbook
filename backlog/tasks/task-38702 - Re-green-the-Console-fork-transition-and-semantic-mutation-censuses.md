@@ -90,6 +90,17 @@ Both censuses pass, and the PR Fast Lane now runs them. The fixes are classifica
 - `.github/workflows/derived-artifacts.yml`
 - `Tests/CI/test_ci_queue_pressure_contract.py`
 - `backlog/docs/lessons-testing-evidence.md`
+
+**Review round (PR review, 2026-11-03).** Commit 7234a9f2a2.
+- **The gap.** `_derive_spec_field_targets` checked `.spec` writes only in the store's own module. A host could rewrite the spec with `store.spec = KeywordStoreSpec(link_table="messages")` or `object.__setattr__(SPEC, "link_table", "messages")`, and the derivation still returned `{"Links"}`.
+- **The fix.** `_store_constructions` already walks the whole package; that walk now also:
+  - fails on a `.spec` Store or Del whose receiver is not a method's own `self`;
+  - returns the attribute names written through `setattr`, `delattr`, `__setattr__` or `__delattr__`.
+
+  The derivation then refuses `spec` or a reviewed field among those names. It also requires the spec class beside the store to carry `@dataclass(frozen=True)`.
+- **Deviation from the review's wording.** The review said to fail on a receiver that is "not `self` inside the store class". I allow another class's own `self.spec`, because `ConsoleVideoCard` and `ConsoleGenerationCard` bind one. Inside the store's module, the existing check still allows exactly one binding, in `__init__`. Subclassing the store already fails as a forwarded reference.
+- **RED/GREEN.** 12 new negative controls failed before the change: 8 rewrite forms and 4 non-frozen decorators. The positive control, another class's `self.spec` plus an unrelated `setattr`, passed before and after.
+- **Evidence.** Both census files passed 172 serially, on the final tree. ruff: no new findings.
 <!-- SECTION:IMPLEMENTATION_NOTES:END -->
 
 ## Final Summary
