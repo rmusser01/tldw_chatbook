@@ -134,7 +134,6 @@ tldw_chatbook.Prompt_Management.prompt_batch_models
 tldw_chatbook.Provider_Contract
 tldw_chatbook.Provider_Contract.provider_continuation
 tldw_chatbook.Provider_Contract.provider_endpoint_contract
-tldw_chatbook.Provider_Contract.provider_setup_facts
 tldw_chatbook.Provider_Contract.sampling_params
 tldw_chatbook.Provider_Contract.thinking_blocks
 tldw_chatbook.RAG_Search
