@@ -21,7 +21,7 @@ dependencies:
 <!-- SECTION:DESCRIPTION:BEGIN -->
 Found in the round-5 wave of the 2026-10-23 burn-down (TASK-38649's review, PR #3372, 2026-11-03). Checked by reading the code on dev 9bbd5c2515 and at #3372's head; not measured.
 
-A full Console sync awaits `prepare_console_presentation_sync` (config_sync.py:100-140) before it renders. That function returns False at once while the screen is maintenance-paused or closing (:127-129). Otherwise it returns `ConsoleReadinessConfigProjection.warm()` (:140, console_spend_projection.py:462). When it returns False, the sync sets `_console_control_bar_replay_whole_sync` and asks for a delayed control-bar sync (chat_screen.py:17847-17850). That request is a fixed `set_timer(0.2, ...)` (chat_screen.py:20847), so the whole full sync replays.
+A full Console sync awaits `prepare_console_presentation_sync` (config_sync.py:100-140) before it renders. That function returns False at once while the screen is maintenance-paused or closing (:127-129). Otherwise, for the stock disk-loaded projection (it returns True early for a config not loaded from disk, :131-132, or a non-standard projection, :134-138), it returns `ConsoleReadinessConfigProjection.warm()` (:140, console_spend_projection.py:462). When it returns False, the sync sets `_console_control_bar_replay_whole_sync` and asks for a delayed control-bar sync (chat_screen.py:17847-17850). That request is a fixed `set_timer(0.2, ...)` (chat_screen.py:20847), so the whole full sync replays.
 
 `warm()` itself refuses up front only for a closing screen or a disposed runtime (console_spend_projection.py:464-467). After its read settles, it returns False when the key has moved or the projection has no fresh value.
 
