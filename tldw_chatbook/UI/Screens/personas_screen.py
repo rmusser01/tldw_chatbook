@@ -9535,7 +9535,7 @@ class PersonasScreen(BaseAppScreen):
                 is not ConsoleImageRenderCache
             ):
                 raise RuntimeError("persona_visual_job_source_changed")
-        captured_snapshot = visual._shape(snapshot) if snapshot is not None else None
+        captured_snapshot = visual.value_shape(snapshot) if snapshot is not None else None
 
         def work():
             from contextlib import ExitStack
@@ -9545,7 +9545,7 @@ class PersonasScreen(BaseAppScreen):
             try:
                 if (
                     snapshot is not None
-                    and visual._shape(snapshot) != captured_snapshot
+                    and visual.value_shape(snapshot) != captured_snapshot
                 ):
                     raise RuntimeError("persona_visual_job_source_changed")
                 with ExitStack() as sources:
@@ -9561,7 +9561,7 @@ class PersonasScreen(BaseAppScreen):
 
                         actor = snapshot.local_service
                         if type(actor) is LocalCharacterPersonaService:
-                            actor_binding = chat._validate(actor)
+                            actor_binding = chat.validate(actor)
                             if actor_binding is not None:
                                 if (
                                     actor.db is not db
@@ -12240,7 +12240,7 @@ class PersonasScreen(BaseAppScreen):
             raise RuntimeError("visual_identity_job_source_changed")
         state = self._visual_identity_authoring
         snapshot = state.snapshot if state is not None else None
-        snapshot_shape = life._shape(snapshot)
+        snapshot_shape = life.value_shape(snapshot)
 
         def work():
             previous = getattr(db._local, "conn", None) if concrete_db else None
@@ -12251,7 +12251,7 @@ class PersonasScreen(BaseAppScreen):
                     raise RuntimeError("visual_identity_job_source_changed")
                 if snapshot is not None and (
                     state.snapshot is not snapshot
-                    or life._shape(snapshot) != snapshot_shape
+                    or life.value_shape(snapshot) != snapshot_shape
                 ):
                     raise RuntimeError("visual_identity_job_source_changed")
                 result = function(*args, **kwargs)

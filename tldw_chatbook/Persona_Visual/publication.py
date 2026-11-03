@@ -201,7 +201,7 @@ def publish_persona_visual(
     directories = (profile_path, profile_path / "persona_visual", profile_path / "persona_visual/packs",
                    versions_path.parent, versions_path, *(p for c in candidates for p in (c, c / "assets")))
     source_files = tuple(source_path / name for name, _ in assets)
-    if any(visual_lifetime._identity(candidate) is not None for candidate in candidates) or any(
+    if any(visual_lifetime.path_identity(candidate) is not None for candidate in candidates) or any(
         asset == candidate or candidate in asset.parents
         for asset in source_files for candidate in candidates
     ):

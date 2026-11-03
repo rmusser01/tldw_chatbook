@@ -702,7 +702,7 @@ def _native_close(fd):
     if state is not None:
         return visual.native_close(fd)
     raw = sys.modules.get("tldw_chatbook.Backup_Recovery.raw_participants")
-    state = raw._owned_descriptor_retirement_state(fd) if raw is not None else None
+    state = raw.owned_descriptor_retirement_state(fd) if raw is not None else None
     if state is not None:
         return raw._close_descriptor(state, fd)
     operation = _runtime_operation()
@@ -859,7 +859,7 @@ def _bind_parent_walk(definition):
 
         def owned_close(fd):
             # Keep creator cleanup independent of revoked source metadata.
-            if not active or raw._owned_descriptor_retirement_state(fd) is not state:
+            if not active or raw.owned_descriptor_retirement_state(fd) is not state:
                 raise raw.bootstrap.RecoveryRequired("raw_operation_provenance_invalid")
             raw._close_descriptor(state, fd)
 
@@ -1510,7 +1510,7 @@ def atomic_private_write_bytes(
             )
 
         if operation is not None:
-            raw._check_temporary_identity(
+            raw.check_temporary_identity(
                 raw._check(operation), selected.parent / temporary_leaf
             )
             state = raw._check(operation)

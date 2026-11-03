@@ -196,20 +196,20 @@ def issued(value):
     if record is None or record[0] is not value:
         return None
     source, shape, pins = record[1:]
-    if _shape(value) != shape:
+    if value_shape(value) != shape:
         raise bootstrap.RecoveryRequired("persona_visual_candidate_changed")
     if source is not None:
         _validate_source(source)
     return record
 
 
-def _shape(value):
+def value_shape(value):
     if is_dataclass(value):
         return type(value), tuple(
-            (f.name, _shape(getattr(value, f.name))) for f in fields(value)
+            (f.name, value_shape(getattr(value, f.name))) for f in fields(value)
         )
     if isinstance(value, tuple):
-        return tuple(_shape(item) for item in value)
+        return tuple(value_shape(item) for item in value)
     return value
 
 
@@ -228,7 +228,7 @@ def issue(value, source, *, replaces=None):
             ):
                 pins[p] = identity
     with storage._changed:
-        _issued[id(value)] = (value, source, _shape(value), pins)
+        _issued[id(value)] = (value, source, value_shape(value), pins)
     return value
 
 
@@ -251,7 +251,7 @@ def candidate_source(value, profile):
         record = issued(value)
         if record is not None:
             for p, expected in record[3].items():
-                if _identity(p) != expected:
+                if path_identity(p) != expected:
                     raise bootstrap.RecoveryRequired(
                         "persona_visual_candidate_identity_changed"
                     )
@@ -268,7 +268,7 @@ def candidate_source(value, profile):
     return actual
 
 
-def _identity(path):
+def path_identity(path):
     try:
         info = os.stat(path, follow_symlinks=False)
     except FileNotFoundError:
@@ -364,12 +364,12 @@ def _check_path(state, selected, *, writing=False):
     ):
         raise bootstrap.RecoveryRequired("persona_visual_path_outside_scope")
     expected = state.expectations[selected]
-    if _identity(selected) != expected:
+    if path_identity(selected) != expected:
         raise bootstrap.RecoveryRequired("persona_visual_file_identity_changed")
     for parent in selected.parents:
         if (
             parent in state.expectations
-            and _identity(parent) != state.expectations[parent]
+            and path_identity(parent) != state.expectations[parent]
         ):
             raise bootstrap.RecoveryRequired("persona_visual_parent_identity_changed")
 
@@ -427,14 +427,14 @@ def files(source, paths, directories=(), *, writing=(), repository=None):
             for p in paths + directories:
                 for ancestor in (p, *p.parents):
                     if ancestor not in state.expectations:
-                        state.expectations[ancestor] = _identity(ancestor)
+                        state.expectations[ancestor] = path_identity(ancestor)
             for p in paths + directories:
                 attempt.check()
                 lease = storage.acquire_storage(p)
                 state.leases.append(lease)
                 state.holds.append(storage._holds.get(lease._key))
             for p, identity in state.expectations.items():
-                if _identity(p) != identity:
+                if path_identity(p) != identity:
                     raise bootstrap.RecoveryRequired("persona_visual_preflight_changed")
             if any(
                 h is not None and h.authority.pause_requested(h.names)
@@ -548,7 +548,7 @@ def native_open(value, flags, mode=0o777, *, dir_fd=None):
     if flags & os.O_CREAT and flags & os.O_EXCL:
         state.expectations[selected] = identity
         state.owned[selected] = identity
-    if state.expectations[selected] != identity or _identity(selected) != identity:
+    if state.expectations[selected] != identity or path_identity(selected) != identity:
         raise bootstrap.RecoveryRequired("persona_visual_file_identity_changed")
     return fd
 
@@ -775,7 +775,7 @@ def publication_selection(repository, capability, profile, candidate):
             raise bootstrap.RecoveryRequired("persona_visual_candidate_not_issued")
     if record is not None:
         for p, expected in record[2].items():
-            if _identity(p) != expected:
+            if path_identity(p) != expected:
                 raise bootstrap.RecoveryRequired(
                     "persona_visual_candidate_identity_changed"
                 )
@@ -833,3 +833,7 @@ def _check_producer(frame):
                     return module_name, name
                 function = getattr(function, "__wrapped__", None)
     raise bootstrap.RecoveryRequired("persona_visual_producer_not_installed")
+
+
+_identity = path_identity
+_shape = value_shape

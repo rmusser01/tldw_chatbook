@@ -57,7 +57,7 @@ def _selected(source, owner, canonical):
 
         if getattr(source, "_recovery_original_path", None) != canonical:
             return canonical
-        return selected_path(canonical, retained=raw._mcp_observation(source, canonical))
+        return selected_path(canonical, retained=raw.mcp_observation(source, canonical))
     return canonical
 
 

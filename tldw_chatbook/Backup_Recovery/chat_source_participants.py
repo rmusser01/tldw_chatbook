@@ -80,7 +80,7 @@ class _Binding:
     companions: tuple = ()
 
 
-def _validate(source):
+def validate(source):
     bound = _BINDINGS.get(source)
     if bound is None:
         return None
@@ -119,7 +119,7 @@ def _validate(source):
 
 
 def check_citation_attachment(source, migration):
-    bound = _validate(source)
+    bound = validate(source)
     if bound is not None:
         expected = bound.companions[0]() if bound.companions else None
         if migration is not expected:
@@ -129,7 +129,7 @@ def check_citation_attachment(source, migration):
 def binding(source):
     if source not in _BINDINGS:
         return None
-    bound = _validate(source)
+    bound = validate(source)
     return _source_kind(source)[1][1], bound.path, True
 
 
@@ -137,7 +137,7 @@ def selection(source, route, target=None):
     _, (actual_route, _, attribute, _) = _source_kind(source)
     if route != actual_route:
         raise bootstrap.RecoveryRequired("chat_source_not_supported")
-    bound = _validate(source)
+    bound = validate(source)
     value = getattr(source, attribute)
     if value is None:
         raise bootstrap.RecoveryRequired("chat_source_has_no_file")
@@ -211,8 +211,8 @@ def bind_citation_services(service, migration):
         selected = config.get_user_data_dir() / "tldw_chatbook_chat_rag_context.json"
         attempt.check()
         if service in _BINDINGS or migration in _BINDINGS:
-            _validate(service)
-            _validate(migration)
+            validate(service)
+            validate(migration)
             return
         if (
             type(service) is not ChatConversationService
@@ -252,7 +252,7 @@ def _cache_names(source):
 
 
 def drain_ready(source):
-    _validate(source)
+    validate(source)
     return getattr(source, "_chat_persistence_error", None) is None
 
 
@@ -262,12 +262,12 @@ def operation(source):
     from . import raw_participants as raw
     from .participants import core_operation
 
-    bound = _validate(source)
+    bound = validate(source)
     route, _, attribute, _ = _source_kind(source)[1]
     active = getattr(_LOCAL, "active", None)
     if active is not None and any(item is source for item, _ in active):
         for item, token in active:
-            _validate(item)
+            validate(item)
             raw._check(token)
         core = getattr(storage._operation_local, "operation", None)
         if core is not None:
@@ -338,10 +338,10 @@ def operation(source):
             # Both native scopes exist before exposure. No pause-time acquisition.
             attempt.check()
             for item, token in tokens:
-                _validate(item)
+                validate(item)
                 state = raw._check(token)
                 if bound is not None:
-                    state.observed_files[state.selected] = _sidecar_identity(
+                    state.observed_files[state.selected] = sidecar_identity(
                         state.selected
                     )
                 if (
@@ -445,21 +445,21 @@ def write_text(source, text):
             with raw.file(token, temporary, "w") as stream:
                 stream.write(text)
             state = raw._check(token, selected, writing=True)
-            if _validate(source) is not None and (
-                _sidecar_identity(selected, writing=True)
+            if validate(source) is not None and (
+                sidecar_identity(selected, writing=True)
                 != state.observed_files.get(selected)
             ):
                 raise bootstrap.RecoveryRequired("chat_sidecar_identity_changed")
             raw.replace(token, temporary, selected)
-            if _validate(source) is not None:
-                state.observed_files[selected] = _sidecar_identity(selected)
+            if validate(source) is not None:
+                state.observed_files[selected] = sidecar_identity(selected)
         finally:
             state = raw._states[token]
             if temporary in state.created_files and not state.uncertain:
                 raw.remove_temporary(token, temporary)
 
 
-def _sidecar_identity(path, *, writing=False):
+def sidecar_identity(path, *, writing=False):
     try:
         info = os.stat(path, follow_symlinks=False)
     except FileNotFoundError:
@@ -502,3 +502,7 @@ def sidecar_descriptor(source):
             yield descriptor
         finally:
             raw._close_descriptor(state, descriptor)
+
+
+_sidecar_identity = sidecar_identity
+_validate = validate

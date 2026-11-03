@@ -661,7 +661,7 @@ import importlib, importlib.abc, sys
 from pathlib import Path
 from tldw_chatbook.Backup_Recovery import bootstrap
 bootstrap.default_bootstrap_root = lambda: Path(sys.argv[1]) / "bootstrap"
-from tldw_chatbook.Backup_Recovery.participants import _repository_types
+from tldw_chatbook.Backup_Recovery.participants import repository_types
 names = {
  "tldw_chatbook.DB.Evals_DB": "EvalsDB",
  "tldw_chatbook.DB.Subscriptions_DB": "SubscriptionsDB",
@@ -675,11 +675,11 @@ class NoAddedSources(importlib.abc.MetaPathFinder):
    raise AssertionError("eager new source import: " + fullname)
 blocker = NoAddedSources()
 sys.meta_path.insert(0, blocker)
-_repository_types()
+repository_types()
 sys.meta_path.remove(blocker)
 for number, (module, name) in enumerate(names.items()):
  cls = getattr(importlib.import_module(module), name)
- assert cls in _repository_types()
+ assert cls in repository_types()
  path = Path(sys.argv[1]) / (str(number) + ".sqlite")
  owner = cls(db_path=path) if name == "LocalKanbanService" else cls(path)
  if name == "NotesDeviceStateStore":

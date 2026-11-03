@@ -415,7 +415,7 @@ class _State:
 _states = {}
 
 
-def _live_state(operation, path, writing):
+def live_state(operation, path, writing):
     """Validate issued operation and lease identities under the coordinator.
 
     This helper is deliberately free of selected-source and filesystem reads.
@@ -451,13 +451,13 @@ def _live_state(operation, path, writing):
     return state
 
 
-def _mcp_observation(source, canonical):
+def mcp_observation(source, canonical):
     """Supply only this installed source's currently issued canonical lease."""
     operation = getattr(_local, "operation", None)
     if operation is None:
         return None
     with storage._lock:
-        state = _live_state(operation, None, False)
+        state = live_state(operation, None, False)
         if (
             state.source is not source
             or state.route != mcp_sources.ROUTE
@@ -477,7 +477,7 @@ def _mcp_observation(source, canonical):
     lease.execution_context(canonical)
     with storage._lock:
         if (
-            _live_state(operation, None, False) is not state
+            live_state(operation, None, False) is not state
             or _participant_identity(state.participant) is not participant
             or state.mcp_observation_lease is not lease
             or state.source is not source
@@ -491,7 +491,7 @@ def _mcp_observation(source, canonical):
 def _source_custody_check(operation, path=None, *, writing=False):
     # No virtual validator dispatch and no mutable caller token fields.
     with storage._lock:
-        state = _live_state(operation, path, writing)
+        state = live_state(operation, path, writing)
         participant = state.participant
         source = state.source
     # Binding validation may read native recovery records. It must not
@@ -519,7 +519,7 @@ def _source_custody_check(operation, path=None, *, writing=False):
     # A valid earlier observation cannot substitute for current issued custody.
     with storage._lock:
         if (
-            _live_state(operation, path, writing) is not state
+            live_state(operation, path, writing) is not state
             or state.participant is not participant
             or state.source is not source
         ):
@@ -560,7 +560,7 @@ def _check(operation, path=None, *, writing=False):
     return state
 
 
-def _owned_descriptor_retirement_state(fd: int) -> _State | None:
+def owned_descriptor_retirement_state(fd: int) -> _State | None:
     """Find exact current issuer custody without re-admitting a native effect."""
     operation = getattr(_local, "operation", None)
     if operation is None:
@@ -1250,7 +1250,7 @@ def file(operation, path, mode):
                 io.TextIOWrapper.close(text)
                 if mode in {"w", "a"}:
                     # Closing the wrapper only pushes user-space buffers into
-                    # the descriptor. _replace goes on to fsync the destination
+                    # the descriptor. replace goes on to fsync the destination
                     # DIRECTORY, so without this the entry was made durable
                     # while the blocks it points at were not -- the classic
                     # rename-without-fsync corruption, on the user's own MCP,
@@ -1317,7 +1317,7 @@ def replace(operation, temporary, destination, *, expected=_UNCHECKED):
         if _entry_identity(state, destination) != expected:
             raise FileExistsError(f"{destination.name} changed before it was written")
         if expected is None:
-            _check_temporary_identity(state, temporary)
+            check_temporary_identity(state, temporary)
             try:
                 if state.pinned:
                     os.link(
@@ -1365,7 +1365,7 @@ def replace(operation, temporary, destination, *, expected=_UNCHECKED):
                 identity = None
             if identity != state.observed_files.get(destination):
                 raise bootstrap.RecoveryRequired("raw_entry_identity_changed")
-        _check_temporary_identity(state, temporary)
+        check_temporary_identity(state, temporary)
         if state.route == mcp_sources.ROUTE:
             mcp_sources.check_destination(state, destination)
         # task-32896: the rename is atomic but was not durable -- this
@@ -1411,7 +1411,7 @@ def remove_temporary(operation, temporary):
     if temporary not in state.created_files:
         return
     try:
-        _check_temporary_identity(state, temporary)
+        check_temporary_identity(state, temporary)
         if state.pinned:
             os.unlink(temporary.name, dir_fd=state.pins[temporary.parent])
         else:
@@ -1421,7 +1421,7 @@ def remove_temporary(operation, temporary):
     state.created_files.pop(temporary)
 
 
-def _check_temporary_identity(state, temporary):
+def check_temporary_identity(state, temporary):
     expected = state.created_files.get(temporary)
     info = (
         os.stat(
@@ -1561,15 +1561,15 @@ _PARENT_WALK_SOURCE = tuple(
         None if function.__closure__ is None else tuple(cell.cell_contents for cell in function.__closure__),
     )
     for name, function in (
-        ("_runtime_operation", runtime_operation),
+        ("runtime_operation", runtime_operation),
         ("_check", _check),
         ("_check_parent_pins", _check_parent_pins),
         ("_source_custody_check", _source_custody_check),
         ("_source_custody_check.__wrapped__", _source_custody_check.__wrapped__),
-        ("_live_state", _live_state),
+        ("live_state", live_state),
         ("_participant_identity", _participant_identity),
         ("_participant_state", _participant_state),
-        ("_owned_descriptor_retirement_state", _owned_descriptor_retirement_state),
+        ("owned_descriptor_retirement_state", owned_descriptor_retirement_state),
         ("_close_descriptor", _close_descriptor),
     )
 )
@@ -1670,7 +1670,7 @@ def _bind_parent_walk_source(definition):
             pin = state.pins.get(selected.parent)
             if not state.pinned or type(pin) is not int:
                 return None
-            _live_state(operation, None, True)
+            live_state(operation, None, True)
             # A changed discovery edge while waiting is held drift, not a retry.
             if not source_current():
                 raise bootstrap.RecoveryRequired("raw_operation_provenance_invalid")
@@ -1733,7 +1733,7 @@ _CONSOLE_PERMISSION_LOAD_GUARDS = tuple(
         ),
     )
     for name, callback, functions in (
-        ("_scope", scope, (scope, scope.__wrapped__)),
+        ("scope", scope, (scope, scope.__wrapped__)),
         ("_check", _check, (_check,)),
     )
 )
@@ -1749,3 +1749,9 @@ _selected = selected_target
 _service_file = service_file
 _service_mutation = service_mutation
 _runtime_operation = runtime_operation
+
+
+_check_temporary_identity = check_temporary_identity
+_live_state = live_state
+_mcp_observation = mcp_observation
+_owned_descriptor_retirement_state = owned_descriptor_retirement_state

@@ -86,7 +86,7 @@ class _DictionaryJob:
             self._db = source.db
             self._method = method.__name__
             self._function = method.__func__
-            chat._validate(source)
+            chat.validate(source)
             self._attempt.check()
             self._pid = os.getpid()
             self._thread = threading.current_thread()
@@ -163,7 +163,7 @@ class _DictionaryJob:
                 is not self._function
             ):
                 raise bootstrap.RecoveryRequired("dictionary_job_source_changed")
-            chat._validate(self._source)
+            chat.validate(self._source)
             while not self._source._history_lock.acquire(timeout=0.05):
                 self._attempt.check()
             acquired = True

@@ -25778,7 +25778,7 @@ _CONSOLE_BROWSER_NOTES_CLOSING_SOURCE = (
     (),
     tuple(
         (name, core_operation.__wrapped__.__globals__[name])
-        for name in ("core_closing", "repository_participant", "_repository_types")
+        for name in ("core_closing", "repository_participant", "repository_types")
     ),
     tuple(
         (
@@ -25797,7 +25797,7 @@ _CONSOLE_BROWSER_NOTES_CLOSING_SOURCE = (
             for name in (
                 "core_closing",
                 "repository_participant",
-                "_repository_types",
+                "repository_types",
             )
         )
         + (core_closing.__wrapped__,)

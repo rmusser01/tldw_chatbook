@@ -294,13 +294,13 @@ class LocalCharacterPersonaService:
                     stream.buffer.write(payload)
                 state = raw._check(token, selected, writing=True)
                 if _chat_sources.binding(self) is not None and (
-                    _chat_sources._sidecar_identity(selected, writing=True)
+                    _chat_sources.sidecar_identity(selected, writing=True)
                     != state.observed_files.get(selected)
                 ):
                     raise _chat_sources.bootstrap.RecoveryRequired("chat_sidecar_identity_changed")
                 raw.replace(token, temporary, selected)
                 if _chat_sources.binding(self) is not None:
-                    state.observed_files[selected] = _chat_sources._sidecar_identity(selected)
+                    state.observed_files[selected] = _chat_sources.sidecar_identity(selected)
             finally:
                 state = raw._states[token]
                 if temporary in state.created_files and not state.uncertain:

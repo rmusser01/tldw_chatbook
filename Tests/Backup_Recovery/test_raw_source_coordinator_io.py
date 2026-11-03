@@ -273,7 +273,7 @@ def test_retained_mcp_observation_rejects_real_lease_for_another_path(permission
         state.mcp_observation_lease = other
         try:
             with pytest.raises(RecoveryRequired, match="execution_selection_changed"):
-                raw._mcp_observation(permission, state.mcp_canonical)
+                raw.mcp_observation(permission, state.mcp_canonical)
         finally:
             state.mcp_observation_lease = original
             state.leases.pop()
@@ -292,7 +292,7 @@ async def test_retained_observation_rechecks_source_after_actual_lease_validatio
     entered, release = threading.Event(), threading.Event()
     captured, published, errors = [], [], []
     context_code = storage.StorageLease.execution_context.__code__
-    observation_code = raw._mcp_observation.__code__
+    observation_code = raw.mcp_observation.__code__
 
     def profile(frame, event, _arg):
         if (
@@ -314,7 +314,7 @@ async def test_retained_observation_rechecks_source_after_actual_lease_validatio
             sys.setprofile(profile)
             try:
                 published.append(
-                    raw._mcp_observation(
+                    raw.mcp_observation(
                         permission, raw._states[operation].mcp_canonical
                     )
                 )

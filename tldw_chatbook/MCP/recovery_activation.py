@@ -458,7 +458,7 @@ def _require_store_write(store, owner):
     from tldw_chatbook.Backup_Recovery import raw_participants as raw
 
     path = getattr(store, "_recovery_original_path", lexical_path(store.path))
-    with observed(path, retained=raw._mcp_observation(store, path)) as witnesses:
+    with observed(path, retained=raw.mcp_observation(store, path)) as witnesses:
         if not witnesses:
             return
         expected = _root(path, witnesses) / path.name if owner in _FRESH else path

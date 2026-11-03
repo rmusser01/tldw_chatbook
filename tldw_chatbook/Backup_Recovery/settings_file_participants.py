@@ -197,7 +197,7 @@ def check_export_parent(state):
     The editor refuses that folder when the path is typed, but the folder the
     write lands in is the one this scope pinned, which a swapped link or
     rename can make a different one (Qodo 4118068772). The pin (or, unpinned,
-    the admitted identity) is what ``_replace`` publishes into, so this is
+    the admitted identity) is what ``replace`` publishes into, so this is
     checked against it, not a path spelling.
 
     Args:

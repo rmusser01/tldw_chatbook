@@ -744,8 +744,8 @@ class NoEngines(importlib.abc.MetaPathFinder):
 sys.meta_path.insert(0, NoEngines())
 from tldw_chatbook.Backup_Recovery import bootstrap
 bootstrap.default_bootstrap_root = lambda: Path(sys.argv[1]) / "bootstrap"
-from tldw_chatbook.Backup_Recovery.participants import _repository_types
-for number, cls in enumerate(_repository_types()):
+from tldw_chatbook.Backup_Recovery.participants import repository_types
+for number, cls in enumerate(repository_types()):
     owner = cls(Path(sys.argv[1]) / (str(number) + ".sqlite")) if cls.__name__ not in {"CharactersRAGDB", "MediaDatabase", "PromptsDatabase"} else cls(Path(sys.argv[1]) / (str(number) + ".sqlite"), "import-check")
     owner.close()
 print("constructors-retired")

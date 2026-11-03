@@ -62,7 +62,7 @@ def run_finite_local_worker(function, /, *args, **kwargs):
     try:
         return function(*args, **kwargs)
     finally:
-        types = _repository_types()
+        types = repository_types()
         closers = {
             "db.chachanotes.primary": "close_connection",
             "db.media.primary": "close_connection",
@@ -143,7 +143,7 @@ def retire_current_thread_caches(pause) -> None:
         "runtime.event_state": None,
         "notes.sync_state": None,
     }
-    types = _repository_types()
+    types = repository_types()
     with storage._lock:
         participants = tuple(_installed_repositories)
     for participant in participants:
@@ -290,7 +290,7 @@ class _RepositoryParticipant:
             self.closed = False
 
 
-def _repository_types():
+def repository_types():
     """Exact source-backed runtime declarations; subclasses confer no authority."""
     from tldw_chatbook.Notifications.event_state_repository import EventStateRepository
     from tldw_chatbook.Sync_Interop.sync_state_repository import SyncStateRepository
@@ -370,7 +370,7 @@ def repository_participant(repository):
     """Bind exact installed repository types to their actual selected paths."""
     from . import storage_admission as storage
 
-    types = _repository_types()
+    types = repository_types()
     if (
         type(repository) not in types
         or repository.is_memory_db
@@ -409,7 +409,7 @@ def core_access(repository):
 
     participant = (
         repository_participant(repository)
-        if type(repository) in _repository_types()
+        if type(repository) in repository_types()
         else None
     )
     with storage._lock:
@@ -431,7 +431,7 @@ def core_access(repository):
 @contextmanager
 def core_operation(repository):
     """Count an installed core scope without revoking its native borrowers."""
-    if repository.is_memory_db or type(repository) not in _repository_types():
+    if repository.is_memory_db or type(repository) not in repository_types():
         core_access(repository)
         yield
     else:
@@ -468,7 +468,7 @@ def core_closing(repository, connection):
     only at its explicit close boundary. Live managed work or paused borrowed
     transactions cannot be discarded, and foreign-thread close is refused.
     """
-    if repository.is_memory_db or type(repository) not in _repository_types():
+    if repository.is_memory_db or type(repository) not in repository_types():
         yield True
         return
     from . import storage_admission as storage
@@ -511,7 +511,7 @@ def core_closing(repository, connection):
 
 def register_core_connection(repository, connection):
     """Retain actual core native handles; caller names never confer authority."""
-    if repository.is_memory_db or type(repository) not in _repository_types():
+    if repository.is_memory_db or type(repository) not in repository_types():
         return connection
     from . import storage_admission as storage
     from .bootstrap import RecoveryRequired
@@ -570,7 +570,7 @@ retired_core_connections = weakref.WeakSet()
 
 def core_cached_connection(repository, connection):
     """Invalidate a cache only after the wrapper observed successful native close."""
-    if repository.is_memory_db or type(repository) not in _repository_types():
+    if repository.is_memory_db or type(repository) not in repository_types():
         return connection
     from . import storage_admission as storage
 
@@ -613,3 +613,7 @@ _register_core_connection = register_core_connection
 _retired_core_connections = retired_core_connections
 _core_cached_connection = core_cached_connection
 _core_getter = core_getter
+
+
+# Private aliases for importers not yet migrated (TASK-36948.2). Remove once none remain.
+_repository_types = repository_types

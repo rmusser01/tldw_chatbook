@@ -310,7 +310,7 @@ def test_copied_operation_cannot_borrow_descriptor_retirement_ownership(
         assert copied not in raw._states
         raw._local.operation = copied
         try:
-            assert raw._owned_descriptor_retirement_state(fd) is None
+            assert raw.owned_descriptor_retirement_state(fd) is None
             # The ordinary unowned route remains separate; do not make a new
             # blanket-close refusal policy for copied or absent operations.
             assert raw.runtime_operation() is None
@@ -329,7 +329,7 @@ def test_untracked_descriptor_preserves_original_checked_close(configured_source
         closed = False
         try:
             assert fd not in state.descriptors
-            assert raw._owned_descriptor_retirement_state(fd) is None
+            assert raw.owned_descriptor_retirement_state(fd) is None
             with _original_close_checks() as checks:
                 private_paths._native_close(fd)
             closed = True

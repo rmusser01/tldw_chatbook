@@ -33,7 +33,7 @@ class OriginalPrivateAppCreators(OriginalStorageUnitObserver):
                 (self.app_type, "__init__", app_init),
             )
         )
-        self.original_types = participants._repository_types()
+        self.original_types = participants.repository_types()
         assert EvalsDB in self.original_types and SubscriptionsDB in self.original_types
         self.roles, self.births, self.owners = {}, {}, []
         self.parallel_methods = {}

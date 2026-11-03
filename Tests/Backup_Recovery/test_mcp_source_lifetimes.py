@@ -863,3 +863,15 @@ def test_installed_history_private_posture_demotion_refuses_before_read(
     monkeypatch.setattr(private_paths, "_atomic_posix_guards_available", lambda: False)
     with pytest.raises(bootstrap.RecoveryRequired, match="selection_changed"):
         source.read_recent()
+
+
+def test_replacing_public_raw_scope_rejects_console_owned_load(mcp_sources, monkeypatch):
+    from tldw_chatbook.Backup_Recovery import raw_participants as raw
+    from tldw_chatbook.MCP import permission_store
+
+    source = mcp_sources[3]
+    captured = permission_store._capture_console_owned_load(source)
+    assert captured is not None
+    assert permission_store._console_owned_load_current(source, captured)
+    monkeypatch.setattr(raw, "scope", lambda *args, **kwargs: raw.scope(*args, **kwargs))
+    assert not permission_store._console_owned_load_current(source, captured)
