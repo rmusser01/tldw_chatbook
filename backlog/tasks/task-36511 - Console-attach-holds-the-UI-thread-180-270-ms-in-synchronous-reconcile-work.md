@@ -5,7 +5,7 @@ status: In Progress
 assignee:
 - '@claude'
 created_date: 2026-10-23 22:44
-updated_date: 2026-11-03 14:21
+updated_date: 2026-11-03 15:08
 labels:
 - follow-up
 - performance
@@ -61,6 +61,7 @@ Owner ruling (2026-10-23): keep the 100 ms bound and treat this attach work as a
 **What changed** (shared mechanism: hold both config locks without blocking, or defer):
 - `config_sync.sync_console_core_state`: the push runs only while it holds both config locks and the live read is warm. Otherwise it replays the whole sync, and that pass's own preparation warms config off-loop.
 - `console_spend_projection.retry_after_config_rebuild`: the identity and width refreshes also defer while a live read is cold, and kick the readiness projection's off-loop read. The shared check is `live_config_read_is_cold`: only a disk-loaded snapshot reads live, so other snapshots never loop.
+- Review round 1, bounded deferral (`defer_cold_live_read`). Config can stay cold for good: an unparseable `config.toml`, a strict decryption failure or an unexpected load error installs neither cache, and the app keeps running in that state. Deferring every cold read replayed an idle Console forever. Each owner (the core-state push, and each `retry_after_config_rebuild` refresh by name) now defers once per cold episode. Its next call reads live, as base did, and only a warm read ends the episode. Outside triggers therefore cannot start new deferrals while config stays cold. The 0.2 s retry stays a single pending timer per refresh.
 - `app.py` subscriptions backfill starter: the pre-check uses the wired `SubscriptionsDB.db_path`, as the scheduler's pre-check does, instead of a checked `get_subscriptions_db_path()` on the UI loop. Size row 5687 -> 5689 with a dated waiver.
 - `Tests/Backup_Recovery/test_console_config_sync_lifetime.py`: the `Surface` proxy re-bound classmethods. The new disk-loaded check reached that in `native-worker-teardown`; the proxy is fixed.
 
@@ -90,16 +91,22 @@ UI-loop steps of 30 ms or more:
 - AC#2, first fixes (lock hold and starter): 18 of 20 rounds green, 280 of 280 probes under 100 ms. Both failures were `queued_body` running the swapped body through the cold push, which led to the cold-replay change.
 - AC#2, final code: 19 of 20 rounds green at load 9-28; my own instrumented run was adding load during rounds 1-10. 279 of 280 probes were under 100 ms. The failure was round 7, `closing`, at load 27.4: 135 ms in Textual `Widget.watch_has_focus -> update_node_styles`, a focus restyle with no config work.
 - Red/green:
-  - `test_the_core_state_push_never_waits_for_or_rebuilds_config` is red on dev (`[True] == [False]`, a worker read started under the push) and on the lock-hold-only version (`2 == 1`, a cold push ran).
-  - `test_a_mount_refresh_defers_a_cold_live_read_and_warms_it_off_the_loop` is red before the wrapper change (`[True] == []`).
-  - `test_subscriptions_starter_reads_no_config_on_the_ui_loop` is red on dev (its `AssertionError` fired).
-  - All three are green on the branch.
-- Regression check: 20 attach, reconcile, config-sync and boot files at `-n 4`, run on the branch and on dev sources with the same command. The failure sets are identical apart from the three new tests (red on dev) and `native-worker-teardown` (the proxy, fixed). The 21 shared failures are pre-existing local reds. The size ratchets pass except the pre-existing `library_skills_controller` (3171 > 3142, untouched). Preflight passes.
+  - `test_the_core_state_push_never_waits_for_or_rebuilds_config` is red on dev (`[True] == [False]`, a worker read started under the push), on the lock-hold-only version (`2 == 1`, a cold push ran), and at 7dd3f03343 on its episode case ("a still-cold replay deferred again").
+  - `test_a_mount_refresh_defers_a_cold_live_read_and_warms_it_off_the_loop` is red before the wrapper change (`[True] == []`) and at 7dd3f03343 ("a still-cold retry deferred again").
+  - `test_an_unparseable_config_leaves_an_idle_console_idle` (mounted, `@private_profile_test`, breaks only the child's own `config.toml` and restores it) is red at 7dd3f03343: in the first second 7 full syncs, 0 pushes from the full sync and 0 identity-refresh runs.
+  - `test_subscriptions_starter_reads_no_config_on_the_ui_loop` is red against base `app.py` ("the starter read config on the UI loop").
+  - All four are green on the branch.
+- Reviewer probes, 7dd3f03343 -> branch, load 7-10:
+  - Mounted idle Console with an unparseable config: 7dd3f03343 ran 5 full syncs and 26 core-state pushes a second, with the replay flag stuck on. The branch does one burst (3 full syncs and 18 pushes in second 0), then 0 a second, as base did (4 and 22, then 0).
+  - Unit probe, 5 rounds of off-loop warm read then push and refresh: 7dd3f03343 made 1 push and 5 replays and never ran the refresh, with a timer always armed. The branch makes 1 replay, pushes every round after the first, runs the refresh from round 1, and leaves no timer.
+- Regression check: 20 attach, reconcile, config-sync and boot files at `-n 4`, run on the branch and on dev sources with the same command. The failure sets are identical apart from the new tests (red on dev) and `native-worker-teardown` (the proxy, fixed). After review round 1 it was re-run at load 7-14: 21 failed on the branch and 23 on base sources. All 21 branch failures also fail on base; the base-only 2 are the new unit tests. The size ratchets pass except the pre-existing `library_skills_controller` (3171 > 3142, untouched). Preflight passes.
 
 **Criteria left open**
 - AC#1 is not met. Lock waits and cold rebuilds are gone from the attach path. The remaining attach steps are CPU-bound and stay under 100 ms of CPU (left-rail allocation peaks at 74 ms), but their wall time passes 100 ms at load 20 and above.
 - AC#2 is not met: 19 of 20 rounds (above).
 - AC#3 is blocked. `scripts/check_ui_pr_gate_census.py` rejects any entry outside `Tests/UI/`. The only PR lane for `Tests/Performance` is `perf-guard.yml`, which open PR #3380 also edits, so this change leaves it alone. Follow-up after #3380 merges: add both gate files to perf-guard's "Run Console tab-publication and voice gates" step and remove its "Not here" comment (lines 126-128).
 
-**Files:** `tldw_chatbook/UI/Console_Modules/config_sync.py`, `tldw_chatbook/UI/Console_Modules/console_spend_projection.py`, `tldw_chatbook/app.py`, `Tests/UI/test_console_projection_reads_off_loop.py`, `Tests/App/test_boot_worker_stagger_policy.py`, `Tests/Backup_Recovery/test_console_config_sync_lifetime.py`, `Tests/Architecture/test_module_size_ratchet.py`, and `backlog/docs/lessons-testing-evidence.md` (new entry).
+**Test placement.** The starter test lives in `Tests/UI/test_app_instance_warning.py`, a whole-file census entry that already pins `TldwCli` boot wiring unbound against a stub. The boot fleet's own suite, `Tests/App/test_boot_worker_stagger_policy.py`, runs in no PR lane.
+
+**Files:** `tldw_chatbook/UI/Console_Modules/config_sync.py`, `tldw_chatbook/UI/Console_Modules/console_spend_projection.py`, `tldw_chatbook/app.py`, `Tests/UI/test_console_projection_reads_off_loop.py`, `Tests/UI/test_app_instance_warning.py`, `Tests/Backup_Recovery/test_console_config_sync_lifetime.py`, `Tests/Architecture/test_module_size_ratchet.py`, and `backlog/docs/lessons-testing-evidence.md` (new entry).
 <!-- SECTION:NOTES:END -->

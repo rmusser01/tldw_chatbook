@@ -330,4 +330,3 @@ async def test_every_staggered_body_runs_after_the_ui_is_ready(request):
     )
     early = sorted(key for key, ready in observed.items() if not ready)
     assert not early, f"staggered boot workers that ran before _ui_ready: {early}"
-
