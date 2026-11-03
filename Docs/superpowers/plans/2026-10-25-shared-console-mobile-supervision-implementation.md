@@ -12,7 +12,7 @@
 
 **Decision:** [ADR-244](../../../backlog/decisions/244-shared-console-ownership-and-mobile-supervision.md)
 
-**Planning task:** [TASK-36729](../../../backlog/tasks/task-36729%20-%20Plan-shared-served-Console-ownership-and-mobile-supervision-implementation.md)
+**Planning task:** [TASK-38683](../../../backlog/tasks/task-38683%20-%20Plan-shared-served-Console-ownership-and-mobile-supervision-implementation.md)
 
 **Original planning baseline:** `8dbf79077b10d5671dabd4f9cbe06ea9c2ee8c15` recorded the approved specification and overflow correction before implementation. Later integration and qualification checkpoints are recorded below.
 

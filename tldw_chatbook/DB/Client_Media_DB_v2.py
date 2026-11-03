@@ -51,6 +51,12 @@ from loguru import logger
 from ..Metrics.metrics_logger import log_counter, log_histogram
 from ..STT.persistence import dump_transcription_provenance_document
 from .keyword_store import KeywordStore, KeywordStoreSpec
+from .media_db_errors import (
+    DatabaseError,
+    SchemaError,
+    InputError,
+    ConflictError,
+)
 from .library_search_engine import LibrarySearchSpec, library_search_page
 from .sql_validation import (
     validate_column_name,
@@ -74,7 +80,6 @@ from tldw_chatbook.Utils.fts5_match_forms import (
     quote_fts5_prefix,
     quote_fts5_token,
 )
-from tldw_chatbook.DB.store_errors import StoreConflictError, StoreInputError, StoreSchemaError
 #
 ########################################################################################################################
 #
@@ -82,49 +87,6 @@ from tldw_chatbook.DB.store_errors import StoreConflictError, StoreInputError, S
 
 
 # --- Custom Exceptions ---
-
-
-class DatabaseError(Exception):
-    """Base exception for database related errors."""
-
-    pass
-
-
-class SchemaError(DatabaseError, StoreSchemaError):
-    """Exception for schema version mismatches or migration failures."""
-
-    pass
-
-
-class InputError(StoreInputError, ValueError):
-    """Custom exception for input validation errors."""
-
-    pass
-
-
-class ConflictError(DatabaseError, StoreConflictError):
-    """Indicates a conflict due to concurrent modification (version mismatch)."""
-
-    def __init__(
-        self,
-        message="Conflict detected: Record modified concurrently.",
-        entity=None,
-        identifier=None,
-    ):
-        super().__init__(message)
-        self.entity = entity
-        self.identifier = identifier  # Can be id or uuid
-
-    def __str__(self):
-        base = super().__str__()
-        details = []
-        if self.entity:
-            details.append(f"Entity: {self.entity}")
-        if self.identifier:
-            details.append(f"ID: {self.identifier}")
-        return f"{base} ({', '.join(details)})" if details else base
-
-
 # --- Custom JSON Encoder for DateTime ---
 class DateTimeEncoder(json.JSONEncoder):
     """Custom JSON encoder that handles datetime objects."""

@@ -39,6 +39,8 @@ from tldw_chatbook.Utils.path_validation import fold_path_part
 from tldw_chatbook.Utils.sensitive_paths import find_root_binding_conflict
 
 from .models import (
+    _membership_from_row,
+    _quick_note_receipt_from_row,
     DEFAULT_WORKSPACE_DESCRIPTION,
     DEFAULT_WORKSPACE_ID,
     DEFAULT_WORKSPACE_NAME,
@@ -3885,45 +3887,6 @@ def _workspace_from_row(row: sqlite3.Row) -> WorkspaceRecord:
         archive_revision=row["archive_revision"],
         assistant_defaults=_assistant_defaults_from_json(row["assistant_defaults"]),
         assistant_defaults_explicit_none=bool(row["assistant_defaults_explicit_none"]),
-        created_at=row["created_at"],
-        updated_at=row["updated_at"],
-    )
-
-
-def _membership_from_row(row: sqlite3.Row) -> WorkspaceMembership:
-    return WorkspaceMembership(
-        membership_id=row["membership_id"],
-        workspace_id=row["workspace_id"],
-        item_type=row["item_type"],
-        item_id=row["item_id"],
-        role=row["role"],
-        transfer_policy=WorkspaceTransferPolicy(row["transfer_policy"]),
-        title=row["title"],
-        created_at=row["created_at"],
-    )
-
-
-def _quick_note_receipt_from_row(row: sqlite3.Row) -> ResearchQuickNoteReceipt:
-    return ResearchQuickNoteReceipt(
-        receipt_id=row["receipt_id"],
-        data_source=row["data_source"],
-        server_profile_id=row["server_profile_id"],
-        principal_id=row["principal_id"],
-        workspace_id=row["workspace_id"],
-        local_user_id=row["local_user_id"],
-        operation_token=row["operation_token"],
-        operation_kind=row["operation_kind"],
-        canonical_note_id=row["canonical_note_id"],
-        owner_proof=row["owner_proof"],
-        lease_token=row["lease_token"],
-        lease_expires_at=row["lease_expires_at"],
-        abandon_after=row["abandon_after"],
-        expected_version=row["expected_version"],
-        state=row["state"],
-        revision=int(row["revision"]),
-        failure_count=int(row["failure_count"]),
-        next_retry_at=row["next_retry_at"],
-        blocked_reason_code=row["blocked_reason_code"],
         created_at=row["created_at"],
         updated_at=row["updated_at"],
     )

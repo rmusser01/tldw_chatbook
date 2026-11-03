@@ -25,6 +25,7 @@ from tldw_chatbook.Utils.platform_files import os
 from . import bootstrap, control_records
 from .admission import Admission, AdmissionCancelled, _local
 from .control_records import UNBOUND_NAMESPACE, admission_authority
+from .limits import _RAW_RECOVERY_LIMITS
 from .profile_paths import effective_config_path, lexical_path
 from .qualification import qualified_for
 
@@ -547,7 +548,9 @@ class _Hold:
         # evidence, discarded with this hold. Guarded by _lock.
         self.evidence: dict[str, _Evidence] = {}
         self.path_evidence: OrderedDict[tuple, _Evidence] = OrderedDict()
-        self.derived_evidence: OrderedDict[tuple, tuple[_Evidence, object]] = OrderedDict()
+        self.derived_evidence: OrderedDict[tuple, tuple[_Evidence, object]] = (
+            OrderedDict()
+        )
         self.thread = threading.Thread(
             target=self._run,
             args=(authority,),
@@ -1091,7 +1094,10 @@ def _mount_read_only(path: Path) -> bool:
 def _selected_paths(path, related_paths) -> tuple[Path, ...]:
     return tuple(
         selected
-        for selected in ((lexical_path(path) if path is not None else None), *related_paths)
+        for selected in (
+            (lexical_path(path) if path is not None else None),
+            *related_paths,
+        )
         if selected is not None
     )
 
@@ -1589,7 +1595,9 @@ def _acquire_storage(
             # each owner path to its verified scope. Native unavailability is not a
             # conflict with an unrelated operation and never qualifies maintenance.
             _scope(
-                root, selector, lexical_path(path) if path is not None else None,
+                root,
+                selector,
+                lexical_path(path) if path is not None else None,
                 related_paths=related_paths,
             )
             allowed, reason = bootstrap.startup_permission(selector, root)
@@ -1652,8 +1660,14 @@ def _acquire_storage(
                 raise bootstrap.RecoveryRequired("storage_scope_changed")
         if before is not None:
             _note_evidence(
-                hold, root, selector, path, related_paths, names,
-                attempt.scope_roots, before,
+                hold,
+                root,
+                selector,
+                path,
+                related_paths,
+                names,
+                attempt.scope_roots,
+                before,
             )
         return token
     except BaseException:
@@ -1843,46 +1857,20 @@ class _CaptureScope:
 
     @staticmethod
     def _sqlite_identity(info):
-        return (
-            info.st_dev,
-            info.st_ino,
-            info.st_mode,
-            info.st_nlink,
-            info.st_uid,
-            info.st_size,
-            info.st_mtime_ns,
-            info.st_ctime_ns,
+        from . import storage_sqlite_copies
+
+        return storage_sqlite_copies._sqlite_identity(
+            info,
         )
 
     def _sqlite_state(self, source):
         self.check()
-        resources = _CaptureFileDescriptors(self)
-        try:
-            with resources.pinned_directory(source.parent) as parent:
-                parent_info = os.fstat(parent)
-                result = []
-                for suffix in ("", "-wal", "-shm", "-journal"):
-                    try:
-                        info = os.stat(
-                            source.name + suffix, dir_fd=parent, follow_symlinks=False
-                        )
-                    except FileNotFoundError:
-                        result.append(None)
-                        continue
-                    if (
-                        not stat.S_ISREG(info.st_mode)
-                        or info.st_nlink != 1
-                        or info.st_uid != os.geteuid()
-                    ):
-                        raise ValueError("capture_sqlite_source_changed")
-                    result.append(self._sqlite_identity(info))
-                if result[0] is None or (source, *result[0][:2]) not in self.sources:
-                    raise ValueError("capture_sqlite_source_changed")
-                if result[3] is not None and result[3][5]:
-                    raise ValueError("capture_sqlite_hot_journal")
-                return (self._sqlite_identity(parent_info), tuple(result))
-        finally:
-            resources.retire()
+        from . import storage_sqlite_copies
+
+        return storage_sqlite_copies._capture_sqlite_state(
+            self,
+            source,
+        )
 
     def verify_sqlite_sources(self):
         for source, (before, target) in self.sqlite_snapshots.items():
@@ -1894,30 +1882,12 @@ class _CaptureScope:
     def verify_sqlite_target(self, target):
         """Check materialized authority, excluding SQLite's private SHM work."""
         self.check()
-        expected = self.sqlite_targets.get(target)
-        if expected is None:
-            return
-        root = os.stat(self.sqlite_directory, follow_symlinks=False)
-        if (root.st_dev, root.st_ino) != self.sqlite_directory_identity:
-            raise ValueError("capture_sqlite_staging_changed")
-        resources = _CaptureFileDescriptors(self)
-        try:
-            with resources.pinned_directory(target.parent) as parent:
-                info = os.fstat(parent)
-                if (info.st_dev, info.st_ino) != expected[0]:
-                    raise ValueError("capture_sqlite_target_changed")
-                for suffix, identity in zip(("", "-wal"), expected[1], strict=True):
-                    try:
-                        info = os.stat(
-                            target.name + suffix, dir_fd=parent, follow_symlinks=False
-                        )
-                    except FileNotFoundError:
-                        info = None
-                    actual = None if info is None else self._sqlite_identity(info)
-                    if actual != identity:
-                        raise ValueError("capture_sqlite_target_changed")
-        finally:
-            resources.retire()
+        from . import storage_sqlite_copies
+
+        return storage_sqlite_copies._verify_sqlite_target(
+            self,
+            target,
+        )
 
     def sqlite_target(self, owner_id, source, progress_guard=None):
         """Materialize only a native-qualified main/WAL set, never live SHM."""
@@ -1928,146 +1898,15 @@ class _CaptureScope:
         self.check()
         if not SQLITE_OWNER_REGISTRY[owner_id].recovery_capture_allowed:
             raise bootstrap.RecoveryRequired("capture_owner_not_registered")
-        source = lexical_path(source)
-        if self.staging in source.parents:
-            self.verify_sqlite_target(source)
-            return None
-        if progress_guard is not None:
-            progress_guard()
-        before = self._sqlite_state(source)
-        if source in self.sqlite_snapshots:
-            original, target = self.sqlite_snapshots[source]
-            if original != before:
-                raise ValueError("capture_sqlite_source_changed")
-            if target is None:
-                raise ValueError("capture_sqlite_copy_incomplete")
-            self.verify_sqlite_target(target)
-            return target
-        required = sum(info[5] for info in before[1][:2] if info is not None)
-        if (
-            any(
-                info is not None and info[5] > self.limits.member_bytes
-                for info in before[1][:2]
-            )
-            or self.copied_bytes + required > self.byte_budget
-        ):
-            raise ValueError("capture_sqlite_limit")
-        require_capacity({self.staging: required * 2})
-        resources = _CaptureFileDescriptors(self)
-        try:
-            if self.sqlite_directory is None:
-                from uuid import uuid4
+        from . import storage_sqlite_copies
 
-                name = "sqlite-sources-" + uuid4().hex
-                with resources.pinned_directory(self.staging) as parent:
-                    info = os.fstat(parent)
-                    if (info.st_dev, info.st_ino) != (
-                        self.staging_identity.st_dev,
-                        self.staging_identity.st_ino,
-                    ):
-                        raise ValueError("capture_sqlite_staging_changed")
-                    os.mkdir(name, mode=0o700, dir_fd=parent)
-                    self.sqlite_directory = self.staging / name
-                    created = os.stat(name, dir_fd=parent, follow_symlinks=False)
-                    self.sqlite_directory_identity = created.st_dev, created.st_ino
-            target_root = self.sqlite_directory / str(len(self.sqlite_snapshots))
-            with resources.pinned_directory(self.sqlite_directory) as parent:
-                info = os.fstat(parent)
-                if (info.st_dev, info.st_ino) != self.sqlite_directory_identity:
-                    raise ValueError("capture_sqlite_staging_changed")
-                os.mkdir(target_root.name, mode=0o700, dir_fd=parent)
-                created = os.stat(
-                    target_root.name, dir_fd=parent, follow_symlinks=False
-                )
-                target_identity = created.st_dev, created.st_ino
-            target = target_root / "source.sqlite3"
-            # Failed attempts remain unqualified until scope retirement.
-            self.sqlite_snapshots[source] = before, None
-            private_identities = [None, None]
-            wal_header = False
-            main_header = bytearray()
-            with resources.pinned_directory(source.parent) as parent:
-                if self._sqlite_identity(os.fstat(parent)) != before[0]:
-                    raise ValueError("capture_sqlite_source_changed")
-                for suffix, expected in zip(("", "-wal"), before[1][:2], strict=True):
-                    if expected is None and not (suffix == "-wal" and wal_header):
-                        continue
-                    if expected is not None:
-                        descriptor = os.open(
-                            source.name + suffix,
-                            os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK,
-                            dir_fd=parent,
-                        )
-                        resources.fds.append(descriptor)
-                        if self._sqlite_identity(os.fstat(descriptor)) != expected:
-                            raise ValueError("capture_sqlite_source_changed")
-                    with resources.pinned_directory(target_root) as output_parent:
-                        info = os.fstat(output_parent)
-                        if (info.st_dev, info.st_ino) != target_identity:
-                            raise ValueError("capture_sqlite_staging_changed")
-                        output = os.open(
-                            target.name + suffix,
-                            os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW,
-                            0o600,
-                            dir_fd=output_parent,
-                        )
-                        resources.fds.append(output)
-                    count = 0
-                    while expected is not None:
-                        if progress_guard is not None:
-                            progress_guard()
-                        self.check()
-                        chunk = os.read(
-                            descriptor, min(1024**2, expected[5] - count + 1)
-                        )
-                        if not chunk:
-                            break
-                        if not suffix and len(main_header) < 20:
-                            # WAL-header databases need an empty WAL even when
-                            # the original was cleanly checkpointed. Create and
-                            # bind it now; never adopt a later replacement.
-                            main_header.extend(chunk[: 20 - len(main_header)])
-                            wal_header = (
-                                main_header[:16] == b"SQLite format 3\x00"
-                                and main_header[18:20] == b"\x02\x02"
-                            )
-                        count += len(chunk)
-                        if count > expected[5]:
-                            raise ValueError("capture_sqlite_source_changed")
-                        view = memoryview(chunk)
-                        while view:
-                            written = os.write(output, view)
-                            if not written:
-                                raise OSError("capture_sqlite_write_failed")
-                            view = view[written:]
-                    if expected is not None and (
-                        count != expected[5]
-                        or self._sqlite_identity(os.fstat(descriptor)) != expected
-                    ):
-                        raise ValueError("capture_sqlite_source_changed")
-                    current_parent = os.stat(target_root, follow_symlinks=False)
-                    current = os.stat(
-                        target_root / (target.name + suffix), follow_symlinks=False
-                    )
-                    held = os.fstat(output)
-                    if (
-                        current_parent.st_dev,
-                        current_parent.st_ino,
-                    ) != target_identity or (current.st_dev, current.st_ino) != (
-                        held.st_dev,
-                        held.st_ino,
-                    ):
-                        raise ValueError("capture_sqlite_staging_changed")
-                    private_identities[bool(suffix)] = self._sqlite_identity(held)
-        finally:
-            try:
-                self.verify_sqlite_sources()
-            finally:
-                resources.retire()
-        self.copied_bytes += required
-        self.sqlite_targets[target] = target_identity, tuple(private_identities)
-        self.sqlite_snapshots[source] = before, target
-        return target
+        return storage_sqlite_copies._capture_sqlite_target(
+            self,
+            owner_id,
+            source,
+            progress_guard,
+            require_capacity=require_capacity,
+        )
 
 
 def _capture_sqlite_target(owner_id, source):
@@ -2218,38 +2057,12 @@ class _PreviewScope:
         return self.copy_buffer
 
     def _source_state(self, source):
-        if self.read_budget is not None:
-            from .mobile_preview_budget import path_cost
+        from . import storage_sqlite_copies
 
-            self.read_budget.reserve(2048 + path_cost(source, copies=3))
-        result = []
-        for suffix in ("", "-wal", "-journal"):
-            path = source.with_name(source.name + suffix)
-            try:
-                info = os.stat(path, follow_symlinks=False)
-            except FileNotFoundError:
-                result.append(None)
-                continue
-            if (
-                not stat.S_ISREG(info.st_mode)
-                or info.st_nlink != 1
-                or info.st_uid != os.geteuid()
-            ):
-                raise ValueError("preview_sqlite_unavailable")
-            result.append(
-                (
-                    info.st_dev,
-                    info.st_ino,
-                    info.st_size,
-                    info.st_mtime_ns,
-                    info.st_ctime_ns,
-                )
-            )
-        if result[0] is None or result[2] is not None and result[2][2]:
-            # A hot rollback journal needs recovery; preview never runs that on
-            # the source or guesses a committed image from an incomplete copy.
-            raise ValueError("preview_sqlite_unavailable")
-        return tuple(result)
+        return storage_sqlite_copies._preview_source_state(
+            self,
+            source,
+        )
 
     def sqlite_target(self, source):
         """Copy a stable main/WAL set once; never open live SQLite to back it up."""
@@ -2260,129 +2073,17 @@ class _PreviewScope:
         from .space import require_capacity
 
         self.check()
-        if self.read_budget is not None:
-            from .mobile_preview_budget import path_cost
+        from . import storage_sqlite_copies
 
-            self.read_budget.reserve(4096 + path_cost(source, copies=5))
-        source = lexical_path(source)
-        if source in self.snapshots:
-            previous, target = self.snapshots[source]
-            if self.native_scope is not None and self._source_state(source) != previous:
-                raise ValueError("preview_sqlite_changed")
-            # Owners sharing this source inspect one verified image per preview.
-            # Ordinary live commits cannot invalidate that private image; a
-            # replaced or unsafe source path still cannot reuse its identity.
-            with bootstrap.pinned_directory(
-                source.parent,
-                _close=self.custody.close_descriptor if self.custody else None,
-            ) as parent:
-                current = os.stat(source.name, dir_fd=parent, follow_symlinks=False)
-                if (
-                    not stat.S_ISREG(current.st_mode)
-                    or current.st_nlink != 1
-                    or current.st_uid != os.geteuid()
-                    or (current.st_dev, current.st_ino) != previous[0][:2]
-                ):
-                    raise ValueError("preview_sqlite_changed")
-            return target
-        before = self._source_state(source)
-        required = sum(state[2] for state in before[:2] if state is not None)
-        if (
-            any(
-                state is not None and state[2] > self.limits.member_bytes
-                for state in before[:2]
-            )
-            or self.copied_bytes + required > self.byte_budget
-        ):
-            raise ValueError("preview_sqlite_limit")
-        temporary_parent = Path(tempfile.gettempdir()).resolve()
-        require_capacity({temporary_parent: required * 2})
-        if self.directory is None:
-            self.directory = Path(
-                tempfile.mkdtemp(prefix="chatbook-preview-", dir=temporary_parent)
-            )
-        target_root = self.directory / str(len(self.snapshots))
-        create_private_directory(target_root)
-        target = target_root / "source.sqlite3"
-        try:
-            with bootstrap.pinned_directory(
-                source.parent,
-                _close=self.custody.close_descriptor if self.custody else None,
-            ) as parent:
-                for suffix, expected in zip(("", "-wal"), before[:2], strict=True):
-                    if expected is None:
-                        continue
-                    descriptor = os.open(
-                        source.name + suffix,
-                        os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK,
-                        dir_fd=parent,
-                    )
-                    if self.custody is not None:
-                        self.custody.fds.append(descriptor)
-                    try:
-                        opened = os.fstat(descriptor)
-                        if (
-                            opened.st_dev,
-                            opened.st_ino,
-                            opened.st_size,
-                            opened.st_mtime_ns,
-                            opened.st_ctime_ns,
-                        ) != expected:
-                            raise ValueError("preview_sqlite_changed")
-                        with create_private_file(
-                            target.with_name(target.name + suffix),
-                            _custody=self.custody,
-                        ) as output:
-                            if self.read_budget is not None:
-                                self._buffer()
-                            count = 0
-                            while True:
-                                size = min(1024**2, expected[2] - count + 1)
-                                if self.read_budget is not None:
-                                    self.read_budget.reserve(768)
-                                    view = self.copy_buffer[: min(65536, size)]
-                                    size = os.readv(descriptor, [view])
-                                    chunk = view[:size]
-                                else:
-                                    chunk = os.read(descriptor, size)
-                                if not chunk:
-                                    break
-                                count += len(chunk)
-                                if count > expected[2]:
-                                    raise ValueError("preview_sqlite_changed")
-                                view = memoryview(chunk)
-                                while view:
-                                    if self.read_budget is not None:
-                                        self.read_budget.reserve(256)
-                                    written = os.write(output, view)
-                                    if not written:
-                                        raise OSError("preview_sqlite_write_failed")
-                                    view = view[written:]
-                            info = os.fstat(descriptor)
-                            observed = (
-                                info.st_dev,
-                                info.st_ino,
-                                info.st_size,
-                                info.st_mtime_ns,
-                                info.st_ctime_ns,
-                            )
-                            if count != expected[2] or observed != expected:
-                                raise ValueError("preview_sqlite_changed")
-                    finally:
-                        if self.custody is None:
-                            os.close(descriptor)
-                        else:
-                            from .native_files import _close_owned
-
-                            _close_owned(descriptor, self.custody)
-            if self._source_state(source) != before:
-                raise ValueError("preview_sqlite_changed")
-        except BaseException:
-            shutil.rmtree(target_root)
-            raise
-        self.copied_bytes += required
-        self.snapshots[source] = before, target
-        return target
+        return storage_sqlite_copies._preview_sqlite_target(
+            self,
+            source,
+            shutil=shutil,
+            tempfile=tempfile,
+            create_private_directory=create_private_directory,
+            create_private_file=create_private_file,
+            require_capacity=require_capacity,
+        )
 
     def retire(self):
         import shutil
@@ -3046,9 +2747,9 @@ class MaintenanceSession:
             if item.status != "included" or item.path is None:
                 continue
             path = lexical_path(item.path)
-            if not _contains_capture_path(self._roots, path) and not _config_capture_item(
-                item, current, self._config_capture_sources
-            ):
+            if not _contains_capture_path(
+                self._roots, path
+            ) and not _config_capture_item(item, current, self._config_capture_sources):
                 raise bootstrap.RecoveryRequired("capture_source_outside_scope")
             info = os.stat(path)
             if not stat.S_ISREG(info.st_mode):
@@ -3078,7 +2779,10 @@ class MaintenanceSession:
             if type(limits) is not ArchiveLimits:
                 raise TypeError("invalid_preview_limits")
             byte_budget = limits.expanded_bytes if byte_budget is None else byte_budget
-            if type(byte_budget) is not int or not 0 < byte_budget <= limits.expanded_bytes:
+            if (
+                type(byte_budget) is not int
+                or not 0 < byte_budget <= limits.expanded_bytes
+            ):
                 raise ValueError("invalid_preview_budget")
         elif limits is not None or byte_budget is not None:
             raise ValueError("invalid_discovery_copy_options")
@@ -3867,14 +3571,16 @@ class _CaptureFileDescriptors:
             self.scope.resources.remove(self)
 
 
-def _check_capture_file_identity(scope, selected, info, *, source_only=False, owner_id=None):
+def _check_capture_file_identity(
+    scope, selected, info, *, source_only=False, owner_id=None
+):
     scope.check()
     if not stat.S_ISREG(info.st_mode) or info.st_nlink != 1:
         raise bootstrap.RecoveryRequired("capture_file_not_regular")
     if type(scope) is _DiscoveryScope:
-        if not _contains_capture_path(scope.session._roots, selected) and not _config_capture_file(
-            scope.config_sources, selected, owner_id, info
-        ):
+        if not _contains_capture_path(
+            scope.session._roots, selected
+        ) and not _config_capture_file(scope.config_sources, selected, owner_id, info):
             raise bootstrap.RecoveryRequired("capture_source_outside_scope")
         return
     if type(scope) is _PreviewScope:
@@ -3891,53 +3597,6 @@ def _check_capture_file_identity(scope, selected, info, *, source_only=False, ow
 
 
 # Explicit installed owners; identifiers grant no path or maintenance authority.
-_RAW_RECOVERY_LIMITS = {
-    "research.paste_staging": 64 * 1024,
-    "collections.archives": 1,
-    "rag.definitions": 16 * 1024**2,
-    "rag.projections": 256 * 1024**3,
-    "recovered.media": 512 * 1024**2,
-    "generation.assets": 256 * 1024**3,
-    "diagnostics.logs": 256 * 1024**3,
-    "tokenizers.custom": 256 * 1024**3,
-    "skills": 256 * 1024**3,
-    "persona.assets": 256 * 1024**3,
-    "persona.visual_identity": 256 * 1024**3,
-    "persona.visual_identity_builtin": 256 * 1024**3,
-    "tts.voices": 256 * 1024**3,
-    "models.artifacts": 256 * 1024**3,
-    "config": 16 * 1024**2,
-    "config.history": 16 * 1024**2,
-    "personas": 256 * 1024**3,
-    "chat.dictionary_history": 256 * 1024**3,
-    "chat.rag_context": 256 * 1024**3,
-    "chat.grammars": 256 * 1024**3,
-    "feedback": 256 * 1024**3,
-    "audio.history": 256 * 1024**3,
-    "chat.prompt_history": 256 * 1024**3,
-    "ui.state": 256 * 1024**3,
-    "ui.emoji_recents": 256 * 1024**3,
-    "ui.themes": 256 * 1024**3,
-    "chatbooks.registry": 256 * 1024**3,
-    "chatbooks.archives": 256 * 1024**3,
-    "chat.dictionaries": 256 * 1024**3,
-    "chunking.templates": 256 * 1024**3,
-    "notes.templates": 256 * 1024**3,
-    "chat.prompts": 256 * 1024**3,
-    "generation.styles": 256 * 1024**3,
-    "external.files": 256 * 1024**3,
-    "eval.definitions": 1024**4,
-    "mcp.local": 16 * 1024**2,
-    "mcp.targets": 16 * 1024**2,
-    "mcp.context": 16 * 1024**2,
-    "mcp.permissions": 16 * 1024**2,
-    "mcp.history": 256 * 1024**3,
-    "runtime.source_state": 16 * 1024**2,
-    "tamagotchi.config": 16 * 1024**2,
-    "workspaces.change_tracking": 256 * 1024**3,
-    "agents.history": 256 * 1024**3,
-    "subscriptions.assets": 256 * 1024**3,
-}
 
 
 def _recovery_file_limit(owner_id: str, max_bytes: int) -> None:

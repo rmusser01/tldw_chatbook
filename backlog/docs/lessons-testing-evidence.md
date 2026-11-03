@@ -24932,3 +24932,24 @@ PR3345 epochs148/149 (2026-11-02) failed at different fleet stages;149 recorded 
 ### A prepared heartbeat needs its receive loop
 
 PR3345 epoch155 (2026-11-02) held one native shared child start for25 seconds under the existing45-second test bound. A real client received Ping and sent Pong, yet closed1006 before startup released: `prepare` had armed the15/7.5-second heartbeat while the only receiver was still behind awaited startup. Validate the handshake before child effects, finish startup and revalidate native auth/host before upgrade.156 passed the same test plus native malformed/auth/shutdown/cancellation controls without raising timeouts. This establishes that ordering defect; it does not retroactively identify the unobserved close causes in148/153, and diagnostic154's pass remains no reproduction.
+
+
+### A suspended Console can keep replaying FULL presentation
+
+PR3345's GGUF keyboard CI hit its existing 60-second limit. Diagnostic 163 on
+2026-11-02 passed only under its already-running 300-second local limit: the
+child body took 202.36 seconds, with repeated `console_sync` churn while Models
+was visible, before both screens unmounted. That diagnostic is not a CI pass.
+
+Native regression 167 held only one original FULL at its preparation return,
+suspended the actual Console, and proved that completion admitted another hidden
+FULL. Presentation-only deferral then passed 171: dirty work survived, the same
+runtime/store remained attached, and real resume displayed the newest draft with
+one reconciliation completion. Keep app-owned execution and native cleanup live;
+quiesce disposable presentation rather than cropping the navigation fixture.
+
+Setup failures remain separate evidence: 165's broad read observer caught another
+producer; 169's one-shot refresh was legitimately coalesced. The final fixture
+retries real admission within its original five seconds, yielding at the existing
+0.05-second polling cadence. Strict 60-second GGUF and tour qualification were
+still pending when this lesson was recorded.

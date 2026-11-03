@@ -2,7 +2,7 @@
 
 Status: Accepted 2026-10-25 (design only; written review and corrections complete)
 Date: 2026-10-25
-Related Task: [TASK-36728](../tasks/task-36728%20-%20Design-shared-Console-ownership-and-mobile-agent-supervision.md)
+Related Task: [TASK-38682](../tasks/task-38682%20-%20Design-shared-Console-ownership-and-mobile-agent-supervision.md)
 Spec: [Shared Console ownership and mobile supervision](../../Docs/superpowers/specs/2026-10-25-shared-console-mobile-supervision-design.md)
 Plan: [Shared Console mobile supervision implementation](../../Docs/superpowers/plans/2026-10-25-shared-console-mobile-supervision-implementation.md)
 Supersedes: [ADR-234](234-served-mobile-companion-surface.md), its separate mobile execution/storage contract

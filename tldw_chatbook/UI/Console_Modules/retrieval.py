@@ -24,11 +24,6 @@ from ...Chat.rag_scope import (
     read_conversation_scope,
     write_conversation_scope,
 )
-from ...Chat.scope_picker_listers import (
-    build_keyword_tag_lister,
-    build_media_source_lister,
-    build_notes_source_lister,
-)
 from ...Event_Handlers.Chat_Events.chat_rag_events import (
     capture_console_staged_evidence_for_chat,
     resolve_effective_scope_for_chat,
@@ -322,6 +317,12 @@ class ConsoleRetrievalController:
 
     def _console_scope_picker_listers(self) -> tuple[Any, Any, Any]:
         """Build the real media, notes, and keyword listers."""
+        from .retrieval import (
+            build_keyword_tag_lister,
+            build_media_source_lister,
+            build_notes_source_lister,
+        )
+
         user_id = getattr(self.app_instance, "notes_user_id", None) or "default_user"
         return (
             build_media_source_lister(self.app_instance),
@@ -742,3 +743,15 @@ class ConsoleRetrievalController:
                 action_label="Resolve Library search setup",
             )
         )
+
+
+def __getattr__(name: str):
+    if name in {
+        "build_keyword_tag_lister",
+        "build_media_source_lister",
+        "build_notes_source_lister",
+    }:
+        from ...Chat import scope_picker_listers
+
+        return getattr(scope_picker_listers, name)
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")

@@ -1102,6 +1102,7 @@ def _canvas_schema_access(connection, schema, restrictions=None):
         CHACHANOTES_V84_SCHEMAS,
         CHACHANOTES_V85_SCHEMAS,
         CHACHANOTES_V86_SCHEMAS,
+        CHACHANOTES_V87_SCHEMAS,
         CORE_SCHEMAS,
     )
 
@@ -1129,6 +1130,7 @@ def _canvas_schema_access(connection, schema, restrictions=None):
         *CHACHANOTES_V84_SCHEMAS,
         *CHACHANOTES_V85_SCHEMAS,
         *CHACHANOTES_V86_SCHEMAS,
+        *CHACHANOTES_V87_SCHEMAS,
         *(sql for _, sql in _SUBSCRIPTIONS_SCHEMA),
     )
     if schema not in frozen:
@@ -1406,6 +1408,7 @@ def _validate_candidate(
                         CHACHANOTES_V83_SCHEMAS,
                         CHACHANOTES_V84_SCHEMAS,
                         CHACHANOTES_V85_SCHEMAS,
+                        CHACHANOTES_V86_SCHEMAS,
                     )
 
                     actual_sql = tuple(
@@ -1436,6 +1439,8 @@ def _validate_candidate(
                         and actual_sql in CHACHANOTES_V84_SCHEMAS
                         or version == 85
                         and actual_sql in CHACHANOTES_V85_SCHEMAS
+                        or version == 86
+                        and actual_sql in CHACHANOTES_V86_SCHEMAS
                     ):
                         return (("unsupported_schema_migration",), None)
                     shipped_checkpoint = actual_sql in CHACHANOTES_V76_SHIPPED_SCHEMAS

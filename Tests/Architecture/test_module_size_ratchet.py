@@ -218,7 +218,7 @@ _BUDGETS: dict[str, int] = {
     # PR3173 integration, 2026-10-31: explicit user size waiver; exact measured tree.
     # PR3295, 2026-10-31: user size waiver; exact integrated measurement.
     # PR3312 integration: explicit user size waiver; measured 2026-11-01.
-    "tldw_chatbook/Chat/console_chat_controller.py": 29173,
+    "tldw_chatbook/Chat/console_chat_controller.py": 28943,
     # ADR-220: existing interrupt and compaction owners gain explicit coordination.
     "tldw_chatbook/Chat/console_interrupt_rounds.py": 6303,
     # PR3295, 2026-10-31: explicit user size waiver; measured integrated owner.
@@ -898,7 +898,7 @@ _BUDGETS: dict[str, int] = {
     # live row count (dead sequences inside the range count too).
     # 2026-10-31, PR3298 user size waiver: +31 to select the completed proof
     # by exact descriptors and its permitted start before full validation.
-    "tldw_chatbook/Chat/console_trace_service.py": 6587,
+    "tldw_chatbook/Chat/console_trace_service.py": 6494,
     "tldw_chatbook/Widgets/Settings_Widgets/speech_tts_settings_panel.py": 6108,
     "tldw_chatbook/Notes/notes_sync_executor.py": 6007,
     "tldw_chatbook/MCP/unified_control_plane_service.py": 6054,

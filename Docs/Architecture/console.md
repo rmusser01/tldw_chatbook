@@ -134,6 +134,15 @@ Top-to-bottom inside `#console-shell`: a `DestinationHeader` with speech control
 
 Multiple chats are store-level `ConsoleChatSession`s, one per tab on the session surface's tab strip. Sessions bind to workspaces via `session.workspace_id` (default the global workspace). Streamed transcript and background-run activity are projected by `_sync_native_console_chat_ui`, including its `set_interval(0.2 s)` poll; the timer deliberately does not stop while any session still has an in-flight run. Session switches call `UI/Console_Modules/session.py::_bind_composer_to_active_session()` before the first await: they save the outgoing draft, load the selected chat's draft, and update the active-tab highlight and title immediately. The shared tab/switcher activation path also focuses the composer before awaiting; background switches preserve keyboard focus.
 
+New FULL presentation passes defer while `ChatScreen.on_screen_suspend` marks
+the view suspended. An already admitted refresh retains its original checks and
+retirement; subsequent requests keep `_console_sync_requested` and any whole-sync
+coalesced replay pending. The existing attachment reconciliation and coalescer
+consume that work on real resume using the latest store state. This is a
+presentation boundary: app-owned turns, approvals, detached supervision and native
+shutdown retain their existing owners (`_sync_native_console_chat_ui`,
+`_run_coalesced_control_bar_sync`, and `on_screen_resume`).
+
 `ConsoleSessionController._sync_console_session_draft` treats an already closed
 outgoing owner's optional snapshot as absent and continues binding the active
 chat. Current-active snapshot reads retain their failure behavior; surviving
@@ -566,7 +575,8 @@ full literal body, rather than embedding bodies in fingerprint diagnostics.
 The unreleased v86 marker-preservation trigger permits only the exact recorded
 same-owner predecessor/successor transition. It continues to preserve valid markers
 against arbitrary metadata writes. The exact recovery schema catalog changes with
-that trigger; the schema version is 86 on current dev.
+that trigger; the native mix-in step remains 86, followed by shared Console
+consolidation at 87 (ADR-244).
 
 Context Next Send uses the same literal composition and source fences with
 `capture(publish_facts=False)`: it does not publish last-used/reconciliation facts,

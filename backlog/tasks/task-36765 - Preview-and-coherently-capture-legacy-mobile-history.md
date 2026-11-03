@@ -4,7 +4,7 @@ title: Preview and coherently capture legacy mobile history
 status: Done
 created_date: 2026-10-25 17:39
 dependencies:
-- TASK-36729
+- TASK-38683
 labels:
 - console
 - web-server

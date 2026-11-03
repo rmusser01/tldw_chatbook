@@ -39,7 +39,6 @@ if TYPE_CHECKING:
 from loguru import logger
 
 from tldw_chatbook.Chat.attachment_core import image_url_part
-from tldw_chatbook.Chat.console_compaction_hooks import _finish_compaction_hooks
 from tldw_chatbook.Chat.console_context_policy import (
     CompactionFailureBehavior,
     ContextCarryForwardMode,
@@ -2813,9 +2812,7 @@ class ConsoleCompactionService:
         outer cancellation propagates. Returns the completion and the
         engine that produced it ("provider_native" | "local").
         """
-        from tldw_chatbook.Chat.console_provider_gateway import (
-            AuxiliaryCompletionRequest,
-        )
+        from .console_provider_gateway import AuxiliaryCompletionRequest
 
         request = AuxiliaryCompletionRequest(
             resolution=resolution,
@@ -3874,6 +3871,7 @@ class ConsoleCompactionPreflight:
                 honor_failure_latch=micro_compaction or not manual_action,
                 hooks=hooks,
             )
+            from .console_compaction_hooks import _finish_compaction_hooks
             failure = await _finish_compaction_hooks(hooks)
             if failure is not None:
                 return provider_messages, blocked(failure)

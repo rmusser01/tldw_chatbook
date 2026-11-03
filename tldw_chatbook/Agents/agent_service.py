@@ -262,6 +262,12 @@ def __getattr__(name: str):
     triggers exactly that, off the boot leg. Runtime spawn sites still
     resolve live via ``get_internal_prompt`` above.
     """
+    if name in {"_response_text", "_response_message"}:
+        from . import agent_request_execution
+
+        value = getattr(agent_request_execution, name)
+        globals()[name] = value
+        return value
     if name == "SUBAGENT_SYSTEM_PROMPT":
         from tldw_chatbook.Internal_Prompts import CATALOG
 
@@ -1708,21 +1714,6 @@ def _default_chat_call():
     from tldw_chatbook.Chat.Chat_Functions import chat_api_call
 
     return chat_api_call
-
-
-def _response_text(resp) -> str:
-    try:
-        return resp["choices"][0]["message"]["content"] or ""
-    except (KeyError, IndexError, TypeError):
-        return ""
-
-
-def _response_message(resp) -> dict:
-    try:
-        message = resp["choices"][0]["message"]
-    except (KeyError, IndexError, TypeError):
-        return {}
-    return message if isinstance(message, dict) else {}
 
 
 def budget_weighted_tokens(resp, *, provider: str, model: str) -> int | None:

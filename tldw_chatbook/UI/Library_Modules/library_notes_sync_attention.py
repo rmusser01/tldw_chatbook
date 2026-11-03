@@ -544,3 +544,67 @@ __all__ = [
     "schedule_library_notes_sync_attention",
     "signal_library_note_lasting_sync",
 ]
+
+# Type-only declaration; the defining owner stays a per-operation import.
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    import tldw_chatbook.UI.Library_Modules.library_notes_sync_controller as host
+
+
+
+def _project_root(
+    self, root: host.NotesSyncRootRuntimeSnapshot, *, runtime_status: str = "active"
+) -> host.LastingSyncRootRow:
+    """Project one runtime root, with its last refusal laid over the top.
+
+    ``runtime_status`` is the runtime-level status from the same
+    snapshot this root came out of. Only the one reassuring label is
+    rewritten when the runtime is not active -- every other per-root
+    status already says something is wrong, and rewriting ``status``
+    itself would change which controls the canvas offers (see the
+    comment below). A runtime that is still ``starting`` has not
+    finished deciding, so it reads "◌ Starting", not "⚠ Sync stopped".
+    """
+    import tldw_chatbook.UI.Library_Modules.library_notes_sync_controller as host
+
+    failure, failed_action = self._root_failures.get(root.root_id, ("", ""))
+    status, next_action = root.status, root.next_action
+    action_label = failed_action or next_action
+    # Fix round 1: the overlay owns the LABELS only. Rewriting ``status``
+    # made an offline root's row render an enabled Check and a Pause,
+    # because the canvas suppresses both by reading ``status`` -- the same
+    # defect this overlay fixes for Resume, on a sibling status.
+    if failure:
+        status_label = host.ROOT_STATUS_LABELS["needs_attention"]
+    elif runtime_status != "active" and status == "up_to_date":
+        status_label = host.ROOT_STATUS_LABELS[
+            "starting" if runtime_status == "starting" else "not_watching"
+        ]
+    elif status == "up_to_date" and not root.watching:
+        # TASK-34000.50: the same lie one level down -- the runtime is
+        # active, but THIS root's lease has no watcher (a folder held at
+        # startup and healed through Review or Recovery used to land
+        # here). ``watching`` is read live by the runtime's snapshot, so
+        # the label follows the fact, not the last publication; Check
+        # changes (``sync_now``, this status's own next action) starts
+        # the watcher.
+        status_label = host.ROOT_STATUS_LABELS["not_watching"]
+    else:
+        # TASK-32633 slice (N-03): the healthy label is dated from the
+        # publication, so "Up to date" never reads as a standing promise.
+        status_label = host.root_status_label(status, root.published_at)
+    # TASK-32451: the runtime stamps the root's folder name (or its
+    # honest fallback) on every publication; the bare fallback here is
+    # reachable only from a hand-built snapshot.
+    return host.LastingSyncRootRow(
+        root.root_id,
+        root.display_name or "Sync folder",
+        status,
+        next_action,
+        status_label,
+        host._ACTION_LABELS.get(action_label, action_label.replace("_", " ").title()),
+        root.action_id,
+        failure=failure,
+        failed_action=failed_action,
+    )

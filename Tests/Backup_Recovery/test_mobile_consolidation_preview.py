@@ -658,3 +658,55 @@ def test_typed_source_fingerprint_is_stable_but_changes_with_same_stat_result(tm
     assert observations[0].source_fingerprint != observations[1].source_fingerprint
     assert observations[0].destination.identity == observations[1].destination.identity
     assert observations[0].source_witnesses == observations[1].source_witnesses
+
+
+def test_absent_source_claims_at_untrusted_ancestors_do_not_block_backup(
+    tmp_path, monkeypatch
+):
+    from tldw_chatbook.Backup_Recovery.mobile_consolidation import (
+        _source_claim_inventory,
+        _source_claim_locations,
+    )
+    from tldw_chatbook.Backup_Recovery.profile_paths import legacy_mobile_dir
+    from tldw_chatbook.Utils.platform_files import os
+
+    shared = tmp_path / "shared"
+    shared.mkdir(mode=0o700)
+    from tldw_chatbook.Backup_Recovery.models import (
+        DISCOVERY_CONTEXT_KEY,
+        DiscoveryContext,
+    )
+
+    config = {"paths": {"data_dir": str(shared / "profile")}}
+    config[DISCOVERY_CONTEXT_KEY] = DiscoveryContext(
+        tmp_path / "config.toml", "ancestor-fixture"
+    )
+    pair = next(
+        pair
+        for pair in _source_claim_locations(legacy_mobile_dir(config))
+        if pair[0].parent == shared
+    )
+    try:
+        os.chmod(shared, 0o777)
+        inventory = {item.path: item for item in _source_claim_inventory(config)}
+        assert all(inventory[path].status == "intentionally_excluded" for path in pair)
+        pair[0].write_text("untrusted existing control")
+        inventory = {item.path: item for item in _source_claim_inventory(config)}
+        assert inventory[pair[0]].status == "unsupported"
+        pair[0].unlink()
+        pair[0].mkdir()
+        inventory = {item.path: item for item in _source_claim_inventory(config)}
+        assert inventory[pair[0]].status == "unsupported"
+        original_stat = os.stat
+
+        def denied(path, *args, **kwargs):
+            if path == pair[1]:
+                raise PermissionError("untrusted ancestor is unreadable")
+            return original_stat(path, *args, **kwargs)
+
+        with monkeypatch.context() as changes:
+            changes.setattr(os, "stat", denied)
+            inventory = {item.path: item for item in _source_claim_inventory(config)}
+            assert inventory[pair[1]].status == "unsupported"
+    finally:
+        os.chmod(shared, 0o700)

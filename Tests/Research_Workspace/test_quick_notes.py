@@ -787,6 +787,7 @@ async def test_local_delete_retry_cleans_membership_when_owner_returns_false() -
     assert registry.get_item_memberships("note", "note-1") == ()
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_local_note_round_trip_uses_real_sqlite_owners_and_cleans_membership(
     tmp_path,
@@ -973,6 +974,7 @@ async def test_local_create_receipt_recovers_after_link_failure_reopen_and_concu
         reopened_notes_db.close_connection()
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_pending_create_receipt_with_atomic_owner_row_recovers_after_reopen(
     tmp_path,

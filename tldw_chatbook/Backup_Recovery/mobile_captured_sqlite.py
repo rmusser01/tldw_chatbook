@@ -23,7 +23,7 @@ from .storage_admission import MaintenanceSession, _CaptureFileDescriptors, _loc
 
 # These are selectors within an authenticated native declaration, never grants.
 _FAMILIES = (
-    ("chat", "db.chachanotes.primary", "chat.db", (81, 82, 83, 84, 85, 86), 87),
+    ("chat", "db.chachanotes.primary", "chat.db", (81, 82, 83, 84, 85), 87),
     ("workspaces", "db.workspaces", "workspaces.db", (8, 9, 10), 11),
     ("runs", "db.agent_runs", "runs.db", (24, 25), 27),
 )
@@ -555,6 +555,11 @@ def _native_column_layouts(purpose, family, table, current, version):
         missing = ()
         if (family, table) == ("chat", "conversations") and version in (81, 82, 83, 84):
             missing = ("archived_at",)
+        elif (family, table) == (
+            "chat",
+            "console_dispatch_checkpoints",
+        ) and version <= 85:
+            missing = ("mixin_snapshot_schema_version",)
         elif (family, table) == ("workspaces", "workspace_records") and version in (
             8,
             9,

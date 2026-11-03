@@ -17,25 +17,13 @@ from enum import Enum
 from types import MappingProxyType
 from pathlib import Path
 from typing import (
-    TYPE_CHECKING,
-    Any,
-    Literal,
-    Protocol,
-    Self,
-    TypeAlias,
+    TYPE_CHECKING, Any, Iterator, Literal, Protocol, Self, TypeAlias, overload,
     runtime_checkable,
 )
 
-from pydantic import (
-    BaseModel,
-    ConfigDict,
-    Field,
-    field_validator,
-    model_validator,
-)
-from pydantic import ValidationError as PydanticValidationError
-
 if TYPE_CHECKING:
+    from pydantic import BaseModel
+
     from tldw_chatbook.Chat.local_reasoning import ReasoningReplayPolicy
 
     from .code_review_models import ReviewRunBinding
@@ -1149,6 +1137,49 @@ def definition_from_row(row: dict) -> AgentDefinition:
     )
 
 
+@dataclass(frozen=True)
+class ConsoleActivityReceiptPage:
+    """One bounded keyset page of current unseen activity receipts."""
+
+    rows: tuple[dict[str, Any], ...]
+    next_cursor: tuple[str, str] | None
+
+    def __iter__(self) -> Iterator[dict[str, Any]]:
+        return iter(self.rows)
+
+    def __len__(self) -> int:
+        return len(self.rows)
+
+    @overload
+    def __getitem__(self, index: int) -> dict[str, Any]: ...
+
+    @overload
+    def __getitem__(self, index: slice) -> tuple[dict[str, Any], ...]: ...
+
+    def __getitem__(
+        self, index: int | slice
+    ) -> dict[str, Any] | tuple[dict[str, Any], ...]:
+        return self.rows[index]
+
+
+def _canonical_step_payload(index: int, payload: dict) -> str:
+    """Validate and serialize one explicit-index step before locking SQLite."""
+    if type(index) is not int:
+        raise TypeError("step index must be an int")
+    if index < 0:
+        raise ValueError("step index must be non-negative")
+    if not isinstance(payload, dict):
+        raise TypeError("step payload must be a dict")
+    if "index" not in payload:
+        raise ValueError("step payload must include index")
+    payload_index = payload["index"]
+    if type(payload_index) is not int:
+        raise TypeError("step payload index must be an int")
+    if payload_index != index:
+        raise ValueError("step payload index must match sequence index")
+    return json.dumps(payload, sort_keys=True, separators=(",", ":"))
+
+
 @dataclass
 class AgentStep:
     index: int
@@ -1515,6 +1546,7 @@ def contain_child_budget(child: RunBudget, max_wall_seconds: float) -> RunBudget
 @cache
 def _console_new_chat_input_model() -> type[BaseModel]:
     """Build the creation-only schema lazily, outside application startup."""
+    from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
     from pydantic_core import PydanticCustomError
 
     class ConsoleNewChatInput(BaseModel):
@@ -1578,6 +1610,8 @@ def validate_console_new_chat_arguments(arguments: Mapping[str, Any]) -> dict[st
         ValueError: With an input-free invalid_args or payload_too_large category
             for invalid types, limits, choices, or a blank start prompt.
     """
+    from pydantic import ValidationError as PydanticValidationError
+
     try:
         return _console_new_chat_input_model().model_validate(arguments).model_dump()
     except PydanticValidationError as exc:

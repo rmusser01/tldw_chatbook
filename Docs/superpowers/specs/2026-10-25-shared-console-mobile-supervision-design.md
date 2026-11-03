@@ -2,7 +2,7 @@
 
 Date: 2026-10-25
 Status: Design accepted 2026-10-25; implementation and scoped code reviews are present at code22bae10d3dd6. Fresh UAT on8491688b was13P1F; later retention checks passed but the first mouse failure remains unclassified. Task11/AC1 is reopened; physical phone/VPN remains unverified.
-Task: [TASK-36728](../../../backlog/tasks/task-36728%20-%20Design-shared-Console-ownership-and-mobile-agent-supervision.md)
+Task: [TASK-38682](../../../backlog/tasks/task-38682%20-%20Design-shared-Console-ownership-and-mobile-agent-supervision.md)
 Decision: [ADR-244](../../../backlog/decisions/244-shared-console-ownership-and-mobile-supervision.md)
 Implementation plan: [Shared Console mobile supervision](../plans/2026-10-25-shared-console-mobile-supervision-implementation.md)
 Delivery evidence: [Task11 qualification packet](../qa/2026-10-25-shared-console-mobile-supervision/README.md). Automated/emulated checks and physical phone/VPN qualification are recorded separately; this status does not claim release completion.
