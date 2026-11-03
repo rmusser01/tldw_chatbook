@@ -73,7 +73,7 @@ def test_original_config_pin_skips_ineligible_evidence(
             and frame.f_locals["state"].source is source
         ):
             pins.append((frame.f_locals["state"], value))
-        if event == "return" and frame.f_code is raw._close_descriptor.__code__:
+        if event == "return" and frame.f_code is raw.close_descriptor.__code__:
             state, fd = frame.f_locals["state"], frame.f_locals["fd"]
             if state.source is source and (state, fd) in pins:
                 try:

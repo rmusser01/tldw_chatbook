@@ -341,7 +341,7 @@ async def test_native_raw_scope_cannot_transfer_to_async_task(installed_history)
 
         async def copied_context():
             with pytest.raises(bootstrap.RecoveryRequired, match="provenance"):
-                raw._check(operation)
+                raw.check(operation)
 
         await asyncio.create_task(copied_context())
         assert raw.selected_target(operation) == installed_history.path
@@ -759,7 +759,7 @@ def test_bound_history_rechecks_actual_mapping_during_io(
         with pytest.raises(
             bootstrap.RecoveryRequired, match="raw_source_selection_changed"
         ):
-            raw._check(operation)
+            raw.check(operation)
 
 
 @pytest.mark.asyncio

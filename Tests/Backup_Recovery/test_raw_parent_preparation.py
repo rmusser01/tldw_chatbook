@@ -38,8 +38,8 @@ def _original_parent_work(operation, *, selected=None, after_component=None):
         private, "_walk_verified_parent", private._open_verified_parent
     ).__code__
     component_code = private._open_directory_component.__code__
-    check_code = raw._check.__code__
-    close_code = raw._close_descriptor.__code__
+    check_code = raw.check.__code__
+    close_code = raw.close_descriptor.__code__
     previous = sys.getprofile()
     selected = state.selected if selected is None else selected
     observed = SimpleNamespace(
@@ -289,7 +289,7 @@ def test_finite_directory_opener_refuses_foreign_copy_and_expired_use(
             captured.append((opener, closer))
             expected = set(state.descriptors)
             with pytest.raises(bootstrap.RecoveryRequired):
-                raw._check_directory_allocation(
+                raw.check_directory_allocation(
                     copy.copy(operation), state, state.source, state.participant
                 )
 
@@ -502,10 +502,10 @@ def test_transient_parent_substitution_refuses_and_retires_returned_descriptor(
     assert not original.exists() and not replacement.exists()
     before = selected.read_bytes()
     grandparent_identity = raw.os.stat(parent.parent)
-    allocation_code = raw._check_directory_allocation.__code__
+    allocation_code = raw.check_directory_allocation.__code__
     component_code = private._open_directory_component.__code__
     walker_code = private._walk_verified_parent.__code__
-    check_code = raw._check.__code__
+    check_code = raw.check.__code__
     swapped = restored = False
     returned, final_checks, delivered, refusals = [], [], [], []
     with raw.scope(configured_source, "config", writing=True) as operation:
@@ -679,7 +679,7 @@ def test_original_returned_parent_descriptor_substitution_refuses_and_retires(
     replaced = False
     returned, final_checks, delivered, refusals = [], [], [], []
     walker_code = private._walk_verified_parent.__code__
-    check_code = raw._check.__code__
+    check_code = raw.check.__code__
     try:
         assert stat.S_IMODE(raw.os.stat(replacement).st_mode) == 0o700
         substitute = raw.os.open(

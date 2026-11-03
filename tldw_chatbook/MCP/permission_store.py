@@ -3039,7 +3039,7 @@ def _load_in_owned_scope(source, operation, captured) -> dict[str, Any]:
                 or current.route != mcp_sources.ROUTE
                 or current.participant is None
                 or current.selected != captured[2]
-                or raw._participant_identity(current.participant).source() is not source
+                or raw.participant_identity(current.participant).source() is not source
             ):
                 raise mcp_sources.bootstrap.RecoveryRequired("mcp_source_not_installed")
             return current

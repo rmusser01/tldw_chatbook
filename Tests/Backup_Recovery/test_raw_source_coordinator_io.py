@@ -35,7 +35,7 @@ def permission(tmp_path, monkeypatch):
 async def test_actual_witness_disk_read_does_not_hold_storage_coordinator(permission):
     entered, release = threading.Event(), threading.Event()
     captured = []
-    check_code = raw._check.__code__
+    check_code = raw.check.__code__
     witness_code = selected_path.__code__
 
     def observe(frame, event, arg):
@@ -86,7 +86,7 @@ async def test_native_parent_proof_cannot_return_revoked_custody(
 ):
     entered, release = threading.Event(), threading.Event()
     captured, published, errors = [], [], []
-    check_code = raw._check.__code__
+    check_code = raw.check.__code__
     participant_code = raw._participant_state.__code__
     parent_proof_code = raw._check_parent_pins.__code__
     fstat = raw.os.fstat
@@ -128,7 +128,7 @@ async def test_native_parent_proof_cannot_return_revoked_custody(
             previous = sys.getprofile()
             sys.setprofile(observe)
             try:
-                published.append(raw._check(operation))
+                published.append(raw.check(operation))
             except Exception as error:  # noqa: BLE001 - record observer failures without skipping physical test cleanup.
                 errors.append(error)
             finally:

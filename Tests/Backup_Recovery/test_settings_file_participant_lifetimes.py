@@ -579,7 +579,7 @@ def writing(fd, value):
         fd_target = fd
         if failure == 'temporary_identity':
             operation = raw._local.operation
-            replacement = raw._check(operation).temporary
+            replacement = raw.check(operation).temporary
             replacement.rename(replacement.with_suffix('.unpublished'))
             replacement.write_bytes(b'new-owner')
             raise OSError('injected write failure')

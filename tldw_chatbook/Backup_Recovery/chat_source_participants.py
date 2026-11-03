@@ -268,7 +268,7 @@ def operation(source):
     if active is not None and any(item is source for item, _ in active):
         for item, token in active:
             validate(item)
-            raw._check(token)
+            raw.check(token)
         core = getattr(storage._operation_local, "operation", None)
         if core is not None:
             storage._check_operation(core, source.db.db_path)
@@ -339,7 +339,7 @@ def operation(source):
             attempt.check()
             for item, token in tokens:
                 validate(item)
-                state = raw._check(token)
+                state = raw.check(token)
                 if bound is not None:
                     state.observed_files[state.selected] = sidecar_identity(
                         state.selected
@@ -407,7 +407,7 @@ def operation(source):
         if previous_core is not None:
             storage._check_operation(previous_core, previous_core.path)
         if previous_raw is not None:
-            raw._check(previous_raw)
+            raw.check(previous_raw)
 
 
 def guarded(function):
@@ -444,7 +444,7 @@ def write_text(source, text):
         try:
             with raw.file(token, temporary, "w") as stream:
                 stream.write(text)
-            state = raw._check(token, selected, writing=True)
+            state = raw.check(token, selected, writing=True)
             if validate(source) is not None and (
                 sidecar_identity(selected, writing=True)
                 != state.observed_files.get(selected)
@@ -489,7 +489,7 @@ def sidecar_descriptor(source):
         raise bootstrap.RecoveryRequired("chat_source_not_supported")
     with operation(source) as token:
         selected = profile_paths.lexical_path(source.sidecar_path)
-        state = raw._check(token, selected)
+        state = raw.check(token, selected)
         flags = os.O_RDONLY | getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NOFOLLOW", 0)
         if state.pinned:
             descriptor = os.open(
@@ -501,7 +501,7 @@ def sidecar_descriptor(source):
         try:
             yield descriptor
         finally:
-            raw._close_descriptor(state, descriptor)
+            raw.close_descriptor(state, descriptor)
 
 
 _sidecar_identity = sidecar_identity

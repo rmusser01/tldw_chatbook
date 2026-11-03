@@ -38,7 +38,7 @@ class _NativeLedger:
         self.previous = sys.getprofile()
         self.allocate = private._allocate_native_descriptor.__code__
         self.component = private._open_directory_component.__code__
-        self.raw_close = raw._close_descriptor.__code__
+        self.raw_close = raw.close_descriptor.__code__
         self.native_close = private._native_close.__code__
 
     def identity(self, fd):
@@ -173,7 +173,7 @@ def _attempt(source, route, selected, monkeypatch, *, ordinary, kind, change):
             leases = tuple(state.leases)
             assert state.active and state.participant is not None and state.pins
             assert state.source is source and state.pinned
-            assert raw._participant_identity(state.participant).owner == (
+            assert raw.participant_identity(state.participant).owner == (
                 "mcp.history" if kind == "mcp" else "config")
             assert all(lease in storage._live_leases for lease in leases)
             baseline = set(state.descriptors)

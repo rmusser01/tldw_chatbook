@@ -1462,7 +1462,7 @@ def _independent_sqlite_helpers() -> Iterator[None]:
     finally:
         primary = sys.exception()
         try:
-            raw._check(previous)
+            raw.check(previous)
         except BaseException as cleanup:
             if primary is not None and (
                 not isinstance(primary, Exception) or isinstance(cleanup, Exception)

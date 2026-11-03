@@ -304,7 +304,7 @@ def _checked_read(source: Any, call: Callable[[], Any]) -> tuple[Any, tuple[Any,
             raise RecoveryRequired("mcp_source_not_installed")
         before = _source_identity(source)
         payload = call()
-        raw._check(operation, state.selected)
+        raw.check(operation, state.selected)
         after = _source_identity(source)
         if before != after or Path(source.path) != state.selected:
             raise RecoveryRequired("mcp_source_selection_changed")

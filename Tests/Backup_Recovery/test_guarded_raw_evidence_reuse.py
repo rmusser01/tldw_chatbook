@@ -587,7 +587,7 @@ def test_warm_raw_operation_owns_and_retires_actual_parent_fd(mcp_sources, monke
         actual = os.fstat(fd)
         current = source.path.parent.stat()
         assert (actual.st_dev, actual.st_ino) == (current.st_dev, current.st_ino)
-        raw._check(operation)
+        raw.check(operation)
     with pytest.raises(OSError):
         os.fstat(fd)
     assert operation not in raw._states and operation not in storage._raw_operations

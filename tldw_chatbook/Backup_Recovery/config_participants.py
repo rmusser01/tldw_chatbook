@@ -39,7 +39,7 @@ def checked_config_identity(source: object, active: object) -> tuple[int, str]:
     """Tag data with its active checked config generation and selected path."""
     from . import raw_participants as raw
 
-    state = raw._check(active)
+    state = raw.check(active)
     if state.source is not source or state.route not in {"config", "config_snapshot"}:
         raise bootstrap.RecoveryRequired("config_operation_source_invalid")
     return source._CONFIG_GENERATION, str(state.selected)
@@ -309,7 +309,7 @@ def verified_companion_parent(source, path):
     operation = getattr(raw._local, "operation", None)
     if operation is None:
         return False
-    state = raw._check(operation)
+    state = raw.check(operation)
     return (
         state.source is source
         and state.companion_guard is not None
@@ -329,7 +329,7 @@ def verified_user_data_directory(source):
     operation = getattr(raw._local, "operation", None)
     if operation is None:
         return None
-    state = raw._check(operation)
+    state = raw.check(operation)
     if state.source is not source or state.companion_guard is None:
         return None
     if source._CONFIG_CACHE_SOURCE != state.selected or source._CONFIG_CACHE is None:
@@ -370,7 +370,7 @@ def verified_user_data_directory(source):
         # Retain the installed default/fallback ambiguity check at both edges.
         if profile_paths.user_data_dir(source._CONFIG_CACHE) != selected:
             raise bootstrap.RecoveryRequired("config_directory_selection_changed")
-        raw._check(operation)
+        raw.check(operation)
         # Creation still belongs to the fully admitted config_data operation.
         return None if missing else selected
 
@@ -382,14 +382,14 @@ def operation(source, *, route="config", target=None):
     previous = getattr(raw._local, "operation", None)
     nested = (
         previous is not None
-        and raw._check(previous).source is source
+        and raw.check(previous).source is source
         and route in {"config", "config_snapshot"}
     )
     nested_target = target
     if nested and route == "config_snapshot":
-        raw._check(
+        raw.check(
             previous,
-            source._config_snapshot_path(raw._check(previous).selected, target),
+            source._config_snapshot_path(raw.check(previous).selected, target),
             writing=True,
         )
         nested_target = None
@@ -511,7 +511,7 @@ def guarded(function):
 def check_lock_wait(source, operation):
     from . import raw_participants as raw
 
-    state = raw._check(operation)
+    state = raw.check(operation)
     if state.source is not source:
         raise bootstrap.RecoveryRequired("config_source_not_installed")
     if storage._pause is not None or (

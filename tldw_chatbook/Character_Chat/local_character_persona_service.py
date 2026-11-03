@@ -292,7 +292,7 @@ class LocalCharacterPersonaService:
             try:
                 with raw.file(token, temporary, "w") as stream:
                     stream.buffer.write(payload)
-                state = raw._check(token, selected, writing=True)
+                state = raw.check(token, selected, writing=True)
                 if _chat_sources.binding(self) is not None and (
                     _chat_sources.sidecar_identity(selected, writing=True)
                     != state.observed_files.get(selected)

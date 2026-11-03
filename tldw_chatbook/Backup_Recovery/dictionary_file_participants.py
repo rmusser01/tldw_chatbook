@@ -145,7 +145,7 @@ def pin_inputs(state):
             descriptor, _ = _open_verified_parent(
                 path,
                 missing_leaf_allowed=False,
-                _close=lambda fd: raw._close_descriptor(state, fd),
+                _close=lambda fd: raw.close_descriptor(state, fd),
             )
             state.pins[path.parent] = descriptor
         if not state.pinned:
@@ -169,7 +169,7 @@ def _current():
     if plan is None or plan.token is None:
         return None
     _check_selection(plan)
-    raw._check(plan.token)
+    raw.check(plan.token)
     if plan.core is not None:
         storage._check_operation(plan.core, plan.db.db_path)
     return plan
@@ -249,7 +249,7 @@ def _operation(
                 plan.token = token
                 attempt.check()
                 _check_selection(plan)
-                raw._check(token)
+                raw.check(token)
                 qualified = (
                     plan.installed
                     and all(raw._states[token].holds)
@@ -280,7 +280,7 @@ def _operation(
         raw._local.operation = previous_raw
         storage._operation_local.operation = previous_core
         if previous_raw is not None:
-            raw._check(previous_raw)
+            raw.check(previous_raw)
         if previous_core is not None:
             storage._check_operation(previous_core, previous_core.path)
 
@@ -501,7 +501,7 @@ def copy_file(source, destination):
             if _current().token is not None:
                 from . import raw_participants as raw
 
-                state = raw._check(_current().token)
+                state = raw.check(_current().token)
                 if state.pinned and _current().metadata_supported:
                     os.utime(outgoing.fileno(), ns=(info.st_atime_ns, info.st_mtime_ns))
                     shutil._copyxattr(incoming.fileno(), outgoing.fileno())

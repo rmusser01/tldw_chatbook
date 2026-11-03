@@ -41,7 +41,7 @@ def configured_source(tmp_path, monkeypatch, local_root):
 
 @contextmanager
 def _original_tracked_closes(source):
-    close_code = raw._close_descriptor.__code__
+    close_code = raw.close_descriptor.__code__
     native_close_code = private_paths._native_close.__code__
     prepared_parent_walk = getattr(private_paths, "_prepared_parent_walk", None)
     finite_close_code = None
@@ -51,7 +51,7 @@ def _original_tracked_closes(source):
             for code in prepared_parent_walk.__wrapped__.__code__.co_consts
             if isinstance(code, type(close_code)) and code.co_name == "owned_close"
         )
-    check_code = raw._check.__code__
+    check_code = raw.check.__code__
     parent_code = private_paths._open_verified_parent.__code__
     active, native_active, finite_active, operations = {}, set(), set(), set()
     counts = dict(closes=0, checks=0, parent_walk_closes=0)
@@ -184,7 +184,7 @@ def _owned_config_descriptor(source):
 
 @contextmanager
 def _original_close_checks():
-    check_code = raw._check.__code__
+    check_code = raw.check.__code__
     previous = sys.getprofile()
     calls = []
 

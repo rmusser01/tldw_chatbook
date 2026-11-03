@@ -231,7 +231,7 @@ class JSONStorage(StorageAdapter):
     def _write_data(self, data: Dict[str, Dict[str, Any]]) -> bool:
         """Write all data to JSON file."""
         operation = raw._local.operation
-        temporary = raw._check(operation).temporary
+        temporary = raw.check(operation).temporary
         try:
             with raw.file(operation, temporary, "w") as f:
                 json.dump(data, f, indent=2, ensure_ascii=False)
@@ -253,7 +253,7 @@ class JSONStorage(StorageAdapter):
     def _create_backup(self) -> None:
         """Create a backup of the current JSON file."""
         operation = raw._local.operation
-        state = raw._check(operation)
+        state = raw.check(operation)
         if not self.filepath.exists():
             return
         try:
@@ -274,7 +274,7 @@ class JSONStorage(StorageAdapter):
     def _cleanup_old_backups(self) -> None:
         """Prune only exact timestamp entries observed before mutation."""
         operation = raw._local.operation
-        state = raw._check(operation)
+        state = raw.check(operation)
         backups = sorted(state.observed_files)
         for oldest in backups[:max(0, len(backups) - max(0, self.max_backups))]:
             raw._unlink(operation, oldest)

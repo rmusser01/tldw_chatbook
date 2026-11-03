@@ -292,7 +292,7 @@ def _operation(source):
     from . import raw_participants as raw
 
     operation = getattr(raw._local, "operation", None)
-    state = raw._check(operation)
+    state = raw.check(operation)
     if state.source is not source or state.route != ROUTE:
         raise bootstrap.RecoveryRequired("mcp_source_not_supported")
     return operation, state
@@ -352,7 +352,7 @@ def backup_corrupt(source):
         source.path.replace(backup)
         state.mcp_effects = True
         return
-    raw._check(operation, backup, writing=True)
+    raw.check(operation, backup, writing=True)
     check_destination(state, state.selected)
     check_destination(state, backup)
     try:

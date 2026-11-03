@@ -677,7 +677,7 @@ class SettingsThemeEditor(Vertical):
         files: dict[str, Path] = {}
         unreadable: dict[str, tuple[Path, str]] = {}
         with raw.scope(self, "theme_directory") as operation:
-            state = raw._check(operation)
+            state = raw.check(operation)
             for theme_file in sorted(state.rejected_files):
                 # Qodo 4109320408: refused by the backup layer, never opened.
                 unreadable[theme_file.stem] = (

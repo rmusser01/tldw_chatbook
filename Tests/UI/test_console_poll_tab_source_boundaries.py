@@ -347,7 +347,7 @@ class _OriginalTabDrift:
             ("guarded_settings", config, "_load_settings_guarded"),
             ("acquire", storage, "_acquire_storage"),
             ("raw_scope", raw, "scope"),
-            ("close_fd", raw, "_close_descriptor"),
+            ("close_fd", raw, "close_descriptor"),
             (
                 "metadata",
                 windows_files._Native if os.name == "nt" else storage,

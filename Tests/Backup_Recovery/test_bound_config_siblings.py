@@ -73,7 +73,7 @@ path.unlink(missing_ok=True)
 if case=='arbitrary':
  with raw.scope(source,route,writing=True) as operation:
   for forbidden in (parent/'unrelated',parent/'ui_state.toml.other.tmp',parent):
-   try:raw._check(operation,forbidden,writing=True)
+   try:raw.check(operation,forbidden,writing=True)
    except bootstrap.RecoveryRequired:pass
    else:raise AssertionError('unselected sibling or directory admitted')
 elif case=='unsafe_parent':
@@ -94,7 +94,7 @@ elif case=='unsafe_parent':
      subprocess.run(['icacls',str(parent),'/grant','*S-1-1-0:(R)'],check=True,capture_output=True)
     else:parent.chmod(0o755)
     assert native_os.stat(parent).st_mode & 0o044
-    try:raw._check(operation,path,writing=True)
+    try:raw.check(operation,path,writing=True)
     except bootstrap.RecoveryRequired:pass
     else:raise AssertionError('unsafe parent admitted')
     assert native_os.stat(parent).st_mode & 0o044

@@ -19,18 +19,10 @@ PARTICIPANT = re.compile(r"participants?$")
 STATE_ALLOWLIST = {
     ("raw_participants", "_states"): "module state table; tests rebind it and callers need an accessor API",
     ("raw_participants", "_local"): "thread-local state; needs an accessor API",
-    ("raw_participants", "_check"): "patched by tests via setattr, so an alias would split the patch",
-    ("raw_participants", "_close_descriptor"): "patched by tests via setattr",
-    ("raw_participants", "_participant_identity"): "patched by tests via setattr",
     ("raw_participants", "_unlink"): "patched by tests via setattr",
     ("raw_participants", "_CONSOLE_PERMISSION_LOAD_GUARDS"): "provenance data tuple, not a helper",
-    ("raw_participants", "_PARENT_WALK_SOURCE"): "provenance data tuple, not a helper",
-    ("raw_participants", "_parent_walk_operation"): "assigned from a source-bound factory, not a def",
-    ("raw_participants", "_check_directory_allocation"): "assigned from a source-bound factory, not a def",
     ("mcp_source_participants", "_BINDINGS"): "module state registry",
     ("participant", "_condition"): "lock on the imported rag_definition participant singleton, not a helper",
-    ("participant", "_lock"): "lock on the imported participant singleton, not a helper",
-    ("participant", "_borrowers"): "borrower table of the imported participant singleton, not a helper",
     ("persona_visual_participants", "_repositories"): "module state registry",
 }
 
@@ -59,7 +51,8 @@ def _private(name: object) -> bool:
     return isinstance(name, str) and name.startswith("_") and not name.startswith("__")
 
 
-def private_participant_uses(root: Path = PACKAGE) -> list[str]:
+def private_participant_uses(root: Path = PACKAGE, allowlist=None) -> list[str]:
+    allowlist = STATE_ALLOWLIST if allowlist is None else allowlist
     found = []
     for path in sorted(root.rglob("*.py")):
         rel = path.relative_to(root)
@@ -70,7 +63,7 @@ def private_participant_uses(root: Path = PACKAGE) -> list[str]:
         bound = _bound_participant_modules(tree)
 
         def flag(node, module, name, form):
-            if (module, name) not in STATE_ALLOWLIST:
+            if (module, name) not in allowlist:
                 found.append(f"{rel}:{node.lineno} {module}.{name} ({form})")
 
         for node in ast.walk(tree):
@@ -123,16 +116,10 @@ def test_no_private_participant_use_outside_backup_recovery():
 
 
 def test_allowlist_entries_are_still_needed():
-    stale = []
-    tree_text = "\n".join(
-        p.read_text(encoding="utf-8")
-        for p in PACKAGE.rglob("*.py")
-        if "Backup_Recovery" not in p.relative_to(PACKAGE).parts
-    )
-    for (_, name), _reason in STATE_ALLOWLIST.items():
-        if name not in tree_text:
-            stale.append(name)
-    assert stale == []
+    raw_hits = {
+        tuple(row.split(" ")[1].split(".", 1)) for row in private_participant_uses(allowlist={})
+    }
+    assert set(STATE_ALLOWLIST) <= raw_hits, sorted(set(STATE_ALLOWLIST) - raw_hits)
 
 
 def test_guard_detects_injected_private_uses(tmp_path):

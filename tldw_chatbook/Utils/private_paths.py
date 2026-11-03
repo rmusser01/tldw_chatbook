@@ -704,13 +704,13 @@ def _native_close(fd):
     raw = sys.modules.get("tldw_chatbook.Backup_Recovery.raw_participants")
     state = raw.owned_descriptor_retirement_state(fd) if raw is not None else None
     if state is not None:
-        return raw._close_descriptor(state, fd)
+        return raw.close_descriptor(state, fd)
     operation = _runtime_operation()
     if operation is None:
         os.close(fd)
     else:
         raw = sys.modules["tldw_chatbook.Backup_Recovery.raw_participants"]
-        raw._close_descriptor(raw._states[operation], fd)
+        raw.close_descriptor(raw._states[operation], fd)
 
 
 # Capture definitions once; optional module metadata cannot restamp this witness.
@@ -778,8 +778,8 @@ def _bind_parent_walk(definition):
     @contextlib.contextmanager
     def _prepared_parent_walk(selected, open, close):
         raw = sys.modules.get("tldw_chatbook.Backup_Recovery.raw_participants")
-        selector = getattr(raw, "_parent_walk_operation", None)
-        allocation_check = getattr(raw, "_check_directory_allocation", None)
+        selector = getattr(raw, "parent_walk_operation", None)
+        allocation_check = getattr(raw, "check_directory_allocation", None)
         if (
             open is not None or close is not None
             or source_current.__code__ is not current_code
@@ -801,7 +801,7 @@ def _bind_parent_walk(definition):
              None if callback.__kwdefaults__ is None else tuple(callback.__kwdefaults__.items()),
              callback.__globals__, callback.__closure__,
              tuple((cell, cell.cell_contents) for cell in callback.__closure__ or ()))
-            for name, callback in (("_parent_walk_operation", selector), ("_check_directory_allocation", allocation_check))
+            for name, callback in (("parent_walk_operation", selector), ("check_directory_allocation", allocation_check))
         )
         owner = selector(selected)
         if owner is None:
@@ -861,11 +861,11 @@ def _bind_parent_walk(definition):
             # Keep creator cleanup independent of revoked source metadata.
             if not active or raw.owned_descriptor_retirement_state(fd) is not state:
                 raise raw.bootstrap.RecoveryRequired("raw_operation_provenance_invalid")
-            raw._close_descriptor(state, fd)
+            raw.close_descriptor(state, fd)
 
         def finish(parent):
             current()
-            checked = raw._check(operation, writing=True)
+            checked = raw.check(operation, writing=True)
             if checked is not state or state.source is not source or state.participant is not participant:
                 raise raw.bootstrap.RecoveryRequired("raw_operation_provenance_invalid")
             if type(state.pins.get(selected.parent)) is not int or state.pins[selected.parent] != pin:
@@ -971,7 +971,7 @@ def _admitted_file(function):
         operation = _runtime_operation(lexical_path(path))
         if operation is not None:
             raw = sys.modules["tldw_chatbook.Backup_Recovery.raw_participants"]
-            state = raw._check(operation)
+            state = raw.check(operation)
             config = sys.modules.get("tldw_chatbook.config")
             if raw.mcp_sources.history_operation(state):
                 if not raw.mcp_sources.helper_allowed(state, function.__name__, path):
@@ -1080,7 +1080,7 @@ class _ConfigStream:
         if self._retired:
             return
         raw = sys.modules["tldw_chatbook.Backup_Recovery.raw_participants"]
-        raw._check(self._operation)
+        raw.check(self._operation)
         _close_runtime_stream(self._operation, self._stream)
         _native_close(self._fd)
         self._retired = True
@@ -1097,7 +1097,7 @@ class _MCPAppendStream(_ConfigStream):
 
     def write(self, value):
         raw = sys.modules["tldw_chatbook.Backup_Recovery.raw_participants"]
-        state = raw._check(self._operation, writing=True)
+        state = raw.check(self._operation, writing=True)
         state.mcp_effects = True
         return self._stream.write(value)
 
@@ -1107,14 +1107,14 @@ class _MCPAppendStream(_ConfigStream):
         info = os.fstat(self._fd)
         super().close()
         raw = sys.modules["tldw_chatbook.Backup_Recovery.raw_participants"]
-        state = raw._check(self._operation)
+        state = raw.check(self._operation)
         state.mcp_publications[state.selected] = (info.st_dev, info.st_ino)
         raw.mcp_sources.published(state, state.selected)
 
 
 def _operation_temporary(operation, selected):
     raw = sys.modules["tldw_chatbook.Backup_Recovery.raw_participants"]
-    state = raw._check(operation, selected, writing=True)
+    state = raw.check(operation, selected, writing=True)
     return state.temporaries.get(selected, state.temporary)
 
 
@@ -1126,7 +1126,7 @@ def _admitted_stream(function):
         operation = _runtime_operation()
         if operation is not None:
             raw = sys.modules["tldw_chatbook.Backup_Recovery.raw_participants"]
-            state = raw._check(operation, lexical_path(path), writing=True)
+            state = raw.check(operation, lexical_path(path), writing=True)
             config = sys.modules.get("tldw_chatbook.config")
             if raw.mcp_sources.history_operation(state):
                 if not raw.mcp_sources.helper_allowed(state, function.__name__, path):
@@ -1165,7 +1165,7 @@ def _admitted_reader(function):
         operation = _runtime_operation(lexical_path(path))
         if operation is not None:
             raw = sys.modules["tldw_chatbook.Backup_Recovery.raw_participants"]
-            state = raw._check(operation)
+            state = raw.check(operation)
             config = sys.modules.get("tldw_chatbook.config")
             if raw.mcp_sources.history_operation(state):
                 if not raw.mcp_sources.helper_allowed(state, function.__name__, path):
@@ -1344,7 +1344,7 @@ def atomic_private_write_bytes(
                         _PRIVATE_FILE_MODE,
                     )
                     info = os.fstat(fd)
-                    raw._check(operation).created_files[temporary] = (
+                    raw.check(operation).created_files[temporary] = (
                         info.st_dev,
                         info.st_ino,
                     )
@@ -1353,11 +1353,11 @@ def atomic_private_write_bytes(
             try:
                 with os.fdopen(fd, "wb", closefd=operation is None) as stream:
                     if operation is not None:
-                        raw._check(operation).files.append(stream)
+                        raw.check(operation).files.append(stream)
                     stream.write(payload)
                     stream.flush()
                 if operation is not None:
-                    raw._check(operation).files.remove(stream)
+                    raw.check(operation).files.remove(stream)
                     _native_close(fd)
                     raw.replace(operation, temporary, selected)
                 else:
@@ -1468,7 +1468,7 @@ def atomic_private_write_bytes(
         temporary_exists = True
         temporary_stat = os.fstat(temporary_fd)
         if operation is not None:
-            raw._check(operation).created_files[selected.parent / temporary_leaf] = (
+            raw.check(operation).created_files[selected.parent / temporary_leaf] = (
                 temporary_stat.st_dev,
                 temporary_stat.st_ino,
             )
@@ -1511,9 +1511,9 @@ def atomic_private_write_bytes(
 
         if operation is not None:
             raw.check_temporary_identity(
-                raw._check(operation), selected.parent / temporary_leaf
+                raw.check(operation), selected.parent / temporary_leaf
             )
-            state = raw._check(operation)
+            state = raw.check(operation)
             if raw.mcp_sources.history_operation(state):
                 raw.mcp_sources.check_destination(state, selected)
         try:
@@ -1535,7 +1535,7 @@ def atomic_private_write_bytes(
         temporary_exists = False
         published = True
         if operation is not None:
-            raw._check(operation).created_files.pop(selected.parent / temporary_leaf)
+            raw.check(operation).created_files.pop(selected.parent / temporary_leaf)
         os.fsync(parent_fd)
         if not _private_file_postcondition_holds(
             temporary_fd,
@@ -1551,14 +1551,14 @@ def atomic_private_write_bytes(
                 )
             )
         if operation is not None and raw.mcp_sources.history_operation(
-            raw._check(operation)
+            raw.check(operation)
         ):
             raw._states[operation].mcp_publications[selected] = (
                 temporary_stat.st_dev,
                 temporary_stat.st_ino,
             )
         if operation is not None:
-            state = raw._check(operation)
+            state = raw.check(operation)
             if state.route == "config" and state.selected == selected:
                 state.config_publication = (
                     selected,
@@ -1696,7 +1696,7 @@ def open_private_text_append_stream(
                 _native_close(fd)
                 raise
             raw = sys.modules["tldw_chatbook.Backup_Recovery.raw_participants"]
-            raw._check(operation).files.append(stream)
+            raw.check(operation).files.append(stream)
             return stream
         raise PrivatePathError(
             PrivatePathResult(
@@ -1774,7 +1774,7 @@ def open_private_text_append_stream(
         )
         if operation is not None:
             raw = sys.modules["tldw_chatbook.Backup_Recovery.raw_participants"]
-            raw._check(operation).files.append(stream)
+            raw.check(operation).files.append(stream)
         file_fd = -1
         return stream
     except PrivatePathError:
@@ -1838,7 +1838,7 @@ def open_private_lock_stream(
                 _native_close(fd)
                 raise
             raw = sys.modules["tldw_chatbook.Backup_Recovery.raw_participants"]
-            raw._check(operation).files.append(stream)
+            raw.check(operation).files.append(stream)
             return stream
         raise PrivatePathError(
             PrivatePathResult(
@@ -1990,7 +1990,7 @@ def open_private_lock_stream(
         )
         if operation is not None:
             raw = sys.modules["tldw_chatbook.Backup_Recovery.raw_participants"]
-            raw._check(operation).files.append(stream)
+            raw.check(operation).files.append(stream)
         file_fd = -1
         return stream
     except PrivatePathError:
@@ -2208,7 +2208,7 @@ def open_private_binary(path: PathInput) -> Iterator[PrivateBinaryFile]:
                     )
             else:
                 raw = sys.modules["tldw_chatbook.Backup_Recovery.raw_participants"]
-                state = raw._check(operation)
+                state = raw.check(operation)
                 fd = _native_open(selected, os.O_RDONLY | getattr(os, "O_BINARY", 0))
                 try:
                     stream = os.fdopen(fd, "rb", closefd=False)
@@ -2301,7 +2301,7 @@ def open_private_binary(path: PathInput) -> Iterator[PrivateBinaryFile]:
             stream_fd = file_fd
             if operation is not None:
                 raw = sys.modules["tldw_chatbook.Backup_Recovery.raw_participants"]
-                raw._check(operation).files.append(stream)
+                raw.check(operation).files.append(stream)
             file_fd = -1
         except PrivatePathError:
             raise
@@ -2597,7 +2597,7 @@ def verify_trusted_directory(
     operation = _runtime_operation()
     if operation is not None:
         raw = sys.modules["tldw_chatbook.Backup_Recovery.raw_participants"]
-        state = raw._check(operation)
+        state = raw.check(operation)
         if selected != state.selected.parent and selected not in state.directories:
             raise RuntimeError("raw_source_helper_not_supported")
 

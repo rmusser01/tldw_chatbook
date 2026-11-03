@@ -68,14 +68,14 @@ def _original_scope_acquisitions(source):
     scope_code = inspect.unwrap(raw.scope).__code__
     acquire_function = storage.acquire_storage
     acquire_code = acquire_function.__code__
-    check_function, participant_function = raw._check, raw._participant_state
+    check_function, participant_function = raw.check, raw._participant_state
     check_code, participant_code = (
         check_function.__code__,
         participant_function.__code__,
     )
     reuse_function = storage._reuse_evidence
     reuse_code = reuse_function.__code__
-    close_code = raw._close_descriptor.__code__
+    close_code = raw.close_descriptor.__code__
     private_module = sys.modules["tldw_chatbook.Utils.private_paths"]
     parent_function = private_module._open_verified_parent
     parent_code = parent_function.__code__
@@ -465,7 +465,7 @@ def _original_scope_acquisitions(source):
         sys.setprofile(previous)
         assert storage.acquire_storage is acquire_function
         assert acquire_function.__code__ is acquire_code
-        assert raw._check is check_function and check_function.__code__ is check_code
+        assert raw.check is check_function and check_function.__code__ is check_code
         assert raw._participant_state is participant_function
         assert participant_function.__code__ is participant_code
         assert sys.modules.get("tldw_chatbook.Utils.private_paths") is private_module

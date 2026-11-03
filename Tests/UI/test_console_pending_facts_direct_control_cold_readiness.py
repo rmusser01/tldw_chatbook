@@ -98,8 +98,8 @@ class _OriginalColdRead(OriginalStorageUnitObserver):
             (config, "load_settings"),
             (chat_screen, "load_settings"),
             (config_participants, "binding"),
-            (raw_participants, "_check"),
-            (raw_participants, "_participant_identity"),
+            (raw_participants, "check"),
+            (raw_participants, "participant_identity"),
         ):
             descriptor = inspect.getattr_static(owner, name)
             self.slots.append((owner, name, descriptor))
