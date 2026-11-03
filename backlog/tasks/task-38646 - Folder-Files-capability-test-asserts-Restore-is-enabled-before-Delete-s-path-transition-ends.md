@@ -50,7 +50,7 @@ Reason: Test-only synchronization fix; no product or architectural change.
 
 This change touches only the test, in `Tests/UI/test_library_file_notes_workspace.py`. The immediate `assert restore.display and not restore.disabled` after Delete is now TASK-36383's wait: `_wait_until(pilot, lambda: restore.display and not restore.disabled, "Restore was not offered after Delete")`. It has no fixed pause, and product code is unchanged. Before Delete, Restore is hidden. During Delete's path transition it is shown but disabled. So the wait can only pass once Delete has settled.
 
-Why only one window races: `pilot.pause()` first runs `_wait_for_screen`, which waits for each widget's queue. The Delete handler holds the workspace's queue, so only the first pause after the press can overlap it. The old assert failed only when the delete thread set `_selected_deleted_path` inside that first ~20 ms window.
+Why only one window races: `pilot.pause()` first runs `_wait_for_screen`, which waits for each widget's queue. The Delete handler holds the workspace's queue. Any pause that starts before the bubbled Pressed message reaches the workspace can overlap the handler, and in practice that is usually only the first pause after the press. The old assert failed only when the delete thread set `_selected_deleted_path` inside that first ~20 ms window.
 
 **Red at dev (base 2dcf038cb8).** 2 of 10 serial runs failed, each its own pytest process through the scratch wrapper. Both failed at :1886 with `restore.disabled=True`. A pinned control added `asyncio.sleep(0.5)` before Delete's rescan, inside the transition. Under it, the old form failed 2 of 3 runs and the new form passed 5 of 5. The edit was reverted.
 
@@ -67,7 +67,10 @@ Why only one window races: `pilot.pause()` first runs `_wait_for_screen`, which 
 - Each branch run had one different extra failure, in a test this change does not touch:
   - `test_folder_files_shared_shell_retains_state_across_breakpoints`: `_push_phase` was 'idle' at :757.
   - `test_conflict_resolution_discard_keeps_cancel_first_confirmation`: Cancel did not have focus at :5971.
-- Each extra passed 5 of 5 serial runs on the branch. Neither failed in the one dev run, so neither is shown pre-existing; they are load flakes reported for follow-up.
+- Each extra passed 5 of 5 serial runs on the branch. The review then ran each one alone, on code byte-identical to dev, because the changed test is not collected.
+  - `test_conflict_resolution_discard_keeps_cancel_first_confirmation` failed 2 of 6 alone at :5971, so it is pre-existing on dev. It asserts the Cancel focus right after the confirmation shows, but `_set_reload_confirmation` focuses through `call_later`.
+  - `test_folder_files_shared_shell_retains_state_across_breakpoints` did not reproduce in 27 review runs; it is a rare load flake whose dev status is unproven.
+  - This change cannot cause either: it touches only this test's body. Both are proposed as follow-ups.
 
 **Checks.** Preflight passes. Ruff format is clean, and the Ruff lint count is unchanged from base (24).
 
