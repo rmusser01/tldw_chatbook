@@ -2,7 +2,10 @@
 id: TASK-37653
 title: Qualify multi-model code review live through a completed verifier report
 status: Done
+assignee:
+  - '@claude'
 created_date: 2026-10-30 03:54
+updated_date: '2026-11-02T23:59:00Z'
 labels:
 - agents
 - code-review
@@ -87,6 +90,7 @@ Files: `tldw_chatbook/Chat/console_chat_store.py` (decorator; size unchanged at 
 - *Harness repairs.* macOS /tmp cleanup had deleted the raw history packets, so the runner records them as lost rather than refusing (spend caps and pins unchanged). A dev fixture-signature drift was absorbed.
 - *Archives.* Under ~/.codex/artifacts/task-37653/, credential scan clean.
 - *Totals.* 574 requests / 38 children after these runs.
+- Final console_chat_store row, restated 2026-11-02 against dev 88af9f9379 (supersedes the numbers above): dev measures 22,400; this branch's net +122 plus the +2 lock-order comment gives 22,524.
 <!-- SECTION:IMPLEMENTATION_NOTES:END -->
 
 ## Final Summary

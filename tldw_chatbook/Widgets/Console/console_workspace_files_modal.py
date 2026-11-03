@@ -27,6 +27,7 @@ from textual.screen import ModalScreen
 from textual.timer import Timer
 from textual.widgets import Button, Input, Static
 
+from tldw_chatbook.Utils.path_validation import fold_path_part
 from tldw_chatbook.Workspaces.file_inspector import (
     FILTER_DEBOUNCE_MS,
     BindingScope,
@@ -39,7 +40,6 @@ from tldw_chatbook.Workspaces.file_inspector import (
     FilterProgress,
     FilterResult,
 )
-from tldw_chatbook.Utils.path_validation import fold_path_part
 from tldw_chatbook.Widgets.modal_dismissal import SafeModalDismissMixin
 
 

@@ -47,7 +47,7 @@ The only change was the one-line harness fix: the runner now attaches through `a
 
 ## Changes to the harness for these runs
 
-All three runs below were reviewed against the consumed `macos-final60` preparation. Patches are in the archives.
+The three harness changes below were reviewed against the consumed `macos-final60` preparation. Patches are in the archives.
 
 - **History loss.** macOS's periodic `/tmp` cleanup deleted the raw history packets the runner re-hashes (23 of 24 history files and 194 of 278 spend-history files).
   - With the owner's approval, the runner now records them as lost instead of refusing.

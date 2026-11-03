@@ -1935,7 +1935,8 @@ class ConsoleChatStore(ConsoleReceivedTurnAdmissionMixin, ConsoleReceivedIntentI
         # The registry lock is never held while waiting for an owner. Lock
         # order for nested terminal recovery is owner -> registry (short,
         # non-waiting) -> preparation; callers must not enter here while
-        # holding ``_preparation_lock``.
+        # holding ``_preparation_lock``. Owner scopes nest only in
+        # ``_message_session_index`` order (parent before descendant): close holds many.
         self._generation_owner_locks_guard = threading.Lock()
         self._generation_owner_locks: dict[str, _GenerationOwnerLockEntry] = {}
         self._generation_mutation_local = threading.local()
@@ -5241,9 +5242,9 @@ class ConsoleChatStore(ConsoleReceivedTurnAdmissionMixin, ConsoleReceivedIntentI
                 message_id, blocking=wait_for_owners
             ):
                 # ponytail: close holds every owner it claimed; one that joined
-                # after its last claim and is held elsewhere keeps its runtime
-                # state (its holder then fails on the closed session) rather
-                # than wait under first persistence. Purge it later if it leaks.
+                # after its last claim and is held elsewhere keeps its index
+                # entry until process exit (its holder fails on the closed
+                # session) rather than wait under first persistence.
                 continue
             self.clear_terminal_citation_state(message_id)
             self._message_session_index.pop(message_id, None)
@@ -15332,7 +15333,8 @@ class ConsoleChatStore(ConsoleReceivedTurnAdmissionMixin, ConsoleReceivedIntentI
 
         Promotion admission precedes generation ownership, which precedes the
         fork source lock and persistence.  The fork lock is held only while
-        publishing the transition marker, never across database work.
+        publishing the transition marker, never across database work.  Nest
+        owner scopes only in ``_message_session_index`` order (see close_session).
         """
         with self._voice_promotion_message_mutation(message_id) as session_id:
             with self._generation_owner_locks_guard:

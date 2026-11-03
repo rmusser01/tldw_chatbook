@@ -59,6 +59,7 @@ Root cause: the shared matcher folded case but not Unicode normalization, so `na
   - `Widgets/Console/console_workspace_files_modal.py` `_is_excluded` (badge and unexclude toggle) and `Workspaces/registry_service.py` exclusion dedupe/remove fold the same way, so an NFD duplicate of an NFC exclusion is refused and removing by either spelling works. Ratchet row 4232 -> 4233 (+1, the import).
   - `local_tool_impls._is_relative_sensitive_path`: the name rule compares the already-folded `parts[-1]` instead of re-folding `relative.name` per rule. Bundle regenerated (line count unchanged).
   - Tests, both directions: `Tests/DB/test_workspace_project_index_db.py` (both helpers per rule kind, plus an end-to-end top-k/coverage check), `Tests/Widgets/test_console_workspace_files_modal_exclusions.py`, `Tests/Workspaces/test_folder_binding_exclusions.py`. All 16 new cases were red before the fix and are green after.
+- Final size-ratchet rows, restated 2026-11-02 against dev 88af9f9379 (supersede the numbers above): local_tool_provider 5,851 -> 5,854; remote_worker_bundle 5,722 (dev's fresh build 5,705 + 17); registry_service 4,304 -> 4,305.
 <!-- SECTION:IMPLEMENTATION_NOTES:END -->
 
 ## Final Summary
