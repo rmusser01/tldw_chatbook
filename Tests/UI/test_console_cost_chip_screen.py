@@ -23,6 +23,7 @@ from __future__ import annotations
 from Tests.UI.console_controller_stubs import context_spend_for_test
 
 import asyncio
+import inspect
 import re
 import time
 from dataclasses import replace
@@ -1187,8 +1188,10 @@ async def test_idle_draft_edit_burst_coalesces_one_cost_refresh(monkeypatch, rec
             type(console)._sync_console_settings_summary.__code__: "summary",
             type(console)._sync_console_cost_chip.__code__: "cost",
         }
+        # Unwrapped: a decorated owner's own __code__ is its decorator's
+        # wrapper (retry_after_config_rebuild's, shared and self-less).
         ordinary = {
-            getattr(type(console), name).__code__: name
+            inspect.unwrap(getattr(type(console), name)).__code__: name
             for name in (
                 "_poll_console_credential_readiness",
                 "_sync_console_control_bar_under_config",

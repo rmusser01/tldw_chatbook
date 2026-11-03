@@ -389,6 +389,25 @@ async def test_console_armed_unknown_mouse_send_snapshots_before_skill_await(
             return await dispatch()
 
         monkeypatch.setattr(console._hooks, "dispatch", dispatch_without_hook_review)
+        # The received path runs the same unchanged-draft gate first
+        # (wiring.receive_console_visible_intent's live-vs-stash check,
+        # 3e618d7119). Isolate only that check: the real function runs
+        # without the stash, so every other check it makes stays live.
+        from tldw_chatbook.UI.Console_Modules import wiring
+
+        receive = wiring.receive_console_visible_intent
+
+        def receive_without_unchanged_draft_gate(
+            screen, draft, session_id, stash, **kwargs
+        ):
+            assert draft == armed and stash.text == armed
+            return receive(screen, draft, session_id, None, **kwargs)
+
+        monkeypatch.setattr(
+            wiring,
+            "receive_console_visible_intent",
+            receive_without_unchanged_draft_gate,
+        )
         requests: list[object] = []
         notices: list[str] = []
         monkeypatch.setattr(
