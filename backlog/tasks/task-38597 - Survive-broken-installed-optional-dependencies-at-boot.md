@@ -1,13 +1,13 @@
 ---
 id: TASK-38597
 title: Survive broken-installed optional dependencies at boot
-status: In Progress
+status: Done
 created_date: 2026-11-02 14:28
 labels:
 - bug
 - utils
 priority: medium
-updated_date: 2026-11-02 14:51
+updated_date: 2026-11-03 02:55
 ---
 
 ## Description
@@ -18,15 +18,15 @@ check_dependency only catches ImportError so an installed-but-broken optional pa
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 check_dependency catches non-ImportError failures such as OSError
-- [ ] #2 Eager dependency check degrades to feature disabled instead of crashing boot
-- [ ] #3 Test covers a raising import
+- [x] #1 check_dependency catches non-ImportError failures such as OSError
+- [x] #2 Eager dependency check degrades to feature disabled instead of crashing boot
+- [x] #3 Test covers a raising import
 <!-- AC:END -->
 
 ## Implementation Notes
 
 <!-- SECTION:IMPLEMENTATION_NOTES:BEGIN -->
-
+check_dependency catches non-ImportError failures as broken-unavailable with the failure kind logged so missing versus broken stays distinguishable. Commit 7bd2ad0ad2.
 <!-- SECTION:IMPLEMENTATION_NOTES:END -->
 
 ## Final Summary

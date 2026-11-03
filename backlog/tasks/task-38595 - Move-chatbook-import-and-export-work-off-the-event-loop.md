@@ -1,13 +1,13 @@
 ---
 id: TASK-38595
 title: Move chatbook import and export work off the event loop
-status: In Progress
+status: Done
 created_date: 2026-11-02 14:28
 labels:
 - bug
 - ui
 priority: medium
-updated_date: 2026-11-02 14:51
+updated_date: 2026-11-03 02:55
 ---
 
 ## Description
@@ -18,15 +18,15 @@ The wizards run the full sync import and export pipelines directly inside async 
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 Importer and creator calls run via to_thread inside wizard workers
-- [ ] #2 Progress UI stays responsive during local import and export
-- [ ] #3 Workers use exclusive groups
+- [x] #1 Importer and creator calls run via to_thread inside wizard workers
+- [x] #2 Progress UI stays responsive during local import and export
+- [x] #3 Workers use exclusive groups
 <!-- AC:END -->
 
 ## Implementation Notes
 
 <!-- SECTION:IMPLEMENTATION_NOTES:BEGIN -->
-
+All blocking importer and creator calls run via to_thread; four wizard workers exclusive with distinct groups; thread-safety of status writes preserved. Commit e9f8afd969.
 <!-- SECTION:IMPLEMENTATION_NOTES:END -->
 
 ## Final Summary

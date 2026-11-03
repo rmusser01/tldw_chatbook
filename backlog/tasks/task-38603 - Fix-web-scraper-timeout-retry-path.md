@@ -1,13 +1,13 @@
 ---
 id: TASK-38603
 title: Fix web scraper timeout retry path
-status: In Progress
+status: Done
 created_date: 2026-11-02 14:29
 labels:
 - bug
 - scraping
 priority: low
-updated_date: 2026-11-02 14:51
+updated_date: 2026-11-03 02:55
 ---
 
 ## Description
@@ -18,15 +18,15 @@ The timeout branch retries with no backoff and never raises MaxRetriesExceededEr
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 Timeout branch sleeps between attempts and raises after the final one
-- [ ] #2 retries below 1 is rejected or coerced
-- [ ] #3 Test covers timeout exhaustion
+- [x] #1 Timeout branch sleeps between attempts and raises after the final one
+- [x] #2 retries below 1 is rejected or coerced
+- [x] #3 Test covers timeout exhaustion
 <!-- AC:END -->
 
 ## Implementation Notes
 
 <!-- SECTION:IMPLEMENTATION_NOTES:BEGIN -->
-
+Timeout branch sleeps between attempts and raises MaxRetriesExceededError after the final one; retries below 1 rejected with the config key named. Commit c9bcdac2cb.
 <!-- SECTION:IMPLEMENTATION_NOTES:END -->
 
 ## Final Summary

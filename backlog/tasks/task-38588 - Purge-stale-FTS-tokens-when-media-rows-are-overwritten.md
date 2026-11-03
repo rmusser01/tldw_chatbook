@@ -1,13 +1,13 @@
 ---
 id: TASK-38588
 title: Purge stale FTS tokens when media rows are overwritten
-status: In Progress
+status: Done
 created_date: 2026-11-02 14:27
 labels:
 - bug
 - db
 priority: medium
-updated_date: 2026-11-02 14:50
+updated_date: 2026-11-03 02:54
 ---
 
 ## Description
@@ -18,15 +18,15 @@ The metadata overwrite path uses INSERT OR REPLACE on an external-content FTS5 t
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 Overwrite path issues the FTS5 delete command before reinsert or deletes then inserts by rowid
-- [ ] #2 Words only present in old content are no longer searchable after overwrite
-- [ ] #3 Regression test proves stale token removal
+- [x] #1 Overwrite path issues the FTS5 delete command before reinsert or deletes then inserts by rowid
+- [x] #2 Words only present in old content are no longer searchable after overwrite
+- [x] #3 Regression test proves stale token removal
 <!-- AC:END -->
 
 ## Implementation Notes
 
 <!-- SECTION:IMPLEMENTATION_NOTES:BEGIN -->
-
+FTS5 delete command with true old values on every title or content changing path; regression test drives the real external-content table and asserts integrity. Commit 6813f053d8.
 <!-- SECTION:IMPLEMENTATION_NOTES:END -->
 
 ## Final Summary

@@ -1,13 +1,13 @@
 ---
 id: TASK-38589
 title: Decode SSE streams as UTF-8 in legacy LLM calling paths
-status: In Progress
+status: Done
 created_date: 2026-11-02 14:27
 labels:
 - bug
 - llm
 priority: medium
-updated_date: 2026-11-02 14:50
+updated_date: 2026-11-03 02:56
 ---
 
 ## Description
@@ -18,15 +18,15 @@ Four legacy streaming paths use iter_lines with decode_unicode so endpoints that
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 Legacy openai Responses Gemini and local engine paths decode bytes as UTF-8 explicitly
-- [ ] #2 An endpoint omitting charset produces correct non-ASCII output
-- [ ] #3 Regression test covers a charset-less content type
+- [x] #1 Legacy openai Responses Gemini and local engine paths decode bytes as UTF-8 explicitly
+- [x] #2 An endpoint omitting charset produces correct non-ASCII output
+- [x] #3 Regression test covers a charset-less content type
 <!-- AC:END -->
 
 ## Implementation Notes
 
 <!-- SECTION:IMPLEMENTATION_NOTES:BEGIN -->
-
+All four legacy SSE sites iterate bytes and decode UTF-8 explicitly with per-site line contracts preserved; charsetless-header tests were born red. Commit 05e5ea12ec.
 <!-- SECTION:IMPLEMENTATION_NOTES:END -->
 
 ## Final Summary

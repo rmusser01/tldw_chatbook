@@ -1,13 +1,13 @@
 ---
 id: TASK-38608
 title: Enforce artifact-share auth for non-loopback binds in the controller
-status: In Progress
+status: Done
 created_date: 2026-11-02 14:29
 labels:
 - security
 - web
 priority: low
-updated_date: 2026-11-02 14:52
+updated_date: 2026-11-03 02:55
 ---
 
 ## Description
@@ -18,15 +18,15 @@ The controller serves user artifacts to the LAN without auth when started with a
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 start_share raises for non-loopback bind without credentials at the controller layer
-- [ ] #2 Existing dialog behavior is unchanged
-- [ ] #3 Test covers the controller gate
+- [x] #1 start_share raises for non-loopback bind without credentials at the controller layer
+- [x] #2 Existing dialog behavior is unchanged
+- [x] #3 Test covers the controller gate
 <!-- AC:END -->
 
 ## Implementation Notes
 
 <!-- SECTION:IMPLEMENTATION_NOTES:BEGIN -->
-
+Controller raises for non-loopback binds without credentials; the dialog refuses in place naming both remedies; loopback and LAN-with-credentials flows unchanged. Commit 9666f82a50.
 <!-- SECTION:IMPLEMENTATION_NOTES:END -->
 
 ## Final Summary

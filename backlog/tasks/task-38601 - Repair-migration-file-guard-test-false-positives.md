@@ -1,13 +1,13 @@
 ---
 id: TASK-38601
 title: Repair migration-file guard test false positives
-status: In Progress
+status: Done
 created_date: 2026-11-02 14:29
 labels:
 - test
 - db
 priority: medium
-updated_date: 2026-11-02 14:51
+updated_date: 2026-11-03 02:56
 ---
 
 ## Description
@@ -18,15 +18,15 @@ Tests/DB/test_migration_file_sources.py is red on dev because its regex cannot s
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 Guard regex or reader-module list covers with_name and f-string migration readers
-- [ ] #2 The currently red run passes while genuine decorative files are still caught
-- [ ] #3 Dreams guardian and workspace readers are recognized
+- [x] #1 Guard regex or reader-module list covers with_name and f-string migration readers
+- [x] #2 The currently red run passes while genuine decorative files are still caught
+- [x] #3 Dreams guardian and workspace readers are recognized
 <!-- AC:END -->
 
 ## Implementation Notes
 
 <!-- SECTION:IMPLEMENTATION_NOTES:BEGIN -->
-
+Guard detection widened to with_name and f-string readers with module auto-discovery; green in worktree with two proofs that decorative files are still caught. Commit 3d568c95cf.
 <!-- SECTION:IMPLEMENTATION_NOTES:END -->
 
 ## Final Summary

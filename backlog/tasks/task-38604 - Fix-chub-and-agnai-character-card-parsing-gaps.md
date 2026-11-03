@@ -1,13 +1,13 @@
 ---
 id: TASK-38604
 title: Fix chub and agnai character card parsing gaps
-status: In Progress
+status: Done
 created_date: 2026-11-02 14:29
 labels:
 - bug
 - characters
 priority: low
-updated_date: 2026-11-02 14:52
+updated_date: 2026-11-03 02:55
 ---
 
 ## Description
@@ -18,15 +18,15 @@ The chub format detector is unreachable because the v2 pattern matches first so 
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 Chub cards are detected before the v2 pattern or chub fields are folded into v2 parsing
-- [ ] #2 Agnai persona objects are stringified instead of dropped
-- [ ] #3 Tests cover both formats
+- [x] #1 Chub cards are detected before the v2 pattern or chub fields are folded into v2 parsing
+- [x] #2 Agnai persona objects are stringified instead of dropped
+- [x] #3 Tests cover both formats
 <!-- AC:END -->
 
 ## Implementation Notes
 
 <!-- SECTION:IMPLEMENTATION_NOTES:BEGIN -->
-
+Chub detected before v2 with its fields preserved into extensions; agnai persona objects flattened or JSON-encoded instead of dropped. Commit 0749449a0e.
 <!-- SECTION:IMPLEMENTATION_NOTES:END -->
 
 ## Final Summary
