@@ -453,11 +453,9 @@ from pathlib import Path
 from typing import Any, TYPE_CHECKING
 
 from textual import on
-from textual.containers import Vertical
 from textual.css.query import NoMatches, QueryError
 from textual.widgets import Button, Collapsible, Input, Static
 
-from ...Library.ingest_analysis import resolve_ingest_analysis_provider
 from ...Library.ingest_capabilities import capabilities_for_backend, get_capabilities
 from ...Library.ingest_types import PreflightResult
 from ...Library.library_ingest_jobs import (
@@ -473,7 +471,6 @@ from ...Library.library_ingest_state import (
     IngestOutcomeGroup,
     LibraryIngestCanvasState,
     LibraryIngestFormState,
-    active_ingest_start_confirm_line,
     build_ingest_forecast,
     format_ingest_progress_line,
     group_ingest_queue_rows,
@@ -486,12 +483,10 @@ from ...Library.library_shell_state import LIBRARY_ROW_INGEST_MEDIA
 from ...Third_Party.textual_fspicker import FileOpen
 from ...Widgets.Library import (
     LibraryIngestCanvas,
-    LibraryIngestPreflightSummary,
     LibraryIngestQueuePanel,
 )
 from ...Widgets.Library.library_ingest_canvas import (
     build_type_group_title,
-    ingest_scope_label,
 )
 from .canvas_sync import _sync_library_canvas
 from .library_ingest_state import LibraryIngestState

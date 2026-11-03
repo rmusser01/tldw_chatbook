@@ -68,7 +68,7 @@ from pydantic import (  # noqa: E402
 )
 
 # Optional dependencies with fallbacks
-from ..Utils.optional_deps import get_safe_import, DEPENDENCIES_AVAILABLE  # noqa: E402
+from ..Utils.optional_deps import get_safe_import  # noqa: E402
 
 # torch/transformers/numpy are heavy optional dependencies (torch alone pulls
 # in roughly a thousand transitive modules, transformers a few hundred more).

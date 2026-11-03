@@ -405,7 +405,6 @@ from .screen_constants import (
     LIBRARY_SKILL_SAVE_STATUS_COPY,
     LIBRARY_SKILL_TEXT_MAX_CHARS,
 )
-from .screen_helpers import _library_screen_is_current
 from .screen_support_types import LibraryEntryReconcileResult
 from .skills_trust_modals import SkillTrustBootstrapModal, SkillTrustPassphraseModal
 

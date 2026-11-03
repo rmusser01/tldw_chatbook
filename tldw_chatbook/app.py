@@ -278,8 +278,9 @@ from .Notes.notes_scope_service import NotesScopeService
 if TYPE_CHECKING:  # pragma: no cover - typing only
     from .Notes.notes_sync_runtime import NotesSyncRuntimeOwner
 from .Notes.server_notes_workspace_service import ServerNotesWorkspaceService
-from .Character_Chat.local_character_persona_service import LocalCharacterPersonaService
-from .Character_Chat.local_chat_dictionary_service import LocalChatDictionaryService
+from .Character_Chat.local_character_persona_service import (  # noqa: F401 - read by the app wiring test
+    LocalCharacterPersonaService,
+)
 
 # Persona_Buddy is deliberately NOT imported at module scope (TASK-21103):
 # its controller drags Persona_Visual and PIL (1.28 s cold) onto the boot

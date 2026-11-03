@@ -11,7 +11,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from tldw_chatbook.Utils.platform_files import os
 
-from .admission import Admission, fcntl
+from .admission import Admission
 from .bootstrap import _read
 from .native_files import create_private_directory, flush_directory, pinned_directory
 from .native_platform import flush_file

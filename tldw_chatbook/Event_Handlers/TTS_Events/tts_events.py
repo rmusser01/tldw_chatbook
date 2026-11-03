@@ -3427,7 +3427,6 @@ class TTSEventHandler:
         )
         from tldw_chatbook.TTS.playback_capability import (
             format_playable_locally,
-            playback_remedy,
         )
 
         # TASK-32494 playback-capability pre-check: when this machine

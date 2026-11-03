@@ -15,7 +15,7 @@ only have been meant for code that moved out.
 
 from dataclasses import replace
 from functools import partial
-from typing import Any
+from typing import Any, TYPE_CHECKING
 
 from loguru import logger
 from textual.app import App
@@ -67,6 +67,11 @@ from .UI.Navigation.shell_destinations import (
     get_shell_destination,
 )
 from .UI.Workbench.help import WorkbenchHelpPanel, WorkbenchHelpState
+
+if TYPE_CHECKING:  # pragma: no cover - typing only
+    # Quoted-annotation-only names (the runtime imports stay lazy inside the
+    # palette command handlers; see _switch_theme/_persist_switch).
+    from .css.Themes.theme_catalog import QueuedLaunchDefault, ThemeChange
 
 
 class ThemeProvider(Provider):

@@ -87,7 +87,7 @@ from tldw_chatbook.Chat.console_voice_settings import (
     response_eagerness_ms,
 )
 from tldw_chatbook.config import (
-    get_cli_setting,
+    get_cli_setting,  # noqa: F401 - patch target of the speculative-voice panel tests
     load_cli_config_and_ensure_existence,
     save_settings_to_cli_config,
 )

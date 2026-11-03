@@ -3,7 +3,6 @@ import tldw_chatbook.Chat.console_chat_fork as _fork_contracts
 import tldw_chatbook.Chat.console_chat_models as _chat_models
 import tldw_chatbook.Chat.console_project_instructions as _project_instructions
 import tldw_chatbook.Chat.rag_scope as _rag_scope
-import base64
 import json
 import sqlite3
 import threading
@@ -22,8 +21,6 @@ from typing import (
     List,
     Mapping,
     Optional,
-    Sequence,
-    Tuple,
     cast,
 )
 

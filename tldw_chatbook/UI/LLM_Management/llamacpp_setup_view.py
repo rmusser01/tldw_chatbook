@@ -13,7 +13,6 @@ from textual.app import ComposeResult
 from textual.containers import Horizontal, Vertical
 from textual.css.query import QueryError
 from textual.widgets import Button, Collapsible, Input, Label, Select, Static
-from textual.css.query import QueryError
 
 from tldw_chatbook.LLM_Management.llamacpp_connection import (
     canonical_base_url,

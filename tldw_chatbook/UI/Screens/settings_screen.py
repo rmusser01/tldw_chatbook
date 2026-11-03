@@ -3151,7 +3151,6 @@ def _settings_ssh_advisory_probe(
         get_remote_binding_status_cache,
     )
     from tldw_chatbook.Tools.remote_workspace_executor import (
-        RemoteWorkspaceExecutionError,
         RemoteWorkspaceToolExecutor,
         ssh_binding_identity,
     )

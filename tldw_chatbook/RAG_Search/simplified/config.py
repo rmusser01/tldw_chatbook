@@ -15,7 +15,7 @@ from loguru import logger
 # Import the main config module to access existing configuration
 from tldw_chatbook.config import (
     get_cli_setting,
-    load_cli_config_and_ensure_existence,
+    load_cli_config_and_ensure_existence,  # noqa: F401 - patch target of RAG config tests
     get_user_data_dir,
 )
 from tldw_chatbook.Utils.path_validation import validate_path_simple

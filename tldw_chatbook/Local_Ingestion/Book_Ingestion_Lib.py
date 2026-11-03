@@ -525,7 +525,6 @@ def epub_to_markdown(
         markdown_content = ""
         if include_toc:
             markdown_content = "# Table of Contents\n\n"
-            chapters = []
 
             # Extract and format the table of contents
             toc = book.toc

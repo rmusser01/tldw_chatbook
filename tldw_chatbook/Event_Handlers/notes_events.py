@@ -48,7 +48,6 @@ if TYPE_CHECKING:
 #
 # --- Template Definitions ---
 
-from pathlib import Path  # noqa: E402
 
 
 def load_note_templates():

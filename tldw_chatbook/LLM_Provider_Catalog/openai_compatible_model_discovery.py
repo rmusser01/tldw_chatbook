@@ -16,7 +16,6 @@ import httpx
 from tldw_chatbook.Chat.console_session_settings import normalize_llamacpp_base_url
 from tldw_chatbook.Chat.local_server_discovery import (
     MODEL_ID_MAX_CHARS,
-    MODEL_IDS_MAX_COUNT,
     MODEL_PROBE_RESPONSE_MAX_BYTES,
     UnsupportedModelResponseEncoding,
     classify_transport_failure,
