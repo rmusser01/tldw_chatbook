@@ -17,9 +17,13 @@ the opening then undid, stays hidden after the rail opens.
 
 from __future__ import annotations
 
+import asyncio
+import time
+
 import pytest
 from textual.app import ComposeResult
 from textual.containers import Vertical
+from textual.screen import Screen
 from textual.widget import Widget
 from textual.widgets import Button, Static
 
@@ -34,6 +38,9 @@ from tldw_chatbook.Chat.console_display_state import (
     ConsoleInspectorState,
 )
 from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
+from tldw_chatbook.Widgets.Console.console_bounded_section import (
+    ConsoleBoundedSection,
+)
 from tldw_chatbook.Widgets.Console.console_inspector_section import (
     ConsoleInspectorSection,
     ConsoleInspectorSectionState,
@@ -127,12 +134,32 @@ def _witness(rail: Widget) -> list[tuple]:
     ]
 
 
+async def _settled_witness(pilot, rail: Widget) -> list[tuple]:
+    """The rail's witness once it has settled.
+
+    Settled: no batch open, no bounded section with a reconcile pending, and
+    two pauses in a row leave the witness as it was. A fixed number of pauses
+    could sample before the bounded sections reconciled against their laid-out
+    viewport (TASK-38650 review: a run viewport 14 rows tall instead of 2).
+    """
+    previous = None
+    for _ in range(40):
+        await pilot.pause(0.05)
+        current = _witness(rail)
+        pending = any(
+            section._reconcile_scheduled
+            for section in rail.query(ConsoleBoundedSection)
+        )
+        if current == previous and not rail.app._batch_count and not pending:
+            return current
+        previous = current
+    raise AssertionError(f"the rail never settled: {current}")
+
+
 async def _never_hidden(widget: Widget) -> list[tuple]:
     host = _RailHost(widget)
     async with host.run_test(size=(40, 30)) as pilot:
-        await pilot.pause()
-        await pilot.pause()
-        return _witness(host.query_one("#rail"))
+        return await _settled_witness(pilot, host.query_one("#rail"))
 
 
 async def _changed_while_hidden(monkeypatch, widget: Widget, change) -> tuple:
@@ -150,10 +177,7 @@ async def _changed_while_hidden(monkeypatch, widget: Widget, change) -> tuple:
             await pilot.pause()
             hidden_calls = list(calls)
         ChatScreen._sync_console_rail_descendant_visibility(rail, True)
-        await pilot.pause()
-        await pilot.pause()
-        await pilot.pause()
-        return hidden_calls, _witness(rail)
+        return hidden_calls, await _settled_witness(pilot, rail)
 
 
 async def test_run_inspector_holds_a_rebuild_for_the_rails_opening(monkeypatch) -> None:
@@ -228,6 +252,132 @@ async def test_section_patch_in_a_hidden_rail_keeps_its_new_secondary_line(
     assert opened == await _never_hidden(
         ConsoleInspectorSection(title="Agents", section_id="agents", **_kwargs(after))
     )
+
+
+@pytest.mark.parametrize("held", ["run inspector", "section"])
+async def test_the_held_rebuild_lands_before_the_openings_first_paint(
+    monkeypatch, held
+) -> None:
+    """TASK-38650: no frame of the opening shows the rows the rail held.
+
+    The opening queues the held rebuild on the widget's own message pump,
+    while the screen's update timer ticks on a task of its own. When that
+    tick was already queued as the opening ran (the screen's idle woke the
+    timer earlier in the same loop pass), it ran first and painted the held
+    rows twice, for its layout and its repaint, before the rebuild began.
+    The ``call_soon`` below queues that tick.
+    """
+    if held == "run inspector":
+        widget = ConsoleRunInspector(
+            _inspector_state(provider="No active work", chat=False)
+        )
+        after = _inspector_state(provider="No active work", chat=True)
+        selector = "#console-inspector-dictionaries-attach"
+    else:
+        widget = ConsoleInspectorSection(
+            title="Agents",
+            section_id="agents",
+            **_kwargs(_section_state(summary="", detail="")),
+        )
+        after = _section_state(summary="Run history", detail="")
+        selector = "#console-inspector-section-agents-summary"
+
+    def facts(screen) -> tuple:
+        return tuple((_painted(node), node.disabled) for node in screen.query(selector))
+
+    frames: list[tuple] = []
+    paint = Screen._compositor_refresh
+
+    def painted(screen) -> None:
+        frames.append(facts(screen))
+        return paint(screen)
+
+    host = _RailHost(widget)
+    async with host.run_test(size=(40, 30)) as pilot:
+        await pilot.pause()
+        rail = host.query_one("#rail")
+        ChatScreen._sync_console_rail_descendant_visibility(rail, False)
+        await pilot.pause()
+        held_rows = facts(host.screen)
+        widget.sync_state(after)
+        await pilot.pause()
+        assert widget._rail_rebuild_deferred
+        monkeypatch.setattr(Screen, "_compositor_refresh", painted)
+        asyncio.get_running_loop().call_soon(host.screen._on_timer_update)
+        ChatScreen._sync_console_rail_descendant_visibility(rail, True)
+        host.screen.refresh(layout=True)  # the opening's own layout
+        for _ in range(6):
+            await pilot.pause(0.05)
+        rebuilt = facts(host.screen)
+        opening = list(frames)
+        # The hold's 1 s net releases it a second time; the release ends the
+        # batch only once, so the count stays 0 and painting carries on.
+        await pilot.pause(1.2)
+        assert host._batch_count == 0, "the hold ended its batch twice"
+        frames.clear()
+        host.screen.refresh(layout=True)
+        await pilot.pause(0.1)
+        assert frames, "nothing painted after the hold's net"
+    assert rebuilt != held_rows
+    assert opening, "the opening painted no frame"
+    assert set(opening) == {rebuilt}, opening
+
+
+class _KeepAliveRailHost(_RailHost):
+    """Keeps running after a widget pump's error, as TldwCli does (TASK-32533)."""
+
+    def __init__(self, widget: Widget) -> None:
+        super().__init__(widget)
+        self.kept: list[BaseException] = []
+
+    def _handle_exception(self, error: Exception) -> None:
+        self.kept.append(error)
+
+
+async def test_a_failed_rebuild_does_not_leave_the_paints_held(monkeypatch) -> None:
+    """TASK-38650 review: the opening's paint hold ends when the rebuild raises.
+
+    A raising callback makes ``_flush_next_callbacks`` drop the rest of the
+    pump's queue, the hold's release included. TldwCli keeps the app alive
+    for a widget pump's error (``app_lifecycle._handle_exception``), so that
+    left the batch open and nothing painted again.
+    """
+    section = ConsoleInspectorSection(
+        title="Agents",
+        section_id="agents",
+        **_kwargs(_section_state(summary="", detail="")),
+    )
+    host = _KeepAliveRailHost(section)
+    async with host.run_test(size=(40, 30)) as pilot:
+        await pilot.pause()
+        rail = host.query_one("#rail")
+        ChatScreen._sync_console_rail_descendant_visibility(rail, False)
+        await pilot.pause()
+        section.sync_state(_section_state(summary="Run history", detail=""))
+        await pilot.pause()
+        assert section._rail_rebuild_deferred
+
+        async def failed_rebuild() -> None:
+            raise RuntimeError("the rebuild failed")
+
+        monkeypatch.setattr(section, "recompose", failed_rebuild)
+        ChatScreen._sync_console_rail_descendant_visibility(rail, True)
+        deadline = time.monotonic() + 1.5
+        while host._batch_count and time.monotonic() < deadline:
+            await pilot.pause(0.05)
+        assert any(isinstance(error, RuntimeError) for error in host.kept)
+        assert not host._batch_count, "a failed rebuild left every paint held"
+        frames: list[Screen] = []
+        paint = Screen._compositor_refresh
+
+        def painted(screen) -> None:
+            frames.append(screen)
+            return paint(screen)
+
+        monkeypatch.setattr(Screen, "_compositor_refresh", painted)
+        host.screen.refresh(layout=True)
+        await pilot.pause(0.1)
+        assert frames, "nothing painted after the hold"
 
 
 class _FocusRailHost(_RailHost):

@@ -310,7 +310,18 @@ _BUDGETS: dict[str, tuple[str, int, int]] = {
     # PR3301, 2026-10-31: user size waiver; exact integrated measurement.
     # Final PR3301 on dev59b8fe0249: explicit owner size waiver, exact measurement.
     # PR3311, 2026-11-01: user size waiver; exact integrated measurement.
-    "tldw_chatbook/UI/Screens/chat_screen.py": ("ChatScreen", 24590, 741),
+    #: Raised 24590 -> 24596 (methods unchanged) 2026-11-03 by TASK-38650,
+    #: owner rule (a fix over a size ratchet raises the row with a dated
+    #: comment; never move or reflow code to make it fit): the rail cascade
+    #: holds paints until a reopened widget's held rebuild has run (+2 code,
+    #: +4 comment). Dev 18482c1cf7 measures 24590/741; with the fix, 24596/741.
+    #: Raised 24596 -> 24613 (methods unchanged) 2026-11-03 by TASK-38650's
+    #: second review, same owner rule: the hold's release ends the batch once,
+    #: and an asyncio call_later net ends it after 1 s when the child's pump
+    #: drops the release (a raising callback, or a pump whose mount raised).
+    #: The cascade's local helper is +17 lines, 7 of them its comment.
+    #: Dev 18482c1cf7 measures 24590/741; with the fix, 24613/741.
+    "tldw_chatbook/UI/Screens/chat_screen.py": ("ChatScreen", 24613, 741),
     #: Added 2026-09 by the Library decomposition plan (PR 0b): this row was
     #: missing for the entire month in which library_screen.py tripled from
     #: 15,819 to 46,109 lines while chat_screen.py shrank under its budget.

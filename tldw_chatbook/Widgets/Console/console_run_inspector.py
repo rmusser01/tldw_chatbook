@@ -334,19 +334,23 @@ class ConsoleRunInspector(RecomposeCaptureGuard, Vertical):
         self.call_after_refresh(self._restore_rail_cascade_visibility)
         self.call_after_refresh(self._request_sections_reconcile)
 
-    def rebuild_if_deferred(self) -> None:
+    def rebuild_if_deferred(self) -> bool:
         """Run the recompose a collapsed rail held back (TASK-37000).
 
         The rail's opening cascade calls this once it has shown the inspector
         again, so the rebuild lands with the opening's own layout.
+
+        Returns:
+            True when a rebuild was queued on this widget's message pump.
         """
         if not self._rail_rebuild_deferred:
-            return
+            return False
         self._rail_rebuild_deferred = False
         if not self.is_mounted:
-            return
+            return False
         self.recompose_count += 1
         self.refresh(recompose=True)
+        return True
 
     async def recompose(self) -> None:
         """Reconcile the replacement sections after their DOM is committed."""
