@@ -12,8 +12,6 @@ attributed to a fabricated "default_user" client, which is what sync and
 conflict resolution key off.
 """
 
-import pathlib
-
 import pytest
 
 import tldw_chatbook.Tools.note_management_tools as nmt
@@ -56,7 +54,11 @@ def _clear_notes_service_cache():
 
 
 @pytest.fixture
-def fake_service(monkeypatch):
+def fake_service(monkeypatch, tmp_path):
+    from types import SimpleNamespace
+
+    stub = SimpleNamespace(db_path_str=str(tmp_path / "stub.db"))
+    monkeypatch.setattr(nmt, "_default_db_provider", lambda: stub)
     monkeypatch.setattr(nmt, "NotesInteropService", _FakeNotesService)
     return _FakeNotesService
 
@@ -167,12 +169,6 @@ def test_importing_the_module_does_not_resolve_the_db_path(reloadable_module):
     with patch.object(config_module, "get_chachanotes_db_path", landmine):
         importlib.reload(nmt)  # the import itself must not call it
 
-        # ...but it must still be reachable lazily, per call.
-        with patch.object(
-            nmt, "get_chachanotes_db_path", lambda: pathlib.Path("/tmp/x/db.sqlite")
-        ):
-            assert str(nmt._notes_db_base_dir()) == "/tmp/x"
-
 
 def test_an_unwritable_data_dir_does_not_break_the_import(reloadable_module):
     """The failure mode that made this a bug rather than a style nit."""
@@ -187,23 +183,6 @@ def test_an_unwritable_data_dir_does_not_break_the_import(reloadable_module):
     with patch.object(config_module, "get_chachanotes_db_path", boom):
         importlib.reload(nmt)  # must not raise
         assert nmt.CreateNoteTool().name == "create_note"
-
-
-def test_a_reload_does_not_leak_a_patched_binding(reloadable_module):
-    """Regression guard for the leak itself, not just its symptom."""
-    import importlib
-    from unittest.mock import patch
-
-    import tldw_chatbook.config as config_module
-
-    with patch.object(
-        config_module, "get_chachanotes_db_path", lambda: pathlib.Path("/fake/db")
-    ):
-        importlib.reload(nmt)
-    importlib.reload(nmt)  # what the fixture does, asserted inline
-
-    assert nmt.get_chachanotes_db_path is config_module.get_chachanotes_db_path
-    assert "/fake" not in str(nmt._notes_db_base_dir())
 
 
 @pytest.mark.asyncio
@@ -234,11 +213,13 @@ async def test_note_tools_reuse_one_service_across_calls(monkeypatch, fake_servi
 
 
 @pytest.mark.asyncio
-async def test_service_cache_rebuilds_when_the_db_path_changes(
+async def test_service_cache_rebuilds_when_the_supplied_db_changes(
     monkeypatch, fake_service, tmp_path
 ):
-    """The cache is keyed on the resolved DB path, so re-pointing the data
-    dir must NOT serve a service bound to the previous database."""
+    """The cache is keyed on the DB the host supplies, so handing a tool a
+    different database must NOT serve a service bound to the previous one."""
+    from types import SimpleNamespace
+
     monkeypatch.setattr(nmt, "_resolve_user_id", lambda: "alice")
     built = []
     real_init = _FakeNotesService.__init__
@@ -249,19 +230,76 @@ async def test_service_cache_rebuilds_when_the_db_path_changes(
 
     monkeypatch.setattr(_FakeNotesService, "__init__", counting_init)
 
-    first = tmp_path / "one" / "chachanotes.db"
-    second = tmp_path / "two" / "chachanotes.db"
-    first.parent.mkdir(parents=True)
-    second.parent.mkdir(parents=True)
+    first = SimpleNamespace(db_path_str=str(tmp_path / "one" / "c.db"))
+    second = SimpleNamespace(db_path_str=str(tmp_path / "two" / "c.db"))
 
-    # Only `get_chachanotes_db_path` is patched: `_notes_service` now resolves
-    # the path ONCE and derives the base directory from it (Qodo #5), so
-    # patching `_notes_db_base_dir` here would be inert and would imply a
-    # coupling that no longer exists.
-    monkeypatch.setattr(nmt, "get_chachanotes_db_path", lambda: first)
-    await nmt.CreateNoteTool().execute(title="a", content="c")
+    await nmt.CreateNoteTool(db_provider=lambda: first).execute(title="a", content="c")
     assert len(built) == 1
+    await nmt.CreateNoteTool(db_provider=lambda: first).execute(title="b", content="c")
+    assert len(built) == 1
+    await nmt.CreateNoteTool(db_provider=lambda: second).execute(title="b", content="c")
+    assert len(built) == 2, "a different DB must rebuild the cached service"
 
-    monkeypatch.setattr(nmt, "get_chachanotes_db_path", lambda: second)
-    await nmt.CreateNoteTool().execute(title="b", content="c")
-    assert len(built) == 2, "a new DB path must rebuild the cached service"
+
+# -- TASK-36945.4: the real service, fed by the host-supplied database -------
+
+
+@pytest.mark.bootstrap_profile
+@pytest.mark.asyncio
+async def test_note_tools_use_the_real_service_on_the_supplied_database(tmp_path):
+    """Tool.execute -> real NotesInteropService -> real DB, nothing faked."""
+    from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
+
+    db = CharactersRAGDB(tmp_path / "tool-path.db", "task-36945-4")
+    nmt._reset_notes_service_cache()
+    try:
+        created = await nmt.CreateNoteTool(db_provider=lambda: db).execute(
+            title="provider note", content="stored via the tool path"
+        )
+        assert "error" not in created, created
+        found = await nmt.SearchNotesTool(db_provider=lambda: db).execute(
+            query="provider"
+        )
+        assert "error" not in found, found
+        assert created["note_id"] in str(found)
+    finally:
+        nmt._reset_notes_service_cache()
+
+
+_FRESH_PROCESS_SCRIPT = """
+import asyncio, json, os
+from pathlib import Path
+import tldw_chatbook.config as config
+from tldw_chatbook.Agents.tool_catalog import BuiltinToolProvider
+
+assert config.chachanotes_db is None, "something already created the DB"
+real = config.get_cli_setting
+config.get_cli_setting = lambda s, k, d=None: True if s == "tools" else real(s, k, d)
+tool = BuiltinToolProvider()._tools["create_note"]
+result = asyncio.run(tool.execute(title="fresh", content="process"))
+db = config.chachanotes_db
+print(json.dumps({"result": result, "db_path": str(Path(db.db_path_str).resolve()) if db else None}))
+"""
+
+
+def test_note_tools_succeed_in_a_process_where_nothing_created_the_db():
+    """AC#3: base failed with 'No unified database template for
+    NotesInteropService' because config.chachanotes_db was still None."""
+    import json
+    import os
+    import subprocess
+    import sys
+    from pathlib import Path
+
+    env = dict(os.environ)
+    proc = subprocess.run(
+        [sys.executable, "-c", _FRESH_PROCESS_SCRIPT],
+        env=env, capture_output=True, text=True, timeout=180,
+    )
+    assert proc.returncode == 0, proc.stderr[-2000:]
+    out = json.loads(proc.stdout.strip().splitlines()[-1])
+    assert "error" not in out["result"], out
+    assert out["result"]["note_id"]
+    # Never the real profile: the DB must sit under the scratch HOME/XDG.
+    scratch = Path(env["HOME"]).resolve()
+    assert Path(out["db_path"]).is_relative_to(scratch), out["db_path"]
