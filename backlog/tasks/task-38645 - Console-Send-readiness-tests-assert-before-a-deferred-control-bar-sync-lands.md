@@ -68,9 +68,9 @@ Evidence (dev 2dcf038cb8; each loaded run had `Tests/UI/test_console_send_price.
 - AC#1: 10 of 10 `-n 4` runs, 4 passed each, under the same load.
 - Control for the wait: with the display made cold just before the sync, the bare call fails the composer-resync test (`(True, True) == (False, False)`) and the helper passes it.
 - AC#2: temporarily reverted, run with `-n 4`, and restored (`git diff -- tldw_chatbook` empty afterwards).
-- AC#2 re-worded by the coordinator after review (2026-11-03). The original wording, "each test still fails against the Send disagreements that TASK-33620.15.22 fixed", cannot hold for the positive press test. That test passed on the pre-fix code by design, as TASK-33620.15.22's merge evidence records. The new wording names the control that does prove the wait does not blunt it: removing the provider wiring.
   - Revert of the product lines of 1facb4b8ef (composer resync counts any label; screen counts draft or pending image) and c353b078f6 (Workbench reads draft text only and ignores the vision block): 3 failed at their assertions, matching TASK-33620.15.22's notes. Document-with-bytes screen `(True, True)` against composer `(False, False)`; stale label `(False, False) == (True, True)`; Workbench image `(True, False) == (False, False)`.
   - The positive press test passes on that revert, as it did on pre-fix code: it pins "a ready Send sends", not a disagreement. It fails under the revert of 1facb4b8ef's `sendable_attachment_provider` wiring at `_send_state(send) == (False, False)`: Send reads disabled while a press would send the image. That revert turns all 4 red.
+- AC#2 re-worded by the coordinator after review (2026-11-03). The original wording, "each test still fails against the Send disagreements that TASK-33620.15.22 fixed", cannot hold for the positive press test. That test passed on the pre-fix code by design, as TASK-33620.15.22's merge evidence records. The new wording names the control that does prove the wait does not blunt it: removing the provider wiring.
 - `./scripts/preflight.sh` passed.
 
 Files: Tests/UI/test_console_send_ready_attachment.py, backlog/docs/lessons-testing-evidence.md.
