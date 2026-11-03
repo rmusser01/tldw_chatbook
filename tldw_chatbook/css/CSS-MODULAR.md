@@ -50,7 +50,10 @@ hash of every input, and the startup check below reads it.
 1. Edit a module, or a `BUNDLED_CSS` or `BUNDLED_SCREEN_CSS` literal. For a new
    module, create the file and add it to `CSS_MODULES` at its cascade position.
 2. Run `python tldw_chatbook/css/build_css.py` with the repo's Python (3.12 or
-   newer).
+   newer). `./build_css.sh` at the repo root runs the same command. It uses
+   `$PYTHON` when that is set. Otherwise it uses the first of `.venv/bin/python`,
+   `python3`, `python3.14`, `python3.13` and `python3.12` that is 3.12 or newer,
+   and it stops with an error when none is.
 3. Commit the source change with every regenerated sheet.
 4. Run `./scripts/preflight.sh`.
 
