@@ -505,7 +505,8 @@ from tldw_chatbook.config import (
     get_cli_setting,
     get_runtime_config_snapshot,
 )
-from tldw_chatbook.Chat.console_capture_policy import apply_console_capture_settings, runtime_capture_policy
+from tldw_chatbook.Chat.console_capture_policy import apply_console_capture_settings
+from tldw_chatbook.Chat.console_capture_policy import runtime_capture_policy
 from tldw_chatbook.Library.library_rag_service import LibraryRagSearchRequest
 from tldw_chatbook.UI.Views.RAGSearch.search_handoff import (
     build_library_rag_evidence_bundle,

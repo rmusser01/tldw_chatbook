@@ -95,7 +95,9 @@ async def run_legacy_trace_maintenance(
                 from tldw_chatbook.Chat.console_trace_models import (
                     new_opaque_id,
                 )
-                from tldw_chatbook.Chat.console_capture_policy import resolve_trace_compaction_policy
+                from tldw_chatbook.Chat.console_capture_policy import (
+                    resolve_trace_compaction_policy,
+                )
 
                 controller = self._chat_controller
                 pause = getattr(
