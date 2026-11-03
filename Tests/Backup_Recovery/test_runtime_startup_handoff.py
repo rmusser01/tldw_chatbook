@@ -17,6 +17,7 @@ keyring.set_keyring(Keyring())
 from tldw_chatbook.app import TldwCli
 from tldw_chatbook.Backup_Recovery import storage_admission as storage
 from tldw_chatbook.Backup_Recovery.runtime_maintenance import RuntimeMaintenance
+from tldw_chatbook.Backup_Recovery.participants import _retire_current_thread_caches
 from tldw_chatbook.Backup_Recovery.bootstrap import RecoveryRequired
 
 async def main():
@@ -54,7 +55,13 @@ async def main():
             with __import__('pytest').raises(RuntimeError, match='audio_history_paused_for_maintenance'):
                 await owner.create_audio_speech({'input':'during capture'})
         runtime.retire_local_caches()
-        assert runtime.pause.drain(time.monotonic()+1)
+        drain_deadline = time.monotonic()+1
+        # Match the native monitor: a foreign operation may defer this cache.
+        while not runtime.pause.drain(time.monotonic()):
+            assert time.monotonic() < drain_deadline
+            await asyncio.sleep(.01)
+            _retire_current_thread_caches(runtime.pause)
+        assert runtime.pause.drain(time.monotonic()) and time.monotonic() <= drain_deadline
         startup = next(iter(storage._startups.values()))
         holder = storage._holds[startup._key]
         with __import__('pytest').raises(RecoveryRequired, match='participant_runtime_coverage_incomplete'):

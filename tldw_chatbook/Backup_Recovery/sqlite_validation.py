@@ -5,11 +5,13 @@ entry checks SQLite content and owned BLOBs; it never opens those external paths
 """
 
 import sqlite3
+from collections.abc import Iterator
 from contextlib import ExitStack, closing, contextmanager
 from contextvars import ContextVar
 from pathlib import Path
 from threading import Event
 from time import monotonic
+from typing import Any
 
 from .models import OwnerAdapter
 from tldw_chatbook.DB.recovery_sqlite import _split_statistics, _statistics_metadata
@@ -1871,3 +1873,235 @@ def validated_schema_version(
     if issues or version is None:
         raise ValueError(issues[0] if issues else "sqlite_validation_unavailable")
     return version
+
+
+def _validate_sqlite(
+    connection: sqlite3.Connection,
+    versions: tuple[int, ...],
+    schemas: tuple[tuple[int, tuple[str, ...]], ...],
+    *,
+    version_query: str = "PRAGMA user_version",
+    allow_statistics: bool = False,
+) -> tuple[str, ...]:
+    from tldw_chatbook.Backup_Recovery.mobile_preview_budget import (
+        current,
+        integrity_cost,
+        matching_schemas,
+        reserve,
+        scalar_cost,
+    )
+
+    restrictions = _current_restrictions(connection)
+    if any(
+        "canvas_revision_payload_valid" in sql
+        for _, schema in schemas
+        for sql in schema
+    ):
+        if restrictions is None:
+            restrictions = _restrict_connection(connection)
+    else:
+        connection.execute("PRAGMA trusted_schema=OFF")
+    if current() is not None and not allow_statistics:
+        matches = matching_schemas(connection, schemas)
+        matched = tuple(row[0] for row in matches)
+        actual = matches[0][1] if matches else ()
+    else:
+        catalog = _catalog(connection, _schemas=schemas)
+        if allow_statistics:
+            reserve(128 + 32 * len(catalog))
+            catalog, _stats = _split_statistics(catalog)
+        actual = tuple(row[3] for row in catalog if row[3] is not None)
+        matched = tuple(known for known, schema in schemas if actual == schema)
+    if not matched:
+        return ("unsupported_schema",)
+    scalar_cost(connection)
+    version = connection.execute(version_query).fetchone()[0]
+    if version not in versions or version not in matched:
+        return ("unsupported_schema_version",)
+    with _canvas_schema_access(connection, actual, restrictions):
+        integrity_cost(connection)
+        if connection.execute("PRAGMA foreign_key_check").fetchone() is not None:
+            return ("invalid_domain_reference",)
+        payload_issues = _canvas_payload_issues(connection, restrictions)
+        if payload_issues:
+            return payload_issues
+        if connection.execute("PRAGMA quick_check").fetchall() != [("ok",)]:
+            return ("invalid_sqlite_integrity",)
+        return ()
+
+
+def validate_goal_rows(connection):
+    """Validate exact goal payloads and cross-table ownership without opening sources."""
+    import hashlib
+    from typing import get_args
+
+    from tldw_chatbook.Backup_Recovery.mobile_preview_budget import (
+        connection_budget,
+        scalar_cost,
+        table_cost,
+    )
+
+    budget = connection_budget(connection)
+    scalar_cost(connection, 2)
+
+    from tldw_chatbook.Agents.goal_models import (
+        GoalCheckpoint,
+        GoalEvidence,
+        GoalReport,
+        GoalRequest,
+        GoalSnapshot,
+    )
+
+    # Version admission runs first; still fail closed without a version.
+    version = connection.execute("SELECT MAX(version) FROM schema_version").fetchone()[
+        0
+    ]
+    if type(version) is not int:
+        return ("unsupported_schema_version",)
+    # Goal rows exist from v24 on (v25 adds review-boundary claims only).
+    if version < 24:
+        return ()
+    invalid = connection.execute(
+        "SELECT 1 FROM goal_runs g JOIN automatic_work_chains c ON c.id=g.chain_id "
+        "WHERE c.conversation_id!=g.conversation_id OR c.allowance_root_chain_id IS NOT NULL "
+        "UNION ALL SELECT 1 FROM goal_iterations i JOIN goal_runs g ON g.id=i.goal_id "
+        "JOIN automatic_wake_attempts a ON a.id=i.attempt_id "
+        "WHERE a.attempt_kind!='goal_iteration' OR a.chain_id!=g.chain_id OR a.conversation_id!=g.conversation_id "
+        "OR (i.run_id IS NOT NULL AND NOT EXISTS (SELECT 1 FROM agent_runs r WHERE r.id=i.run_id AND r.work_chain_id=g.chain_id AND r.conversation_id=g.conversation_id)) "
+        "UNION ALL SELECT 1 FROM automatic_wake_attempts a WHERE a.attempt_kind='goal_iteration' "
+        "AND NOT EXISTS (SELECT 1 FROM goal_iterations i WHERE i.attempt_id=a.id) "
+        "UNION ALL SELECT 1 FROM goal_reports r JOIN goal_iterations i ON i.id=r.iteration_id WHERE r.goal_id!=i.goal_id "
+        "UNION ALL SELECT 1 FROM goal_checkpoints c WHERE NOT EXISTS (SELECT 1 FROM goal_iterations i WHERE i.attempt_id=c.attempt_id AND i.goal_id=c.goal_id) "
+        "UNION ALL SELECT 1 FROM goal_evidence e WHERE NOT EXISTS (SELECT 1 FROM goal_iterations i WHERE i.attempt_id=e.attempt_id AND i.goal_id=e.goal_id) "
+        "UNION ALL SELECT 1 FROM goal_payload_reservations p WHERE NOT EXISTS (SELECT 1 FROM goal_iterations i WHERE i.attempt_id=p.attempt_id AND i.goal_id=p.goal_id) LIMIT 1"
+    ).fetchone()
+    if invalid is not None:
+        return ("invalid_goal_ownership",)
+    if budget is not None:
+        for table, columns in (
+            ("goal_runs", ("status", "request_json", "payload_hash")),
+            ("goal_reports", ("payload_json",)),
+            ("goal_checkpoints", ("attempt_id", "payload_json")),
+            ("goal_evidence", ("id", "goal_id", "attempt_id", "payload_json")),
+        ):
+            table_cost(connection, table, columns)
+        budget.reserve(2048)
+        count, size = connection.execute(
+            "SELECT count(*),coalesce(sum(coalesce(length(CAST(i.run_id AS BLOB)),0)),0) "
+            "FROM goal_evidence e JOIN goal_iterations i ON i.attempt_id=e.attempt_id"
+        ).fetchone()
+        budget.reserve(256 + 128 * count + 4 * size)
+
+    def payload_cost(payload):
+        if budget is not None:
+            budget.json(payload)
+            budget.reserve(1024 + 4 * len(payload))
+
+    try:
+        for status, payload, digest in connection.execute(
+            "SELECT status, request_json, payload_hash FROM goal_runs"
+        ):
+            if status not in get_args(GoalSnapshot.model_fields["status"].annotation):
+                return ("invalid_goal_payload",)
+            if status == "removed":
+                if payload:
+                    return ("invalid_goal_payload",)
+                continue
+            payload_cost(payload)
+            GoalRequest.model_validate_json(payload)
+            if hashlib.sha256(payload.encode()).hexdigest() != digest:
+                return ("invalid_goal_payload",)
+        for (payload,) in connection.execute("SELECT payload_json FROM goal_reports"):
+            payload_cost(payload)
+            GoalReport.model_validate_json(payload)
+        for attempt_id, ordinal, payload in connection.execute(
+            "SELECT c.attempt_id,i.ordinal,c.payload_json FROM goal_checkpoints c "
+            "JOIN goal_iterations i ON i.attempt_id=c.attempt_id"
+        ):
+            payload_cost(payload)
+            checkpoint = GoalCheckpoint.model_validate_json(payload)
+            if checkpoint.id != attempt_id or checkpoint.ordinal != ordinal:
+                return ("invalid_goal_ownership",)
+        for evidence_id, goal_id, attempt_id, run_id, payload in connection.execute(
+            "SELECT e.id,e.goal_id,e.attempt_id,i.run_id,e.payload_json FROM goal_evidence e "
+            "JOIN goal_iterations i ON i.attempt_id=e.attempt_id"
+        ):
+            payload_cost(payload)
+            evidence = GoalEvidence.model_validate_json(payload)
+            if (
+                evidence.id,
+                evidence.goal_id,
+                evidence.attempt_id,
+                evidence.run_id,
+            ) != (evidence_id, goal_id, attempt_id, run_id):
+                return ("invalid_goal_ownership",)
+    except (ValueError, TypeError):
+        return ("invalid_goal_payload",)
+    return ()
+
+
+@contextmanager
+def _open_recovery_validation(
+    owner_id: "str",
+    candidate: "Path",
+    *,
+    writable: "bool",
+    with_restrictions: "bool" = False,
+    cancel=None,
+    _custody=None,
+) -> "Iterator[sqlite3.Connection | tuple[sqlite3.Connection, Any]]":
+    """Open a disposable candidate with restrictions before any imported query.
+
+    The caller owns staging and must never pass a live destination. This authority
+    deliberately does not enroll the candidate as an ordinary profile resource.
+    Internal validators may request the original restriction budget alongside
+    the connection so catalog inspection and later checks share one deadline.
+    """
+    from tldw_chatbook.Backup_Recovery.sqlite_validation import (
+        _installed_owner,
+        _recovery_restriction_scope,
+        _restrict_connection,
+    )
+    from tldw_chatbook.DB import private_sqlite as _sqlite
+
+    _installed_owner(owner_id)
+    with _sqlite.contextlib.ExitStack() as resources:
+        if _custody is None:
+            connection = resources.enter_context(
+                _sqlite.contextlib.closing(
+                    _sqlite._connect_registered_sqlite(
+                        "recovery.validation",
+                        candidate,
+                        read_only=not writable,
+                        must_exist=True,
+                        immutable=not writable,
+                        isolation_level=None,
+                        cached_statements=0,
+                        timeout=0,
+                    )
+                )
+            )
+        else:
+            if writable:
+                raise ValueError("captured_validation_is_read_only")
+            from tldw_chatbook.Backup_Recovery.archive_reader import _regular
+            from tldw_chatbook.Backup_Recovery.storage_admission import _CaptureLease
+
+            stream = resources.enter_context(_regular(candidate, _custody=_custody))
+            lease = _CaptureLease(_custody.scope)
+            lease.descriptor_outcome = _sqlite._SQLiteDescriptorOutcome()
+            resources.callback(lease.retire)
+            connection = _sqlite.connect_private_sqlite_descriptor(
+                "recovery.validation",
+                stream.fileno(),
+                _native_outcome=lease.descriptor_outcome,
+                isolation_level=None,
+                cached_statements=0,
+                timeout=0,
+            )
+            lease.attach(connection)
+        restrictions = _restrict_connection(connection, cancel)
+        restrictions.capture_scope = None if _custody is None else _custody.scope
+        restrictions.capture_stream = None if _custody is None else stream
+        with _recovery_restriction_scope(connection, restrictions):
+            yield ((connection, restrictions) if with_restrictions else connection)

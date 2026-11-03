@@ -2,13 +2,36 @@
 
 import hashlib
 
+from tldw_chatbook.DB import mobile_consolidation_receipts as _receipt_owner
 from tldw_chatbook.DB.mobile_consolidation_receipts import (
     _DOMAINS_BY_NAME,
     _SPECS,
     _encode_owner_receipt,
     _row_digest,
-    _source_row_digest,
 )
+
+
+def _source_row_digest(reads, table, values, budget):
+    """Fingerprint an original row only under its live authenticated catalog."""
+    from tldw_chatbook.Backup_Recovery.mobile_captured_sqlite import (
+        _native_columns_match,
+        _verify_candidate,
+    )
+
+    spec = _receipt_owner._SPECS[table]
+    columns = tuple(values)
+    # Receipt construction retains its original per-row live-reader proof.
+    reads.check()
+    version = next(v for p, f, v in reads.versions if (p, f) == ("legacy", spec.family))
+    matches = _native_columns_match(
+        "legacy", spec.family, table, columns, spec.columns, version
+    )
+    _, restrictions, _, candidate, digest = reads._connections["legacy", spec.family]
+    _verify_candidate(reads, restrictions, candidate, digest)
+    reads.check()
+    if not matches:
+        _receipt_owner._invalid()
+    return _receipt_owner._digest_row_values(table, values, columns, budget)
 
 
 def _array(value, budget):

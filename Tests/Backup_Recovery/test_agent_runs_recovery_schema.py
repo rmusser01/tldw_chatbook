@@ -350,11 +350,13 @@ def test_native_receipt_migration_rolls_back_table_before_version_stamp(
 
 
 def test_legacy_mobile_declaration_reuses_exact_agent_schema_policy(tmp_path):
+    from tldw_chatbook.Backup_Recovery.mobile_consolidation import (
+        legacy_mobile_declarations,
+    )
     from tldw_chatbook.Backup_Recovery.models import (
         DISCOVERY_CONTEXT_KEY,
         DiscoveryContext,
     )
-    from tldw_chatbook.DB.recovery_operations import legacy_mobile_declarations
 
     config = {
         "general": {"users_name": "user"},

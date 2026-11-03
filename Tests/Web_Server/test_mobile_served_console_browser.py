@@ -358,6 +358,7 @@ async def _run_retention(root):
         "tldw_chatbook/app_served.py",
         "tldw_chatbook/Chat/console_chat_controller.py",
         "tldw_chatbook/Utils/custom_tokenizers.py",
+        "tldw_chatbook/Chat/custom_tokenizers.py",
         "tldw_chatbook/Backup_Recovery/mobile_enrollment.py",
         "tldw_chatbook/Backup_Recovery/storage_admission.py",
     ]

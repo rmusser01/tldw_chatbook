@@ -735,3 +735,13 @@ else:
         check=False,
     )
     assert result.returncode == 0, result.stdout + result.stderr
+
+
+def test_app_import_defers_unmount_service_drain_module(tmp_path: Path) -> None:
+    result = _run_isolated_python(
+        tmp_path,
+        "import sys\n"
+        "import tldw_chatbook.app\n"
+        "assert 'tldw_chatbook.app_shutdown' not in sys.modules\n",
+    )
+    assert result.returncode == 0, result.stdout + result.stderr

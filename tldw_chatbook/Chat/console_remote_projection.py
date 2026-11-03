@@ -7,13 +7,13 @@ import hashlib
 import json
 from typing import TYPE_CHECKING
 
-from tldw_chatbook.Web_Server.served_console_events import ConsoleEventBatch
+from tldw_chatbook.Chat.console_remote_models import ConsoleEventBatch
 
 from .console_remote_commands import REVISION_FIELDS, ConsoleRemoteCommands
 from .console_remote_models import ConsoleHostIdentity, ConsoleTarget
 
 if TYPE_CHECKING:
-    from tldw_chatbook.Web_Server.served_console_events import ConsoleEventBuffer
+    from tldw_chatbook.Chat.console_remote_models import ConsoleEventBuffer
 
     from .console_runtime import ConsoleRuntime
 

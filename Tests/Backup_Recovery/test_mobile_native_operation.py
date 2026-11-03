@@ -77,29 +77,19 @@ def test_component_retires_actual_readers_before_native_owner_and_refuses_copy(
 def test_production_operation_derives_all_inputs_and_refuses_before_first_effect(
     tmp_path, monkeypatch
 ):
-    import json
+    from functools import partial
 
-    from tldw_chatbook.Backup_Recovery import mobile_runs_preflight, sqlite_validation
+    from Tests.Backup_Recovery import mobile_consolidation_fixture
+    from Tests.Backup_Recovery.test_mobile_owning_transactions import _small_native_seed
 
-    expired = []
-    native_expired = sqlite_validation._Restrictions.expired
+    monkeypatch.setattr(
+        mobile_consolidation_fixture,
+        "_seed",
+        partial(_small_native_seed, source_case="physical_snapshot"),
+    )
 
-    def observe_expired(restrictions):
-        result = native_expired(restrictions)
-        if result and len(expired) < 8:
-            expired.append(
-                {
-                    "steps": restrictions.steps,
-                    "step_budget": sqlite_validation._STEP_BUDGET,
-                    "cancelled": restrictions.cancel is not None
-                    and restrictions.cancel.is_set(),
-                    "deadline": restrictions.deadline,
-                    "observed_after_native_call": sqlite_validation.monotonic(),
-                }
-            )
-        return result
+    from tldw_chatbook.Backup_Recovery import mobile_runs_preflight
 
-    monkeypatch.setattr(sqlite_validation._Restrictions, "expired", observe_expired)
     observed = []
     original_plan = mobile_runs_preflight._plan_runs
 
@@ -115,40 +105,36 @@ def test_production_operation_derives_all_inputs_and_refuses_before_first_effect
         before = _fingerprints(tmp_path / "profile")
         with captured.journal._locked(exclusive=False) as fd:
             records = tuple(captured.journal._records(fd))
-        try:
-            with pytest.raises(
-                ValueError, match="mobile_native_operation_blocked"
-            ) as error:
-                captured.consolidate(
-                    password=b"test-private-mobile-rollback", cancel=Event()
-                )
-        finally:
-            (tmp_path / "native-expiry.json").write_text(json.dumps(expired))
+        with pytest.raises(
+            ValueError, match="mobile_native_operation_blocked"
+        ) as error:
+            captured.consolidate(
+                password=b"test-private-mobile-rollback", cancel=Event()
+            )
         blockers = error.value.blockers
         assert len(observed) == 1
         plan = observed[0]
         assert plan.source_rows
         assert all(blocker in blockers for blocker in plan.blockers)
         assert {
-            (row.table, row.original, row.dependency_domain, row.dependency_id)
-            for row in blockers
-            if row.reason == "native_consumer_required"
-        } == {
-            (d.table, d.original, d.owner, d.requirement) for d in plan.pending_duties
+            "workspace_records",
+            "conversations",
+            "messages",
+            "agent_runs",
+            "change_snapshots",
+        } <= {row.table for row in plan.source_rows}
+        assert plan.pending_duties
+        snapshots = {
+            row.original for row in plan.rows if row.table == "change_snapshots"
         }
-        assert {
-            row.original
-            for row in blockers
-            if row.reason == "native_runlog_receipt_membership_required"
-        } == {(h.logical_id,) for h in plan.history}
+        assert snapshots
+        assert {(row.table, row.original, row.reason) for row in blockers} == {
+            ("change_snapshots", original, "native_physical_dependency_unproved")
+            for original in snapshots
+        }
         for diagnostic in (plan, plan.integrated, plan.integrated.sync.trace.content):
             with pytest.raises(ValueError):
                 diagnostic.require_complete()
-        assert {
-            row.dependency_id
-            for row in blockers
-            if row.reason == "native_owner_writer_required"
-        } == {"db.chachanotes.primary", "db.workspaces", "db.agent_runs"}
         assert _fingerprints(tmp_path / "profile") == before
         with captured.journal._locked(exclusive=False) as fd:
             assert tuple(captured.journal._records(fd)) == records

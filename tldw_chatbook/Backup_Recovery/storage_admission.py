@@ -2388,7 +2388,10 @@ class _MobileScope:
         _MobileScope._check(self)
 
     def check_for_lock(self):
-        _MobileScope._check(self, recovering_mode=self.recovering_mode)
+        mode = getattr(self, "recovering_mode", None)
+        if type(mode) is not bool:
+            raise bootstrap.RecoveryRequired("mobile_scope_inactive")
+        _MobileScope._check(self, recovering_mode=mode)
 
     def _check(self, *, recovering_mode=False):
         from .journal import _mobile_active_owner, _mobile_state
@@ -3343,12 +3346,13 @@ class MaintenanceSession:
     @contextmanager
     def mobile_consolidation_owner(self, journal, owner_id):
         """Construct one exact installed owner; retire physical handles before return."""
-        from tldw_chatbook.Chat.console_execution_owner import ConsoleExecutionOwner
         from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
         from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
+        from tldw_chatbook.DB.console_execution_owner import ConsoleExecutionOwner
         from tldw_chatbook.DB.Workspace_DB import WorkspaceDB
 
         from .journal import _mobile_active_owner, _mobile_sidecar_state, _mobile_state
+        from .mobile_native_operation import _acquire_run_owner
 
         self._check()
         if journal is not getattr(self, "_mobile_journal", None) or any(
@@ -3441,9 +3445,7 @@ class MaintenanceSession:
         try:
             kwargs = {}
             if owner_id == "db.agent_runs":
-                scope.execution_owner = ConsoleExecutionOwner._acquire_consolidation(
-                    scope
-                )
+                scope.execution_owner = _acquire_run_owner(ConsoleExecutionOwner, scope)
                 kwargs = {
                     "execution_owner": scope.execution_owner,
                     "reconcile_on_init": False,

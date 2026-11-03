@@ -37,7 +37,7 @@ caught = None
 
 def start_owned_child(argv, **options):
     assert not children, 'the App child must not be launched'
-    assert Path(argv[-1]).name == 'native-producer.json'
+    assert Path(argv[-1]).name == 'native-seed.json'
     assert options['start_new_session'] is True
     assert {key: options['env'].get(key) for key in entry} == entry
     # Only this launch is replaced. The real standalone owns the Popen object,
@@ -105,7 +105,7 @@ report = json.loads(result_path.read_text())
 assert report.get('completed') is not True
 assert len(report['children']) == 1
 record = report['children'][0]
-assert record['name'] == 'producer' and record['pid'] == children[0][0].pid
+assert record['name'] == 'seed' and record['pid'] == children[0][0].pid
 assert record['returncode'] == 0 and record['interrupted'] is True
 assert not Path(record['output']).exists()
 assert not (Path(report['fixture']) / 'profile').exists()
@@ -157,3 +157,118 @@ def test_standalone_records_already_reaped_child_and_preserves_interrupt(tmp_pat
             parent.kill()
         parent.wait(timeout=5)
         parent.stderr.close()
+
+
+@pytest.mark.skipif(os.name != "posix", reason="standalone owns POSIX process groups")
+@pytest.mark.parametrize(
+    "mutation",
+    ("missing_record", "incomplete", "seeded_id", "config", "source", "target"),
+)
+def test_seed_evidence_rejects_missing_or_changed_fixture_before_producer(
+    tmp_path, mutation
+):
+    import hashlib
+    import json
+
+    from Tests.Backup_Recovery.test_mobile_mounted_manual import (
+        _closed_seed_files,
+        _read_seed_record,
+    )
+
+    fixture = tmp_path / "fixture"
+    fixture.mkdir(mode=0o700)
+    selector = fixture / "profile/config.toml"
+    source = fixture / "profile/data/shared/mobile"
+    targets = fixture / "profile/new/nested"
+    source.mkdir(mode=0o700, parents=True)
+    targets.mkdir(mode=0o700, parents=True)
+    selector.write_bytes(b"selected-config")
+    leaves = [selector]
+    for root, names in (
+        (source, ("chat.db", "workspaces.db", "runs.db")),
+        (targets, ("chat.db", "workspaces.db", "agent_runs.db")),
+    ):
+        for name in names:
+            path = root / name
+            path.write_bytes(name.encode())
+            leaves.append(path)
+    for path in leaves:
+        path.chmod(0o600)
+    files = _closed_seed_files(fixture)
+    record = {
+        "complete": True,
+        "fixture": str(fixture),
+        "seed_calls": [True, False],
+        "seeded": {
+            "legacy": {
+                "conversation": "actual-seeded-id",
+                "fingerprints": {
+                    name: facts["sha256"] for name, facts in files["source"].items()
+                },
+            },
+            "canonical": {"conversation": "actual-canonical-id"},
+        },
+        "files": files,
+        "selected_config": selector.read_bytes().hex(),
+    }
+    path = fixture / "native-seed.json"
+    path.write_text(json.dumps(record))
+    path.with_name("native-seed-exit.json").write_text(
+        json.dumps(
+            {
+                "entry_home": {"HOME": "unchanged", "USERPROFILE": None},
+                "exit_home": {"HOME": "unchanged", "USERPROFILE": None},
+                "profile_guard": [],
+                "network_guard": [],
+                "target_files": files["targets"],
+            }
+        )
+    )
+    expected_digest = hashlib.sha256(path.read_bytes()).hexdigest()
+    assert _read_seed_record(fixture, expected_digest) == (record, expected_digest)
+    if mutation == "missing_record":
+        path.unlink()
+    elif mutation == "incomplete":
+        record["complete"] = False
+        path.write_text(json.dumps(record))
+    elif mutation == "seeded_id":
+        record["seeded"]["legacy"]["conversation"] = "different-id"
+        path.write_text(json.dumps(record))
+    else:
+        changed = {
+            "config": selector,
+            "source": source / "chat.db",
+            "target": targets / "chat.db",
+        }[mutation]
+        changed.write_bytes(b"changed")
+    with pytest.raises((AssertionError, FileNotFoundError)):
+        _read_seed_record(
+            fixture, None if mutation == "incomplete" else expected_digest
+        )
+
+
+@pytest.mark.skipif(os.name != "posix", reason="standalone owns POSIX process groups")
+@pytest.mark.parametrize("posture", ("missing", "linked", "public"))
+def test_prepared_seed_reuse_refuses_invalid_profile_before_seed(
+    tmp_path, monkeypatch, posture
+):
+    from Tests.Backup_Recovery import mobile_consolidation_fixture
+    from Tests.Backup_Recovery.test_mobile_consolidation_admission import prepared
+
+    def forbidden_seed(*args, **kwargs):
+        pytest.fail("invalid reused profile reached native fixture seeding")
+
+    monkeypatch.setattr(mobile_consolidation_fixture, "_seed", forbidden_seed)
+    profile = tmp_path / "profile"
+    if posture == "linked":
+        actual = tmp_path / "actual"
+        actual.mkdir(mode=0o700)
+        profile.symlink_to(actual, target_is_directory=True)
+    elif posture == "public":
+        profile.mkdir(mode=0o700)
+        profile.chmod(0o755)
+    with (
+        pytest.raises((AssertionError, FileNotFoundError)),
+        prepared(tmp_path, monkeypatch, reuse_seeded_profile=True),
+    ):
+        pytest.fail("invalid reused profile reached admission")

@@ -639,7 +639,19 @@ def _command_owner(case):
         incarnation_id=case.session.incarnation_id,
     )
     revisions = {key: getattr(case.session, key) for key in REVISION_FIELDS}
-    return ConsoleRemoteCommands(case.runtime, host), target, revisions
+    from tldw_chatbook.Web_Server.served_console_app import (
+        _load_console_configuration_metadata,
+    )
+
+    return (
+        ConsoleRemoteCommands(
+            case.runtime,
+            host,
+            configuration_metadata_loader=_load_console_configuration_metadata,
+        ),
+        target,
+        revisions,
+    )
 
 
 def _configure_command_case(case, tmp_path):
@@ -669,6 +681,7 @@ async def test_command_native_capture_retains_desktop_and_refuses_scope_races(
     received_workspace, monkeypatch, tmp_path, native_change
 ):
     from Tests.Chat.test_console_received_intent_inputs import _attachment
+    from tldw_chatbook.Chat.console_chat_models import ConsoleStagedSource
 
     case = received_workspace
     gateway = _configure_command_case(case, tmp_path)

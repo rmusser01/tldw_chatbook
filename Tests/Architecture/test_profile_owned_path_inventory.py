@@ -219,7 +219,7 @@ def test_shared_asset_exceptions_are_explicit() -> None:
         "tldw_chatbook/UI/Speech/speech_settings_mixin.py",
         "tldw_chatbook/UI/Speech/speech_settings_model.py",
         "tldw_chatbook/UI/Voice_Cloning_Window.py",
-        "tldw_chatbook/Utils/custom_tokenizers.py",
+        "tldw_chatbook/Chat/custom_tokenizers.py",
     )
     shared_rules = tuple(
         rule for rule in APPROVED_EXCEPTIONS if rule.relative_path in shared_paths

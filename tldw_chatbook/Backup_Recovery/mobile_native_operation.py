@@ -1,5 +1,7 @@
 """Fixed native owning transactions from one authenticated, retired input cohort."""
 
+from tldw_chatbook.DB import console_execution_owner as _native_execution_owner
+
 from . import archive_reader, control_records
 from .mobile_content_graph import _ContentBlocker
 
@@ -1453,3 +1455,69 @@ def _consolidate(captured, *, password, cancel):
                 _native_capture_check(captured, cancel)
     _native_preopen(captured, cancel)
     commit_terminal()
+
+
+def _acquire_run_owner(cls, scope) -> "_native_execution_owner.ConsoleExecutionOwner":
+    """Acquire the exact run lock before journaled native mode preparation."""
+    from tldw_chatbook.Backup_Recovery.admission import Admission
+    from tldw_chatbook.Backup_Recovery.native_files import pinned_directory
+    from tldw_chatbook.Backup_Recovery.storage_admission import _MobileScope
+
+    if (
+        cls is not _native_execution_owner.ConsoleExecutionOwner
+        or type(scope) is not _MobileScope
+    ):
+        raise _native_execution_owner.ConsoleExecutionUnavailable(
+            "consolidation_scope_required"
+        )
+    _MobileScope.check_for_lock(scope)
+    if scope.owner["owner_id"] != "db.agent_runs" or scope.execution_owner is not None:
+        raise _native_execution_owner.ConsoleExecutionUnavailable(
+            "consolidation_run_scope_required"
+        )
+    path = _native_execution_owner.Path(scope.owner["path"])
+    result = _native_execution_owner.verify_trusted_directory(
+        path.parent, allow_shared_sticky=False
+    )
+    if result.status != _native_execution_owner.PrivatePathStatus.TRUSTED_DIRECTORY:
+        raise _native_execution_owner.ConsoleExecutionUnavailable(
+            "unverified_run_store_parent"
+        )
+    leaf = f".{path.name}.execution.lock"
+    with pinned_directory(path.parent) as parent:
+        try:
+            Admission._create_lock(parent, leaf)
+        except FileExistsError:
+            pass
+        fd = Admission._open(parent, leaf, _native_execution_owner.os.O_RDWR)
+        # The native scope owns the descriptor even if fdopen/locking fails.
+        scope.execution_fd = fd
+        stream = _native_execution_owner.os.fdopen(fd, "r+")
+        scope.execution_stream = stream
+        try:
+            _native_execution_owner.fcntl.flock(
+                fd,
+                _native_execution_owner.fcntl.LOCK_EX
+                | _native_execution_owner.fcntl.LOCK_NB,
+            )
+        except OSError as exc:
+            if exc.errno in (
+                _native_execution_owner.errno.EACCES,
+                _native_execution_owner.errno.EAGAIN,
+            ):
+                raise _native_execution_owner.ConsoleExecutionBusy(
+                    "console_execution_busy"
+                ) from None
+            raise
+        _MobileScope.recover_mode(scope)
+        if scope.recovering_owner:
+            _MobileScope.observe_sidecars(scope, "recovered")
+        _MobileScope.harden_store(scope)
+        owner = cls(path, stream)
+        scope.execution_owner = owner
+        cls._live.add(owner)
+        owner.require_current(path)
+        scope.execution_use = owner._use(path)
+        scope.execution_use.__enter__()
+        _MobileScope.check(scope)
+        return owner
