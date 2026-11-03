@@ -755,8 +755,9 @@ MINIMUM_FILES = 1337
 # measured entry count.
 MINIMUM_FILES = 1349
 # TASK-38649 (2026-11-03): appends the closed-owner and retry-backoff readiness
-# nodes at the tail: 1,337 + 2.
-MINIMUM_FILES = 1351
+# nodes at the tail: 1,337 + 2; review rounds 2-3 add the single-timer and
+# late-delivery nodes: 1,339 + 2.
+MINIMUM_FILES = 1353
 
 
 def read_census(path: Path) -> list[str]:
