@@ -126,10 +126,9 @@ def _build_retry_policy(*, retries: int, retry_delay: float) -> Retry:
     )
 
 
-#: task-32805.4: upper bound on a provider-supplied Retry-After. api_base_url
-#: is user-configurable and this delay is slept on the gateway worker thread
-#: that Stop cannot interrupt, so an unbounded value would pin the worker.
-_MAX_RETRY_AFTER_SECONDS = 60.0
+#: TASK-38609: the local re-definition of _MAX_RETRY_AFTER_SECONDS (same
+#: 60.0 value) was deleted; the single definition lives in hosted_chat and
+#: is imported at the top of this module.
 
 
 def _advance_retry_policy(

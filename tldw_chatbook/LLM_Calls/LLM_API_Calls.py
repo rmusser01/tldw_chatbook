@@ -472,7 +472,14 @@ def get_openai_embeddings(input_data: str, model: str) -> List[float]:
             logger.error(
                 f"OpenAI Embeddings: request failed with status code {response.status_code}"
             )
-            logger.error(f"OpenAI Embeddings: Error response: {response.text}")
+            # TASK-38609: same safe-detail discipline as the chat handlers
+            # (safe_llm_error_detail at the openai chat error path) -- the
+            # raw provider error body never lands in logs at ERROR
+            # unredacted; sensitive runs get the stable redaction.
+            logger.error(
+                "OpenAI Embeddings: Error response: "
+                f"{safe_llm_error_detail(response.text)}"
+            )
             # Propagate HTTPError to be caught by chat_api_call's handler (if this were called from there)
             # Or raise specific error if called directly
             response.raise_for_status()  # This will raise HTTPError
@@ -826,6 +833,9 @@ def chat_with_openai(
                 session_context = create_owned_default_session()
                 session = session_context.__enter__()
                 response = None
+                # TASK-38609: honor the same configured timeout the
+                # non-streaming path uses instead of a hardcoded 180s.
+                stream_timeout = float(openai_config.get("api_timeout", 90.0))
                 try:
                     response = _provider_recovery.openai_post(
                         session,
@@ -833,7 +843,7 @@ def chat_with_openai(
                         headers=headers,
                         json=payload,
                         stream=True,
-                        timeout=180,
+                        timeout=stream_timeout,
                     )
                     if (
                         response.status_code == 400
@@ -852,7 +862,7 @@ def chat_with_openai(
                             headers=headers,
                             json=retry_payload,
                             stream=True,
-                            timeout=180,
+                            timeout=stream_timeout,
                         )
                     response.raise_for_status()
                     if use_responses_api:
