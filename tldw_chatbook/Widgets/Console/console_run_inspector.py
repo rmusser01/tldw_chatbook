@@ -339,6 +339,12 @@ class ConsoleRunInspector(RecomposeCaptureGuard, Vertical):
 
         The rail's opening cascade calls this once it has shown the inspector
         again, so the rebuild lands with the opening's own layout.
+
+        TASK-38650: ``delay_update`` holds the app's paints until this
+        widget's pump has started the recompose, whose own batch holds them
+        from there; its end is a timer, so it runs after the pump step queued
+        here. Without it, a screen update tick already queued when the rail
+        opened painted the held rows once.
         """
         if not self._rail_rebuild_deferred:
             return
@@ -346,6 +352,7 @@ class ConsoleRunInspector(RecomposeCaptureGuard, Vertical):
         if not self.is_mounted:
             return
         self.recompose_count += 1
+        self.app.delay_update()
         self.refresh(recompose=True)
 
     async def recompose(self) -> None:

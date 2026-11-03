@@ -17,9 +17,12 @@ the opening then undid, stays hidden after the rail opens.
 
 from __future__ import annotations
 
+import asyncio
+
 import pytest
 from textual.app import ComposeResult
 from textual.containers import Vertical
+from textual.screen import Screen
 from textual.widget import Widget
 from textual.widgets import Button, Static
 
@@ -228,6 +231,66 @@ async def test_section_patch_in_a_hidden_rail_keeps_its_new_secondary_line(
     assert opened == await _never_hidden(
         ConsoleInspectorSection(title="Agents", section_id="agents", **_kwargs(after))
     )
+
+
+@pytest.mark.parametrize("held", ["run inspector", "section"])
+async def test_the_held_rebuild_lands_before_the_openings_first_paint(
+    monkeypatch, held
+) -> None:
+    """TASK-38650: no frame of the opening shows the rows the rail held.
+
+    The opening queues the held rebuild on the widget's own message pump,
+    while the screen's update timer ticks on a task of its own. When that
+    tick was already queued as the opening ran (the screen's idle woke the
+    timer earlier in the same loop pass), it ran first and painted the held
+    rows twice, for its layout and its repaint, before the rebuild began.
+    The ``call_soon`` below queues that tick.
+    """
+    if held == "run inspector":
+        widget = ConsoleRunInspector(
+            _inspector_state(provider="No active work", chat=False)
+        )
+        after = _inspector_state(provider="No active work", chat=True)
+        selector = "#console-inspector-dictionaries-attach"
+    else:
+        widget = ConsoleInspectorSection(
+            title="Agents",
+            section_id="agents",
+            **_kwargs(_section_state(summary="", detail="")),
+        )
+        after = _section_state(summary="Run history", detail="")
+        selector = "#console-inspector-section-agents-summary"
+
+    def facts(screen) -> tuple:
+        return tuple((_painted(node), node.disabled) for node in screen.query(selector))
+
+    frames: list[tuple] = []
+    paint = Screen._compositor_refresh
+
+    def painted(screen) -> None:
+        frames.append(facts(screen))
+        return paint(screen)
+
+    host = _RailHost(widget)
+    async with host.run_test(size=(40, 30)) as pilot:
+        await pilot.pause()
+        rail = host.query_one("#rail")
+        ChatScreen._sync_console_rail_descendant_visibility(rail, False)
+        await pilot.pause()
+        held_rows = facts(host.screen)
+        widget.sync_state(after)
+        await pilot.pause()
+        assert widget._rail_rebuild_deferred
+        monkeypatch.setattr(Screen, "_compositor_refresh", painted)
+        asyncio.get_running_loop().call_soon(host.screen._on_timer_update)
+        ChatScreen._sync_console_rail_descendant_visibility(rail, True)
+        host.screen.refresh(layout=True)  # the opening's own layout
+        for _ in range(6):
+            await pilot.pause(0.05)
+        rebuilt = facts(host.screen)
+    assert rebuilt != held_rows
+    assert frames, "the opening painted no frame"
+    assert set(frames) == {rebuilt}, frames
 
 
 class _FocusRailHost(_RailHost):
