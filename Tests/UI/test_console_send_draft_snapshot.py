@@ -16,6 +16,7 @@ import pytest
 from textual.events import Key
 from textual.widgets import Button
 
+from Tests.UI.pump_probe import console_attach_ended
 from Tests.UI.test_console_native_chat_flow import (
     BlockedGateway,
     _configure_native_ready_console,
@@ -341,6 +342,9 @@ async def test_console_armed_unknown_mouse_send_snapshots_before_skill_await(
     async with host.run_test(size=(160, 48)) as pilot:
         console = host.screen_stack[-1]
         await _wait_for_selector(console, pilot, "#console-native-composer")
+        # Arm the send only once the attach has ended and the Console's
+        # queue has drained, so no attach work runs inside the measured send.
+        await console_attach_ended(console)
         monkeypatch.setattr(
             console._prompt_queue, "_blocked_reason_accessor", lambda: ""
         )
@@ -352,11 +356,6 @@ async def test_console_armed_unknown_mouse_send_snapshots_before_skill_await(
         composer.load_draft(armed)
         store.set_session_draft(session.id, armed)
         console._console_unknown_send_armed = armed
-        for _ in range(100):
-            if console._console_attach_reconciled:
-                break
-            await pilot.pause(0.05)
-        assert console._console_attach_reconciled
         assert console._console_runtime().view is console
 
         entered = asyncio.Event()
