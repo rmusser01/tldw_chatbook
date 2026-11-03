@@ -24403,9 +24403,9 @@ extending the deadline. Evidence is retained in the hosted-97a QA phase.
 - the first poll tick, at mount + 10 s, ran `refresh_files`, whose `_refresh_session_changes` saw the new revision and rehydrated Git state;
 - with no retained push and no push recovery in the owner, the rehydrate set the phase to `"idle"`.
 
-At load average 34 alone, the resize loop ended 9.3 s after mount. At 37, the real tick landed between two widths, at 10.0 s. Holding the test past the tick (`asyncio.sleep(10)` after the write) failed 2 of 2 runs.
+Run on its own at load average 34, the resize loop ended 9.3 s after mount. In a run at load 37, the real tick landed between two widths, at 10.0 s. Holding the test past the tick (`asyncio.sleep(10)` after the write) failed 2 of 2 runs.
 
 **What to do.**
 - A test whose body runs for seconds should treat `poll_interval=10` as a tick that can land in the middle of it.
-- If the test writes state that a poll can re-derive, run the refresh the poll would run (`await workspace.refresh_files()`) before setting that state.
-- Or seed the state through the owner the poll reads.
+- If the poll re-derives the state only when something changed, run the refresh the poll would run (`await workspace.refresh_files()`) before setting it. Here the gate is the owner-revision compare in `_refresh_session_changes`, so one refresh consumes the owed change and later ticks skip the rehydrate.
+- That does not protect state the poll re-derives on every tick. For example, `_apply_reconcile` overwrites `_root_offline` and `_runtime_warning` on each reconcile. Seed such state through the owner the poll reads, or stop the poll timer for the test.

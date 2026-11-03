@@ -5,7 +5,7 @@ status: Done
 assignee:
 - '@claude'
 created_date: 2026-11-03 05:51
-updated_date: 2026-11-03 06:42
+updated_date: 2026-11-03 07:16
 labels:
 - follow-up
 - tests
@@ -68,7 +68,7 @@ Two forced orders on the unfixed test each failed 2 of 2 runs with `assert 'idle
 
 **AC#4.** 20 three-test runs with `-n 4`, each its own pytest process. The three tests were this one, `test_conflict_resolution_discard_keeps_cancel_first_confirmation` and `test_folder_files_capability_inventory_and_modes`. This test passed in all 20, and so did the conflict-discard test. Load averages were 32 to 45. 9 of the 20 runs failed only `test_folder_files_capability_inventory_and_modes`, at the Restore assertion (`restore.disabled`). That is TASK-38646's race, which PR #3356 fixes and which is not on dev yet.
 
-**The file's other direct writes** (`test_notes_authority_round_trip_retains_both_workspaces`, `test_folder_files_authority_row_tracks_root_save_and_session_git`, `test_folder_files_authority_status_survives_in_surface_navigation`). A one-run probe logged no owed refresh at any of their writes. In two of them, the observed revision equalled the owner's. The row test has no bound session revision to compare: (0, 0), observed `None`. None of them was changed. `test_notes_authority_round_trip_retains_both_workspaces` is red at base 18482c1cf7 for an unrelated reason: `#library-notes-task-return` is not displayed at :1155.
+**Other direct writes.** These are the three that the task description named: `test_notes_authority_round_trip_retains_both_workspaces`, `test_folder_files_authority_row_tracks_root_save_and_session_git` and `test_folder_files_authority_status_survives_in_surface_navigation`. A one-run probe logged no owed refresh at any of their writes. In two of them, the observed revision equalled the owner's. The row test has no bound session revision to compare: (0, 0), observed `None`. None of them was changed. The file has four more `_push_phase =` writes (:3128, :3843, :3891 and :7077 at 88ceaa72c0), which this task did not probe. `test_notes_authority_round_trip_retains_both_workspaces` is red at base 18482c1cf7 for an unrelated reason: `#library-notes-task-return` is not displayed at :1155.
 
 **Checks.** Preflight passes. Ruff format is clean, and the Ruff lint count is unchanged from base (24). A lesson entry, "A 10 s `poll_interval` does not keep the poll out of a loaded UI test", was added to `backlog/docs/lessons-testing-evidence.md`.
 
