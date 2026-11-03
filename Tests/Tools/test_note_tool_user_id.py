@@ -324,6 +324,8 @@ def test_service_cache_reuses_for_same_db_and_rebuilds_for_another(tmp_path):
         assert second.unified_db_template is two
     finally:
         nmt._reset_notes_service_cache()
+        one.close()
+        two.close()
 
 
 def test_registrar_default_getter_is_resolved_at_call_time(monkeypatch):
