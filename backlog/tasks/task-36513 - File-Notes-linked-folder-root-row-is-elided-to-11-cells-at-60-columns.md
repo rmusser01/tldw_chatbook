@@ -67,4 +67,6 @@ Reason: Visibility rule for one existing control and the folder row's fit; no ar
 
 **Also.** File Notes user guide: the Review pairing… row and the narrow-fit rule. Module size ratchet re-pinned 9541 -> 9568 with a dated comment. The no-folder half of TASK-34000.30 AC#10 for this button now holds as a side effect; that task's other criteria are untouched. `Tests/UI/test_library_file_notes_git.py::test_40x20_prepare_scrolls_actions_below_a_long_linked_root` (TASK-38693, red on dev) still fails, now because the 40-column row reads "Linked · notes" rather than "."; its `"..."` expectation predates the part-wise fit.
 
+**Side effect, measured.** `Tests/UI/test_library_notes_riders_r_file_notes.py::test_the_slow_wait_row_keeps_every_control_on_pane_at_60_columns[linked]` and `[unlinked]` (task-32180) were red on eba3ad14b5 in the same whole-file run: "At index 0 diff: 'Review recovered pairing…' != 'Cancel'". The button no longer shows during a folder change, and both pass at ab866f9619.
+
 **Files.** `tldw_chatbook/Widgets/Library/library_file_notes_workspace.py`, `tldw_chatbook/Notes/file_notes_service.py`, `Tests/UI/test_library_file_notes_workspace.py`, `Tests/Architecture/test_module_size_ratchet.py`, `Docs/User_Guide/library/file-notes.md`.
