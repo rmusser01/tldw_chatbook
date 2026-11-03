@@ -7677,6 +7677,80 @@ async def test_focus_moved_inside_the_panel_while_rows_mount_is_not_stolen() -> 
         assert back.has_focus, repr(panel.screen.focused)
 
 
+class _FencedQuitHarness(_PanelHarness):
+    """Quit the way ``TldwCli._shutdown`` does: fence mounts, then drain.
+
+    ``TldwCli`` sets ``App._exit`` -- Textual's mount fence, under which every
+    widget reads ``is_attached`` False -- and then awaits its app-owned drains
+    while every widget is still alive. ``drain`` stands in for those drains.
+    A plain ``App.exit()`` cannot show the bug: Textual closes the widgets
+    first, and a closing ListView ignores the mount.
+    """
+
+    def __init__(self, panel: LibraryFileNotesGitPanel, drain) -> None:
+        super().__init__(panel)
+        self._drain = drain
+
+    async def _shutdown(self) -> None:
+        self._exit = True
+        await self._drain()
+        await super()._shutdown()
+
+
+@pytest.mark.asyncio
+async def test_a_git_row_render_resuming_after_quit_does_nothing() -> None:
+    """TASK-36527: a rescan's row render that lands after quit starts is a no-op.
+
+    The render is held until quit has set the mount fence, then lands during
+    the shutdown drain. RED before the fix: leaving ``run_test`` raises
+    ``WorkerFailed: MountError("Can't mount widget(s) before
+    ListView(id='file-notes-git-rows') is mounted")`` -- in the app, a worker
+    error ending the quit.
+    """
+    panel = LibraryFileNotesGitPanel()
+    panel.styles.display = "block"
+    render_rows = panel._render_rows
+    hold_rows = False
+    render_started = asyncio.Event()
+    release_rows = asyncio.Event()
+    render_landed = asyncio.Event()
+    resumed_after_quit: list[bool] = []
+
+    async def held_render_rows(generation, group_id, rows) -> None:
+        if not hold_rows:
+            await render_rows(generation, group_id, rows)
+            return
+        render_started.set()
+        await release_rows.wait()
+        resumed_after_quit.append(app._exit)
+        try:
+            await render_rows(generation, group_id, rows)
+        finally:
+            render_landed.set()
+
+    async def drain() -> None:
+        release_rows.set()
+        await asyncio.wait_for(render_landed.wait(), timeout=5)
+
+    panel._render_rows = held_render_rows
+    app = _FencedQuitHarness(panel, drain)
+    async with app.run_test(size=(120, 40)) as pilot:
+        # A rescan replaces rows already on screen (the Restore case).
+        panel.render_status(_status(_row("unstaged", stage_action="stage")))
+        await _drain_git_row_render(pilot, panel)
+        hold_rows = True
+        panel.render_status(_status(_row("unstaged", group_id=2, stage_action="stage")))
+        await _wait_until(
+            pilot,
+            render_started.is_set,
+            "Git row replacement did not start",
+        )
+    # Without this, a render cancelled before it resumed would turn the test
+    # green without ever reaching the guard.
+    assert resumed_after_quit == [True], "the held render never resumed under quit"
+    assert panel._replacing_rows, "the late render still synced the panel"
+
+
 async def _drain_git_row_render(pilot, panel) -> None:
     """Wait until the row-render worker has finished, `finally` included."""
     await pilot.app.workers.wait_for_complete()

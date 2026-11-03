@@ -3185,17 +3185,17 @@ class LibraryFileNotesGitPanel(Vertical):
         group_id: int | None,
         rows: tuple[SessionGitRow, ...],
     ) -> None:
-        # TASK-32800.5: the lookup sat OUTSIDE the try below, so the one
-        # statement that can raise when the panel is detached was the one
-        # statement not covered. Worker body + exit_on_error=True means that is
-        # an app exit, not a dropped render.
+        # Worker body + exit_on_error=True: a raise is an app exit, not a dropped
+        # render. TASK-32800.5 guards the lookup against a detached panel, and
+        # TASK-36527 the mount: quit sets `App._exit` before its drains, and
+        # from then on nothing reads as attached, so a late render is moot.
         found = self.query("#file-notes-git-rows")
         if not found:
             return
         list_view = found.first(ListView)
         try:
             await list_view.clear()
-            if generation != self._row_render_generation:
+            if generation != self._row_render_generation or not self.is_attached:
                 return
             await list_view.extend(_SessionGitListItem(row) for row in rows)
             if generation != self._row_render_generation:
@@ -3208,7 +3208,7 @@ class LibraryFileNotesGitPanel(Vertical):
             )
             self._selected_group_id = group_id
         finally:
-            if generation == self._row_render_generation:
+            if generation == self._row_render_generation and self.is_attached:
                 self._replacing_rows = False
                 self._sync_empty_state()
                 self._update_actions()
