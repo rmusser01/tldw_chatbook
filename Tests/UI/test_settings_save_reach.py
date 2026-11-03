@@ -696,7 +696,7 @@ def test_a_held_settings_revision_spans_only_convergence(monkeypatch):
         _console_new_chat_default_generation=lambda: 0,
         _provider_readiness_app_config=dict,  # a new mapping per read
         _pristine_defaults_checked=None,
-        _default_convergences={},
+        _default_convergence=None,
         _notify_stale_default_provider_swap=lambda *_args: None,
     )
 

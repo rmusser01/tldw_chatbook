@@ -459,7 +459,7 @@ def settings_revision_held(
     chat, so the Chat settings draft suspended at ``revision`` may still return.
 
     Args:
-        controller: The session controller that records convergence spans.
+        controller: The session controller that records the convergence run.
         store: The store that owns the chat.
         session_id: The chat the draft was suspended for.
         revision: The chat's settings revision when the draft was suspended.
@@ -471,9 +471,10 @@ def settings_revision_held(
         KeyError: When the chat is gone.
     """
     current = store.session_settings_revision(session_id)
-    spans = getattr(controller, "_default_convergences", {})
-    start, end = spans.get(session_id, (current, current))
-    return current == revision or (end == current and start <= revision <= end)
+    run = getattr(controller, "_default_convergence", None)
+    if current == revision or run is None or run[0] != session_id:
+        return current == revision
+    return run[2] == current and run[1] <= revision <= current
 
 
 _MAX_CANONICAL_CHARACTER_ID = (1 << 63) - 1
@@ -1197,9 +1198,9 @@ class ConsoleSessionController:
         # (session id, config mapping) the pristine-chat refresh last derived
         # saved defaults for; see `_maybe_refresh_stale_default_console_settings`.
         self._pristine_defaults_checked: tuple[str, object] | None = None
-        # session id -> (from, to): a run of settings revisions that only
+        # (session id, from, to): the run of settings revisions that only
         # convergence moved a chat through; see `settings_revision_held`.
-        self._default_convergences: dict[str, tuple[int, int]] = {}
+        self._default_convergence: tuple[str, int, int] | None = None
 
         self._resume_screen_is_torn_down = resume_screen_is_torn_down
         self._read_resume_asyncio = read_resume_asyncio
@@ -4754,11 +4755,11 @@ class ConsoleSessionController:
             mark_user_work=False,
             canonical_settings_baseline=fresh_defaults,
         )
-        span = self._default_convergences.get(session.id)
-        self._default_convergences[session.id] = (
-            span[0] if span is not None and span[1] == before else before,
-            store.session_settings_revision(session.id),
-        )
+        run = self._default_convergence
+        if run is None or run[0] != session.id or run[2] != before:
+            run = (session.id, before, before)
+        after = store.session_settings_revision(session.id)
+        self._default_convergence = (session.id, run[1], after)
         if previous_provider_key and next_provider_key != previous_provider_key:
             # task-16475: the convergence itself is D1 behavior, but a
             # session whose provider identity changes under it must not do so
