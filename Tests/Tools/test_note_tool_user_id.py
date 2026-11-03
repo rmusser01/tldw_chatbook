@@ -37,6 +37,13 @@ class _FakeNotesService:
         return True
 
 
+class _StubDB:
+    """Weak-referenceable stand-in for the ChaChaNotes DB."""
+
+    def __init__(self, db_path_str):
+        self.db_path_str = db_path_str
+
+
 @pytest.fixture(autouse=True)
 def _clear_notes_service_cache():
     """Drop the module-global service cache around every test (task-692).
@@ -55,9 +62,7 @@ def _clear_notes_service_cache():
 
 @pytest.fixture
 def fake_service(monkeypatch, tmp_path):
-    from types import SimpleNamespace
-
-    stub = SimpleNamespace(db_path_str=str(tmp_path / "stub.db"))
+    stub = _StubDB(str(tmp_path / "stub.db"))
     monkeypatch.setattr(nmt, "_default_db_provider", lambda: stub)
     monkeypatch.setattr(nmt, "NotesInteropService", _FakeNotesService)
     return _FakeNotesService
@@ -218,8 +223,6 @@ async def test_service_cache_rebuilds_when_the_supplied_db_changes(
 ):
     """The cache is keyed on the DB the host supplies, so handing a tool a
     different database must NOT serve a service bound to the previous one."""
-    from types import SimpleNamespace
-
     monkeypatch.setattr(nmt, "_resolve_user_id", lambda: "alice")
     built = []
     real_init = _FakeNotesService.__init__
@@ -230,8 +233,8 @@ async def test_service_cache_rebuilds_when_the_supplied_db_changes(
 
     monkeypatch.setattr(_FakeNotesService, "__init__", counting_init)
 
-    first = SimpleNamespace(db_path_str=str(tmp_path / "one" / "c.db"))
-    second = SimpleNamespace(db_path_str=str(tmp_path / "two" / "c.db"))
+    first = _StubDB(str(tmp_path / "one" / "c.db"))
+    second = _StubDB(str(tmp_path / "two" / "c.db"))
 
     await nmt.CreateNoteTool(db_provider=lambda: first).execute(title="a", content="c")
     assert len(built) == 1
@@ -303,3 +306,26 @@ def test_note_tools_succeed_in_a_process_where_nothing_created_the_db():
     # Never the real profile: the DB must sit under the scratch HOME/XDG.
     scratch = Path(env["HOME"]).resolve()
     assert Path(out["db_path"]).is_relative_to(scratch), out["db_path"]
+
+
+@pytest.mark.asyncio
+async def test_service_cache_does_not_keep_the_db_alive(fake_service, tmp_path):
+    import gc
+    import weakref
+    db = _StubDB(str(tmp_path / "c.db"))
+    ref = weakref.ref(db)
+    await nmt.CreateNoteTool(db_provider=lambda: db).execute(title="a", content="c")
+    del db
+    gc.collect()
+    assert ref() is None, "the service cache must not extend the DB's lifetime"
+
+
+def test_registrar_default_getter_is_resolved_at_call_time(monkeypatch):
+    """A patch of config's lazy getter after the provider is built must apply."""
+    import tldw_chatbook.config as config_module
+    from tldw_chatbook.Agents.tool_catalog import BuiltinToolProvider
+
+    provider = BuiltinToolProvider()
+    sentinel = object()
+    monkeypatch.setattr(config_module, "get_chachanotes_db_lazy", lambda: sentinel)
+    assert provider._chachanotes_db_provider() is sentinel

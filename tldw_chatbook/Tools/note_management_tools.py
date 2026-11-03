@@ -5,6 +5,7 @@ These tools allow LLMs to create, search, update, and manage notes.
 """
 
 import threading
+import weakref
 from pathlib import Path
 from typing import Any, Callable, Dict, Optional, Tuple
 
@@ -30,7 +31,7 @@ from ..config import load_settings
 #: repoints the data dir) still rebuilds rather than serving a service
 #: bound to the previous database.
 _SERVICE_LOCK = threading.Lock()
-_SERVICE_CACHE: Optional[Tuple[Tuple[str, int], NotesInteropService]] = None
+_SERVICE_CACHE: Optional[Tuple[Any, NotesInteropService]] = None
 
 
 def _default_db_provider() -> Any:
@@ -59,22 +60,26 @@ def _notes_service(db_provider: Callable[[], Any]) -> NotesInteropService:
     db = db_provider()
     if db is None:
         raise RuntimeError("The notes database is unavailable.")
-    key = (str(db.db_path_str), id(db))
+
+    def _fresh(cached) -> bool:
+        # The weakref keeps the cache from extending the DB's lifetime; a
+        # dead ref or a different DB object means rebuild.
+        return cached is not None and cached[0]() is db
 
     cached = _SERVICE_CACHE
-    if cached is not None and cached[0] == key:
+    if _fresh(cached):
         return cached[1]
 
     with _SERVICE_LOCK:
         cached = _SERVICE_CACHE
-        if cached is not None and cached[0] == key:
+        if _fresh(cached):
             return cached[1]
         service = NotesInteropService(
             base_db_directory=Path(db.db_path_str).parent,
             api_client_id="tool_executor",
             global_db_to_use=db,
         )
-        _SERVICE_CACHE = (key, service)
+        _SERVICE_CACHE = (weakref.ref(db), service)
         return service
 
 
@@ -126,6 +131,9 @@ def _resolve_user_id() -> str:
 
 class _NoteTool(Tool):
     """Base for the note tools: holds the host-supplied database provider."""
+
+    #: Read by ``build_gateable_tool`` to decide whether to pass a provider.
+    accepts_notes_db_provider = True
 
     def __init__(self, db_provider: Optional[Callable[[], Any]] = None) -> None:
         """Bind the tool to a database source.

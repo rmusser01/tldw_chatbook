@@ -7,7 +7,6 @@ for a user rather than for a test double.
 """
 
 import threading
-import types
 
 import pytest
 
@@ -177,7 +176,10 @@ def test_note_tool_executes_on_a_worker_thread(
     monkeypatch.setattr(nmt, "_resolve_user_id", lambda: "alice")
     # The registrar hands the note tools config's lazy getter; give it a stub
     # DB so the faked service never touches a real profile.
-    stub_db = types.SimpleNamespace(db_path_str="/nonexistent/stub.db")
+    class _StubDB:
+        db_path_str = "/nonexistent/stub.db"
+
+    stub_db = _StubDB()
     monkeypatch.setattr("tldw_chatbook.config.get_chachanotes_db_lazy", lambda: stub_db)
 
     gate = BuiltinToolGate(service=_FakeService())

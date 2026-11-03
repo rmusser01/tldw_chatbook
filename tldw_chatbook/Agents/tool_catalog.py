@@ -1247,8 +1247,8 @@ def build_gateable_tool(
 
     Args:
         entry: The table entry to construct.
-        db_provider: ChaChaNotes DB getter handed to the note tools; others
-            ignore it. ``None`` leaves the tool's own lazy default.
+        db_provider: ChaChaNotes DB getter handed to tool classes that
+            declare ``accepts_notes_db_provider``; others ignore it. ``None`` leaves the tool's own lazy default.
 
     Returns:
         The instantiated ``Tool``.
@@ -1262,7 +1262,9 @@ def build_gateable_tool(
         f"..Tools.{entry.module_name}", package=__package__
     )
     factory = getattr(module, entry.factory_name)
-    if db_provider is not None and entry.module_name == "note_management_tools":
+    if db_provider is not None and getattr(
+        factory, "accepts_notes_db_provider", False
+    ):
         return factory(db_provider=db_provider)
     return factory()
 
@@ -1375,7 +1377,12 @@ class BuiltinToolProvider:
         # The note tools get their database from this registrar. Default is
         # the self-initializing getter, so a fresh process works unaided.
         if chachanotes_db_provider is None:
-            from ..config import get_chachanotes_db_lazy as chachanotes_db_provider
+
+            def chachanotes_db_provider() -> Any:
+                from .. import config
+
+                return config.get_chachanotes_db_lazy()
+
         self._chachanotes_db_provider = chachanotes_db_provider
         # settings-workspaces-folder-roots spec §3: the run's workspace,
         # bound around every tool execution (see `invoke`) so file tools
