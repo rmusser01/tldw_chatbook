@@ -218,17 +218,31 @@ async def test_default_model_is_one_row_and_lists_ids_by_where_they_came_from(
         assert adapter.suggester is None and field.suggester is None
 
         await _press_discover(host, pilot, screen)
+        source = screen.query_one("#settings-model-source", Static)
+        help_line = screen.query_one("#settings-model-help", Static)
+        current = expected.index(f"{model}  {CURRENT_MARK}")
         field.focus()
-        await pilot.pause()
+        await _until(
+            pilot,
+            lambda: (
+                results.display
+                and _rows(results) == expected
+                and not source.display
+                and not help_line.display
+                and results.region.width > 36 + 24
+                and results.highlighted == current
+                and f"{model}  {CURRENT_MARK}"
+                in "\n".join(_region_rows(screen, results))
+            ),
+        )
 
         assert results.display
         assert _rows(results) == expected, _rows(results)
         # While choosing, the list opens across the row: the Source word and
         # help step aside, so no id or mark is cut to the 36-cell column.
-        assert not screen.query_one("#settings-model-source", Static).display
-        assert not screen.query_one("#settings-model-help", Static).display
+        assert not source.display
+        assert not help_line.display
         assert results.region.width > 36 + 24
-        current = expected.index(f"{model}  {CURRENT_MARK}")
         assert results.highlighted == current
         painted = "\n".join(_region_rows(screen, results))
         assert f"{model}  {CURRENT_MARK}" in painted, painted
@@ -256,26 +270,39 @@ async def test_choosing_a_discovered_model_replaces_a_set_default_and_saves_with
         picker, field, results, adapter = _widgets(screen)
         await _press_discover(host, pilot, screen)
         before = {key: list(value) for key, value in app.providers_models.items()}
+        source = screen.query_one("#settings-model-source", Static)
 
         field.focus()
         await pilot.pause()
         await pilot.press(*"o3-mini", "down", "enter")
-        await pilot.pause()
+        # The pick reaches the adapter, the draft and the Source word through
+        # posted messages (ModelSelected, then the adapter's Input.Changed).
+        await _until(
+            pilot,
+            lambda: (
+                adapter.value == field.value == picker.value == "o3-mini-new"
+                and screen._provider_setting_values_mapping().get("model")
+                == "o3-mini-new"
+                and screen._category_has_unsaved_changes(PROVIDERS_MODELS)
+                and str(source.renderable) == "edited *"
+            ),
+        )
 
         assert adapter.value == field.value == picker.value == "o3-mini-new"
         assert screen._provider_setting_values_mapping()["model"] == "o3-mini-new"
         assert screen._category_has_unsaved_changes(PROVIDERS_MODELS)
-        assert str(screen.query_one("#settings-model-source", Static).renderable) == (
-            "edited *"
-        )
+        assert str(source.renderable) == "edited *"
         assert app.providers_models == before
 
         await pilot.press("escape")
-        await pilot.pause()
+        await _until(pilot, lambda: host.focused is None)
         assert host.focused is None
         file_list = get_cli_providers_and_models()["OpenAI"]
         await pilot.press("s")
         await _settle(host, pilot)
+        await _until(
+            pilot, lambda: not screen._category_has_unsaved_changes(PROVIDERS_MODELS)
+        )
 
         (saved,) = [
             values
@@ -317,16 +344,39 @@ async def test_changing_provider_rescopes_the_picker_to_that_providers_default(
         def paints_the_head() -> bool:
             cells = field.content_region.width
             assert len(local) > cells, cells
-            return local[:cells] in _region_rows(screen, field)[0]
+            rows = _region_rows(screen, field)
+            return bool(rows) and local[:cells] in rows[0]
+
+        def lists_only_local() -> bool:
+            listed = _rows(results)
+            return f"{local}  {CURRENT_MARK}" in listed and not any(
+                "gpt-4o" in row for row in listed
+            )
 
         screen.query_one("#settings-provider-value", Select).value = "llama_cpp"
         await _settle(host, pilot)
+        await _until(
+            pilot,
+            lambda: (
+                adapter.value == field.value == picker.value == local
+                and screen._provider_setting_values_mapping().get("model") == local
+                and paints_the_head()
+            ),
+        )
 
         assert adapter.value == field.value == picker.value == local
         assert screen._provider_setting_values_mapping()["model"] == local
         assert paints_the_head(), _region_rows(screen, field)[0]
         field.focus()
-        await pilot.pause()
+        await _until(
+            pilot,
+            lambda: (
+                results.display
+                and lists_only_local()
+                and field.selection == Selection(len(local), 0)
+                and paints_the_head()
+            ),
+        )
         assert results.display
         listed = _rows(results)
         assert f"{local}  {CURRENT_MARK}" in listed
@@ -335,14 +385,15 @@ async def test_changing_provider_rescopes_the_picker_to_that_providers_default(
         assert field.selection == Selection(len(local), 0)
         assert paints_the_head(), _region_rows(screen, field)[0]
         await pilot.press("end")  # the caret is the user's to move
-        await pilot.pause()
+        await _until(pilot, lambda: not paints_the_head())
         assert not paints_the_head()
         await pilot.press("escape")  # leaves the field (task-1560)
-        for _ in range(100):
-            if not field.has_focus:
-                break
-            await pilot.pause(0.05)
-        await pilot.pause(0.2)  # the picker's blur timer
+        # Focus leaves first; the picker's blur timer then closes the list
+        # and rests the field on the head.
+        await _until(
+            pilot,
+            lambda: not field.has_focus and not results.display and paints_the_head(),
+        )
         assert not field.has_focus and not results.display
         assert paints_the_head(), _region_rows(screen, field)[0]
 
@@ -361,13 +412,27 @@ async def test_revert_puts_the_saved_default_back_in_the_picker(request):
         field.focus()
         await pilot.pause()
         await pilot.press(*"gpt-4.1", "enter")
-        await pilot.pause()
+        await _until(
+            pilot,
+            lambda: (
+                adapter.value == field.value == picker.value == "gpt-4.1"
+                and screen._category_has_unsaved_changes(PROVIDERS_MODELS)
+            ),
+        )
         assert adapter.value == field.value == picker.value == "gpt-4.1"
         assert screen._category_has_unsaved_changes(PROVIDERS_MODELS)
         await pilot.press("escape", "r")
         await _settle(host, pilot)
+        await _until(pilot, lambda: bool(host.screen.query("#confirm-button")))
         await pilot.click("#confirm-button")
         await _settle(host, pilot)
+        await _until(
+            pilot,
+            lambda: (
+                adapter.value == field.value == picker.value == "gpt-4o"
+                and not screen._category_has_unsaved_changes(PROVIDERS_MODELS)
+            ),
+        )
 
         assert adapter.value == field.value == picker.value == "gpt-4o"
         assert not screen._category_has_unsaved_changes(PROVIDERS_MODELS)
@@ -394,13 +459,21 @@ async def test_an_unlisted_model_id_is_entered_through_custom_id_and_validated(
         field.focus()
         await pilot.pause()
         await pilot.press("tab")
-        await pilot.pause()
+        await _until(pilot, lambda: host.focused is custom)
         assert host.focused is custom
         await pilot.press("enter")
-        await pilot.pause()
+        await _until(pilot, lambda: picker.custom_mode and host.focused is field)
         assert picker.custom_mode and host.focused is field
         await pilot.press(*"my-private-model")
-        await pilot.pause()
+        await _until(
+            pilot,
+            lambda: (
+                adapter.value == picker.value == "my-private-model"
+                and screen._provider_setting_values_mapping().get("model")
+                == "my-private-model"
+                and screen._category_has_unsaved_changes(PROVIDERS_MODELS)
+            ),
+        )
 
         assert adapter.value == picker.value == "my-private-model"
         assert screen._provider_setting_values_mapping()["model"] == (
@@ -409,7 +482,15 @@ async def test_an_unlisted_model_id_is_entered_through_custom_id_and_validated(
         assert screen._category_has_unsaved_changes(PROVIDERS_MODELS)
 
         field.value = "m" * 257
-        await pilot.pause()
+        await _until(
+            pilot,
+            lambda: (
+                picker.value is None
+                and adapter.value == ""
+                and "Invalid model ID" in str(status.renderable)
+                and not screen._provider_setting_values_mapping().get("model")
+            ),
+        )
         assert picker.value is None
         assert adapter.value == ""
         assert "Invalid model ID" in str(status.renderable)
@@ -434,22 +515,37 @@ async def test_an_invalid_custom_id_is_rolled_back_when_the_field_is_left(
         screen = await _open_providers(host, pilot)
         await _settle(host, pilot)
         picker, field, _results, adapter = _widgets(screen)
+
+        def saved_models() -> list:
+            return [
+                values["chat_defaults"]["model"]
+                for values, _deleted in mutations
+                if "model" in values.get("chat_defaults", {})
+            ]
+
         field.focus()
         await pilot.pause()
         await pilot.press(*"gpt-4.1", "enter", "tab", "enter")
-        await pilot.pause()
+        await _until(pilot, lambda: picker.custom_mode and host.focused is field)
         assert picker.custom_mode and host.focused is field
         field.value = "m" * 257
-        await pilot.pause()
+        await _until(pilot, lambda: adapter.value == "")
         assert adapter.value == ""
 
         if leave == "escape":
             await pilot.press("escape")
         else:
             screen.set_focus(None)
-        # The roll-back runs on the picker's blur timer.
+        # The roll-back runs on the picker's blur timer, and reaches the
+        # draft through the adapter's Input.Changed.
         await _until(
-            pilot, lambda: not picker.custom_mode and adapter.value == "gpt-4.1"
+            pilot,
+            lambda: (
+                host.focused is None
+                and not picker.custom_mode
+                and adapter.value == field.value == picker.value == "gpt-4.1"
+                and screen._provider_setting_values_mapping().get("model") == "gpt-4.1"
+            ),
         )
 
         assert host.focused is None
@@ -458,13 +554,9 @@ async def test_an_invalid_custom_id_is_rolled_back_when_the_field_is_left(
         assert screen._provider_setting_values_mapping()["model"] == "gpt-4.1"
         await pilot.press("s")
         await _settle(host, pilot)
+        await _until(pilot, lambda: saved_models() == ["gpt-4.1"])
 
-        saved_models = [
-            values["chat_defaults"]["model"]
-            for values, _deleted in mutations
-            if "model" in values.get("chat_defaults", {})
-        ]
-        assert saved_models == ["gpt-4.1"], mutations
+        assert saved_models() == ["gpt-4.1"], mutations
 
 
 @pytest.mark.asyncio
@@ -484,18 +576,25 @@ async def test_rolling_back_to_a_bracketed_model_id_names_it_literally(request):
         field.focus()
         await pilot.pause()
         await pilot.press("tab", "enter")
-        await pilot.pause()
+        await _until(pilot, lambda: picker.custom_mode and host.focused is field)
         assert picker.custom_mode and host.focused is field
         field.value = "m" * 257
-        await pilot.pause()
+        await _until(pilot, lambda: adapter.value == "")
 
+        kept = f"Invalid model ID not kept; the model is still {model}."
         await pilot.press("escape")
-        # The roll-back runs on the picker's blur timer.
-        await _until(pilot, lambda: not picker.custom_mode and adapter.value == model)
+        # The roll-back runs on the picker's blur timer; its toast is posted.
+        await _until(
+            pilot,
+            lambda: (
+                not picker.custom_mode
+                and adapter.value == picker.value == model
+                and any(str(n.message) == kept for n in host._notifications)
+            ),
+        )
 
         assert not picker.custom_mode
         assert adapter.value == picker.value == model
-        kept = f"Invalid model ID not kept; the model is still {model}."
         toast = next(n for n in host._notifications if str(n.message) == kept)
         assert not toast.markup  # the message is the same with markup on
 
@@ -568,18 +667,37 @@ async def test_a_custom_id_the_save_cannot_write_is_refused_as_it_is_typed(reque
         field.focus()
         await pilot.pause()
         await pilot.press("tab", "enter")
-        await pilot.pause()
+        await _until(pilot, lambda: picker.custom_mode and host.focused is field)
         assert picker.custom_mode and host.focused is field
 
         longest = "m" * MAX_MODEL_ID_CHARS
+
+        def holds_longest() -> bool:
+            return (
+                adapter.value == picker.value == longest
+                and screen._provider_setting_values_mapping().get("model") == longest
+            )
+
+        def refused() -> bool:
+            return (
+                picker.value is None
+                and adapter.value == ""
+                and str(status.renderable) == _INVALID_ID_STATUS
+                and not screen._provider_setting_values_mapping().get("model")
+            )
+
         field.value = longest
-        await pilot.pause()
+        await _until(pilot, holds_longest)
         assert adapter.value == picker.value == longest
         assert screen._provider_setting_values_mapping()["model"] == longest
 
         for model_id in _UNWRITABLE_IDS:
+            # From the longest id each time: a refusal right after another
+            # leaves the same state, which no wait could tell from the last.
+            field.value = longest
+            await _until(pilot, holds_longest)
             field.value = model_id
-            await pilot.pause()
+            await _until(pilot, refused)
             assert picker.value is None, model_id
             assert adapter.value == "", model_id
             assert str(status.renderable) == _INVALID_ID_STATUS, model_id
@@ -613,19 +731,33 @@ async def test_an_id_the_save_refuses_is_named_as_the_cause_not_config_access(
         else:
             temperature = "#settings-model-profile-temperature"
             screen.query_one(temperature, Input).value = "0.42"
-        await pilot.pause()
+        await _until(
+            pilot,
+            lambda: (
+                adapter.value == unwritable
+                and screen._category_has_unsaved_changes(PROVIDERS_MODELS)
+            ),
+        )
         assert adapter.value == unwritable
         assert screen._category_has_unsaved_changes(PROVIDERS_MODELS)
         screen.set_focus(None)
         await pilot.press("s")
         await _settle(host, pilot)
-
-        result = screen._provider_save_result
-        assert result == (
+        refusal = (
             "Provider settings not saved: the model ID is invalid. Use a "
             f"single-line value of at most {MAX_MODEL_ID_CHARS} characters, "
             "with no invisible or control characters. Draft retained."
         )
+        await _until(
+            pilot,
+            lambda: (
+                screen._provider_save_result == refusal
+                and any(str(n.message) == refusal for n in host._notifications)
+            ),
+        )
+
+        result = screen._provider_save_result
+        assert result == refusal
         assert result in [str(n.message) for n in host._notifications]
         assert mutations == []
         assert PROVIDERS_MODELS in screen._settings_drafts
@@ -646,6 +778,11 @@ async def test_discovered_models_stay_in_the_picker_after_the_card_rebuilds(
         screen = await _open_providers(host, pilot)
         await _settle(host, pilot)
         await _press_discover(host, pilot, screen)
+        before = _widgets(screen)[0]
+
+        def rebuilt() -> bool:
+            pickers = list(screen.query("#settings-model-picker"))
+            return len(pickers) == 1 and pickers[0] is not before
 
         if rebuild == "pane":
             screen.mutate_reactive(SettingsScreen.active_category)
@@ -653,11 +790,14 @@ async def test_discovered_models_stay_in_the_picker_after_the_card_rebuilds(
             await _click_settings_category(pilot, "appearance")
             await _click_settings_category(pilot, "providers-models")
         await _settle(host, pilot)
+        await _until(pilot, rebuilt)  # every card compose builds a new picker
+        assert rebuilt()
         assert [m.model_id for m in screen._model_discovery_models] == ["served-c"]
 
         _picker, field, results, _adapter = _widgets(screen)
         field.focus()
         await _settle(host, pilot)
+        await _until(pilot, lambda: {"Served now", "served-c"} <= set(_rows(results)))
         assert {"Served now", "served-c"} <= set(_rows(results)), _rows(results)
 
 
@@ -702,7 +842,20 @@ async def test_a_discovered_model_becomes_the_saved_default_and_joins_the_list(
         picker, field, _results, adapter = _widgets(screen)
         field.focus()
         await pilot.pause()
-        await pilot.press(*served, "enter", "escape", "s")
+        await pilot.press(*served, "enter")
+        # Staged first: an s that lands before the pick has nothing to save,
+        # and the wait below would then end at once on a clean category.
+        await _until(
+            pilot,
+            lambda: (
+                screen._provider_setting_values_mapping().get("model") == served
+                and screen._category_has_unsaved_changes(PROVIDERS_MODELS)
+            ),
+        )
+        assert screen._category_has_unsaved_changes(PROVIDERS_MODELS)
+        await pilot.press("escape")
+        await _until(pilot, lambda: host.focused is None)
+        await pilot.press("s")
         deadline = time.monotonic() + 8
         while screen._category_has_unsaved_changes(PROVIDERS_MODELS):
             assert time.monotonic() < deadline, "save did not finish"
@@ -739,9 +892,10 @@ async def test_the_search_index_model_entry_lands_on_the_picker_field(request):
         summary = screen._category_summary_by_id(PROVIDERS_MODELS)
         assert not screen._search_match_is_field_landing("Model", summary)
 
+        field = screen.query_one("#model-search-picker-input", Input)
         screen._land_search_focus_on_field(field_id, label)
-        await pilot.pause()
-        assert host.focused is screen.query_one("#model-search-picker-input", Input)
+        await _until(pilot, lambda: host.focused is field)
+        assert host.focused is field
 
 
 @pytest.mark.asyncio
@@ -764,27 +918,39 @@ async def test_a_typed_filter_counts_matches_and_enter_picks_the_first(request):
         picker, field, results, adapter = _widgets(screen)
         status = picker.query_one("#model-search-picker-status", Static)
 
+        source = screen.query_one("#settings-model-source", Static)
+        matched = ["Current catalog", "o4-mini-2025-04-16", "o3-mini-2025-01-31"]
+        found = "2 found · Enter picks · Esc cancels"
+
         field.focus()
         await pilot.pause()
         await pilot.press(*"mini")
-        await pilot.pause()
+        await _until(
+            pilot,
+            lambda: (
+                _rows(results) == matched
+                and str(status.renderable) == found
+                and results.highlighted == 1
+                and found in "\n".join(_region_rows(screen, picker))
+            ),
+        )
 
-        assert _rows(results) == [
-            "Current catalog",
-            "o4-mini-2025-04-16",
-            "o3-mini-2025-01-31",
-        ]
-        assert str(status.renderable) == "2 found · Enter picks · Esc cancels"
+        assert _rows(results) == matched
+        assert str(status.renderable) == found
         assert results.highlighted == 1
         painted = "\n".join(_region_rows(screen, picker))
-        assert "2 found · Enter picks · Esc cancels" in painted, painted
+        assert found in painted, painted
 
         await pilot.press("enter")
-        await pilot.pause()
-        assert adapter.value == picker.value == "o4-mini-2025-04-16"
-        assert str(screen.query_one("#settings-model-source", Static).renderable) == (
-            "edited *"
+        await _until(
+            pilot,
+            lambda: (
+                adapter.value == picker.value == "o4-mini-2025-04-16"
+                and str(source.renderable) == "edited *"
+            ),
         )
+        assert adapter.value == picker.value == "o4-mini-2025-04-16"
+        assert str(source.renderable) == "edited *"
 
 
 @pytest.mark.asyncio
@@ -805,17 +971,29 @@ async def test_a_click_on_a_listed_model_picks_it(request, held):
         picker, field, results, adapter = _widgets(screen)
         await _press_discover(host, pilot, screen)
         field.focus()
-        await pilot.pause()
+        await _until(
+            pilot,
+            lambda: (
+                results.display
+                and "o3-mini-new" in _rows(results)
+                and results.region.height > 1
+            ),
+        )
         row = (3, results.gutter.top + _rows(results).index("o3-mini-new"))
         if held:  # an ordinary press lasts 80-150 ms
             before = results.region
             await pilot.mouse_down(results, offset=row)
+            await _until(pilot, lambda: host.focused is results)
+            # A fixed hold, not a settle: the list must stay open across it,
+            # past the field's 0.05 s blur timer.
             await pilot.pause(0.12)
             assert host.focused is results
             assert results.display and results.region == before
             return
         await pilot.click(results, offset=row)
-        await pilot.pause(0.2)
+        await _until(
+            pilot, lambda: adapter.value == field.value == picker.value == "o3-mini-new"
+        )
         assert adapter.value == field.value == picker.value == "o3-mini-new"
 
 
@@ -868,12 +1046,14 @@ async def test_a_click_below_an_open_list_lands_on_the_pressed_control_or_none(
         host.post_message(events.MouseDown(**arguments))
         if held:
             await _until(pilot, lambda: not results.display)
-            await pilot.pause()
+            await _until(pilot, lambda: screen.get_widget_at(*point)[0] is not title)
             # The collapse reached the screen: another control is under the
             # pointer now, so this release is the case the rider is about.
             assert screen.get_widget_at(*point)[0] is not title
         host.post_message(events.MouseUp(**arguments))
-        await _until(pilot, lambda: not results.display)
+        await _until(pilot, lambda: not results.display and host.focused is title)
+        # A fixed window, not a settle: what follows asserts that no other
+        # control was activated, and no poll can wait for an absence.
         await pilot.pause(0.1)
 
         toggled = {
@@ -928,19 +1108,37 @@ async def test_koboldcpp_root_and_prefix_root_list_where_switch_model_probes(
         assert screen._provider_widget_value() == "koboldcpp"
         await _press_discover(host, pilot, screen)
         field = screen.query_one("#settings-provider-endpoint-value", Input)
+        refused = (
+            "Endpoint path has ambiguous API suffixes. Use the server's "
+            "/api/v1/generate route, such as http://localhost:5001/api/v1/generate."
+        )
+
+        def shown_status() -> str:
+            shown = list(
+                screen.query("#settings-model-discovery-status").results(Static)
+            )
+            return _static_text(shown[0]) if shown and shown[0].display else ""
+
+        def staged(endpoint: str) -> bool:
+            # One handler stages the typed endpoint and clears the listing;
+            # until it runs, Discover would read the earlier listing as done.
+            return (
+                screen._provider_setting_values_mapping().get("endpoint") == endpoint
+                and not screen._model_discovery_models
+            )
+
         field.value = prefix
         await _settle(host, pilot)
+        await _until(pilot, lambda: staged(prefix))
         await _press_discover(host, pilot, screen)
         field.value = ambiguous
         await _settle(host, pilot)
+        await _until(pilot, lambda: staged(ambiguous))
         screen.query_one("#settings-discover-provider-models", Button).focus()
         await pilot.press("enter")
-        await _until(
-            pilot, lambda: screen._model_discovery_status.startswith("Endpoint path")
-        )
+        await _until(pilot, lambda: shown_status() == refused)
         await _settle(host, pilot)
-        status = screen.query_one("#settings-model-discovery-status", Static)
-        shown = _static_text(status) if status.display else ""
+        shown = shown_status()
 
     probed = [
         resolve_provider_endpoint("koboldcpp", e).models_url for e in (root, prefix)
@@ -950,7 +1148,4 @@ async def test_koboldcpp_root_and_prefix_root_list_where_switch_model_probes(
         "http://localhost:5001/kobold/v1/models",
     ]
     assert [str(sent.url) for sent in served.requests] == probed
-    assert shown == (
-        "Endpoint path has ambiguous API suffixes. Use the server's "
-        "/api/v1/generate route, such as http://localhost:5001/api/v1/generate."
-    ), shown
+    assert shown == refused, shown
