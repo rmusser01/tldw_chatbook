@@ -7339,6 +7339,8 @@ async def test_library_database_files_switch_retains_workspace_and_database_canv
         editor = retained.query_one("#file-notes-editor", TextArea)
         owned_replica = retained._replica
         assert owned_replica is not None
+        owned_connection = owned_replica._connection
+        assert owned_connection is not None
         assert retained is workspace
         # task-2850: Files mode renders INSIDE the same rail + canvas frame
         # every other notes view uses -- it must never blank the rail.
@@ -7527,8 +7529,12 @@ async def test_library_database_files_switch_retains_workspace_and_database_canv
         assert text_during_open == before_open
     assert workspace._shutdown
     await workspace.shutdown()
+    # TASK-36531: the connection the workspace opened is closed by its quit.
+    # A closed file-backed replica reopens on its next use (b5251e9a6e), so
+    # reusing the replica proves nothing; probe the retired handle instead.
+    assert owned_replica._connection is None
     with pytest.raises(sqlite3.ProgrammingError):
-        owned_replica.list_deleted(str(root.resolve()))
+        owned_connection.execute("SELECT 1")
 
 
 @pytest.mark.asyncio

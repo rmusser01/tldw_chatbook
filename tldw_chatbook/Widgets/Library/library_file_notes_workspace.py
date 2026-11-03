@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import Callable, Collection, Iterator
+from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager
 from dataclasses import dataclass, replace
 from functools import partial
@@ -1521,6 +1522,9 @@ class LibraryFileNotesWorkspace(Vertical):
             replica if isinstance(replica, FileNotesReplica) else None
         )
         self._owns_replica = replica is _UNSET
+        # TASK-36531: a file-backed replica closes only on the thread that
+        # opened its connection, so an owned one opens and closes here.
+        self._replica_thread: ThreadPoolExecutor | None = None
         self._session_owner = (
             FileNotesSessionOwner() if session_owner is None else session_owner
         )
@@ -2759,8 +2763,12 @@ class LibraryFileNotesWorkspace(Vertical):
             await asyncio.to_thread(
                 self._session_owner.wait_for_root_commit,
             )
-        if self._owns_replica:
-            await asyncio.to_thread(self._close_owned_replica)
+        owner_thread = self._replica_thread
+        if self._owns_replica and owner_thread is not None:
+            await asyncio.get_running_loop().run_in_executor(
+                owner_thread, self._close_owned_replica
+            )
+            owner_thread.shutdown(wait=False)
 
     def _close_owned_replica(self) -> None:
         with self._runtime_lock:
@@ -2871,7 +2879,13 @@ class LibraryFileNotesWorkspace(Vertical):
                     replica_path = self._replica_path or (
                         get_user_data_dir() / "file_notes.sqlite"
                     )
-                    replica = FileNotesReplica(replica_path)
+                    if self._replica_thread is None:
+                        self._replica_thread = ThreadPoolExecutor(
+                            1, thread_name_prefix="file-notes-replica"
+                        )
+                    replica = self._replica_thread.submit(
+                        FileNotesReplica, replica_path
+                    ).result()
                     # Keep the handle even if the awaiting mount is cancelled.
                     # A rapid remount will reuse it instead of opening a second
                     # connection after the background thread completes.

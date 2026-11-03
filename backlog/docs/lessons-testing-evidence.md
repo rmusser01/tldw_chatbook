@@ -24529,3 +24529,11 @@ Run on its own at load average 34, the resize loop ended 9.3 s after mount. In a
 **Incident.** TASK-36532 added the 59-test local-server discovery suite (about 13 s serial) to a PR lane. The obvious home was `pr-fast-lane`'s sandboxed step, which already runs the `Tests/Chat` riders. Its comment in `derived-artifacts.yml` gives median 16.1 / max 20.8 min against a 35-min cap (measured 2026-10-14). The job times from the GitHub API for the 37 successful PR runs on 2026-11-03 were median 31.4 / max 34.7 min. A rider placed on the strength of the comment would have pushed the worst case to the cap, and in a run that hits the cap the job is cancelled with no report.
 
 **What to do.** Before you pick a lane for a rider, read the job's recent durations, not its comment: `gh api "repos/<owner>/<repo>/actions/workflows/derived-artifacts.yml/runs?event=pull_request&status=completed&per_page=60"`, then `runs/<id>/jobs?per_page=100` for each run, using `started_at` and `completed_at`. Put the rider where the measured max plus the file's serial time stays clearly under the `timeout-minutes`, and record both numbers in the task notes.
+
+## A core repository's foreign-thread close does nothing, and a closed one reopens on its next use (TASK-36531, 2026-11-03)
+
+**Incident.** File Notes' `shutdown()` closed its owned replica through `asyncio.to_thread`. Since b5251e9a6e, `FileNotesReplica.close()` retires a file-backed connection only on the thread that opened it, and it refuses any other thread without raising. The replica had been opened on one default-executor thread (`asyncio_2`) and was closed from another (`asyncio_8`), so the connection stayed open after quit. The test meant to catch this called `owned_replica.list_deleted(...)` and expected `ProgrammingError`. That probe could never pass, though. A successfully closed file-backed replica sets `_connection = None` and reopens on its next use. The test's "DID NOT RAISE" was filed as "either a leak or a stale expectation" and waited ten days. It was both.
+
+**What to do.**
+- Close a thread-affine repository on the thread that opened it. The fix gives the workspace a one-thread executor for both open and close.
+- To prove a close, capture the native handle beforehand and assert that the handle raises afterwards. Reusing the repository proves nothing.
