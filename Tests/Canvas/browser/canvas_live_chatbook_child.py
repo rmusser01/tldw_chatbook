@@ -1057,8 +1057,8 @@ def main() -> None:
             runtime = app.console_runtime
             native_receipts = runtime.ensure_remote_receipts
 
-            def observed_receipts(identity):
-                receipts = native_receipts(identity)
+            def observed_receipts(identity, **options):
+                receipts = native_receipts(identity, **options)
                 if not getattr(receipts, "_fixture_clock_installed", False):
                     native_clock = receipts.monotonic_ns
                     offset = data_root / "fixture-command-clock-offset-ns"

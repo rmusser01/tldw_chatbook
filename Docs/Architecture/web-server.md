@@ -228,8 +228,10 @@ Textual's internal resize/compositor methods; focused driver and actual-App brow
 tests qualify this seam against the supported Textual version.
 
 Shutdown closes host admission and drains lifecycle-owned retirement tasks even
-if an observer is cancelled. The service uses its own process group for bounded
-TERM/KILL escalation and waits for actual process exit. A closed host can be
+if an observer is cancelled. The service executes the exact application argv
+directly, so its retained process identifies the Console App holding the lease.
+Bounded escalation keeps POSIX session-group signals and uses native process
+termination on Windows, then waits for that actual App to exit. A closed host can be
 replaced only after its process reports a return code; a timeout cannot prove
 owner death. The child separately watches genuine private-control loss, closes
 native admission/wakes, fences the already-installed Console controller and requests
@@ -347,6 +349,14 @@ row. Its transient result explicitly reports
 `stop_requested_exit_unconfirmed_receipt_unavailable_capacity` (or a refusal).
 Its query can return null. It is never reported as durable completion; clients
 must inspect native state and retain uncertainty instead of retrying on reconnect.
+The phone retains an observed accepted or queued handoff across failed receipt
+reads; queued still does not establish consumption and accepted Stop still does
+not establish physical exit. An explicit unknown-command response makes that
+known receipt historical and ends polling for its ID, retaining its original
+binding and outcome without replay. Transport failures keep polling, while
+pending, unknown and never-acknowledged commands retain their ambiguity and
+applicable-target mutation fences. Fresh native snapshots still gate connection
+readiness and exact Stop independently of receipt history.
 The public API and phone client implement this receipt contract; their qualification is recorded below.
 
 ## Selected profile and served qualification (Task11)

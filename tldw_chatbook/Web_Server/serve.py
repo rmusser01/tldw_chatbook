@@ -717,6 +717,7 @@ class ChatbookWebServerMixin:
     def __init__(
         self,
         *args,
+        app_argv: tuple[str, ...] | None = None,
         web_auth_policy: WebAuthPolicy | None = None,
         web_ssl_context: ssl.SSLContext | None = None,
         canvas_policy: CanvasConfigPolicy | None = None,
@@ -731,6 +732,7 @@ class ChatbookWebServerMixin:
         """Initialize the served shell and its feature surfaces.
 
         Args:
+            app_argv: Exact child argv, required when a service starts.
             mobile_service: Injected mobile companion service (ADR-234).
                 ``None`` (the default) constructs ``MobileChatService``
                 lazily on the first ``/api/v1/mobile`` request.
@@ -743,6 +745,7 @@ class ChatbookWebServerMixin:
                 and passes ``None`` when RP derivation fails.
         """
         super().__init__(*args, **kwargs)
+        self._app_argv = app_argv
         if web_auth_policy is None:
             web_auth_policy = build_web_auth_policy(
                 host=self.host,
@@ -1960,6 +1963,7 @@ class ChatbookWebServerMixin:
         return ServedConsoleHost(
             lambda **callbacks: service_class(
                 self.command,
+                app_argv=self._app_argv,
                 **callbacks,
                 download_manager=self.download_manager,
                 debug=self.debug,
@@ -2312,8 +2316,15 @@ def build_chatbook_app_service_class(textual_app_service_class: type) -> type:
     """Adapt textual-serve child metadata, environment and physical retirement."""
 
     class ChatbookAppService(textual_app_service_class):
-        def __init__(self, *args, canvas_control_broker, **kwargs):
+        def __init__(
+            self,
+            *args,
+            canvas_control_broker,
+            app_argv: tuple[str, ...] | None = None,
+            **kwargs,
+        ):
             super().__init__(*args, **kwargs)
+            self._app_argv = app_argv
             self._canvas_control_broker = canvas_control_broker
             self._canvas_control_environment: dict[str, str] = {}
             self._canvas_control_started = False
@@ -2358,13 +2369,15 @@ def build_chatbook_app_service_class(textual_app_service_class: type) -> type:
                 await self.remote_close()
 
         async def _open_app_process(self, width: int = 80, height: int = 24):
-            self._process = process = await asyncio.create_subprocess_shell(
-                self.command,
+            if not self._app_argv:
+                raise RuntimeError("served app launch argv is unavailable")
+            self._process = process = await asyncio.create_subprocess_exec(
+                *self._app_argv,
                 stdin=asyncio.subprocess.PIPE,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
                 env=self._build_environment(width, height),
-                start_new_session=True,
+                start_new_session=os.name == "posix",
             )
             self._stdin = process.stdin
             return process
@@ -2385,18 +2398,26 @@ def build_chatbook_app_service_class(textual_app_service_class: type) -> type:
             except TimeoutError:
                 if process is None:
                     raise
-                for sig in (signal.SIGTERM, signal.SIGKILL):
+                for force in (False, True):
                     if process.returncode is not None:
                         break
                     try:
-                        os.killpg(process.pid, sig)
+                        if os.name == "posix":
+                            os.killpg(
+                                process.pid,
+                                signal.SIGKILL if force else signal.SIGTERM,
+                            )
+                        elif force:
+                            process.kill()
+                        else:
+                            process.terminate()
                     except ProcessLookupError:
                         pass
                     try:
                         await asyncio.wait_for(process.wait(), 2)
                         break
                     except TimeoutError:
-                        if sig == signal.SIGKILL:
+                        if force:
                             raise
             finally:
                 # Only physical exit permits cancelling a lagging pipe observer.
@@ -2487,9 +2508,9 @@ def create_server(
         textual_app_service_class,
     )
 
-    # Create the command to run the app
-    # textual-serve expects a command string, not a list
-    command = f"{sys.executable} -m tldw_chatbook.app"
+    # textual-serve retains a display string; only the exact argv is executed.
+    app_argv = (sys.executable, "-m", "tldw_chatbook.app")
+    command = " ".join(app_argv)
 
     # Configure title
     if title is None:
@@ -2613,6 +2634,7 @@ def create_server(
     logger.info("Creating web server on {}:{}", host, port)
     server = chatbook_web_server_class(
         command=command,
+        app_argv=app_argv,
         host=host,
         port=port,
         title=title,

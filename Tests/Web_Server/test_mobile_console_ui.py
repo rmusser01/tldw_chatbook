@@ -1924,6 +1924,106 @@ async def test_historical_unknown_does_not_block_current_stop_or_decision(
     )
 
 
+@pytest.mark.parametrize(
+    "receipt_state", ["accepted", "queued", "pending", "outcome_unknown"]
+)
+@pytest.mark.parametrize("read_status", [404, 503])
+async def test_receipt_read_failure_preserves_only_observed_handoffs(
+    mobile_browser_case, receipt_state, read_status
+):
+    case = mobile_browser_case
+    service, page = case.service, case.page
+    service.body = "Current body"
+    await case.open_chat("chat-a")
+    await page.locator("#chat-draft").fill("original command input")
+    await page.locator("#send-command").click()
+    await case.release_receipt(receipt_state)
+    label = {
+        "accepted": "send: accepted",
+        "queued": "queued · consumption not confirmed",
+        "pending": "Preparing · not accepted yet",
+        "outcome_unknown": "outcome unknown",
+    }[receipt_state]
+    await expect(page.locator("#command-status")).to_contain_text(label)
+    await page.locator("#chat-draft").fill("new unsent draft")
+    observed = service.receipts["command-0"]
+    failures = []
+
+    async def fail_read(route):
+        failures.append(route.request.url)
+        await route.fulfill(
+            status=read_status,
+            json={
+                "error": "unknown_command"
+                if read_status == 404
+                else "temporarily_unavailable"
+            },
+        )
+
+    endpoint = "**/api/v1/mobile/commands/command-0"
+    await page.route(endpoint, fail_read)
+    service.receipts.pop("command-0")
+    async with page.expect_response(
+        lambda response: (
+            response.url.endswith("/commands/command-0")
+            and response.status == read_status
+        )
+    ):
+        await service.events_queue.put(MobileEvent("console.changed", "", {}, 2))
+    known = receipt_state in {"accepted", "queued"}
+    if known:
+        await expect(page.locator("#connection-state")).to_contain_text("Connected")
+        await expect(page.locator("#command-status")).to_contain_text(label)
+        await expect(page.locator("#command-status")).not_to_contain_text(
+            "Response lost"
+        )
+        for control in ("send", "steer", "redirect", "stop"):
+            await expect(page.locator(f"#{control}-command")).to_be_enabled()
+        if read_status == 404:
+            await expect(page.locator("#command-status")).to_contain_text(
+                "Historical command command-0"
+            )
+            await expect(page.locator("#command-status")).to_contain_text("chat-a")
+            previous_reads = len(failures)
+            await page.locator("#back-button").click()
+            await case.open_chat("chat-a")
+            assert len(failures) == previous_reads
+        else:
+            await expect(page.locator("#command-status")).not_to_contain_text(
+                "Historical command"
+            )
+            service.receipts["command-0"] = observed
+            await page.unroute(endpoint, fail_read)
+            async with page.expect_response(
+                lambda response: (
+                    response.url.endswith("/commands/command-0")
+                    and response.status == 200
+                )
+            ):
+                await service.events_queue.put(
+                    MobileEvent("console.changed", "", {}, 3)
+                )
+            await expect(page.locator("#command-status")).to_contain_text(label)
+    else:
+        await expect(page.locator("#command-status")).to_contain_text("Response lost")
+        for control in ("send", "steer", "redirect"):
+            await expect(page.locator(f"#{control}-command")).to_be_disabled()
+        await expect(page.locator("#stop-command")).to_be_enabled()
+        await expect(page.locator("#command-status")).not_to_contain_text(
+            "Historical command"
+        )
+    await expect(page.locator("#chat-draft")).to_have_value("new unsent draft")
+    assert len(case.commands) == len(service.tickets) == 1
+    assert case.commands[0]["target"].model_dump(exclude_none=True) == {
+        "server_epoch": "epoch",
+        "console_id": "console",
+        "session_id": "chat-a",
+        "incarnation_id": "inc-a",
+        "run_id": "run-chat-a",
+        "turn_id": "turn-chat-a",
+    }
+
+
 @pytest.mark.parametrize("action", ["stop", "decision"])
 async def test_receiptless_unknown_keeps_original_target_across_navigation(
     mobile_browser_case, action
