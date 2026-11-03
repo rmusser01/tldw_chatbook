@@ -2016,3 +2016,8 @@ Tests/UI/test_console_send_draft_snapshot.py::test_spoken_send_sends_its_capture
 # TASK-38689 review (2026-11-03): a spoken send whose capture another send
 # already took is not sent again. Appended at the tail, so no slot moves.
 Tests/UI/test_console_send_draft_snapshot.py::test_spoken_send_of_a_capture_another_send_took_is_not_sent_again
+# TASK-36524 (2026-11-03): the Evals skill-eval launch panel -- the Run
+# button's subject and model guards, RunRequested and Stop run -- pressed on
+# the real buttons, not by coordinate. 23 tests, 9-11 s serially here at load
+# average ~30, so the whole file; appended at the tail, so no slot moves.
+Tests/UI/test_evals_skill_eval_panel.py

@@ -767,6 +767,8 @@ MINIMUM_FILES = 1362
 # TASK-38689 review (2026-11-03): append the spent-capture spoken-send node
 # at the tail. The floor is the measured entry count.
 MINIMUM_FILES = 1363
+# TASK-36524 (2026-11-03): append the skill-eval panel file at the tail.
+MINIMUM_FILES = 1364
 
 
 def read_census(path: Path) -> list[str]:
