@@ -57,9 +57,11 @@ from tldw_chatbook.UI.Screens.change_review_screen import (
     PUSH_NO_REMOTE_REASON,
     PUSH_OPTION_BRANCH_REASON,
     PUSH_TURN_MODE_REFUSAL,
-    AgentRunsChangeReviewProvider,
     ChangeGitPushModal,
     ChangeReviewScreen,
+)
+from tldw_chatbook.Workspaces.change_review_provider import (
+    AgentRunsChangeReviewProvider,
 )
 from tldw_chatbook.Utils.log_sanitizer import content_fingerprint
 from tldw_chatbook.Workspaces.change_tracking import ShadowRepoService

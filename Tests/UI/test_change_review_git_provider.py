@@ -35,7 +35,7 @@ import pytest
 
 import tldw_chatbook.config as config_module
 from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
-from tldw_chatbook.UI.Screens.change_review_screen import (
+from tldw_chatbook.Workspaces.change_review_provider import (
     AgentRunsChangeReviewProvider,
 )
 from tldw_chatbook.Workspaces.change_tracking import ChangedFile, ShadowRepoService

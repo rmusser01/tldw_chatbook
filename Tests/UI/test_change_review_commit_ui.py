@@ -46,9 +46,11 @@ from tldw_chatbook.UI.Screens.change_review_screen import (
     CURRENT_MODE_COMMENT_REFUSAL,
     CURRENT_MODE_SENTINEL,
     GIT_ACTION_WORKER_GROUP,
-    AgentRunsChangeReviewProvider,
     ChangeGitCommitModal,
     ChangeReviewScreen,
+)
+from tldw_chatbook.Workspaces.change_review_provider import (
+    AgentRunsChangeReviewProvider,
 )
 from tldw_chatbook.Workspaces.change_tracking import ShadowRepoService
 from tldw_chatbook.Workspaces.change_turn_tracker import ChangeTurnTracker

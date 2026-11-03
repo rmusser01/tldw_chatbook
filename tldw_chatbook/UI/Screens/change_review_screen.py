@@ -53,8 +53,8 @@ from tldw_chatbook.Chat.console_display_state import (
 from tldw_chatbook.Utils.input_validation import validate_text_input
 from tldw_chatbook.Utils.log_sanitizer import content_fingerprint
 from tldw_chatbook.Widgets.glyph_fallback import resolve_glyph
-from tldw_chatbook.Workspaces.change_review_provider import (  # noqa: F401 -- re-exported for existing importers.
-    DEFAULT_DIFF_DISPLAY_MAX_LINES,
+# Provider and helpers live in Textual-free Workspaces.change_review_provider.
+from tldw_chatbook.Workspaces.change_review_provider import (
     AgentRunsChangeReviewProvider,
     ReviewTurn,
     _file_count_noun,
