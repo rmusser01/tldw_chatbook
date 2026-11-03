@@ -18,6 +18,7 @@ the opening then undid, stays hidden after the rail opens.
 from __future__ import annotations
 
 import asyncio
+import time
 
 import pytest
 from textual.app import ComposeResult
@@ -311,6 +312,63 @@ async def test_the_held_rebuild_lands_before_the_openings_first_paint(
     assert rebuilt != held_rows
     assert frames, "the opening painted no frame"
     assert set(frames) == {rebuilt}, frames
+
+
+class _KeepAliveRailHost(_RailHost):
+    """Keeps running after a widget pump's error, as TldwCli does (TASK-32533)."""
+
+    def __init__(self, widget: Widget) -> None:
+        super().__init__(widget)
+        self.kept: list[BaseException] = []
+
+    def _handle_exception(self, error: Exception) -> None:
+        self.kept.append(error)
+
+
+async def test_a_failed_rebuild_does_not_leave_the_paints_held(monkeypatch) -> None:
+    """TASK-38650 review: the opening's paint hold ends when the rebuild raises.
+
+    A raising callback makes ``_flush_next_callbacks`` drop the rest of the
+    pump's queue, the hold's release included. TldwCli keeps the app alive
+    for a widget pump's error (``app_lifecycle._handle_exception``), so that
+    left the batch open and nothing painted again.
+    """
+    section = ConsoleInspectorSection(
+        title="Agents",
+        section_id="agents",
+        **_kwargs(_section_state(summary="", detail="")),
+    )
+    host = _KeepAliveRailHost(section)
+    async with host.run_test(size=(40, 30)) as pilot:
+        await pilot.pause()
+        rail = host.query_one("#rail")
+        ChatScreen._sync_console_rail_descendant_visibility(rail, False)
+        await pilot.pause()
+        section.sync_state(_section_state(summary="Run history", detail=""))
+        await pilot.pause()
+        assert section._rail_rebuild_deferred
+
+        async def failed_rebuild() -> None:
+            raise RuntimeError("the rebuild failed")
+
+        monkeypatch.setattr(section, "recompose", failed_rebuild)
+        ChatScreen._sync_console_rail_descendant_visibility(rail, True)
+        deadline = time.monotonic() + 1.5
+        while host._batch_count and time.monotonic() < deadline:
+            await pilot.pause(0.05)
+        assert any(isinstance(error, RuntimeError) for error in host.kept)
+        assert not host._batch_count, "a failed rebuild left every paint held"
+        frames: list[Screen] = []
+        paint = Screen._compositor_refresh
+
+        def painted(screen) -> None:
+            frames.append(screen)
+            return paint(screen)
+
+        monkeypatch.setattr(Screen, "_compositor_refresh", painted)
+        host.screen.refresh(layout=True)
+        await pilot.pause(0.1)
+        assert frames, "nothing painted after the hold"
 
 
 class _FocusRailHost(_RailHost):
