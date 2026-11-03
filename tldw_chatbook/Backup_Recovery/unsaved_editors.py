@@ -57,7 +57,7 @@ def _speech_snapshot_dirty(snapshot) -> bool:
         return False
     if not _exact(
         snapshot,
-        "Widgets.Settings_Widgets.speech_tts_settings_panel",
+        "Widgets.Settings_Widgets.speech_tts_panel_types",
         "SpeechTTSPanelDraftSnapshot",
     ):
         raise TypeError("unknown speech settings snapshot")
