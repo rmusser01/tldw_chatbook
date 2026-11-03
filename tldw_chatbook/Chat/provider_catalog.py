@@ -10,7 +10,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 
-from tldw_chatbook.config import normalize_provider_config_key
+from tldw_chatbook.provider_registry import ALL_RECORDS, normalize_provider_config_key
 
 # task-180: single source of human display names for provider keys rendered
 # in Settings and Console. Labels are display-only; the underlying
@@ -98,21 +98,25 @@ PROVIDER_GROUP_ORDER = (
 # compatibility but sort last, so new users pick the canonical entry
 # (llama_cpp over local_llamacpp, ollama over local_ollama, mistralai over
 # mistral, vllm over local_vllm).
-PROVIDER_CUSTOM_GROUP_KEYS = frozenset(
-    {
-        "custom",
-        "custom_2",
-        "local_llamacpp",
-        "local_llm",
-        "local_ollama",
-        "local_vllm",
-        "mistral",
-    }
+#: The built-in custom slots (``[api_settings.custom]``/``custom_2``), derived
+#: from the custom-openai-api records' config keys (TASK-36946.1).
+PROVIDER_CUSTOM_SLOT_KEYS = frozenset(
+    normalize_provider_config_key(record.config_key)
+    for record in ALL_RECORDS
+    if record.key.startswith("custom-openai-api")
 )
+#: Which spelling is the legacy alias is UI taxonomy, not a record fact: this
+#: list calls ``mistral`` legacy where the registry's canonical key is
+#: ``mistral`` and ``mistralai`` its alias, and keeps ``local_llamafile`` /
+#: ``local_mlx_lm`` (registry aliases) canonical, so it stays listed here.
+_PROVIDER_LEGACY_ALIAS_KEYS = frozenset(
+    {"local_llamacpp", "local_llm", "local_ollama", "local_vllm", "mistral"}
+)
+PROVIDER_CUSTOM_GROUP_KEYS = PROVIDER_CUSTOM_SLOT_KEYS | _PROVIDER_LEGACY_ALIAS_KEYS
 #: The legacy aliases alone: the custom group minus the built-in custom slots,
 #: which stay listable (ADR-146) while Console hides an alias unless it is
 #: configured or current (ADR-066).
-PROVIDER_LEGACY_ALIAS_KEYS = PROVIDER_CUSTOM_GROUP_KEYS - {"custom", "custom_2"}
+PROVIDER_LEGACY_ALIAS_KEYS = PROVIDER_CUSTOM_GROUP_KEYS - PROVIDER_CUSTOM_SLOT_KEYS
 #: TASK-35578: said under a server's listing in Chat settings and the first-run
 #: wizard's model step, whose picks never join a model list: a provider's
 #: saved list (``[providers]``) or, for a named custom endpoint, its own list

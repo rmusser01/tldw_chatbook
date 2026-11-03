@@ -144,3 +144,102 @@ def test_databricks_preset_shape():
     assert record.default_base_url is None  # workspace host is per-account
     assert record.reasoning_disposition == "ignored"
     assert "databricks" in {r.key for r in ENGINE_RECORDS}
+
+
+# --- Lookup tables derived from the records (TASK-36946.1) ---
+
+
+def test_continuation_provider_literal_matches_derived_keys():
+    # A typing Literal cannot be computed, so it is pinned to the derived set
+    # that the runtime checks (_PAIRINGS) are built from.
+    from typing import get_args
+
+    from tldw_chatbook.Provider_Contract.provider_continuation import (
+        _PAIRINGS,
+        ContinuationProvider,
+    )
+    from tldw_chatbook.provider_registry import CONTINUATION_PROVIDER_KEYS
+
+    assert set(get_args(ContinuationProvider)) == CONTINUATION_PROVIDER_KEYS
+    assert {provider for provider, _ in _PAIRINGS} == CONTINUATION_PROVIDER_KEYS
+    assert _PAIRINGS == {
+        (key, "chat_completions") for key in CONTINUATION_PROVIDER_KEYS
+    } | {("deepseek", "responses")}
+    assert {r.key for r in ENGINE_RECORDS if r.continuation_protocol} <= (
+        CONTINUATION_PROVIDER_KEYS
+    )
+
+
+def test_readiness_key_sets_are_the_registry_derivations():
+    from tldw_chatbook import provider_registry as registry
+    from tldw_chatbook.Chat import provider_readiness as readiness
+
+    norm = registry.normalize_provider_config_key
+    assert readiness.KEYLESS_PROVIDER_KEYS is registry.KEYLESS_PROVIDER_KEYS
+    assert readiness.PROVIDERS_REQUIRING_API_KEY_KEYS is registry.PROVIDERS_REQUIRING_API_KEY_KEYS
+    assert readiness.PROVIDERS_REQUIRING_BASE_URL_KEYS is registry.PROVIDERS_REQUIRING_BASE_URL_KEYS
+    keyed = registry.PROVIDERS_REQUIRING_API_KEY_KEYS
+    keyless = registry.KEYLESS_PROVIDER_KEYS
+    assert not keyed & keyless
+    for record in ALL_RECORDS:
+        if record.key == "custom-hosted":  # execution-only, never a readiness identity
+            assert norm(record.key) not in keyed | keyless
+        elif record.classification == "cloud":
+            assert norm(record.key) in keyed
+        else:
+            assert norm(record.key) in keyless
+    for alias, canonical in registry.ALIASES.items():
+        bucket = keyed if RECORDS_BY_KEY[canonical].classification == "cloud" else keyless
+        assert norm(alias) in bucket
+    # Config tables without a record or handler: the one explicit exception.
+    assert keyless - {norm(k) for k in RECORDS_BY_KEY} - {
+        norm(r.config_key) for r in ALL_RECORDS
+    } == {"local_onnx", "local_transformers"}
+
+
+def test_base_url_required_matches_records_without_a_default_url():
+    from tldw_chatbook.provider_registry import PROVIDERS_REQUIRING_BASE_URL_KEYS
+
+    assert PROVIDERS_REQUIRING_BASE_URL_KEYS == {"azure", "cloudflare", "databricks"}
+    for record in ALL_RECORDS:
+        if record.base_url_required:
+            assert record.engine_driven and record.default_base_url is None
+
+
+def test_default_api_key_env_var_is_the_record_field():
+    from tldw_chatbook.Chat.provider_readiness import default_api_key_env_var
+    from tldw_chatbook.provider_registry import (
+        KEYLESS_PROVIDER_KEYS,
+        PROVIDERS_REQUIRING_API_KEY_KEYS,
+    )
+
+    for key in PROVIDERS_REQUIRING_API_KEY_KEYS:
+        assert default_api_key_env_var(key) == RECORDS_BY_KEY[key].api_key_env_var
+        assert default_api_key_env_var(key)
+    assert default_api_key_env_var("mistralai") == "MISTRAL_API_KEY"
+    for key in KEYLESS_PROVIDER_KEYS | {"not-a-provider"}:
+        assert default_api_key_env_var(key) is None
+
+
+def test_console_execution_keys_cover_every_record_but_custom_hosted():
+    from tldw_chatbook.Chat.console_session_settings import (
+        CONSOLE_SETTINGS_EXECUTION_PROVIDER_KEYS,
+    )
+
+    assert CONSOLE_SETTINGS_EXECUTION_PROVIDER_KEYS == set(RECORDS_BY_KEY) - {
+        "custom-hosted"
+    }
+
+
+def test_custom_slot_keys_come_from_the_custom_records():
+    from tldw_chatbook.Chat.provider_catalog import (
+        PROVIDER_CUSTOM_GROUP_KEYS,
+        PROVIDER_CUSTOM_SLOT_KEYS,
+        PROVIDER_DISPLAY_NAMES,
+    )
+    from tldw_chatbook.Chat.provider_readiness import KNOWN_PROVIDER_KEYS
+
+    assert PROVIDER_CUSTOM_SLOT_KEYS == {"custom", "custom_2"}
+    # Hand-kept UI labels/groups must name real providers (no typo'd keys).
+    assert PROVIDER_CUSTOM_GROUP_KEYS <= KNOWN_PROVIDER_KEYS
+    assert set(PROVIDER_DISPLAY_NAMES) - KNOWN_PROVIDER_KEYS == {"custom_hosted"}

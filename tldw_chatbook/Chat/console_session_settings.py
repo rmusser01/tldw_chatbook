@@ -78,6 +78,7 @@ from tldw_chatbook.Chat.provider_test_evidence import (
     connection_credential_revision,
     provider_readiness_verdict,
 )
+from tldw_chatbook.provider_registry import CONSOLE_EXECUTION_PROVIDER_KEYS
 from tldw_chatbook.Provider_Contract.sampling_params import (
     TEMPERATURE_RANGE,
     _is_blank_value,
@@ -127,76 +128,11 @@ CONSOLE_SESSION_SETTINGS_SOURCES = frozenset({"derived", "user"})
 #: Includes the ADR-179 engine-driven cloud presets (databricks, together,
 #: fireworks, cerebras -- TASK-32919): they dispatch through
 #: ``API_CALL_HANDLERS`` like every legacy key, so they are identity keys
-#: here too; only ``custom-hosted`` stays execution-only (Phase 2 Task 6
+#: here too; only ``custom-hosted`` stays execution-only, which the
+#: registry derivation (every record key and alias but that one) encodes (Phase 2 Task 6
 #: decision 1). Reconciled against the handler map by
 #: ``test_settings_execution_provider_keys_match_chat_api_handlers``.
-CONSOLE_SETTINGS_EXECUTION_PROVIDER_KEYS = frozenset(
-    {
-        "anthropic",
-        "aphrodite",
-        "arcee",
-        "azure",
-        "baseten",
-        "byteplus",
-        "cerebras",
-        "cloudflare",
-        "cohere",
-        "commandcode",
-        "custom-openai-api",
-        "custom-openai-api-2",
-        "databricks",
-        "deepinfra",
-        "deepseek",
-        "fireworks",
-        "gmi",
-        "google",
-        "groq",
-        "huggingface",
-        "kilo",
-        "koboldcpp",
-        "llama_cpp",
-        "strata",
-        "polystrata",
-        "local-llm",
-        "local_llamacpp",
-        "local_llamafile",
-        "local_mlx_lm",
-        "local_ollama",
-        "local_vllm",
-        "meta",
-        "mimo",
-        "minimax",
-        "mistral",
-        "mistralai",
-        "mlx_lm",
-        "moonshot",
-        "nebius",
-        "nous",
-        "novita",
-        "nvidia",
-        "ollama",
-        "ollama_cloud",
-        "oobabooga",
-        "openai",
-        "opencode_zen",
-        "openrouter",
-        "qianfan",
-        "qwencloud",
-        "sambanova",
-        "siliconflow",
-        "stepfun",
-        "tabbyapi",
-        "together",
-        "tokenhub",
-        "upstage",
-        "venice",
-        "vercel",
-        "vllm",
-        "wandb",
-        "zai",
-        "zenmux",
-    }
-)
+CONSOLE_SETTINGS_EXECUTION_PROVIDER_KEYS = CONSOLE_EXECUTION_PROVIDER_KEYS
 
 
 def settings_provider_catalog() -> tuple[ConsoleProviderCatalogEntry, ...]:
