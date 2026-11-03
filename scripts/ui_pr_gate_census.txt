@@ -2008,3 +2008,8 @@ Tests/UI/test_library_file_notes_git.py::test_a_push_focus_landing_during_remova
 Tests/UI/test_library_file_notes_git.py::test_a_panel_entry_called_during_removal_does_nothing
 Tests/UI/test_library_file_notes_git.py::test_a_deferred_panel_refresh_landing_during_removal_does_nothing
 Tests/UI/test_library_file_notes_git.py::test_a_commit_that_settles_mid_removal_remounts_on_the_list
+# TASK-38689 (2026-11-03): a spoken "Console, send." (no pending-send token)
+# edited after its capture sends the captured text and keeps the edit as the
+# next draft, instead of refusing with "Draft changed; Send again." Its file
+# is in no other PR lane; appended at the tail, so no slot moves.
+Tests/UI/test_console_send_draft_snapshot.py::test_spoken_send_sends_its_capture_and_keeps_text_typed_after_it

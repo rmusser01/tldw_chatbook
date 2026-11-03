@@ -24,6 +24,17 @@ from Tests.UI.test_console_native_chat_flow import (
     _persist_console_provider_config,
     _select_llamacpp_console,
 )
+from Tests.UI.test_console_send_acknowledgement import (
+    build,
+    eager_tasks,
+    ready_console,
+    until,
+)
+from Tests.UI.test_console_send_admission_off_pump import (
+    _record_notices,
+    _sent_or_queued,
+)
+from Tests.UI.test_console_send_resend_guard import _idle, _speak_send
 from Tests.UI.test_destination_shells import _build_test_app, _wait_for_selector
 from Tests.UI.test_product_maturity_gate1_core_loop_screen_adaptation import (
     ConsoleHarness,
@@ -333,10 +344,11 @@ async def test_console_armed_unknown_mouse_send_snapshots_before_skill_await(
 ):
     """Skill parsing retains the captured send and preserves later typing.
 
-    Two draft gates that run after the skill await are isolated in this case:
-    hook review's unchanged-draft gate (``console._hooks.dispatch``) and the
-    received path's live-vs-stash check
-    (``wiring.receive_console_visible_intent``).
+    The received path's live-vs-stash check
+    (``wiring.receive_console_visible_intent``) runs live: typing during the
+    skill await no longer refuses the send with "Draft changed; Send again."
+    (TASK-38689, owner decision 2026-11-03: TASK-340 wins). Only hook
+    review's dispatch is isolated (``console._hooks.dispatch``).
     """
 
     app = _ready_openai_app(monkeypatch, "unused")
@@ -392,28 +404,6 @@ async def test_console_armed_unknown_mouse_send_snapshots_before_skill_await(
             return await dispatch()
 
         monkeypatch.setattr(console._hooks, "dispatch", dispatch_without_hook_review)
-        # The received path runs its own draft gate first, and it is stricter
-        # than hook review's: wiring.receive_console_visible_intent's
-        # live-vs-stash check (3e618d7119) refuses ANY edit after the capture
-        # when there are no captured inputs, while hook review refuses an
-        # edited draft only after a review ran (TASK-340). Isolate only that
-        # check: the real function runs without the stash, so every other
-        # check it makes stays live.
-        from tldw_chatbook.UI.Console_Modules import wiring
-
-        receive = wiring.receive_console_visible_intent
-
-        def receive_without_unchanged_draft_gate(
-            screen, draft, session_id, stash, **kwargs
-        ):
-            assert draft == armed and stash.text == armed
-            return receive(screen, draft, session_id, None, **kwargs)
-
-        monkeypatch.setattr(
-            wiring,
-            "receive_console_visible_intent",
-            receive_without_unchanged_draft_gate,
-        )
         requests: list[object] = []
         notices: list[str] = []
         monkeypatch.setattr(
@@ -439,6 +429,77 @@ async def test_console_armed_unknown_mouse_send_snapshots_before_skill_await(
         assert requests[0].draft == armed
         assert composer.draft_text() == " suffix"
         assert store.session_draft(session.id) == " suffix"
+
+
+@pytest.mark.asyncio
+async def test_spoken_send_sends_its_capture_and_keeps_text_typed_after_it(
+    monkeypatch,
+):
+    """TASK-38689: a tokenless send edited after its capture is sent, not refused.
+
+    "Console, send." calls ``handle_console_send_message`` with no pending
+    send token, so ``wiring.receive_console_visible_intent`` gets no captured
+    inputs. Sending an armed unknown command captures the draft, then awaits
+    the skill context; that await is the window between a tokenless capture
+    and the wiring check. A key handled while the read is still pending
+    disarms the command (the composer's Changed handler), so the edit here
+    lands as the read returns, before that handler runs. On dev the
+    function's live-vs-stash check then refused with "Draft changed; Send
+    again." and nothing was sent. Owner decision 2026-11-03 (TASK-340 wins):
+    the captured text reaches the provider and the edit stays as the next
+    draft. Hook review runs live; with no hooks configured nothing is
+    reviewed, so it does not re-check the draft.
+    """
+    host, gateway, _timeline = build()
+    async with host.run_test(size=(160, 45)) as pilot:
+        with eager_tasks():
+            console, composer = await ready_console(host, pilot, gateway)
+            store = console._ensure_console_chat_store()
+            session_id = store.active_session_id
+            armed = "/nosuchcommand"
+            composer.load_draft(armed)
+            store.set_session_draft(session_id, armed)
+            console._console_unknown_send_armed = armed
+            entered, release = asyncio.Event(), asyncio.Event()
+
+            async def held_skill_context():
+                entered.set()
+                await release.wait()
+                composer.insert_text("x")  # Typed as the skill read returns.
+                return object()
+
+            async def no_blocked_match(_name, _summaries):
+                return False
+
+            monkeypatch.setattr(
+                console._skill, "_fetch_console_skill_context", held_skill_context
+            )
+            monkeypatch.setattr(
+                console._skill, "_console_skill_blocked_summaries", lambda _c: ()
+            )
+            monkeypatch.setattr(
+                console._skill,
+                "_console_skill_blocked_match_response",
+                no_blocked_match,
+            )
+            spoken: list[str] = []
+            monkeypatch.setattr(console, "_speak_status", spoken.append)
+            notices = _record_notices(host)
+            gateway.validation_release.set()
+
+            _speak_send(console, session_id)
+            await until(entered.is_set)
+            release.set()
+            await until(lambda: bool(spoken))
+            assert spoken == ["Sent."], notices
+            await until(lambda: gateway.stream_calls == 1)
+            await _idle(host, console, pilot, session_id)
+
+            assert _sent_or_queued(console, session_id) == [armed]
+            assert gateway.stream_calls == 1
+            assert composer.draft_text() == "x"
+            assert store.session_draft(session_id) == "x"
+            assert "Draft changed; Send again." not in notices
 
 
 @pytest.mark.asyncio

@@ -369,10 +369,13 @@ def receive_console_visible_intent(
     ):
         return None
     if _captured_inputs is None and stash is not None:
+        # Without captured inputs this path sends the live composer and reloads
+        # it afterwards. Edited since the capture, it is not the captured draft:
+        # decline, and the ordinary dispatch sends the stash and keeps the later
+        # typing (TASK-340; TASK-38689, owner 2026-11-03: no refusal).
         live = composer.capture_draft_snapshot()
         if live.generation != stash.generation or live.edit_serial != stash.edit_serial:
-            screen.app_instance.notify("Draft changed; Send again.", severity="warning")
-            return ""
+            return None
     if (
         screen._console_visible_draft_session_id != session_id
         or (_captured_inputs is None and composer.draft_text() != draft)

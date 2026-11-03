@@ -18326,7 +18326,7 @@ class ChatScreen(BaseAppScreen):
         from tldw_chatbook.Chat.console_send_diagnostics import record_send_stage
 
         # A scheduled Enter callback may consume only its own capture.
-        # Mouse/Workbench sends have no token and always read the live draft.
+        # Tokenless sends ("Console, send.") capture the live draft below.
         stash = None
         if pending_send_token is not None:
             pending_send = self._console_pending_send
