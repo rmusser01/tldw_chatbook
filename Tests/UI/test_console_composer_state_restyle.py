@@ -299,8 +299,6 @@ async def test_the_acceptance_projection_clears_now_and_restyles_send_after(
         session_id = console._console_visible_draft_session_id
         assert session_id is not None
         store = console._console_chat_store
-        # The durable acceptance's input CAS has already emptied the draft.
-        monkeypatch.setattr(store, "session_draft", lambda _session_id: "")
         # The screen's own action-row sync (its config-sync cadence) can land
         # in the pause below and flip Send by itself, which would hide a
         # projection that never synced the row at all; keep it out, so Send
@@ -318,6 +316,14 @@ async def test_the_acceptance_projection_clears_now_and_restyles_send_after(
         monkeypatch.setattr(composer, "_sync_current_action_state", record_own_sync)
         applied = _spy_restyles(host, monkeypatch)
 
+        # Run the durable acceptance's real input CAS, as run start does just
+        # before it projects. TASK-37654: faking only the read left the store
+        # holding the old draft, so a Console sync tick's write-back of the
+        # cleared draft bumped the store revision past the projected one and
+        # the next tick reloaded the composer: a second sync, by timing.
+        assert store.commit_session_input_draft(
+            store.session_input_snapshot(session_id)
+        )
         console._project_console_received_input(session_id)
 
         assert composer.draft_text() == ""
@@ -326,6 +332,11 @@ async def test_the_acceptance_projection_clears_now_and_restyles_send_after(
             node is send for node in applied
         ), "Send was restyled inside the acceptance projection"
         assert own_syncs == [], "The action row synced inside the projection"
+        # Two Console sync ticks' draft reconcile (write-back, then revision
+        # check) can land before the deferred sync; neither may reload the row.
+        console._session._sync_console_session_draft()
+        console._session._sync_console_session_draft()
+        assert own_syncs == [], f"A Console sync tick resynced the row: {own_syncs!r}"
         # call_later captured record_own_sync during the projection. Restore
         # the method before yielding so a background session-draft refresh
         # cannot be counted as another execution of that deferred callback.

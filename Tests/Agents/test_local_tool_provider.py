@@ -5,6 +5,7 @@ import logging
 import os
 import shutil
 import subprocess
+import unicodedata
 from io import BytesIO
 from collections import UserDict
 from pathlib import Path
@@ -4949,6 +4950,34 @@ def test_path_targets_maps_remote_targets_lexically_no_laptop_disk(
     with pytest.raises(ValueError):
         provider.path_targets(
             "local:fs_write", {"path": ".git/config", "content": "x"}
+        )
+
+
+@pytest.mark.parametrize(("rule_form", "path_form"), (("NFC", "NFD"), ("NFD", "NFC")))
+def test_remote_path_targets_refuse_other_normalization_of_an_exclusion(
+    tmp_path,
+    rule_form,
+    path_form,
+    _laptop_disk_tripwire,
+    _default_specs_without_config_reads,
+):
+    """TASK-37655: the preflight mirror folds like the worker, so an excluded
+    name in either spelling is refused before any approval card renders."""
+    from tldw_chatbook.Tools.local_tool_impls import LocalToolError
+    from tldw_chatbook.Utils.sensitive_paths import SensitiveExclusion
+
+    rule = SensitiveExclusion(
+        "file", unicodedata.normalize(rule_form, "Données/naïve.txt")
+    )
+    authority = dataclasses.replace(
+        _remote_authority(), exclusions_provider=lambda: (rule,)
+    )
+    provider = make_provider(root=tmp_path, admitted_roots=(authority,))
+
+    with pytest.raises(LocalToolError, match="protected path"):
+        provider.path_targets(
+            "local:fs_read",
+            {"path": unicodedata.normalize(path_form, "Données/naïve.txt")},
         )
 
 

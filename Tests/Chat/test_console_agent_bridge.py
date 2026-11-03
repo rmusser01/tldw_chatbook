@@ -3581,6 +3581,10 @@ def test_tool_marker_with_brackets_renders_literally_not_escaped(tmp_path):
     ]
     bridge, _db, store, session, aid = _bridge(tmp_path, scripts)
     outcome = _run(bridge, store, session, aid)
+    # TASK-38205: the child outlives the turn (PR3a-1 Task 2), so it can still
+    # hold its run-database connection when `run_reply` returns. Join it before
+    # the autouse fixture closes the database and asserts no live worker owner.
+    _join_fleet_threads()
     assert outcome.status == "done"
     spawn_markers = [
         m

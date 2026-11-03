@@ -2,6 +2,7 @@
 
 from dataclasses import replace
 import sqlite3
+import unicodedata
 
 import pytest
 
@@ -989,6 +990,104 @@ def test_lexical_exclusion_predicates_match_live_oracle_before_top_k(tmp_path):
                 assert (
                     tuple(c.relative_path for c in found) == expected[:limit]
                 ), raw_floor
+    finally:
+        store.close_native()
+
+
+#: (kind, rule, excluded path) written in NFC; each test re-spells rule and
+#: path in opposite normalizations (TASK-37655 review: both pre-top-k
+#: helpers compared with plain ``casefold`` while the live read folds both).
+_NORMALIZATION_EXCLUSIONS = (
+    ("subtree", "Donn\u00e9es", "Donn\u00e9es/a.py"),
+    ("file", "Donn\u00e9es/na\u00efve.py", "Donn\u00e9es/na\u00efve.py"),
+    ("name", "na\u00efve.py", "src/na\u00efve.py"),
+    ("direct_children", "Donn\u00e9es", "Donn\u00e9es/a.py"),
+)
+
+
+@pytest.mark.parametrize(("rule_form", "path_form"), [("NFC", "NFD"), ("NFD", "NFC")])
+@pytest.mark.parametrize(("kind", "rule", "path"), _NORMALIZATION_EXCLUSIONS)
+def test_exclusion_helpers_fold_unicode_normalization(
+    kind, rule, path, rule_form, path_form
+):
+    """Both pre-top-k helpers refuse a path spelled in the other normalization."""
+    from tldw_chatbook.DB.Workspace_Project_Index_DB import (
+        WorkspaceProjectIndexDB,
+        _path_allowed,
+    )
+    from tldw_chatbook.Utils.sensitive_paths import SensitiveExclusion
+
+    path = unicodedata.normalize(path_form, path)
+    for value in (rule, rule.upper()):
+        floor = (SensitiveExclusion(kind, unicodedata.normalize(rule_form, value)),)
+        allowed = WorkspaceProjectIndexDB._eligibility_predicate(
+            ProjectIndexPolicy((), ()), floor
+        )
+        assert not _path_allowed(path, floor)
+        assert allowed(path) == 0
+        # Control: an unrelated path stays eligible under the same floor.
+        assert _path_allowed("other/a.py", floor)
+        assert allowed("other/a.py") == 1
+
+
+@pytest.mark.parametrize(("rule_form", "path_form"), [("NFC", "NFD"), ("NFD", "NFC")])
+def test_lexical_prefilter_drops_other_normalization_rows(
+    tmp_path, rule_form, path_form
+):
+    """An excluded row in the other spelling neither takes a top-k slot nor
+    reports coverage."""
+    from hashlib import sha256
+    from tldw_chatbook.DB.Workspace_Project_Index_DB import prepare_scan_page
+    from tldw_chatbook.Utils.sensitive_paths import SensitiveExclusion
+    from tldw_chatbook.Workspaces.project_index.models import (
+        FileCapture,
+        ScanEntry,
+        ScanPage,
+    )
+
+    excluded = unicodedata.normalize(path_form, "Donn\u00e9es/a.py")
+    text = "normalization marker"
+    captures = tuple(
+        FileCapture(
+            path, "logical", 1, len(text), sha256(text.encode()).hexdigest(), text
+        )
+        for path in (excluded, "src/ok.py")
+    )
+    entries = tuple(
+        ScanEntry(c.relative_path, "file", c.identity, c.mtime_ns, c.size_bytes)
+        for c in captures
+    )
+    store = open_index_store(tmp_path)
+    key = make_index_key(tmp_path)
+    try:
+        scope = store.configure(
+            key,
+            ProjectIndexPolicy((), ()),
+            enabled=True,
+            expected_scope=store.load_status(key).scope,
+        )
+        claim = store.claim_job(
+            scope,
+            owner_token="normalization-floor",
+            authority_revision=1,
+            expected_job_revision=store.load_status(key).job_revision,
+        )
+        assert store.commit_scan_page(
+            scope,
+            claim.job_id,
+            prepare_scan_page(ScanPage("", "root", entries, captures, True, 1)),
+            expected_job_revision=claim.job_revision,
+            authority_revision=1,
+        )
+        rule = unicodedata.normalize(rule_form, "Donn\u00e9es")
+        floor = (SensitiveExclusion("subtree", rule),)
+        found = store.lexical_candidates(
+            search_authority(tmp_path, scope, floor), "normalization", limit=1
+        )
+        assert [c.relative_path for c in found] == ["src/ok.py"]
+        assert not store.has_compatible_files(
+            scope, (*floor, SensitiveExclusion("file", "src/ok.py"))
+        )
     finally:
         store.close_native()
 

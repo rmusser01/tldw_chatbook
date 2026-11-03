@@ -208,6 +208,8 @@ import threading
 from pathlib import Path
 from typing import Iterable, Literal, NamedTuple
 
+from tldw_chatbook.Utils.path_validation import fold_path_part
+
 #: Resolution failures seen on this thread; ``_raw_inputs`` never memoizes a
 #: snapshot built while one occurred (it would keep a gap in the deny list).
 _failures = threading.local()
@@ -852,9 +854,9 @@ def _compare_key(path: Path) -> tuple[str, ...]:
         path: An already-resolved absolute path.
 
     Returns:
-        The path's components, each casefolded.
+        The path's components, each folded by :func:`fold_path_part`.
     """
-    return tuple(part.casefold() for part in path.parts)
+    return tuple(fold_path_part(part) for part in path.parts)
 
 
 def _same_path(a: Path, b: Path) -> bool:

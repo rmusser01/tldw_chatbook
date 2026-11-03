@@ -1,5 +1,17 @@
 # Lessons: verifying against the real thing
 
+## A live harness that builds the controller itself misses UI-layer attach steps; keep its evidence out of /tmp (TASK-37653, 2026-11-02)
+
+**Incident.** TASK-37653's first owner-approved live run spent 40 requests and 2 children, and its verifier never started. Every spawn returned `original_reports_not_presented`. The gated harness built its own `ConsoleChatController` and set `controller.app = app`. That was the attach step before PR #3286 moved review presentation into the UI wiring. The Console screen now attaches through `wiring.attach_review_presenter`, which is what installs the original-report presenter. With that one-line change, the second run (50 requests) sealed the verifier and expanded every finding. The run also failed twice before it started:
+- macOS's periodic `/tmp` cleanup had deleted the raw history packets the harness re-hashes (23 of 24 history files, 194 of 278 spend-history files);
+- a test-fixture signature had changed on dev.
+
+Neither cost spend, because both refusals came before the claim.
+
+**What to do.**
+- When a harness constructs product owners directly instead of going through the screen, diff its setup against the screen's attach path at the head under test. Re-run its offline composition there with the same flags the live launch will use, including `--capacity-evidence`; one omitted flag made the offline check look broken.
+- Keep run evidence and archives outside `/tmp`. Files left unread for about three days are removed.
+
 ## The run projection's cost grows with the chat: pair launch by launch and record the chat length (TASK-36571, 2026-10-30)
 
 **Incident.** TASK-36571's bound (32.6 ms of projection per send window) was

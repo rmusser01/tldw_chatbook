@@ -78,6 +78,7 @@ import signal
 import subprocess
 import threading
 import time
+import unicodedata
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 
@@ -86,6 +87,7 @@ from tldw_chatbook.Tools.local_tool_impls import (
     _relative_target_is_safe,
     resolve_workspace_path,
 )
+from tldw_chatbook.Utils.path_validation import fold_path_part
 from tldw_chatbook.Utils.sensitive_paths import (
     SensitiveExclusion,
     SensitivePathContext,
@@ -478,20 +480,29 @@ def _denylist_pathspecs(
         )
 
     specs: list[str] = []
-    for kind, value in exclusions:
-        if kind in {"subtree", "file"}:
-            if not value:
+    for kind, raw_value in exclusions:
+        # TASK-37655: git matches pathspecs byte-wise and, with
+        # core.precomposeunicode off, keeps a name in the normalization it was
+        # created in, so each rule excludes both its NFC and NFD spellings.
+        # ponytail: a name stored in a mixed normalization is not covered.
+        for value in dict.fromkeys(
+            unicodedata.normalize(form, raw_value) for form in ("NFC", "NFD")
+        ):
+            if kind in {"subtree", "file"}:
+                if not value:
+                    raise LocalToolError(
+                        f"repository root ({repo_root}) is a protected path; refusing"
+                    )
+                specs.append(f":(exclude,literal,icase){value}")
+            elif kind == "direct_children":
+                prefix = f"{_glob_escape(value)}/" if value else ""
+                specs.append(f":(exclude,glob,icase){prefix}*")
+            elif kind == "name":
+                specs.append(f":(exclude,glob,icase)**/{_glob_escape(value)}")
+            else:  # pragma: no cover - defensive; see the docstring
                 raise LocalToolError(
-                    f"repository root ({repo_root}) is a protected path; refusing"
+                    f"unsupported sensitive-path exclusion kind: {kind!r}"
                 )
-            specs.append(f":(exclude,literal,icase){value}")
-        elif kind == "direct_children":
-            prefix = f"{_glob_escape(value)}/" if value else ""
-            specs.append(f":(exclude,glob,icase){prefix}*")
-        elif kind == "name":
-            specs.append(f":(exclude,glob,icase)**/{_glob_escape(value)}")
-        else:  # pragma: no cover - defensive; see the docstring
-            raise LocalToolError(f"unsupported sensitive-path exclusion kind: {kind!r}")
     return tuple(specs)
 
 
@@ -502,7 +513,7 @@ def _repo_relative_exclusions(
 ) -> tuple[SensitiveExclusion, ...]:
     """Translate parent-admitted workspace exclusions to repository-relative."""
     repo_parts = tuple(
-        part.casefold() for part in repo_root.relative_to(workspace_root).parts
+        fold_path_part(part) for part in repo_root.relative_to(workspace_root).parts
     )
     translated: list[SensitiveExclusion] = []
     for exclusion in exclusions:
@@ -510,7 +521,7 @@ def _repo_relative_exclusions(
             translated.append(exclusion)
             continue
         value_parts = PurePosixPath(exclusion.value).parts if exclusion.value else ()
-        folded_value = tuple(part.casefold() for part in value_parts)
+        folded_value = tuple(fold_path_part(part) for part in value_parts)
         if folded_value[: len(repo_parts)] == repo_parts:
             relative_parts = value_parts[len(repo_parts) :]
             translated.append(

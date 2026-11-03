@@ -1,6 +1,7 @@
 """Real public schema, canonical response packing and original path controls."""
 
 import json
+import os
 
 import pytest
 
@@ -219,21 +220,76 @@ def test_real_instruction_ledger_maps_original_paths_without_consuming_cursor(
         ) == (ToolPathTarget(c.root, "directory"),)
 
 
+def test_refused_read_is_not_deferred_as_an_instruction_scope_change(review_case):
+    """TASK-37653: macos-final60's primary lost a round to a misleading deferral.
+
+    A read the provider refuses touches no path. Mapping it as "outside"
+    made the instruction ledger defer the whole batch with "project
+    instructions were loaded"; the actual refusal arrived a round later.
+    """
+    from Tests.Agents.test_project_instruction_runtime import _payload, _snapshot
+    from tldw_chatbook.Agents.agent_models import ToolCall
+    from tldw_chatbook.Agents.project_instruction_runtime import (
+        InstructionActivationLedger,
+    )
+    from tldw_chatbook.Agents.tool_catalog import ToolCatalogRegistry
+
+    c = review_case
+    prepared = c.prepare()
+    ledger = InstructionActivationLedger(_snapshot(c.root), nested_max_bytes=1024)
+    payload, _ = _payload()
+    with c.participant(prepared) as provider:
+        registry = ToolCatalogRegistry()
+        registry.register_provider(provider)
+        listing = {
+            "review_id": prepared.review_id,
+            "view": "source",
+            "source_query": {"op": "list", "relative_dir": ".", "side": "worktree"},
+        }
+        settled = ledger.prepare(
+            [ToolCall("code_review_read", listing, "list")], "chain", registry, payload
+        )
+        if settled.receipt is not None:
+            ledger.mark_payload_sent(settled.receipt, settled.rows)
+        relist = [ToolCall("code_review_read", listing, "relist")]
+        assert ledger.prepare(relist, "chain", registry, payload).status == "proceed"
+        forged = {
+            "review_id": prepared.review_id,
+            "view": "source",
+            "document_ref": "R1-F1",
+        }
+        calls = [ToolCall("code_review_read", forged, f"read{i}") for i in range(2)]
+        assert ledger.prepare(calls, "chain", registry, payload).status == "proceed"
+        result = provider.invoke("code_review:code_review_read", forged)
+        assert (result.ok, result.error) == (False, "invalid_source_reference")
+
+
 @pytest.mark.parametrize(
     "failure",
     [
+        "invalid_arguments",
         "forged_ref",
         "malformed_cursor",
         "excluded",
         "stale_epoch",
         "expired",
         "other_chat",
+        "symlink",
         "disabled",
         "absent_actor",
     ],
 )
 def test_public_authority_failures_do_not_produce_paths(review_case, failure):
+    """Refusals that cannot clear map to no path; transient ones still defer.
+
+    TASK-37653 review: a refusal fixed by the call's own arguments or by a
+    terminal review (unknown/expired review_id, a symlink in the requested
+    path) is refused again by invoke, so the read touches nothing and must not
+    defer the whole batch. A state/authority refusal that can clear between
+    ledger prepare and invoke keeps raising, so the ledger defers it.
+    """
     from tldw_chatbook.Agents.code_review_models import ReviewRefused
+    from tldw_chatbook.Agents.code_review_tool_provider import _ARGUMENT_REFUSALS
 
     c = review_case
     prepared = c.prepare()
@@ -250,6 +306,8 @@ def test_public_authority_failures_do_not_produce_paths(review_case, failure):
             },
         )["records"][0]["source_ref"]
         args = dict(review_id=prepared.review_id, view="source", document_ref=ref)
+        if failure == "invalid_arguments":
+            args["unexpected"] = True
         if failure == "forged_ref":
             args["document_ref"] = "forged"
         if failure == "malformed_cursor":
@@ -269,9 +327,32 @@ def test_public_authority_failures_do_not_produce_paths(review_case, failure):
             provider.service.app_config["tools"]["code_review_enabled"] = False
         if failure == "absent_actor":
             provider.service.actor = c.actor
-        with pytest.raises(ReviewRefused):
-            provider.path_targets("code_review:code_review_read", args)
-        assert not provider.invoke("code_review:code_review_read", args).ok
+        if failure == "symlink":
+            try:
+                (c.root / "alias").symlink_to("helpers.py")
+            except OSError as exc:
+                if os.name == "nt" and getattr(exc, "winerror", None) == 1314:
+                    pytest.skip("Windows host does not grant symlink creation")
+                raise
+            args = {
+                "review_id": prepared.review_id,
+                "view": "source",
+                "source_query": {
+                    "op": "resolve",
+                    "relative_path": "alias",
+                    "side": "worktree",
+                },
+            }
+        if failure in {"stale_epoch", "disabled", "absent_actor"}:
+            with pytest.raises(ReviewRefused) as refused:
+                provider.path_targets("code_review:code_review_read", args)
+            assert refused.value.reason not in _ARGUMENT_REFUSALS
+            assert not provider.invoke("code_review:code_review_read", args).ok
+        else:
+            assert provider.path_targets("code_review:code_review_read", args) == ()
+            result = provider.invoke("code_review:code_review_read", args)
+            assert not result.ok
+            assert result.error in _ARGUMENT_REFUSALS | {"invalid_arguments"}
 
 
 @pytest.mark.bootstrap_profile

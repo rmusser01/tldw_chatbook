@@ -3303,7 +3303,10 @@ Console opens when you return to Console, and one that finished while you were i
 opens when you switch back to its chat. Read originals, raw output, target identity,
 requested/actual provider-model routes, fallback changes and coverage separately.
 A failed or incomplete report is not an empty successful review. Later edits to
-your files do not change captured evidence.
+your files do not change captured evidence. A failed review tool call -- a read, a
+submission or any other review step -- shows its review reason code in the transcript
+(for example `invalid_source_reference`); any other failure shows as `review_refused`.
+Read contents and submitted records never appear there.
 
 Ask for verification initially (“Review my changes and verify every finding”), or
 accept the later offer; the first “yes” or “no” answers it, and a later “yes” is

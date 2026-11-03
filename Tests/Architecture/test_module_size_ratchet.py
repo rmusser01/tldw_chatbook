@@ -223,7 +223,14 @@ _BUDGETS: dict[str, int] = {
     # console_native_commit.py, so the controller no longer reads the
     # store's private commit-owner maps.
     # PR3309 integration 2026-11-01: user size waiver; 22361 dev + 8 = 22369.
-    "tldw_chatbook/Chat/console_chat_store.py": 22317,
+    # 2026-11-03 (TASK-37653 review rounds 1-4 and the PR #3352 review, owner
+    # rule: raise the row by exactly the fix's own lines): dev 66155632ed pins
+    # 22,317; this branch adds a net +128 -- close claims generation owners
+    # before first persistence (an AB/BA deadlock with a continuation write)
+    # and takes late-joining owners without waiting, the managed seal runs
+    # outside the owner scope with a recheck (a purge mid-seal refuses), and
+    # the owner-scope nesting order is documented: 22,445, the exact measurement.
+    "tldw_chatbook/Chat/console_chat_store.py": 22445,
     # TASK-33622.14: the aggregate Roleplay draft guard moved to
     # UI/Persona_Modules/roleplay_draft_guard.py (dev had grown to 16,533,
     # over this row; the move brings it to 16,397).
@@ -841,8 +848,16 @@ _BUDGETS: dict[str, int] = {
     "tldw_chatbook/Notes/notes_sync_executor.py": 6007,
     "tldw_chatbook/MCP/unified_control_plane_service.py": 6054,
     # PR3295, 2026-10-31: user size waiver; exact integrated measurement.
-    "tldw_chatbook/Agents/local_tool_provider.py": 5851,
-    "tldw_chatbook/Tools/remote_worker_bundle.py": 5706,
+    # 2026-11-02, TASK-37655 (owner rule: a fix over a size ratchet raises the
+    # row with a dated comment): dev 88af9f9379's 5,851 + 3 = 5,854. The remote
+    # preflight mirror folds Unicode normalization like the worker.
+    "tldw_chatbook/Agents/local_tool_provider.py": 5854,
+    # 2026-11-02, TASK-37655 (owner rule: a fix over a size ratchet raises the
+    # row with a dated comment): dev 88af9f9379's bundle measures 5,705 (its row says
+    # 5,706); this branch's fold changes -- the bundled fold_path_part, git
+    # exclusion pathspecs in both spellings, grep's ``re`` at module scope --
+    # add 17: 5,722, the exact measurement of a fresh build.
+    "tldw_chatbook/Tools/remote_worker_bundle.py": 5722,
     "tldw_chatbook/UI/Screens/scheduling/schedules_workbench.py": 5532,
     "tldw_chatbook/LLM_Calls/LLM_API_Calls.py": 5167,
     "tldw_chatbook/Notes/notes_sync_runtime.py": 5167,
@@ -873,7 +888,10 @@ _BUDGETS: dict[str, int] = {
     # Never/Blocked default its turn ran under) instead of refusing it.
     "tldw_chatbook/Chat/chat_persistence_service.py": 4239,
     "tldw_chatbook/UI/Screens/evals_screen.py": 4211,
-    "tldw_chatbook/Workspaces/registry_service.py": 4304,
+    # 2026-11-02, TASK-37655 review (owner rule: a fix over a size ratchet
+    # raises the row with a dated comment): dev 88af9f9379's 4,304 + 1 = 4,305. The
+    # exclusion dedupe/remove import the shared fold_path_part.
+    "tldw_chatbook/Workspaces/registry_service.py": 4305,
     # 2026-11-03, TASK-36527 review round 3, under the owner's 2026-10-31 size
     # waiver: each workspace-reachable entry point and call_after_refresh
     # target opens with the two-line `_going_away()` guard: 4207 -> 4253.

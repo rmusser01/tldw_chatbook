@@ -298,6 +298,55 @@ before you lengthen a wait. The queued-dispatch case in
 `Tests/UI/test_console_send_start_window.py` holds in the stream and stubs
 only the archive check.
 
+## A leaked worker connection: print the owner's current stack before trusting a code-read mechanism (TASK-38205, 2026-10-31)
+
+**Incident.** `test_tool_marker_with_brackets_renders_literally_not_escaped`
+failed at teardown in 9 of 12 loaded xdist runs: an `AgentRunsDB` connection was
+still registered after the main thread closed the database. Code reading
+blamed a late close: `worker_guard` closes the child's handle only after
+`fleet.finish` and the settle signal. Instrumentation showed something else.
+It printed the owner thread from `lease.resource_thread` and that thread's
+live stack from `sys._current_frames()`. The owner was the child's
+`fleet-*` thread, still alive and still in its first model call. The log
+also showed `_settle_fleet: 1 sub-agents are outliving their turn`. Since
+PR3a-1, a child outlives `run_reply` by design. Its sibling test already
+calls `_join_fleet_threads()` for this reason; this test did not.
+
+**What to do.** When a test that spawns a sub-agent asserts on the database,
+the fleet, or teardown state, join the fleet threads first. When a resource
+leaks from a worker, print the owning thread's current stack, not only the
+stack that opened the resource. The current stack showed whether the worker
+had finished; the opening stack could not.
+
+## On Windows, every Textual timer sleep holds a default-executor thread (TASK-38206, 2026-10-31)
+
+**Incident.** The GGUF recompose test failed only on windows-latest (runs
+40798969907 and 41091204880). Its 10 s settle expired before the rebuilt
+`LLMManagementWindow` reached `_finish_deferred_mount`. On macOS that takes
+0.33 s and one pause. The obvious reading was "slow runner". The pytest-timeout
+thread dumps in the same jobs said otherwise. All 8 `asyncio_N` default-executor
+threads (min(32, 4 vCPU + 4)) were parked in `textual/_win_sleep.py`
+`wait_inner`, and the main thread sat idle in the IOCP poll. The startup
+diagnostic also caught coroutines waiting in `_win_sleep.cancel` and
+`Timer._stop_all`, plus 20+ `_win_sleep.wait` calls queued for up to 47 s. On
+Windows, Textual runs each timer sleep as a blocking executor job, and cancelling
+a timer needs a second job. The app has three 24 h timers plus 120 s and 65 s
+ones, and up to 48 sleeps were in flight. So timer teardown, and every
+`thread=True` worker, waits for one of those threads. A local proxy of
+`_win_sleep` with an 8-thread pool took 12.8-23.6 s and failed 3 of 3 at 10 s.
+The same proxy with 64 threads took about 1 s. Host CPU load alone (load
+average 37-41 on 18 cores) took 0.6-1.1 s.
+
+**What to do.** When a Tests/UI wait fails only on Windows, check the job's
+thread dump for `_win_sleep.wait_inner` before blaming CPU speed. To reproduce
+it on macOS, route `textual.timer.sleep` and `textual._time.sleep` through
+`run_in_executor`, both the sleep and its cancel, and cap the app's
+`FreshContextExecutor` at 8 workers. Size Windows wait budgets for executor
+queueing, which CPU load does not reproduce -- as one deadline shared by the
+test's waits, not a budget per wait: the first fix gave each wait 60 s, and
+review caught that three slow waits sum past the job's 180 s node timeout,
+which kills the test instead of failing its assertion.
+
 ## A child kept across its parent's rebuild defeats an "every child is unlaid" guard (TASK-33622.6, 2026-10-29)
 
 **Incident.** To stop the Console rail's filter input being replaced under
@@ -535,6 +584,17 @@ coordinator's `sync_controls()`. A later re-sync then repaints the same state, s
 assertion stops depending on when the owner's own sync lands. A presentation-only
 push is fine for a widget mounted alone (`Tests/UI/test_console_speech_controls.py`),
 never inside the real screen.
+
+**Same shape for a faked store read (TASK-37654, 2026-10-31).** The Send-acceptance
+projection test patched `store.session_draft` to return `""` instead of running the
+input CAS, so the store still held the typed draft at the revision the projection
+recorded. A Console sync tick then wrote the cleared draft back (revision 1 -> 2) and
+the next tick saw the revision move and reloaded the composer: a second action-row
+sync, in about 1 run of 6, whenever `pilot.pause()` waited long enough for two ticks.
+Running the real `commit_session_input_draft` before projecting made the write-back
+a no-op. Calling the tick's `_sync_console_session_draft()` twice by hand reproduced
+it 3 of 3 under the fake. Do not patch a store getter to fake a write: perform the
+write, or a reconcile pass will make the store agree with the screen later.
 
 ## A display cache keyed by the turns it shows hides a missing record: delete it and reopen (TASK-33621.51, 2026-10-29)
 

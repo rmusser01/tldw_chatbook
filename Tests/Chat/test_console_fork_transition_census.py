@@ -183,7 +183,7 @@ def _called_attributes(node: ast.AST) -> set[str]:
 
 
 _TRANSITION_DECORATORS = frozenset(
-    {"_fork_continuation_event_transition", "_fork_session_transition"}
+    {"_continuation_event_owner_scope", "_fork_session_transition"}
 )
 _TRANSITION_CONTEXTS = frozenset({"_fork_source_transition", "_generation_owner_scope"})
 _DETACHED_MUTATION_METHODS = frozenset(

@@ -3,6 +3,7 @@ import json
 import multiprocessing
 import os
 import threading
+import unicodedata
 from pathlib import Path
 
 import portalocker
@@ -89,6 +90,82 @@ def test_relative_sensitive_exclusion_matcher_covers_root_and_each_kind(
         )
         is expected
     )
+
+
+@pytest.mark.parametrize(("rule_form", "path_form"), (("NFC", "NFD"), ("NFD", "NFC")))
+@pytest.mark.parametrize(
+    ("kind", "rule", "relative"),
+    (
+        ("file", "Données/naïve.txt", "Données/naïve.txt"),
+        ("file", "Données/naïve.txt", "DONNÉES/NAÏVE.TXT"),
+        ("subtree", "Données", "Données/naïve.txt"),
+        ("direct_children", "Données", "Données/naïve.txt"),
+        ("name", "naïve.txt", "elsewhere/naïve.txt"),
+    ),
+)
+def test_relative_sensitive_exclusion_matcher_ignores_unicode_normalization(
+    kind: str, rule: str, relative: str, rule_form: str, path_form: str
+) -> None:
+    """TASK-37655: APFS opens an NFD spelling as the stored NFC file (and back)."""
+    rule = unicodedata.normalize(rule_form, rule)
+    relative = unicodedata.normalize(path_form, relative)
+    assert rule not in relative  # the two spellings really differ
+    assert local_tool_impls._is_relative_sensitive_path(
+        Path(relative), (SensitiveExclusion(kind, rule),), is_directory=False
+    )
+
+
+@pytest.mark.parametrize(
+    ("relative", "expected"),
+    (
+        ("SECRET/key.pem", True),
+        ("Secret/Key.PEM", True),
+        ("secretfoo/key.pem", False),
+        ("nested/CREDENTIALS", True),
+        ("nested/credentials.bak", False),
+    ),
+)
+def test_relative_sensitive_exclusion_matcher_ascii_case_folding_unchanged(
+    relative: str, expected: bool
+) -> None:
+    exclusions = (
+        SensitiveExclusion("subtree", "secret"),
+        SensitiveExclusion("name", "credentials"),
+    )
+    assert (
+        local_tool_impls._is_relative_sensitive_path(
+            Path(relative), exclusions, is_directory=False
+        )
+        is expected
+    )
+
+
+@pytest.mark.parametrize(("rule_form", "path_form"), (("NFC", "NFD"), ("NFD", "NFC")))
+def test_worker_fs_read_refuses_other_normalization_of_excluded_file(
+    tmp_path: Path, rule_form: str, path_form: str
+) -> None:
+    """The pinned worker's fs_read core (local and remote) applies the matcher."""
+    rule = unicodedata.normalize(rule_form, "naïve.txt")
+    selected = unicodedata.normalize(path_form, "naïve.txt")
+    (tmp_path / rule).write_text("PRIVATE")
+    if not (tmp_path / selected).exists():  # normalization-sensitive filesystem
+        (tmp_path / selected).write_text("PRIVATE")
+    with pytest.raises(LocalToolError, match="file not found"):
+        local_tool_impls._read_relative_file(
+            Path(selected),
+            workspace=tmp_path,
+            offset=1,
+            limit=None,
+            sensitive_exclusions=(SensitiveExclusion("file", rule),),
+        )
+
+
+def test_grep_core_annotations_resolve() -> None:
+    """``_grep_relative_files`` annotates ``re.Pattern``; ``re`` must be bound."""
+    import typing
+
+    hints = typing.get_type_hints(local_tool_impls._grep_relative_files)
+    assert "pattern" in hints
 
 
 def test_resolve_workspace_path_confines(tmp_path):

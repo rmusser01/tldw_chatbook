@@ -68,6 +68,97 @@ _ROLE_GUIDANCE = {
         "arguments (dispositions, empty records, same ID, current revision); accepted decisions remain unchanged."
     ),
 }
+# The review's own refusal codes: every ``ReviewRefused`` reason raised under
+# tldw_chatbook/ (a test pins the two together, both ways). Only these reach
+# durable/display projections: upstream permission/routing reasons, hook text
+# and digests collapse to ``review_refused`` (TASK-37653 review).
+_REVIEW_REFUSAL_CODES = frozenset(
+    """
+    accepted_request_already_narrowed accepted_review_intent_required
+    accepted_reviewer_selection_mismatch accepted_stage_intent_required
+    accepted_stage_selection_mismatch accepted_user_message_changed
+    accepted_user_message_required ambiguous_comparison attempt_binding_conflict
+    batch_unavailable binary_source check_actor_conflict check_actor_mismatch
+    check_actor_unbound check_already_pending check_attempt_mismatch
+    check_deadline_expired check_execution_admission_expired
+    check_execution_already_accepted check_execution_specification_mismatch
+    check_receipt_target_mismatch check_result_not_read
+    check_result_transport_unavailable child_budget_unavailable
+    completion_records_not_empty context_not_captured context_quota_exceeded
+    context_revision_conflict disposition_conflict disposition_evidence_required
+    duplicate_local_key duplicate_original_id duplicate_patch_target
+    duplicate_verification_unit feature_disabled history_unavailable
+    invalid_arguments invalid_check_proposal invalid_check_receipt invalid_cursor
+    invalid_disposable_check_root invalid_duplicate_reference
+    invalid_executed_check_evidence invalid_native_check_receipt invalid_patch
+    invalid_record invalid_record_chunk invalid_record_count
+    invalid_report_reference invalid_review_admission_counts invalid_review_target
+    invalid_review_team invalid_run_id invalid_source_cursor
+    invalid_source_manifest invalid_source_path invalid_source_query
+    invalid_source_range invalid_source_reference invalid_source_selection
+    invalid_source_side invalid_stage invalid_storage_counts invalid_storage_file
+    invalid_storage_write invalid_submission_id invalid_target_digest
+    invalid_terminal_status invalid_untracked_selection invalid_verification_unit
+    invalid_verifier_focus native_discard_required no_model_resolved
+    original_reports_not_presented patch_preimage_mismatch preset_disabled
+    preset_missing publication_failed record_too_large report_capture_missing
+    report_unavailable reservation_actual_mismatch reservation_closed
+    reservation_exceeded review_attempt_has_publications
+    review_attempt_not_settled review_attempt_outcome_uncertain
+    review_attempt_state_changed review_authority_quota_exceeded
+    review_boundary_unavailable review_busy review_capture_closed
+    review_checkpoint_scope_mismatch review_context_capacity_unknown
+    review_context_reduction_blocked review_control_too_large_for_tool_result
+    review_expired review_guide_unavailable review_launch_already_bound
+    review_launch_unknown review_no_unstarted_reviewers
+    review_page_capacity_changed review_record_too_large_for_tool_result
+    review_response_capacity_unavailable review_revision_conflict
+    review_run_settled review_scope_mismatch review_selection_required
+    review_session_fenced review_slot_unknown review_stage_already_started
+    review_stage_tools_unreachable review_team_empty
+    reviewer_check_evidence_unavailable reviewer_selection_required role_denied
+    role_kind_mismatch run_binding_conflict run_not_bound single_record_required
+    source_absent source_acquisition_failed source_already_published
+    source_authority_changed source_authority_mismatch
+    source_authority_unavailable source_binding_mismatch
+    source_capacity_unavailable source_cursor_conflict source_digest_mismatch
+    source_drift source_epoch_mismatch source_outside_scope
+    source_page_capacity_changed source_path_unavailable
+    source_permission_unavailable source_query_capacity_unavailable
+    source_selection_required source_span_too_large_for_tool_result
+    source_truncated source_unavailable stage_admission_unavailable
+    stage_grant_scope_mismatch stage_grant_unavailable stale_attempt
+    storage_limits_conflict storage_quota_exceeded submission_conflict
+    submission_revision_conflict target_acquisition_unavailable
+    target_digest_mismatch terminal_receipt_conflict unknown_review
+    unknown_submission_kind unmerged_source unresolved_submission_rejections
+    unsupported_source_encoding unsupported_source_type
+    verification_attempt_closed verification_batch_unacknowledged
+    verification_incomplete verification_unavailable
+    verification_unit_not_delivered verifier_missing
+    """.split()  # noqa: SIM905 - 164 codes; one literal per line is unreadable
+)
+# Refusals that cannot clear before invoke(): fixed by the read's own
+# arguments (bad reference/cursor/path, out of scope, a symlink in the requested
+# path) or by a review that is gone (mistyped, foreign or expired review_id).
+# invoke() refuses them again, so path_targets maps them to no path instead of
+# deferring the whole batch. Transient state/authority refusals (changed source
+# epoch or authority, unbound run, disabled feature) may clear in between and
+# still raise so the instruction ledger defers (TASK-37653 review).
+_ARGUMENT_REFUSALS = frozenset(
+    {
+        "invalid_source_cursor",
+        "invalid_source_path",
+        "invalid_source_reference",
+        "invalid_source_selection",
+        "review_expired",
+        "source_cursor_conflict",
+        "source_outside_scope",
+        "source_path_unavailable",
+        "unknown_review",
+        "unsupported_source_type",
+    }
+)
 _ROLE_READ_VIEWS = {
     "primary": {"source", "report", "index", "summary"},
     "reviewer": {"source"},
@@ -305,15 +396,25 @@ class CodeReviewToolProvider:
     def path_targets(self, tool_id: str, args: Mapping[str, Any]):
         if tool_id != "code_review:code_review_read":
             return ()
-        parsed = ReadArguments.model_validate(dict(args))
-        if parsed.view != "source":
+        # A read refused for its arguments touches no path; raising here made
+        # the instruction ledger defer the batch as "outside scope" and delay
+        # the refusal a round (TASK-37653). See _ARGUMENT_REFUSALS.
+        try:
+            parsed = ReadArguments.model_validate(dict(args))
+            if parsed.view != "source":
+                return ()
+            return self.service.source_instruction_targets(
+                parsed.review_id,
+                document_ref=parsed.document_ref,
+                cursor=parsed.cursor,
+                source_query=parsed.source_query,
+            )
+        except ValidationError:
             return ()
-        return self.service.source_instruction_targets(
-            parsed.review_id,
-            document_ref=parsed.document_ref,
-            cursor=parsed.cursor,
-            source_query=parsed.source_query,
-        )
+        except ReviewRefused as exc:
+            if exc.reason in _ARGUMENT_REFUSALS:
+                return ()
+            raise
 
     def project_tool_record(self, audience, call, result):
         arguments = {"schema_version": 1, "tool_name": call.name}
@@ -327,6 +428,10 @@ class CodeReviewToolProvider:
             content=""
             if result is None
             else f'{{"schema_version":1,"size_chars":{len(result.content)},"ok":{str(result.ok).lower()}}}',
-            error="" if result is None or result.ok else "review_refused",
+            error=""
+            if result is None or result.ok
+            else result.error
+            if result.error in _REVIEW_REFUSAL_CODES
+            else "review_refused",
             ok=None if result is None else result.ok,
         )

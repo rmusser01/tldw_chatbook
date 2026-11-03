@@ -171,6 +171,78 @@ def test_nested_guidance_precedes_complete_source_pages(
     )
 
 
+def test_refusal_projection_keeps_only_a_code_shaped_reason(dispatch_case):
+    """TASK-37653: every durable refusal read "review_refused", hiding its cause."""
+    from tldw_chatbook.Agents.agent_models import ToolCall, ToolResult
+
+    provider = dispatch_case.provider
+    call = ToolCall("code_review_read", {"view": "report"}, "call")
+    for audience in ("display", "log", "continuation", "cycle"):
+        for error, label in (
+            ("invalid_report_reference", "invalid_report_reference"),
+            ("source_authority_unavailable", "source_authority_unavailable"),
+            ("review_session_fenced", "review_session_fenced"),
+            ("Deferred because project instructions were loaded", "review_refused"),
+            ("hook: /private/secret refused", "review_refused"),
+            # Code-shaped but not a review refusal: an upstream routing code
+            # and a content digest must not reach the durable projection.
+            ("provider_not_ready", "review_refused"),
+            ("a" + "0" * 63, "review_refused"),
+        ):
+            projection = provider.project_tool_record(
+                audience, call, ToolResult(ok=False, error=error)
+            )
+            assert projection.error == label
+
+
+def test_refusal_code_allowlist_matches_the_review_refusals_raised():
+    """The allowlist is exactly the ``ReviewRefused`` reasons raised anywhere.
+
+    Both ways: every literal reason under tldw_chatbook/ (including the Console
+    review owner, e.g. ``review_session_fenced``) projects, and every listed
+    code is raised somewhere -- as a literal, or routed through a variable by
+    the module named below.
+    """
+    import ast
+    from pathlib import Path
+
+    from tldw_chatbook.Agents import code_review_tool_provider as provider
+
+    def reasons(node):
+        if isinstance(node, ast.IfExp):
+            return reasons(node.body) | reasons(node.orelse)
+        if isinstance(node, ast.Constant) and isinstance(node.value, str):
+            return {node.value}
+        return set()
+
+    package = Path(provider.__file__).parents[1]
+    raised = set()
+    for path in package.rglob("*.py"):
+        source = path.read_text(encoding="utf-8")
+        if "ReviewRefused" not in source:
+            continue
+        for call in ast.walk(ast.parse(source)):
+            if not isinstance(call, ast.Call) or not call.args:
+                continue
+            name = getattr(call.func, "id", None) or getattr(call.func, "attr", None)
+            if name == "ReviewRefused":
+                raised |= reasons(call.args[0])
+    routed = {
+        "Agents/code_review_source.py": {
+            "ambiguous_comparison",
+            "history_unavailable",
+            "unmerged_source",
+        },
+        "Agents/code_review_service.py": {"check_result_transport_unavailable"},
+        "Chat/console_agent_bridge.py": {"review_stage_tools_unreachable"},
+    }
+    for relative, codes in routed.items():
+        source = (package / relative).read_text(encoding="utf-8")
+        assert all(f'"{code}"' in source for code in codes), relative
+    assert "review_session_fenced" in raised
+    assert raised | set().union(*routed.values()) == provider._REVIEW_REFUSAL_CODES
+
+
 def test_cycle_projection_preserves_call_identity_without_bodies(dispatch_case):
     from tldw_chatbook.Agents.agent_models import ToolCall
 

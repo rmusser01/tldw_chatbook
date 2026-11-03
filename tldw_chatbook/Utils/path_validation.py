@@ -8,6 +8,7 @@ escape allowed directories.
 import os
 import stat
 import time
+import unicodedata
 from pathlib import Path
 from typing import Optional, Sequence, Union
 
@@ -99,6 +100,19 @@ def _logging_logger():
     except ImportError:
         return _NoOpLogger()
     return logger
+
+
+def fold_path_part(part: str) -> str:
+    """One path component in the form every denylist/exclusion compares.
+
+    Case-folded (TASK-19800, see ``sensitive_paths._compare_key``) AND Unicode
+    normalization-folded (TASK-37655): APFS, like other filesystems that
+    ignore normalization when opening files, opens an NFD ``naïve.txt`` as
+    the stored NFC file, so an exact-codepoint compare let either spelling
+    past a rule written in the other. This is Unicode's canonical caseless
+    match, ``NFD(casefold(NFD(x)))``; ASCII folds exactly as ``casefold``.
+    """
+    return unicodedata.normalize("NFD", unicodedata.normalize("NFD", part).casefold())
 
 
 def validate_recovery_relative_path(value: str) -> str:

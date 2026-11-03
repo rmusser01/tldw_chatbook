@@ -32,6 +32,7 @@ from __future__ import annotations
 
 import asyncio
 import os
+import unicodedata
 from pathlib import Path
 
 import pytest
@@ -1071,6 +1072,28 @@ def test_case_folding_does_not_deny_an_unrelated_lookalike():
     (home / ".sshfoo" / "notes.txt").write_text("ordinary\n")
     assert not is_sensitive_path(home / ".sshfoo" / "notes.txt")
     assert not is_sensitive_path(home / ".SSHFOO" / "notes.txt")
+
+
+@pytest.mark.parametrize(("rule_form", "path_form"), (("NFC", "NFD"), ("NFD", "NFC")))
+def test_denylist_folds_unicode_normalization_like_case(tmp_path, rule_form, path_form):
+    """TASK-37655: APFS opens an NFD spelling as the stored NFC path (and back),
+    so the absolute denylist and its root-relative translation fold both."""
+    from tldw_chatbook.Utils.sensitive_paths import (
+        SensitiveExclusion,
+        SensitivePathContext,
+        is_sensitive_path,
+        sensitive_exclusions_under,
+    )
+
+    base = tmp_path.resolve()
+    denied = base / unicodedata.normalize(rule_form, "Données") / "private"
+    context = SensitivePathContext((), (denied,), (), None, ())
+    spelled = base / unicodedata.normalize(path_form, "Données")
+
+    assert is_sensitive_path(spelled / "private" / "a.txt", context)
+    assert sensitive_exclusions_under(spelled, context)[0] == SensitiveExclusion(
+        "subtree", "private"
+    )
 
 
 def test_binding_gate_detects_a_case_variant_conflict():

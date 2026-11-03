@@ -13,6 +13,7 @@ import sqlite3
 from uuid import uuid4
 
 from tldw_chatbook.DB.store_kernel import SQLiteStoreKernel
+from tldw_chatbook.Utils.path_validation import fold_path_part
 from tldw_chatbook.Utils.timestamps import utc_now_iso
 from tldw_chatbook.Workspaces.project_index.models import (
     MAX_CACHE_BYTES,
@@ -147,10 +148,16 @@ def _prepare_chunks(captures):
 
 
 def _path_allowed(path: str, exclusions) -> bool:
-    """Apply the requesting run's exclusion floor before SQL rank and LIMIT."""
-    value = path.casefold()
+    """Apply the requesting run's exclusion floor before SQL rank and LIMIT.
+
+    Rule and path fold with ``fold_path_part`` (case AND Unicode
+    normalization, TASK-37655) like the shared tool matcher; folding the whole
+    string equals folding each component because ``/`` is a starter neither
+    fold touches.
+    """
+    value = fold_path_part(path)
     for exclusion in exclusions:
-        denied = exclusion.value.replace("\\", "/").strip("/").casefold()
+        denied = fold_path_part(exclusion.value.replace("\\", "/").strip("/"))
         if exclusion.kind == "subtree" and (
             not denied or value == denied or value.startswith(denied + "/")
         ):
@@ -944,9 +951,10 @@ class WorkspaceProjectIndexDB(SQLiteStoreKernel):
         )
 
         # Freeze this query's current run floor before SQLite evaluates rows.
-        # Keep the same normalization as the live-validation predicate.
+        # Fold rule and path exactly as ``_path_allowed`` (the live-validation
+        # predicate) does: ``fold_path_part``, case AND Unicode normalization.
         exclusions = tuple(
-            (item.kind, item.value.replace("\\", "/").strip("/").casefold())
+            (item.kind, fold_path_part(item.value.replace("\\", "/").strip("/")))
             for item in floor
         )
         subtrees = frozenset(value for kind, value in exclusions if kind == "subtree")
@@ -961,15 +969,17 @@ class WorkspaceProjectIndexDB(SQLiteStoreKernel):
         deny_all = "" in subtrees
 
         def allowed(path):
-            value = path.casefold()
+            folded = fold_path_part(path)
             if (
                 deny_all
-                or value in denied_paths
-                or value.startswith(subtree_heads)
-                or value.rsplit("/", 1)[-1] in denied_names
-                or value.rpartition("/")[0] in denied_parents
+                or folded in denied_paths
+                or folded.startswith(subtree_heads)
+                or folded.rsplit("/", 1)[-1] in denied_names
+                or folded.rpartition("/")[0] in denied_parents
             ):
                 return 0
+            # Include prefixes stay casefold-only, as in the scan worker.
+            value = path.casefold()
             if (
                 not all_prefixes
                 and value not in prefixes
