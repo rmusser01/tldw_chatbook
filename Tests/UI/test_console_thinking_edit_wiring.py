@@ -55,6 +55,7 @@ def _reasoning_envelope(text: str) -> ThinkingEnvelope:
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_thinking_row_edit_opens_modal_and_saves_block_text():
     app = _build_test_app()
     host = ConsoleHarness(app)

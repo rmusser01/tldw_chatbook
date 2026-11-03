@@ -10,8 +10,8 @@ from typing import Mapping
 from tldw_chatbook.Backup_Recovery.mobile_preview_budget import (
     json_loads as _budgeted_json_loads,
 )
-from tldw_chatbook.Chat.console_trace_read_budget import _TraceReadLimit
 
+from .limits import _TraceReadLimit
 from .mobile_preview_budget import toml_loads as _budgeted_toml_loads
 from .models import OwnerAdapter, StorageItem, discovery_context, storage_logical_id
 from .profile_paths import DATABASE_PATHS, default_config_path, setting, user_data_dir

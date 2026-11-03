@@ -5861,6 +5861,7 @@ async def test_prefilled_send_bypasses_agent_loop():
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_real_agent_composition_advertises_and_invokes_shared_canvas_owner(
     tmp_path,
 ):
@@ -5911,6 +5912,7 @@ async def test_real_agent_composition_advertises_and_invokes_shared_canvas_owner
     try:
         controller._agent_bridge = SimpleNamespace(run_reply=run_reply)
         session = _arm_session(store)
+        session.settings = ConsoleSessionSettings(provider="llama_cpp")
 
         result = await controller.submit_draft("make a canvas")
 
@@ -5924,6 +5926,7 @@ async def test_real_agent_composition_advertises_and_invokes_shared_canvas_owner
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_deferred_canvas_provider_uses_the_runtime_restart_latch(tmp_path):
     from types import SimpleNamespace
 
@@ -5962,7 +5965,8 @@ async def test_deferred_canvas_provider_uses_the_runtime_restart_latch(tmp_path)
 
     try:
         controller._agent_bridge = SimpleNamespace(run_reply=run_reply)
-        _arm_session(store)
+        session = _arm_session(store)
+        session.settings = ConsoleSessionSettings(provider="llama_cpp")
         result = await controller.submit_draft("defer the canvas tool")
 
         assert result.accepted is True

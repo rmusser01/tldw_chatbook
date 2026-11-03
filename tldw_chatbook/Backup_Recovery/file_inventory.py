@@ -7,11 +7,11 @@ import sys
 import unicodedata
 from pathlib import Path
 
-from tldw_chatbook.Chat.console_trace_read_budget import _TraceReadLimit
 from tldw_chatbook.Utils.path_validation import validate_recovery_relative_path
 from tldw_chatbook.Utils.platform_files import os
 
 from . import bootstrap
+from .limits import _TraceReadLimit
 from .models import FileMetadata, StorageItem
 
 MAX_ENTRIES = 100_000
