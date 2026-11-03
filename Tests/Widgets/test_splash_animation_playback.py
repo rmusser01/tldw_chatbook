@@ -219,6 +219,7 @@ KNOWN_BROKEN_EFFECT_CARDS = {
 }
 
 
+@pytest.mark.bootstrap_profile
 async def test_every_animated_card_renders_consecutive_frames():
     """Regression smoke: every animated card renders or falls back cleanly."""
     load_all_effects()
@@ -259,6 +260,7 @@ async def test_every_animated_card_renders_consecutive_frames():
     assert not failures, failures
 
 
+@pytest.mark.bootstrap_profile
 async def test_delta_clocked_effect_progress_depends_only_on_rendered_frames():
     """terminal_boot treats start_time as a per-frame delta anchor.
 

@@ -33,6 +33,8 @@ from typing import Any
 
 import pytest
 
+from Tests.agent_runs_owner import owned_agent_runs_db
+
 from tldw_chatbook.Chat.console_agent_bridge import ConsoleAgentBridge
 from tldw_chatbook.Chat.console_chat_models import (
     ConsoleMessageRole,
@@ -46,7 +48,6 @@ from tldw_chatbook.Chat.console_provider_gateway import (
     ConsoleProviderStreamSignals,
 )
 from tldw_chatbook.Chat.provider_usage import ProviderUsage
-from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
 
 #: The adapters read provider settings through the guarded config loader;
 #: under the per-test redirect that admission fails closed with
@@ -287,7 +288,9 @@ def _run_console_reply(
     )
     signals = ConsoleProviderStreamSignals()
     bridge = ConsoleAgentBridge(
-        agent_runs_db=AgentRunsDB(tmp_path / "runs.db", client_id="refused-stream"),
+        agent_runs_db=owned_agent_runs_db(
+            tmp_path / "runs.db", client_id="refused-stream"
+        ),
         store=store,
         provider_gateway=gateway,
     )

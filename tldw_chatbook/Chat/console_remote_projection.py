@@ -275,7 +275,10 @@ class ConsoleRemoteProjection:
             if store
             else set()
         )
-        service = getattr(self.runtime.app, "local_chat_conversation_service", None)
+        try:
+            service = self.runtime.app.local_chat_conversation_service
+        except AttributeError:
+            service = None
         if service is None:
             return rows, None
         saved = service.list_library_conversations(
@@ -496,8 +499,12 @@ class ConsoleRemoteProjection:
 
     def _saved_cursor(self, target: ConsoleTarget) -> str | None:
         store, _controller, session = self._require_target(target)
+        try:
+            service = self.runtime.app.local_chat_conversation_service
+        except AttributeError:
+            service = None
         if (
-            getattr(self.runtime.app, "local_chat_conversation_service", None) is None
+            service is None
             or not session.persisted_conversation_id
             or store.message_count(session.id)
         ):
@@ -522,7 +529,10 @@ class ConsoleRemoteProjection:
     def _saved_snapshot(self, target, cursor, boundary, receipt_fields, receipt_cursor):
         """Continue canonical history after native metadata; never hydrate to read."""
         _store, _controller, session = self._require_target(target)
-        service = getattr(self.runtime.app, "local_chat_conversation_service", None)
+        try:
+            service = self.runtime.app.local_chat_conversation_service
+        except AttributeError:
+            service = None
         current = self._saved_cursor(target)
         if current is None:
             return None

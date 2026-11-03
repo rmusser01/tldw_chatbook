@@ -1962,7 +1962,19 @@ def legacy_mobile_declarations(config, *, source_dir: Path | None = None):
 
 
 from .mobile_import_authority import AGENT_RUNS_MIGRATION, WORKSPACE_MIGRATION
-from .console_command_receipts import COMMAND_RECEIPT_MIGRATION
+
+# Read the same installed DDL without importing Console receipt models
+# into constructor-free offline recovery.
+COMMAND_RECEIPT_MIGRATION = tuple(
+    statement.strip()
+    for statement in (
+        Path(__file__).with_name("migrations")
+        / "agent_runs_v31_to_v32_console_command_receipts.sql"
+    )
+    .read_text(encoding="utf-8")
+    .split(";")
+    if statement.strip()
+)
 
 _AGENT_RUNS_SCHEMA += tuple(
     (32, tuple(sorted(catalog + COMMAND_RECEIPT_MIGRATION[:-1], key=_installed_schema_order)))
