@@ -5961,7 +5961,13 @@ async def test_conflict_resolution_discard_keeps_cancel_first_confirmation(
             "discard did not open the destructive confirmation",
         )
         cancel = workspace.query_one("#file-notes-reload-cancel", Button)
-        assert cancel.has_focus
+        # The confirmation focuses Cancel through `call_later`, after
+        # `reload_confirmation_active` is already true.
+        await _wait_until(
+            pilot,
+            lambda: cancel.has_focus,
+            "destructive confirmation did not focus Cancel",
+        )
         assert editor.text == "retained draft"
         assert workspace.save_state == "conflict"
 
