@@ -5,12 +5,12 @@ from __future__ import annotations
 import json
 import re
 from dataclasses import dataclass, field
-from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING
 
 from tldw_chatbook.Canvas.limits import validate_opaque_identifier
 from tldw_chatbook.Chat.console_remote_models import ConsoleHostIdentity, ConsoleTarget
+from tldw_chatbook.Utils.timestamps import utc_now_iso
 
 if TYPE_CHECKING:
     from .AgentRuns_DB import AgentRunsDB
@@ -47,7 +47,7 @@ COMMAND_RECEIPT_MIGRATION = tuple(
 
 
 def _now() -> str:
-    return datetime.now(UTC).isoformat()
+    return utc_now_iso()
 
 
 def canonical(value: object) -> str:

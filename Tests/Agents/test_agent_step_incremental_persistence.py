@@ -52,6 +52,7 @@ def db(tmp_path) -> AgentRunsDB:
     return owned_agent_runs_db(tmp_path / "agent-runs.db", client_id="test")
 
 
+@pytest.mark.bootstrap_profile
 def test_first_step_is_durable_before_run_finalization(db: AgentRunsDB) -> None:
     observed = []
 
@@ -66,6 +67,7 @@ def test_first_step_is_durable_before_run_finalization(db: AgentRunsDB) -> None:
     assert observed[0][1][0]["index"] == observed[0][2] == 0
 
 
+@pytest.mark.bootstrap_profile
 def test_step_timestamp_uses_injected_utc_wall_clock_not_budget_clock(
     db: AgentRunsDB,
 ) -> None:
@@ -104,6 +106,7 @@ def test_loopdeps_preserves_pre_wall_clock_positional_continuation_slot() -> Non
     assert deps.call_model_with_continuation is continuation
 
 
+@pytest.mark.bootstrap_profile
 def test_raising_wall_clock_falls_back_without_aborting_run(db: AgentRunsDB) -> None:
     def fail_wall_clock():
         raise RuntimeError("clock unavailable")
@@ -142,18 +145,23 @@ def test_safe_utc_timestamp_converts_aware_non_utc_value() -> None:
     assert timestamp == "2026-08-22T13:00:00.123456Z"
 
 
+@pytest.mark.bootstrap_profile
 def test_terminal_error_step_without_live_timestamp_uses_wall_clock_fallback(
     db: AgentRunsDB,
 ) -> None:
     fixed = datetime(2026, 8, 22, 13, 0, 0, tzinfo=timezone.utc)
+    provider_calls = 0
 
     def fail_provider(**_kwargs):
+        nonlocal provider_calls
+        provider_calls += 1
         raise RuntimeError("provider failed")
 
     run_id, outcome = _run(
         _service(db, chat_call=fail_provider, wall_clock=lambda: fixed)
     )
 
+    assert provider_calls == 1
     assert outcome.status == "error"
     live_step = outcome.steps[0]
     durable_step = next(
@@ -164,6 +172,7 @@ def test_terminal_error_step_without_live_timestamp_uses_wall_clock_fallback(
     assert durable_timestamp == "2026-08-22T13:00:00.000000Z"
 
 
+@pytest.mark.bootstrap_profile
 def test_live_serialization_failure_still_notifies_ui_and_finalizes_status(
     db: AgentRunsDB, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -191,6 +200,7 @@ def test_live_serialization_failure_still_notifies_ui_and_finalizes_status(
     assert run["status"] == "done" and run["result"] == "done"
 
 
+@pytest.mark.bootstrap_profile
 def test_live_and_terminal_trace_write_failure_still_finalizes_status(
     db: AgentRunsDB, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -225,6 +235,7 @@ def test_live_and_terminal_trace_write_failure_still_finalizes_status(
     assert all("SECRET_TRACE_PAYLOAD" not in repr(item) for item in warnings)
 
 
+@pytest.mark.bootstrap_profile
 def test_failed_incremental_write_does_not_abort_and_terminal_write_recovers(
     db: AgentRunsDB, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -262,6 +273,7 @@ def test_failed_incremental_write_does_not_abort_and_terminal_write_recovers(
     assert all(step.index in durable_by_index for step in outcome.steps)
 
 
+@pytest.mark.bootstrap_profile
 def test_ui_callback_failure_does_not_abort_incremental_durability(
     db: AgentRunsDB,
 ) -> None:
@@ -275,6 +287,7 @@ def test_ui_callback_failure_does_not_abort_incremental_durability(
     assert all(step.index in durable_indices for step in outcome.steps)
 
 
+@pytest.mark.bootstrap_profile
 def test_terminal_recovery_does_not_duplicate_successful_incremental_rows(
     db: AgentRunsDB,
 ) -> None:

@@ -121,6 +121,7 @@ def test_chatbook_app_service_injects_control_data_via_environment_only() -> Non
     asyncio.run(scenario())
 
 
+@pytest.mark.bootstrap_profile
 def test_textual_child_app_starts_and_closes_its_control_client() -> None:
     async def scenario() -> None:
         from tldw_chatbook import app as app_module
@@ -185,3 +186,23 @@ async def test_control_loss_without_installed_controller_does_not_create_one(
         app.console_runtime = UnusedRuntime()
     await app_served._retire_after_control_loss(app)
     assert app._shutting_down and events == ["served control lost", "exit"]
+
+
+@pytest.mark.asyncio
+async def test_served_mode_without_control_still_retires_admission():
+    import asyncio
+
+    from tldw_chatbook import app_served
+
+    events = []
+    app = SimpleNamespace(
+        served_canvas_control=None,
+        _served_canvas_mode=True,
+        _served_canvas_control_start_task=None,
+        _close_boot_worker_gate=lambda reason: events.append(reason),
+        exit=lambda: events.append("exit"),
+    )
+    app_served._start_served_canvas_control(app, app_globals={"asyncio": asyncio})
+    await app._served_control_lifetime_task
+    assert app._shutting_down
+    assert events == ["served control lost", "exit"]

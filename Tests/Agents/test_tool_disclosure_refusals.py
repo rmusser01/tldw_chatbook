@@ -2,6 +2,7 @@
 
 import pytest
 
+from Tests.agent_runs_owner import owned_agent_runs_db
 from Tests.Agents.test_agent_service import (
     FakeBigProvider,
     ScriptedChat,
@@ -16,7 +17,6 @@ from tldw_chatbook.Agents.agent_models import (
 )
 from tldw_chatbook.Agents.agent_service import AgentService
 from tldw_chatbook.Agents.tool_catalog import ToolCatalogRegistry
-from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
 
 pytestmark = pytest.mark.bootstrap_profile
 
@@ -50,7 +50,7 @@ def test_refusal_guidance_preserves_dispatch_and_approval_boundaries(
 
     registry = ToolCatalogRegistry()
     registry.register_provider(RecordingProvider())
-    db = AgentRunsDB(tmp_path / "runs.db", client_id="refusal")
+    db = owned_agent_runs_db(tmp_path / "runs.db", client_id="refusal")
     service = AgentService(db=db, registry=registry, chat_call=lambda **_: None)
     invoke = service._make_invoke_tool(
         AgentConfig(model="m", system_prompt="s", allowed_tools=allowed),
@@ -111,7 +111,7 @@ def test_allowed_tool_recovers_after_schema_reload(tmp_path, native, replaced):
     chat = ScriptedChat(replies)
     registry = ToolCatalogRegistry()
     registry.register_provider(RecordingProvider())
-    db = AgentRunsDB(tmp_path / "runs.db", client_id="reload")
+    db = owned_agent_runs_db(tmp_path / "runs.db", client_id="reload")
     service = AgentService(db=db, registry=registry, chat_call=chat)
     run_id, outcome = service.run_turn(
         conversation_id="c",
@@ -161,7 +161,7 @@ async def test_hook_preparation_preserves_schema_reload_guidance(tmp_path, nativ
     engine = HookEngine((), lambda *_: True, HookBudgetOwner())
     registry = ToolCatalogRegistry()
     registry.register_provider(FakeBigProvider())
-    db = AgentRunsDB(tmp_path / "runs.db", client_id="hook-reload")
+    db = owned_agent_runs_db(tmp_path / "runs.db", client_id="hook-reload")
     service = AgentService(
         db=db,
         registry=registry,

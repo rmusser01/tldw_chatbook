@@ -1,5 +1,5 @@
 ---
-id: TASK-36728
+id: TASK-38682
 title: Design shared Console ownership and mobile agent supervision
 status: Done
 created_date: 2026-10-25 16:01
@@ -71,3 +71,8 @@ ADR required: yes; backlog/decisions/244-shared-console-ownership-and-mobile-sup
 ## Definition of Done
 <!-- DOD:BEGIN -->
 <!-- DOD:END -->
+
+
+## Renumbering provenance
+
+On 2026-11-03, TASK-36728 became TASK-38682. The older native Reminder task retains TASK-36728. Its first addition is 6b75fc937ea7d1b5beeb5f50fee427d17d12c6b2 (authored 2026-10-25 03:51:45 UTC); this Console task was added later in 2d7d5175e12e2fe47be6f5c69d1fc9a06d1f7c8a. Titles, creation dates, Done status, acceptance criteria and historical evidence are retained. Existing dependent tasks and live links follow the new ID; historical QA and exports retain their recorded IDs.

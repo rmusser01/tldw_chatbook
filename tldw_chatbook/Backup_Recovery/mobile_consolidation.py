@@ -1095,6 +1095,17 @@ def _source_claim_inventory(config):
         for path in pair:
             item = _inventory_root(path, owner="recovery.control", external=False)
             safe = item.status in {"unused", "included"}
+            if item.status == "unavailable":
+                from .mobile_preview_budget import reserve
+
+                reserve(1024)
+                try:
+                    os.stat(path, follow_symlinks=False)
+                except FileNotFoundError:
+                    # An absent fixed control grants no storage authority.
+                    safe = True
+                except (OSError, ValueError):
+                    pass
             if item.status == "included":
                 try:
                     with pinned_directory(path.parent) as parent:

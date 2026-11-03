@@ -226,7 +226,7 @@ Unresolved reads use bounded keyset pages, including receipts for closed chats.
 
 ## Imported history authority (ADR-244)
 
-The installed heads are ChaChaNotes86, Workspace11 and AgentRuns27. Their
+The installed heads are ChaChaNotes87, Workspace11 and AgentRuns27. Their
 file-backed `*_mobile_consolidation.sql` migrations add
 `mobile_consolidation_batches(operation_id, source_fingerprint, batch_key,
 mapping_json, committed_at)` with primary key `(operation_id, batch_key)`.
@@ -335,7 +335,7 @@ permission to import or activate Notes sync.
 
 ## Native mobile compatibility and preflight (ADR-244 R168–R173)
 
-Integrated Core86, Workspace11 and Runs27 append receipts/holds after all native
+Integrated Core87, Workspace11 and Runs27 append receipts/holds after all native
 migrations. Authenticated source Core81–85, Workspace8–10 and Runs24/25 retain
 exact physical catalog variants. Unsupported populated source portrait/review
 history refuses before writing; canonical portrait, review and archive state
@@ -359,3 +359,13 @@ inside mobile custody the existing helper requires already-private artifacts and
 refuses rather than chmod. This exception applies only to the fixed preflight,
 not strict capture, legacy-source, ciphertext or rollback preservation. Existing
 older-writer quiescence remains required; preflight is no external-writer lock.
+
+
+The native prompt mix-in migration remains schema 86; mobile consolidation follows
+as schema 87. Exact v86 catalogs migrate to 87 through the ordinary and restricted
+recovery paths, preserving each historical physical lineage. Legacy mobile inputs
+remain limited to Core81–85; native 86 is admitted as a recovery predecessor.
+Canonical 87 retains operational preferences, snapshots, attempts and checkpoint
+markers. Recent v81→87 migration bodies live in
+`DB/chachanotes_recent_migrations.py`; the original `CharactersRAGDB` entrypoints,
+transaction custody and errors remain.

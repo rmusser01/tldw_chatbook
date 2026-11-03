@@ -1534,28 +1534,17 @@ class LifecycleMixin:
                 return
             from tldw_chatbook.Workspaces.change_retention import (
                 run_retention_for_app,
+                run_retention_with_app_owner,
             )
 
-            def retained_cleanup():
-                from tldw_chatbook.Backup_Recovery.activation import execution_scope
 
-                with execution_scope(
-                    ("db.agent_runs",), Path(db_path).parent / "agent_runs.db"
-                ) as allowed:
-                    if allowed:
-                        from tldw_chatbook.Chat.console_runtime import (
-                            ensure_console_runtime,
-                        )
-
-                        runtime = ensure_console_runtime(self)
-                        run_retention_for_app(
-                            db_path,
-                            execution_owner=runtime.ensure_execution_owner(
-                                Path(db_path).parent / "agent_runs.db"
-                            ),
-                        )
-
-            await asyncio.to_thread(retained_cleanup)
+            await asyncio.to_thread(
+                run_retention_with_app_owner,
+                self,
+                db_path,
+                run_retention_for_app,
+                source_globals=globals(),
+            )
         except Exception:  # noqa: BLE001 -- retention must never surface to the UI
             self.loguru_logger.opt(exception=True).warning(
                 "Change-review retention pass failed"

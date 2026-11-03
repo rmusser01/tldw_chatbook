@@ -1,10 +1,10 @@
 ---
-id: TASK-36729
+id: TASK-38683
 title: Plan shared served Console ownership and mobile supervision implementation
 status: Done
 created_date: 2026-10-25 17:28
 dependencies:
-- TASK-36728
+- TASK-38682
 assignee:
 - '@codex'
 labels:
@@ -66,3 +66,8 @@ Repository-wide ID validation reports existing duplicate IDs 34991 and 35028, ea
 ## Definition of Done
 <!-- DOD:BEGIN -->
 <!-- DOD:END -->
+
+
+## Renumbering provenance
+
+On 2026-11-03, TASK-36729 became TASK-38683. The older native Study task retains TASK-36729. Its first addition is 6b75fc937ea7d1b5beeb5f50fee427d17d12c6b2 (authored 2026-10-25 03:51:45 UTC); this Console task was added later in 1bb7c507236a5a194eaf21de3c8371897b30c8f9. Titles, creation dates, Done status, acceptance criteria and historical evidence are retained. Existing dependent tasks and live links follow the new ID; historical QA and exports retain their recorded IDs.
