@@ -6051,6 +6051,9 @@ class ConsoleChatController:
         """Receive queue-owner changes without copying its state."""
 
         self._advance_lifecycle_revision(session_id)
+        runtime = getattr(self, "_hooks_v2_runtime", None)
+        if runtime is not None:
+            runtime._wake_first_send()
 
     def _lifecycle_revision_for(self, session_id: str | None) -> int:
         with self._lifecycle_revision_lock:
@@ -6266,80 +6269,88 @@ class ConsoleChatController:
     ) -> PromptQueueMutationResult:
         """Attempt atomic text-only admission behind queue-owned work."""
 
-        clean_text, validation_error = self._validated_draft(text)
-        if validation_error is not None:
-            return PromptQueueMutationResult(
-                QueueMutationStatus.INVALID,
-                self.prompt_queue_registry.snapshot(session_id),
-                detail=validation_error,
-            )
-        captured_mixins = None
-        mixin_current = None
-        if configuration is None:
-            mixin_service = self.prompt_mixin_service()
-            revision = mixin_service.preferences(session_id).revision
-            mixin_current = mixin_service._capture_currentness(session_id, expected_revision=revision)
-            captured_mixins = await mixin_service.capture(
-                session_id, expected_revision=revision
-            )
-        from .console_hook_preparation import bind_hook_preparation_session
-
-        with bind_hook_preparation_session(self, session_id):
-            reason = await self.hook_admission_reason()
-        if mixin_current is not None:
-            mixin_current()
-        if reason is not None:
-            return PromptQueueMutationResult(
-                QueueMutationStatus.INVALID,
-                self.prompt_queue_registry.snapshot(session_id),
-                detail=reason,
-            )
-        if configuration is None:
-            configuration = replace(
-                self.resolve_turn_configuration_snapshot(session_id),
-                prompt_mixins=captured_mixins,
-            )
-        if not isinstance(configuration, ConsoleTurnConfigurationSnapshot):
-            raise TypeError("Queue configuration must be an immutable turn snapshot.")
-        if configuration.session_id != session_id:
-            return PromptQueueMutationResult(
-                QueueMutationStatus.INVALID,
-                self.prompt_queue_registry.snapshot(session_id),
-                detail="Queue configuration belongs to a different session.",
-            )
-        if _before_admission is not None:
-            _before_admission()
-        one_shot_prefill, one_shot_prefill_revision = (
-            self.store.session_one_shot_prefill_snapshot(session_id)
+        runtime = self._hooks_v2_runtime
+        scope = (
+            runtime._first_send_source_scope_async()
+            if runtime is not None
+            else contextlib.nullcontext()
         )
-        request = ConsoleTurnCustodyRequest(
-            turn_id=str(uuid4()),
-            session_id=session_id,
-            draft=clean_text,
-            configuration=configuration,
-            one_shot_prefill=one_shot_prefill,
-            one_shot_prefill_revision=one_shot_prefill_revision,
-        )
-        if mixin_current is not None:
-            mixin_current()
-        from .console_configuration_preparation import seal_pending_queue_capture
+        async with scope:
+            clean_text, validation_error = self._validated_draft(text)
+            if validation_error is not None:
+                return PromptQueueMutationResult(
+                    QueueMutationStatus.INVALID,
+                    self.prompt_queue_registry.snapshot(session_id),
+                    detail=validation_error,
+                )
+            captured_mixins = None
+            mixin_current = None
+            if configuration is None:
+                mixin_service = self.prompt_mixin_service()
+                revision = mixin_service.preferences(session_id).revision
+                mixin_current = mixin_service._capture_currentness(session_id, expected_revision=revision)
+                captured_mixins = await mixin_service.capture(
+                    session_id, expected_revision=revision
+                )
+            from .console_hook_preparation import bind_hook_preparation_session
 
-        session = next(item for item in self.store.sessions() if item.id == session_id)
-        with seal_pending_queue_capture(self, session, configuration):
-            result = self.prompt_queue_coordinator.admit(
-                session_id,
-                text=clean_text,
-                expected_revision=expected_revision,
-                custody_request=request,
+            with bind_hook_preparation_session(self, session_id):
+                reason = await self.hook_admission_reason()
+            if mixin_current is not None:
+                mixin_current()
+            if reason is not None:
+                return PromptQueueMutationResult(
+                    QueueMutationStatus.INVALID,
+                    self.prompt_queue_registry.snapshot(session_id),
+                    detail=reason,
+                )
+            if configuration is None:
+                configuration = replace(
+                    self.resolve_turn_configuration_snapshot(session_id),
+                    prompt_mixins=captured_mixins,
+                )
+            if not isinstance(configuration, ConsoleTurnConfigurationSnapshot):
+                raise TypeError("Queue configuration must be an immutable turn snapshot.")
+            if configuration.session_id != session_id:
+                return PromptQueueMutationResult(
+                    QueueMutationStatus.INVALID,
+                    self.prompt_queue_registry.snapshot(session_id),
+                    detail="Queue configuration belongs to a different session.",
+                )
+            if _before_admission is not None:
+                _before_admission()
+            one_shot_prefill, one_shot_prefill_revision = (
+                self.store.session_one_shot_prefill_snapshot(session_id)
             )
-        if result.applied:
-            self.prompt_mixin_service().publish_accepted_usage(
-                session_id, configuration.prompt_mixins,
-                observed_revision=mixin_current.revision if mixin_current is not None else None,
+            request = ConsoleTurnCustodyRequest(
+                turn_id=str(uuid4()),
+                session_id=session_id,
+                draft=clean_text,
+                configuration=configuration,
+                one_shot_prefill=one_shot_prefill,
+                one_shot_prefill_revision=one_shot_prefill_revision,
             )
-        if result.applied and self.response_rules is not None:
-            self.response_rules.invalidate(session_id, "user_input")
-        return result
+            if mixin_current is not None:
+                mixin_current()
+            from .console_configuration_preparation import seal_pending_queue_capture
+
+            session = next(item for item in self.store.sessions() if item.id == session_id)
+            with seal_pending_queue_capture(self, session, configuration):
+                result = self.prompt_queue_coordinator.admit(
+                    session_id,
+                    text=clean_text,
+                    expected_revision=expected_revision,
+                    custody_request=request,
+                )
+            if result.applied:
+                self.prompt_mixin_service().publish_accepted_usage(
+                    session_id, configuration.prompt_mixins,
+                    observed_revision=mixin_current.revision if mixin_current is not None else None,
+                )
+            if result.applied and self.response_rules is not None:
+                self.response_rules.invalidate(session_id, "user_input")
+            return result
+
 
     def edit_queued_prompt(
         self,
@@ -9307,7 +9318,13 @@ class ConsoleChatController:
         """Observe the whole attempt, including refusals before trace setup."""
         from .console_send_diagnostics import send_diagnostic_scope
 
-        async with send_diagnostic_scope("controller_submit") as diagnostic:
+        runtime = self._hooks_v2_runtime
+        scope = (
+            runtime._first_send_source_scope_async()
+            if runtime is not None
+            else contextlib.nullcontext()
+        )
+        async with scope, send_diagnostic_scope("controller_submit") as diagnostic:
             result = await self._submit_draft_lifecycle(
                 draft,
                 session_id=session_id,

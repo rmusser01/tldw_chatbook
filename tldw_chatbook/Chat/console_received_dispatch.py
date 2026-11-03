@@ -469,6 +469,12 @@ async def _run_received_intent_bound(runtime, record, source):
         goal_authorization=None,
         raise_on_refusal=True,
         hook_read=hook_read,
+        first_send_source=(
+            source.config_identity,
+            source.app_config,
+            source.controller,
+            source.store,
+        ),
     )
 
 

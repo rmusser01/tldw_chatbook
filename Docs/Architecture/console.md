@@ -264,6 +264,24 @@ per-session lookup have retired (TASK-35311).
 
 Streaming details, transforms (skills → chat dictionaries → world info), swipes/branching, and the non-agent plain path are covered in [chat-pipeline.md](./chat-pipeline.md).
 
+## First-send onboarding persistence (ADR-285)
+
+A successful manual parent updates the app's onboarding flag immediately. The
+runtime retains the original intake config identity and app/controller/store
+objects for one deferred native one-key save. Received and mounted capture,
+direct submission, every queued/claimed prompt, and original ordinary trees
+block that save until their source lifetimes return. Election shares a metadata
+lock with capture; asynchronous intake waits before capture and synchronous
+intake refuses before input transfer during the actual write. The native config
+transaction rechecks those original identities under its own lock.
+
+A parent can return while children or hooks survive. The same tree retains its
+source through native callbacks, canonical settlement, execution and DB scope
+unwind; uncertain close retains protection. Disposal drains the save before
+storage close. No Stop-specific generation exception or full-config snapshot is
+used. External source changes remain strict refusals. A crash before deferred
+persistence can show onboarding again on the next launch.
+
 ## Direct-user native RawCLI (ADR-094/285)
 
 `UI/Console_Modules/raw_cli.py` attaches to the original Runtime's private

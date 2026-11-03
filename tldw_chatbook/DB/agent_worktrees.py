@@ -304,13 +304,3 @@ class AgentWorktreeRepository:
                 (state, _now(), run_id, operation_id, *inflight),
             )
         return cursor.rowcount == 1
-
-
-_NATIVE_CONSOLE_DRAIN_REPOSITORY = (
-    AgentWorktreeRepository,
-    AgentWorktreeRepository.mark_writer_finished,
-    AgentWorktreeRepository.mark_writer_finished.__code__,
-    AgentWorktreeRepository.mark_writer_finished.__defaults__,
-    AgentWorktreeRepository.mark_writer_finished.__kwdefaults__,
-    AgentWorktreeRepository.mark_writer_finished.__closure__,
-)

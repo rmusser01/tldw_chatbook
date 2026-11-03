@@ -1112,6 +1112,13 @@ class ConsoleRuntime:
         self._worktree_activity: WorktreeActivity | None = None
         self._execution_capacity_lock = threading.RLock()
         self._ordinary_turns: set[Any] = set()
+        # Metadata only: no source selected before this gate can race the
+        # first-send write, and no owner or execution permission is created.
+        self._first_send_sources = 0
+        self._first_send_publishing = False
+        self._first_send_task = None
+        self._first_send_wakeup = None
+        self._first_send_loop = None
         self._app = app
         self._canvas_profile_snapshot = getattr(app, "_canvas_profile_snapshot", None)
         # -- setters, for the screen handles that now READ THROUGH here ----
@@ -2983,6 +2990,7 @@ class ConsoleRuntime:
             record.inputs.attachments = ()
             record.inputs.staged_evidence_revision = None
             record.task = None
+            self._wake_first_send()
 
     def _note_received_admission_changed(self, store, session_id: str) -> None:
         """Publish activity revision without copying the store's admission state."""
@@ -3010,90 +3018,101 @@ class ConsoleRuntime:
         recover_before_acceptance: bool = True,
     ) -> str:
         """Synchronously retain input metadata for asynchronous physical admission."""
-        self._raise_if_disposed_or_session_fenced(request.session_id)
-        if request.configuration.session_id != request.session_id:
-            raise ValueError("Turn configuration belongs to another session.")
-        store = self._chat_store
-        if store is None:
-            raise RuntimeError("Console chat store is unavailable.")
-        pressed = request._pressed_inputs
-        if pressed is not None:
-            from .console_received_intent import ConsoleSessionInputSnapshot
+        with self._first_send_source_scope():
+            from tldw_chatbook import config
 
-            if (
-                type(pressed) is not ConsoleSessionInputSnapshot
-                or pressed._store_ref() is not store
-                or pressed.session_id != request.session_id
-                or not store.session_inputs_are_current(pressed, include_draft=False)
-            ):
-                raise RuntimeError("Pressed Console input changed before admission.")
-        claim = store.claim_received_turn(
-            request.session_id, request.turn_id, origin=origin,
-            draft_revision=pressed.draft_revision if pressed is not None else request.draft_revision,
-            _allow_draft_change=pressed is not None,
-        )
-        if claim is None:
-            raise RuntimeError("Console session already has an admission owner.")
-        attachments = ()
-        try:
-            self._note_received_admission_changed(store, request.session_id)
-            if (
-                origin is ConsoleSubmissionOrigin.MANUAL
-                and self._response_rules is not None
-            ):
-                self._response_rules.invalidate(request.session_id, "user_input")
-            record = self._register_custody(
-                request,
-                attachments,
-                self._staged_evidence_lease_revision(
-                    request.staged_evidence_launch, request.session_id
-                ),
-                store=store,
-                received_claim=claim,
+            first_send_source = (
+                config.current_config_identity(),
+                getattr(self._app, "app_config", None),
+                self._chat_controller,
+                self._chat_store,
             )
-        except BaseException:
+            self._raise_if_disposed_or_session_fenced(request.session_id)
+            if request.configuration.session_id != request.session_id:
+                raise ValueError("Turn configuration belongs to another session.")
+            store = self._chat_store
+            if store is None:
+                raise RuntimeError("Console chat store is unavailable.")
+            pressed = request._pressed_inputs
+            if pressed is not None:
+                from .console_received_intent import ConsoleSessionInputSnapshot
+
+                if (
+                    type(pressed) is not ConsoleSessionInputSnapshot
+                    or pressed._store_ref() is not store
+                    or pressed.session_id != request.session_id
+                    or not store.session_inputs_are_current(pressed, include_draft=False)
+                ):
+                    raise RuntimeError("Pressed Console input changed before admission.")
+            claim = store.claim_received_turn(
+                request.session_id, request.turn_id, origin=origin,
+                draft_revision=pressed.draft_revision if pressed is not None else request.draft_revision,
+                _allow_draft_change=pressed is not None,
+            )
+            if claim is None:
+                raise RuntimeError("Console session already has an admission owner.")
+            attachments = ()
             try:
-                store.restore_transferred_pending_attachments(
-                    request.session_id, attachments
+                self._note_received_admission_changed(store, request.session_id)
+                if (
+                    origin is ConsoleSubmissionOrigin.MANUAL
+                    and self._response_rules is not None
+                ):
+                    self._response_rules.invalidate(request.session_id, "user_input")
+                record = self._register_custody(
+                    request,
+                    attachments,
+                    self._staged_evidence_lease_revision(
+                        request.staged_evidence_launch, request.session_id
+                    ),
+                    store=store,
+                    received_claim=claim,
                 )
-            finally:
-                store.release_received_turn(claim)
-            raise
-        if self._archive_recovery is not None:
-            self._archive_recovery.accept_user_proof(
-                request.configuration.recovery_user_origin,
-                request.session_id,
-                request.turn_id,
+            except BaseException:
+                try:
+                    store.restore_transferred_pending_attachments(
+                        request.session_id, attachments
+                    )
+                finally:
+                    store.release_received_turn(claim)
+                raise
+            if self._archive_recovery is not None:
+                self._archive_recovery.accept_user_proof(
+                    request.configuration.recovery_user_origin,
+                    request.session_id,
+                    request.turn_id,
+                )
+            coroutine = self._run_custodied_turn(
+                record,
+                first_send_source=first_send_source,
+                origin=origin,
+                queue_entry_id=queue_entry_id,
+                queue_authorization=queue_authorization,
+                wake_authorization=wake_authorization,
+                goal_authorization=goal_authorization,
+                raise_on_refusal=recover_before_acceptance,
             )
-        coroutine = self._run_custodied_turn(
-            record,
-            origin=origin,
-            queue_entry_id=queue_entry_id,
-            queue_authorization=queue_authorization,
-            wake_authorization=wake_authorization,
-            goal_authorization=goal_authorization,
-            raise_on_refusal=recover_before_acceptance,
-        )
-        try:
-            record.task = self._create_custody_task(coroutine)
-        except BaseException:
-            coroutine.close()
             try:
-                store.restore_transferred_pending_attachments(
-                    request.session_id, attachments
+                record.task = self._create_custody_task(coroutine)
+            except BaseException:
+                coroutine.close()
+                try:
+                    store.restore_transferred_pending_attachments(
+                        request.session_id, attachments
+                    )
+                finally:
+                    self._release_custody(record.turn_id)
+                raise
+            record.task.add_done_callback(
+                functools.partial(
+                    self._finish_custodied_turn,
+                    turn_id=record.turn_id,
+                    recover_before_acceptance=recover_before_acceptance,
+                    terminal_callback=terminal_callback,
                 )
-            finally:
-                self._release_custody(record.turn_id)
-            raise
-        record.task.add_done_callback(
-            functools.partial(
-                self._finish_custodied_turn,
-                turn_id=record.turn_id,
-                recover_before_acceptance=recover_before_acceptance,
-                terminal_callback=terminal_callback,
             )
-        )
-        return record.turn_id
+            return record.turn_id
+
 
     def _create_custody_task(self, coroutine):
         """Retain the lazy Task before any factory can step it; open its send start."""
@@ -3104,9 +3123,11 @@ class ConsoleRuntime:
         """Register authored receipt inputs before checked native preparation."""
         from .console_received_dispatch import accept_received_intent
 
-        return accept_received_intent(
-            self, intent, _configuration_preparation=_configuration_preparation, terminal_callback=terminal_callback
-        )
+        with self._first_send_source_scope():
+            return accept_received_intent(
+                self, intent, _configuration_preparation=_configuration_preparation, terminal_callback=terminal_callback
+            )
+
 
     def has_received_intents(
         self, session_id: str | None, *, unpromoted_only: bool = False
@@ -3215,6 +3236,7 @@ class ConsoleRuntime:
         goal_authorization: Any | None,
         raise_on_refusal: bool,
         hook_read: Any = None,
+        first_send_source: tuple,
     ) -> Any:
         """Run one screen-free turn using only its frozen custody record.
 
@@ -3363,11 +3385,49 @@ class ConsoleRuntime:
             and bool(getattr(result, "accepted", False))
             and getattr(run_state, "status", None) is ConsoleRunStatus.COMPLETED
         ):
-            await self._record_successful_first_send(record)
+            await self._record_successful_first_send(first_send_source)
         return result
 
-    async def _record_successful_first_send(self, record=None) -> None:
-        """Record terminal first-send success without retaining a view."""
+    def _wake_first_send(self) -> None:
+        loop, wakeup = self._first_send_loop, self._first_send_wakeup
+        if loop is not None and wakeup is not None and not loop.is_closed():
+            loop.call_soon_threadsafe(wakeup.set)
+
+    @contextlib.contextmanager
+    def _first_send_source_scope(self):
+        """Fence an original capture without granting it execution authority."""
+        with self._execution_capacity_lock:
+            if self._first_send_publishing:
+                raise RuntimeError("Console configuration is being saved; Send again.")
+            self._first_send_sources += 1
+        try:
+            yield
+        finally:
+            with self._execution_capacity_lock:
+                self._first_send_sources -= 1
+            self._wake_first_send()
+
+    @contextlib.asynccontextmanager
+    async def _first_send_source_scope_async(self):
+        """Wait only before acquiring the original capture's metadata scope."""
+        while True:
+            with self._execution_capacity_lock:
+                if not self._first_send_publishing:
+                    self._first_send_sources += 1
+                    break
+                pending = self._first_send_task
+            if pending is None:
+                raise RuntimeError("Console configuration publication is unavailable.")
+            await asyncio.shield(pending)
+        try:
+            yield
+        finally:
+            with self._execution_capacity_lock:
+                self._first_send_sources -= 1
+            self._wake_first_send()
+
+    async def _record_successful_first_send(self, source) -> None:
+        """Show first-send success now; persist after original work retires."""
         app_config = getattr(self._app, "app_config", None)
         if not isinstance(app_config, dict):
             return
@@ -3379,90 +3439,101 @@ class ConsoleRuntime:
         if not isinstance(onboarding, dict):
             onboarding = {}
             console["onboarding"] = onboarding
-        if coerce_console_first_send_completed(
-            onboarding.get("first_send_completed")
-        ):
+        if coerce_console_first_send_completed(onboarding.get("first_send_completed")):
             return
-        source = None
-        if record is not None and self._turn_custody.get(record.turn_id) is record:
-            with self._execution_capacity_lock:
-                candidates = tuple(self._ordinary_turns)
-            matches = [
-                tree
-                for tree in candidates
-                if tree.first_send_record is record
-                and tree.first_send_request is record.request
-                and tree.source is not None
-                and tree.source.received_claim is record.received_claim
-                and tree.source.store is record.store
-                and tree.source is not None
-                and tree.source.first_send_source is not None
-            ]
-            if len(matches) == 1 and _first_send_runtime_current():
-                candidate = matches[0].source
-                try:
-                    candidate.check_memory()
-                except RuntimeError:
-                    pass
-                else:
-                    source = candidate
+        from tldw_chatbook import config
+
         onboarding["first_send_completed"] = True
+        identity, original_config, controller, store = source
+        loop = asyncio.get_running_loop()
+        self._first_send_loop = loop
+        self._first_send_wakeup = asyncio.Event()
+        self._first_send_task = loop.create_task(
+            self._persist_first_send_when_quiescent(
+                config, identity, original_config, controller, store
+            ),
+            name="console-first-send-persistence",
+        )
+        self._wake_first_send()
+
+    async def _persist_first_send_when_quiescent(
+        self, config, identity, app_config, controller, store
+    ) -> None:
+        """Run the original one-key save only beyond all original lifetimes."""
+        import sys
+
+        from . import console_first_send_persistence as persistence
+        from .console_ordinary_tree import _function_unchanged
+
+        check = persistence._NATIVE_CONFIG_CHECK
+
+        def original_config():
+            return (
+                persistence._native_config_current is check[0]
+                and _function_unchanged(check)
+                and check[0]()
+            )
+
+        wakeup = self._first_send_wakeup
         try:
-            from tldw_chatbook.config import save_setting_to_cli_config
-
-            if source is None:
-                await asyncio.to_thread(
-                    save_setting_to_cli_config,
-                    "console.onboarding",
-                    "first_send_completed",
-                    True,
+            while True:
+                wakeup.clear()
+                registry = getattr(controller, "prompt_queue_registry", None)
+                queued = bool(
+                    registry is not None
+                    and any(state.total_count for state in registry._states.values())
                 )
-            else:
-                from . import console_first_send_retirement as retirement
+                with self._execution_capacity_lock:
+                    if (
+                        not self._first_send_sources
+                        and not self._ordinary_turns
+                        and not self._turn_custody
+                        and not queued
+                    ):
+                        self._first_send_publishing = True
+                        break
+                await wakeup.wait()
 
-                fence, code, defaults, kwdefaults, closure = (
-                    retirement._NATIVE_STOP_PRODUCER_FENCE
+            def current():
+                return (
+                    sys.modules.get("tldw_chatbook.config") is config
+                    and original_config()
+                    and vars(self._app).get("console_runtime") is self
+                    and vars(self._app).get("app_config") is app_config
+                    and self._chat_controller is controller
+                    and self._chat_store is store
+                    and config.current_config_identity() == identity
                 )
-                if (
-                    retirement._stop_producers_current is fence
-                    and fence.__code__ is code
-                    and fence.__defaults__ is defaults
-                    and fence.__kwdefaults__ is kwdefaults
-                    and fence.__closure__ is closure
-                    and fence()
-                ):
-                    receipt = await asyncio.to_thread(
-                        retirement.publish_first_send, source
-                    )
-                else:
-                    await asyncio.to_thread(
-                        save_setting_to_cli_config,
-                        "console.onboarding",
-                        "first_send_completed",
-                        True,
-                    )
-                    receipt = None
-                if (
-                    receipt is not None
-                    and fence()
-                    and _first_send_runtime_current()
-                    and self._turn_custody.get(record.turn_id) is record
-                ):
-                    source.first_send_receipt = receipt
-                    engine = self._hooks_v2_engines.get(record.session_id)
-                    native = getattr(engine, "_native_commands", None)
-                    if native is not None:
-                        with native._condition:
-                            events = tuple(native._events)
-                        for event in events:
-                            if getattr(event.source, "agent_sources", None) is source:
-                                event.reconcile()
-        except Exception as exc:  # noqa: BLE001 -- the completed turn stays valid
+
+            if not current():
+                raise RuntimeError("Original first-send source changed.")
+            producer = asyncio.create_task(
+                asyncio.to_thread(
+                    config.apply_settings_mutation_to_cli_config,
+                    {"console.onboarding": {"first_send_completed": True}},
+                    mutation_precondition=current,
+                )
+            )
+            cancelled = False
+            while not producer.done():
+                try:
+                    await asyncio.shield(producer)
+                except asyncio.CancelledError:
+                    cancelled = True
+            result = producer.result()
+            if cancelled:
+                raise asyncio.CancelledError
+            if result.conflict or result.failure_phase is not None:
+                raise RuntimeError("Original first-send persistence failed.")
+        except Exception as exc:  # noqa: BLE001 - the completed turn stays valid
             logger.warning(
-                "Failed to persist Console first-send completion "
-                "(exception_type={})",
+                "Failed to persist Console first-send completion (exception_type={})",
                 type(exc).__name__,
             )
+        finally:
+            with self._execution_capacity_lock:
+                self._first_send_publishing = False
+            self._wake_first_send()
 
     async def _capture_console_staged_rag(
         self, draft: str, turn_context: Any = None
@@ -7092,6 +7163,15 @@ class ConsoleRuntime:
         cancel_requested |= await self._drain_legacy_hooks()
         for turn_id in tuple(self._turn_custody):
             self._release_custody(turn_id)
+        self._wake_first_send()
+        first_send_task = self._first_send_task
+        if first_send_task is not None:
+            while not first_send_task.done():
+                try:
+                    await asyncio.shield(first_send_task)
+                except asyncio.CancelledError:
+                    cancel_requested = True
+            first_send_task.result()
         if self._chat_store is not None:
             end_app_runtime = getattr(self._chat_store, "end_app_runtime", None)
             if callable(end_app_runtime):
@@ -7387,35 +7467,3 @@ _NATIVE_ORDINARY_LIBRARY_FACTORY = (
 )
 
 _NATIVE_ORDINARY_CANVAS_ENABLED = ConsoleRuntime._canvas_enabled
-
-_NATIVE_FIRST_SEND_RUNTIME = tuple(
-    (
-        name,
-        function,
-        function.__code__,
-        function.__defaults__,
-        function.__kwdefaults__,
-        tuple((function.__kwdefaults__ or {}).items()),
-        function.__closure__,
-        tuple((cell, cell.cell_contents) for cell in function.__closure__ or ()),
-    )
-    for name in ("_run_custodied_turn", "_record_successful_first_send")
-    for function in (getattr(ConsoleRuntime, name),)
-)
-
-
-def _first_send_runtime_current():
-    return all(
-        inspect.getattr_static(ConsoleRuntime, name, None) is function
-        and function.__code__ is code
-        and function.__defaults__ is defaults
-        and function.__kwdefaults__ is kwdefaults
-        and function.__closure__ is closure
-        and (
-            kwdefaults is None
-            or len(kwdefaults) == len(entries)
-            and all(kwdefaults.get(key) is value for key, value in entries)
-        )
-        and all(cell.cell_contents is value for cell, value in cells)
-        for name, function, code, defaults, kwdefaults, entries, closure, cells in _NATIVE_FIRST_SEND_RUNTIME
-    )

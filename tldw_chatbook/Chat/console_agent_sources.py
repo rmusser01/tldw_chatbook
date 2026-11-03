@@ -75,6 +75,43 @@ async def prepare_agent_sources(
     holder[2].enter_context(source.activate())
 
 
+@contextmanager
+def _retained_source_stack(tree, databases):
+    """Retain the original tree until native scopes and handles return."""
+    locals_and_handles = []
+    for database in dict.fromkeys(db for db in databases if db is not None):
+        if getattr(database, "is_memory_db", False):
+            continue
+        namespace = vars(database)
+        local = namespace.get("_local") or namespace.get("_thread_local")
+        if local is not None:
+            locals_and_handles.append((local, getattr(local, "conn", None)))
+    cleanup = [False]
+    body_error = None
+    with tree.retain_source_scope(_cleanup_state=cleanup):
+        try:
+            with ExitStack() as stack:
+                try:
+                    yield stack
+                except BaseException as error:
+                    body_error = error
+                    raise
+        except BaseException as error:
+            if error is body_error and all(
+                getattr(local, "conn", None) is original
+                for local, original in locals_and_handles
+            ):
+                cleanup[0] = True
+            raise
+        else:
+            if not all(
+                getattr(local, "conn", None) is original
+                for local, original in locals_and_handles
+            ):
+                raise RuntimeError("original source database handle did not return")
+            cleanup[0] = True
+
+
 class _AgentSources:
     def __init__(self, controller, runtime, bridge, session, configuration):
         from tldw_chatbook import config
@@ -139,7 +176,6 @@ class _AgentSources:
             )
         self.root = self.root_identity = None
         self.writer = self.writer_state = self.bound = None
-        self.first_send_source = None
 
     def _check_original_sources(self):
         from tldw_chatbook import config
@@ -185,177 +221,6 @@ class _AgentSources:
         if self.writer is not None:
             self._check_writer(self.writer)
 
-    def check_retirement(self, event):
-        """Check only the retained original, fully returned Stop event."""
-        from tldw_chatbook.Agents.hooks_v2.native_commands import (
-            _CommandCustody,
-            _CommandEvent,
-        )
-
-        from .console_first_send_retirement import first_send_receipt_current
-
-        tree = getattr(self, "ordinary_tree", None)
-        receipt = getattr(self, "first_send_receipt", None)
-        if (
-            type(event) is not _CommandCustody
-            or type(event.source) is not _CommandEvent
-            or event.source.agent_sources is not self
-            or event.source.ordinary_tree is not tree
-            or event.source.event.event != "Stop"
-            or event.source.issuer.runtime is not self.runtime
-            or event.claim is not None
-            or tree is None
-            or tree.source is not self
-            or not first_send_receipt_current(self, receipt)
-        ):
-            raise RuntimeError("original Stop retirement proof unavailable")
-        with event._lock:
-            if (
-                event.retired
-                or event.failed_write
-                or not event.host_returned
-                or not all(
-                    target.event is event
-                    and target.returned
-                    and target.proven
-                    and target.operation.owner is event.owner
-                    for target in event.targets
-                )
-            ):
-                raise RuntimeError("original Stop physical return unavailable")
-        with tree.lock:
-            member = tree.members.get(event.owner)
-            if (
-                member is None
-                or not tree.sealed
-                or not member.host_returned
-                or not member.durable
-                or tree.settled
-                or tree.configuration.scratch_space is not None
-                and tree.scratch_lease is None
-            ):
-                raise RuntimeError("original Stop member proof unavailable")
-        self._check_original_bindings()
-        if self.writer is not None:
-            self._check_writer(self.writer)
-        self.check_storage()
-        if not first_send_receipt_current(self, receipt):
-            raise RuntimeError("original Stop publication changed")
-
-    @contextmanager
-    def retain_retirement(self, event):
-        self.check_retirement(event)
-        tree = self.ordinary_tree
-        with tree.lock:
-            if (
-                tree.scratch_lease is None
-                and tree.configuration.scratch_space is not None
-            ):
-                raise RuntimeError("original ordinary scratch lease retired")
-            tree.source_scopes += 1
-        self.check_retirement(event)
-        # An exception at the yield skips release, retaining unproven custody.
-        yield
-        with tree.lock:
-            tree.source_scopes -= 1
-        tree._retire_scratch()
-
-    @contextmanager
-    def retirement_journal(self, event):
-        """Expose retained DB context only to the checked native journal."""
-        self.check_retirement(event)
-        with ExitStack() as stack:
-            stack.enter_context(execution(sources=self.sources))
-            for db in dict.fromkeys(db for db in self.databases if db is not None):
-                stack.enter_context(operation_owned_connection(db))
-            yield
-
-    def retirement_journal_callback(self, event, record):
-        """Recognize the callback actually issued by the native worktree owner."""
-        from types import CodeType
-
-        from tldw_chatbook.Agents.agent_service import (
-            _NATIVE_CONSOLE_WORKTREE_ADMISSION,
-            AgentService,
-        )
-        from tldw_chatbook.DB.agent_worktrees import _NATIVE_CONSOLE_DRAIN_REPOSITORY
-
-        from .console_ordinary_tree import _function_unchanged
-
-        if type(record) is not tuple or len(record) != 11:
-            raise RuntimeError("original worktree journal unavailable")
-        (
-            callback,
-            callback_record,
-            connection,
-            connection_record,
-            generator_record,
-            service,
-            repository,
-            db,
-            run_id,
-            owner,
-            tree,
-        ) = record
-        function, code, defaults, kwdefaults, closure = (
-            _NATIVE_CONSOLE_WORKTREE_ADMISSION
-        )
-        (
-            repo_class,
-            repo_method,
-            repo_code,
-            repo_defaults,
-            repo_kwdefaults,
-            repo_closure,
-        ) = _NATIVE_CONSOLE_DRAIN_REPOSITORY
-        nested = {
-            item.co_name: item for item in code.co_consts if type(item) is CodeType
-        }
-        callback_cells = dict(
-            zip(
-                callback.__code__.co_freevars,
-                (cell.cell_contents for cell in callback.__closure__ or ()),
-            )
-        )
-        if (
-            inspect.getattr_static(AgentService, "_admit_agent_worktree")
-            is not function
-            or function.__code__ is not code
-            or function.__defaults__ is not defaults
-            or function.__kwdefaults__ is not kwdefaults
-            or function.__closure__ is not closure
-            or type(service) is not AgentService
-            or service.db is not db
-            or getattr(service, "_ordinary_tree", None) is not tree
-            or tree is not self.ordinary_tree
-            or owner is not event.owner
-            or db is not self.databases[0]
-            or type(repository) is not repo_class
-            or repository._db is not db
-            or inspect.getattr_static(repo_class, "mark_writer_finished")
-            is not repo_method
-            or repo_method.__code__ is not repo_code
-            or repo_method.__defaults__ is not repo_defaults
-            or repo_method.__kwdefaults__ is not repo_kwdefaults
-            or repo_method.__closure__ is not repo_closure
-            or not _function_unchanged(callback_record)
-            or not _function_unchanged(connection_record)
-            or not _function_unchanged(generator_record)
-            or callback.__code__ is not nested.get("persist_actual_drain")
-            or getattr(connection, "__wrapped__", None).__code__
-            is not nested.get("callback_connection")
-            or callback_cells.get("callback_connection") is not connection
-            or callback_cells.get("repository") is not repository
-            or callback_cells.get("execution_owner") is not owner
-            or callback_cells.get("child_run_id") != run_id
-        ):
-            raise RuntimeError("original worktree journal source changed")
-        with tree.lock:
-            member = tree.members.get(owner)
-            if member is None or member.run_id != run_id or not member.durable:
-                raise RuntimeError("original worktree journal member changed")
-        return callback
-
     def _allowed_roots(self):
         from tldw_chatbook.Tools.workspace_file_roots import (
             allowed_file_roots,
@@ -396,70 +261,29 @@ class _AgentSources:
                 extra.append(("mcp.permissions", self.prospective_permission_path))
             self.sources = tuple(dict.fromkeys((*self.sources, *extra)))
         self.check_memory()
-        # This is optional, private retirement evidence only.  An unavailable
-        # or non-native view never weakens the normal source checks.
-        from . import console_first_send_retirement as retirement
-
-        try:
-            fence, code, defaults, kwdefaults, closure = (
-                retirement._NATIVE_STOP_PRODUCER_FENCE
-            )
-            if (
-                retirement._stop_producers_current is fence
-                and fence.__code__ is code
-                and fence.__defaults__ is defaults
-                and fence.__kwdefaults__ is kwdefaults
-                and fence.__closure__ is closure
-                and fence()
-            ):
-                captured = retirement.capture_first_send_source(self)
-                if fence():
-                    self.first_send_source = captured
-        except (AttributeError, KeyError, TypeError, ValueError, RecursionError):
-            self.first_send_source = None
-        self.check_memory()
 
     @contextmanager
-    def activate(self, *, _initial_refusal=None):
-        try:
-            self.check_memory()
-        except RuntimeError:
-            if type(_initial_refusal) is list and not _initial_refusal:
-                _initial_refusal.append(self)
-            raise
-        entry_error = None
-        try:
-            with ExitStack() as stack:
-                from .console_ordinary_tree import bind_ordinary_tree
+    def activate(self):
+        self.check_memory()
+        tree = getattr(self, "ordinary_tree", None)
+        scope = (
+            _original_retained_source_stack(tree, self.databases)
+            if tree is not None and self.root_identity is not None
+            else ExitStack()
+        )
+        with scope as stack:
+            from .console_ordinary_tree import bind_ordinary_tree
 
-                stack.enter_context(
-                    bind_ordinary_tree(getattr(self, "ordinary_tree", None))
-                )
-                stack.enter_context(execution(sources=self.sources))
-                for db in dict.fromkeys(db for db in self.databases if db is not None):
-                    stack.enter_context(operation_owned_connection(db))
-                if self.root_identity is not None:
-                    tree = getattr(self, "ordinary_tree", None)
-                    stack.enter_context(
-                        tree.retain_source_scope()
-                        if tree is not None
-                        else self.scratch_manager.lease(self.scratch)
-                    )
-                    self.check_storage()
-                try:
-                    self.check_memory()
-                except RuntimeError as error:
-                    entry_error = error
-                    raise
-                yield
-        except BaseException as error:
-            if (
-                error is entry_error
-                and type(_initial_refusal) is list
-                and not _initial_refusal
-            ):
-                _initial_refusal.append(self)
-            raise
+            stack.enter_context(bind_ordinary_tree(tree))
+            stack.enter_context(execution(sources=self.sources))
+            for db in dict.fromkeys(db for db in self.databases if db is not None):
+                stack.enter_context(operation_owned_connection(db))
+            if self.root_identity is not None:
+                if tree is None:
+                    stack.enter_context(self.scratch_manager.lease(self.scratch))
+                self.check_storage()
+            self.check_memory()
+            yield
 
     def bind_writer(self, writer):
         from tldw_chatbook.Agents.run_log import _RUN_LOG_PATH_WRITER_ORIGINAL
@@ -546,27 +370,28 @@ def console_writer_source(writer: object) -> _AgentSources | None:
 
 
 from .console_ordinary_tree import _function_record as _record_source_function
+from .console_ordinary_tree import _function_unchanged, _OrdinaryTurn
 
-_NATIVE_STOP_SOURCE_METHODS = tuple(
-    (
-        name,
-        _record_source_function(function),
-        _record_source_function(function.__wrapped__)
-        if hasattr(function, "__wrapped__")
-        else None,
-    )
-    for name in (
-        "check_memory",
-        "_check_original_sources",
-        "_check_original_bindings",
-        "check_retirement",
-        "retain_retirement",
-        "retirement_journal",
-        "retirement_journal_callback",
-        "activate",
-        "check_storage",
-        "_check_writer",
-        "_allowed_roots",
-    )
-    for function in (inspect.getattr_static(_AgentSources, name),)
+_NATIVE_RETAINED_SOURCE_STACK = (
+    _record_source_function(_retained_source_stack),
+    _record_source_function(_retained_source_stack.__wrapped__),
+    _record_source_function(_OrdinaryTurn.retain_source_scope),
+    _record_source_function(_OrdinaryTurn.retain_source_scope.__wrapped__),
 )
+
+
+def _original_retained_source_stack(tree, databases):
+    records = _NATIVE_RETAINED_SOURCE_STACK
+    if (
+        type(tree) is not _OrdinaryTurn
+        or globals().get("_retained_source_stack") is not records[0][0]
+        or getattr(_retained_source_stack, "__wrapped__", None) is not records[1][0]
+        or inspect.getattr_static(tree, "retain_source_scope", None)
+        is not records[2][0]
+        or inspect.getattr_static(_OrdinaryTurn, "retain_source_scope", None)
+        is not records[2][0]
+        or getattr(records[2][0], "__wrapped__", None) is not records[3][0]
+        or not all(_function_unchanged(record) for record in records)
+    ):
+        raise RuntimeError("original source retention changed")
+    return _retained_source_stack(tree, databases)

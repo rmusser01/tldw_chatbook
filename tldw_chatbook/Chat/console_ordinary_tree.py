@@ -78,8 +78,6 @@ class _OrdinaryTurn:
         )
         self.source, self.configuration = source, configuration
         self.original_configuration = configuration
-        self.first_send_record = None
-        self.first_send_request = None
         self.agent_eligible = agent_eligible
         self.persistence = self.store.persistence
         self.incarnation = session.incarnation_id
@@ -764,7 +762,7 @@ class _OrdinaryTurn:
             raise CapacityRefused("runtime_closed")
 
     @contextmanager
-    def retain_source_scope(self):
+    def retain_source_scope(self, *, _cleanup_state=None):
         """Reuse the original live scratch lease, including after tombstoning."""
         with self.lock:
             if (
@@ -776,9 +774,10 @@ class _OrdinaryTurn:
         try:
             yield
         finally:
-            with self.lock:
-                self.source_scopes -= 1
-            self._retire_scratch()
+            if _cleanup_state is None or _cleanup_state[0]:
+                with self.lock:
+                    self.source_scopes -= 1
+                self._retire_scratch()
 
     def _drained(self, owner, proven):
         with self.lock:
@@ -815,6 +814,7 @@ class _OrdinaryTurn:
             self.retired.set_result(None)
             with self.runtime._execution_capacity_lock:
                 self.runtime._ordinary_turns.discard(self)
+            self.runtime._wake_first_send()
 
     def borrow(self, runtime, *, opaque=True):
         self.check()
@@ -995,22 +995,6 @@ async def admit_ordinary_turn(
     tree = _OrdinaryTurn(
         controller, session, configuration, origin, source, agent_eligible
     )
-    task = asyncio.current_task()
-    matches = [
-        record
-        for record in tree.runtime._turn_custody.values()
-        if record.task is task
-        and record.session_id == session.id
-        and record.request is not None
-        and source is not None
-        and source.configuration is configuration
-        and source.received_claim is not None
-        and record.store is source.store
-        and record.received_claim is source.received_claim
-    ]
-    if len(matches) == 1:
-        tree.first_send_record = matches[0]
-        tree.first_send_request = matches[0].request
     from .console_configuration_preparation import (
         original_mcp_capture_matches,
         original_skill_capture_preparation,

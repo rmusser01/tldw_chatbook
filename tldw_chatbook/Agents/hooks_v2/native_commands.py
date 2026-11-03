@@ -89,15 +89,6 @@ class _CommandCustody(_EventCustody):
         future.add_done_callback(lambda done: done.exception())
 
 
-_NATIVE_STOP_COMMAND_RECONCILE = (
-    _CommandCustody.reconcile,
-    _CommandCustody.reconcile.__code__,
-    _CommandCustody.reconcile.__defaults__,
-    _CommandCustody.reconcile.__kwdefaults__,
-    _CommandCustody.reconcile.__closure__,
-)
-
-
 class _CommandEvent:
     def __init__(self, issuer, event, *, teardown, future=False):
         self.issuer, self.event, self.teardown = issuer, event, teardown

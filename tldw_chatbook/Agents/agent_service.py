@@ -4358,27 +4358,6 @@ class AgentService:
                     )
 
             execution_owner.on_drained(persist_actual_drain)
-            # Retain only the callback actually registered by this original
-            # producer.  It is metadata, not permission to run the callback;
-            # the original event's retirement fence must still prove custody.
-            tree = getattr(self, "_ordinary_tree", None)
-            if tree is not None:
-                from tldw_chatbook.Chat.console_ordinary_tree import _function_record
-
-                execution_owner._console_native_drain_journal = (
-                    persist_actual_drain,
-                    _function_record(persist_actual_drain),
-                    callback_connection,
-                    _function_record(callback_connection),
-                    _function_record(callback_connection.__wrapped__),
-                    self,
-                    repository,
-                    self.db,
-                    child_run_id,
-                    execution_owner,
-                    tree,
-                )
-
             def cleanup_unproven() -> None:
                 execution_owner.mark_cleanup_unproven()
                 try:
@@ -5818,19 +5797,38 @@ class AgentService:
 
             def run_child_owned() -> None:
                 nonlocal admission_refused
-                try:
-                    admitted_child()
-                except AgentActivationRequired:
-                    # No child work began. Return teardown to the parent,
-                    # whose exact AgentRuns operation owns the reservation
-                    # and precreated row even if local storage just paused.
-                    admission_refused = True
-                finally:
+
+                def run_original_child():
+                    nonlocal admission_refused
                     try:
-                        if not admission_refused:
-                            self._finish_execution(child_owner)
+                        admitted_child()
+                    except AgentActivationRequired:
+                        # The original parent handles a refused worker.
+                        admission_refused = True
                     finally:
-                        admission_decided.set()
+                        try:
+                            if not admission_refused:
+                                self._finish_execution(child_owner)
+                        finally:
+                            admission_decided.set()
+
+                tree = getattr(self, "_ordinary_tree", None)
+                if tree is None:
+                    run_original_child()
+                    return
+                from tldw_chatbook.Chat.console_agent_sources import (
+                    _original_retained_source_stack,
+                )
+                from tldw_chatbook.DB.base_db import operation_owned_connection
+
+                with _original_retained_source_stack(
+                    tree, tree.source.databases
+                ) as stack:
+                    for db in dict.fromkeys(
+                        db for db in tree.source.databases if db is not None
+                    ):
+                        stack.enter_context(operation_owned_connection(db))
+                    run_original_child()
 
             thread = None
             try:
@@ -10609,12 +10607,3 @@ class AgentService:
             return False
         self._cancel_fleet_handles([handle_id])
         return True
-
-
-_NATIVE_CONSOLE_WORKTREE_ADMISSION = (
-    AgentService._admit_agent_worktree,
-    AgentService._admit_agent_worktree.__code__,
-    AgentService._admit_agent_worktree.__defaults__,
-    AgentService._admit_agent_worktree.__kwdefaults__,
-    AgentService._admit_agent_worktree.__closure__,
-)

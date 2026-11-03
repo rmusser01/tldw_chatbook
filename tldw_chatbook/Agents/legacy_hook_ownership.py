@@ -283,7 +283,6 @@ class _EventCustody:
 
     def reconcile(self):
         from contextlib import nullcontext
-        from inspect import getattr_static
 
         with self._lock:
             if self.retired:
@@ -292,50 +291,11 @@ class _EventCustody:
                 self._reconcile_pending = True
                 return
             self._reconciling = True
-        source = None
-        initial_refusal = []
         try:
-            from .hooks_v2.native_commands import _CommandCustody
-
-            if type(self) is _CommandCustody:
-                event_source = getattr_static(self, "source", None)
-                source = getattr_static(event_source, "agent_sources", None)
-            else:
-                source = getattr(self.source, "agent_sources", None)
-            retiring = False
-            if (
-                source is not None
-                and getattr_static(source, "first_send_receipt", None) is not None
-            ):
-                from . import execution_capacity as capacity
-
-                fence, code, defaults, kwdefaults, closure = (
-                    capacity._NATIVE_STOP_RECEIVER_FENCE
-                )
-                if (
-                    capacity._require_original_stop_receivers is not fence
-                    or fence.__code__ is not code
-                    or fence.__defaults__ is not defaults
-                    or fence.__kwdefaults__ is not kwdefaults
-                    or fence.__closure__ is not closure
-                ):
-                    raise RuntimeError("original Stop receiver changed")
-                fence(source, self)
-                try:
-                    source.check_memory()
-                except RuntimeError:
-                    source.check_retirement(self)
-                    retiring = True
-            scope = (
-                source.retain_retirement(self)
-                if retiring
-                else source.activate(_initial_refusal=initial_refusal)
-                if source is not None
-                else nullcontext()
-            )
-            with scope:
+            source = getattr(self.source, "agent_sources", None)
+            with source.activate() if source is not None else nullcontext():
                 while True:
-                    self._reconcile_active(source if retiring else None)
+                    self._reconcile_active()
                     with self._lock:
                         if self.retired or not self._reconcile_pending:
                             self._reconciling = False
@@ -344,54 +304,10 @@ class _EventCustody:
         except BaseException:
             with self._lock:
                 self._reconciling = False
-                retry_pending = self._reconcile_pending
                 self._reconcile_pending = False
-            if (
-                retry_pending
-                and initial_refusal == [source]
-                and getattr_static(source, "first_send_receipt", None) is not None
-                and type(self) is _CommandCustody
-            ):
-                try:
-                    from . import execution_capacity as capacity
-
-                    fence, code, defaults, kwdefaults, closure = (
-                        capacity._NATIVE_STOP_RECEIVER_FENCE
-                    )
-                    if (
-                        capacity._require_original_stop_receivers is not fence
-                        or fence.__code__ is not code
-                        or fence.__defaults__ is not defaults
-                        or fence.__kwdefaults__ is not kwdefaults
-                        or fence.__closure__ is not closure
-                    ):
-                        raise RuntimeError("original Stop receiver changed")
-                    fence(source, self)
-                    source.check_retirement(self)
-                except (RuntimeError, ValueError):
-                    pass
-                else:
-                    self.reconcile()
             raise
 
-    def _reconcile_active(self, retiring_source=None):
-        if retiring_source is not None:
-            import inspect
-
-            from . import execution_capacity as capacity
-
-            fence, code, defaults, kwdefaults, closure = (
-                capacity._NATIVE_STOP_RECEIVER_FENCE
-            )
-            if (
-                capacity._require_original_stop_receivers is not fence
-                or fence.__code__ is not code
-                or fence.__defaults__ is not defaults
-                or fence.__kwdefaults__ is not kwdefaults
-                or fence.__closure__ is not closure
-            ):
-                raise RuntimeError("original Stop receiver changed")
-            fence(retiring_source, self)
+    def _reconcile_active(self):
         with self._lock:
             ready = [
                 target
@@ -402,32 +318,10 @@ class _EventCustody:
                 and not self.failed_write
                 and not target.releasing
             ]
-            if retiring_source is not None:
-                function, code, defaults, kwdefaults, entries, closure = (
-                    capacity._NATIVE_STOP_OPERATION_FINISH
-                )
-                if any(
-                    type(target.operation) is not capacity.OwnedOperation
-                    or inspect.getattr_static(target.operation, "finish", None)
-                    is not function
-                    or inspect.getattr_static(capacity.OwnedOperation, "finish", None)
-                    is not function
-                    or function.__code__ is not code
-                    or function.__defaults__ is not defaults
-                    or function.__kwdefaults__ is not kwdefaults
-                    or function.__closure__ is not closure
-                    or tuple((kwdefaults or {}).items()) != entries
-                    for target in ready
-                ):
-                    raise RuntimeError("original Stop operation receiver changed")
             for target in ready:
                 target.releasing = True
         for target in ready:
-            if retiring_source is None:
-                target.operation.finish()
-            else:
-                target.operation.finish(_console_retirement=(retiring_source, self))
-                retiring_source.check_retirement(self)
+            target.operation.finish()
             with self._lock:
                 target.released = True
         with self._lock:
@@ -586,17 +480,3 @@ def check_prompt_handoff() -> None:
     handoff = _prompt_handoff.get()
     if handoff is not None:
         handoff.check()
-
-
-_NATIVE_STOP_EVENT_METHODS = tuple(
-    (
-        name,
-        function,
-        function.__code__,
-        function.__defaults__,
-        function.__kwdefaults__,
-        function.__closure__,
-    )
-    for name in ("reconcile", "_reconcile_active")
-    for function in (getattr(_EventCustody, name),)
-)

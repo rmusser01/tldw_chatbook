@@ -307,8 +307,10 @@ def test_runtime_restore_staged_evidence_never_overwrites_a_newer_launch() -> No
 
 
 @pytest.mark.asyncio
-async def test_successful_viewless_manual_turn_records_first_send(monkeypatch) -> None:
-    """Terminal success records onboarding without retaining a ChatScreen."""
+async def test_viewless_manual_turn_keeps_session_flag_when_publisher_is_replaced(
+    monkeypatch,
+) -> None:
+    """Terminal success stays visible when native persistence must refuse."""
     saved: list[tuple[str, str, bool]] = []
     monkeypatch.setattr(
         "tldw_chatbook.config.save_setting_to_cli_config",
@@ -338,7 +340,9 @@ async def test_successful_viewless_manual_turn_records_first_send(monkeypatch) -
             assert session_id == session.id
             return ConsoleRunState(ConsoleRunStatus.COMPLETED, "done")
 
-    runtime.set_chat_controller(SuccessfulController())
+    controller = SuccessfulController()
+    controller.store = store
+    runtime.set_chat_controller(controller)
     request = ConsoleTurnCustodyRequest(
         turn_id="turn-first-send",
         session_id=session.id,
@@ -354,7 +358,8 @@ async def test_successful_viewless_manual_turn_records_first_send(monkeypatch) -
 
     assert runtime.view is None
     assert app.app_config["console"]["onboarding"]["first_send_completed"] is True
-    assert saved == [("console.onboarding", "first_send_completed", True)]
+    await asyncio.wait_for(asyncio.shield(runtime._first_send_task), 5)
+    assert saved == []
 
 
 @pytest.mark.asyncio

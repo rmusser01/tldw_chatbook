@@ -1073,542 +1073,66 @@ async def test_late_subagent_stop_retains_original_tree_until_physical_return(
 
 @pytest.mark.parametrize("onboarded", [False, True])
 async def test_original_stop_hook_holds_same_ordinary_tree(ordinary_host, onboarded):
-    import os
-    import subprocess
-    import sys
-    import traceback
+    from Tests.Agents.test_hooks_v2_execution import command
+    from Tests.Chat.test_console_skill_substitution import _RecordingGateway
+    from tldw_chatbook import config
+    from tldw_chatbook.Chat.console_ordinary_tree import current_ordinary_tree
+    from tldw_chatbook.Chat.console_turn_context import ConsoleTurnCustodyRequest
+    from tldw_chatbook.Workspaces.worktree_activity import WorktreeFootprint
 
-    if os.environ.get("TASK8_STOP_TREE_PEER") != "1":
-        env = dict(os.environ, TASK8_STOP_TREE_PEER="1")
-        result = await asyncio.to_thread(
-            subprocess.run,
-            [
-                sys.executable,
-                "-m",
-                "pytest",
-                "-q",
-                "-s",
-                f"{__file__}::test_original_stop_hook_holds_same_ordinary_tree[{onboarded}]",
-                "--basetemp=" + str(ordinary_host.tmp_path / "stop-tree-peer"),
-            ],
-            env=env,
-            capture_output=True,
-            text=True,
-            timeout=35,
-        )
-        (ordinary_host.tmp_path / "stop-tree-peer.log").write_text(
-            result.stdout + result.stderr
-        )
-        assert result.returncode == 0, result.stdout + result.stderr
-        return
+    h = ordinary_host
+    if onboarded:
+        h.app.app_config["console"] = {"onboarding": {"first_send_completed": True}}
+    entered, release = h.tmp_path / "stop-entered", h.tmp_path / "stop-release"
+    code = (
+        "import time;from pathlib import Path;"
+        f"Path({str(entered)!r}).touch();"
+        f"exec({f'while not Path({str(release)!r}).exists(): time.sleep(0.01)'!r})"
+    )
+    engine = h.runtime.ensure_hooks_v2(
+        h.session.id,
+        (command(code, name="Stop", timeout_seconds=30),),
+        lambda *_: True,
+    )
+    trees = []
 
+    class Gateway(_RecordingGateway):
+        async def stream_chat(self, resolution, messages, **kwargs):
+            trees.append(current_ordinary_tree())
+            self.payloads.append(messages)
+            yield "original reply"
+
+    h.controller.provider_gateway = h.bridge._gateway = Gateway()
+    h.controller._confirm_project_instruction_dispatch = lambda notice: "proceed"
+    configuration = await h.controller.capture_turn_configuration_snapshot(h.session.id)
+    identity = config.current_config_identity()
+    request = ConsoleTurnCustodyRequest(
+        turn_id="held-original-stop",
+        session_id=h.session.id,
+        draft="hold the original Stop event",
+        configuration=configuration,
+    )
+    turn_id = h.runtime.accept_turn(request)
+    task = h.runtime._turn_custody[turn_id].task
+    h.tasks.append(task)
     try:
-        from Tests.Agents.test_hooks_v2_execution import command
-        from Tests.Chat.test_console_skill_substitution import _RecordingGateway
-        from tldw_chatbook.Chat.console_ordinary_tree import current_ordinary_tree
-        from tldw_chatbook.Chat.console_turn_context import ConsoleTurnCustodyRequest
-        from tldw_chatbook.Workspaces.worktree_activity import WorktreeFootprint
-
-        h = ordinary_host
-        seam_negative = os.environ.get("TASK8_STOP_SEAM_NEGATIVE") == "1"
-        seam_entered, seam_release, seam_returned, seam_events = (
-            threading.Event(),
-            threading.Event(),
-            threading.Event(),
-            [],
-        )
-        seam_source_entered, seam_source_release = threading.Event(), threading.Event()
-        if seam_negative:
-            from tldw_chatbook.Agents.legacy_hook_ownership import _EventCustody
-            from tldw_chatbook.Chat.console_agent_sources import _AgentSources
-
-            source_entry_code = _AgentSources.activate.__wrapped__.__code__
-            reconcile_code = _EventCustody.reconcile.__code__
-
-            def hold_original_reconcile(frame, event, _arg):
-                if event == "call" and frame.f_code is source_entry_code:
-                    source = frame.f_locals.get("self")
-                    parent = frame.f_back
-                    while parent is not None and parent.f_code is not reconcile_code:
-                        parent = parent.f_back
-                    custody = (
-                        parent.f_locals.get("self") if parent is not None else None
-                    )
-                    if (
-                        custody is not None
-                        and getattr(custody.source, "agent_sources", None) is source
-                        and custody.source.event.event == "Stop"
-                        and getattr(source, "first_send_receipt", None) is None
-                        and not seam_source_entered.is_set()
-                    ):
-                        seam_source_entered.set()
-                        seam_source_release.wait(15)
-                elif (
-                    event == "call"
-                    and frame.f_code is _EventCustody._reconcile_active.__code__
-                    and frame.f_locals.get("retiring_source") is not None
-                ):
-                    seam_events.append(frame.f_locals["self"])
-                    seam_entered.set()
-                    seam_release.wait(15)
-                elif (
-                    event == "return"
-                    and frame.f_code is _EventCustody._reconcile_active.__code__
-                    and frame.f_locals.get("retiring_source") is not None
-                ):
-                    seam_returned.set()
-
-            threading.setprofile_all_threads(hold_original_reconcile)
-        if onboarded:
-            h.app.app_config["console"] = {"onboarding": {"first_send_completed": True}}
-        entered, release = h.tmp_path / "stop-entered", h.tmp_path / "stop-release"
-        code = (
-            "import time;from pathlib import Path;"
-            f"Path({str(entered)!r}).touch();"
-            f"exec({f'while not Path({str(release)!r}).exists(): time.sleep(0.01)'!r})"
-        )
-        engine = h.runtime.ensure_hooks_v2(
-            h.session.id,
-            (command(code, name="Stop", timeout_seconds=30),),
-            lambda *_: True,
-        )
-        trees = []
-
-        class Gateway(_RecordingGateway):
-            async def stream_chat(self, resolution, messages, **kwargs):
-                trees.append(current_ordinary_tree())
-                self.payloads.append(messages)
-                yield "original reply"
-
-        gateway = Gateway()
-        h.controller.provider_gateway = gateway
-        h.bridge._gateway = gateway
-        h.controller._confirm_project_instruction_dispatch = lambda notice: "proceed"
-        notification_observations = []
-        selected_source_negative = (
-            os.environ.get("TASK8_STOP_SELECTED_SOURCE_NEGATIVE") == "1"
-        )
-
-        def notification():
-            from tldw_chatbook.Agents.activation import _guard
-            from tldw_chatbook.Agents.execution_capacity import current_execution_owner
-            from tldw_chatbook.Chat.console_first_send_retirement import (
-                first_send_receipt_current,
-            )
-
-            if not trees or notification_observations:
-                return
-            tree = trees[0]
-            source = tree.source
-            receipt = getattr(source, "first_send_receipt", None)
-            if receipt is None:
-                return
-            before = first_send_receipt_current(source, receipt)
-            if selected_source_negative:
-                os.environ["TLDW_CONFIG_PATH"] = str(
-                    h.tmp_path / "replacement-config.toml"
-                )
-            after = first_send_receipt_current(source, receipt)
-            try:
-                with source.activate():
-                    strict_refusal = False
-            except RuntimeError:
-                strict_refusal = True
-            notification_observations.append(
-                (
-                    current_ordinary_tree() is None,
-                    current_execution_owner() is None,
-                    _guard.context.get() is None,
-                    strict_refusal,
-                    before,
-                    after,
-                )
-            )
-
-        unsubscribe = (
-            h.runtime.execution_capacity.subscribe_tool_availability(notification)
-            if selected_source_negative
-            else lambda: None
-        )
-        configuration = await h.controller.capture_turn_configuration_snapshot(
-            h.session.id
-        )
-        bootstrap_negative = os.environ.get("TASK8_STOP_BOOTSTRAP_NEGATIVE")
-        producer_invoked = []
-        fresh_bootstrap = os.environ.get("TASK8_STOP_REQUIRE_FRESH") == "1"
-        if bootstrap_negative or fresh_bootstrap:
-            from tldw_chatbook import config
-
-            creation = config._FIRST_BOOTSTRAP_CREATION
-            assert creation is not None
-            assert str(creation[0]) == config.current_config_identity()[1]
-            assert creation[1] is config._CONFIG_CACHE
-            assert creation[2].status is config.PrivatePathStatus.CREATED_PRIVATE
-            assert creation[2].lexical_path == creation[0]
-            assert config._CONFIG_CACHE["_first_run"] is True
-            assert config.settings["COMPREHENSIVE_CONFIG_RAW"]["_first_run"] is True
-        if bootstrap_negative == "marker-type":
-            config._CONFIG_CACHE["_first_run"] = 1
-            config.settings["COMPREHENSIVE_CONFIG_RAW"]["_first_run"] = 1
-        request = ConsoleTurnCustodyRequest(
-            turn_id="held-original-stop",
-            session_id=h.session.id,
-            draft="hold the original Stop event",
-            configuration=configuration,
-        )
-        turn_id = h.runtime.accept_turn(request)
-        task = h.runtime._turn_custody[turn_id].task
-        h.tasks.append(task)
-        try:
-            await until(lambda: entered.exists() or task.done())
-            print(
-                "STOP_CHECK entered",
-                entered.exists(),
-                "task_done",
-                task.done(),
-                flush=True,
-            )
-            assert entered.exists(), (
-                task.result() if task.done() else "Stop was not entered"
-            )
-            assert trees and trees[0] is not None
-            if bootstrap_negative == "source-loss":
-                from tldw_chatbook import config
-
-                assert (
-                    trees[0].source.first_send_source.bootstrap
-                    is config._FIRST_BOOTSTRAP_CREATION
-                )
-                assert config._FIRST_BOOTSTRAP_CREATION is not None
-                config._FIRST_BOOTSTRAP_CREATION = None
-            elif bootstrap_negative == "producer-replaced":
-                from tldw_chatbook.Chat import (
-                    console_first_send_retirement as retirement,
-                )
-
-                h.monkeypatch.setattr(
-                    retirement,
-                    "publish_first_send",
-                    lambda *_: producer_invoked.append(True),
-                )
-            with h.runtime.worktree_activity.prelaunch(
-                footprint=WorktreeFootprint(opaque=True)
-            ) as claim:
-                print("STOP_CHECK conflicting_claim", claim is not None, flush=True)
-                assert claim is None, "original Stop lost its tree claim while held"
-        finally:
-            release.touch()
-        done, _ = await asyncio.wait({task}, timeout=8)
-        print("STOP_CHECK task_returned", bool(done), flush=True)
-        assert done, "original turn did not return after Stop release"
-        await task
-        if seam_negative:
-            from tldw_chatbook.Agents.execution_capacity import OwnedOperation
-
-            assert seam_source_entered.is_set(), (
-                "original source-entry barrier was not reached"
-            )
-            assert trees[0].source.first_send_receipt is not None
-            seam_source_release.set()
-            try:
-                await until(seam_entered.is_set)
-            except TimeoutError:
-                from tldw_chatbook.Agents.execution_capacity import (
-                    _require_original_stop_receivers,
-                )
-
-                with engine._native_commands._condition:
-                    pending = tuple(engine._native_commands._events)
-                for retained in pending:
-                    try:
-                        _require_original_stop_receivers(
-                            retained.source.agent_sources, retained
-                        )
-                    except BaseException as error:  # noqa: BLE001 - diagnostic preserves original refusal
-                        print(
-                            "STOP_SEAM_NATIVE_FENCE",
-                            type(error).__name__,
-                            str(error),
-                            flush=True,
-                        )
-                raise
-            event = seam_events[0]
-            source = event.source.agent_sources
-            target = event.targets[0]
-            assert (
-                type(target.operation) is OwnedOperation
-                and target.returned
-                and target.proven
-            )
-            with pytest.raises(RuntimeError):
-                target.operation.finish(_console_retirement=(source, event))
-            with event.owner.capacity._lock:
-                assert target.operation in event.owner._operations
-            invoked = []
-            source.check_retirement = lambda _event: invoked.append(True)
-            try:
-                seam_release.set()
-                await until(lambda: seam_returned.is_set() and not event._reconciling)
-                assert not invoked
-                with event.owner.capacity._lock:
-                    assert target.operation in event.owner._operations
-                assert not trees[0].retired.done() and trees[0].source_scopes > 0
-            finally:
-                del source.check_retirement
-                seam_source_release.set()
-                seam_release.set()
-                threading.setprofile_all_threads(None)
-            print("STOP_SEAM_FOREIGN_REFUSED", flush=True)
-            os._exit(0)
-        if not onboarded and bootstrap_negative is None:
-            assert trees[0].source.first_send_receipt.source is trees[0].source
-            if fresh_bootstrap:
-                original = trees[0].source.first_send_receipt.original
-                assert original.bootstrap is not None
-                assert original.views.raw["_first_run"] is True
-            if selected_source_negative:
-                await until(lambda: bool(notification_observations))
-                assert notification_observations == [
-                    (True, True, True, True, True, False)
-                ]
-        unsubscribe()
-        native = engine._native_commands
-        if bootstrap_negative:
-            from tldw_chatbook import config
-
-            assert trees[0].source.first_send_source is not None
-            assert getattr(trees[0].source, "first_send_receipt", None) is None
-            assert not producer_invoked
-            assert (
-                config.current_config_identity()[0]
-                == trees[0].source.config_identity[0] + 1
-            )
-            assert (
-                config._CONFIG_CACHE["console"]["onboarding"]["first_send_completed"]
-                is True
-            )
-            assert not trees[0].retired.done()
-            with native._condition:
-                assert native._events
-            print("STOP_BOOTSTRAP_REFUSED", bootstrap_negative, flush=True)
-            os._exit(0)
-        if selected_source_negative:
-            assert not trees[0].retired.done() and trees[0].source_scopes > 0
-            h.store.set_session_draft(h.session.id, "selected source changed draft")
-            try:
-                following = await asyncio.wait_for(
-                    h.controller.submit_draft(
-                        "selected source changed draft",
-                        session_id=h.session.id,
-                        configuration=configuration,
-                    ),
-                    timeout=5,
-                )
-            except (RuntimeError, PermissionError) as error:
-                print(
-                    "STOP_SELECTED_SUBMIT_EXCEPTION",
-                    type(error).__name__,
-                    str(error),
-                    flush=True,
-                )
-            else:
-                print(
-                    "STOP_SELECTED_SUBMIT_REFUSAL",
-                    str(getattr(following, "visible_copy", "")),
-                    flush=True,
-                )
-                assert not following.accepted
-            assert len(gateway.payloads) == 1
-            assert (
-                h.store.session_draft(h.session.id) == "selected source changed draft"
-            )
-            print("STOP_SELECTED_SOURCE_REFUSED", flush=True)
-            os._exit(0)
-        with native._condition:
-            print(
-                "STOP_CHECK native_events",
-                native._admissions,
-                [
-                    (
-                        event.host_returned,
-                        event.retired,
-                        event.failed_write,
-                        [
-                            (
-                                target.started,
-                                target.returned,
-                                target.proven,
-                                target.releasing,
-                                target.released,
-                            )
-                            for target in event.targets
-                        ],
-                    )
-                    for event in native._events
-                ],
-                "tree_retired",
-                trees[0].retired.done(),
-                flush=True,
-            )
-            from tldw_chatbook import config
-
-            for event in native._events:
-                source = event.source.agent_sources
-                now = config.current_config_identity()
-                print(
-                    "STOP_CHECK before_close_config",
-                    source.config_identity[0],
-                    now[0],
-                    "same_path",
-                    source.config_identity[1] == now[1],
-                    "first_send_source",
-                    source.first_send_source is not None,
-                    "first_send_receipt",
-                    getattr(source, "first_send_receipt", None) is not None,
-                    flush=True,
-                )
-        close = asyncio.create_task(h.runtime.close_hooks_v2(h.session.id))
-        closed, _ = await asyncio.wait({close}, timeout=12)
-        print("STOP_CHECK engine_returned", bool(closed), flush=True)
-        assert closed, "original hook engine did not return"
-        await close
-        await until(lambda: trees[0].retired.done())
-        assert not native.cleanup_pending
-    except BaseException:  # noqa: BLE001 - isolated peer reports cancellation and exits
-        traceback.print_exc(file=sys.__stderr__)
-        sys.__stderr__.flush()
-        os._exit(1)
-
-
-async def test_stop_notification_rejects_replaced_selected_config_before_new_dispatch(
-    ordinary_host,
-):
-    import os
-    import subprocess
-    import sys
-
-    env = dict(
-        os.environ, TASK8_STOP_TREE_PEER="1", TASK8_STOP_SELECTED_SOURCE_NEGATIVE="1"
-    )
-    result = await asyncio.to_thread(
-        subprocess.run,
-        [
-            sys.executable,
-            "-m",
-            "pytest",
-            "-q",
-            "-s",
-            f"{__file__}::test_original_stop_hook_holds_same_ordinary_tree[False]",
-            "--basetemp=" + str(ordinary_host.tmp_path / "stop-selected-source-peer"),
-        ],
-        env=env,
-        capture_output=True,
-        text=True,
-        timeout=35,
-    )
-    (ordinary_host.tmp_path / "stop-selected-source-peer.log").write_text(
-        result.stdout + result.stderr
-    )
-    assert result.returncode == 0, result.stdout + result.stderr
-    assert "STOP_SELECTED_SOURCE_REFUSED" in result.stdout
-
-
-@pytest.mark.parametrize(
-    "negative", ["marker-type", "source-loss", "producer-replaced"]
-)
-async def test_stop_retirement_rejects_unproven_bootstrap(ordinary_host, negative):
-    import os
-    import subprocess
-    import sys
-
-    env = dict(
-        os.environ, TASK8_STOP_TREE_PEER="1", TASK8_STOP_BOOTSTRAP_NEGATIVE=negative
-    )
-    env.pop("TLDW_TEST_CONFIG_ROOT", None)
-    env.pop("TLDW_TEST_CONFIG_ROOT_OWNER", None)
-    result = await asyncio.to_thread(
-        subprocess.run,
-        [
-            sys.executable,
-            "-m",
-            "pytest",
-            "-q",
-            "-s",
-            f"{__file__}::test_original_stop_hook_holds_same_ordinary_tree[False]",
-            "--basetemp=" + str(ordinary_host.tmp_path / "stop-bootstrap-peer"),
-        ],
-        env=env,
-        capture_output=True,
-        text=True,
-        timeout=35,
-    )
-    (ordinary_host.tmp_path / "stop-bootstrap-peer.log").write_text(
-        result.stdout + result.stderr
-    )
-    assert result.returncode == 0, result.stdout + result.stderr
-    assert f"STOP_BOOTSTRAP_REFUSED {negative}" in result.stdout
-
-
-async def test_stop_first_send_retires_with_original_fresh_bootstrap(ordinary_host):
-    import os
-    import subprocess
-    import sys
-
-    env = dict(os.environ, TASK8_STOP_TREE_PEER="1", TASK8_STOP_REQUIRE_FRESH="1")
-    env.pop("TLDW_TEST_CONFIG_ROOT", None)
-    env.pop("TLDW_TEST_CONFIG_ROOT_OWNER", None)
-    result = await asyncio.to_thread(
-        subprocess.run,
-        [
-            sys.executable,
-            "-m",
-            "pytest",
-            "-q",
-            "-s",
-            f"{__file__}::test_original_stop_hook_holds_same_ordinary_tree[False]",
-            "--basetemp=" + str(ordinary_host.tmp_path / "stop-fresh-bootstrap-peer"),
-        ],
-        env=env,
-        capture_output=True,
-        text=True,
-        timeout=35,
-    )
-    (ordinary_host.tmp_path / "stop-fresh-bootstrap-peer.log").write_text(
-        result.stdout + result.stderr
-    )
-    assert result.returncode == 0, result.stdout + result.stderr
-    assert "1 passed" in result.stdout
-
-
-async def test_stop_retirement_rejects_foreign_caller_and_replaced_receiver(
-    ordinary_host,
-):
-    import os
-    import subprocess
-    import sys
-
-    env = dict(os.environ, TASK8_STOP_TREE_PEER="1", TASK8_STOP_SEAM_NEGATIVE="1")
-    result = await asyncio.to_thread(
-        subprocess.run,
-        [
-            sys.executable,
-            "-m",
-            "pytest",
-            "-q",
-            "-s",
-            f"{__file__}::test_original_stop_hook_holds_same_ordinary_tree[False]",
-            "--basetemp=" + str(ordinary_host.tmp_path / "stop-seam-peer"),
-        ],
-        env=env,
-        capture_output=True,
-        text=True,
-        timeout=35,
-    )
-    (ordinary_host.tmp_path / "stop-seam-peer.log").write_text(
-        result.stdout + result.stderr
-    )
-    assert result.returncode == 0, result.stdout + result.stderr
-    assert "STOP_SEAM_FOREIGN_REFUSED" in result.stdout
+        await until(lambda: entered.exists() or task.done())
+        assert entered.exists(), task.result() if task.done() else "Stop did not enter"
+        assert trees and trees[0] is not None and not trees[0].retired.done()
+        assert config.current_config_identity() == identity
+        with h.runtime.worktree_activity.prelaunch(
+            footprint=WorktreeFootprint(opaque=True)
+        ) as claim:
+            assert claim is None
+    finally:
+        release.touch()
+    assert (await asyncio.wait_for(asyncio.shield(task), 10)).accepted
+    await asyncio.wait_for(h.runtime.close_hooks_v2(h.session.id), 12)
+    await until(lambda: trees[0].retired.done())
+    assert not engine._native_commands.cleanup_pending
+    if not onboarded:
+        await asyncio.wait_for(asyncio.shield(h.runtime._first_send_task), 10)
+        assert h.app.app_config["console"]["onboarding"]["first_send_completed"] is True
 
 
 from Tests.Chat import test_console_async_mcp_snapshot as snapshot_controls
