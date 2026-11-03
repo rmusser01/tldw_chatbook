@@ -378,8 +378,8 @@ service; another preparation or later `run_turn` cannot replace its tree state.
 The earlier direct `_run_owned` workflow seam also seals this ownership and
 retains its supported no-log path. Task8B's private Console preparation consumer
 now supplies the real bridge result (see [console.md](./console.md#shared-native-preparation-adr-285));
-phase snapshot ownership and the public
-coordinator remain separate integration work. These seams do not enable scheduling.
+the finite phase-wave consumer now supplies snapshot ownership, while the public
+coordinator remains separate integration work. These seams do not enable public scheduling.
 Preparation detaches the task-only native message seed, including bounded
 required inputs/handoffs, and requires the approved instruction row exactly
 once. It never borrows the parent chat or silently truncates mandatory context;
@@ -473,6 +473,19 @@ scripts remain unsupported, and ordinary raw-shell behavior is unchanged.
 
 Schema v27 adds immutable `workflow_checkpoints` and inert
 `workflow_resume_commands`. Historical absent-field JSON remains byte-stable.
+Schema v28 adds workflow-only `workflow_change_windows` and one normalized
+`workflow_change_window_refs` table. Windows record the original phase, bounded
+roots, once-bound actual member anchor and separate B/E dispositions. The expected
+E reference count is NULL while unresolved, and 0–64 after conclusive publication;
+zero-row E and unused B therefore remain distinguishable from missing rows.
+Each workflow admits at most 64 windows, each reserves 64 KiB in the existing
+payload budget, and each carries at most 64 roots (4096 UTF-8 bytes per root,
+32768 bytes serialized). Native E rows, refs, count and disposition commit in one
+FULL transaction. Late E never rewrites immutable task checkpoints. Canonical
+archive validation checks the exact phase/anchor/ref joins and required count;
+restoration creates no live membership. Active/unresolved windows prevent payload
+removal; settled required refs survive pruning until permitted payload removal
+leaves bounded tombstones and releases their snapshot refs.
 Required Change Review references protect their native snapshots from pruning;
 settled explicit private-payload removal retains accounting tombstones.
 `prepare_decision` reviews upcoming execution; `prepare_quality_review` and

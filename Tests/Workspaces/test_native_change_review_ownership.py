@@ -207,11 +207,23 @@ def test_original_end_owner_survives_actual_publication(
     finally:
         release.set()
         assert h.coordinator.shutdown(5)
-    assert h.runtime.execution_capacity.snapshot().executions == ()
-    assert (
-        reservation.completion.value
-        == ("published", "disclosed_failure", "unresolved")[failures]
-    )
+    if failures == 2:
+        # Ordinary required writes keep their original latch. Only a genuine
+        # workflow window separately owns its failed required E publication.
+        ticket = reservation._completion.ticket
+        assert ticket.owner is observed[0] and not ticket.retired.is_set()
+        assert h.runtime.execution_capacity.snapshot().executions
+        assert reservation._completion.disposition.value == "unresolved"
+        assert reservation.completion.value == "pending"
+        with h.runtime.worktree_activity.prelaunch(
+            footprint=WorktreeFootprint(opaque=True)
+        ) as claim:
+            assert claim is None
+    else:
+        assert h.runtime.execution_capacity.snapshot().executions == ()
+        assert (
+            reservation.completion.value == ("published", "disclosed_failure")[failures]
+        )
     assert len(observed) == (1, 2, 2)[failures]
     assert all(owner is observed[0] for owner in observed)
 
@@ -491,6 +503,40 @@ def test_worker_scope_entry_failure_delivers_original_error_and_retires(
     assert not invoked
     assert h.runtime.execution_capacity.snapshot().executions == ()
     h.coordinator.cancel(reservation)
+
+
+def test_end_handoff_scope_failure_preserves_conclusive_original_baseline(
+    native_review, monkeypatch
+):
+    from contextlib import contextmanager
+
+    from tldw_chatbook.Workspaces.change_review_ownership import _SnapshotSource
+
+    h = native_review
+    reservation = register(h)
+    assert reservation.await_baseline(4)
+    wait_for(lambda: reservation.baseline_completion.value == "observed")
+    wait_for(lambda: h.runtime.execution_capacity.snapshot().tool_workers == 0)
+    original = _SnapshotSource.activate
+    failed = threading.Event()
+
+    @contextmanager
+    def fail_original_end_handoff(source, owner):
+        if threading.current_thread().name == "change-review-publisher":
+            failed.set()
+            raise RuntimeError("controlled E handoff source entry failure")
+        with original(source, owner):
+            yield
+
+    monkeypatch.setattr(_SnapshotSource, "activate", fail_original_end_handoff)
+    assert h.coordinator.finalize(reservation, run_id="", kind="turn")
+    wait_for(lambda: reservation._completion.disposition.value == "unresolved")
+    assert failed.is_set()
+    assert reservation.baseline_completion.value == "observed"
+    assert reservation.completion.value == "pending"
+    assert not reservation._completion.ticket.retired.is_set()
+    assert h.runtime.worktree_activity._claims
+    assert reservation._handle.errors[str(h.root)]
 
 
 def test_never_admitted_native_source_has_no_worker_or_direct_publication(
@@ -1271,7 +1317,9 @@ def test_coordinator_idle_does_not_precede_borrowed_ticket_return(
     original = _SnapshotTicket.returned
     box = {}
 
-    def held(ticket, *, worker=False, handoff=False, durable=True):
+    def held(
+        ticket, *, worker=False, handoff=False, durable=True, observation_returned=False
+    ):
         reservation = box.get("reservation")
         if (
             handoff
@@ -1281,7 +1329,13 @@ def test_coordinator_idle_does_not_precede_borrowed_ticket_return(
         ):
             entered.set()
             assert release.wait(5)
-        return original(ticket, worker=worker, handoff=handoff, durable=durable)
+        return original(
+            ticket,
+            worker=worker,
+            handoff=handoff,
+            durable=durable,
+            observation_returned=observation_returned,
+        )
 
     monkeypatch.setattr(_SnapshotTicket, "returned", held)
     reservation = register(h, owner=owner, claim=claim)

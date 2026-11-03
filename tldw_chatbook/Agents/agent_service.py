@@ -2137,6 +2137,27 @@ def _call_with_timeout(
         )
     box: dict = {"dispatch_state": "not_started"}
     ordinary = getattr(execution_owner, "_ordinary_tree", None)
+    from .workflow_task_scope import current_task_authorization
+
+    workflow = current_task_authorization()
+    workflow_prepared = None
+    if workflow is not None:
+        if (
+            not workflow._binding_state
+            or workflow._binding_state[0][0] is not owner
+            or not workflow._bridge_preparation
+        ):
+            if operation is not None:
+                operation.finish()
+            return ToolResult.blocked("workflow tool owner is not an original member")
+        workflow_prepared = workflow._bridge_preparation[0]
+    source_scope = (
+        ordinary.source.activate
+        if ordinary is not None
+        else workflow_prepared.activate_source
+        if workflow_prepared is not None
+        else None
+    )
     retained_source = None
     if ordinary is not None:
         if owner not in ordinary.members or owner.capacity is not ordinary.capacity:
@@ -2158,12 +2179,12 @@ def _call_with_timeout(
 
         with (
             bind_ordinary_tree(ordinary),
-            owner.activate() if ordinary is not None else contextlib.nullcontext(),
+            owner.activate() if source_scope is not None else contextlib.nullcontext(),
         ):
-            if ordinary is not None:
+            if source_scope is not None:
                 try:
-                    ordinary.check_local_sources()
-                except RuntimeError as error:
+                    (ordinary or workflow_prepared).check_local_sources()
+                except (RuntimeError, PermissionError) as error:
                     # No original provider/source scope was attempted. Retire
                     # this unused operation under its captured worker storage.
                     box["result"] = ToolResult.blocked(str(error))
@@ -2171,13 +2192,13 @@ def _call_with_timeout(
                     return
             try:
                 with (  # noqa: SIM117 - source and owner scopes have distinct custody
-                    ordinary.source.activate()
-                    if ordinary is not None
+                    source_scope()
+                    if source_scope is not None
                     else contextlib.nullcontext()
                 ):
                     with (
                         owner.activate()
-                        if ordinary is not None
+                        if source_scope is not None
                         else contextlib.nullcontext()
                     ):
                         try:
@@ -2203,21 +2224,28 @@ def _call_with_timeout(
                             box["call_error"] = error
                             raise
             except BaseException as error:
-                if ordinary is not None and error is not box.get("call_error"):
+                if source_scope is not None and error is not box.get("call_error"):
                     # An attempted source entry/unwind did not return. The
                     # original hold is not proof of that cleanup completing.
                     retain_unknown_return()
                 raise
             finally:
-                if ordinary is not None and (ssh_call is None or not ssh_call.finished):
+                if source_scope is not None and (
+                    ssh_call is None or not ssh_call.finished
+                ):
                     try:
                         operation.finish()
                     except BaseException:  # noqa: BLE001 - preserve unknown finish return
                         retain_unknown_return()
 
     def _runner() -> None:
+        from .goal_storage_lifetime import owned_goal_storage
+
         try:
             with (
+                owned_goal_storage(workflow_prepared.service)
+                if workflow_prepared is not None
+                else contextlib.nullcontext(),
                 automatic_work.scope() if automatic_work else contextlib.nullcontext(),
                 bind_tool_output_sink(output_sink),
             ):
@@ -2226,10 +2254,14 @@ def _call_with_timeout(
                 _admitted_call()
         except BaseException as exc:  # noqa: BLE001 — surfaced as a failed ToolResult, never propagated to the worker's exit
             box["error"] = exc
-            if ordinary is not None and exc is not box.get("call_error"):
+            if source_scope is not None and exc is not box.get("call_error"):
                 retain_unknown_return()
         finally:
-            if ordinary is None and operation is not None and (ssh_call is None or not ssh_call.finished):
+            if (
+                source_scope is None
+                and operation is not None
+                and (ssh_call is None or not ssh_call.finished)
+            ):
                 operation.finish()
             if retained_source is not None:
                 retained_source.__exit__(None, None, None)
@@ -2237,6 +2269,8 @@ def _call_with_timeout(
     try:
         worker = threading.Thread(target=_runner, name=f"tool-{tool_name}", daemon=True)
         worker.start()
+        if workflow_prepared is not None:
+            workflow_prepared._tool_workers.append(worker)
     except BaseException as exc:  # noqa: BLE001 -- failed tool starts return a ToolResult
         if operation is not None:
             operation.finish()
@@ -4873,7 +4907,16 @@ class AgentService:
             bound = False
             dispatched = False
             try:
-                with activity.prelaunch(footprint=authorization.physical_footprint) as claim:
+                bridge_preparation = authorization._bridge_preparation[0]
+                if (
+                    bridge_preparation._wave is None
+                    and bridge_preparation.bridge.change_tracking_enabled
+                ):
+                    raise PermissionError("original capture wave required")
+                with activity.prelaunch(
+                    footprint=authorization.physical_footprint,
+                    _wave_member=authorization,
+                ) as claim:
                     if claim is None:
                         raise _WorkflowChildWait(
                             "worktree_activity", "workflow worktree activity busy"
@@ -4891,6 +4934,8 @@ class AgentService:
                             tracker.service.validate_task_inputs(
                                 authorization, json.loads(prepared.messages_json)
                             )
+                        bridge_preparation._close_operation = owner.reserve_tool()
+                        bridge_preparation._launch_operation = owner.reserve_tool()
                     kwargs = dict(prepared.kwargs)
                     kwargs["messages"] = json.loads(prepared.messages_json)
                     kwargs["workflow_task_authorization"] = authorization
@@ -4934,6 +4979,9 @@ class AgentService:
 
             except BaseException:
                 if not dispatched:
+                    if bridge_preparation._close_operation is not None:
+                        bridge_preparation._close_operation.finish()
+                        bridge_preparation._close_operation = None
                     if owner is not None:
                         owner.finish_root()
                     if bound:
@@ -5798,7 +5846,7 @@ class AgentService:
             def run_child_owned() -> None:
                 nonlocal admission_refused
 
-                def run_original_child():
+                def run_original_child(*, finish_execution=True):
                     nonlocal admission_refused
                     try:
                         admitted_child()
@@ -5807,14 +5855,31 @@ class AgentService:
                         admission_refused = True
                     finally:
                         try:
-                            if not admission_refused:
+                            if workflow_task_authorization := child_kwargs.get(
+                                "workflow_task_authorization"
+                            ):
+                                bridge_preparation = (
+                                    workflow_task_authorization._bridge_preparation[0]
+                                )
+                                bridge_preparation._close_on_native_owner(child_owner)
+                            if finish_execution and not admission_refused:
                                 self._finish_execution(child_owner)
                         finally:
                             admission_decided.set()
 
                 tree = getattr(self, "_ordinary_tree", None)
                 if tree is None:
-                    run_original_child()
+                    authorization = child_kwargs.get("workflow_task_authorization")
+                    if authorization is None:
+                        run_original_child()
+                    else:
+                        bridge_preparation = authorization._bridge_preparation[0]
+                        with bridge_preparation.activate_source():
+                            run_original_child(finish_execution=False)
+                        # The original source/storage stack must physically
+                        # return before native root drain releases its claim.
+                        if not admission_refused:
+                            self._finish_execution(child_owner)
                     return
                 from tldw_chatbook.Chat.console_agent_sources import (
                     _original_retained_source_stack,
@@ -5935,6 +6000,19 @@ class AgentService:
         finally:
             if not launched:
                 try:
+                    authorization = child_kwargs.get("workflow_task_authorization")
+                    if (
+                        authorization is not None
+                        and handle is not None
+                        and not native_thread_started
+                        and not preserve_workflow_reservation
+                    ):
+                        preparation = authorization._bridge_preparation[0]
+                        with child_owner.activate():
+                            self._finalize_workflow_child_log(
+                                authorization, status=RUN_ERROR
+                            )
+                        preparation._close_on_native_owner(child_owner)
                     if (
                         child_reservation is not None
                         and not preserve_workflow_reservation

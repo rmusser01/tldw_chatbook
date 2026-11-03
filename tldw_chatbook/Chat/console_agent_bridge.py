@@ -4391,7 +4391,7 @@ class _PreparedNativeReply:
     progress_owner_id: str
     resolution: Any
     adapter: _StreamingModelAdapter
-    turn_lifeline: _ModelCallLifeline
+    turn_lifeline: _ModelCallLifeline | None
     project_instruction_context: _ProjectInstructionDispatchContext | None
     review_state_scope: Any
     run_log_writer: Any
@@ -4900,8 +4900,12 @@ def build_console_first_request_plan(
         allowed_tools = config.allowed_tools
     # Describe only the final offered capabilities, including Goal scope
     # narrowing, before schema/request construction consumes the note.
+    from .console_agent_sources import current_agent_sources
+
+    original_sources = current_agent_sources()
     workspace_note = workspace_context_note(
         workspace_id,
+                         registry=original_sources.registry if original_sources is not None else None,
         binding_authority=workspace_binding_authority,
         status_cache=get_remote_binding_status_cache(),
         path_tool_aliases=_advertised_path_root_aliases(
@@ -7442,9 +7446,13 @@ class ConsoleAgentBridge:
         # docstring), because a fleet CHILD now owns one of its own from
         # birth via `adapter.child_lifeline`. This one stays exactly what
         # it always was: the PRIMARY agent's, turn-scoped.
-        turn_lifeline = _ModelCallLifeline(
-            "console-agent-loop",
-            close_current_loop=getattr(self._gateway, "aclose_current_loop", None),
+        turn_lifeline = (
+            _ModelCallLifeline(
+                "console-agent-loop",
+                close_current_loop=getattr(self._gateway, "aclose_current_loop", None),
+            )
+            if _workflow_preparation is None
+            else None
         )
         if _workflow_preparation is not None:
             _workflow_preparation.turn_lifeline = turn_lifeline
@@ -7456,7 +7464,7 @@ class ConsoleAgentBridge:
             assistant_message_id=assistant_message_id,
             session_id=session_id if _workflow_preparation is not None else None,
             should_cancel=should_cancel,
-            loop=turn_lifeline.loop,
+            loop=turn_lifeline.loop if turn_lifeline is not None else None,
             native_tools=(
                 config.native_tools
                 and provider_supports_native_tools(
@@ -7904,6 +7912,8 @@ class ConsoleAgentBridge:
         # `turn_concurrent_subagent` and discloses the overlap rather than
         # implying sole authorship.
         concurrent_subagent = self._live_child_count(conversation_id) > 0
+        if _workflow_preparation is not None:
+            change_roots = ()
         if self._native_change_review_expected and change_roots:
             try:
                 native_source = self._change_review_native.capture(
@@ -8037,7 +8047,9 @@ class ConsoleAgentBridge:
         # accessor -- every test harness) builds the service exactly as
         # before: no PostToolUse dep, byte-identical run behavior.
         run_hooks_engine = (
-            self._ensure_run_hooks() if self._ensure_run_hooks is not None else None
+            self._ensure_run_hooks()
+            if _workflow_preparation is None and self._ensure_run_hooks is not None
+            else None
         )
         # A restriction-only guard sees every call, including Canvas tools
         # that intentionally skip interactive approval. The permission chain
@@ -8704,6 +8716,27 @@ class ConsoleAgentBridge:
             child_change_state=child_change_state,
             run_primary=run_primary,
         )
+        if _workflow_preparation is not None:
+
+            def no_launch_metadata_only():
+                from tldw_chatbook.Agents.local_tool_provider import LocalToolProvider
+
+                if (
+                    canvas_turn_controller is not None
+                    or managed_skill_promotion_gate is not None
+                    or raw_shell_progress_run_ids
+                    or primary_buddy_run_ids
+                    or tool_activity._rows
+                    or service.live_subagent_handles()
+                    or local_provider is not None
+                    and type(local_provider) is not LocalToolProvider
+                ):
+                    raise PermissionError(
+                        "workflow no-launch cleanup is not metadata only"
+                    )
+                _workflow_preparation.check_local_sources()
+
+            _workflow_preparation._no_launch_close_guard = no_launch_metadata_only
         try:
             yield prepared
         finally:
@@ -8769,7 +8802,8 @@ class ConsoleAgentBridge:
             # still running when this line executes keeps a live transport
             # to the model rather than losing one out from under it.
             try:
-                turn_lifeline.shutdown()
+                if turn_lifeline is not None:
+                    turn_lifeline.shutdown()
             finally:
                 if execution_owner is not None and ordinary_tree is None:
                     execution_owner.finish_root()

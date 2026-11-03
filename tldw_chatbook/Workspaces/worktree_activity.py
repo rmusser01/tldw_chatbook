@@ -200,6 +200,15 @@ class _ClaimState:
     members: dict[str, _OwnerState] = field(default_factory=dict)
 
 
+@dataclass(frozen=True, slots=True)
+class _WaveFence:
+    """Original window membership; ordering only, never filesystem authority."""
+
+    wave: object
+    footprint: WorktreeFootprint
+    members: tuple[object, ...]
+
+
 class WorktreeActivity:
     """One runtime's all-or-none reservation owner; never launches or waits."""
 
@@ -208,7 +217,66 @@ class WorktreeActivity:
         self._claims: dict[str, _ClaimState] = {}
         self._members: dict[str, _OwnerState] = {}
         self._recovery: dict[str, WorktreeFootprint] = {}
+        self._waves: dict[object, _WaveFence] = {}
+        self._ready_manual: set[object] = set()
         self._observers: set[Callable[[], None]] = set()
+
+    def _set_ready_manual(self, source: object, *, ready: bool) -> None:
+        """Publish the existing queue's body-free priority observation."""
+        with self._lock:
+            if ready:
+                self._ready_manual.add(source)
+            else:
+                self._ready_manual.discard(source)
+        if not ready:
+            self._notify_released()
+
+    def _open_wave(self, wave, footprint, members):
+        """Install ordering atomically against ordinary claim admission."""
+        from tldw_chatbook.Chat.console_workflow_wave import _WorkflowWave
+
+        if (
+            type(wave) is not _WorkflowWave
+            or wave.runtime.worktree_activity is not self
+        ):
+            raise ValueError("original workflow wave required")
+        wave.check_prepared_members(members)
+        fence = _WaveFence(wave, footprint, tuple(members))
+        with self._lock:
+            if wave in self._waves:
+                raise ValueError("workflow wave already opened")
+            if self._ready_manual or any(
+                footprint._conflicts(protected)
+                for protected in (
+                    *(state.footprint for state in self._claims.values()),
+                    *self._recovery.values(),
+                    *(item.footprint for item in self._waves.values()),
+                )
+            ):
+                return None
+            self._waves[wave] = fence
+        return fence
+
+    def _close_wave(self, fence):
+        """Retire only the exact original fence after its required disposition."""
+        with self._lock:
+            if self._waves.get(fence.wave) is not fence:
+                raise ValueError("original workflow fence required")
+            del self._waves[fence.wave]
+        self._notify_released()
+
+    @contextmanager
+    def _snapshot_prelaunch(self, source):
+        """Finite original jobs conflict physically without acquiring a tree lane."""
+        from .change_review_ownership import _SnapshotSource
+
+        if type(source) is not _SnapshotSource or source.issuer.activity is not self:
+            raise ValueError("original finite snapshot source required")
+        source.check_source()
+        with self._prelaunch(
+            footprint=WorktreeFootprint(opaque=True), snapshot_source=source
+        ) as claim:
+            yield claim
 
     def protect_recovery(self, workflow_id: str, footprint: WorktreeFootprint) -> None:
         """Retain startup uncertainty for this runtime; this only denies admission."""
@@ -251,7 +319,7 @@ class WorktreeActivity:
 
     @contextmanager
     def prelaunch(
-        self, *, footprint: WorktreeFootprint
+        self, *, footprint: WorktreeFootprint, _wave_member=None
     ) -> Iterator[WorktreeActivityClaim | None]:
         """Acquire before native capacity; unwind only a never-bound claim.
 
@@ -259,11 +327,21 @@ class WorktreeActivity:
         Capacity refusal or an exception before binding releases this reservation;
         any outcome after binding requires physical drain and durable settlement.
         """
+        with self._prelaunch(footprint=footprint, wave_member=_wave_member) as claim:
+            yield claim
+
+    @contextmanager
+    def _prelaunch(self, *, footprint, wave_member=None, snapshot_source=None):
         if not isinstance(footprint, WorktreeFootprint):
             raise TypeError("footprint must be a WorktreeFootprint")
         claim = WorktreeActivityClaim(uuid4().hex, self)
         with self._lock:
-            if any(
+            foreign_wave = snapshot_source is None and any(
+                footprint._conflicts(fence.footprint)
+                and not any(wave_member is member for member in fence.members)
+                for fence in self._waves.values()
+            )
+            if foreign_wave or any(
                 footprint._conflicts(protected)
                 for protected in (
                     *(s.footprint for s in self._claims.values()),
@@ -410,6 +488,42 @@ class WorktreeActivity:
             released = self._retire_if_settled(member.claim_id)
         if released:
             self._notify_released()
+
+    def _release_workflow_observation(self, ticket):
+        """Retire finite observation while the original window retains REQUIRED E."""
+        from .change_review_ownership import _SnapshotTicket
+
+        if type(ticket) is not _SnapshotTicket or ticket.claim is None:
+            raise ValueError("original snapshot observation required")
+        source = ticket.source
+        wave = source.workflow_wave
+        if (
+            wave is None
+            or wave.source is not source
+            or wave.publication is None
+            or wave.publication.reservation is not wave.reservation
+        ):
+            raise ValueError("original durable workflow window required")
+        with self._lock:
+            state = self._claims.get(ticket.claim.id)
+            member = state.members.get(ticket.claim.id) if state is not None else None
+            if (
+                self._waves.get(wave) is not wave.fence
+                or state is None
+                or state.custody is not ticket.claim
+                or member is None
+                or member.owner is not ticket.owner
+                or member.drained is not True
+                or not ticket._worker_returned
+                or not ticket._handoff_returned
+                or not ticket._observation_returned
+            ):
+                raise ValueError("original workflow observation return unproven")
+            # This finite claim has no required payload. The still-live fence
+            # above retains the distinct window's failed required publication.
+            del self._members[ticket.claim.id]
+            del self._claims[ticket.claim.id]
+        self._notify_released()
 
     def _retire_if_settled(self, claim_id: str) -> bool:
         state = self._claims[claim_id]

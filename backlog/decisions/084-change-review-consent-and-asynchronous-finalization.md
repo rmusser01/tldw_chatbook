@@ -305,3 +305,45 @@ and parent release. First-unsaved-turn borrowers consume the original launch key
 with the original store's committed durable identity mapping; saved rows keep real
 conversation IDs. Required bundles cannot wait behind their own held slots;
 original advisory omissions remain visible. No new consent, queue or journal.
+
+
+### Concurrent phase-wave capture (Task8D2; approved before behavior)
+
+ADR-285's concurrent phase-wave contract qualifies the existing coordinator.
+One real B/E covers each concurrently admitted eligible task set. Original
+WorktreeActivity membership orders claims and windows under the same mutex;
+finite snapshot jobs retain OPAQUE physical conflict without cross-root fence
+cycles. Earlier ordinary and ready manual work takes priority. Human consent and
+finite preparation precede the wave; committed child claims survive tool approval.
+
+The original coordinator issues an inert reservation before the workflow FULL
+active-window commit; only the same original reservation/source/receipt activates
+normal jobs afterward. B callback, handoff and physical return precede child
+writes. Bind the first actual committed member run, never a fake supervisor.
+Close E at actual quiescence before manual/capacity/human gaps; fresh B is required
+after intervening effects. No-commit races close an honest unused window.
+
+Workflow-only v28 window/ref records cover zero-row E, unused/no-run and late E
+without changing ordinary snapshot rows or immutable task checkpoint bytes.
+Publication atomically writes native rows and refs/disposition. A successful
+fallback discloses failure; both failures retain required window/phase/original
+source/storage/config/recovery protection and cannot acknowledge quality success.
+Conclusive finite observational return is distinct from required durable success;
+never label failed rows durable to release them. Unknown physical/source proof
+remains retained. E handoff failure preserves a previously conclusive B.
+
+Active/unresolved windows block pruning/removal despite review closure; settled
+refs persist until permitted payload removal. Original source counting extends
+through actual E/publisher/finish return. Native consent, exclusions, historical
+contents, helper qualification and confirmed Undo stay unchanged. Exact bounds,
+budget accounting, migration/catalog/archive/recovery and costs are recorded in
+[ADR-285](285-native-phased-agent-workflows.md#concurrent-phase-wave-capture-task8d2-approved-before-behavior).
+
+
+Task8 D2 close refinement (source-confirmed): workflow preparation must not allocate the unused primary model lifeline. Only `run_primary` starts it, and that entry refuses workflow dispatch; actual children retain their unchanged native child model lifelines. Launched-task native frame teardown returns under a pre-reserved operation on that same original child before its physical drain. A no-launch frame may retire only the source-verified empty display/maps and native provider unbind metadata; any unexpected effectful callback or changed cleanup source refuses, retaining its source lifetime. There is no fresh cleanup owner or OPAQUE claim against the wave, and no generic cleanup exemption.
+
+
+Task8 D2 required-reference count refinement: the v28 window records a bounded snapshot_count alongside the ONE normalized ref table: NULL while required E is pending/unresolved, 0..64 atomically with conclusive E rows/refs, and zero for unused/removed windows. This is the necessary count witness distinguishing a genuine successful zero-row E from missing required references during restore validation; it carries no second mapping or authority. It remains inside the existing 65536-byte reservation and does not change v25–v27 catalogs.
+
+
+Task8 D2 original native failure/host return refinement: a known failed native create/setup/thread start must finalize its original log and return its original frame under the pre-held close operation when no child thread was started. Unknown creation retains custody. Reserve one additional finite launch-host operation on the SAME child owner before dispatch callbacks, and finish it only after the original launch source/storage/execution scopes return; it prevents an early child or known failure root finish from releasing the original claim before host return. It adds one existing operation per admitted child, not an owner, scheduler or claim. Tool-worker automatic budget/authority checks must enter the existing owned_goal_storage scope before their first database read; the actual child model-loop coroutine must activate its exact original workflow source and owned_goal_storage before gateway checks. The unchanged original lifeline and pre-held child close/join retain protection through these real thread/source/storage returns. Live native archive evidence found AgentRunsDB leases on departed tool/model threads when those checks preceded the finite scopes; no cache reset or cross-thread close substitutes for their original return.

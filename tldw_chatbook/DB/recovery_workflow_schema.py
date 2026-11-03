@@ -110,6 +110,14 @@ def validate_workflow_rows(connection: sqlite3.Connection) -> tuple[str, ...]:
 
     if (
         connection.execute("SELECT MAX(version) FROM schema_version").fetchone()[0]
+        >= 28
+    ):
+        issues = _validate_workflow_windows(connection)
+        if issues:
+            return issues
+
+    if (
+        connection.execute("SELECT MAX(version) FROM schema_version").fetchone()[0]
         >= 27
     ):
         from tldw_chatbook.Agents.workflow_models import WorkflowCheckpoint
@@ -395,3 +403,111 @@ def workflow_checkpoint_catalog(catalog):
                 "SELECT sql FROM sqlite_master WHERE sql IS NOT NULL ORDER BY type,name"
             )
         )
+
+
+WORKFLOW_WINDOW_MIGRATION = (
+    "CREATE TABLE workflow_change_windows (\n    id TEXT PRIMARY KEY CHECK(length(CAST(id AS BLOB)) BETWEEN 1 AND 256),\n    workflow_id TEXT NOT NULL REFERENCES workflow_runs(id),\n    phase_attempt_id TEXT NOT NULL REFERENCES workflow_phase_attempts(id),\n    ordinal INTEGER NOT NULL CHECK(typeof(ordinal)='integer' AND ordinal BETWEEN 1 AND 64),\n    anchor_attempt_id TEXT REFERENCES workflow_task_attempts(id),\n    roots_json TEXT NOT NULL CHECK(length(CAST(roots_json AS BLOB)) <= 32768),\n    state TEXT NOT NULL CHECK(state IN ('active','unused','completed','disclosed_failure','unresolved','removed')),\n    baseline TEXT NOT NULL DEFAULT 'pending' CHECK(baseline IN ('pending','completed','disclosed_failure','unresolved')),\n    ending TEXT NOT NULL DEFAULT 'pending' CHECK(ending IN ('pending','completed','disclosed_failure','unresolved','unused')),\n    snapshot_count INTEGER CHECK(snapshot_count IS NULL OR (typeof(snapshot_count)='integer' AND snapshot_count BETWEEN 0 AND 64)),\n    reserved_bytes INTEGER NOT NULL CHECK(reserved_bytes IN (0,65536)),\n    UNIQUE(workflow_id, ordinal),\n    CHECK((state='removed' AND reserved_bytes=0 AND roots_json='[]') OR (state!='removed' AND reserved_bytes=65536)),\n    CHECK(state!='unused' OR (anchor_attempt_id IS NULL AND baseline='completed' AND ending='unused')),\n    CHECK(state!='completed' OR (anchor_attempt_id IS NOT NULL AND baseline='completed' AND ending='completed')),\n    CHECK(state NOT IN ('active','unresolved') OR ending IN ('pending','unresolved')),\n    CHECK((state IN ('active','unresolved') AND snapshot_count IS NULL) OR (state NOT IN ('active','unresolved') AND snapshot_count IS NOT NULL)),\n    CHECK(state NOT IN ('unused','removed') OR snapshot_count=0)\n)",
+    "CREATE TABLE workflow_change_window_refs (\n    window_id TEXT NOT NULL REFERENCES workflow_change_windows(id),\n    snapshot_id INTEGER NOT NULL UNIQUE REFERENCES change_snapshots(id),\n    PRIMARY KEY(window_id,snapshot_id)\n)",
+    "CREATE TRIGGER workflow_change_window_identity\nBEFORE UPDATE OF id,workflow_id,phase_attempt_id,ordinal ON workflow_change_windows\nBEGIN SELECT RAISE(ABORT, 'workflow window identity is immutable'); END",
+    "CREATE TRIGGER workflow_change_window_anchor\nBEFORE UPDATE OF anchor_attempt_id ON workflow_change_windows\nWHEN OLD.anchor_attempt_id IS NOT NULL AND NEW.anchor_attempt_id IS NOT OLD.anchor_attempt_id\nBEGIN SELECT RAISE(ABORT, 'workflow window anchor is immutable'); END",
+    "INSERT INTO schema_version(version) VALUES (28)",
+)
+
+
+def workflow_window_catalog(catalog):
+    """Apply the exact additive v28 catalog without opening captured paths."""
+    with sqlite3.connect(":memory:") as conn:
+        for sql in sorted(catalog, key=lambda sql: not sql.startswith("CREATE TABLE")):
+            if not sql.startswith("CREATE TABLE sqlite_sequence"):
+                conn.execute(sql)
+        for sql in WORKFLOW_WINDOW_MIGRATION:
+            conn.execute(sql)
+        return tuple(
+            row[0]
+            for row in conn.execute(
+                "SELECT sql FROM sqlite_master WHERE sql IS NOT NULL ORDER BY type,name"
+            )
+        )
+
+
+def _validate_workflow_windows(conn):
+    """Validate durable evidence only; restored IDs never mint live membership."""
+    import json
+
+    from .workflow_runs import WorkflowRunsStore
+
+    rows = conn.execute("SELECT * FROM workflow_change_windows")
+    columns = [column[0] for column in rows.description]
+    try:
+        if conn.execute(
+            "SELECT 1 FROM workflow_change_windows GROUP BY workflow_id HAVING COUNT(*)>64 LIMIT 1"
+        ).fetchone():
+            return ("invalid_workflow_window_bound",)
+        for values in rows:
+            window = dict(zip(columns, values))
+            phase = conn.execute(
+                "SELECT workflow_id,plan_revision,phase_id FROM workflow_phase_attempts WHERE id=?",
+                (window["phase_attempt_id"],),
+            ).fetchone()
+            if phase is None or phase[0] != window["workflow_id"]:
+                return ("invalid_workflow_window_phase",)
+            roots = json.loads(window["roots_json"])
+            if not isinstance(roots, list) or any(
+                not isinstance(root, str) for root in roots
+            ):
+                return ("invalid_workflow_window_roots",)
+            if window["state"] == "removed":
+                if (
+                    roots
+                    or window["reserved_bytes"]
+                    or conn.execute(
+                        "SELECT 1 FROM workflow_change_window_refs WHERE window_id=?",
+                        (window["id"],),
+                    ).fetchone()
+                ):
+                    return ("invalid_workflow_window_removal",)
+            else:
+                WorkflowRunsStore._window_roots(roots)
+            anchor = None
+            if window["anchor_attempt_id"] is not None:
+                anchor = conn.execute(
+                    "SELECT t.workflow_id,t.plan_revision,t.phase_id,t.run_id,c.phase_attempt_id FROM workflow_task_attempts t JOIN workflow_task_claims c ON c.task_attempt_id=t.id WHERE t.id=?",
+                    (window["anchor_attempt_id"],),
+                ).fetchone()
+                if (
+                    anchor is None
+                    or tuple(anchor[:3]) != tuple(phase)
+                    or anchor[3] is None
+                    or anchor[4] != window["phase_attempt_id"]
+                ):
+                    return ("invalid_workflow_window_anchor",)
+            refs = tuple(
+                conn.execute(
+                    "SELECT s.run_id,s.root FROM workflow_change_window_refs r LEFT JOIN change_snapshots s ON s.id=r.snapshot_id WHERE r.window_id=?",
+                    (window["id"],),
+                )
+            )
+            if (
+                len(refs) != (window["snapshot_count"] or 0)
+                or len(refs) > 64
+                or any(
+                    anchor is None or ref[0] != anchor[3] or ref[1] not in roots
+                    for ref in refs
+                )
+            ):
+                return ("invalid_workflow_window_refs",)
+            if refs and window["state"] not in {"completed", "disclosed_failure"}:
+                return ("invalid_workflow_window_disposition",)
+            if window["state"] == "disclosed_failure" and not (
+                window["baseline"] == "disclosed_failure"
+                and window["ending"] == "unused"
+                and anchor is None
+                and not refs
+                or anchor is not None
+                and window["ending"] == "disclosed_failure"
+                and window["baseline"] in {"completed", "disclosed_failure"}
+            ):
+                return ("invalid_workflow_window_disposition",)
+        return ()
+    except (ValueError, TypeError, KeyError):
+        return ("invalid_workflow_window",)

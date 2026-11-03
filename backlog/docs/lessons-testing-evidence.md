@@ -25023,3 +25023,16 @@ The affected selection later passed 424 cases and failed 196 existing local-prov
 **S review fix1, same task/date.** The source check pinned an executor's manager but missed the different manager actually read by its transport; independently imported payload/command aliases were also outside the check. Six real-model replacement controls entered those changed receiving sources. Two real-peer controls then replayed each actual `fs_read` admission frame under its original request ID: the generic response decoder accepted it, so local IO/STATUS return incorrectly retired the operation. Use the existing terminal-only parser for terminal proof, and qualify the concrete receiving references rather than an outer config alias. The first relay accidentally changed ping responses, which have no admission marker; those results were discarded as evidence, and genuine RED preserved ping before replaying the file request's actual admission. Corrected source/proof controls passed eight cases without a new protocol or owner.
 
 **S review fix2, same task/date.** Comparing `type(instance).master_manager` with a pinned property still invoked a replacement descriptor's class `__get__`. A real shared-model after-enqueue descriptor returned the original property for class access but a different manager for instance access; the replacement local SSH peer actually ran (RED1 in4.58s). Read the exact stock class dictionary entry as raw metadata for this identity check. Dynamic class lookup is not descriptor-free introspection; the first correction's six ordinary field/builder negatives did not exercise this case.
+
+## Constructor retirement does not prove later worker storage returned
+
+**TASK-38531 phase wave, 2026-11-03.** Two actual native children completed file
+edits, checkpoints and E, and the private App creator's retirement check passed.
+The subsequent real complete-profile capture still waited on six AgentRunsDB
+leases belonging to the two departed model loops and four tool threads. The
+creator check covered its original constructor resources, not stores opened by
+later authority/budget checks. Moving those original checks inside their existing
+owned storage/source scopes, while keeping the native async worker guard outside,
+allowed actual capture, isolated restore and rebackup. Do not infer global
+storage quiescence from a narrower lifecycle receipt; exercise the real consumer
+that requires all those original leases to return.

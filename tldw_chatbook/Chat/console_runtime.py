@@ -1115,6 +1115,9 @@ class ConsoleRuntime:
         # Metadata only: no source selected before this gate can race the
         # first-send write, and no owner or execution permission is created.
         self._first_send_sources = 0
+        self._workflow_preparations = set()
+        self._workflow_waves = {}
+        self._workflow_closing = False
         self._first_send_publishing = False
         self._first_send_task = None
         self._first_send_wakeup = None
@@ -5304,6 +5307,19 @@ class ConsoleRuntime:
                 self._change_revert_native = NativeUndoIssuer(self)
 
             def _publish_change_review(item: Any) -> None:
+                from tldw_chatbook.Workspaces.change_review_ownership import (
+                    native_snapshot_ticket,
+                )
+
+                ticket = native_snapshot_ticket()
+                wave = (
+                    getattr(ticket.source, "workflow_wave", None)
+                    if ticket is not None
+                    else None
+                )
+                if wave is not None:
+                    wave.publish(item)
+                    return
                 runs_db.record_change_snapshots_batch(
                     run_id=item.run_id,
                     records=[record.__dict__ for record in item.records],
@@ -6810,6 +6826,25 @@ class ConsoleRuntime:
         controller = self._chat_controller
         recovery_owner = None
         try:
+            # Native waves must finish their actual B/E and child/source tails
+            # before capacity and consent owners close. No new wave may enter.
+            self._workflow_closing = True
+            waves = tuple(self._workflow_waves)
+            for wave in waves:
+                wave.stopping.set()
+            wave_cancelled = False
+            for wave in waves:
+                if wave.driver is None:
+                    continue
+                while not wave.driver.done():
+                    try:
+                        await asyncio.shield(wave.driver)
+                    except asyncio.CancelledError:
+                        wave_cancelled = True
+                    except BaseException:  # noqa: BLE001 - original driver result retains failure custody
+                        break
+                if wave.driver.done() and not wave.driver.cancelled():
+                    wave.driver.exception()  # An unresolved required window stays retained.
             # Capture only the installed stock field; custom facade getters
             # and optional presentation methods remain outside this cleanup.
             try:
@@ -6827,6 +6862,8 @@ class ConsoleRuntime:
                 timeout_seconds=timeout_seconds,
                 _recovery_owner=recovery_owner,
             )
+            if wave_cancelled:
+                raise asyncio.CancelledError
         finally:
             cancelled = False
             cancelled |= await self._drain_change_review_initialization()

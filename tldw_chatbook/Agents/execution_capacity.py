@@ -172,6 +172,20 @@ class RuntimeCapacity:
             self._owners[owner.execution_id] = owner
             return owner
 
+    def _workflow_children_ready(self, count: int) -> bool:
+        """Observe an immediate native launch set; actual admission still decides."""
+        self._refresh_limits()
+        with self._lock:
+            children = tuple(owner for owner in self._owners.values() if owner.child)
+            automatic = sum(owner.origin is WorkOrigin.AUTOMATIC for owner in children)
+            return (
+                not self._closed
+                and count > 0
+                and len(children) + count <= self.max_child_executions
+                and automatic + count
+                <= self.max_child_executions - self.reserved_manual_children
+            )
+
     def close(self) -> None:
         """Close admission before shutdown drains existing operations."""
         with self._lock:

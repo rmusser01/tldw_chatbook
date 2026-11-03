@@ -31,6 +31,11 @@ def issuing_agent_sources(controller: object) -> Iterator[None]:
 def current_agent_sources(controller: object | None = None) -> _AgentSources | None:
     holder = _issuing.get()
     if holder is None or controller is not None and holder[0] is not controller:
+        from .console_workflow_preparation import current_workflow_preparation
+
+        prepared = current_workflow_preparation(controller)
+        if prepared is not None:
+            return prepared.source
         return None
     return holder[3]
 
@@ -187,6 +192,13 @@ class _AgentSources:
     def _check_original_bindings(self):
         tree = getattr(self, "ordinary_tree", None)
         retained = tree is not None and tree.has_admitted_members()
+        prepared = getattr(self, "workflow_preparation", None)
+        retained = retained or (
+            prepared is not None
+            and prepared.source is self
+            and prepared in self.runtime._workflow_preparations
+            and prepared._source_scope is not None
+        )
         if (
             self.controller._hooks_v2_runtime is not self.runtime
             or self.controller._agent_bridge is not self.bridge

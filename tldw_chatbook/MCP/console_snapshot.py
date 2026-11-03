@@ -492,6 +492,15 @@ class _CapturedSources:
 
             tree = current_ordinary_tree()
             ordinary = tree.source if tree is not None else None
+            if ordinary is None:
+                from tldw_chatbook.Chat.console_workflow_preparation import (
+                    current_workflow_preparation,
+                )
+
+                preparation = current_workflow_preparation()
+                if preparation is not None:
+                    preparation.borrow_preparation(preparation.runtime)
+                    ordinary = preparation.source
             if ordinary is not None:
                 ordinary.check_memory()
                 if (

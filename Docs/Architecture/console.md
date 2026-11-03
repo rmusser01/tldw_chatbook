@@ -443,9 +443,10 @@ startup instructions are read under the finite root claim, confirmed outside
 the claim, and revalidated before `_prepare_workflow_child` captures them.
 
 Each finite callback uses `run_preparation_read`, fresh owned database/activation
-scopes and an actual execution owner. The complete finite READ claim includes
-the selected root and metadata-derived external native shell sources consumed by
-predecessor review/freshness. It rechecks identities after acquisition and ends with the callback;
+scopes and an actual automatic execution owner with its reserved tool operation.
+Cold composition uses a conservative OPAQUE finite claim before constructors;
+it does not infer a bounded maximum from the requested task tools alone.
+It rechecks identities after acquisition and ends with the callback;
 later scheduling must batch eligible preparation before disjoint writes or
 derive narrower complete read scopes. Cancellation/profile shutdown waits for
 physical callback retirement. The returned original object must be retained
@@ -455,9 +456,28 @@ assert snapshot workers have drained. The existing gateway provider worker
 re-enters workflow activation through `worker_guard` using the original ledger
 and source while preserving native task/run ownership.
 
-This is an internal preparation slice. Capture-enabled task entry refuses until
-the phase snapshot window and its worker ownership are integrated; ordinary
-capture is unchanged. Final Task7 launch freshness reads now run under the actual
+`console_workflow_wave.run_workflow_wave` consumes a fixed set of these original
+preparations. It checks native capacity and complete task footprints, installs an
+ordering fence under the existing WorktreeActivity admission mutex, and publishes
+the required active window before activating the existing coordinator's B job.
+Actual B callback/handoff retirement precedes concurrent native child launch.
+The first committed member binds the durable anchor; no coordinator AgentRun is
+created. At quiescence each child drains and checkpoints before the same
+coordinator captures and publishes E. A later wave takes a fresh B, including
+intervening manual effects as its baseline. Original consent-disabled preparation
+keeps capture off. The public coordinator remains separate integration work.
+
+The fence grants no file access or capacity. Conflicting ordinary intake refuses
+before acquiring a physical claim, and the existing ready manual queue wins
+before a new wave. Finite snapshot jobs use the original native source and
+physical admission without becoming ordinary trees. Native model/tool workers,
+frame close, and launch return retain the original source and storage lifetime;
+the unused primary model loop is not constructed for workflow preparation.
+Required E failure retains the original window, fence and configuration source.
+An observational worker may retire after proven physical return even when both
+required publications fail; that does not make the missing E durable.
+
+Final Task7 launch freshness reads run under the actual
 native owner and complete host-only footprint before child row creation,
 dispatch or allowance commit (see [agent-runtime.md](./agent-runtime.md#native-workflow-admission-adr-285)).
 Human approval/review and phase settlement admission remain coordinator work. These private seams do not

@@ -5,7 +5,7 @@ from __future__ import annotations
 import hashlib
 import json
 import time
-from dataclasses import asdict
+from dataclasses import asdict, dataclass
 from typing import TYPE_CHECKING, get_args
 from uuid import uuid4
 
@@ -36,6 +36,12 @@ if TYPE_CHECKING:
 
 def _hash(payload: str) -> str:
     return hashlib.sha256(payload.encode()).hexdigest()
+
+
+@dataclass(frozen=True)
+class _WindowPublication:
+    store: object
+    reservation: object
 
 
 class WorkflowRunsStore:
@@ -74,6 +80,12 @@ class WorkflowRunsStore:
                 + (" AND workflow_id=?" if owner else ""),
                 (owner,) if owner else (),
             ).fetchone()[0]
+            if conn.execute("SELECT 1 FROM schema_version WHERE version=28").fetchone():
+                total += conn.execute(
+                    "SELECT COALESCE(SUM(reserved_bytes),0) FROM workflow_change_windows"
+                    + (" WHERE workflow_id=?" if owner else ""),
+                    (owner,) if owner else (),
+                ).fetchone()[0]
             # Planning needs private result capacity before its first provider call.
             if conn.execute("SELECT 1 FROM schema_version WHERE version=26").fetchone():
                 total += conn.execute(
@@ -563,7 +575,179 @@ class WorkflowRunsStore:
             return self._read_result(conn, workflow_id, attempt_id)
 
     @staticmethod
+    def _window_roots(roots):
+        roots = tuple(str(root) for root in roots)
+        payload = json.dumps(roots, ensure_ascii=False, separators=(",", ":"))
+        if (
+            not 1 <= len(roots) <= 64
+            or len(set(roots)) != len(roots)
+            or any(not root or len(root.encode()) > 4096 for root in roots)
+            or len(payload.encode()) > 32768
+        ):
+            raise ValueError("workflow_window_roots_bound")
+        return payload
+
+    def open_change_window(self, phase, reservation, roots):
+        """Commit the original inert reservation before its first native job."""
+        from tldw_chatbook.Workspaces.change_review_finalization import (
+            ChangeReviewReservation,
+        )
+
+        if type(reservation) is not ChangeReviewReservation:
+            raise TypeError("original change-review reservation required")
+        payload = self._window_roots(roots)
+        with self.db.automatic_work.transaction() as conn:
+            phase.check()
+            attempt = conn.execute(
+                "SELECT * FROM workflow_phase_attempts WHERE native_attempt_id=? AND workflow_id=?",
+                (phase.attempt.id, phase.attempt.workflow_id),
+            ).fetchone()
+            if attempt is None or attempt["status"] != "accepted":
+                raise ValueError("workflow_window_phase_required")
+            ordinal = conn.execute(
+                "SELECT COALESCE(MAX(ordinal),0)+1 FROM workflow_change_windows WHERE workflow_id=?",
+                (attempt["workflow_id"],),
+            ).fetchone()[0]
+            if ordinal > 64:
+                raise ValueError("workflow_window_count_bound")
+            self._capacity(conn, attempt["workflow_id"], 65536)
+            conn.execute(
+                "INSERT INTO workflow_change_windows(id,workflow_id,phase_attempt_id,ordinal,roots_json,state,reserved_bytes) VALUES (?,?,?,?,?,'active',65536)",
+                (
+                    reservation.id,
+                    attempt["workflow_id"],
+                    attempt["id"],
+                    ordinal,
+                    payload,
+                ),
+            )
+        return _WindowPublication(self, reservation)
+
+    def anchor_change_window(self, window_id, authorization, owner):
+        """Associate only an already committed original native member."""
+        from tldw_chatbook.Agents.execution_capacity import current_execution_owner
+
+        # bind_native runs before the model loop installs its run ContextVar.
+        # Its committed original owner and actual joined rows are the anchor.
+        authorization.check_preparation()
+        if (
+            not authorization._binding_state
+            or authorization._binding_state[0][0] is not owner
+            or current_execution_owner() is not owner
+            or owner.run_id != authorization.claim.launch_run_id
+        ):
+            raise ValueError("workflow_window_original_owner_required")
+        authorization._runtime.worktree_activity.validate_claim(
+            authorization._binding_state[0][1],
+            owner=owner,
+            footprint=authorization.physical_footprint,
+        )
+        with self.db.automatic_work.transaction() as conn:
+            window = conn.execute(
+                "SELECT w.*,p.native_attempt_id FROM workflow_change_windows w "
+                "JOIN workflow_phase_attempts p ON p.id=w.phase_attempt_id WHERE w.id=?",
+                (window_id,),
+            ).fetchone()
+            if (
+                window is None
+                or window["state"] != "active"
+                or window["workflow_id"] != authorization.claim.workflow_id
+                or window["native_attempt_id"] != authorization.claim.phase_attempt_id
+            ):
+                raise ValueError("workflow_window_member_required")
+            committed = conn.execute(
+                "SELECT t.run_id,t.status,r.status,a.state FROM workflow_task_attempts t "
+                "JOIN agent_runs r ON r.id=t.run_id "
+                "JOIN workflow_task_claims c ON c.task_attempt_id=t.id "
+                "JOIN automatic_work_reservations a ON a.id=c.child_reservation_id "
+                "WHERE t.id=? AND c.phase_attempt_id=?",
+                (authorization.claim.id, window["phase_attempt_id"]),
+            ).fetchone()
+            if committed is None or tuple(committed) != (
+                owner.run_id,
+                "accepted",
+                "running",
+                "committed",
+            ):
+                raise ValueError("workflow_window_committed_member_required")
+            conn.execute(
+                "UPDATE workflow_change_windows SET anchor_attempt_id=? WHERE id=? AND anchor_attempt_id IS NULL",
+                (authorization.claim.id, window_id),
+            )
+
+    def baseline_change_window(self, window_id, roots, disposition):
+        """Publish actual B disposition; B alone never settles an effects window."""
+        payload = self._window_roots(roots)
+        if disposition not in {"completed", "disclosed_failure", "unresolved"}:
+            raise ValueError("workflow_window_baseline_required")
+        with self.db.automatic_work.transaction() as conn:
+            if (
+                conn.execute(
+                    "UPDATE workflow_change_windows SET roots_json=?,baseline=? WHERE id=? AND state='active' AND baseline='pending'",
+                    (payload, disposition, window_id),
+                ).rowcount
+                != 1
+            ):
+                raise ValueError("workflow_window_baseline_conflict")
+
+    def unused_change_window(self, window_id):
+        """Close a conclusively returned B with no actually committed member."""
+        with self.db.automatic_work.transaction() as conn:
+            if (
+                conn.execute(
+                    "UPDATE workflow_change_windows SET state=CASE baseline WHEN 'completed' THEN 'unused' ELSE 'disclosed_failure' END,ending='unused',snapshot_count=0 "
+                    "WHERE id=? AND state='active' AND anchor_attempt_id IS NULL AND baseline IN ('completed','disclosed_failure')",
+                    (window_id,),
+                ).rowcount
+                != 1
+            ):
+                raise ValueError("workflow_window_not_unused")
+
+    def publish_change_window(self, window_id, *, run_id, records, kind):
+        """Atomically publish native E rows, one ref representation and disposition."""
+        records = tuple(records)
+        if len(records) > 64:
+            raise ValueError("workflow_window_refs_bound")
+        with self.db.automatic_work.transaction() as conn:
+            window = conn.execute(
+                "SELECT w.*,t.run_id FROM workflow_change_windows w LEFT JOIN workflow_task_attempts t ON t.id=w.anchor_attempt_id WHERE w.id=?",
+                (window_id,),
+            ).fetchone()
+            if (
+                window is None
+                or window["state"] != "active"
+                or window["run_id"] != run_id
+            ):
+                raise ValueError("workflow_window_anchor_required")
+            roots = set(json.loads(window["roots_json"]))
+            if any(str(record.get("root") or "") not in roots for record in records):
+                raise ValueError("workflow_window_foreign_root")
+            ids = self.db._insert_change_snapshots(
+                conn, run_id=run_id, records=records, kind=kind
+            )
+            conn.executemany(
+                "INSERT INTO workflow_change_window_refs VALUES (?,?)",
+                ((window_id, snapshot_id) for snapshot_id in ids),
+            )
+            failed = window["baseline"] != "completed" or any(
+                record.get("tracking_error") for record in records
+            )
+            disposition = "disclosed_failure" if failed else "completed"
+            conn.execute(
+                "UPDATE workflow_change_windows SET state=?,ending=?,snapshot_count=? WHERE id=?",
+                (disposition, disposition, len(ids), window_id),
+            )
+
+    @staticmethod
     def _active(conn, workflow_id):
+        if (
+            conn.execute("SELECT 1 FROM schema_version WHERE version=28").fetchone()
+            and conn.execute(
+                "SELECT 1 FROM workflow_change_windows WHERE workflow_id=? AND state IN ('active','unresolved') LIMIT 1",
+                (workflow_id,),
+            ).fetchone()
+        ):
+            return True
         return (
             conn.execute(
                 "SELECT 1 FROM workflow_task_attempts WHERE workflow_id=? AND (status IN ('prepared','accepted','uncertain') OR retirement!='drained') UNION ALL SELECT 1 FROM workflow_phase_attempts WHERE workflow_id=? AND (status IN ('prepared','accepted','uncertain') OR retirement!='drained') UNION ALL SELECT 1 FROM workflow_active_intervals WHERE workflow_id=? AND ended_at IS NULL LIMIT 1",
@@ -656,6 +840,14 @@ class WorkflowRunsStore:
             )
             conn.execute(
                 "UPDATE workflow_payload_reservations SET state='removed' WHERE workflow_id=?",
+                (workflow_id,),
+            )
+            conn.execute(
+                "DELETE FROM workflow_change_window_refs WHERE window_id IN (SELECT id FROM workflow_change_windows WHERE workflow_id=?)",
+                (workflow_id,),
+            )
+            conn.execute(
+                "UPDATE workflow_change_windows SET state='removed',roots_json='[]',reserved_bytes=0,snapshot_count=0 WHERE workflow_id=?",
                 (workflow_id,),
             )
             return self._snapshot(conn, self._row(conn, workflow_id))

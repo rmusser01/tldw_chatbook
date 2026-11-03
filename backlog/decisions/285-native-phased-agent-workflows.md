@@ -685,3 +685,118 @@ Ruling: WHAT: retain the same original tree source until native activation DB/ex
 FIX1 supersedes the earlier Stop semantic-successor implementation: source-closed deferred persistence makes its sole receipt producer unused. Remove paired snapshots, bootstrap receipt metadata and the private Stop finish/journal exception together; keep strict original activation and native config-function pins for the locked one-key mutation. Actual hook/worktree callbacks, storage checks and cleanup semantics remain. Replacement ordering is qualified by actual runtime survivor and held SubagentStop controls; the final native child tail beyond retained DB/execute scope is source-only implicit return/thread bookkeeping, not a universal OS-thread-join claim. ADR required: no new ADR; existing ADR-285.
 
 FIX2 ruling: WHAT — extend the same first-send metadata counter to exact original RawCLI and confirmed-Undo pending membership. Gate native capture before selecting generation, atomically overlap capture/admission with pending count, and release/wake only after original physical/required/host/operation-finish/storage/scratch/root/claim return. Gate only trusted RAW classification through the SAME captured draft commit/start; normal slash/unknown/escaped routes retain their existing availability. WHY — actual unchanged FIX1 native transaction hold admitted a RawCLI call with the old generation (RED1F12.63s, normal original cleanup), and the directly connected Undo source has the same generation-sensitive pending lifetime outside ordinary trees. COST — reuse one existing per-runtime metadata count; no new owner/claim/registry/poller/waiver or source adoption. Lost original membership keeps its count conservatively. Unadmitted Undo confirmation metadata may become stale between user actions and then refuses before effects. Model/Task7 RawCLI keeps its existing single operation/tree. ADR required: no new ADR; existing ADR-285. Source/caller/physical table: task-8d2-ordinary-integration-fix2-source.md.
+
+
+### Concurrent phase-wave capture (Task8D2; approved before behavior)
+
+One actual Change Review B/E window covers each concurrently admitted wave of an
+accepted phase. Complete human decisions and finite preparation before opening.
+The existing WorktreeActivity mutex atomically orders original wave fences and
+physical claim admission using immutable canonical/alias/nested/OPAQUE metadata.
+A fence is a denial/order restriction, never filesystem authority or a physical
+coordinator root claim. Exact original task/source objects supply membership;
+saved IDs and restored rows cannot recreate it. Earlier conflicting ordinary
+claims win; later conflicting ordinary/manual attempts use their existing visible
+busy/refusal or explicit queue path without consuming input. Ready manual work
+from the existing queue/custody notifications has priority before a fresh wave.
+Finite original snapshot jobs remain distinct from long-lived ordinary trees:
+OPAQUE physical conflict still applies, without cross-root metadata fence cycles.
+
+Reuse the existing ChangeReview coordinator, bounded workers, channels and lanes.
+Its original workflow source first receives a real inert reservation in a
+registering state. Persist that exact active-window identity in the existing FULL
+transaction outside activity/coordinator locks; only the same original
+reservation/source/publication receipt may then activate normal scheduling.
+No B/discovery enqueue may precede that durable handoff. After actual B callback,
+original baseline handoff and physical ticket return, genuinely independent
+eligible tasks launch through their existing native child services. Bind the
+first real committed member at WorkflowTaskAuthorization.bind_native, after the
+native row, original allowance commit and held owner/claim proof. No supervisor
+AgentRun, requested-ID anchor, per-task fictional diff or second executor exists.
+
+At actual quiescence, require native child drain and required checkpoint
+settlement, then close E before any human/capacity/manual gap. A no-commit race
+after B closes an honest unused window after actual observation drain. Reopening
+takes fresh B after intervening manual effects, never continuation(oldE).
+Committed child claims survive tool approval. Original runtime shutdown custody
+seals new waves and retains required E/source/storage/finish return before close.
+
+Finite native workflow preparation reuses its existing AUTOMATIC ExecutionOwner,
+adds its actual reserved tool operation, and acquires complete OPAQUE activity
+before source/catalog/client callbacks. The exact original preparation source and
+current native owner permit narrowly validated borrowing via the existing native
+producer paths; no fabricated _OrdinaryTurn or general registry is introduced.
+Original host handoff, source/storage/DB scopes and actual operation.finish RETURN
+precede root/claim retirement. Qualify actual native callable/spec/permission
+maximum with the existing ordinary source records and final invocation guards.
+Approved task restrictions can narrow native fs effects to their declared paths
+plus guidance/freshness reads. Unknown/custom handlers, selected MCP/raw/arbitrary
+effects retain existing OPAQUE/exclusive or refusal semantics; existing effectful
+hook and skill-script refusal stays policy. Never prune capabilities or alter
+permissions to manufacture concurrency. Cold source callbacks need the same
+complete native custody before construction.
+
+AgentRuns schema v28 adds workflow-only window identity/state and ONE normalized
+snapshot-reference representation. Maximums are 64 windows per workflow across
+revisions (ordinals never reused), 64 canonical roots per window, 4096 UTF-8 bytes
+per root, 32768 bytes of canonical root JSON, and 64 snapshot refs per window.
+Reserve 65536 bytes per window before B, counted by the existing 4 MiB/workflow and
+128 MiB aggregate payload limits; retained sidecar metadata must fit that slot.
+Keep it until permitted payload removal, then retain bounded identity/accounting
+tombstones. Discovery overflow is disclosed before B population/child effects;
+existing max_sub_roots and ordinary history are not silently changed. Native
+shadow contents retain their existing scan/retention policy.
+
+The original publisher atomically writes native snapshot rows, window refs and
+window disposition, including zero-row E. Active, unused, completed,
+disclosed_failure and unresolved states remain distinct. A first publication
+failure followed by successful original fallback records explicit failure.
+Both failures cannot acknowledge phase success: retain required durable window,
+phase, original source/storage/config and recovery protection. Conclusive finite
+observational callback/finish return is a separate fact, not durable=True for
+failed rows; unknown physical/source return remains retained. Preserve a
+conclusive B disposition when E handoff fails. Immutable task checkpoint bytes
+never change for late E; exact window identity supplies those refs. Active or
+unresolved windows block pruning/removal even after review closure. Settled refs
+remain until explicit permitted payload removal. Phase settlement and quality
+readiness require appropriate E disposition, not B alone.
+
+Update exact v28 constructor/file migration, installed recovery catalog/staging
+allowlist, canonical row/ownership/bound checks, actual complete-profile archive,
+restore/activation/rebackup and startup denial protection. Preserve historical
+catalogs and payload bytes. Restored sidecars are inert evidence, never live
+memberships. No separate export format or automatic recovery replay is added.
+
+Workflow config-sensitive capture uses the current first-send source/publication
+fence before selecting original identities. Finite pre-consent custody ends before
+the modal; stale unadmitted metadata refuses afterward without repinning. The
+approved prepared/wave lifetime overlaps its capture counter atomically and
+retains it until original task frames and E/publisher/source/storage/host/finish
+return. Unknown return retains the count. Release once from the exact original
+pending membership and wake the existing save; ordinary/RawCLI/Undo policy stays.
+
+Cost: finite preparation serialization, bounded extra snapshot/storage work and
+possible conservative refusal or retained uncertainty. This amends ADR-285 and
+ADR-084, not a new scheduler, permission grant, queue or optional feature. Full
+wave qualification requires real native concurrent tasks, manual races/fresh B,
+no-task races, alias/OPAQUE/cross-root ordering, held worker/publisher/finish,
+publication failures/empty/late E and actual retention/archive/recovery evidence.
+Task38531 remains In Progress; Task8E/F/G and WHOLE remain required.
+
+
+Task8 D2 close refinement (source-confirmed): workflow preparation must not allocate the unused primary model lifeline. Only `run_primary` starts it, and that entry refuses workflow dispatch; actual children retain their unchanged native child model lifelines. Launched-task native frame teardown returns under a pre-reserved operation on that same original child before its physical drain. A no-launch frame may retire only the source-verified empty display/maps and native provider unbind metadata; any unexpected effectful callback or changed cleanup source refuses, retaining its source lifetime. There is no fresh cleanup owner or OPAQUE claim against the wave, and no generic cleanup exemption.
+
+
+Task8 D2 hook construction refinement: the unchanged native workflow hook policy refuses configured effectful hooks and any existing legacy engine. `ConsoleAgentBridge._prepare_native_reply` must not invoke the ordinary lazy `ensure_run_hooks` constructor for an accepted workflow preparation after that check: it creates an otherwise unused engine even when unconfigured, invalidating its own preparation. Workflow child callbacks keep the captured absent engine; ordinary hooks and the original workflow refusal checks remain unchanged. This creates no newly supported hook execution.
+
+
+Task8 D2 existing-empty-hook refinement: an earlier ordinary send creates the original app-owned legacy engine even with no configured handlers. Its mere presence is not an effectful hook. Workflow preparation may recognize only that exact RunHooksEngine and its existing _NativeLegacyHookSource attachment, original runtime/permissions/callback identities, no pending custody, and no published targets, while the saved hook configuration has no enabled handlers. Reuse the issuer capture/check; never fire engine callbacks. Configured handlers, custom/replaced engines or changed sources remain refused. This enables fresh workflow B after an ordinary gap without enabling workflow hooks.
+
+
+Task8 D2 required-reference count refinement: the v28 window records a bounded snapshot_count alongside the ONE normalized ref table: NULL while required E is pending/unresolved, 0..64 atomically with conclusive E rows/refs, and zero for unused/removed windows. This is the necessary count witness distinguishing a genuine successful zero-row E from missing required references during restore validation; it carries no second mapping or authority. It remains inside the existing 65536-byte reservation and does not change v25–v27 catalogs.
+
+
+Task8 D2 original native failure/host return refinement: a known failed native create/setup/thread start must finalize its original log and return its original frame under the pre-held close operation when no child thread was started. Unknown creation retains custody. Reserve one additional finite launch-host operation on the SAME child owner before dispatch callbacks, and finish it only after the original launch source/storage/execution scopes return; it prevents an early child or known failure root finish from releasing the original claim before host return. It adds one existing operation per admitted child, not an owner, scheduler or claim. Tool-worker automatic budget/authority checks must enter the existing owned_goal_storage scope before their first database read; the actual child model-loop coroutine must activate its exact original workflow source and owned_goal_storage before gateway checks. The unchanged original lifeline and pre-held child close/join retain protection through these real thread/source/storage returns. Live native archive evidence found AgentRunsDB leases on departed tool/model threads when those checks preceded the finite scopes; no cache reset or cross-thread close substitutes for their original return.
+
+
+Task8 D2 approved owning-loop callback correction: the existing project-authority wrapper may invoke the SAME synchronous callback directly inside the original native Textual App context only when the captured dispatcher/context are original, current thread equals App._thread_id, and the actual running loop is App._loop. Worker callers continue through original App.call_from_thread; missing/mismatched loop or custom dispatcher/context preserves the existing route/refusal. This corrects the actual ordinary gap send reaching its authority callback on the UI thread without changing permission, source, recovery or activation checks; one positive native identity/thread/loop check, no replacement dispatcher or authority repin.

@@ -1533,7 +1533,7 @@ def _capture_maximum(tree):
     return WorktreeFootprint(tuple(reads), tuple(writes), opaque)
 
 
-def _capture_local_sources(tree, local):
+def _capture_native_local_sources(controller, local):
     """Pin concrete construction sources without constructing a provider/spec."""
     from inspect import getattr_static
 
@@ -1560,7 +1560,7 @@ def _capture_local_sources(tree, local):
         (local, "_NATIVE_WORKTREE_EFFECTS", local._NATIVE_WORKTREE_EFFECTS, None),
     ]
     for obj, definitions in (
-        (tree.controller, host._NATIVE_ORDINARY_COMPOSITION_METHODS),
+        (controller, host._NATIVE_ORDINARY_COMPOSITION_METHODS),
         (local.LocalToolProvider, local._ORDINARY_NATIVE_PROVIDER_METHODS),
     ):
         for name, original in definitions:
@@ -1594,7 +1594,7 @@ def _capture_local_sources(tree, local):
         *host._NATIVE_ORDINARY_COMPOSITION_FUNCTIONS,
     )
     native &= all(_function_unchanged(record) for record in records)
-    tree.local_function_values += tuple(
+    function_values = tuple(
         _function_record(function)
         for function in dict.fromkeys(
             (
@@ -1607,7 +1607,13 @@ def _capture_local_sources(tree, local):
             )
         )
     )
-    tree.local_source_values += tuple(values)
+    return native, tuple(values), function_values
+
+
+def _capture_local_sources(tree, local):
+    native, values, functions = _capture_native_local_sources(tree.controller, local)
+    tree.local_source_values += values
+    tree.local_function_values += functions
     return native
 
 

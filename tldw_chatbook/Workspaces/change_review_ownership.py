@@ -75,6 +75,7 @@ class _NativeSnapshotIssuer(_NativeReviewResources):
         roots,
         owner=None,
         claim=None,
+        workflow_wave=None,
     ):
         if (
             self.runtime._agent_bridge is not bridge
@@ -128,6 +129,7 @@ class _NativeSnapshotIssuer(_NativeReviewResources):
             owner,
             claim,
             tree,
+            workflow_wave=workflow_wave,
         )
         if tree is not None:
             source.prepare_ordinary()
@@ -150,6 +152,7 @@ class _SnapshotSource:
     owner: object = None
     claim: object = None
     ordinary_tree: object = None
+    workflow_wave: object = None
     _holds: dict = field(default_factory=dict, compare=False, repr=False)
     _holds_lock: object = field(default_factory=Lock, compare=False, repr=False)
     _closed: object = field(default_factory=Event, compare=False, repr=False)
@@ -212,6 +215,8 @@ class _SnapshotSource:
             ticket.returned(worker=True, handoff=True)
 
     def check_source(self):
+        if self.workflow_wave is not None:
+            self.workflow_wave.check_snapshot_source(self)
         if self.ordinary_tree is not None:
             self.ordinary_tree.check()
         runtime = self.issuer.runtime
@@ -302,7 +307,7 @@ class _SnapshotSource:
                 None,
                 publish=self.issuer.coordinator._publish,
             ), ""
-        with activity.prelaunch(footprint=WorktreeFootprint(opaque=True)) as claim:
+        with activity._snapshot_prelaunch(self) as claim:
             if claim is None:
                 return None, "activity"
             owner = capacity.begin_execution(
@@ -337,6 +342,8 @@ class _SnapshotTicket:
         self.retired = Event()
         self._worker_returned = self._handoff_returned = self._retired = False
         self._failed_write = False
+        self._workflow_completion = None
+        self._observation_returned = False
 
     @contextmanager
     def activate(self):
@@ -347,25 +354,41 @@ class _SnapshotTicket:
             finally:
                 _current_ticket.reset(token)
 
-    def returned(self, *, worker=False, handoff=False, durable=True):
+    def returned(
+        self, *, worker=False, handoff=False, durable=True, observation_returned=False
+    ):
         with self._lock:
             self._worker_returned |= worker
             self._handoff_returned |= handoff
+            self._observation_returned |= observation_returned
             self._failed_write |= not durable
             if (
                 self._retired
-                or self._failed_write
+                or (
+                    self._failed_write
+                    and not (
+                        self._observation_returned
+                        and getattr(self.source, "workflow_wave", None) is not None
+                    )
+                )
                 or not (self._worker_returned and self._handoff_returned)
             ):
                 return
             self._retired = True
         with self.activate():
             self.operation.finish()
-            if self.claim is not None:
-                # Availability callbacks inside finish must return before root drain.
-                self.owner.finish_root()
-                self.claim.settle(durable=True)
-            self.retired.set()
+        if self.claim is not None:
+            # Source/storage exits and availability callbacks inside finish
+            # must physically return before the finite claim can retire.
+            self.owner.finish_root()
+            if self._failed_write and self.source.workflow_wave is not None:
+                self.source.issuer.activity._release_workflow_observation(self)
+            else:
+                self.claim.settle(durable=not self._failed_write)
+        self.retired.set()
+        if self._workflow_completion is not None:
+            public, kind = self._workflow_completion
+            self.source.workflow_wave.snapshot_returned(public, kind, self)
 
 
 class _NativeInitializationIssuer(_NativeReviewResources):

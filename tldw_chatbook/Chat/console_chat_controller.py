@@ -39,6 +39,7 @@ from uuid import uuid4
 import weakref
 
 from loguru import logger
+from textual.app import App as _TextualApp
 from tldw_chatbook.Utils.input_validation import escape_markup
 
 from tldw_chatbook.Agents.approval_provenance import (
@@ -425,6 +426,13 @@ from tldw_chatbook.Chat.console_skill_resolver import (
     resolve_skill_command,
 )
 from tldw_chatbook.Chat.prompt_history import PromptHistory
+
+_NATIVE_TEXTUAL_DISPATCH = (
+    _TextualApp.call_from_thread,
+    _TextualApp.call_from_thread.__code__,
+    _TextualApp._context,
+    _TextualApp._context.__code__,
+)
 
 if TYPE_CHECKING:
     from .console_approval_feedback import ApprovalFeedbackStore
@@ -6054,6 +6062,23 @@ class ConsoleChatController:
         runtime = getattr(self, "_hooks_v2_runtime", None)
         if runtime is not None:
             runtime._wake_first_send()
+            activity = runtime.worktree_activity
+            if activity is not None:
+                from .console_prompt_queue import PromptQueueMode
+
+                queue = self.prompt_queue_coordinator
+                snapshot = queue._queue_snapshots.get(session_id)
+                activity._set_ready_manual(
+                    (queue, session_id),
+                    ready=bool(
+                        snapshot is not None
+                        and snapshot.total_count
+                        and snapshot.mode is not PromptQueueMode.PAUSED
+                        and not snapshot.closing
+                        and not queue._shutting_down
+                        and not queue._maintenance_paused
+                    ),
+                )
 
     def _lifecycle_revision_for(self, session_id: str | None) -> int:
         with self._lifecycle_revision_lock:
@@ -15960,9 +15985,24 @@ class ConsoleChatController:
 
         ordinary = current_ordinary_tree(self)
         if ordinary is None:
-            provider = await compose_run_mcp_provider(
-                service, uncomposed, local_kill_switch
-            )
+            from .console_workflow_preparation import current_workflow_preparation
+
+            preparation = current_workflow_preparation(self)
+            if preparation is None:
+                provider = await compose_run_mcp_provider(
+                    service, uncomposed, local_kill_switch
+                )
+            else:
+                operation = preparation.borrow_preparation(
+                    self._hooks_v2_runtime
+                ).reserve_tool()
+                with preparation.activate_source():
+                    try:
+                        provider = await compose_run_mcp_provider(
+                            service, uncomposed, local_kill_switch
+                        )
+                    finally:
+                        operation.finish()
         else:
             operation = ordinary.borrow(
                 self._hooks_v2_runtime, opaque=False

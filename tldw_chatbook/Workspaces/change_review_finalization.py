@@ -451,6 +451,9 @@ class ChangeReviewFinalizationCoordinator:
                 active_handle=handle,
                 roots=canonical,
                 sequence=self._next_sequence,
+                phase="registering"
+                if getattr(native_source, "workflow_wave", None) is not None
+                else "waiting",
             )
             self._next_sequence += 1
             self._states[reservation_id] = state
@@ -460,6 +463,34 @@ class ChangeReviewFinalizationCoordinator:
             self.publication_signal.admitted()
             self._schedule_ready_locked()
             return public
+
+    def _activate_workflow_reservation(self, reservation, source, publication):
+        """Activate the same inert native reservation after its FULL publication."""
+        from tldw_chatbook.DB.workflow_runs import _WindowPublication
+
+        wave = source.workflow_wave
+        if (
+            wave is None
+            or type(publication) is not _WindowPublication
+            or publication.reservation is not reservation
+            or publication is not wave.publication
+            or publication.store is not wave.service.db.workflow_runs
+            or source is not wave.source
+            or source.issuer is not self._native
+        ):
+            raise ValueError("original workflow window publication required")
+        source.check()
+        with self._lock:
+            state = self._states.get(reservation.id)
+            if (
+                state is None
+                or state.public is not reservation
+                or state.native_source is not source
+                or state.phase != "registering"
+            ):
+                raise ValueError("original inert workflow reservation required")
+            state.phase = "waiting"
+            self._schedule_ready_locked()
 
     def finalize(
         self,
@@ -1108,6 +1139,7 @@ class ChangeReviewFinalizationCoordinator:
 
     def _consume_operation_result(self, result: _OperationResult) -> None:
         ticket = result.ticket
+        handoff_returned = False
         with self._lock:
             state = self._states.get(result.reservation_id)
             public = state.public if state is not None else None
@@ -1117,7 +1149,28 @@ class ChangeReviewFinalizationCoordinator:
                     state.public._baseline_completion.ticket = ticket
         try:
             with ticket.activate() if ticket else nullcontext():
+                if (
+                    ticket is not None
+                    and ticket.source.workflow_wave is not None
+                    and result.kind == "discover"
+                ):
+                    try:
+                        ticket.source.workflow_wave.validate_discovered_roots(
+                            result.preparations
+                        )
+                    except ValueError:
+                        # No partial root set may become a successful B.
+                        error = "workflow snapshot root metadata exceeds its bound"
+                        result = replace(
+                            result,
+                            preparations=tuple(
+                                BaselineRootPreparation(root=root, tracking_error=error)
+                                for root in public._handle.roots
+                            ),
+                            error=error,
+                        )
                 self._consume_result(result)
+                handoff_returned = True
         except Exception:  # Scope admission must deliver a terminal handoff.
             if self._native is None:
                 raise
@@ -1132,19 +1185,23 @@ class ChangeReviewFinalizationCoordinator:
                     state.public._completion.disposition = (
                         ChangeReviewCompletion.UNRESOLVED
                     )
-                    state.public._baseline_completion.disposition = (
-                        ChangeReviewCompletion.UNRESOLVED
-                    )
+                    if result.kind in {"discover", "baseline"}:
+                        state.public._baseline_completion.disposition = (
+                            ChangeReviewCompletion.UNRESOLVED
+                        )
                     state.operation_inflight = False
                     self._complete_locked(state, published=False)
                     self._schedule_ready_locked()
         finally:
             if ticket:
+                if getattr(ticket.source, "workflow_wave", None) is not None:
+                    ticket._workflow_completion = (public, result.kind)
                 ticket.returned(
                     handoff=True,
                     durable=public is None
                     or public._completion.disposition
                     is not ChangeReviewCompletion.UNRESOLVED,
+                    observation_returned=handoff_returned,
                 )
             elif (
                 public is not None

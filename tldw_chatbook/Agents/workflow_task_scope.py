@@ -71,8 +71,29 @@ def _check_hooks(runtime, session_id: str) -> None:
         )
     if configured.enabled and (configured.hooks or configured.v2_handlers):
         _refuse("effectful_hooks_unsupported")
-    if getattr(runtime, "run_hooks_engine", None) is not None:
-        _refuse("effectful_hooks_unsupported")
+    engine = getattr(runtime, "run_hooks_engine", None)
+    if engine is not None:
+        from .legacy_hook_ownership import _NativeLegacyHookSource
+        from .run_hooks import RunHooksEngine
+
+        issuer = getattr(runtime, "_legacy_hooks_source", None)
+        if (
+            type(engine) is not RunHooksEngine
+            or type(issuer) is not _NativeLegacyHookSource
+            or issuer.engine is not engine
+            or issuer.runtime is not runtime
+            or not engine._native_attached
+            or issuer.cleanup_pending
+            or issuer.permissions._published_targets
+        ):
+            _refuse("effectful_hooks_unsupported")
+        try:
+            # capture checks its original source before extending the native
+            # execution observation. No hook callback is run in this scope.
+            with issuer.capture(session_id):
+                pass
+        except RuntimeError:
+            _refuse("effectful_hooks_unsupported")
     engines = getattr(runtime, "_hooks_v2_engines", {})
     engine = engines.get(session_id)
     if engine is not None and engine.definitions:
@@ -212,6 +233,9 @@ class WorkflowTaskAuthorization:
                 owner_id=self.claim.owner_id,
             )
             self._binding_state.append((owner, activity_claim))
+        prepared = self._bridge_preparation[0]
+        if prepared._wave is not None:
+            prepared._wave.bind_member(self, owner)
 
     def check(self) -> None:
         """Require the same live task, native run, owner and held activity claim."""

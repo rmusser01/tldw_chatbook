@@ -232,8 +232,7 @@ def chat_call_impl(
         call_signals = aggregate_signals.new_usage_call()
         gateway_signals = call_signals
 
-    @bridge.agent_async_worker_guard(self)
-    async def _consume() -> None:
+    async def _consume_body() -> None:
         nonlocal \
             any_streamed, \
             terminal_metadata, \
@@ -646,6 +645,23 @@ def chat_call_impl(
     # TURN's loop can no longer strand a child mid-call -- the case the
     # timeout above was the last line of defence against.
     from tldw_chatbook.Chat.stream_stall_watchdog import StreamStallError
+
+    from .console_workflow_preparation import current_workflow_preparation
+
+    workflow_preparation = current_workflow_preparation()
+
+    @bridge.agent_async_worker_guard(self)
+    async def _consume():
+        from tldw_chatbook.Agents.goal_storage_lifetime import owned_goal_storage
+
+        if workflow_preparation is None:
+            await _consume_body()
+        else:
+            with (
+                owned_goal_storage(workflow_preparation.service),
+                workflow_preparation.activate_source(),
+            ):
+                await _consume_body()
 
     future = bridge.asyncio.run_coroutine_threadsafe(_consume(), self._submit_loop)
     _stall_session_id = self._session_id or self._store.session_id_for_message(self._assistant_message_id)

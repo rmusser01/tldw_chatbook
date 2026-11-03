@@ -1653,6 +1653,12 @@ def require_prepared_skill_context(
     preparation = catalog.preparation
     runtime = getattr(creator, "_hooks_v2_runtime", None)
     record = getattr(runtime, "_turn_custody", {}).get(catalog.turn_id)
+    from .console_workflow_preparation import current_workflow_preparation
+
+    workflow = current_workflow_preparation(creator)
+    workflow_member = workflow is not None and workflow.accepts_skill_context(
+        prepared, selection
+    )
     if (
         type(preparation) is not ConsoleReceivedConfigurationPreparation
         or preparation.app is not app
@@ -1660,12 +1666,15 @@ def require_prepared_skill_context(
         or preparation.creator is not creator
         or catalog.session_id != session_id
         or catalog.skill_workspace_id != selection.skill_workspace_id
-        or record is None
-        or record.session_id != session_id
-        or record.received_intent is None
-        or record.received_intent.selection is not selection
-        or record.received_intent.turn_id != catalog.turn_id
-        or record.store is not store
+        or not workflow_member
+        and (
+            record is None
+            or record.session_id != session_id
+            or record.received_intent is None
+            or record.received_intent.selection is not selection
+            or record.received_intent.turn_id != catalog.turn_id
+            or record.store is not store
+        )
         or (prepared.trust_refs is None and prepared.maximum is not catalog.maximum)
     ):
         raise RecoveryRequired("console_snapshot_owner_changed")
@@ -2255,15 +2264,24 @@ def original_mcp_capture_matches(
             record = controller._hooks_v2_runtime._turn_custody.get(
                 prepared.catalog.turn_id
             )
-            if record is None or record.received_intent is None:
-                return False
+            from .console_workflow_preparation import current_workflow_preparation
+
+            workflow = current_workflow_preparation(controller)
+            if workflow is not None and workflow.accepts_skill_context(
+                prepared, workflow._configuration_selection
+            ):
+                selection = workflow._configuration_selection
+            else:
+                if record is None or record.received_intent is None:
+                    return False
+                selection = record.received_intent.selection
             unused_trust = require_prepared_skill_context(
                 prepared,
                 app,
                 store,
                 controller,
                 session_id=session.id,
-                selection=record.received_intent.selection,
+                selection=selection,
             )
         current_refs = _source_references(
             app, store, controller, session, _unused_trust=unused_trust

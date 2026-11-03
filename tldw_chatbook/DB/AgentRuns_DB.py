@@ -334,7 +334,7 @@ class AgentRunsDB(SQLiteStoreKernel, BaseDB):
     # to v21 and chains after v20. The guarded ALTERs below are idempotent
     # either way, and the from-now-on contract only requires the constant to
     # equal the HIGHEST recorded version.
-    _CURRENT_SCHEMA_VERSION = 27
+    _CURRENT_SCHEMA_VERSION = 28
     _swept_paths: set[str] = set()  # DB files already reconciled this process
 
     #: BaseDB-provenance (ADR-353): connections open through BaseDB's
@@ -923,6 +923,24 @@ class AgentRunsDB(SQLiteStoreKernel, BaseDB):
                 finally:
                     conn.execute(f"PRAGMA synchronous={previous_sync}")
 
+            if not conn.execute(
+                "SELECT 1 FROM schema_version WHERE version=28"
+            ).fetchone():
+                from .recovery_workflow_schema import WORKFLOW_WINDOW_MIGRATION
+
+                previous_sync = int(conn.execute("PRAGMA synchronous").fetchone()[0])
+                conn.execute("PRAGMA synchronous=FULL")
+                try:
+                    conn.execute("BEGIN IMMEDIATE")
+                    for statement in WORKFLOW_WINDOW_MIGRATION:
+                        conn.execute(statement)
+                    conn.commit()
+                except BaseException:
+                    conn.rollback()
+                    raise
+                finally:
+                    conn.execute(f"PRAGMA synchronous={previous_sync}")
+
             # Keep the (write-only, audit) version table in step with the
             # DDL -- append-per-version, matching the INSERT OR IGNORE
             # convention above (UPDATE would collide on the UNIQUE column
@@ -1303,34 +1321,38 @@ class AgentRunsDB(SQLiteStoreKernel, BaseDB):
         """Atomically record every root row for one completed review window."""
         if not records:
             return
-        created_at = _now_iso()
         with self.transaction() as conn:
-            conn.executemany(
-                """
-                INSERT INTO change_snapshots
-                    (run_id, root, baseline_sha, end_sha, files_changed,
-                     adds, dels, tracking_error, untracked_oversize,
-                     nested_repos, kind, created_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                """,
-                tuple(
-                    (
-                        run_id,
-                        str(record.get("root") or ""),
-                        str(record.get("baseline_sha") or ""),
-                        str(record.get("end_sha") or ""),
-                        int(record.get("files_changed") or 0),
-                        int(record.get("adds") or 0),
-                        int(record.get("dels") or 0),
-                        str(record.get("tracking_error") or ""),
-                        int(record.get("untracked_oversize") or 0),
-                        json.dumps(list(record.get("nested_repos") or ())),
-                        kind,
-                        created_at,
-                    )
-                    for record in records
+            self._insert_change_snapshots(
+                conn, run_id=run_id, records=records, kind=kind
+            )
+
+    @staticmethod
+    def _insert_change_snapshots(conn, *, run_id, records, kind):
+        """Use the caller's transaction, including required workflow disclosure."""
+        created_at = _now_iso()
+        ids = []
+        for record in records:
+            cursor = conn.execute(
+                "INSERT INTO change_snapshots "
+                "(run_id,root,baseline_sha,end_sha,files_changed,adds,dels,tracking_error,"
+                "untracked_oversize,nested_repos,kind,created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
+                (
+                    run_id,
+                    str(record.get("root") or ""),
+                    str(record.get("baseline_sha") or ""),
+                    str(record.get("end_sha") or ""),
+                    int(record.get("files_changed") or 0),
+                    int(record.get("adds") or 0),
+                    int(record.get("dels") or 0),
+                    str(record.get("tracking_error") or ""),
+                    int(record.get("untracked_oversize") or 0),
+                    json.dumps(list(record.get("nested_repos") or ())),
+                    kind,
+                    created_at,
                 ),
             )
+            ids.append(cursor.lastrowid)
+        return ids
 
     def delete_change_snapshots_older_than(self, cutoff_iso: str) -> int:
         """Delete snapshot rows created before ``cutoff_iso`` (TASK-1975).
@@ -1347,7 +1369,8 @@ class AgentRunsDB(SQLiteStoreKernel, BaseDB):
                 "DELETE FROM change_snapshots WHERE created_at < ? "
                 "AND NOT EXISTS (SELECT 1 FROM workflow_task_attempts t "
                 "WHERE t.run_id=change_snapshots.run_id AND (t.retirement!='drained' "
-                "OR EXISTS (SELECT 1 FROM workflow_checkpoints c WHERE c.attempt_id=t.id)))",
+                "OR EXISTS (SELECT 1 FROM workflow_checkpoints c WHERE c.attempt_id=t.id))) "
+                "AND NOT EXISTS (SELECT 1 FROM workflow_change_window_refs r WHERE r.snapshot_id=change_snapshots.id)",
                 (cutoff_iso,),
             )
             return int(cur.rowcount or 0)

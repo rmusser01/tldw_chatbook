@@ -1621,6 +1621,11 @@ class AutomaticWorkLedger:
             (current_owner_id,),
         ).fetchall()
         for phase in candidates:
+            if conn.execute(
+                "SELECT 1 FROM workflow_change_windows WHERE phase_attempt_id=? AND state IN ('active','unresolved') LIMIT 1",
+                (phase["phase_row"],),
+            ).fetchone():
+                continue
             if phase["state"] == "accepted" and phase["retirement"] != "drained":
                 continue
             if conn.execute(
@@ -2575,6 +2580,10 @@ class AutomaticWorkLedger:
         )
         return (
             unsettled
+            or conn.execute(
+                "SELECT 1 FROM workflow_change_windows WHERE phase_attempt_id=? AND state IN ('active','unresolved','disclosed_failure') LIMIT 1",
+                (phase["id"],),
+            ).fetchone()
             or conn.execute(
                 "SELECT 1 FROM automatic_work_reservations r "
                 "JOIN automatic_work_chains c ON c.id=r.chain_id "
