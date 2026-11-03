@@ -1,10 +1,10 @@
 ---
 id: TASK-36523
 title: css/main.tcss imports two deleted sheets and CSS-MODULAR.md describes a CSS build the app no longer has
-status: In Progress
+status: Done
 assignee:
 - '@claude'
-updated_date: 2026-11-03 08:05
+updated_date: 2026-11-03 08:09
 created_date: 2026-10-24 00:26
 labels:
 - follow-up
@@ -43,7 +43,6 @@ Correction (2026-11-03): there is a startup rebuild. It lives in `tldw_chatbook/
 - [x] #1 No .tcss file in the tree imports a sheet that does not exist, and main.tcss is either removed together with its test reference or marked as not loaded by the app
 - [x] #2 CSS-MODULAR.md describes how the app's CSS is built and loaded today, including how the bundle is regenerated and checked (preflight)
 - [x] #3 The CSS build's own messages and helper scripts describe the current build: no stale app.py instruction, no timestamp claim the bundle header no longer carries, and no helper that runs an interpreter below the project's Python floor
-- [ ] #4 No stylesheet under tldw_chatbook/css is left that no build input or loader reads
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -59,7 +58,7 @@ Correction (2026-11-03): there is a startup rebuild. It lives in `tldw_chatbook/
 8. `build_css.sh` is referenced by `Docs/Development` pages, so keep it. Make it run an interpreter at or above the 3.12 floor (`$PYTHON`, then the repo `.venv`), as `CSS-MODULAR.md` says, and mention it there.
 9. (Review round.) Fix the review's four minor issues: the comment-stripping and cascade-order wording in `CSS-MODULAR.md`; the drift message, split enumeration and "exact" wording in `check_bundle_sync.py`; the stale `widget_css.py` docstring (and `_get_default_css`'s); `build_css.sh`'s `cd` before a relative `$PYTHON`.
 10. Replace the guard with a stronger one: no `.tcss` under the package contains `@import`. Show it red with a temporary file.
-11. AC #4: sweep the stylesheets under `css/` against every loader and build input. Delete the ones nothing reads, or stop and report any that something still references.
+11. Sweep the stylesheets under `css/` against every loader and build input. Delete the ones nothing reads, or stop and report any that something still references. (This step was briefly a fourth criterion, which the coordinator dropped after the sweep.)
 <!-- SECTION:PLAN:END -->
 
 ## Implementation Notes
@@ -73,7 +72,15 @@ Deleted `css/main.tcss` and its one test reference, and rewrote `CSS-MODULAR.md`
 - **Build text (AC #3).** `build_css.py` `main()` no longer says "Update app.py to use 'tldw_cli_modular.tcss'"; it says to commit the regenerated sheets and run preflight. Its module docstring now lists the split sheets as well. `check_bundle_sync.py`'s docstrings no longer claim a `Generated:` timestamp (the header has read `Generated: deterministic` since 38ab1fc57e) or that only two sheets are checked. No test pinned the old strings, and no behaviour changed.
 - **`build_css.sh` (AC #3).** It is still referenced by three `Docs/Development` pages and historical plans, so it is kept. It ran a bare `python3`, which is the system 3.9 on macOS. It now uses `$PYTHON` when set, else the first of `.venv/bin/python`, `python3`, `python3.14`, `python3.13` and `python3.12` that meets the 3.12 floor, and it works from any directory. Checked: `PYTHON=/usr/bin/python3` (3.9.6) is refused with exit 1; the default chain rebuilds with no change to the committed sheets. `CSS-MODULAR.md` documents it.
 - **Review round (4 minor issues).** `CSS-MODULAR.md` now says that only the bundle and the widget-defaults and screen sheets strip comments, since the split sheets keep theirs, and that the `CSS_MODULES` order is only broadly core-to-utilities, since `components/_settings_personal_context.tcss` sits before `features/_settings.tcss` for the Settings split. In `check_bundle_sync.py`, the drift and success messages now name each sheet's own sources (the `.tcss` modules for split sheets, the `BUNDLED_CSS`/`BUNDLED_SCREEN_CSS` declarations for the others). It no longer lists three of the ten split sheets, and it says the comparison is exact apart from the blanked `Generated:` line. The `widget_css.py` docstring and `_get_default_css`'s docstring now describe `widget_defaults_{self,scoped}.tcss` and `screen_css_{scoped,self}.tcss` as they are loaded today; these are docstring-only changes, and `app.py`'s line count is unchanged. `build_css.sh` no longer runs `cd`, so a relative `$PYTHON` resolves from the caller's directory. Checked: the repro `cd tldw_chatbook && PYTHON=../../../../.venv/bin/python ../build_css.sh` fails with the old script (exit 1) and builds with the new one. The new script also built when called through a script path and a `$PYTHON` path that both contain spaces, and still refused a 3.9 `$PYTHON`.
-- **AC #4 not met: stopped as instructed.** The sweep compared every tracked `.tcss`/`.css` under `css/` with `CSS_MODULES`, the split modules and sheets, the four boot sheets (`CSS_PATH` and `_get_default_css`), and any path string under `tldw_chatbook/` and `Tests/` (`_SCREEN_OWNED_ROUTE_CSS` and screen/modal `CSS_PATH`s name only generated split sheets). Three sheets are outside the build. `Themes/theme_tester.tcss` is loaded by the standalone `ThemeDemoApp` (`css/Themes/theme_tester.py` `CSS_PATH`), so a loader does read it. `features/_new_ingest.tcss` and `features/_chatbooks_improved.tcss` are loaded by nothing in the app, but tests read them as fixtures. `_new_ingest.tcss` is read by `Tests/UI/test_non_obscuring_focus_contract.py` (`NEW_INGEST`; the `SOURCE_ONLY_CSS_MODULES` not-in-bundle contract; `test_new_ingest_focus_overrides_defer_to_shared_contracts`; `test_new_ingest_drop_zone_active_state_is_readable`) and listed in `Tests/UI/test_design_token_governance.py` `_LEGACY_SHEETS`. `_chatbooks_improved.tcss` is read by `test_non_obscuring_focus_contract.py` (`CHATBOOKS_IMPROVED`, `test_chatbooks_search_input_focus_uses_stable_thin_contracts`), listed in `_LEGACY_SHEETS`, and named in a comment in `UI/Chatbooks_Window_Improved.py:332`. Nothing was deleted. Deleting them needs a decision on those tests (PR #3342 also edits `test_non_obscuring_focus_contract.py`).
+- **Unloaded-sheet sweep (criterion dropped).** I compared every tracked `.tcss`/`.css` under `css/` with `CSS_MODULES`, the split modules and sheets, the boot sheets (`CSS_PATH` and `_get_default_css`), `_SCREEN_OWNED_ROUTE_CSS`, the screen and modal `CSS_PATH`s, and any path string under `tldw_chatbook/` and `Tests/`. Three sheets are outside the build:
+
+  | Sheet | What reads it |
+  |---|---|
+  | `Themes/theme_tester.tcss` | The standalone `ThemeDemoApp` (`css/Themes/theme_tester.py`, `CSS_PATH`) |
+  | `features/_new_ingest.tcss` | Nothing in the app. `Tests/UI/test_non_obscuring_focus_contract.py` (the `SOURCE_ONLY_CSS_MODULES` not-in-bundle contract and two `test_new_ingest_*` cases) and `_LEGACY_SHEETS` in `Tests/UI/test_design_token_governance.py` |
+  | `features/_chatbooks_improved.tcss` | Nothing in the app. `test_non_obscuring_focus_contract.py` (`test_chatbooks_search_input_focus_uses_stable_thin_contracts`), `_LEGACY_SHEETS`, and a comment in `UI/Chatbooks_Window_Improved.py` |
+
+  `_new_ingest.tcss` and `_chatbooks_improved.tcss` stay, because tests pin them as legacy sheets, and draft PR #3342 also edits the focus-contract file. The coordinator dropped the fourth criterion, and will file retiring the two sheets with their contract tests as a follow-up after #3342 lands.
 - **Checks.** `./scripts/preflight.sh` passed after every change. `Tests/Architecture/test_module_size_ratchet.py` (serial) gave 201 passed. Final covering run with `-n 4` (load average about 26): `test_css_staleness_manifest`, `test_css_bundle_sync_guard`, `test_css_build_integrity`, `test_css_generated_comments`, `test_widget_css_consolidation`, `test_component_pattern_governance`, `test_design_token_governance` and `test_notes_unsaved_indicator_removed` gave 357 passed and 2 failed. The same command at dev base `66155632ed` gave 356 passed and the same 2 failed, with the same messages. One is `test_app_boots_after_removal` (RecoveryRequired `raw_source_selection_changed`). The other is `test_widget_css_consolidation.py::test_base_class_blocks_precede_their_subclasses` (`[scoped] BaseAppScreen is a base of KanbanBoardScreen but is emitted after it`), which no PR lane runs. Earlier rounds: `test_boot_css_byte_budget` and `test_non_obscuring_focus_contract` gave 1 passed and 98 setup RecoveryRequired errors, identical at dev.
 - **Files.** `tldw_chatbook/css/main.tcss` (deleted), `tldw_chatbook/css/CSS-MODULAR.md`, `tldw_chatbook/css/build_css.py`, `tldw_chatbook/css/check_bundle_sync.py`, `tldw_chatbook/css/widget_css.py`, `tldw_chatbook/app.py` (docstring), `build_css.sh`, `Tests/UI/test_master_shell_design_system_contract.py`, `Tests/UI/test_css_staleness_manifest.py`.
 <!-- SECTION:NOTES:END -->
