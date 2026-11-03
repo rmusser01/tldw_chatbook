@@ -72,8 +72,10 @@ class ProviderRecord:
             list the record feeds.
         api_key_env_var: Conventional credential environment variable, or
             ``None`` when the provider has none.
-        api_key_env_candidates: Full env-candidate chain (configured name
-            first, then canonical) the engine's credential resolution walks.
+        api_key_env_candidates: Env-candidate chain (configured name first,
+            then canonical). The cloud-live capture harness walks it; the
+            engine resolves keys through readiness (ADR-012, TASK-36941.3),
+            which reads ``api_key_env_var``.
         default_base_url: Shipped base URL fallback, or ``None`` when the
             host is per-account (Databricks) or per-entry (custom family).
         native_tools: Whether the provider's chat path advertises native
