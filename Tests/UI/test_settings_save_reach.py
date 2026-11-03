@@ -664,3 +664,75 @@ async def test_a_blank_chats_settings_draft_survives_its_own_credential_save(
         assert returned._current_model_value() == "gpt-4.1"
         assert returned.query_one("#console-settings-temperature", Input).value == "0.9"
         assert set(returned._unsaved_field_labels()) >= {"Temperature"}
+
+
+def test_a_held_settings_revision_spans_only_convergence(monkeypatch):
+    """TASK-36534: ``settings_revision_held`` accepts a suspended draft's
+    revision only while saved-default convergence alone moved the chat since:
+    at the run's start, inside it and at its end. An edit made elsewhere ends
+    the run, so a revision before it never holds again, even after the next
+    convergence."""
+    from types import SimpleNamespace
+
+    import tldw_chatbook.UI.Console_Modules.session as session_module
+    from tldw_chatbook.Chat.console_chat_store import ConsoleChatStore
+    from tldw_chatbook.Chat.console_context_policy import (
+        ConsoleContextPolicyOverrides,
+        ContextCompactionMode,
+    )
+    from tldw_chatbook.Chat.console_session_settings import ConsoleSessionSettings
+    from tldw_chatbook.UI.Console_Modules.session import (
+        ConsoleSessionController,
+        settings_revision_held,
+    )
+
+    store = ConsoleChatStore()
+    unused = ConsoleSessionSettings(provider="openai", model="gpt-4o-mini")
+    chat = store.create_session(settings=unused, canonical_settings_baseline=unused).id
+    controller = SimpleNamespace(
+        _screen=SimpleNamespace(),
+        _console_new_chat_default_generation=lambda: 0,
+        _provider_readiness_app_config=dict,  # a new mapping per read
+        _pristine_defaults_checked=None,
+        _default_convergences={},
+        _notify_stale_default_provider_swap=lambda *_args: None,
+    )
+
+    def converge(model: str) -> None:
+        monkeypatch.setattr(
+            session_module,
+            "blank_console_session_settings",
+            lambda _config: ConsoleSessionSettings(provider="openai", model=model),
+        )
+        session = next(s for s in store.sessions() if s.id == chat)
+        ConsoleSessionController._maybe_refresh_stale_default_console_settings(
+            controller, store, session
+        )
+        assert store.session_settings(chat).model == model
+
+    def held(revision: int) -> bool:
+        return settings_revision_held(controller, store, chat, revision)
+
+    start = store.session_settings_revision(chat)
+    assert held(start) and not held(start + 1)
+    converge("gpt-4o")
+    converge("gpt-4.1")
+    assert [held(start + step) for step in range(4)] == [True, True, True, False]
+
+    store.set_session_context_policy_overrides(  # the same chat, edited elsewhere
+        chat, ConsoleContextPolicyOverrides(compaction_mode=ContextCompactionMode.ASK)
+    )
+    edited = store.session_settings_revision(chat)
+    assert edited == start + 3
+    assert [held(start + step) for step in range(4)] == [False, False, False, True]
+
+    converge("gpt-5")
+    assert [held(start + step) for step in range(5)] == [
+        False,
+        False,
+        False,
+        True,
+        True,
+    ]
+    assert settings_revision_held(None, store, chat, edited + 1)
+    assert not settings_revision_held(None, store, chat, edited)
