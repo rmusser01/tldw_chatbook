@@ -436,7 +436,7 @@ async def test_a_cold_refresh_that_returns_early_still_converges_the_controls(
         )
         real_settings = store.session_settings
         real_handoff = console._session._maybe_refresh_stale_default_console_settings
-        real_request = console._request_console_control_bar_sync
+        real_set_timer = console.set_timer
         real_publish = console._sync_native_console_chat_ui
 
         def settings(target):
@@ -451,10 +451,10 @@ async def test_a_cold_refresh_that_returns_early_still_converges_the_controls(
                 identity_moved.append(True)
             return real_handoff(*args, **kwargs)
 
-        def request(**kwargs):
+        def set_timer(*args, **kwargs):
             if sys._getframe(1).f_code.co_name == "_refresh":
                 requests.append(("retry", state["disposed"]))
-            return real_request(**kwargs)
+            return real_set_timer(*args, **kwargs)
 
         def publish(*args, **kwargs):
             if sys._getframe(1).f_code.co_name == "_refresh":
@@ -473,7 +473,7 @@ async def test_a_cold_refresh_that_returns_early_still_converges_the_controls(
         monkeypatch.setattr(
             console._session, "_maybe_refresh_stale_default_console_settings", handoff
         )
-        monkeypatch.setattr(console, "_request_console_control_bar_sync", request)
+        monkeypatch.setattr(console, "set_timer", set_timer)
         monkeypatch.setattr(console, "_sync_native_console_chat_ui", publish)
 
         composer.load_draft("describe this")
@@ -530,7 +530,7 @@ async def test_a_cold_refresh_that_returns_early_still_converges_the_controls(
             if path == "disposed":
                 # Disposed after the worker was scheduled, before it entered.
                 state["disposed"] = True
-                # A retry would be asked for in the step that clears pending.
+                # A retry would be scheduled in the step that clears pending.
                 await settled()
                 assert requests == [], "a disposed runtime scheduled more work"
                 state["disposed"] = False

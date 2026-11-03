@@ -44,6 +44,7 @@ def _screen(monkeypatch):
         run_worker=schedule,
         _sync_native_console_chat_ui=refresh,
         _request_console_control_bar_sync=lambda **_: None,
+        set_timer=lambda *_args, **_kwargs: None,
     )
 
     @contextmanager
@@ -839,9 +840,9 @@ async def test_closed_readiness_owner_never_reads_or_publishes(monkeypatch, clos
     screen, _owner, _identity, tasks, published = _screen(monkeypatch)
     entered, release = threading.Event(), threading.Event()
     reads, retries = [], []
-    # TASK-38649: a refresh that publishes nothing asks for a retry, but
+    # TASK-38649: a refresh that publishes nothing schedules a retry, but
     # never for a closing screen.
-    screen._request_console_control_bar_sync = lambda **kwargs: retries.append(kwargs)
+    screen.set_timer = lambda *args, **_kwargs: retries.append(args)
 
     def read():
         reads.append(True)
@@ -870,6 +871,58 @@ async def test_closed_readiness_owner_never_reads_or_publishes(monkeypatch, clos
     finally:
         release.set()
         await asyncio.gather(*tasks, return_exceptions=True)
+
+
+@pytest.mark.asyncio
+async def test_a_failing_cold_refresh_backs_off_and_a_publish_resets_it(monkeypatch):
+    """TASK-38649 review: a lasting refusal must not cost a read every 0.2 s.
+
+    The fake's retry re-enters ``run`` as the screen's coalesced control-bar
+    sync does, so each retry starts the next native read.
+    """
+    screen, _owner, _identity, tasks, _published = _screen(monkeypatch)
+    loop = asyncio.get_running_loop()
+    delays, timers, reads, failing = [], [], [], [True]
+
+    def set_timer(delay, callback):
+        delays.append(delay)
+        timers.append(loop.call_later(delay, callback))
+
+    def read():
+        reads.append(True)
+        if failing[0]:
+            raise RuntimeError("persistent refusal")
+        return _read_result({"read": len(reads)})
+
+    projection = spend.ConsoleReadinessConfigProjection(screen, read_current=read)
+    screen.set_timer = set_timer
+    screen._request_console_control_bar_sync = lambda **_: projection.run(lambda: None)
+
+    async def drain():
+        while not all(task.done() for task in tasks):
+            await asyncio.gather(*tasks, return_exceptions=True)
+        for timer in timers:
+            timer.cancel()
+
+    try:
+        assert projection.run(lambda: None) is False
+        await asyncio.sleep(2.5)
+        # A fixed 0.2 s retry reads about twelve times here; doubling, four.
+        assert 2 <= len(reads) <= 5, len(reads)
+        assert delays == [min(0.2 * 2**index, 5.0) for index in range(len(delays))]
+        await drain()
+        failing[0] = False
+        assert projection.run(lambda: None) is False
+        await drain()
+        assert projection.value == {"read": len(reads)}
+        # The same owner fails again: the publish reset its delay.
+        failing[0] = True
+        projection.at -= projection.max_age + 1
+        assert projection.run(lambda: None) is True
+        await drain()
+        assert delays[-1] == 0.2, delays
+    finally:
+        await drain()
 
 
 @pytest.mark.asyncio

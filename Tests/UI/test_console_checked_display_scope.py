@@ -32,6 +32,7 @@ def _screen(tmp_path):
         ChatScreen._provider_readiness_app_config, screen
     )
     screen._request_console_control_bar_sync = lambda **_: None
+    screen.set_timer = lambda *_args, **_kwargs: None  # TASK-38649 retry timer
     return database, store, controller, screen, tasks
 
 
