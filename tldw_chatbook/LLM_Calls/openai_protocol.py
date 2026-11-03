@@ -79,7 +79,11 @@ def _responses_stream_to_chat_sse(response, *, model: str):
     completion_id = f"chatcmpl-openai-responses-{_owner.time.time_ns()}"
     created_ts = int(_owner.time.time())
     try:
-        for raw_line in response.iter_lines(decode_unicode=True):
+        # TASK-38589: iterate BYTES and decode UTF-8 explicitly. The previous
+        # ``decode_unicode=True`` header-charset decode (ISO-8859-1 when the
+        # endpoint omits ``charset=utf-8``) mojibake-ed non-ASCII text before
+        # the defensive bytes branch below could ever run.
+        for raw_line in response.iter_lines():
             line = (
                 raw_line.decode("utf-8")
                 if isinstance(raw_line, bytes)
