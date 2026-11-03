@@ -1092,6 +1092,26 @@ def live_config_read_is_cold(screen: Any) -> bool:
     )
 
 
+def defer_cold_live_read(screen: Any, owner: str) -> bool:
+    """Whether ``owner`` defers its live read once for a cold config (TASK-36511).
+
+    An unparseable config.toml never installs either cache, so config can stay
+    cold for good: deferring every cold read replayed an idle Console 5 times a
+    second. Each owner defers once per cold episode; its next call reads live,
+    as before, and only a warm read ends the episode.
+    """
+    deferred = getattr(screen, "_console_cold_read_deferrals", None)
+    if deferred is None:
+        deferred = screen._console_cold_read_deferrals = set()
+    if not live_config_read_is_cold(screen):
+        deferred.discard(owner)
+        return False
+    if owner in deferred:
+        return False
+    deferred.add(owner)
+    return True
+
+
 def retry_after_config_rebuild(function: Callable) -> Callable:
     """Retry a screen refresh shortly while a config rebuild holds a cold cache.
 
@@ -1100,8 +1120,10 @@ def retry_after_config_rebuild(function: Callable) -> Callable:
     loop. While ``config_read_would_wait()`` the call runs 0.2 s later instead,
     once per refresh; the latest call's arguments win.
 
-    TASK-36511: a cold cache defers too, and the readiness projection warms it
-    off the loop; the identity refresh rebuilt config on the UI loop (80 ms).
+    TASK-36511: a cold cache defers too, once per cold episode, and the
+    readiness projection warms it off the loop; the identity refresh rebuilt
+    config on the UI loop (80 ms). The retry after that deferral runs even if
+    config is still cold.
     """
 
     @wraps(function)
@@ -1119,7 +1141,7 @@ def retry_after_config_rebuild(function: Callable) -> Callable:
                         break
                     acquired.callback(lock.release)
                 else:
-                    if not live_config_read_is_cold(screen):
+                    if not defer_cold_live_read(screen, function.__name__):
                         if pending is not None:
                             pending.pop(function.__name__, None)
                         return function(screen, *args, **kwargs)

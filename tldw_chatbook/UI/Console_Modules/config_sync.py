@@ -190,14 +190,15 @@ def sync_console_core_state(screen) -> None:
     this pass still runs. Otherwise it is the same live read a send's own push
     makes (``_ensure_console_chat_controller``).
 
-    TASK-36511: the push now holds both config locks, and replays when a live
-    read would be cold. A worker read that took the locks after the old
+    TASK-36511: the push now holds both config locks, and replays once when a
+    live read would be cold. A worker read that took the locks after the old
     would-wait probe held the UI loop 238 ms; a cold read rebuilt config on it.
-    The replayed pass pushes after its preparation warmed config off-loop.
+    The replayed pass pushes after its preparation warmed config off-loop, and
+    pushes live if config is still cold (an unparseable file stays cold).
     """
     from tldw_chatbook import config
 
-    from .console_spend_projection import live_config_read_is_cold
+    from .console_spend_projection import defer_cold_live_read
 
     with ExitStack() as held:
         for lock in (config._settings_rebuild_lock(), config._config_file_lock()):
@@ -205,7 +206,7 @@ def sync_console_core_state(screen) -> None:
                 break
             held.callback(lock.release)
         else:
-            if not live_config_read_is_cold(screen):
+            if not defer_cold_live_read(screen, "sync_console_core_state"):
                 screen._sync_console_chat_core_state()
                 return
     replay_whole_console_sync(screen)

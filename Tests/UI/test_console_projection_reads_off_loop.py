@@ -28,6 +28,7 @@ import threading
 
 import pytest
 
+from Tests.private_profile import private_profile_test
 from Tests.UI.test_console_config_sync_cadence import _install_clock
 from Tests.UI.test_console_send_acknowledgement import (
     build,
@@ -420,6 +421,17 @@ def test_the_core_state_push_never_waits_for_or_rebuilds_config(monkeypatch):
     assert screen.pushes == 1, "the push would rebuild config on the UI loop"
     assert screen.replays == [True, True]
 
+    # An unparseable config.toml stays cold for good: one deferral per episode.
+    config_sync.sync_console_core_state(screen)  # The replay pushes live.
+    assert screen.pushes == 2, "a still-cold replay deferred again (replay loop)"
+    config_sync.sync_console_core_state(screen)  # Same episode: no new replay.
+    assert screen.pushes == 3 and screen.replays == [True, True]
+    warm["settings"] = {}
+    config_sync.sync_console_core_state(screen)  # A warm push ends the episode,
+    warm["settings"] = None
+    config_sync.sync_console_core_state(screen)  # so a later cold one defers once.
+    assert screen.pushes == 4 and screen.replays == [True, True, True]
+
 
 def test_a_mount_refresh_defers_a_cold_live_read_and_warms_it_off_the_loop(monkeypatch):
     """TASK-36511: ``retry_after_config_rebuild`` defers while a live read is cold.
@@ -465,3 +477,116 @@ def test_a_mount_refresh_defers_a_cold_live_read_and_warms_it_off_the_loop(monke
     warm["settings"] = {}  # The projection's off-loop read warmed it.
     timers.pop()()
     assert calls == [True] and not timers
+
+    # An unparseable config.toml stays cold for good: one deferral per episode.
+    warm["settings"] = None
+    refresh(screen)
+    assert calls == [True] and len(timers) == 1 and kicked == [screen] * 2
+    timers.pop()()  # The retry runs although config is still cold,
+    assert calls == [True] * 2, "a still-cold retry deferred again (retry chain)"
+    refresh(screen)  # and so does any later call in the same cold episode.
+    assert calls == [True] * 3 and not timers and kicked == [screen] * 2
+
+
+class _UiLoopStarts:
+    """Count starts of named code objects on the UI loop's thread (observed only).
+
+    A coroutine's frame reports "call" again at every resume, so a start is a
+    frame not seen before. Each name maps to ``(code, caller code or None)``.
+    """
+
+    def __init__(self, **codes):
+        self._codes = codes
+        self._frames: list = []
+        self.counts = dict.fromkeys(codes, 0)
+
+    def __enter__(self):
+        self._previous = sys.getprofile()
+
+        def observe(frame, event, _argument):
+            if event != "call":
+                return
+            for name, (code, caller) in self._codes.items():
+                if frame.f_code is not code:
+                    continue
+                if caller is not None and frame.f_back.f_code is not caller:
+                    continue
+                if not any(frame is seen for seen in self._frames):
+                    self._frames.append(frame)
+                    self.counts[name] += 1
+
+        sys.setprofile(observe)  # This thread only: the UI loop's.
+        return self
+
+    def __exit__(self, *_exc):
+        sys.setprofile(self._previous)
+        self._frames.clear()
+
+    def take(self) -> dict:
+        counts, self.counts = self.counts, dict.fromkeys(self.counts, 0)
+        return counts
+
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_an_unparseable_config_leaves_an_idle_console_idle(request):
+    """TASK-36511 review: a config that stays cold never replays the Console in a loop.
+
+    An unparseable config.toml installs neither config cache, so a live read
+    stays cold for good. Deferring every cold read replayed the idle Console
+    5 full syncs a second (26 cold core-state reads a second) and re-armed the
+    identity refresh every 0.2 s without running it. Each owner now defers
+    once per cold episode: the core-state push and the identity refresh run
+    within one replay or retry, and the idle Console goes quiet again.
+    """
+    from tldw_chatbook import config
+    from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
+
+    host, gateway, _timeline = build()
+    async with host.run_test(size=(160, 45)) as pilot:
+        with eager_tasks():
+            console, _composer = await ready_console(host, pilot, gateway)
+            assert console._console_config_snapshot_is_disk_loaded(
+                console.app_instance.app_config
+            )
+            path = config._get_effective_config_path()  # This child's own profile.
+            original = path.read_bytes()
+            await pilot.pause(1.0)
+            starts = _UiLoopStarts(
+                full_sync=(ChatScreen._sync_native_console_chat_ui.__code__, None),
+                core_push=(
+                    ChatScreen._sync_console_chat_core_state.__code__,
+                    config_sync.sync_console_core_state.__code__,
+                ),
+                identity=(
+                    ChatScreen._sync_console_identity_surfaces.__wrapped__.__code__,
+                    None,
+                ),
+            )
+            with starts:
+                await pilot.pause(2.0)
+                idle = starts.take()
+                path.write_bytes(original + b"\n[unterminated\n")
+                try:
+                    await asyncio.to_thread(config.load_settings, True)
+                    assert config._settings_cache_hit(path) is None
+                    starts.take()
+                    console.run_worker(
+                        console._sync_native_console_chat_ui(),
+                        exclusive=True,
+                        group="console-sync",
+                    )
+                    console._sync_console_identity_surfaces()
+                    await pilot.pause(1.0)
+                    first = starts.take()
+                    await pilot.pause(2.0)
+                    later = starts.take()
+                finally:
+                    path.write_bytes(original)
+                    await asyncio.to_thread(config.load_settings, True)
+    assert first["core_push"] >= 1, f"the full sync never pushed: {first}"
+    assert first["identity"] >= 1, f"the identity refresh never ran: {first}"
+    assert later["full_sync"] <= idle["full_sync"] + 1, (
+        f"the idle Console kept replaying: idle {idle}, cold config {later}"
+    )
+
