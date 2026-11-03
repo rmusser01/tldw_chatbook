@@ -62,6 +62,12 @@ from tldw_chatbook.Widgets.Library.notes_recovery_dialog import NotesRecoveryDia
 from tldw_chatbook.Widgets.Persona_Widgets.buddy_management_modal import (
     BuddyManagementModal,
 )
+from tldw_chatbook.Widgets.Persona_Widgets.portrait_composition_review import (
+    PortraitCompositionReview,
+)
+from tldw_chatbook.Widgets.Persona_Widgets.portrait_region_editor import (
+    PortraitRegionEditor,
+)
 from tldw_chatbook.Widgets.template_selector import TemplateSelectorDialog
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -460,6 +466,27 @@ def _build_template_selector_modal(_app: object) -> TemplateSelectorDialog:
     return TemplateSelectorDialog()
 
 
+# The portrait dialogs' artwork jobs only run while ``is_current`` says so;
+# False keeps them idle, and geometry needs no frames or source pixels.
+def _build_portrait_pairs_modal(_app: object) -> PortraitCompositionReview:
+    return PortraitCompositionReview((), None, lambda: False)  # type: ignore[arg-type]
+
+
+def _build_portrait_regions_modal(_app: object) -> PortraitRegionEditor:
+    async def save(_recipe: object) -> bool:
+        return False
+
+    return PortraitRegionEditor(
+        b"",
+        width=64,
+        height=64,
+        pixel_sha256="",
+        recipe=None,
+        save=save,
+        is_current=lambda: False,
+    )
+
+
 #: One representative per cap tier: anchor -> (cap, base width rule).
 #: Base geometry is pinned here so the tier provably leaves it untouched:
 #: prompts ``90% / 104``, system prompt ``84 / 95%``, reaction ``76 / 100%``.
@@ -473,6 +500,7 @@ def _build_template_selector_modal(_app: object) -> TemplateSelectorDialog:
 #: ``#prompt-collection-manager`` fixed ``96``, 150;
 #: ``TemplateSelectorDialog .template-selector-dialog`` (base rule shipped
 #: with wave 2) ``95% / 76``, 120.
+#: TASK-38641: the two portrait dialogs, base ``120 / 100%``, cap 170.
 SPOT_REPRESENTATIVES: dict[str, tuple[int, tuple[int, int | None]]] = {
     WIDE_TIER_CAPS[170]: (170, (104, 90)),  # base max-width, base percent
     WIDE_TIER_CAPS[150]: (150, (84, 95)),
@@ -484,6 +512,8 @@ SPOT_REPRESENTATIVES: dict[str, tuple[int, tuple[int, int | None]]] = {
     "ChatbookTemplatesWindow > Container": (170, (100, 80)),
     "#prompt-collection-manager": (150, (96, None)),
     "TemplateSelectorDialog .template-selector-dialog": (120, (76, 95)),
+    ".portrait-pairs-dialog": (170, (120, 100)),
+    ".portrait-regions-dialog": (170, (120, 100)),
 }
 SPOT_BUILDERS = {
     WIDE_TIER_CAPS[170]: _build_prompts_modal,
@@ -496,7 +526,14 @@ SPOT_BUILDERS = {
     "ChatbookTemplatesWindow > Container": _build_chatbook_templates_modal,
     "#prompt-collection-manager": _build_prompt_collection_modal,
     "TemplateSelectorDialog .template-selector-dialog": _build_template_selector_modal,
+    ".portrait-pairs-dialog": _build_portrait_pairs_modal,
+    ".portrait-regions-dialog": _build_portrait_regions_modal,
 }
+
+#: TASK-38641: the portrait dialogs are also measured at the full-screen sizes
+#: the app runs at, and one column under the breakpoint, where their 120-column
+#: base rule (not the viewport) sets the width.
+PORTRAIT_SPOT_SIZES = ((211, 44), (235, 52), (149, 44))
 
 
 def _expected_base_width(
@@ -512,6 +549,11 @@ def _expected_base_width(
     (
         *[(anchor, (200, 50)) for anchor in SPOT_REPRESENTATIVES],
         *[(anchor, (120, 40)) for anchor in SPOT_REPRESENTATIVES],
+        *[
+            (anchor, size)
+            for anchor in (".portrait-pairs-dialog", ".portrait-regions-dialog")
+            for size in PORTRAIT_SPOT_SIZES
+        ],
     ),
     ids=lambda value: value[1:] if isinstance(value, str) else f"{value[0]}x{value[1]}",
 )

@@ -123,10 +123,6 @@ MODAL_WIDE_TIER_SKIPPED: dict[str, str] = {
     "FileNotesHistoryDialog": "File Notes history (base width 90) -- follow-up wave",
     "WorkflowRunConfirmation": "workflow run confirm (base 90% / 100) -- follow-up wave",
     "WorkflowRunSetup": "workflow run setup (base 90% / 100) -- follow-up wave",
-    # -- added on dev after that triage, found by the sweep at the 2026-10-30
-    # re-sync (TASK-36382) --
-    "PortraitCompositionReview": "portrait composition review (base width 120) -- follow-up wave",
-    "PortraitRegionEditor": "portrait region editor (base width 120) -- follow-up wave",
 }
 
 #: Whole modules whose ModalScreen subclasses are all outside the tier:
@@ -229,6 +225,18 @@ MODAL_WIDE_TIER: tuple[tuple[str, int, str], ...] = (
         "UI/ChatbookExportManagementWindow.py",
     ),
     ("ChatbookTemplatesWindow > Container", 170, "UI/ChatbookTemplatesWindow.py"),
+    # cap 170 -- TASK-38641: the portrait dialogs (base 120), which the
+    # 2026-10-30 re-sync (TASK-36382) had skipped as a follow-up wave
+    (
+        ".portrait-pairs-dialog",
+        170,
+        "Widgets/Persona_Widgets/portrait_composition_review.py",
+    ),
+    (
+        ".portrait-regions-dialog",
+        170,
+        "Widgets/Persona_Widgets/portrait_region_editor.py",
+    ),
     # cap 150 -- base width 84-96
     ("#personal-context-review-modal", 150, "css/components/_profile_interview.tcss"),
     ("#console-scope-picker-modal", 150, "css/features/_console_panels.tcss"),
