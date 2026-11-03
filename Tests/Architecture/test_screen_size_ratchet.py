@@ -322,16 +322,10 @@ _BUDGETS: dict[str, tuple[str, int, int]] = {
     #: The cascade's local helper is +17 lines, 7 of them its comment.
     #: Dev 18482c1cf7 measures 24590/741; with the fix, 24613/741.
     # TASK-36534, 2026-11-03: size waiver (owner rule: a fix over a size ratchet
-    # raises the row with a dated comment); +8, the return's two revision checks
-    # call Console_Modules/session.py's settings_revision_held. Exact measurement.
-    # call Console_Modules/session.py's settings_revision_held; review round,
-    # +9: Chat settings reopens on followed_suspended_draft. Exact measurement.
-    # call Console_Modules/session.py's settings_revision_held; review rounds,
-    # +23: Chat settings reopens on followed_suspended_draft, read after its
-    # context preparation with the modal's committed values. Exact measurement.
-    # +21: Chat settings reopens on followed_suspended_draft, read after its
-    # context preparation, and refuses a follow the chat moved past while its
-    # models were listed (re-read at construction). Exact measurement.
+    # raises the row with a dated comment). The return's revision checks call
+    # settings_revision_held; Chat settings reopens on followed_suspended_draft,
+    # read after context preparation and re-read at construction. On dev
+    # with TASK-38650's row, exact measurement.
     "tldw_chatbook/UI/Screens/chat_screen.py": ("ChatScreen", 24601, 741),
     #: Added 2026-09 by the Library decomposition plan (PR 0b): this row was
     #: missing for the entire month in which library_screen.py tripled from
