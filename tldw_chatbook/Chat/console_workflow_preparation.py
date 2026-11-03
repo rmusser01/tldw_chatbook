@@ -415,6 +415,8 @@ class _PreparedWorkflowReply:
             )
             or any(
                 vars(readers).get(name) is not record[0]
+                or name == "resolve_workspace_path"
+                and vars(native).get(name) is not record[0]
                 or not _function_unchanged(record)
                 for name, record in readers._NATIVE_PLANNING_READERS
             )

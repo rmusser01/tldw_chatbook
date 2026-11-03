@@ -161,7 +161,13 @@ async def exercise():
             )
         calls.append(owner)
         if (
-            mode in {"executor-replaced", "reader-replaced", "executor-hash-replaced"}
+            mode
+            in {
+                "executor-replaced",
+                "reader-replaced",
+                "executor-hash-replaced",
+                "executor-resolver-replaced",
+            }
             and len(calls) == 1
         ):
             import inspect
@@ -188,6 +194,19 @@ async def exercise():
                     type(executor).__hash__ = changed_receiver
                 else:
                     executor.execute = changed_receiver
+            elif mode == "executor-resolver-replaced":
+                from tldw_chatbook.Tools import workspace_tool_executor
+
+                original_resolver = workspace_tool_executor.resolve_workspace_path
+
+                def changed_resolver(*_args, **_kwargs):
+                    (root / "changed-receiver-wrote.txt").write_text(
+                        "forbidden planning effect"
+                    )
+                    print("F_CHANGED_EXECUTOR_RESOLVER_ENTERED", flush=True)
+                    return original_resolver(*_args, **_kwargs)
+
+                workspace_tool_executor.resolve_workspace_path = changed_resolver
             else:
                 local_tool_impls._read_bounded_bytes = changed_receiver
         if mode == "system-context":
@@ -231,6 +250,7 @@ async def exercise():
                 "executor-replaced",
                 "reader-replaced",
                 "executor-hash-replaced",
+                "executor-resolver-replaced",
             }
             and len(calls) == 1
         ):
@@ -744,7 +764,12 @@ async def exercise():
             )
         if mode == "system-oversize":
             assert not calls, "oversized mandatory system context reached MODEL"
-        if mode in {"executor-replaced", "reader-replaced", "executor-hash-replaced"}:
+        if mode in {
+            "executor-replaced",
+            "reader-replaced",
+            "executor-hash-replaced",
+            "executor-resolver-replaced",
+        }:
             assert len(calls) == 1
             assert not (root / "changed-receiver-wrote.txt").exists(), (
                 "changed receiver performed an effect"
@@ -781,6 +806,7 @@ async def exercise():
             "executor-replaced",
             "reader-replaced",
             "executor-hash-replaced",
+            "executor-resolver-replaced",
         }:
             assert not result.plans, "invalid or cancelled planning published a plan"
         else:
