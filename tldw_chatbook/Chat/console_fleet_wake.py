@@ -25,8 +25,8 @@ from tldw_chatbook.Agents.agent_models import TERMINAL_RUN_STATUSES, RunBudget
 from tldw_chatbook.Agents.agent_service import (
     AUTOWAKE_ENABLED_KEY,
     DEFAULT_AUTOWAKE_ENABLED,
+    coerce_autowake_enabled,
 )
-from tldw_chatbook.Agents.agent_service_public import coerce_autowake_enabled
 from tldw_chatbook.Agents.run_log import setting as _setting
 from tldw_chatbook.Chat.console_fleet_attention import (
     clear_fleet_unseen_completion,

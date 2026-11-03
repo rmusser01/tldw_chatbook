@@ -2382,9 +2382,6 @@ def controller_factory_current(factory) -> bool:
     )
 
 
-_controller_factory_current = controller_factory_current  # kept for existing importers/patch targets
-
-
 def console_preparation_pipeline_current(preparation_source, binding=None):
     """Qualify detached-data methods before executing a supplied result callback."""
     binding = binding or preparation_source._CONSOLE_PREPARATION_CHECK
@@ -2401,9 +2398,6 @@ def console_preparation_pipeline_current(preparation_source, binding=None):
         and _controller_inputs_current(checker, inputs)
         and checker()
     )
-
-
-_console_preparation_pipeline_current = console_preparation_pipeline_current  # kept for existing importers/patch targets
 
 
 class _ControllerCatalogComposition:

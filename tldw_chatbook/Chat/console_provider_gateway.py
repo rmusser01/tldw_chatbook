@@ -1487,7 +1487,7 @@ def _automatic_budget_tokens(
     for name in ("cache_read_input_tokens", "cache_creation_input_tokens"):
         if name in payload and (type(payload[name]) is not int or payload[name] < 0):
             return None
-    from tldw_chatbook.Agents.agent_service_public import budget_weighted_tokens
+    from tldw_chatbook.Agents.agent_service import budget_weighted_tokens
 
     return budget_weighted_tokens(
         {"usage": dict(payload)}, provider=provider, model=model

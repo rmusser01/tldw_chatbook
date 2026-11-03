@@ -383,9 +383,9 @@ def test_empty_stream_usage_is_not_merged_into_the_retry_usage(tmp_path):
     assert usage.total_tokens == 47
     # The agent's weighted budget is not raw token usage. Verify through its
     # existing strict normalizer and pricing, never by dropping the first leg.
-    from tldw_chatbook.Agents.agent_service import _budget_weighted_tokens
+    from tldw_chatbook.Agents.agent_service import budget_weighted_tokens
 
-    assert outcome.total_tokens == _budget_weighted_tokens(
+    assert outcome.total_tokens == budget_weighted_tokens(
         {
             "usage": {
                 "prompt_tokens": 42,

@@ -129,7 +129,7 @@ class AutomaticWorkContext:
     @_owned_goal_call
     def check(self) -> AutomaticWorkSnapshot:
         """Enforce accepted authority, the root kill switch, and live limits."""
-        from .agent_service import _coerce_autowake_enabled
+        from .agent_service import coerce_autowake_enabled
 
         if not self._accepted.is_set():
             raise AutomaticWorkRefused("acceptance_required")
@@ -142,7 +142,7 @@ class AutomaticWorkContext:
         is_goal = self.policy_kind() == "goal_iteration"
         setting = "goal_runs_enabled" if is_goal else "autowake_enabled"
         reason = "goal_runs_disabled" if is_goal else "autowake_disabled"
-        if not _coerce_autowake_enabled(_setting(setting, not is_goal)):
+        if not coerce_autowake_enabled(_setting(setting, not is_goal)):
             self.ledger.pause(self.chain_id, reason)
             raise AutomaticWorkRefused(reason)
         if self.goal is not None:

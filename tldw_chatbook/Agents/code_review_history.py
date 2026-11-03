@@ -197,7 +197,7 @@ def review_input_capacity(
         ceiling = capacity.effective_input_ceiling_tokens
         if ceiling is None:
             return None
-        used = runtime._count_model_messages(
+        used = runtime.count_model_messages(
             list(request.messages),
             config.model,
             api_endpoint,

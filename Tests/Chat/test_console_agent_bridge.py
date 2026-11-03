@@ -8,6 +8,7 @@ import hashlib
 import json
 import os
 import threading
+import sys
 import time
 from dataclasses import replace
 from io import BytesIO
@@ -18,7 +19,6 @@ import pytest
 from loguru import logger
 
 import tldw_chatbook.Agents.agent_service as agent_service_module
-import tldw_chatbook.Agents.agent_service_public as agent_service_public
 from tldw_chatbook.Chat import console_agent_bridge
 import tldw_chatbook.Chat.console_agent_bridge as bridge_module
 from tldw_chatbook.Chat.console_agent_bridge import (
@@ -993,16 +993,15 @@ def test_fenced_nested_delivery_counts_exact_transformed_payload_before_mark(
     events = []
     monkeypatch.setattr(agent_service_module, "get_model_token_limit", lambda *_: 100)
     monkeypatch.setattr(
-        agent_service_module, "_count_model_messages", lambda *_, **_kwargs: 10
-    )
-    monkeypatch.setattr(
         bridge_module, "get_model_token_limit", lambda *_: 100, raising=False
     )
-    monkeypatch.setattr(
-        agent_service_public,
-        "count_model_messages",
-        lambda *_, **_kwargs: transformed_tokens,
-    )
+    # One name serves both AgentService's own counts (10) and the bridge's
+    # pre-checks (transformed_tokens); tell them apart by calling module.
+    def count_by_caller(*_args, **_kwargs):
+        caller = sys._getframe(1).f_globals["__name__"]
+        return transformed_tokens if caller == bridge_module.__name__ else 10
+
+    monkeypatch.setattr(agent_service_module, "count_model_messages", count_by_caller)
     marks = []
     real_mark = bridge_module.InstructionActivationLedger.mark_payload_sent
 

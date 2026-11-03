@@ -128,6 +128,23 @@ def test_frozen_console_imports_have_no_stale_rows() -> None:
     assert not stale, f"remove these rows, the imports are gone (list only shrinks): {stale}"
 
 
+def _literal_module(node: ast.AST) -> str | None:
+    """The ``tldw_chatbook.*`` literal of ``import_module(..)``/``sys.modules[..]``/``.get(..)``."""
+    if isinstance(node, ast.Subscript) and ast.unparse(node.value) == "sys.modules":
+        arg = node.slice
+    elif isinstance(node, ast.Call) and node.args and ast.unparse(node.func) in {
+        "importlib.import_module",
+        "import_module",
+        "sys.modules.get",
+    }:
+        arg = node.args[0]
+    else:
+        return None
+    if isinstance(arg, ast.Constant) and str(arg.value).startswith("tldw_chatbook."):
+        return str(arg.value)
+    return None
+
+
 def _private_crossings() -> list[str]:
     crossings: list[str] = []
     other = {"Agents": {"Chat"}, "LLM_Calls": {"Chat"}, "Chat": {"Agents", "LLM_Calls"}}
@@ -145,7 +162,23 @@ def _private_crossings() -> list[str]:
             if _area(target) in targets and _is_module(f"{target}.{name}"):
                 bound.add(binding)
         for node in ast.walk(tree):
+            if isinstance(node, ast.Assign):
+                literal = _literal_module(node.value)
+                if literal and _area(literal) in targets:
+                    bound.update(
+                        ast.unparse(t) for t in node.targets if isinstance(t, ast.Name)
+                    )
+        for node in ast.walk(tree):
+            literal = _literal_module(node.value) if isinstance(node, ast.Attribute) else None
             if (
+                isinstance(node, ast.Attribute)
+                and literal
+                and _area(literal) in targets
+                and node.attr.startswith("_")
+                and not node.attr.startswith("__")
+            ):
+                crossings.append(f"{current}:{node.lineno}: {ast.unparse(node)}")
+            elif (
                 isinstance(node, ast.Attribute)
                 and node.attr.startswith("_")
                 and not node.attr.startswith("__")

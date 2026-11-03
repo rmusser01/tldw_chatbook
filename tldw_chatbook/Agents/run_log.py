@@ -152,7 +152,7 @@ def setting(key: str, default):
     return default if value is None else value
 
 
-_setting = setting  # kept for existing importers/patch targets
+_setting = setting  # alias: tests patch run_log._setting, which this module's own callers read
 
 
 def _coerce_dir_name(value, default: str) -> str:

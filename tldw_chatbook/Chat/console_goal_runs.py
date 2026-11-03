@@ -916,7 +916,7 @@ class ConsoleGoalCoordinator:
             self._dispatch_goal_id = None
 
     async def _dispatch_owned(self, goal_id: str) -> GoalIterationResult:
-        from tldw_chatbook.Agents.agent_service_public import coerce_autowake_enabled
+        from tldw_chatbook.Agents.agent_service import coerce_autowake_enabled
         from tldw_chatbook.Chat.console_chat_models import (
             ConsoleRunState,
             ConsoleRunStatus,

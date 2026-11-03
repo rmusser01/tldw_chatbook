@@ -93,11 +93,11 @@ def test_disabled_replay_removes_reasoning_from_prepared_budget():
     )
     assert "reasoning_content" not in thaw_json(off.messages[1])
     assert on.accounting.total_input_tokens > off.accounting.total_input_tokens + 100
-    from tldw_chatbook.Agents.agent_service import _count_model_messages
+    from tldw_chatbook.Agents.agent_service import count_model_messages
 
     assert (
-        _count_model_messages(rows, model, "llama_cpp", replay_thinking=True)
-        > _count_model_messages(rows, model, "llama_cpp", replay_thinking=False) + 100
+        count_model_messages(rows, model, "llama_cpp", replay_thinking=True)
+        > count_model_messages(rows, model, "llama_cpp", replay_thinking=False) + 100
     )
 
 
