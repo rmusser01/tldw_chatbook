@@ -245,3 +245,54 @@ def canonical_console_paths(config: Mapping[str, object]) -> tuple[Path, Path, P
         database_path(config, "workspaces_db_path"),
         chat.parent / "agent_runs.db",
     )
+
+
+def _user_data_dir_inputs(*, source_globals) -> tuple[tuple, tuple[Path, ...]]:
+    """The memo key and every path whose posture the resolution depends on.
+
+    Returns:
+        ``(key, stamped_paths)``. The key starts with the config cache object
+        (compared by identity) and its generation, so any reload or write
+        invalidates the memo; then the settings the resolution reads and the
+        default data base, which follows HOME. The stamped paths are every
+        component of each candidate user directory's chain plus the entries
+        the default-root selection reads (conventional root, fallback root,
+        root lock file).
+    """
+    from tldw_chatbook.Backup_Recovery.storage_admission import _chain
+
+    user_folder = source_globals["get_user_folder_name"]()
+    configured_data_dir = source_globals["get_cli_setting"]("paths", "data_dir", None)
+    if configured_data_dir is None:
+        configured_data_dir = source_globals["get_cli_setting"](
+            "Paths", "data_dir", None
+        )
+    if configured_data_dir:
+        candidates = (
+            source_globals["lexical_path"](configured_data_dir) / user_folder,
+        )
+        entries: tuple[Path, ...] = ()
+        # Expanded, not as written: a relative value follows the working dir.
+        base = str(candidates[0].parent)
+    else:
+        conventional = source_globals["_default_base_data_dir"]()
+        fallback = (
+            conventional.parents[2] / source_globals["_DEFAULT_DATA_FALLBACK_DIRECTORY"]
+        )
+        candidates = (conventional / user_folder, fallback / user_folder)
+        entries = (
+            conventional,
+            fallback,
+            conventional.parents[2]
+            / source_globals["profile_paths"].DATA_ROOT_LOCK_NAME,
+        )
+        base = str(conventional)
+    key = (
+        source_globals["_CONFIG_CACHE"],
+        source_globals["_CONFIG_GENERATION"],
+        source_globals["_CONFIG_CACHE_SOURCE"],
+        user_folder,
+        base,
+    )
+    paths = (*(p for c in candidates for p in _chain(c)), *entries)
+    return key, tuple(dict.fromkeys(paths))

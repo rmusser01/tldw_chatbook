@@ -12,6 +12,7 @@ from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 from contextlib import contextmanager
 from pathlib import Path
+from typing import TYPE_CHECKING, Any
 
 from tldw_chatbook.Notes.notes_device_state_store import (
     NotesDeviceStateStore,
@@ -66,6 +67,11 @@ class LegacyNotesSyncSnapshotError(RuntimeError):
 
 class LegacyNotesSyncMigrationError(RuntimeError):
     """Paused candidates could not be persisted atomically."""
+
+
+if TYPE_CHECKING:
+    import tldw_chatbook.Notes.notes_sync_runtime as host
+    from tldw_chatbook.Notes.notes_sync_runtime import PriorImportObservation
 
 
 @dataclass(frozen=True, slots=True, repr=False)
@@ -1533,3 +1539,316 @@ def _canonical_import_present(core):
             ).fetchone()
             is not None
         )
+
+
+
+def _notes_sync_state_db_has_configured_roots(state_path: Any) -> bool:
+    """Whether the notes-sync state DB on disk carries real configuration.
+
+    TASK-21240: the TASK-21112 start gate's second clause was a bare
+    ``state_path.exists()``, which an ABANDONED first-time setup satisfies
+    forever -- opening setup force-starts the runtime (creating and
+    schema-initializing the file), and abandoning it without configuring a
+    sync directory leaves an empty store that re-arms the gate on every
+    subsequent boot. The honest evidence is a configured ROOT in
+    ``notes_sync_roots``.
+
+    Use the notes owner for read-only SELECTs, without creating or migrating
+    the database; its private-path and permission checks still apply. Corrupt
+    or unopenable stores raise so callers attempt normal runtime startup.
+
+    Args:
+        state_path: The state DB path from ``get_notes_sync_state_db_path()``.
+
+    Returns:
+        True when at least one sync root is configured; False when the file
+        is absent, schema-only (the abandoned-setup case), or missing the
+        roots table entirely.
+    """
+    from pathlib import Path as _Path
+
+    path = _Path(state_path)
+    if not path.exists():
+        return False
+    import sqlite3
+
+    from tldw_chatbook.Notes.notes_device_state_store import NotesDeviceStateStore
+
+    store = NotesDeviceStateStore(path)
+    connection = store._connect(read_only=True, must_exist=True)
+    try:
+        row = connection.execute("SELECT 1 FROM notes_sync_roots LIMIT 1").fetchone()
+    except sqlite3.OperationalError:
+        # No such table: a store whose schema never reached root creation.
+        return False
+    finally:
+        connection.close()
+        store.close()
+    return row is not None
+
+
+def _notes_sync_state_has_imports(state_path: Any, core: Any) -> bool:
+    """Extra start evidence only for an existing exact cutover marker."""
+    import sqlite3
+    from pathlib import Path
+
+    path = Path(state_path)
+    if not path.exists():
+        return False
+    from tldw_chatbook.Notes.notes_device_state_store import NotesDeviceStateStore
+
+    store = NotesDeviceStateStore(path)
+    connection = store._connect(read_only=True, must_exist=True)
+    try:
+        row = connection.execute(
+            "SELECT 1 FROM notes_sync_store_settings WHERE setting_key='cutover_marker' AND setting_value='notes-sync-cutover-v1' LIMIT 1"
+        ).fetchone()
+    except sqlite3.OperationalError as error:
+        if str(error) != "no such table: notes_sync_store_settings":
+            raise
+        return False
+    finally:
+        connection.close()
+        store.close()
+    if row is None:
+        return False
+    from tldw_chatbook.Notes.notes_sync_legacy import _canonical_import_present
+
+    return _canonical_import_present(core)
+
+
+
+def _receipt_ledger_reader(
+    ledger_path: host.Path,
+) -> host.Callable[
+    [tuple[host.ImportSource, ...]], host.Mapping[str, host.PriorImportObservation]
+]:
+    """Read Import once's receipt ledger, importing it only on first use.
+
+    ADR-097: this module is resident at ``_ui_ready``, so a module-level
+    import of ``note_import_receipts`` would drag it -- and the execution
+    models it pulls in -- onto the boot path for a read that only ever
+    happens during a sync pass.
+
+    Args:
+        ledger_path: Database file holding Import once's receipts.
+
+    Returns:
+        A callable mapping discovered sources to their prior-import
+        observations.
+    """
+
+    def _read(
+        sources: tuple[host.ImportSource, ...],
+    ) -> host.Mapping[str, "PriorImportObservation"]:
+        from tldw_chatbook.Notes.note_import_receipts import (
+            NoteImportReceiptRepository,
+        )
+
+        return NoteImportReceiptRepository(ledger_path).prior_imported_notes_read_only(
+            sources
+        )
+
+    return _read
+
+
+def build_notes_sync_runtime_owner(
+    *,
+    notes_scope_service: object,
+    cutover_admitted: bool,
+    profile_process_is_sole: bool,
+    database_path: host.Path | str,
+    migrate_legacy: host.Callable[[], object] | None = None,
+    adapter: host._RuntimeAdapter | None = None,
+    coordinator: object | host.Callable[[], object] | None = None,
+    watcher_factory: host.Callable[[host.Callable[[str], object]], object]
+    | None = None,
+    file_notes_binding: host.Callable[[], object | None] | None = None,
+    local_user_id: str | None = None,
+    recovery_capacity_bytes: int | None = None,
+    start_evidence: host.Callable[[], bool] | None = None,
+    review_imported_notes: host.Callable[[], bool] | None = None,
+    watcher_interval_seconds: float | None = None,
+    watcher_max_interval_seconds: float | None = None,
+) -> host.NotesSyncRuntimeOwner:
+    """Build the application-owned lasting-sync runtime.
+
+    ``start_evidence`` (TASK-21112) gates the boot-time start: when it
+    reports False, :meth:`NotesSyncRuntimeOwner.start` defers inert without
+    creating the state database; first-time setup forces the start later.
+    ``watcher_interval_seconds`` / ``watcher_max_interval_seconds`` shape the
+    default polling watcher's idle backoff; ``None`` keeps its defaults.
+    """
+    import tldw_chatbook.Notes.notes_sync_runtime as host
+
+    if notes_scope_service is None:
+        raise ValueError("notes_scope_service is required.")
+    if migrate_legacy is None:
+        raise ValueError("the idempotent migrate_legacy callable is required.")
+    path = host.Path(database_path)
+    store = host.NotesDeviceStateStore(path)
+    if adapter is None:
+        if not isinstance(notes_scope_service, host.NotesScopeService):
+            raise TypeError("notes_scope_service must be a NotesScopeService.")
+        if type(local_user_id) is not str or not local_user_id:
+            raise ValueError("local_user_id is required for lasting sync.")
+        if type(recovery_capacity_bytes) is not int or recovery_capacity_bytes <= 0:
+            raise ValueError("recovery_capacity_bytes must be positive.")
+        adapter = host._ProductionRuntimeAdapter(
+            store,
+            notes_scope_service,
+            local_user_id=local_user_id,
+            recovery_capacity_bytes=recovery_capacity_bytes,
+            # task-32605: Import once's receipt ledger is in this same file.
+            prior_imports=host._receipt_ledger_reader(path),
+        )
+    selected_coordinator = coordinator or (
+        lambda: host.NotesSyncRootCoordinator(path.parent / "notes_sync_locks")
+    )
+    owner_holder: dict[str, host.NotesSyncRuntimeOwner] = {}
+    watcher_intervals: dict[str, float] = {}
+    if watcher_interval_seconds is not None:
+        watcher_intervals["interval_seconds"] = float(watcher_interval_seconds)
+    if watcher_max_interval_seconds is not None:
+        watcher_intervals["max_interval_seconds"] = float(watcher_max_interval_seconds)
+    selected_watcher_factory = watcher_factory or (
+        lambda schedule: host.PollingNotesSyncWatcher(
+            lambda: owner_holder["owner"]._changed_root_ids(),
+            schedule,
+            **watcher_intervals,
+        )
+    )
+    owner = host.NotesSyncRuntimeOwner(
+        store=store,
+        migrate_legacy=migrate_legacy,
+        coordinator=selected_coordinator,
+        adapter=adapter,
+        watcher_factory=selected_watcher_factory,
+        file_notes_binding=file_notes_binding or (lambda: None),
+        cutover_admitted=cutover_admitted,
+        profile_process_is_sole=profile_process_is_sole,
+        start_evidence=start_evidence,
+        review_imported_notes=review_imported_notes,
+    )
+    owner_holder["owner"] = owner
+    return owner
+
+
+def build_notes_sync_legacy_migrator(
+    *,
+    database_path: host.Path | str,
+    legacy_connection: host.Callable[[], host.sqlite3.Connection],
+    settings: host.Mapping[str, object],
+    note_scope_id: str,
+    file_notes_binding: host.Callable[[], object | None],
+    private_paths: host.Iterable[host.Path | str],
+) -> host.Callable[[], object]:
+    """Compose TASK-19008's exact idempotent migration for app startup."""
+    import tldw_chatbook.Notes.notes_sync_runtime as host
+
+    store = host.NotesDeviceStateStore(database_path)
+    selected_private_paths = tuple(private_paths)
+
+    def migrate() -> object:
+        binding = file_notes_binding()
+        root_key = getattr(binding, "root_key", None)
+        file_notes_roots = (root_key,) if isinstance(root_key, str) else ()
+        snapshot = host.snapshot_legacy_notes_sync(
+            legacy_connection(),
+            settings,
+            note_scope_id=note_scope_id,
+            file_notes_roots=file_notes_roots,
+            private_paths=selected_private_paths,
+        )
+        plan = host.plan_legacy_notes_sync_migration(snapshot)
+        return host.persist_legacy_notes_sync_migration(store, plan)
+
+    return migrate
+
+
+def build_notes_sync_import_reviewer(
+    *,
+    database_path: host.Path | str,
+    core: host.CharactersRAGDB,
+    note_scope_id: str,
+    file_notes_binding: host.Callable[[], object | None],
+    private_paths: host.Iterable[host.Path | str],
+) -> host.Callable[[], bool]:
+    """Build receipt-backed candidate review without opening either store.
+
+    Args:
+        database_path: Existing selected device-private Notes store.
+        core: Actual selected application Core owner.
+        note_scope_id: Canonical local Notes scope.
+        file_notes_binding: Current native FileNotes binding accessor.
+        private_paths: Application paths excluded by native root admission.
+
+    Returns:
+        A callback reporting whether any link needs folder-setup review.
+    """
+    import tldw_chatbook.Notes.notes_sync_runtime as host
+
+    store = host.NotesDeviceStateStore(database_path)
+    selected_private_paths = tuple(private_paths)
+
+    def review() -> bool:
+        from tldw_chatbook.Chat.console_trace_read_budget import _TraceReadBudget
+
+        from .notes_sync_legacy import (
+            _core_import_read,
+            _persist_imported_notes,
+            _plan_imported_notes,
+        )
+
+        budget = _TraceReadBudget()
+        try:
+            # The private owner's first connection performs schema writes. Establish
+            # actual work with constant-row reads, then prime it outside Core's TX.
+            with _core_import_read(core) as connection:
+                budget.container(2)
+                linked = connection.execute(
+                    "SELECT 1 FROM notes WHERE deleted=0 AND (is_externally_synced=1 OR file_path_on_disk IS NOT NULL OR relative_file_path_on_disk IS NOT NULL OR sync_root_folder IS NOT NULL) LIMIT 1"
+                ).fetchone()
+                receipt = (
+                    connection.execute(
+                        "SELECT 1 FROM mobile_consolidation_batches WHERE substr(batch_key,1,4)='chat' LIMIT 1"
+                    ).fetchone()
+                    if linked is not None
+                    else None
+                )
+            if receipt is None:
+                return False
+            current = getattr(core._local, "conn", None)
+            if current is not None and current.in_transaction:
+                raise ValueError("canonical_snapshot_still_borrowed")
+            store.initialize()
+            binding = file_notes_binding()
+            root_key = getattr(binding, "root_key", None)
+            budget.container(1)
+            file_roots = (root_key,) if isinstance(root_key, str) else ()
+            with _core_import_read(core) as connection:
+                plan, warning = _plan_imported_notes(
+                    connection,
+                    store,
+                    budget,
+                    note_scope_id=note_scope_id,
+                    file_notes_roots=file_roots,
+                    private_paths=selected_private_paths,
+                )
+            current = getattr(core._local, "conn", None)
+            if plan is not None and current is not None and current.in_transaction:
+                raise ValueError("canonical_snapshot_still_borrowed")
+            if plan is not None:
+                _persist_imported_notes(
+                    store,
+                    plan,
+                    budget,
+                    note_scope_id=note_scope_id,
+                    file_notes_roots=file_roots,
+                    private_paths=selected_private_paths,
+                )
+            return warning
+        finally:
+            store.close()
+
+    return review

@@ -59,7 +59,6 @@ from tldw_chatbook.Provider_Contract.thinking_blocks import (
     read_thinking_blocks_json,
 )
 from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
-from tldw_chatbook.DB.mobile_consolidation_receipts import _imported_chat_records
 from tldw_chatbook.Sync_Interop.hashing import canonical_payload_hash
 from tldw_chatbook.Video_Generation.video_metadata import VideoGenerationMetadata
 
@@ -236,6 +235,8 @@ class ConsoleDispatchRepository:
         acceptance: ConsoleDurableTurnAcceptance,
     ) -> ConsoleDispatchCheckpoint:
         """Insert one USER, assistant owner, and accepted checkpoint."""
+        from tldw_chatbook.DB.mobile_consolidation_receipts import _imported_chat_records
+
         self._validate_acceptance(acceptance)
         if (
             acceptance.continuation_receipt is not None
@@ -638,6 +639,8 @@ class ConsoleDispatchRepository:
 
     def read_for_session(self, conversation_id: str) -> ConsoleDispatchReadResult:
         """Read and validate at most one active-path recovery owner."""
+        from tldw_chatbook.DB.mobile_consolidation_receipts import _imported_chat_records
+
         if type(conversation_id) is not str or not conversation_id.strip():
             return ConsoleDispatchReadResult(
                 ConsoleDispatchResultStatus.NOT_FOUND,
@@ -740,6 +743,8 @@ class ConsoleDispatchRepository:
         _read_budget: _TraceReadBudget,
     ) -> "ConsoleDispatchRecoveryState | None | _ReconcileWriteNeeded":
         """Run one reconcile pass; read passes may report write-needed."""
+        from tldw_chatbook.DB.mobile_consolidation_receipts import _imported_chat_records
+
 
         with self.db.transaction(immediate=allow_writes) as cursor:
             imported = _imported_chat_records(cursor.connection, _read_budget)
@@ -988,6 +993,8 @@ class ConsoleDispatchRepository:
         *,
         _read_budget: _TraceReadBudget | None = None,
     ) -> ConsoleDispatchRecoveryState | None:
+        from tldw_chatbook.DB.mobile_consolidation_receipts import _imported_chat_records
+
         budget = _read_budget if _read_budget is not None else _TraceReadBudget()
         imported = _imported_chat_records(cursor.connection, budget)
         columns = (
@@ -1227,6 +1234,8 @@ class ConsoleDispatchRepository:
         self, transition: ConsoleDispatchTransition
     ) -> ConsoleDispatchWriteResult:
         """Apply an expected-revision accepted/dispatch-started transition."""
+        from tldw_chatbook.DB.mobile_consolidation_receipts import _imported_chat_records
+
         if (
             not isinstance(transition.expected_state, ConsoleDispatchCheckpointState)
             or not isinstance(transition.new_state, ConsoleDispatchCheckpointState)
@@ -1360,6 +1369,8 @@ class ConsoleDispatchRepository:
         self, settlement: ConsoleAssistantSettlement
     ) -> ConsoleDispatchWriteResult:
         """Commit terminal assistant state and delete its checkpoint atomically."""
+        from tldw_chatbook.DB.mobile_consolidation_receipts import _imported_chat_records
+
         if (
             settlement.terminal_state
             not in {"complete", "stopped", "failed", "discarded"}
@@ -1613,6 +1624,8 @@ class ConsoleDispatchRepository:
         self, handoff: ConsoleContinuationHandoff
     ) -> ConsoleDispatchWriteResult:
         """Commit ADR-063 ownership and remove dispatch ownership atomically."""
+        from tldw_chatbook.DB.mobile_consolidation_receipts import _imported_chat_records
+
         if not self._positive_versions(
             handoff.expected_checkpoint_revision,
             handoff.expected_user_message_version,
@@ -1756,6 +1769,8 @@ class ConsoleDispatchRepository:
         provider_continuation_json: str,
     ) -> ConsoleDispatchWriteResult:
         """CAS one checkpoint-free legacy owner to continuation_active."""
+        from tldw_chatbook.DB.mobile_consolidation_receipts import _imported_chat_records
+
         if (
             not self._valid_identifier(conversation_id)
             or not self._valid_identifier(assistant_message_id)
@@ -1846,6 +1861,8 @@ class ConsoleDispatchRepository:
         self, *, conversation_id: str, assistant_message_id: str
     ) -> Mapping[str, object] | None:
         """Freshly read one valid active-path ADR-063 owner for CAS recovery."""
+        from tldw_chatbook.DB.mobile_consolidation_receipts import _imported_chat_records
+
         try:
             with self.db.transaction() as cursor:
                 if (

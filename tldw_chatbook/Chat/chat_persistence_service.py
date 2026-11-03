@@ -1737,29 +1737,15 @@ class ChatPersistenceService:
         project_context_json: str | None = None,
     ) -> ConsoleLibraryPolicySnapshot:
         """Commit a first conversation row and its Library policy together."""
-        self.validate_workspace_target(**conversation_kwargs)
-        with self.db.transaction(immediate=True):
-            created_id = self.create_conversation(
-                conversation_id=conversation_id,
-                **dict(conversation_kwargs),
-            )
-            if created_id != conversation_id:
-                raise RuntimeError(
-                    "Persistence returned an unexpected conversation id."
-                )
-            result = self.console_library_policy_repository.insert(
-                conversation_id,
-                policy_candidate,
-            )
-            if result.status is not ConsoleLibraryPolicyWriteStatus.COMMITTED:
-                raise RuntimeError(
-                    "Console Library policy could not be committed with conversation."
-                )
-            if project_context_json is not None:
-                self.db.set_conversation_console_project_context(
-                    conversation_id, project_context_json
-                )
-        return result.snapshot
+        from . import console_conversation_persistence
+
+        return console_conversation_persistence.persist_console_conversation_with_policy(
+            self,
+            conversation_id=conversation_id,
+            policy_candidate=policy_candidate,
+            conversation_kwargs=conversation_kwargs,
+            project_context_json=project_context_json,
+        )
 
     def update_agent_handoff_launch(self, conversation_id: str, launch: Any) -> None:
         """Merge bounded display facts without changing draft custody or authority."""

@@ -4602,145 +4602,16 @@ class ConsoleTraceService:
         *,
         _read_budget: _TraceReadBudget | None = None,
     ) -> _SurfaceProjection:
-        segment = self.repository.get_segment(cursor, segment_id)
-        if segment is None:
-            raise ValueError("surface_segment_unavailable")
-        inherited_projection: _SurfaceProjection | None = None
-        if (
-            segment.parent_segment_id is not None
-            and segment.inherited_surface_head_id is not None
-        ):
-            inherited_head = self.repository.get_surface_node(
-                cursor,
-                segment.inherited_surface_head_id,
-            )
-            if inherited_head is None:
-                raise ValueError("inherited_surface_head_unavailable")
-            inherited_projection = self._surface_projection(
-                cursor,
-                segment.parent_segment_id,
-                inherited_head,
-                **({"_read_budget": _read_budget} if _read_budget is not None else {}),
-            )
-            if tail is None:
-                tail = inherited_head
-        head_id = None if tail is None else tail.node_id
-        cached = self._surface_ref_cache.get(segment_id)
-        if cached is not None and cached.head_id == head_id:
-            if _read_budget is not None:
-                _read_budget.container(cached.root.size)
-            return cached
-        nodes: list[SurfaceNodeRecord] = []
-        continuation = None
-        while True:
-            page = self.repository.read_surface_nodes(
-                cursor,
-                segment_id,
-                after=continuation,
-                **({"_read_budget": _read_budget} if _read_budget is not None else {}),
-            )
-            if _read_budget is not None:
-                _read_budget.container(len(page))
-            nodes.extend(page)
-            if page.next_cursor is None:
-                break
-            continuation = page.next_cursor
-        if tail is not None:
-            nodes = [node for node in nodes if node.sequence <= tail.sequence]
-        if _read_budget is not None:
-            # Filtering, indexes, active sequence nodes, and final tuple views.
-            _read_budget.reserve(1024 * len(nodes))
-        local_node_ids = {node.node_id for node in nodes}
-        replacements = tuple(
-            record
-            for record in self.repository.read_surface_replacements(
-                cursor,
-                segment_id,
-                **({"_read_budget": _read_budget} if _read_budget is not None else {}),
-            )
-            if record.replacement.replacement_node_id in local_node_ids
+        """Bounded trace surface materialization for the owning trace service."""
+        from . import console_trace_projection
+
+        return console_trace_projection._surface_projection(
+            self,
+            cursor,
+            segment_id,
+            tail,
+            _read_budget=_read_budget,
         )
-        replacement_ids = {
-            item.replacement.replacement_node_id for item in replacements
-        }
-        root_node: _SequenceNode | None = None
-        active: dict[int, _SequenceNode] = {}
-        if inherited_projection is not None:
-            if _read_budget is None:
-                inherited_entries = inherited_projection.entries
-            else:
-                # Reserve iterator stack and yielded pairs before traversing.
-                _read_budget.container(4 * inherited_projection.root.size)
-                inherited_entries = inherited_projection.root.iter_entries()
-            for sequence, key in inherited_entries:
-                if _read_budget is not None:
-                    _read_budget.container(8)
-                sequence_node = _SequenceNode(sequence, key)
-                root_node = _sequence_merge(root_node, sequence_node)
-                active[sequence] = sequence_node
-        for node in nodes:
-            if node.node_id in replacement_ids:
-                continue
-            sequence_node = _SequenceNode(
-                node.sequence,
-                self._node_reference_key(node),
-            )
-            root_node = _sequence_merge(root_node, sequence_node)
-            active[node.sequence] = sequence_node
-        by_id = {node.node_id: node for node in nodes}
-        for record in replacements:
-            replacement = record.replacement
-            span = replacement.end_sequence - replacement.start_sequence + 1
-            if span > MAX_SURFACE_REPLACEMENT_SPAN:
-                raise ValueError("surface_replacement_span")
-            node = by_id[replacement.replacement_node_id]
-            if _read_budget is not None:
-                _read_budget.container(span)
-            anchors = tuple(
-                active[sequence]
-                for sequence in range(
-                    replacement.start_sequence,
-                    replacement.end_sequence + 1,
-                )
-                if sequence in active
-            )
-            if not anchors:
-                raise ValueError("surface_replacement_target_inactive")
-            insert_at = min(_sequence_rank(anchor) for anchor in anchors)
-            for sequence in range(
-                replacement.start_sequence,
-                replacement.end_sequence + 1,
-            ):
-                removed = active.pop(sequence, None)
-                if removed is not None:
-                    root_node = _sequence_delete(root_node, removed)
-            sequence_node = _SequenceNode(
-                node.sequence,
-                self._node_reference_key(node),
-            )
-            root_node = _sequence_insert(root_node, insert_at, sequence_node)
-            active[node.sequence] = sequence_node
-        if _read_budget is not None:
-            _read_budget.container(len(active))
-        entries = _sequence_entries(root_node)
-        root = _ProjectionRoot(None, base=tuple(entries))
-        inherited_lineage = (
-            () if inherited_projection is None else inherited_projection.lineage_domains
-        )
-        projection = _SurfaceProjection(
-            head_id,
-            root,
-            lineage_domains=inherited_lineage
-            + tuple(
-                (
-                    node.sequence,
-                    _surface_reference_domain(self._node_reference_key(node)),
-                )
-                for node in nodes
-            ),
-        )
-        self._surface_ref_cache[segment_id] = projection
-        return projection
 
     @staticmethod
     def _updated_projection_entries(

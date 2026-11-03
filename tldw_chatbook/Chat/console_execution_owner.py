@@ -28,13 +28,13 @@ class ConsoleExecutionUnavailable(RuntimeError):
 
 
 def _identity(path: Path) -> tuple[int, int]:
-    info = path.stat()
+    info = os.stat(path)
     return info.st_dev, info.st_ino
 
 
 def _store_identity(path: Path) -> tuple[int, int] | None:
     try:
-        info = path.lstat()
+        info = os.stat(path, follow_symlinks=False)
     except FileNotFoundError:
         return None
     if (
@@ -88,7 +88,7 @@ class ConsoleExecutionOwner:
                     raise ConsoleExecutionBusy("console_execution_busy") from None
                 raise
             try:
-                path.lstat()
+                os.stat(path, follow_symlinks=False)
             except FileNotFoundError:
                 pass
             else:

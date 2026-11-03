@@ -540,9 +540,9 @@ from ...Widgets.Chat_Widgets.chat_task_cards import ChatTaskCards
 from ...Widgets.Chat_Widgets.watchlists_operation_card import (
     WatchlistsOperationCard,
 )
+from ...Widgets import Console as console_widgets
 from ...Widgets.Console import (
     ConsoleBoundedSection,
-    ConsoleCitationSourcesModal,
     ConsoleComposerBar,
     ConsoleComposerUndoHistory,
     ConsoleDraftStash,
@@ -623,9 +623,6 @@ from ...Widgets.Console.console_selection_menu import (
     selection_menus_on_screen,
 )
 from ...Widgets.Console import console_project_instructions as project_instruction_ui
-from ...Widgets.Console.console_citation_sources_modal import (
-    selected_valid_evidence_ordinals,
-)
 from ...Widgets.Console.console_generation_card import generation_card_signature
 from ...Widgets.Console.console_video_card import video_card_signature
 from ...Library.library_rag_state import (
@@ -648,10 +645,6 @@ from ...Widgets.Console.console_status_chips import (
 from ...Widgets.Console.console_retrieval_scope_row import (
     ROW_ID as CONSOLE_RETRIEVAL_SCOPE_ROW_ID,
 )
-from ...Widgets.Console.console_character_picker_modal import (
-    ConsoleCharacterChoice,
-    ConsoleCharacterPickerModal,
-)
 from ...Widgets.Console.console_composer_menu_modal import (
     ACTION_GENERATE_CAPTION,
     ACTION_GENERATE_IMAGE,
@@ -666,7 +659,6 @@ from ...Widgets.Console.console_composer_menu_modal import (
     ACTION_UNDO_PROMPT_IMPROVEMENT,
     ConsoleComposerMenuModal,
 )
-from ...Widgets.Console.console_scope_picker_modal import ConsoleScopePickerModal
 from ...Widgets.Console.console_setup_modal import (
     CONSOLE_SETUP_MODAL_DETECTED_WORKBENCH_ACTION,
     CONSOLE_SETUP_MODAL_LOOK_AGAIN_WORKBENCH_ACTION,
@@ -7204,6 +7196,7 @@ class ChatScreen(BaseAppScreen):
         # 0.2s tick above stops as soon as a run leaves an active status.
         self._console_sync_in_progress = False
         self._console_sync_requested = False
+        self._console_sync_suspended = False
         self._console_session_tabs_sync_lock = asyncio.Lock()
         self._console_session_tabs_sync_calls = 0
         self._console_attach_reconciled = False
@@ -10779,6 +10772,8 @@ class ChatScreen(BaseAppScreen):
             session.title,
             max_characters=500,
         )
+        from .chat_screen import ConsoleScopePickerModal
+
         target_label = title or "this conversation"
         media_lister, notes_lister, tag_lister = (
             self._retrieval._console_scope_picker_listers()
@@ -11108,6 +11103,8 @@ class ChatScreen(BaseAppScreen):
             return
         if not self._owns_console_screen_stack():  # TASK-34720: one dialog
             return
+        from .chat_screen import ConsoleCharacterPickerModal
+
         self.app.push_screen(
             ConsoleCharacterPickerModal(
                 options=options,
@@ -11119,7 +11116,7 @@ class ChatScreen(BaseAppScreen):
         )
 
     def _apply_console_character_choice(
-        self, choice: "ConsoleCharacterChoice | None"
+        self, choice: "console_widgets.ConsoleCharacterChoice | None"
     ) -> None:
         """Route the picker result to a swap or a new character session."""
         if choice is None:
@@ -16550,6 +16547,8 @@ class ChatScreen(BaseAppScreen):
         repository_token, repository = self._console_citation_repository_readiness()
         if repository is None:
             return
+        from .chat_screen import ConsoleCitationSourcesModal
+
         modal = ConsoleCitationSourcesModal(
             native_message_id=native_message_id,
             persisted_message_id=persisted_message_id,
@@ -16758,6 +16757,8 @@ class ChatScreen(BaseAppScreen):
                     or not repository.verify_active_trace_result(result)
                 ):
                     continue
+                from .chat_screen import selected_valid_evidence_ordinals
+
                 evidence_ordinals = selected_valid_evidence_ordinals(summary.trace)
             except Exception:
                 logger.exception(
@@ -17567,6 +17568,8 @@ class ChatScreen(BaseAppScreen):
         if not getattr(self, "_console_sync_maintenance_paused", False):
             return
         self._console_sync_maintenance_paused = False
+        if getattr(self, "_console_sync_suspended", False):
+            return
         if getattr(self, "_console_control_bar_replay_whole_sync", False):
             # Its coalesced timer owns the fresh replay; an immediate request
             # cuts a warm-up backoff short so the resume waits 0.2 s at most
@@ -17612,8 +17615,9 @@ class ChatScreen(BaseAppScreen):
             # coalesced request.
             self._console_sync_requested = False
             return False
-        if held or (  # Held for a durable commit: a later poll tick serves it.
-            getattr(self, "_console_sync_maintenance_paused", False)
+        if held or (  # Deferred work stays dirty until its presentation owner resumes.
+            getattr(self, "_console_sync_suspended", False)
+            or getattr(self, "_console_sync_maintenance_paused", False)
             or getattr(self, "_console_control_bar_replay_whole_sync", False)
         ):
             self._console_sync_requested = True
@@ -17634,6 +17638,7 @@ class ChatScreen(BaseAppScreen):
         full_source = run_controls.poll_source(self) if poll_record is None else None
         if poll_record is None and type(self) is ChatScreen:
             self._console_completed_full_source = None
+        self._console_sync_requested = False
         self._console_sync_in_progress = True
         self._record_ui_worker_started("console-sync")
         def poll_is_current() -> bool:
@@ -17852,6 +17857,7 @@ class ChatScreen(BaseAppScreen):
             self._console_sync_in_progress = False
             if (
                 self._console_sync_requested
+                and not getattr(self, "_console_sync_suspended", False)
                 and not getattr(self, "_console_sync_maintenance_paused", False)
                 and not getattr(self, "_console_control_bar_replay_whole_sync", False)
             ):
@@ -22768,6 +22774,7 @@ class ChatScreen(BaseAppScreen):
           install is idempotent), and the previews cache -- all correct to
           leave running/installed across a suspend.
         """
+        self._console_sync_suspended = True
         self._console_attach_visit_generation += 1
         _end_canvas_poll_handoffs(self)
         note_suspend_style_inputs(self)  # TASK-38950
@@ -22865,6 +22872,9 @@ class ChatScreen(BaseAppScreen):
 
     def on_screen_resume(self) -> None:
         """Called when returning to this screen."""
+        self._console_sync_suspended = False
+        if getattr(self, "_console_control_bar_replay_whole_sync", False):
+            self._request_console_control_bar_sync()
         if (controller := self._console_chat_controller) is not None:
             controller.on_console_view_visibility_changed(True)
             wiring.review_view_resumed(controller)
@@ -23818,13 +23828,16 @@ class ChatScreen(BaseAppScreen):
         to the feature's opt-in OFF default, and the spawn itself can never
         block this (UI) thread.
         """
+        from .chat_screen import normalize_console_os_notifications
+        from . import chat_screen as source
+
         settings = normalize_console_os_notifications(
             get_cli_setting("console", "os_notifications", None)
         )
         if not settings.allows(kind):
             return
         _spawn_os_notification_thread(
-            lambda: send_os_notification(kind, session_display, settings=settings)
+            lambda: source.send_os_notification(kind, session_display, settings=settings)
         )
 
     @on(ChatApprovalCard.ApprovalFeedbackChanged)
@@ -24537,3 +24550,6 @@ run_controls.bind_preparing_screen_sources(ChatScreen)
 
 # Complete the finite discovery binding after the real view definition.
 skill_controller.bind_console_skill_discovery(ChatScreen, build_console_controllers)
+
+
+__getattr__ = console_widgets.__getattr__

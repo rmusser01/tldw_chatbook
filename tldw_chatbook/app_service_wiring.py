@@ -525,50 +525,12 @@ def _install_deferred_notes_sync_facades(app: Any) -> bool:
 
 
 def _notes_sync_state_db_has_configured_roots(state_path: Any) -> bool:
-    """Whether the notes-sync state DB on disk carries real configuration.
+    """Whether the notes-sync state DB on disk carries real configuration."""
+    from .Notes import notes_sync_legacy
 
-    TASK-21240: the TASK-21112 start gate's second clause was a bare
-    ``state_path.exists()``, which an ABANDONED first-time setup satisfies
-    forever -- opening setup force-starts the runtime (creating and
-    schema-initializing the file), and abandoning it without configuring a
-    sync directory leaves an empty store that re-arms the gate on every
-    subsequent boot. The honest evidence is a configured ROOT in
-    ``notes_sync_roots``.
-
-    Use the notes owner for read-only SELECTs, without creating or migrating
-    the database; its private-path and permission checks still apply. Corrupt
-    or unopenable stores raise so callers attempt normal runtime startup.
-
-    Args:
-        state_path: The state DB path from ``get_notes_sync_state_db_path()``.
-
-    Returns:
-        True when at least one sync root is configured; False when the file
-        is absent, schema-only (the abandoned-setup case), or missing the
-        roots table entirely.
-    """
-    from pathlib import Path as _Path
-
-    path = _Path(state_path)
-    if not path.exists():
-        return False
-    import sqlite3
-
-    from tldw_chatbook.Notes.notes_device_state_store import NotesDeviceStateStore
-
-    store = NotesDeviceStateStore(path)
-    connection = store._connect(read_only=True, must_exist=True)
-    try:
-        row = connection.execute(
-            "SELECT 1 FROM notes_sync_roots LIMIT 1"
-        ).fetchone()
-    except sqlite3.OperationalError:
-        # No such table: a store whose schema never reached root creation.
-        return False
-    finally:
-        connection.close()
-        store.close()
-    return row is not None
+    return notes_sync_legacy._notes_sync_state_db_has_configured_roots(
+        state_path,
+    )
 
 
 def _task_ended_without_result(task: "asyncio.Task[None]") -> bool:
@@ -591,32 +553,12 @@ async def _await_notes_sync_start(pending: Any) -> None:
 
 def _notes_sync_state_has_imports(state_path: Any, core: Any) -> bool:
     """Extra start evidence only for an existing exact cutover marker."""
-    import sqlite3
-    from pathlib import Path
+    from .Notes import notes_sync_legacy
 
-    path = Path(state_path)
-    if not path.exists():
-        return False
-    from tldw_chatbook.Notes.notes_device_state_store import NotesDeviceStateStore
-
-    store = NotesDeviceStateStore(path)
-    connection = store._connect(read_only=True, must_exist=True)
-    try:
-        row = connection.execute(
-            "SELECT 1 FROM notes_sync_store_settings WHERE setting_key='cutover_marker' AND setting_value='notes-sync-cutover-v1' LIMIT 1"
-        ).fetchone()
-    except sqlite3.OperationalError as error:
-        if str(error) != "no such table: notes_sync_store_settings":
-            raise
-        return False
-    finally:
-        connection.close()
-        store.close()
-    if row is None:
-        return False
-    from tldw_chatbook.Notes.notes_sync_legacy import _canonical_import_present
-
-    return _canonical_import_present(core)
+    return notes_sync_legacy._notes_sync_state_has_imports(
+        state_path,
+        core,
+    )
 
 
 def _notes_sync_boot_start_evidence(app: Any) -> bool:
