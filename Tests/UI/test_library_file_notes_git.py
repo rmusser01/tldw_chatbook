@@ -5123,19 +5123,21 @@ async def test_40x20_prepare_scrolls_actions_below_a_long_linked_root(
         root_row = workspace.query_one("#file-notes-root-row")
         root_status = workspace.query_one("#file-notes-root-status", Static)
         full_status = f"Linked — {root.resolve()}"
+        # TASK-36513: the 18 cells left at 40 columns drop "Local folder:"
+        # and keep the state word and folder name whole; the exact path
+        # stays in the tooltip and Details.
+        compact_status = f"Linked · {root.name}"
         await _wait_until(
             pilot,
             lambda: (
-                _text(root_status) != full_status
-                and "..." in _text(root_status)
+                _text(root_status) == compact_status
                 and str(root_status.tooltip) == full_status
             ),
             "linked-root summary did not settle to compact rendered text",
         )
         assert root_row.region.height == 1
         assert root_status.region.height == 1
-        assert _text(root_status) != full_status
-        assert "..." in _text(root_status)
+        assert _text(root_status) == compact_status
         assert str(root_status.tooltip) == full_status
         details = workspace.query_one("#file-notes-root-details", Button)
         assert details.display
