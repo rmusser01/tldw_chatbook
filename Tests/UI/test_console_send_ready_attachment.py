@@ -107,6 +107,10 @@ async def _ready_console(host, pilot, monkeypatch):
     return console, composer, send, store, session_id
 
 
+# Retries the bare sync without the config locks: the projection test needs a
+# sync that can be refused. Tests that read Send straight after the screen's
+# sync use _sync_console_control_bar_now, which returns with no await after
+# rendering; the pause here could let another site repaint first.
 async def _sync_controls(console, pilot, *, timeout: float = 4.0) -> None:
     """Wait for a checked projection, including its existing deferred replay."""
     deadline = time.monotonic() + timeout
