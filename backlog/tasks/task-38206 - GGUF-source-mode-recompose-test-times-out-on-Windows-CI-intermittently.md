@@ -75,6 +75,8 @@ Three things to know when reading the red Windows runs:
 - With the loop gone, the starvation itself is unchanged. TASK-38462 still owns the source fix.
 
 AC#2 still needs 10 consecutive Windows passes in CI, counted from a head that has both this task's deadline and the TASK-38703 fix.
+
+**The 120 s Windows deadline stays for now.** TASK-38462 (claude/bd-38462, e08f7653a2) moves Windows Textual timer sleeps off the default executor. Waits of 0.25 s or more use `asyncio.sleep`, and shorter ones a dedicated pool. If Windows CI then shows the recompose wait back near macOS, under 1 s, the Windows branch can return to the shared 10 s budget. Pinning that needs Windows job timings. The time to decide is AC#2's 10-run streak: lower the budget only if those runs carry TASK-38462 and their recompose waits fit inside 10 s with margin.
 <!-- SECTION:IMPLEMENTATION_NOTES:END -->
 
 ## Final Summary

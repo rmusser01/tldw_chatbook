@@ -45,7 +45,16 @@ The "TASK-2062.2 GGUF source evidence" workflow was green through 2026-10-31. Fr
 2. That forced a new readiness config read: `read_current` on a worker thread, through config-participant storage admission.
 3. The read published `changed`, which ran another `_sync_native_console_chat_ui`.
 
-Counted in one llamacpp keyboard run before the fix: 3,450 refreshes and 6,896 recaptures in 225 s. After the fix: 4 refreshes and 1 capture. The Console under the pushed LLM screen kept the process busy, so every `pilot.pause()`/`press()` (`wait_for_idle`, up to 1 s while the process uses CPU) ran to its 1 s cap. The visible idle Console loops too: a scratch probe counted 71 refreshes and 7.0 CPU-s in 10 s before the fix, and 3 refreshes and 4.2 CPU-s after.
+Counted in one llamacpp keyboard run before the fix: 3,450 refreshes and 6,896 recaptures in 225 s. After the fix: 4 refreshes and 1 capture. The Console under the pushed LLM screen kept the process busy, so every `pilot.pause()`/`press()` (`wait_for_idle`, up to 1 s while the process uses CPU) ran to its 1 s cap. It also floods the default executor. Each read is `run_preparation_read`'s `run_in_executor(None, context.run, ...)`. Counted across one llamacpp keyboard run:
+
+| | Before the fix (246 s) | After the fix (31 s) |
+|---|---|---|
+| Default-executor submissions | 6,837 | 182 |
+| `Context.run` submissions | 6,825 | 170 |
+| `ConsoleRuntime._canvas_enabled` calls | 694 | 91 |
+| `_local_pause_requested` calls | 211 | 26 |
+
+This is the same signature the TASK-38462 stream reported as "high-frequency polling through thread workers": 4,700-7,800 jobs, 701 `_canvas_enabled` and 216 `_local_pause_requested`. It is this loop, not a separate poller. The visible idle Console loops too: a scratch probe counted 71 refreshes and 7.0 CPU-s in 10 s before the fix, and 3 refreshes and 4.2 CPU-s after.
 
 **Introduced by e017592b44 ("Keep Windows cold display reads off the UI thread"),** the first commit of PR #3166 (codex/windows-interaction-performance), which reached dev in merge 6fbd29f9a3 on 2026-10-31 21:32Z. Bisection timed the llamacpp keyboard node with the CI invocation in scratch worktrees, mostly 2-3 probes in parallel:
 
