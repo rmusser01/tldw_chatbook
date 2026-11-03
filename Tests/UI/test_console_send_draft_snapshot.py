@@ -438,8 +438,9 @@ async def _speak_armed_send(monkeypatch, host, pilot, gateway, as_read_returns):
     the skill context: the window between a tokenless capture and that check.
     ``as_read_returns(composer)`` runs as the held read returns, before
     ``ChatScreen._on_console_composer_draft_changed`` can disarm the command
-    (one handled while the read is pending would). Hook review runs live; with no hooks configured
-    nothing is reviewed, so it does not re-check the draft.
+    (one handled while the read is pending would). Hook review runs live;
+    with no hooks configured nothing is reviewed, so it does not re-check
+    the draft.
 
     Returns:
         The console, composer, store, session id, spoken acks and notices.
@@ -523,7 +524,9 @@ async def test_spoken_send_of_a_capture_another_send_took_is_not_sent_again(
     skill read returns, so the spoken send's capture is spent. The wiring's
     old refusal of any composer change covered this; declining alone sent
     the draft a second time through the ordinary dispatch. A spent capture
-    is still not sent: "Not sent." and no provider call.
+    is still not sent: "Not sent." and no provider call. No "Unknown command"
+    row either, so "Not sent." comes from the spent-capture check, not from
+    a disarmed command's hint.
     """
 
     def another_send_takes_it(composer):
@@ -532,7 +535,7 @@ async def test_spoken_send_of_a_capture_another_send_took_is_not_sent_again(
     host, gateway, _timeline = build()
     async with host.run_test(size=(160, 45)) as pilot:
         with eager_tasks():
-            console, composer, _store, session_id, spoken, notices = (
+            console, composer, store, session_id, spoken, notices = (
                 await _speak_armed_send(
                     monkeypatch, host, pilot, gateway, another_send_takes_it
                 )
@@ -543,6 +546,14 @@ async def test_spoken_send_of_a_capture_another_send_took_is_not_sent_again(
             assert gateway.stream_calls == 0
             assert _sent_or_queued(console, session_id) == []
             assert composer.draft_text() == ""
+            system_rows = [
+                message.content
+                for message in store.messages_for_session(session_id)
+                if message.role.value == "system"
+            ]
+            assert not any(
+                row.startswith("Unknown command") for row in system_rows
+            ), system_rows
 
 
 @pytest.mark.asyncio
