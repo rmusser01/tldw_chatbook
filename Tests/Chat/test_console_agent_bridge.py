@@ -8,7 +8,6 @@ import hashlib
 import json
 import os
 import threading
-import sys
 import time
 from dataclasses import replace
 from io import BytesIO
