@@ -174,3 +174,56 @@ def test_production_code_imports_provider_types_from_the_package():
                 if target in old
             ]
     assert not offenders, f"Import these from tldw_chatbook.Provider_Contract: {offenders}"
+
+
+# Every import that leaves the package, top-level or inside a function (a call-time
+# import still couples the layers; the fresh-interpreter test above sees import time
+# only). Pinned exactly: a new edge fails, and a removed one must be deleted here.
+# The Chat.provider_readiness edges go with TASK-36946.1 (readiness tables derived from
+# the registry). Plugins.continuation stays lazy so V1 restores skip the plugin stack.
+PROVIDER_CONTRACT_OUTBOUND_IMPORTS = {
+    ("provider_continuation", "tldw_chatbook.Chat.provider_readiness"),
+    ("provider_continuation", "tldw_chatbook.Plugins.continuation"),
+    ("provider_continuation", "tldw_chatbook.Utils.input_validation"),
+    ("provider_continuation", "tldw_chatbook.model_capabilities"),
+    ("provider_endpoint_contract", "tldw_chatbook.provider_registry"),
+    ("provider_setup_facts", "tldw_chatbook.Chat.provider_readiness"),
+    ("provider_setup_facts", "tldw_chatbook.provider_registry"),
+    ("thinking_blocks", "tldw_chatbook.Utils.input_validation"),
+}
+
+
+def test_provider_contract_outbound_imports_are_pinned():
+    import ast
+
+    package_dir = Path(__file__).resolve().parents[2] / "tldw_chatbook" / "Provider_Contract"
+    found = set()
+    for file in sorted(package_dir.glob("*.py")):
+        tree = ast.parse(file.read_text(encoding="utf-8"))
+        type_only = {
+            id(inner)
+            for node in ast.walk(tree)
+            if isinstance(node, ast.If) and "TYPE_CHECKING" in ast.unparse(node.test)
+            for inner in ast.walk(node)
+        }
+        for node in ast.walk(tree):
+            if id(node) in type_only:
+                continue
+            if isinstance(node, ast.Import):
+                names = [alias.name for alias in node.names]
+            elif isinstance(node, ast.ImportFrom) and not node.level and node.module:
+                names = [node.module]
+            else:
+                # Relative imports stay inside the package.
+                continue
+            found |= {
+                (file.stem, name)
+                for name in names
+                if name.startswith("tldw_chatbook.")
+                and not name.startswith("tldw_chatbook.Provider_Contract")
+            }
+    assert found == PROVIDER_CONTRACT_OUTBOUND_IMPORTS, (
+        f"new: {sorted(found - PROVIDER_CONTRACT_OUTBOUND_IMPORTS)}; "
+        f"gone (delete the pin row): {sorted(PROVIDER_CONTRACT_OUTBOUND_IMPORTS - found)}. "
+        "Provider_Contract must stay neutral: pass what it needs in instead of importing it."
+    )

@@ -29,6 +29,7 @@ from tldw_chatbook.Chat.console_provider_support import (
     _CUSTOM_OPENAI_THINKING_KEYS,
     console_generation_control_support,
 )
+from tldw_chatbook.Provider_Contract import MODEL_NOT_FOUND_CODE_PROVIDERS
 
 _PACKAGE_ROOT = (
     Path(__file__).resolve().parents[2] / "tldw_chatbook"
@@ -68,6 +69,10 @@ _AUDITED_LITERAL_ALLOWLIST: dict[str, tuple[int, int]] = {
     # deliberately pure (no provider imports), so it keeps literals --
     # NATIVE_TOOLS_PROVIDERS == provider_registry.NATIVE_TOOLS_KEYS pins it.
     "tldw_chatbook/Agents/native_tools.py": (1, 1),
+    # Audit-include (parity-pinned membership): the neutral provider package may not
+    # import Chat (TASK-36944.1), so MODEL_NOT_FOUND_CODE_PROVIDERS keeps literals --
+    # test_membership_sites_consume_the_constant pins that it covers the constant.
+    "tldw_chatbook/Provider_Contract/__init__.py": (1, 1),
 }
 
 _BARE = re.compile(r"custom-openai-api(?!-2)")
@@ -90,6 +95,8 @@ def test_membership_sites_consume_the_constant() -> None:
     assert _CUSTOM_OPENAI_THINKING_KEYS is CUSTOM_OPENAI_EXECUTION_KEYS
     # gateway: the credential-decision providers are the constant.
     assert _CUSTOM_CREDENTIAL_DECISION_PROVIDERS is CUSTOM_OPENAI_EXECUTION_KEYS
+    # model-unavailable projection: the neutral package's own list covers every key.
+    assert CUSTOM_OPENAI_EXECUTION_KEYS <= MODEL_NOT_FOUND_CODE_PROVIDERS
 
 
 def test_custom_hosted_keeps_the_local_reasoning_support_projection() -> None:

@@ -168,6 +168,22 @@ def project_provider_error(exc: BaseException, provider: str) -> ChatAPIError | 
     return None
 
 
+#: Providers whose 400/404 ``model_not_found`` error code is explicit. The package
+#: cannot import Chat's ``CUSTOM_OPENAI_EXECUTION_KEYS``, so it lists the custom family
+#: here; ``Tests/Chat/test_custom_openai_execution_keys_constant.py`` pins the parity.
+MODEL_NOT_FOUND_CODE_PROVIDERS = frozenset(
+    {
+        "openai",
+        "groq",
+        "deepseek",
+        "moonshot",
+        "custom-openai-api",
+        "custom-openai-api-2",
+        "custom-hosted",
+    }
+)
+
+
 def model_unavailable_error(
     provider: str, status: int, payload: object
 ) -> ChatModelUnavailableError | None:
@@ -191,16 +207,7 @@ def model_unavailable_error(
     # ambiguous not_found_error envelopes remain terminal until a distinct
     # machine-code contract is available.
     if (
-        str(provider).lower()
-        in {
-            "openai",
-            "groq",
-            "deepseek",
-            "moonshot",
-            "custom-openai-api",
-            "custom-openai-api-2",
-            "custom-hosted",
-        }
+        str(provider).lower() in MODEL_NOT_FOUND_CODE_PROVIDERS
         and error.get("code") == "model_not_found"
     ):
         return ChatModelUnavailableError(provider=provider, status_code=status)
