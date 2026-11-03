@@ -851,8 +851,22 @@ async def test_ui_ready_before_nonessential_startup_services_finish(
         }
         try:
             import inspect
+            import math
+            import time
+            from concurrent.futures import Future as ConcurrentFuture
+            from concurrent.futures import ThreadPoolExecutor
+            from concurrent.futures import thread as executor_thread
             from functools import partial
-            from types import CoroutineType, FunctionType, MethodType, ModuleType
+            from queue import SimpleQueue
+            from types import (
+                CellType,
+                CodeType,
+                CoroutineType,
+                FrameType,
+                FunctionType,
+                MethodType,
+                ModuleType,
+            )
             from weakref import WeakSet
 
             def code_identity(function):
@@ -895,6 +909,218 @@ async def test_ui_ready_before_nonessential_startup_services_finish(
                     ),
                 }
 
+            def timer_wait_state(task):
+                if type(task) is not asyncio.Task:
+                    return {"missing": "unknown; no native task"}
+
+                def task_path(current):
+                    path = []
+                    coroutine = current._coro
+                    timing = {"missing": "unknown; no retained Timer._run numbers"}
+                    native_run = inspect.getattr_static(timer_class, "_run", None)
+                    timer_code = (
+                        native_run.__code__
+                        if type(native_run) is FunctionType
+                        else None
+                    )
+                    clock_module = sys.modules.get("textual._time")
+                    clock = (
+                        vars(clock_module).get("get_time")
+                        if type(clock_module) is ModuleType
+                        else None
+                    )
+                    for _ in range(5):
+                        if type(coroutine) is not CoroutineType:
+                            break
+                        frame, code = coroutine.cr_frame, coroutine.cr_code
+                        path.append(
+                            [
+                                code.co_qualname[:72],
+                                frame.f_lineno if type(frame) is FrameType else None,
+                            ]
+                        )
+                        if code is timer_code and type(frame) is FrameType:
+                            # Only exact native Timer._run numeric fields; no worker locals.
+                            numbers = {
+                                key: frame.f_locals.get(key)
+                                for key in ("start", "next_timer", "count", "_interval")
+                            }
+
+                            def valid(value):
+                                return (
+                                    type(value) in (int, float)
+                                    and abs(value) < 1e12
+                                    and math.isfinite(value)
+                                )
+
+                            if clock is time.perf_counter or clock is time.monotonic:
+                                now = clock()
+                                timing = {
+                                    "age_s": round(now - numbers["start"], 3)
+                                    if valid(numbers["start"])
+                                    else "unknown",
+                                    "late_s": round(now - numbers["next_timer"], 3)
+                                    if valid(numbers["next_timer"])
+                                    else "unknown",
+                                    "count": numbers["count"]
+                                    if type(numbers["count"]) is int
+                                    and valid(numbers["count"])
+                                    else "unknown",
+                                    "interval_s": numbers["_interval"]
+                                    if valid(numbers["_interval"])
+                                    else "unknown",
+                                }
+                        coroutine = coroutine.cr_await
+                    return {
+                        "task": native_task_state(current),
+                        "code": path,
+                        "more_code": type(coroutine) is CoroutineType,
+                        "timing": timing,
+                    }
+
+                result = task_path(task)
+                waiter = task._fut_waiter
+                if type(waiter) is asyncio.Task:
+                    result["child"] = task_path(waiter)
+                    waiter = waiter._fut_waiter
+                result["waiter"] = {
+                    "type": "Task"
+                    if type(waiter) is asyncio.Task
+                    else "Future"
+                    if type(waiter) is asyncio.Future
+                    else "unknown",
+                    "state": waiter._state
+                    if type(waiter) is asyncio.Task or type(waiter) is asyncio.Future
+                    else "unknown",
+                }
+                source_state = "unknown"
+                if type(waiter) is asyncio.Future:
+                    chain_module = sys.modules.get("asyncio.futures")
+                    chain = (
+                        vars(chain_module).get("_chain_future")
+                        if type(chain_module) is ModuleType
+                        else None
+                    )
+                    if (
+                        type(chain) is FunctionType
+                        and chain.__module__ == "asyncio.futures"
+                        and chain.__qualname__ == "_chain_future"
+                    ):
+                        check_code = next(
+                            (
+                                code
+                                for code in chain.__code__.co_consts
+                                if type(code) is CodeType
+                                and code.co_name == "_call_check_cancel"
+                            ),
+                            None,
+                        )
+                        callbacks = waiter._callbacks
+                        if (
+                            check_code is not None
+                            and type(callbacks) is list
+                            and "source" in check_code.co_freevars
+                        ):
+                            source_index = check_code.co_freevars.index("source")
+                            for entry in callbacks[:8]:
+                                if type(entry) is not tuple or len(entry) != 2:
+                                    continue
+                                callback = entry[0]
+                                if (
+                                    type(callback) is not FunctionType
+                                    or callback.__code__ is not check_code
+                                ):
+                                    continue
+                                closure = callback.__closure__
+                                if (
+                                    type(closure) is not tuple
+                                    or source_index >= len(closure)
+                                    or type(closure[source_index]) is not CellType
+                                ):
+                                    continue
+                                try:
+                                    source = closure[source_index].cell_contents
+                                except ValueError:
+                                    continue
+                                if type(source) is ConcurrentFuture:
+                                    value = inspect.getattr_static(
+                                        source, "_state", None
+                                    )
+                                    if type(value) is str and value in {
+                                        "PENDING",
+                                        "RUNNING",
+                                        "FINISHED",
+                                        "CANCELLED",
+                                    }:
+                                        source_state = value
+                                    break
+                result["waiter"]["executor_source_state"] = source_state
+                return result
+
+            def executor_state():
+                executor = inspect.getattr_static(
+                    asyncio.get_running_loop(), "_default_executor", None
+                )
+                guard_module = sys.modules.get(
+                    "tldw_chatbook.Utils.text_selection_crash_guard"
+                )
+                fresh = (
+                    vars(guard_module).get("FreshContextExecutor")
+                    if type(guard_module) is ModuleType
+                    else None
+                )
+                trusted = (
+                    (ThreadPoolExecutor, fresh)
+                    if type(fresh) is type and fresh.__bases__ == (ThreadPoolExecutor,)
+                    else (ThreadPoolExecutor,)
+                )
+                if not any(type(executor) is kind for kind in trusted):
+                    return {"missing": "unknown; executor type not trusted"}
+                threads = inspect.getattr_static(executor, "_threads", None)
+                work_queue = inspect.getattr_static(executor, "_work_queue", None)
+                maximum = inspect.getattr_static(executor, "_max_workers", None)
+                info = {
+                    "kind": type(executor).__name__,
+                    "max_workers": maximum if type(maximum) is int else "unknown",
+                    "thread_count": len(threads) if type(threads) is set else "unknown",
+                    "queue_size_approx": SimpleQueue.qsize(work_queue)
+                    if type(work_queue) is SimpleQueue
+                    else "unknown",
+                    "workers": [],
+                    "workers_omitted": 0,
+                }
+                if type(threads) is not set or len(threads) > 1024:
+                    info["missing"] = (
+                        "unknown; thread set unavailable or outside observation bound"
+                    )
+                    return info
+                frames = sys._current_frames()
+                worker = executor_thread._worker
+                if type(worker) is not FunctionType:
+                    info["missing"] = "unknown; executor worker code not native"
+                    return info
+                worker_code = worker.__code__
+                info["workers_omitted"] = max(0, len(threads) - 6)
+                for thread in tuple(threads)[:6]:
+                    if type(thread) is not threading.Thread:
+                        continue
+                    frame = frames.get(thread.ident)
+                    names, matched = [], False
+                    for _ in range(24):
+                        if type(frame) is not FrameType:
+                            break
+                        if len(names) < 2:
+                            names.append(frame.f_code.co_qualname[:72])
+                        matched = matched or frame.f_code is worker_code
+                        frame = frame.f_back
+                    if not matched:
+                        continue
+                    info["workers"].append({"code": names})
+                info["worker_sample_missing"] = (
+                    "unknown; departed or deeper worker frames may not match"
+                )
+                return info
+
             manager = fields.get("db_status_manager")
             actual_class = type(app)
             constructor = inspect.getattr_static(actual_class, "__init__", None)
@@ -926,6 +1152,7 @@ async def test_ui_ready_before_nonessential_startup_services_finish(
                 else None
             )
             records, seen, omitted = [], 0, 0
+            db_timer_wait = {"missing": "unknown; second DB timer not retained"}
             periodic = inspect.getattr_static(manager, "_update_timer", None)
             timers = fields.get("_timers")
             retained = [periodic]
@@ -942,6 +1169,16 @@ async def test_ui_ready_before_nonessential_startup_services_finish(
                 ]
                 if timer is not periodic and not roles:
                     continue
+                if bound and "update_db_sizes" in roles:
+                    try:
+                        db_timer_wait = timer_wait_state(
+                            inspect.getattr_static(timer, "_task", None)
+                        )
+                    except Exception as probe_error:  # noqa: BLE001 -- Keep the original observation.
+                        db_timer_wait = {
+                            "missing": "unknown",
+                            "error": type(probe_error).__name__[:80],
+                        }
                 seen += 1
                 if len(records) >= 6:
                     omitted += 1
@@ -1011,6 +1248,13 @@ async def test_ui_ready_before_nonessential_startup_services_finish(
                 if type(database_module) is ModuleType
                 else None
             )
+            try:
+                executor_snapshot = executor_state()
+            except Exception as probe_error:  # noqa: BLE001 -- Keep the original observation.
+                executor_snapshot = {
+                    "missing": "unknown",
+                    "error": type(probe_error).__name__[:80],
+                }
             db_startup = {
                 "missing": "unknown; completed timers or callback batches may no longer be retained",
                 "app_class_matches": actual_class is TldwCli,
@@ -1065,20 +1309,36 @@ async def test_ui_ready_before_nonessential_startup_services_finish(
                 "pump_more_code": True
                 if type(coroutine) is CoroutineType
                 else "unknown",
+                "db_timer_wait": db_timer_wait,
+                "executor": executor_snapshot,
             }
-            while (
-                len(json.dumps(db_startup, sort_keys=True).encode("utf-8")) > 4096
-                and records
-            ):
-                records.pop()
-                db_startup["records_omitted"] += 1
-            while (
-                len(json.dumps(db_startup, sort_keys=True).encode("utf-8")) > 4096
-                and chain
-            ):
+
+            def oversized():
+                return (
+                    len(
+                        json.dumps(
+                            dict(context, db_startup=db_startup), sort_keys=True
+                        ).encode("utf-8")
+                    )
+                    > 4096
+                )
+
+            while oversized() and chain:
                 chain.pop()
                 db_startup["pump_more_code"] = True
-            if len(json.dumps(db_startup, sort_keys=True).encode("utf-8")) > 4096:
+            workers = db_startup["executor"].get("workers", [])
+            while oversized() and workers:
+                workers.pop()
+                db_startup["executor"]["workers_omitted"] += 1
+            while oversized() and records:
+                records.pop()
+                db_startup["records_omitted"] += 1
+            for observed in (db_timer_wait.get("child", {}), db_timer_wait):
+                codes = observed.get("code", [])
+                while oversized() and codes:
+                    codes.pop()
+                    observed["more_code"] = True
+            if oversized():
                 db_startup = {
                     "missing": "unknown",
                     "truncated": "4096-byte observation limit",
