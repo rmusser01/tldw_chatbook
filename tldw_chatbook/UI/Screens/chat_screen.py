@@ -188,6 +188,7 @@ from ..Console_Modules import config_sync  # Resident at compose (context_spend)
 from ..Console_Modules.session import (
     _has_selected_text,
     _is_empty_select_value,
+    settings_revision_held,
 )
 from ...Chat.citation_trace_repository import ActiveCitationTraceState
 from ...Chat.console_chat_controller import (
@@ -3540,7 +3541,12 @@ class ChatScreen(BaseAppScreen):
             ):
                 return False
             try:
-                return store.session_settings_revision(session_id) == settings_revision
+                return settings_revision_held(
+                    getattr(self, "_session", None),
+                    store,
+                    session_id,
+                    settings_revision,
+                )
             except KeyError:
                 return False
 
@@ -3680,9 +3686,11 @@ class ChatScreen(BaseAppScreen):
                     "The temporary conversation is no longer available. Its "
                     "Chat settings draft was not restored."
                 )
-            if (
-                store.session_settings_revision(target.session_id)
-                != target.settings_revision
+            if not settings_revision_held(
+                getattr(self, "_session", None),
+                store,
+                target.session_id,
+                target.settings_revision,
             ):
                 return (
                     "Chat settings changed while credentials were open. "

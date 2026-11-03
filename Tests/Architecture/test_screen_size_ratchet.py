@@ -321,7 +321,10 @@ _BUDGETS: dict[str, tuple[str, int, int]] = {
     #: drops the release (a raising callback, or a pump whose mount raised).
     #: The cascade's local helper is +17 lines, 7 of them its comment.
     #: Dev 18482c1cf7 measures 24590/741; with the fix, 24613/741.
-    "tldw_chatbook/UI/Screens/chat_screen.py": ("ChatScreen", 24613, 741),
+    # TASK-36534, 2026-11-03: size waiver (owner rule: a fix over a size ratchet
+    # raises the row with a dated comment); +8, the return's two revision checks
+    # call Console_Modules/session.py's settings_revision_held. Exact measurement.
+    "tldw_chatbook/UI/Screens/chat_screen.py": ("ChatScreen", 24580, 741),
     #: Added 2026-09 by the Library decomposition plan (PR 0b): this row was
     #: missing for the entire month in which library_screen.py tripled from
     #: 15,819 to 46,109 lines while chat_screen.py shrank under its budget.

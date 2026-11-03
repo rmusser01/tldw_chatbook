@@ -763,9 +763,6 @@ async def test_credential_round_trip_keeps_the_restored_edit_unsaved(
     app.chat_api_provider_value = "openai"
     app.chat_api_model_value = "gpt-5"
     app.providers_models = {"openai": ["gpt-5", "model-b"]}
-    committed = ConsoleSessionSettings(
-        provider="openai", model="gpt-5", temperature=0.7
-    )
 
     async with app.run_test(size=(211, 44)) as pilot:
         console = None
@@ -780,12 +777,9 @@ async def test_credential_round_trip_keeps_the_restored_edit_unsaved(
         )
         store = console._ensure_console_chat_store()
         session = store.ensure_session()
-        # The chat has its own settings, so a saved default never converges
-        # it. A blank chat converges to the new default and its return is
-        # refused (ADR-095 D1; TASK-36534).
-        assert store.replace_session_settings(session.id, committed).has_user_work
-        # Directly replacing settings can leave a mount read on the old revision.
-        # Publish this revision before opening the owner-checked settings modal.
+        # A blank chat: the model save converges it to model-b (ADR-095 D1),
+        # which TASK-36534 no longer counts as a change made while away.
+        # Publish its revision before opening the owner-checked settings modal.
         await _sync_console_control_bar_now(console)
         assert await console._open_console_settings() is True
         for _ in range(80):
@@ -834,6 +828,7 @@ async def test_credential_round_trip_keeps_the_restored_edit_unsaved(
             await pilot.pause(0.05)
         assert returned is not None
         await _settle(pilot, returned)
+        held = store.session_settings(session.id)
         assert returned._unsaved_field_labels() == labels
         assert _text(returned, "#console-settings-esc-hint") == esc_hint_copy(
             len(labels)
@@ -844,7 +839,7 @@ async def test_credential_round_trip_keeps_the_restored_edit_unsaved(
         assert _text(returned, "#console-settings-close-message").startswith(
             unsaved_prompt_copy(labels).split("\n")[0]
         )
-        assert store.session_settings(session.id) == committed
+        assert store.session_settings(session.id) == held
 
 
 def _flip_streaming(modal: ConsoleSettingsModal) -> None:

@@ -566,7 +566,12 @@ back to the Console, move that chat to another model in Switch model
 
 From Chat settings no **Return to Chat settings** shows until you save (Return
 without saving shows while you have unsaved edits, below); the button then
-reopens the dialog with your unsaved edits. From the
+reopens the dialog with your unsaved edits. It does so too when the save makes
+that pair the default for new chats (below) and the chat, still unused, moves
+to it. If
+the chat's own settings change some other way meanwhile, the dialog does not
+reopen, and the Console says "Chat settings changed while credentials were
+open. The earlier draft was not restored.". From the
 Console the button reads **Return to Console** and is there as soon as you
 arrive, so a visit that saves nothing, such as a key test with **t**, can go
 straight back: the status names the chat, as in "No unsaved changes. Return to

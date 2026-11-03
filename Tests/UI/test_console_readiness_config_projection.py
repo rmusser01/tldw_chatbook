@@ -612,6 +612,7 @@ def _real_session_screen(monkeypatch):
         lambda: spend.provider_readiness_app_config(screen, module.load_settings)
     )
     controller._pristine_defaults_checked = None
+    controller._default_convergences = {}
     screen._session = controller
     established = blank_console_session_settings(screen.app_instance.app_config)
     session = store.create_session(
