@@ -342,3 +342,66 @@ def test_a_stopping_poll_hands_a_request_it_was_left_to_the_running_sync():
     assert screen._console_sync_requested, (
         "the coalesced request was dropped when the poll stopped"
     )
+
+
+def test_the_core_state_push_holds_the_config_locks_it_probed(monkeypatch):
+    """TASK-36511: the full sync's core-state push never waits out a config read.
+
+    ``sync_console_core_state`` probed ``config_read_would_wait()`` and then
+    pushed; a worker that took the config locks in between made the push's
+    ``load_settings()`` wait out its whole read on the UI loop (the compact
+    gate's 238 ms probe stall, main thread in ``config_participants.operation``).
+    The push now holds both locks it probed, so no read starts under it, and a
+    lock another thread already holds replays the whole sync instead.
+    """
+    from tldw_chatbook import config
+
+    monkeypatch.setattr(config, "config_read_would_wait", lambda: False)
+    locks = (config._settings_rebuild_lock(), config._config_file_lock())
+    taken_mid_push = []
+
+    class Screen:
+        _console_control_bar_replay_whole_sync = False
+
+        def __init__(self):
+            self.pushes, self.replays = 0, []
+
+        def _sync_console_chat_core_state(self):
+            self.pushes += 1
+
+            def worker_read():  # A worker's checked read starts mid-push.
+                got = [lock.acquire(blocking=False) for lock in locks]
+                for lock, ok in zip(locks, got):
+                    if ok:
+                        lock.release()
+                taken_mid_push.append(any(got))
+
+            reader = threading.Thread(target=worker_read)
+            reader.start()
+            reader.join(5)
+
+        def _request_console_control_bar_sync(self, *, delayed=False):
+            self.replays.append(delayed)
+
+    screen = Screen()
+    config_sync.sync_console_core_state(screen)
+    assert screen.pushes == 1
+    assert taken_mid_push == [False], "a worker's config read started under the push"
+
+    held, release = threading.Event(), threading.Event()
+
+    def hold_file_lock():  # The race: the read took a lock after the probe.
+        with locks[1]:
+            held.set()
+            release.wait(5)
+
+    holder = threading.Thread(target=hold_file_lock)
+    holder.start()
+    assert held.wait(5)
+    try:
+        config_sync.sync_console_core_state(screen)
+    finally:
+        release.set()
+        holder.join(5)
+    assert screen.pushes == 1, "the push ran while another thread held a config lock"
+    assert screen.replays == [True] and screen._console_control_bar_replay_whole_sync

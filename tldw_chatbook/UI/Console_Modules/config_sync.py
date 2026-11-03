@@ -189,13 +189,23 @@ def sync_console_core_state(screen) -> None:
     config the push hands the whole sync to the replay instead, and the rest of
     this pass still runs. Otherwise it is the same live read a send's own push
     makes (``_ensure_console_chat_controller``).
-    """
-    from tldw_chatbook.config import config_read_would_wait
 
-    if config_read_would_wait():
-        replay_whole_console_sync(screen)
-        return
-    screen._sync_console_chat_core_state()
+    TASK-36511: the push holds both config locks it probed, as
+    ``retry_after_config_rebuild`` does; a worker read that started between
+    the probe and the push's ``load_settings()`` held the UI loop 238 ms.
+    """
+    from tldw_chatbook import config
+
+    with ExitStack() as held:
+        if not config.config_read_would_wait():
+            for lock in (config._settings_rebuild_lock(), config._config_file_lock()):
+                if not lock.acquire(blocking=False):
+                    break
+                held.callback(lock.release)
+            else:
+                screen._sync_console_chat_core_state()
+                return
+    replay_whole_console_sync(screen)
 
 
 def sync_console_rail_visibility(screen) -> bool:
