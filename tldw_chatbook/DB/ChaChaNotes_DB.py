@@ -144,6 +144,7 @@ from tldw_chatbook.Utils.fts5_match_forms import (
     quote_fts5_prefix,
     quote_fts5_token,
 )
+from tldw_chatbook.DB.store_errors import StoreConflictError, StoreInputError, StoreSchemaError
 #
 ########################################################################################################################
 #
@@ -435,7 +436,6 @@ def _validate_continuation_owner_content(checkpoint: Any, content: str) -> None:
 
 
 # --- Custom Exceptions ---
-from tldw_chatbook.DB.store_errors import StoreConflictError, StoreInputError, StoreSchemaError
 
 
 class CharactersRAGDBError(Exception):
@@ -450,7 +450,7 @@ class SchemaError(CharactersRAGDBError, StoreSchemaError):
     pass
 
 
-class InputError(StoreInputError):
+class InputError(StoreInputError, ValueError):
     """Custom exception for input validation errors."""
 
     pass

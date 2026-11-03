@@ -67,6 +67,7 @@ from tldw_chatbook.Utils.fts5_match_forms import (
     build_and_match_query,
     quote_fts5_token,
 )
+from tldw_chatbook.DB.store_errors import StoreConflictError, StoreInputError, StoreSchemaError
 #
 ########################################################################################################################
 #
@@ -74,7 +75,6 @@ from tldw_chatbook.Utils.fts5_match_forms import (
 
 
 # --- Custom Exceptions (Mirrors Media_DB_v2) ---
-from tldw_chatbook.DB.store_errors import StoreConflictError, StoreInputError, StoreSchemaError
 
 
 class DatabaseError(Exception):
@@ -89,7 +89,7 @@ class SchemaError(DatabaseError, StoreSchemaError):
     pass
 
 
-class InputError(StoreInputError):
+class InputError(StoreInputError, ValueError):
     """Custom exception for input validation errors."""
 
     pass

@@ -45,7 +45,10 @@ def test_per_store_handlers_still_catch(store, kind):
     module, store_base = STORES[store]
     cls = getattr(module, kind)
     if kind == "InputError":
-        assert issubclass(cls, ValueError) and cls.__mro__[1] is StoreInputError
+        # ValueError stays a direct base; the shared base must precede it (MRO).
+        assert cls.__bases__ == (StoreInputError, ValueError)
+        with pytest.raises(ValueError):
+            raise cls("boom")
     else:
         assert cls.__mro__[1] is store_base
         with pytest.raises(store_base):
