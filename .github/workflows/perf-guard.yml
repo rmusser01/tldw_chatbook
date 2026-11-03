@@ -26,6 +26,28 @@ on:
       - 'Tests/Utils/test_ui_responsiveness_stall_persist.py'
       # The speculative-voice gates the voice step below imports.
       - 'Packaging/speculative_voice_*.py'
+      # TASK-36529: the helpers, conftests and package inits the steps load.
+      # Tests/CI/test_ci_queue_pressure_contract.py derives them from the
+      # steps' imports and fails while one is missing here or below.
+      - 'Tests/__init__.py'
+      - 'Tests/conftest.py'
+      - 'Tests/network_guard.py'
+      - 'Tests/private_profile.py'
+      - 'Tests/real_profile_guard.py'
+      - 'Tests/Backup_Recovery/config_test_support.py'
+      - 'Tests/fixtures/__init__.py'
+      - 'Tests/fixtures/required_doubles.py'
+      - 'Tests/Packaging/test_app_import_diet_closure.py'
+      - 'Tests/Plugins/__init__.py'
+      - 'Tests/Plugins/platform_support.py'
+      - 'Tests/UI/__init__.py'
+      - 'Tests/UI/console_controller_stubs.py'
+      - 'Tests/UI/css_cache.py'
+      - 'Tests/Utils/__init__.py'
+      # The plugin fixture test_app_import_weight.py copies, and the second
+      # in-tree package the app imports (TASK-36529 review).
+      - 'Tests/Plugins/fixtures/native/**'
+      - 'packages/tldw_profile_core/src/**'
       - 'pyproject.toml'
       - '.github/workflows/perf-guard.yml'
   push:
@@ -42,6 +64,26 @@ on:
       - 'Tests/Utils/test_ui_responsiveness_stall_persist.py'
       # The speculative-voice gates the voice step below imports.
       - 'Packaging/speculative_voice_*.py'
+      # TASK-36529: the helpers the steps load (see pull_request).
+      - 'Tests/__init__.py'
+      - 'Tests/conftest.py'
+      - 'Tests/network_guard.py'
+      - 'Tests/private_profile.py'
+      - 'Tests/real_profile_guard.py'
+      - 'Tests/Backup_Recovery/config_test_support.py'
+      - 'Tests/fixtures/__init__.py'
+      - 'Tests/fixtures/required_doubles.py'
+      - 'Tests/Packaging/test_app_import_diet_closure.py'
+      - 'Tests/Plugins/__init__.py'
+      - 'Tests/Plugins/platform_support.py'
+      - 'Tests/UI/__init__.py'
+      - 'Tests/UI/console_controller_stubs.py'
+      - 'Tests/UI/css_cache.py'
+      - 'Tests/Utils/__init__.py'
+      # The plugin fixture test_app_import_weight.py copies, and the second
+      # in-tree package the app imports (TASK-36529 review).
+      - 'Tests/Plugins/fixtures/native/**'
+      - 'packages/tldw_profile_core/src/**'
       - 'pyproject.toml'
       - '.github/workflows/perf-guard.yml'
   # For manual runs; the merge queue approves the held pull_request run instead (ADR-218 amendment 2026-10-06).
@@ -134,11 +176,15 @@ jobs:
 
       # TASK-36390: typing must not snapshot the transcript (TASK-24300) or
       # cost more in a long chat. Both are call counts, not wall clock.
+      # TASK-36529 added the last two (45-55 s on CI): no full sync or history
+      # rows in long-chat typing, and no provider re-derivation per key.
       - name: Run Console keystroke work census
         run: |
           pytest "Tests/Performance/test_console_keystroke_work_census.py::test_typing_never_snapshots_the_transcript" \
             "Tests/Performance/test_console_keystroke_work_census.py::test_keystroke_work_does_not_scale_with_transcript_length" \
             "Tests/Performance/test_console_keystroke_work_census.py::test_typing_census_excludes_elapsed_draft_pause_work" \
+            "Tests/Performance/test_console_keystroke_work_census.py::test_settled_400_message_typing_traverses_no_history" \
+            "Tests/Performance/test_console_keystroke_work_census.py::test_typing_does_not_rebuild_the_provider_derivation" \
             -v --timeout=300
 
       # The Console storage-unit ratchet joined with TASK-33260 after review

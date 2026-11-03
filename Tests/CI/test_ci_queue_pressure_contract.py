@@ -2,8 +2,12 @@
 
 from __future__ import annotations
 
+import ast
 import copy
+import fnmatch
+import re
 import shlex
+import tomllib
 from pathlib import Path
 
 import pytest
@@ -1398,6 +1402,179 @@ def test_focused_guards_keep_dev_pr_and_dev_main_push_coverage() -> None:
         assert triggers["pull_request"]["branches"] == ["dev"]
         assert triggers["pull_request"]["types"] == PULL_REQUEST_TYPES
         assert triggers["push"]["branches"] == ["dev", "main"]
+
+
+def _files_loaded_by_pytest_steps(workflow_name: str) -> set[str]:
+    """Repo files a workflow's pytest steps load, as repo-relative paths.
+
+    Each target, the ``conftest.py`` files and package ``__init__.py`` files
+    pytest loads for it, and every repo module they import, followed
+    transitively by AST (function-level imports included, and the imports of
+    any string that parses as a script, such as a ``python -c`` body).
+    Imports from ``tldw_chatbook/`` are listed but not followed: perf-guard's
+    own glob covers that package wholesale, as
+    ``_in_tree_package_modules`` checks for every in-tree package.
+    """
+
+    def package_inits(path: Path) -> list[Path]:
+        inits = []
+        for parent in path.parents:
+            if not (parent / "__init__.py").is_file():
+                break
+            inits.append(parent / "__init__.py")
+        return inits
+
+    def module_files(dotted: str) -> list[Path]:
+        base = PROJECT_ROOT.joinpath(*dotted.split("."))
+        found = [p for p in (base.with_suffix(".py"), base / "__init__.py") if p.is_file()]
+        return found + package_inits(found[0]) if found else []
+
+    def imported_files(tree: ast.AST, package: list[str]) -> list[Path]:
+        found: list[Path] = []
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Import):
+                for alias in node.names:
+                    found += module_files(alias.name)
+            elif isinstance(node, ast.ImportFrom):
+                parts = package[: len(package) - node.level + 1] if node.level else []
+                module = ".".join(parts + [node.module] if node.module else parts)
+                found += module_files(module)
+                for alias in node.names:
+                    found += module_files(f"{module}.{alias.name}")
+            elif isinstance(node, (ast.Constant, ast.JoinedStr)):
+                # A subprocess script's imports load too. An f-string script
+                # reads each replacement field as ``None`` so it parses whole.
+                script = (
+                    "".join(
+                        v.value if isinstance(v, ast.Constant) else "None"
+                        for v in node.values
+                    )
+                    if isinstance(node, ast.JoinedStr)
+                    else node.value
+                )
+                if not isinstance(script, str) or "import" not in script:
+                    continue
+                try:
+                    found += imported_files(ast.parse(script), package)
+                except (SyntaxError, ValueError):
+                    pass  # Prose, not a script.
+        return found
+
+    pending: list[Path] = []
+    for job in _workflow(workflow_name)["jobs"].values():
+        for step in job["steps"]:
+            for target in _pytest_targets(step.get("run", "")):
+                path = PROJECT_ROOT / target.split("::")[0]
+                assert path.is_file(), f"{workflow_name} runs a non-file target {target}"
+                pending += [path, *package_inits(path)]
+                pending += [p / "conftest.py" for p in path.parents if p.is_relative_to(PROJECT_ROOT)]
+    loaded: set[Path] = set()
+    while pending:
+        path = pending.pop()
+        if path in loaded or not path.is_file():
+            continue
+        loaded.add(path)
+        relative = path.relative_to(PROJECT_ROOT)
+        if relative.parts[0] == "tldw_chatbook":
+            continue
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+        pending += imported_files(tree, list(relative.parent.parts))
+    return {path.relative_to(PROJECT_ROOT).as_posix() for path in loaded}
+
+
+def _in_tree_package_modules() -> set[str]:
+    """One module per top-level package pyproject builds from this tree.
+
+    Every directory under a ``[tool.setuptools.packages.find]`` ``where`` root
+    that ``include`` names and ``exclude`` does not. ``namespaces`` defaults to
+    true, so a package needs no ``__init__.py``; like setuptools, a name with
+    a ``.`` (``tldw_chatbook.egg-info``) is not a package. The module is its
+    ``__init__.py``, else its first ``.py``. A Perf Guard step that imports the
+    app loads them all, so each needs a trigger glob of its own.
+    """
+    pyproject = tomllib.loads((PROJECT_ROOT / "pyproject.toml").read_text(encoding="utf-8"))
+    find = pyproject["tool"]["setuptools"]["packages"]["find"]
+
+    def named(name: str, key: str) -> bool:
+        return any(fnmatch.fnmatchcase(name, p) for p in find.get(key, ()))
+
+    modules: set[str] = set()
+    for root in find["where"]:
+        found = set()
+        for package in (PROJECT_ROOT / root).iterdir():
+            if not package.is_dir() or "." in package.name:
+                continue
+            if not named(package.name, "include") or named(package.name, "exclude"):
+                continue
+            init = package / "__init__.py"
+            module = init if init.is_file() else min(package.rglob("*.py"), default=None)
+            if module is not None:
+                found.add(module.relative_to(PROJECT_ROOT).as_posix())
+        assert found, f"pyproject's packages.find root {root!r} holds no included package"
+        modules |= found
+    return modules
+
+
+#: Files Perf Guard's steps read as data rather than import, kept by hand:
+#: test_app_import_weight.py copies this plugin fixture and checks its
+#: plugin.json.
+PERF_GUARD_DATA_DEPENDENCIES = ("Tests/Plugins/fixtures/native",)
+
+
+def _github_paths_match(pattern: str, path: str) -> bool:
+    """GitHub's ``paths`` glob, for the ``*``/``**`` subset only.
+
+    ``**`` crosses ``/`` and ``*`` does not. ``?``, ``+``, ``[]``, ``!`` and
+    ``**/`` anywhere (GitHub lets ``docs/**/*.md`` match ``docs/hello.md``)
+    would not match as GitHub does, so
+    ``test_perf_guard_runs_when_a_file_its_steps_load_changes`` refuses them.
+    """
+    regex = "".join(
+        {"**": ".*", "*": "[^/]*"}.get(token, re.escape(token))
+        for token in re.split(r"(\*\*|\*)", pattern)
+    )
+    return re.fullmatch(regex, path) is not None
+
+
+def test_perf_guard_runs_when_a_file_its_steps_load_changes() -> None:
+    """TASK-36529: a PR that changed only a helper a Perf Guard step imports
+    (``Tests/private_profile.py``, ``Tests/conftest.py``...) merged without a
+    Perf Guard run. Every file the steps load must match both triggers' paths.
+    """
+    assert _github_paths_match("tldw_chatbook/**.py", "tldw_chatbook/UI/a.py")
+    assert not _github_paths_match("Tests/*.py", "Tests/UI/app_factory.py")
+    loaded = _files_loaded_by_pytest_steps("perf-guard.yml")
+    assert {"Tests/conftest.py", "Tests/private_profile.py"} <= loaded, loaded
+    packages = _in_tree_package_modules()
+    assert {
+        "tldw_chatbook/__init__.py",
+        "packages/tldw_profile_core/src/tldw_profile_core/__init__.py",
+    } <= packages, packages
+    loaded |= packages
+    for data in PERF_GUARD_DATA_DEPENDENCIES:
+        files = [p for p in (PROJECT_ROOT / data).rglob("*") if p.is_file()]
+        assert files, f"data dependency {data} holds no files"
+        loaded |= {p.relative_to(PROJECT_ROOT).as_posix() for p in files}
+    triggers = _triggers(_workflow("perf-guard.yml"))
+    for event in ("pull_request", "push"):
+        unmodelled = [
+            p
+            for p in triggers[event]["paths"]
+            if set(p) & set("?+[]!") or "**/" in p
+        ]
+        assert not unmodelled, (
+            f"perf-guard.yml {event} paths use glob syntax _github_paths_match "
+            f"does not model: {unmodelled}"
+        )
+        missing = sorted(
+            path
+            for path in loaded
+            if not any(_github_paths_match(p, path) for p in triggers[event]["paths"])
+        )
+        assert not missing, (
+            f"perf-guard.yml's {event} paths miss files its steps load; add "
+            f"each to both trigger lists: {missing}"
+        )
 
 
 def test_pull_request_workflows_are_never_cancelled_in_progress() -> None:
