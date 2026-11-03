@@ -7682,18 +7682,40 @@ class _FencedQuitHarness(_PanelHarness):
 
     ``TldwCli`` sets ``App._exit`` -- Textual's mount fence, under which every
     widget reads ``is_attached`` False -- and then awaits its app-owned drains
-    while every widget is still alive. ``drain`` stands in for those drains.
-    A plain ``App.exit()`` cannot show the bug: Textual closes the widgets
-    first, and a closing ListView ignores the mount.
+    while every widget is still alive. A plain ``App.exit()`` cannot show the
+    bug: Textual closes the widgets first, and a closing ListView ignores the
+    mount. Once ``hold`` is set, the panel's ``render_name`` worker render
+    waits; the stand-in drain releases it and waits for it to land.
     """
 
-    def __init__(self, panel: LibraryFileNotesGitPanel, drain) -> None:
+    def __init__(self, panel: LibraryFileNotesGitPanel, render_name: str) -> None:
         super().__init__(panel)
-        self._drain = drain
+        self.hold = False
+        self.started = asyncio.Event()
+        self.resumed_after_quit: list[bool] = []
+        self._release = asyncio.Event()
+        self._landed = asyncio.Event()
+        render = getattr(panel, render_name)
+
+        async def held_render(*args) -> None:
+            if not self.hold:
+                await render(*args)
+                return
+            self.started.set()
+            await self._release.wait()
+            self.resumed_after_quit.append(self._exit)
+            try:
+                await render(*args)
+            finally:
+                self._landed.set()
+
+        setattr(panel, render_name, held_render)
 
     async def _shutdown(self) -> None:
         self._exit = True
-        await self._drain()
+        self._release.set()
+        if self.started.is_set():
+            await asyncio.wait_for(self._landed.wait(), timeout=5)
         await super()._shutdown()
 
 
@@ -7709,46 +7731,40 @@ async def test_a_git_row_render_resuming_after_quit_does_nothing() -> None:
     """
     panel = LibraryFileNotesGitPanel()
     panel.styles.display = "block"
-    render_rows = panel._render_rows
-    hold_rows = False
-    render_started = asyncio.Event()
-    release_rows = asyncio.Event()
-    render_landed = asyncio.Event()
-    resumed_after_quit: list[bool] = []
-
-    async def held_render_rows(generation, group_id, rows) -> None:
-        if not hold_rows:
-            await render_rows(generation, group_id, rows)
-            return
-        render_started.set()
-        await release_rows.wait()
-        resumed_after_quit.append(app._exit)
-        try:
-            await render_rows(generation, group_id, rows)
-        finally:
-            render_landed.set()
-
-    async def drain() -> None:
-        release_rows.set()
-        await asyncio.wait_for(render_landed.wait(), timeout=5)
-
-    panel._render_rows = held_render_rows
-    app = _FencedQuitHarness(panel, drain)
+    app = _FencedQuitHarness(panel, "_render_rows")
     async with app.run_test(size=(120, 40)) as pilot:
         # A rescan replaces rows already on screen (the Restore case).
         panel.render_status(_status(_row("unstaged", stage_action="stage")))
         await _drain_git_row_render(pilot, panel)
-        hold_rows = True
+        app.hold = True
         panel.render_status(_status(_row("unstaged", group_id=2, stage_action="stage")))
-        await _wait_until(
-            pilot,
-            render_started.is_set,
-            "Git row replacement did not start",
-        )
+        await _wait_until(pilot, app.started.is_set, "Git rows did not start")
     # Without this, a render cancelled before it resumed would turn the test
     # green without ever reaching the guard.
-    assert resumed_after_quit == [True], "the held render never resumed under quit"
+    assert app.resumed_after_quit == [True], "the held render never resumed under quit"
     assert panel._replacing_rows, "the late render still synced the panel"
+
+
+@pytest.mark.asyncio
+async def test_a_commit_notes_render_resuming_after_quit_ends_quietly() -> None:
+    """TASK-36527 AC#3: the commit review's included-notes render, same race.
+
+    RED before the fix: ``WorkerFailed: MountError("Can't mount widget(s)
+    before ListView(id='file-notes-git-commit-included-notes') is mounted")``.
+    """
+    panel = LibraryFileNotesGitPanel()
+    panel.styles.display = "block"
+    app = _FencedQuitHarness(panel, "_render_commit_review_notes")
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        panel.render_commit_review(_commit_review_projection())
+        await pilot.app.workers.wait_for_complete()
+        app.hold = True
+        panel.render_commit_review(
+            _commit_review_projection(paths=(("Modified", "folder/two.md"),))
+        )
+        await _wait_until(pilot, app.started.is_set, "notes render did not start")
+    assert app.resumed_after_quit == [True], "the held render never resumed under quit"
 
 
 async def _drain_git_row_render(pilot, panel) -> None:

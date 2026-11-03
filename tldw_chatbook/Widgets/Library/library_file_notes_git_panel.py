@@ -2811,14 +2811,14 @@ class LibraryFileNotesGitPanel(Vertical):
         # TASK-32800.5: this is a worker body, so the panel may already be
         # detached by the time it runs; `exit_on_error` defaults to True, so an
         # unguarded lookup here exits the whole app rather than abandoning a
-        # stale render. The generation checks below already treat "too late" as
-        # a no-op -- a missing subtree is the same situation.
+        # stale render. "Too late" is a no-op: a newer generation, a missing
+        # subtree, or quit's `App._exit` detaching everything (TASK-36527).
         found = self.query("#file-notes-git-commit-included-notes")
         if not found:
             return
         list_view = found.first(ListView)
         await list_view.clear()
-        if generation != self._commit_note_render_generation:
+        if generation != self._commit_note_render_generation or not self.is_attached:
             return
         await list_view.extend(_CommitIncludedNoteListItem(note) for note in notes)
         if generation != self._commit_note_render_generation:

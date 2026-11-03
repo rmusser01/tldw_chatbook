@@ -5,7 +5,7 @@ status: Done
 assignee:
 - '@claude'
 created_date: 2026-10-24 00:26
-updated_date: '2026-11-03 07:24'
+updated_date: '2026-11-03 07:42'
 labels:
 - follow-up
 - library
@@ -29,6 +29,7 @@ Found by TASK-36383's implementation (PR #3232, 2026-10-23). That task fixed thr
 <!-- AC:BEGIN -->
 - [x] #1 Quitting while a File Notes rescan's git-row render is pending ends without a worker error
 - [x] #2 A test pins it by holding the render until quit has started, and it is red before the fix and green after
+- [x] #3 Every other worker render in the git panel that clears and then mounts into a list after an await stops without error when the panel is detached or the app is quitting
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -36,6 +37,7 @@ Found by TASK-36383's implementation (PR #3232, 2026-10-23). That task fixed thr
 1. Add a test in `Tests/UI/test_library_file_notes_git.py` that holds `_render_rows` (the panel harness), releases it and calls `app.exit()` in that order so the real body resumes with `app._exit` set, and asserts the body really ran under quit. Show it red (`WorkerFailed: MountError`) on the unfixed source.
 2. In `_render_rows`, reuse the panel's own liveness guard (`is_attached`, as `_sync_push_availability` and the focus helpers already do): return before touching the list when the panel is not attached, re-check after the `clear()` await before mounting, and skip the `finally` UI sync when the panel is no longer attached.
 3. Green the new test plus the file's covering tests, run the size ratchets and preflight, then finish the task file.
+4. (AC#3) Apply the same post-`clear()` `is_attached` guard to every other worker render in the panel that clears and then mounts after an await (only `_render_commit_review_notes`), pinned by a fenced-quit test that is red first.
 
 ## Implementation Notes
 
@@ -44,5 +46,5 @@ Found by TASK-36383's implementation (PR #3232, 2026-10-23). That task fixed thr
 - **Test:** `test_a_git_row_render_resuming_after_quit_does_nothing` (Tests/UI/test_library_file_notes_git.py). `_FencedQuitHarness` quits the way `TldwCli._shutdown` does: it sets `_exit`, then runs a drain that releases the held rescan render and waits for it to land. The test asserts that the render resumed under `_exit` and left the replacement untouched. A bare `App.exit()` could not reproduce the bug (see the new lessons entry).
 - **Red before the fix:** `WorkerFailed: MountError("Can't mount widget(s) before ListView(id='file-notes-git-rows') is mounted")` from git_panel.py:3200 `extend`. Mutation controls: dropping the post-clear check brings back the same `WorkerFailed`; dropping the `finally` gate fails "the late render still synced the panel".
 - **Green:** 10 of 10 serial runs at load average ~27-30.
-- **Not done:** the commit-notes render (`_render_commit_review_notes`) has the same unguarded `extend`. It is outside these criteria and is proposed as a follow-up.
+- **AC#3:** a grep for `clear()`/`extend()`/`mount()` after an await in a worker finds one other render, `_render_commit_review_notes`. It gets the same post-`clear()` check (generation or `not self.is_attached`). The code after its `extend` only queries the intact DOM under quit, and a detach cancels the worker on the await, so nothing else can raise. `_FencedQuitHarness` now owns the hold, and `test_a_commit_notes_render_resuming_after_quit_ends_quietly` was red first with `WorkerFailed: MountError(... ListView(id='file-notes-git-commit-included-notes') ...)` at git_panel.py:2823. Green 10 of 10 serial runs at load ~20. The module stays at 4207 lines because the note is folded into the existing comment.
 - **Files:** tldw_chatbook/Widgets/Library/library_file_notes_git_panel.py, Tests/UI/test_library_file_notes_git.py, backlog/docs/lessons-testing-evidence.md.
