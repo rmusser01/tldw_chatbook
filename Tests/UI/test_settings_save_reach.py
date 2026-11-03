@@ -879,8 +879,8 @@ def test_a_suspended_draft_follows_only_what_moved_under_its_own_pair():
                 "console-settings-base-url": old_url,
                 "console-settings-temperature": "0.9",
             },
-            provider_model_drafts={"vllm": draft.model},
-            provider_base_url_drafts={"vllm": old_url},
+            provider_model_drafts={draft.provider: draft.model},
+            provider_base_url_drafts={draft.provider: old_url},
             active_view="model",
             scroll_anchor=0,
             focus_control_id=None,
@@ -916,6 +916,25 @@ def test_a_suspended_draft_follows_only_what_moved_under_its_own_pair():
     assert "vllm" not in followed.provider_base_url_drafts
     assert followed.raw_values["console-settings-temperature"] == "0.9"
     assert followed.settings.temperature == opened.temperature
+    # Same pair, a field left alone that the chat did not move: it stays,
+    # though it differs from the chat (a pick's rebase, say); the Endpoint,
+    # which the chat did move, follows.
+    rebased = snapshot(replace(opened, temperature=0.4), set(), values(opened))
+    only_url = followed_suspended_draft(rebased, replace(opened, base_url=new_url))
+    assert (only_url.settings.base_url, only_url.settings.temperature) == (
+        new_url,
+        0.4,
+    )
+    # The same pair spelled another way is still the chat's pair, picked or not.
+    respelled = replace(opened, provider="VLLM", base_url=new_url)
+    for edited in ({"Model"}, {"Temperature"}):
+        spelled = followed_suspended_draft(
+            snapshot(opened, edited, values(opened)), respelled
+        )
+        assert (spelled.settings.provider, spelled.settings.base_url) == (
+            "vllm",
+            new_url,
+        )
 
 
 @pytest.mark.parametrize("after_return", ["kept-invalid", "fixed"])

@@ -47,7 +47,11 @@ from tldw_chatbook.Chat.console_roleplay_identity import (
     ChatDisplayNameError,
     normalize_chat_display_name,
 )
+from tldw_chatbook.Chat.console_session_settings import (
+    normalize_console_model_value,
+)
 from tldw_chatbook.Chat.console_settings_apply import ConsoleSettingsAction
+from tldw_chatbook.Chat.custom_endpoint_registry import provider_identity_key
 from tldw_chatbook.UI.character_display_text import sanitize_character_display_label
 
 #: The modal's name everywhere it is named (TASK-33006.5, spec §3).
@@ -167,6 +171,11 @@ def rebased_unsaved_baseline(
     return rebased
 
 
+def _pair_key(provider: object, model: object) -> tuple[str, str | None]:
+    """A provider·model pair as its identity, however it is spelled."""
+    return provider_identity_key(provider), normalize_console_model_value(model)
+
+
 def followed_suspended_draft(snapshot: Any, committed: Any) -> Any:
     """Move a suspended draft's untouched fields the chat itself moved.
 
@@ -200,14 +209,12 @@ def followed_suspended_draft(snapshot: Any, committed: Any) -> Any:
     raw = dict(snapshot.raw_values)
     models = dict(snapshot.provider_model_drafts)
     urls = dict(snapshot.provider_base_url_drafts)
+    chat_pair = _pair_key(committed.provider, committed.model)
     if moved(_PAIR_LABEL):
-        changes.update(provider=committed.provider, model=committed.model)
-        models[committed.provider] = committed.model
+        changes.update(provider=chat_pair[0], model=chat_pair[1])
+        models[chat_pair[0]] = chat_pair[1]
     provider = changes.get("provider", draft.provider)
-    if (provider, changes.get("model", draft.model)) != (
-        committed.provider,
-        committed.model,
-    ):
+    if _pair_key(provider, changes.get("model", draft.model)) != chat_pair:
         return snapshot  # another pair: the user's pick keeps its own values
     for name, label in _SETTINGS_FIELDS.items():
         value = getattr(committed, name)
