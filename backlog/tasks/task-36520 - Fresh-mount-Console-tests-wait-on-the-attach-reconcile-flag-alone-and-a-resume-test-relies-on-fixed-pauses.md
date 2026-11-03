@@ -45,7 +45,7 @@ Of the four files, only `test_console_approval_compact_layout.py` is in the UI c
 <!-- AC:BEGIN -->
 - [x] #1 Each named test waits for the attach to end and the Console's queue to drain before the work it watches or asserts, or the task notes record why it cannot race
 - [x] #2 The prompt-insert test waits for the states it asserts instead of fixed pauses
-- [x] #3 A negative control that delays the reconcile's start, as TASK-36389's probes did, fails each old form and passes each new one
+- [x] #3 A negative control that delays the reconcile's start, as TASK-36389's probes did, fails the old form and passes the new one of each named test that can race; a test the notes show cannot race is exempt
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -94,4 +94,6 @@ The named snapshot test, red at base, now passes, and the picker and approval fi
 The composer file's 52 plain nodes fail locally on both trees: the `RecoveryRequired` trap (TASK-38111). `ruff check` finds the same counts as base in all four files. `test_console_command_composer.py` is `ruff format`ted as at base; the other three were not formatted at base and only the touched lines changed.
 
 **Files.** `Tests/UI/test_console_cost_chip_screen.py`, `Tests/UI/test_console_send_draft_snapshot.py`, `Tests/UI/test_console_approval_compact_layout.py`, `Tests/UI/test_console_command_composer.py`. Census untouched.
+
+**AC#3 reworded by the coordinator (2026-11-03).** The original wording asked every old form to fail under the control. The cost-chip and approval tests cannot race (see AC#1's notes), so their old forms pass under any reconcile delay. The criterion now covers the tests that can race (prompt insert, snapshot), and both meet it.
 <!-- SECTION:NOTES:END -->
