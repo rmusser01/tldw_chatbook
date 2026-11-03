@@ -182,9 +182,9 @@ jobs:
       # tab-publication controls compile ChatScreen's own method bodies; the
       # voice latency gate runs on a synthetic clock; the locator inventory
       # pins the voice-pair reconciler's schema census. About 4 s together.
-      # The completed-pair history node is a strict xfail until TASK-36510:
-      # eight message-locator columns have no leading index, so promotion
-      # scans them. Its XPASS fails this step, so the fix removes the marker.
+      # The completed-pair history node runs for real since TASK-36510 indexed
+      # the eight message-locator columns promotion used to scan; its gate
+      # reads query plans with no sqlite_stat1, as users' databases have.
       # The compact-setup gates run in the last step (TASK-36511.3).
       - name: Run Console tab-publication and voice gates
         run: |
