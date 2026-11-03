@@ -25,7 +25,7 @@ from Tests.UI.test_settings_provider_keyboard_journeys import _settle
 from Tests.UI.test_settings_speech_tts_panel import _StyledDestinationHarness
 from tldw_chatbook.Chat import provider_setup_persistence as provider_persistence_module
 from tldw_chatbook.config import ConfigMutationResult
-from tldw_chatbook.UI.Settings_Modules.settings_config_models import SettingsCategoryId
+from tldw_chatbook.state.settings_config_models import SettingsCategoryId
 from tldw_chatbook.UI.Screens.settings_context_memory import (
     load_context_memory_values,
     load_show_model_thinking,

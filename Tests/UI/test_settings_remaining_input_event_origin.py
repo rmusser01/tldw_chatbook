@@ -19,7 +19,7 @@ from Tests.UI.test_settings_configuration_hub import (
 )
 from Tests.UI.test_settings_parallel_run_event_origin import _category_key, _type_value
 from tldw_chatbook.UI.Settings_Modules.settings_config_adapter import SettingsConfigAdapter
-from tldw_chatbook.UI.Settings_Modules.settings_config_models import (
+from tldw_chatbook.state.settings_config_models import (
     SettingsCategoryId,
     SettingsDraft,
 )

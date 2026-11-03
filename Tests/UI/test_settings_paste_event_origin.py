@@ -10,7 +10,7 @@ from Tests.UI.test_destination_shells import (
     _build_test_app,
 )
 from Tests.UI.test_settings_configuration_hub import _open_settings_category
-from tldw_chatbook.UI.Settings_Modules.settings_config_models import (
+from tldw_chatbook.state.settings_config_models import (
     SettingsCategoryId,
     SettingsDraft,
 )

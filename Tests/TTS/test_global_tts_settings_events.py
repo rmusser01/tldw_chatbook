@@ -18,7 +18,7 @@ from tldw_chatbook.TTS.TTS_Generation import (
     TTSSettingsPersistenceOutcome,
     TTSSettingsPublication,
 )
-from tldw_chatbook.UI.Settings_Modules.settings_speech_tts import (
+from tldw_chatbook.UI.Speech.settings_speech_tts import (
     BUILT_IN_TTS_PROVIDER_ORDER,
     build_global_speech_tts_save_proposal,
     load_global_speech_tts_state,

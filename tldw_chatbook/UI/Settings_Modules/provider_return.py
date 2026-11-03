@@ -26,7 +26,7 @@ from ..Navigation.conversation_settings_navigation import (
     ConversationSettingsReturnOutcome as Outcome,
 )
 from ..Navigation.pending_handoff_store import HandoffChannel, PendingHandoffStore
-from ..Settings_Modules.settings_config_models import SettingsCategoryId
+from ...state.settings_config_models import SettingsCategoryId
 
 if TYPE_CHECKING:
     from ..Navigation.conversation_settings_navigation import (

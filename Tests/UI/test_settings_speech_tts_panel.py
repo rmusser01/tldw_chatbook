@@ -49,9 +49,9 @@ from tldw_chatbook.TTS.openai_compatible_config import (
 from tldw_chatbook.UI.Lab_Modules import lab_speech_status as lab_speech_status_module
 from tldw_chatbook.UI.Navigation.main_navigation import NavigateToScreen
 from tldw_chatbook.UI.Screens import settings_screen as settings_screen_module
-from tldw_chatbook.UI.Settings_Modules.settings_config_models import SettingsCategoryId
+from tldw_chatbook.state.settings_config_models import SettingsCategoryId
 from tldw_chatbook.UI.Screens.settings_screen import SettingsScreen
-from tldw_chatbook.UI.Settings_Modules.settings_speech_tts import (
+from tldw_chatbook.UI.Speech.settings_speech_tts import (
     BUILT_IN_TTS_PROVIDER_ORDER,
     GLOBAL_TTS_PROVIDER_FIELD_IDS,
     CredentialIntent,
@@ -4516,7 +4516,7 @@ def test_optional_number_validator_rejects_non_finite_values():
     """PR #2638 Qodo #5: NaN compares False to every bound and infinity
     passes a positive lower bound, yet neither belongs in config -- the
     shared helper every realtime numeric knob uses must refuse them."""
-    from tldw_chatbook.UI.Settings_Modules.settings_speech_tts import (
+    from tldw_chatbook.UI.Speech.settings_speech_tts import (
         GlobalSpeechTTSValidationError,
     )
     from tldw_chatbook.Widgets.Settings_Widgets.speech_tts_settings_panel import (

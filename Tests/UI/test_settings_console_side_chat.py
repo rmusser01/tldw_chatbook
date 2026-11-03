@@ -20,7 +20,7 @@ from Tests.UI.test_settings_configuration_hub import (
     _wait_for_settings_search_focus,
     _wait_for_settings_text,
 )
-from tldw_chatbook.UI.Settings_Modules.settings_config_models import SettingsCategoryId
+from tldw_chatbook.state.settings_config_models import SettingsCategoryId
 
 SIDECAT_MODEL_INPUT = "#settings-console-sidechat-model"
 SIDECAT_TEMPLATE_INPUT = "#settings-console-sidechat-prompt-template"

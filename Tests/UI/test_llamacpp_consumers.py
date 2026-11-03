@@ -25,7 +25,7 @@ from tldw_chatbook.UI.Navigation.llamacpp_handoff import (
 )
 from tldw_chatbook.UI.Navigation.pending_handoff_store import HandoffChannel
 from tldw_chatbook.UI.Navigation.vllm_handoff import VllmDefaultIntent
-from tldw_chatbook.UI.Settings_Modules.settings_config_models import SettingsCategoryId
+from tldw_chatbook.state.settings_config_models import SettingsCategoryId
 
 
 def _ready_target(

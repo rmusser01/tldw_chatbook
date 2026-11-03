@@ -31,7 +31,7 @@ from tldw_chatbook.UI.Navigation.pending_handoff_store import (
 )
 from tldw_chatbook.UI.Screens import home_screen as home_screen_module
 from tldw_chatbook.UI.Screens.home_screen import HomeScreen
-from tldw_chatbook.UI.Settings_Modules.settings_config_models import SettingsCategoryId
+from tldw_chatbook.state.settings_config_models import SettingsCategoryId
 from Tests.private_profile import private_profile_test
 from Tests.UI.app_factory import _build_test_app
 from Tests.UI.consolidated_css import ConsolidatedCSSApp

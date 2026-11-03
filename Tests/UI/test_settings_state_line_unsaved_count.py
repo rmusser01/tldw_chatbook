@@ -21,7 +21,7 @@ from Tests.UI.test_destination_shells import (
     _wait_for_selector,
 )
 from Tests.UI.test_settings_narrow_layout import _SettingsCssHarness
-from tldw_chatbook.UI.Settings_Modules.settings_config_models import (
+from tldw_chatbook.state.settings_config_models import (
     SettingsCategoryId,
     SettingsDraft,
     SettingsValidationResult,
@@ -30,7 +30,7 @@ from tldw_chatbook.UI.Screens.settings_screen import (
     GUIDED_SETTINGS_MUTATION_CATEGORIES,
     SettingsScreen,
 )
-from tldw_chatbook.UI.Settings_Modules.settings_speech_tts import load_global_speech_tts_state
+from tldw_chatbook.UI.Speech.settings_speech_tts import load_global_speech_tts_state
 from tldw_chatbook.Widgets.Settings_Widgets.speech_tts_panel_types import (
     SpeechTTSPanelDraftSnapshot,
     _RealtimeSettingsDraft,

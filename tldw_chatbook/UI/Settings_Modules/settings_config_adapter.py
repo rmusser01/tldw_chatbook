@@ -30,7 +30,7 @@ from ...config import (
     save_settings_to_cli_config,
 )
 from ...Utils.path_validation import validate_path_simple
-from .settings_config_models import SettingsValidationResult
+from ...state.settings_config_models import SettingsValidationResult
 
 
 #: ``NAME = value`` / ``NAME: value`` where the name itself declares a secret.

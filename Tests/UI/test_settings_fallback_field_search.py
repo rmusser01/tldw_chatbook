@@ -16,7 +16,7 @@ from Tests.UI.test_destination_shells import (
 )
 from Tests.UI.test_screen_navigation import _build_test_app
 from Tests.UI.test_settings_category_sweep import _settle_settings
-from tldw_chatbook.UI.Settings_Modules.settings_config_models import SettingsCategoryId
+from tldw_chatbook.state.settings_config_models import SettingsCategoryId
 from tldw_chatbook.UI.Screens.settings_screen import SettingsScreen
 from tldw_chatbook.UI.Screens.settings_search_index import FIELD_SEARCH_INDEX
 

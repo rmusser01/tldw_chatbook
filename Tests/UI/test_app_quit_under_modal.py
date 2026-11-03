@@ -771,7 +771,7 @@ async def _settings_with_a_kept_draft(app, pilot):
     Leaving keeps the draft in ``app.screen_state_store`` (the rail's * shows
     it on return); Home is not Settings, so nothing on screen holds it.
     """
-    from tldw_chatbook.UI.Settings_Modules.settings_config_models import (
+    from tldw_chatbook.state.settings_config_models import (
         SettingsCategoryId,
         SettingsDraft,
     )
@@ -797,7 +797,7 @@ async def _go_home(app, pilot) -> None:
 
 
 def _kept_provider_draft(app):
-    from tldw_chatbook.UI.Settings_Modules.settings_config_models import SettingsCategoryId
+    from tldw_chatbook.state.settings_config_models import SettingsCategoryId
 
     return app.screen._settings_drafts.get(SettingsCategoryId.PROVIDERS_MODELS)
 
@@ -938,7 +938,7 @@ async def test_a_raw_edit_left_before_its_change_lands_is_asked_about():
     screen quit without asking about Advanced Config and the edit was lost."""
     from textual.widgets import TextArea
 
-    from tldw_chatbook.UI.Settings_Modules.settings_config_models import SettingsCategoryId
+    from tldw_chatbook.state.settings_config_models import SettingsCategoryId
     from tldw_chatbook.UI.Settings_Modules.settings_quit_guard import (
         KEPT_UNSAVED_TITLES,
     )
@@ -972,7 +972,7 @@ async def test_a_raw_edit_left_before_its_change_lands_is_asked_about():
 
 async def _settings_snapshot_keep(app, pilot):
     """Open Providers & Models and return its snapshot Keep count field."""
-    from tldw_chatbook.UI.Settings_Modules.settings_config_models import SettingsCategoryId
+    from tldw_chatbook.state.settings_config_models import SettingsCategoryId
 
     await _until(
         pilot,
@@ -990,7 +990,7 @@ async def _settings_snapshot_keep(app, pilot):
 
 async def test_inactive_prompt_refresh_keeps_provider_snapshot_dirty_status():
     """A background category refresh cannot replace the active draft status."""
-    from tldw_chatbook.UI.Settings_Modules.settings_config_models import SettingsCategoryId
+    from tldw_chatbook.state.settings_config_models import SettingsCategoryId
 
     app = _build_test_app(configured_default="settings")
     async with app.run_test(size=(190, 55)) as pilot:
@@ -1023,7 +1023,7 @@ async def test_a_snapshot_preference_edit_is_kept_and_asked_about_from_console(
     about): the edit is kept with the draft, Ctrl+Q from Console names
     Providers & Models, and Keep editing returns to the edit, still unsaved."""
     from tldw_chatbook.UI.Navigation.main_navigation import NavigateToScreen
-    from tldw_chatbook.UI.Settings_Modules.settings_config_models import SettingsCategoryId
+    from tldw_chatbook.state.settings_config_models import SettingsCategoryId
 
     app = _build_test_app(configured_default="settings")
     _configure_native_ready_console(app)
@@ -1117,7 +1117,7 @@ async def test_a_kept_snapshot_edit_is_forgotten_once_saved_or_reverted(
     the dict the visit was restored from, and the kept pair is written only
     while unsaved, so it outlived its Revert or Save: Settings came back
     "Unsaved changes" on the old value, and Save said it changed elsewhere."""
-    from tldw_chatbook.UI.Settings_Modules.settings_config_models import SettingsCategoryId
+    from tldw_chatbook.state.settings_config_models import SettingsCategoryId
     from tldw_chatbook.UI.Settings_Modules.settings_quit_guard import (
         KEPT_SNAPSHOT_PREFERENCES,
     )

@@ -43,7 +43,7 @@ from Tests.UI.test_settings_personal_context import (
     _ProfileServiceStub,
     _ready_snapshot,
 )
-from tldw_chatbook.UI.Settings_Modules.settings_config_models import SettingsCategoryId
+from tldw_chatbook.state.settings_config_models import SettingsCategoryId
 from tldw_chatbook.UI.Screens.settings_screen import (
     GUIDED_SETTINGS_MUTATION_CATEGORIES,
     SettingsScreen,

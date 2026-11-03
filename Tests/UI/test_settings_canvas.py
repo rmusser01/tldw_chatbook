@@ -14,7 +14,7 @@ from Tests.UI.test_screen_navigation import _build_test_app
 from Tests.UI.test_settings_category_sweep import _click_settings_category
 from Tests.UI.test_settings_configuration_hub import StyledSettingsDestinationHarness
 from tldw_chatbook.config import RuntimeConfigSnapshot
-from tldw_chatbook.UI.Settings_Modules.settings_config_models import SettingsCategoryId
+from tldw_chatbook.state.settings_config_models import SettingsCategoryId
 from tldw_chatbook.UI.Screens.settings_screen import SettingsScreen
 
 CANVAS_ENVIRONMENT_KEYS = (

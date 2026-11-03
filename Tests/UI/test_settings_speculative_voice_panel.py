@@ -8,7 +8,7 @@ import pytest
 from textual.app import App, ComposeResult
 from textual.widgets import Input, Static, Switch
 
-from tldw_chatbook.UI.Settings_Modules.settings_speech_tts import (
+from tldw_chatbook.UI.Speech.settings_speech_tts import (
     GlobalSpeechTTSValidationError,
     load_global_speech_tts_state,
 )

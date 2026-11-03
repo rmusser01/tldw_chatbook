@@ -76,7 +76,7 @@ from tldw_chatbook.Chat.console_settings_apply import (
     ConsoleSettingsSurface,
 )
 from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
-from tldw_chatbook.UI.Settings_Modules.settings_config_models import SettingsCategoryId
+from tldw_chatbook.state.settings_config_models import SettingsCategoryId
 from tldw_chatbook.UI.Screens.settings_screen import SettingsScreen
 from tldw_chatbook.UI.Console_Modules.left_rail import (
     CONSOLE_DISCARD_DEFAULT_RETRY_ID,

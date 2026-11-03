@@ -7,7 +7,7 @@ import os
 import pytest
 
 from tldw_chatbook.TTS import audio_cpp_guided_launch as guided_launch_module
-from tldw_chatbook.UI.Settings_Modules import settings_speech_tts as settings_model
+from tldw_chatbook.UI.Speech import settings_speech_tts as settings_model
 from tldw_chatbook.TTS.adapter_types import (
     ProviderHealth,
     TTSModelInfo,
@@ -22,7 +22,7 @@ from tldw_chatbook.TTS.audio_cpp_guided_config import (
     AudioCppSafeModelProjection,
     AudioCppSettingsConfig,
 )
-from tldw_chatbook.UI.Settings_Modules.settings_speech_tts import (
+from tldw_chatbook.UI.Speech.settings_speech_tts import (
     AudioCppExactChoiceState,
     GLOBAL_TTS_PROVIDER_FIELD_IDS,
     GlobalSpeechTTSValidationError,

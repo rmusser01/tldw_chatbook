@@ -15,7 +15,7 @@ from Tests.UI.test_settings_category_sweep import (
 )
 from tldw_chatbook import config
 from tldw_chatbook.UI.Settings_Modules.settings_advanced_config import AdvancedConfigSettings
-from tldw_chatbook.UI.Settings_Modules.settings_config_models import SettingsCategoryId
+from tldw_chatbook.state.settings_config_models import SettingsCategoryId
 from tldw_chatbook.Widgets.confirmation_dialog import ConfirmationDialog
 
 

@@ -16,7 +16,7 @@ from tldw_chatbook.TTS.legacy_catalogs import (
     LEGACY_DEFAULT_VOICES,
 )
 from tldw_chatbook.TTS.TTS_Generation import TTSService
-from tldw_chatbook.UI.Settings_Modules.settings_speech_tts import (
+from tldw_chatbook.UI.Speech.settings_speech_tts import (
     GlobalSpeechTTSValidationError,
     load_global_speech_tts_state,
 )

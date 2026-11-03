@@ -34,7 +34,7 @@ from ...Widgets.Persona_Widgets.personas_character_editor_widget import (
 )
 from ...Widgets.Persona_Widgets.personas_preview_pane import PersonasPreviewPane
 from ..Navigation.main_navigation import NavigateToScreen
-from ..Settings_Modules.settings_config_models import SettingsCategoryId
+from ...state.settings_config_models import SettingsCategoryId
 
 if TYPE_CHECKING:
     from ..Screens.personas_screen import PersonasScreen

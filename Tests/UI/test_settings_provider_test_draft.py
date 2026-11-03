@@ -2931,7 +2931,7 @@ async def test_save_redraws_the_test_rows_from_the_saved_values(request):
     """TASK-33005.8: after 't' and Save the rows kept '(draft)' on the saved
     Endpoint until a return visit. Save carries the evidence to the saved
     connection and redraws the rows from the saved values on this visit."""
-    from tldw_chatbook.UI.Settings_Modules.settings_config_models import SettingsCategoryId
+    from tldw_chatbook.state.settings_config_models import SettingsCategoryId
 
     app = _build_test_app()
     app.app_config["chat_defaults"] = {"provider": "llama_cpp", "model": "llama-3"}

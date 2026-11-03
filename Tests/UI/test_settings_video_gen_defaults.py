@@ -215,7 +215,7 @@ async def test_video_gen_opens_clean_on_a_fresh_profile(request, monkeypatch):
         _wait_for_selector,
     )
     from tldw_chatbook.UI.Settings_Modules.settings_config_adapter import SettingsConfigAdapter
-    from tldw_chatbook.UI.Settings_Modules.settings_config_models import SettingsCategoryId
+    from tldw_chatbook.state.settings_config_models import SettingsCategoryId
 
     real_load = SettingsConfigAdapter.load
 

@@ -24,7 +24,7 @@ from Tests.UI.test_settings_configuration_hub import (
     _wait_for_settings_text,
 )
 from tldw_chatbook.UI.Screens import settings_screen as sm
-from tldw_chatbook.UI.Settings_Modules.settings_config_models import SettingsCategoryId
+from tldw_chatbook.state.settings_config_models import SettingsCategoryId
 
 
 async def _entered(event):
@@ -343,7 +343,7 @@ def test_equal_global_stage_keeps_explicit_media_field_history():
         acknowledge_media_gen_save,
         stage_media_gen_value,
     )
-    from tldw_chatbook.UI.Settings_Modules.settings_config_models import SettingsDraft
+    from tldw_chatbook.state.settings_config_models import SettingsDraft
 
     category = SettingsCategoryId.IMAGE_GENERATION
     field_key = "field::openrouter::api_key"

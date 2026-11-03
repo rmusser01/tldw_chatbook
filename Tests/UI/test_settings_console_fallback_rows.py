@@ -37,7 +37,7 @@ from tldw_chatbook.Chat.console_provider_support import (
 from tldw_chatbook.Chat.console_session_settings import (
     build_default_console_session_settings,
 )
-from tldw_chatbook.UI.Settings_Modules.settings_config_models import SettingsCategoryId
+from tldw_chatbook.state.settings_config_models import SettingsCategoryId
 from tldw_chatbook.UI.Screens.settings_screen import (
     CONSOLE_PIN_BUILT_IN_HINT,
     MODEL_PROFILE_STREAMING_SELECT_OPTIONS,

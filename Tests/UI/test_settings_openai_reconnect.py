@@ -21,7 +21,7 @@ from types import SimpleNamespace
 from textual.app import App
 from textual.widgets import Button,Input
 from tldw_chatbook.UI.Screens.settings_screen import SettingsScreen
-from tldw_chatbook.UI.Settings_Modules.settings_config_models import SettingsCategoryId
+from tldw_chatbook.state.settings_config_models import SettingsCategoryId
 from tldw_chatbook.Widgets.confirmation_dialog import ConfirmationDialog
 EFFECT_FIXTURE
 instance=SimpleNamespace(app_config=config.load_settings())

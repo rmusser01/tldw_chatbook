@@ -27,7 +27,7 @@ from tldw_chatbook.Constants import (
     TAB_SKILLS,
 )
 from tldw_chatbook.UI.Navigation.main_navigation import NavigateToScreen
-from tldw_chatbook.UI.Settings_Modules.settings_config_models import SettingsCategoryId
+from tldw_chatbook.state.settings_config_models import SettingsCategoryId
 from tldw_chatbook.Widgets.Console.console_composer_bar import ConsoleComposerBar
 
 

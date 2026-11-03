@@ -155,7 +155,7 @@ from tldw_chatbook.UI.Speech.speech_settings_contracts import (
     SpeechTTSStatusFreshness,
     combine_tts_readiness,
 )
-from tldw_chatbook.UI.Settings_Modules.settings_speech_tts import (
+from tldw_chatbook.UI.Speech.settings_speech_tts import (
     BUILT_IN_TTS_PROVIDER_ORDER,
     GLOBAL_TTS_PROVIDER_ENVIRONMENT_FIELDS,
     GLOBAL_TTS_PROVIDER_FIELD_IDS,

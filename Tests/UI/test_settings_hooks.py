@@ -12,7 +12,7 @@ from Tests.UI.test_destination_shells import (
     _build_test_app,
     _wait_for_selector,
 )
-from tldw_chatbook.UI.Settings_Modules.settings_config_models import SettingsCategoryId
+from tldw_chatbook.state.settings_config_models import SettingsCategoryId
 
 pytestmark = pytest.mark.bootstrap_profile
 

@@ -327,7 +327,7 @@ from ...model_capabilities import (
     reload_capabilities,
     zai_model_supports_reasoning_effort,
 )
-from ..Settings_Modules.settings_config_models import (
+from ...state.settings_config_models import (
     LISTED_SAVE_MODELS,
     SettingsCategoryId,
     SettingsCategorySummary,
@@ -444,7 +444,7 @@ from .settings_storage_defaults import (
     load_storage_defaults,
     validate_storage_defaults,
 )
-from ..Settings_Modules.settings_speech_tts import (
+from ..Speech.settings_speech_tts import (
     BUILT_IN_TTS_PROVIDER_ORDER,
     GlobalSpeechTTSState,
     load_global_speech_tts_state,

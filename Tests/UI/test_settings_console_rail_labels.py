@@ -27,7 +27,7 @@ from Tests.UI.test_settings_configuration_hub import (
 )
 from Tests.UI.test_settings_overview_search_journeys import _category, _painted
 from Tests.UI.test_settings_speech_tts_panel import _StyledDestinationHarness
-from tldw_chatbook.UI.Settings_Modules.settings_config_models import SettingsCategoryId
+from tldw_chatbook.state.settings_config_models import SettingsCategoryId
 from tldw_chatbook.Widgets.Console.console_rail_handle import ConsoleRailHandle
 
 RAIL_LABEL_TOGGLE = "#settings-console-stack-collapsed-rail-labels"

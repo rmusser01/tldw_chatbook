@@ -32,7 +32,7 @@ from tldw_chatbook.UI.Library_Modules.library_media_controller import (
     LibraryMediaController,
 )
 from tldw_chatbook.UI.Screens.library_screen import LibraryScreen
-from tldw_chatbook.UI.Settings_Modules.settings_config_models import SettingsCategoryId
+from tldw_chatbook.state.settings_config_models import SettingsCategoryId
 from tldw_chatbook.UI.Screens.settings_screen import SettingsScreen
 from tldw_chatbook.Widgets.Console.console_conversation_inspector import (
     TAB_NEXT_SEND,

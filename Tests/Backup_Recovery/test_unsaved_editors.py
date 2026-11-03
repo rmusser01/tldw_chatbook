@@ -250,7 +250,7 @@ def test_retained_settings_draft_is_not_restored_or_discarded():
         RuntimeIdentity,
         ScreenStateStore,
     )
-    from tldw_chatbook.UI.Settings_Modules.settings_config_models import (
+    from tldw_chatbook.state.settings_config_models import (
         SettingsCategoryId,
         SettingsDraft,
     )
@@ -430,7 +430,7 @@ def test_retained_speech_realtime_draft_is_compared_without_panel_sync(changed):
         RuntimeIdentity,
         ScreenStateStore,
     )
-    from tldw_chatbook.UI.Settings_Modules.settings_speech_tts import (
+    from tldw_chatbook.UI.Speech.settings_speech_tts import (
         load_global_speech_tts_state,
     )
     from tldw_chatbook.Widgets.Settings_Widgets.speech_tts_settings_panel import (
@@ -469,7 +469,7 @@ def test_retained_speech_pipeline_voice_draft_is_compared(changed):
         RuntimeIdentity,
         ScreenStateStore,
     )
-    from tldw_chatbook.UI.Settings_Modules.settings_speech_tts import (
+    from tldw_chatbook.UI.Speech.settings_speech_tts import (
         load_global_speech_tts_state,
     )
     from tldw_chatbook.Widgets.Settings_Widgets.speech_tts_panel_types import (

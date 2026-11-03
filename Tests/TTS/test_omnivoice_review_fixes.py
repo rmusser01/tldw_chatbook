@@ -301,7 +301,7 @@ def test_every_speech_settings_key_has_a_persistence_binding() -> None:
     from tldw_chatbook.Event_Handlers.STTS_Events.stts_events import (
         _TTS_SETTING_BINDINGS,
     )
-    from tldw_chatbook.UI.Settings_Modules.settings_speech_tts import (
+    from tldw_chatbook.UI.Speech.settings_speech_tts import (
         BUILT_IN_TTS_PROVIDER_ORDER,
         _PROVIDER_NON_SECRET_DEFAULTS,
         _provider_event_settings,
@@ -340,7 +340,7 @@ def test_blank_model_root_saves_and_emits_bound_keys() -> None:
     from tldw_chatbook.Event_Handlers.STTS_Events.stts_events import (
         _TTS_SETTING_BINDINGS,
     )
-    from tldw_chatbook.UI.Settings_Modules.settings_speech_tts import (
+    from tldw_chatbook.UI.Speech.settings_speech_tts import (
         build_global_speech_tts_save_proposal,
         load_global_speech_tts_state,
     )

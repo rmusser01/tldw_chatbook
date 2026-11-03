@@ -47,7 +47,7 @@ from Tests.UI.test_settings_configuration_hub import (
 )
 from tldw_chatbook.DB.Dreams_DB import DreamsDB
 from tldw_chatbook.Dreams.cycle_service import _upsert_profile_signals
-from tldw_chatbook.UI.Settings_Modules.settings_config_models import SettingsCategoryId
+from tldw_chatbook.state.settings_config_models import SettingsCategoryId
 
 
 def test_disabled_gate_copy_says_what_off_stops_and_what_it_does_not():

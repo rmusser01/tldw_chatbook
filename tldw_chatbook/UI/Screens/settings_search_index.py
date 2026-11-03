@@ -14,7 +14,7 @@ users know it by more than one name.
 
 from __future__ import annotations
 
-from ..Settings_Modules.settings_config_models import SettingsCategoryId
+from ...state.settings_config_models import SettingsCategoryId
 
 #: Library reader destinations rendered as per-destination Items pane/width
 #: rows on the Appearance category (shared with settings_screen).
@@ -208,7 +208,7 @@ SPEECH_TTS_PROVIDER_FORM_FIELDS: dict[str, tuple[tuple[str, str], ...]] = {
 
 def _speech_provider_form_entries() -> tuple[tuple[str, str], ...]:
     """Index rows for every TTS provider configure form (finding 5)."""
-    from ..Settings_Modules.settings_speech_tts import TTS_PROVIDER_LABELS
+    from ..Speech.settings_speech_tts import TTS_PROVIDER_LABELS
 
     entries: list[tuple[str, str]] = []
     for provider_id, fields in SPEECH_TTS_PROVIDER_FORM_FIELDS.items():

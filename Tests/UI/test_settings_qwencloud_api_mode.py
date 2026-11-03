@@ -21,7 +21,7 @@ from tldw_chatbook.Chat import provider_setup_persistence as provider_persistenc
 from tldw_chatbook.Chat.console_chat_models import ConsoleProviderSelection
 from tldw_chatbook.Chat.console_provider_gateway import ConsoleProviderGateway
 from tldw_chatbook.config import ConfigMutationResult
-from tldw_chatbook.UI.Settings_Modules.settings_config_models import SettingsCategoryId
+from tldw_chatbook.state.settings_config_models import SettingsCategoryId
 
 
 def _qwencloud_app(*, api_mode: object = "__absent__"):

@@ -11,7 +11,7 @@ from typing import Any
 from tldw_chatbook.Utils.input_validation import validate_text_input
 from tldw_chatbook.Utils.path_validation import validate_path_simple
 
-from ..Settings_Modules.settings_config_models import SettingsValidationResult
+from ...state.settings_config_models import SettingsValidationResult
 
 
 DEFAULT_USER_DB_BASE_DIR = "~/.local/share/tldw_cli/"

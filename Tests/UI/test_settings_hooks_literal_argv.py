@@ -15,7 +15,7 @@ from Tests.UI.test_destination_shells import (
 )
 from tldw_chatbook.Agents.hook_permissions import HookPermissions
 from tldw_chatbook.Agents.run_hooks import HookSpec, fingerprint_hook
-from tldw_chatbook.UI.Settings_Modules.settings_config_models import SettingsCategoryId
+from tldw_chatbook.state.settings_config_models import SettingsCategoryId
 
 hook_file = _hook_file
 

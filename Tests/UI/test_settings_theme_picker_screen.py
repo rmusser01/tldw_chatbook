@@ -1548,7 +1548,7 @@ async def test_quit_with_a_staged_settings_change_asks_first(
     """Capture finding 22 (TASK-33007): Ctrl+Q with "1 unsaved" in Providers &
     Models quit at once and the staged change was lost. Quitting now asks;
     Keep editing stops the quit before any cleanup, Discard and quit goes on."""
-    from tldw_chatbook.UI.Settings_Modules.settings_config_models import (
+    from tldw_chatbook.state.settings_config_models import (
         SettingsCategoryId,
         SettingsDraft,
     )
@@ -1590,7 +1590,7 @@ async def test_quit_asks_about_staged_changes_before_the_theme(request, monkeypa
     Discard undid the Try preview before the staged-change prompt asked;
     Keep editing there then cancelled the quit with the preview already
     gone. The staged-change prompt, which changes nothing, now asks first."""
-    from tldw_chatbook.UI.Settings_Modules.settings_config_models import (
+    from tldw_chatbook.state.settings_config_models import (
         SettingsCategoryId,
         SettingsDraft,
     )
@@ -1633,7 +1633,7 @@ async def test_quit_with_staged_changes_never_stacks_on_the_theme_prompt(
     Ctrl+Q pushed the staged-change prompt on top of it, and its Discard and
     quit then hit the theme prompt's one-at-a-time guard and cancelled the
     quit silently. One prompt at a time: the quit stays put, nothing stacks."""
-    from tldw_chatbook.UI.Settings_Modules.settings_config_models import (
+    from tldw_chatbook.state.settings_config_models import (
         SettingsCategoryId,
         SettingsDraft,
     )

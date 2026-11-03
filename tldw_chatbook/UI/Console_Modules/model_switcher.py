@@ -357,7 +357,7 @@ def open_provider_setup(
     )
     from ..Navigation.main_navigation import NavigateToScreen
     from ..Navigation.pending_handoff_store import HandoffChannel, PendingHandoffStore
-    from ..Settings_Modules.settings_config_models import SettingsCategoryId
+    from ...state.settings_config_models import SettingsCategoryId
 
     if field is None:
         readiness = screen._console_default_readiness(provider, model)

@@ -638,7 +638,7 @@ async def test_home_readiness_computes_a_malformed_default(request, provider):
 @private_profile_test
 async def test_revert_to_a_registry_default_relocks_model_discovery(request):
     """Revert restored the registry id but left llama_cpp's Discover live."""
-    from tldw_chatbook.UI.Settings_Modules.settings_config_models import SettingsCategoryId
+    from tldw_chatbook.state.settings_config_models import SettingsCategoryId
 
     host = DestinationHarness(_registry_default_app("custom-ep:gpu-box"), "settings")
     async with host.run_test(size=(180, 50)) as pilot:

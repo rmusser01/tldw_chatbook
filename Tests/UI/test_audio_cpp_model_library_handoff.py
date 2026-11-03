@@ -299,7 +299,7 @@ def test_save_post_failure_abandons_transferred_publication_hold() -> None:
     from types import SimpleNamespace
 
     from tldw_chatbook.TTS.TTS_Generation import TTSPreferencesSnapshot
-    from tldw_chatbook.UI.Settings_Modules.settings_speech_tts import (
+    from tldw_chatbook.UI.Speech.settings_speech_tts import (
         GlobalSpeechTTSSaveProposal,
     )
     from tldw_chatbook.Widgets.Settings_Widgets.speech_tts_settings_panel import (
@@ -2169,7 +2169,7 @@ async def test_mounted_settings_snapshot_preserves_complete_speech_tts_draft(
         _build_test_app,
         _wait_for_selector,
     )
-    from tldw_chatbook.UI.Settings_Modules.settings_config_models import SettingsCategoryId
+    from tldw_chatbook.state.settings_config_models import SettingsCategoryId
     from tldw_chatbook.Widgets.Settings_Widgets.speech_tts_settings_panel import (
         SpeechTTSSettingsPanel,
     )

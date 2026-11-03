@@ -46,7 +46,7 @@ from tldw_chatbook.LLM_Provider_Catalog.model_catalog_settings import (
     AUTO_REFRESH_PROVIDER_LIST_KEYS,
 )
 from tldw_chatbook.UI.Screens import settings_search_index
-from tldw_chatbook.UI.Settings_Modules.settings_config_models import SettingsCategoryId
+from tldw_chatbook.state.settings_config_models import SettingsCategoryId
 from tldw_chatbook.UI.Screens.settings_screen import (
     MODEL_PROFILE_INPUT_PLACEHOLDERS,
     SettingsScreen,

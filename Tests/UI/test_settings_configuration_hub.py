@@ -81,7 +81,7 @@ from tldw_chatbook.UI.Settings_Modules.settings_config_adapter import (
     failure_status_text,
     redact_secret_text,
 )
-from tldw_chatbook.UI.Settings_Modules.settings_config_models import (
+from tldw_chatbook.state.settings_config_models import (
     SettingsCategoryId,
     SettingsDraft,
     SettingsValidationResult,

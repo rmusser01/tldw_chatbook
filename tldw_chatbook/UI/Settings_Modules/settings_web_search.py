@@ -8,7 +8,7 @@ from copy import deepcopy
 
 from ... import config
 from ...Web_Scraping import search_backend_settings as catalog
-from .settings_config_models import SettingsDraft
+from ...state.settings_config_models import SettingsDraft
 
 DEFAULT_KEY = "SearchSettings.search_provider_default"
 APPLICATION_DEFAULT = "application-default"

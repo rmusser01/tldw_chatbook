@@ -13,8 +13,8 @@ from tldw_chatbook.TTS.openai_compatible_config import (
     normalize_openai_compatible_endpoint,
     openai_destination_fingerprint,
 )
-from tldw_chatbook.UI.Settings_Modules import settings_speech_tts as settings_speech_tts_module
-from tldw_chatbook.UI.Settings_Modules.settings_speech_tts import (
+from tldw_chatbook.UI.Speech import settings_speech_tts as settings_speech_tts_module
+from tldw_chatbook.UI.Speech.settings_speech_tts import (
     BUILT_IN_TTS_PROVIDER_ORDER,
     GLOBAL_TTS_PROVIDER_FIELD_IDS,
     CredentialIntent,

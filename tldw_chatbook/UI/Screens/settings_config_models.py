@@ -1,4 +1,4 @@
-"""Compatibility alias: this module moved to ``tldw_chatbook.UI.Settings_Modules.settings_config_models``.
+"""Compatibility alias: this module moved to ``tldw_chatbook.state.settings_config_models``.
 
 TASK-36944.8: Widgets must not import ``UI/Screens``, so this code moved out
 of the Screens package. The old dotted path aliases the new module object, so
@@ -9,4 +9,4 @@ file once no importer uses the old path.
 import sys
 from importlib import import_module
 
-sys.modules[__name__] = import_module("tldw_chatbook.UI.Settings_Modules.settings_config_models")
+sys.modules[__name__] = import_module("tldw_chatbook.state.settings_config_models")

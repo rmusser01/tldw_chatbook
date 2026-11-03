@@ -56,7 +56,7 @@ from tldw_chatbook.UI.Screens.settings_endpoint_probe import (
     SettingsEndpointProbePurpose,
     probe_settings_endpoint,
 )
-from tldw_chatbook.UI.Settings_Modules.settings_speech_tts import (
+from tldw_chatbook.UI.Speech.settings_speech_tts import (
     build_provider_test_fingerprint,
     load_global_speech_tts_state,
     process_provider_test_evidence_store,

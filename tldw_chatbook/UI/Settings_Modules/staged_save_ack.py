@@ -13,7 +13,7 @@ from typing import TYPE_CHECKING
 from textual.css.query import QueryError
 from textual.widgets import Checkbox, Input, Select
 
-from ..Settings_Modules.settings_config_models import SettingsCategoryId, SettingsDraft
+from ...state.settings_config_models import SettingsCategoryId, SettingsDraft
 
 if TYPE_CHECKING:
     from ..Screens.settings_screen import SettingsScreen

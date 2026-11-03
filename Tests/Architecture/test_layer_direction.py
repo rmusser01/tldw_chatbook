@@ -289,6 +289,11 @@ def _widgets_screen_imports_at_module_level() -> list[str]:
 
 
 def test_widgets_import_nothing_from_ui_screens_at_module_level() -> None:
+    """Scope: runtime module-level imports only.
+
+    ``if TYPE_CHECKING:`` imports, function-local imports and
+    ``importlib.import_module`` calls are out of scope (TASK-36944.8 AC#1).
+    """
     offenders = _widgets_screen_imports_at_module_level()
     assert not offenders, (
         "Widgets must not import tldw_chatbook.UI.Screens at module level; move the "

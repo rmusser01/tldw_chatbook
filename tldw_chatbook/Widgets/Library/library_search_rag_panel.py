@@ -251,7 +251,7 @@ class LibrarySearchRagPanel(PostRecomposeCallback, VerticalScroll):
         """
         event.stop()
         from ...UI.Navigation.main_navigation import NavigateToScreen
-        from ...UI.Settings_Modules.settings_config_models import SettingsCategoryId
+        from ...state.settings_config_models import SettingsCategoryId
 
         self.post_message(
             NavigateToScreen(
