@@ -682,3 +682,86 @@ async def test_receipt_only_retires_its_own_mounted_confirmation(status, own_ope
             assert scope.value == "chat_and_workspace"
             assert app.focused is button
             assert not button.disabled
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("during", ["controls", "imported"])
+async def test_sync_stops_when_its_chat_is_replaced_mid_sync(monkeypatch, during):
+    """TASK-38652: a sync must not read or write for a chat replaced under it.
+
+    Console's first-chat handoff switches to its own chat and closes the
+    untouched one, and it can run while ``sync`` awaits a surface mount.
+    During the controls mount, the old sync then asked the store for the
+    closed chat's messages and raised KeyError, which ends the app. During
+    the imported-recovery mount, it cleared the confirmation just presented
+    for the new chat. The next sync must show the new chat.
+    """
+    import json
+    from dataclasses import replace
+    from types import SimpleNamespace
+
+    from textual.containers import Vertical
+
+    from tldw_chatbook.Chat.archive_recovery.contracts import RecoveryOperationSnapshot
+    from tldw_chatbook.Chat.console_chat_models import ConsoleMessageRole
+    from tldw_chatbook.Chat.console_chat_store import ConsoleChatStore
+    from tldw_chatbook.UI.Console_Modules.archive_recovery import (
+        ConsoleArchiveRecoverySurface,
+        ConsoleArchiveRecoveryView,
+    )
+
+    store = ConsoleChatStore()
+    untouched = store.create_session()
+    handoff = store.create_session(activate=False)
+    if during == "imported":
+        store.append_message(
+            untouched.id,
+            role=ConsoleMessageRole.ASSISTANT,
+            content=json.dumps({"result_set_id": "page", "result_ref": "ref"}),
+        )
+    pending = replace(confirmation(), session_id=handoff.id)
+    snapshots = {
+        handoff.id: RecoveryOperationSnapshot(
+            "operation", handoff.id, "awaiting_confirmation", pending, None
+        )
+    }
+
+    class HandoffApp(App):
+        def compose(self):
+            self.screen._console_chat_store = store
+            runtime = SimpleNamespace(
+                presentations=lambda _: (),
+                coordinator=SimpleNamespace(
+                    snapshot=snapshots.get, receipts=lambda _: ()
+                ),
+            )
+            self.screen._console_runtime = lambda: SimpleNamespace(
+                view=self.screen, ensure_archive_recovery=lambda: runtime
+            )
+            self.view = ConsoleArchiveRecoveryView(self.screen)
+            yield Vertical(id="console-archive-recovery")
+
+    app = HandoffApp()
+    mount = ConsoleArchiveRecoverySurface.mount
+    trigger = ArchiveRecoveryConfirmCard if during == "controls" else Vertical
+
+    async def mount_then_hand_off(surface, *widgets, **kwargs):
+        await mount(surface, *widgets, **kwargs)
+        if store.active_session_id == untouched.id and type(widgets[0]) is trigger:
+            store.switch_session(handoff.id)
+            store.close_session(untouched.id)
+            if during == "imported":
+                assert app.view.show_confirmation(pending)
+
+    monkeypatch.setattr(ConsoleArchiveRecoverySurface, "mount", mount_then_hand_off)
+    async with app.run_test(size=(80, 30)):
+        await app.view.sync()
+        assert store.active_session_id == handoff.id
+        if during == "imported":
+            assert app.query_one(ArchiveRecoveryConfirmCard).confirmation is pending
+
+        await app.view.sync()
+        assert app.view._session_id == handoff.id
+        card = app.query_one(ArchiveRecoveryConfirmCard)
+        assert card.confirmation is pending and card.display
+        assert not app.query("#recovery-manual-library")

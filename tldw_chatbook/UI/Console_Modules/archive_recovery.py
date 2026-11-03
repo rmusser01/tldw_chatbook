@@ -141,6 +141,12 @@ class ConsoleArchiveRecoveryView:
             session_id = store.active_session_id
             if not session_id:
                 return
+
+            def current() -> bool:
+                # An await can let Console switch or close this chat; the next
+                # sync renders whichever chat is active then (TASK-38652).
+                return surface.is_attached and store.active_session_id == session_id
+
             if self._session_id != session_id or self._confirmation() is None:
                 self._render_generation += 1
                 await surface.remove_children()
@@ -159,7 +165,7 @@ class ConsoleArchiveRecoveryView:
             self._rendered_sets.intersection_update(live_sets)
             for record in presentations:
                 await self._mount_results(record)
-            if not surface.is_attached:
+            if not current():
                 return
             imported = not presentations and any(
                 "result_set_id" in message.content and "result_ref" in message.content
@@ -181,6 +187,8 @@ class ConsoleArchiveRecoveryView:
                         classes="archive-recovery-card",
                     )
                 )
+                if not current():
+                    return
             snapshot = runtime.coordinator.snapshot(session_id)
             self.show_confirmation(snapshot.confirmation if snapshot else None)
             receipts = runtime.coordinator.receipts(session_id)
