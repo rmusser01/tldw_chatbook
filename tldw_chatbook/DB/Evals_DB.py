@@ -122,25 +122,28 @@ _VERSION_COLUMN_TABLES: Tuple[str, str, str, str, str] = (
 )
 
 
+from tldw_chatbook.DB.store_errors import StoreConflictError, StoreInputError, StoreSchemaError
+
+
 class EvalsDBError(Exception):
     """Base exception for EvalsDB related errors."""
 
     pass
 
 
-class SchemaError(EvalsDBError):
+class SchemaError(EvalsDBError, StoreSchemaError):
     """Exception for schema version mismatches or migration failures."""
 
     pass
 
 
-class InputError(ValueError):
+class InputError(StoreInputError):
     """Custom exception for input validation errors."""
 
     pass
 
 
-class ConflictError(EvalsDBError):
+class ConflictError(EvalsDBError, StoreConflictError):
     """Indicates a conflict due to concurrent modification or unique constraint violation."""
 
     def __init__(

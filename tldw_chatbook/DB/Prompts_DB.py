@@ -74,25 +74,28 @@ from tldw_chatbook.Utils.fts5_match_forms import (
 
 
 # --- Custom Exceptions (Mirrors Media_DB_v2) ---
+from tldw_chatbook.DB.store_errors import StoreConflictError, StoreInputError, StoreSchemaError
+
+
 class DatabaseError(Exception):
     """Base exception for database related errors."""
 
     pass
 
 
-class SchemaError(DatabaseError):
+class SchemaError(DatabaseError, StoreSchemaError):
     """Exception for schema version mismatches or migration failures."""
 
     pass
 
 
-class InputError(ValueError):
+class InputError(StoreInputError):
     """Custom exception for input validation errors."""
 
     pass
 
 
-class ConflictError(DatabaseError):
+class ConflictError(DatabaseError, StoreConflictError):
     """Indicates a conflict due to concurrent modification (version mismatch)."""
 
     def __init__(

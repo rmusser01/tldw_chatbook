@@ -435,25 +435,28 @@ def _validate_continuation_owner_content(checkpoint: Any, content: str) -> None:
 
 
 # --- Custom Exceptions ---
+from tldw_chatbook.DB.store_errors import StoreConflictError, StoreInputError, StoreSchemaError
+
+
 class CharactersRAGDBError(Exception):
     """Base exception for CharactersRAGDB related errors."""
 
     pass
 
 
-class SchemaError(CharactersRAGDBError):
+class SchemaError(CharactersRAGDBError, StoreSchemaError):
     """Exception for schema version mismatches or migration failures."""
 
     pass
 
 
-class InputError(ValueError):
+class InputError(StoreInputError):
     """Custom exception for input validation errors."""
 
     pass
 
 
-class ConflictError(CharactersRAGDBError):
+class ConflictError(CharactersRAGDBError, StoreConflictError):
     """
     Indicates a conflict due to concurrent modification or unique constraint violation.
 
