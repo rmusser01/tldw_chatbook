@@ -1543,21 +1543,21 @@ def apply_config_eager_flags() -> None:
     global _initialized
     if _initialized or "PYTEST_CURRENT_TEST" in os.environ:
         return
-    from ..Backup_Recovery.bootstrap import RecoveryRequired
+    # The settings read is not wrapped: a read failure (RecoveryRequired among
+    # them) propagates, as it did when this ran at import.
+    from ..config import get_cli_setting
 
+    performance = get_cli_setting("rag", "performance", {})
+    if not isinstance(performance, dict):
+        return
+    if not performance.get("eager_dependency_check", False):
+        return
+    logger.info("Eager dependency checking enabled via config file")
     try:
-        from ..config import get_cli_setting
-
-        if get_cli_setting("rag", "performance", {}).get(
-            "eager_dependency_check", False
-        ):
-            logger.info("Eager dependency checking enabled via config file")
-            initialize_dependency_checks()
-            _initialized = True
-    except RecoveryRequired:
-        raise
+        initialize_dependency_checks()
+        _initialized = True
     except Exception as e:
-        logger.debug(f"Could not check config for eager_dependency_check: {e}")
+        logger.debug(f"Could not run eager dependency checks: {e}")
 
 
 if eager_check:
