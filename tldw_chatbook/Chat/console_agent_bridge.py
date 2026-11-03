@@ -42,7 +42,7 @@ if TYPE_CHECKING:
         ProfileContextService,
         ProfileContextSnapshot,
     )
-    from tldw_chatbook.UI.Screens.change_review_screen import (
+    from tldw_chatbook.Workspaces.change_review_provider import (
         AgentRunsChangeReviewProvider,
     )
 
@@ -11222,7 +11222,7 @@ class ConsoleAgentBridge:
         """
         if self._change_tracker is None:
             return None
-        from tldw_chatbook.UI.Screens.change_review_screen import (
+        from tldw_chatbook.Workspaces.change_review_provider import (
             AgentRunsChangeReviewProvider,
         )
 

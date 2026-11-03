@@ -22,6 +22,9 @@ from __future__ import annotations
 
 import ast
 import functools
+import os
+import subprocess
+import sys
 import warnings
 from pathlib import Path
 
@@ -299,3 +302,19 @@ def test_widgets_import_nothing_from_ui_screens_at_module_level() -> None:
         "Widgets must not import tldw_chatbook.UI.Screens at module level; move the "
         "shared state/helpers to a non-Screens package:\n  " + "\n  ".join(offenders)
     )
+
+
+def test_change_review_provider_imports_without_textual() -> None:
+    """TASK-36944.7: the provider's non-UI home must not load Textual."""
+    probe = (
+        "import sys\n"
+        "from tldw_chatbook.Workspaces.change_review_provider import "
+        "AgentRunsChangeReviewProvider\n"
+        "assert 'textual' not in sys.modules, 'textual was imported'\n"
+    )
+    # Inherit os.environ: the scratch HOME/XDG/TLDW_CONFIG_PATH must reach the child.
+    result = subprocess.run(
+        [sys.executable, "-c", probe],
+        capture_output=True, text=True, env=dict(os.environ), timeout=120,
+    )
+    assert result.returncode == 0, result.stderr[-2000:]

@@ -13,7 +13,6 @@ tldw_chatbook.Backup_Recovery.unsaved_editors	tldw_chatbook.Widgets.Persona_Widg
 tldw_chatbook.Backup_Recovery.visual_identity_participants	tldw_chatbook.UI.Screens.personas_screen	lazy
 tldw_chatbook.Canvas.web_auth	tldw_chatbook.Web_Server.session_store	top
 tldw_chatbook.Chat.attachment_core	tldw_chatbook.Event_Handlers.Chat_Events.chat_image_events	lazy
-tldw_chatbook.Chat.console_agent_bridge	tldw_chatbook.UI.Screens.change_review_screen	lazy
 tldw_chatbook.Chat.console_chat_controller	tldw_chatbook.UI.Views.RAGSearch.search_handoff	top
 tldw_chatbook.Chat.console_chat_fork	tldw_chatbook.Event_Handlers.Chat_Events.chat_image_events	top
 tldw_chatbook.Chat.console_configuration_preparation	tldw_chatbook.UI.Console_Modules.turn_admission	lazy
