@@ -359,6 +359,19 @@ test's waits, not a budget per wait: the first fix gave each wait 60 s, and
 review caught that three slow waits sum past the job's 180 s node timeout,
 which kills the test instead of failing its assertion.
 
+**Update (TASK-38462, 2026-11-03).** On Windows the app now installs its own
+timer sleep at `Load` (`install_windows_timer_sleep`), so the default executor
+carries no timer jobs. If a Windows dump again shows `asyncio_N` threads in
+`wait_inner`, the install did not happen. Check the Textual pin in
+`Tests/App/test_windows_timer_sleep.py` first. Reproducing with the proxy has a
+trap: `@private_profile_test` runs the test body in a child pytest that drops
+`PYTEST_ADDOPTS` and every `-p` plugin, so a proxy loaded only in the parent
+measures plain Textual. Hand the proxy over through `PYTEST_PLUGINS` and
+`PYTHONPATH` in `os.environ`, set from `pytest_configure` in the process that
+runs the test. Do not set them in an xdist controller: on the first try here
+every worker then died at startup with `Error importing plugin`, and the run
+reported "no tests ran".
+
 ## A child kept across its parent's rebuild defeats an "every child is unlaid" guard (TASK-33622.6, 2026-10-29)
 
 **Incident.** To stop the Console rail's filter input being replaced under
