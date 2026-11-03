@@ -867,7 +867,20 @@ def chat_with_openai(
                     # (a consumer Stop records nothing -- cancelled streams
                     # undercount by policy).
                     openai_stream_final_usage = None
-                    for line in response.iter_lines(decode_unicode=True):
+                    # TASK-38589: iterate BYTES and decode UTF-8 explicitly.
+                    # ``decode_unicode=True`` makes ``requests`` decode with
+                    # the response header's charset -- ISO-8859-1 when a
+                    # llama.cpp/vLLM/LiteLLM endpoint declares
+                    # ``text/event-stream`` WITHOUT ``charset=utf-8`` --
+                    # silently mojibake-ing every non-ASCII character. UTF-8
+                    # is the SSE wire contract (the anthropic path and the
+                    # hosted SSERecordDecoder already decode this way).
+                    for raw_line in response.iter_lines():
+                        line = (
+                            raw_line.decode("utf-8")
+                            if isinstance(raw_line, bytes)
+                            else str(raw_line)
+                        )
                         if line and line.strip():
                             if '"usage"' in line:
                                 usage_candidate = _openai_stream_line_usage(line)
@@ -3938,7 +3951,16 @@ def chat_with_google(
                 # latest converted usage and record it once at stream end.
                 stream_final_usage = None
                 try:
-                    for line in response.iter_lines(decode_unicode=True):
+                    # TASK-38589: iterate BYTES and decode UTF-8 explicitly;
+                    # ``decode_unicode=True`` decodes with the header charset
+                    # (ISO-8859-1 when the endpoint omits charset=utf-8),
+                    # corrupting non-ASCII Gemini output.
+                    for raw_line in response.iter_lines():
+                        line = (
+                            raw_line.decode("utf-8")
+                            if isinstance(raw_line, bytes)
+                            else str(raw_line)
+                        )
                         if line and line.strip().startswith("data:"):
                             json_str = line.strip()[len("data:") :].strip()
                             try:

@@ -352,7 +352,18 @@ def _chat_with_openai_compatible_local_server(
                         # the same SSE envelope consumed by all local callers.
                         yield f"data: {json.dumps(response.json())}\n\n"
                     else:
-                        for line in response.iter_lines(decode_unicode=True):
+                        # TASK-38589: iterate BYTES and decode UTF-8 explicitly.
+                        # ``decode_unicode=True`` makes ``requests`` decode with
+                        # the response header's charset -- ISO-8859-1 when a
+                        # local llama.cpp/vLLM/ollama endpoint declares
+                        # ``text/event-stream`` WITHOUT ``charset=utf-8`` (common)
+                        # -- silently mojibake-ing every non-ASCII character.
+                        for raw_line in response.iter_lines():
+                            line = (
+                                raw_line.decode("utf-8")
+                                if isinstance(raw_line, bytes)
+                                else str(raw_line)
+                            )
                             # Return control even for keep-alives so Stop owns
                             # closing the response; invisible chunks stay empty.
                             yield line + "\n\n" if line.startswith("data:") else ""
