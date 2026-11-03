@@ -493,7 +493,10 @@ async def test_keyword_tag_lister_builds_usage_counts_once_per_modal():
 
 
 def test_scope_picker_contract_has_no_widgets_or_textual_import() -> None:
-    """The lister and the contract it implements stay below Widgets (TASK-36944.5)."""
+    """The lister and the contract it implements stay below Widgets (TASK-36944.5).
+
+    Static imports only, at any level; an ``importlib`` call would not be seen.
+    """
     import ast
     from pathlib import Path
 

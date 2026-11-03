@@ -87,7 +87,9 @@ from tldw_chatbook.Widgets.modal_dismissal import SafeModalDismissMixin
 
 from tldw_chatbook.Chat.console_glyphs import GLYPH_SOURCE_MEDIA, GLYPH_SOURCE_NOTE
 from tldw_chatbook.Widgets.glyph_fallback import resolve_glyph
-from tldw_chatbook.Chat.rag_scope import (
+# The scope-picker contract lives in Chat.rag_scope (TASK-36944.5); the names this
+# modal does not use itself stay importable from here for existing importers.
+from tldw_chatbook.Chat.rag_scope import (  # noqa: F401
     SOURCE_TYPE_MEDIA,
     SOURCE_TYPE_NOTE,
     SORT_RECENT,

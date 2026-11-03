@@ -16,7 +16,16 @@ import pytest
 from textual.app import App
 from textual.widgets import Button, Checkbox, Input, Select, Static
 
-from tldw_chatbook.Chat.rag_scope import SOURCE_TYPE_MEDIA, RagScope, ScopeItem
+from tldw_chatbook.Chat.rag_scope import (
+    SORT_TITLE,
+    SORT_TYPE,
+    SOURCE_TYPE_MEDIA,
+    RagScope,
+    ScopeItem,
+    ScopeListItem,
+    ScopeListPage,
+    TagCount,
+)
 from tldw_chatbook.Widgets.Console.console_scope_picker_modal import (
     CANCEL_BTN_ID,
     CLEAR_SCOPE_BTN_ID,
@@ -34,16 +43,11 @@ from tldw_chatbook.Widgets.Console.console_scope_picker_modal import (
     SAVE_BTN_ID,
     SELECT_ALL_BTN_ID,
     SORT_SELECT_ID,
-    SORT_TITLE,
-    SORT_TYPE,
     TAB_MEDIA_BTN_ID,
     TEXT_FILTER_ID,
     VIEW_ALL_BTN_ID,
     VIEW_SELECTED_BTN_ID,
     ConsoleScopePickerModal,
-    ScopeListItem,
-    ScopeListPage,
-    TagCount,
 )
 from Tests.UI.consolidated_css import APP_STYLESHEETS
 
