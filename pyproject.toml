@@ -584,7 +584,7 @@ exclude = [
 # `*.toml` glob would also ship `embedding_configs_examples.toml`, which
 # `Packaging/check_manifest.py` forbids in the wheel. Adding a *runtime*
 # `.toml` here means adding its name here too.
-"tldw_chatbook.Config_Files" = ["*.json", "*.md", "rag_pipelines.toml"]
+"tldw_chatbook.Config_Files" = ["*.json", "*.md", "rag_pipelines.toml", "default_config.toml"]
 # Runtime chunking templates are DB rows now (spec §8.1.2): the deleted
 # Chunking/templates/ file store ships in neither artifact.
 # `eval_datasets/*.json` is RUNTIME data, not a sample: `Evals/eval_templates/

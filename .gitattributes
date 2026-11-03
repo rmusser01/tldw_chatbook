@@ -28,3 +28,7 @@ tldw_chatbook/assets/skills/** -text
 # The offline tokenizer manifest verifies exact upstream bytes (ADR-093).
 # Line-ending conversion would invalidate every BPE table on Windows.
 tldw_chatbook/assets/tiktoken_cache/** -text
+
+# The default config template is SHA-256 pinned (TASK-36945.1) and written verbatim into
+# a fresh config.toml; a CRLF checkout would break the pin and ship CRLF configs.
+tldw_chatbook/Config_Files/default_config.toml -text

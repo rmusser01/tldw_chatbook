@@ -222,18 +222,15 @@ def test_shared_asset_exceptions_are_explicit() -> None:
     shared_rules = tuple(
         rule for rule in APPROVED_EXCEPTIONS if rule.relative_path in shared_paths
     )
-    embedding_rule = next(
-        rule
-        for rule in APPROVED_EXCEPTIONS
-        if (
-            rule.relative_path == "tldw_chatbook/config.py"
-            and rule.expression == "literal:~/.local/share/tldw_cli/models/embeddings"
-        )
-    )
-
     assert shared_rules
     assert all(rule.disposition is Disposition.SHARED_ARTIFACT for rule in shared_rules)
-    assert embedding_rule.disposition is Disposition.PERSISTED_DEFAULT
+    # The persisted embedding-cache default is TOML data now (TASK-36945.1): it ships once
+    # in the packaged template and no shared-asset exception covers it. The full template
+    # path pin is test_default_config_template_profile_paths_are_pinned.
+    embedding_default = "~/.local/share/tldw_cli/models/embeddings"
+    template = (REPO_ROOT / "tldw_chatbook/Config_Files/default_config.toml").read_text(encoding="utf-8")
+    assert template.count(embedding_default) == 1
+    assert not any(embedding_default in rule.expression for rule in shared_rules)
 
 
 def _dotted_name(node: ast.AST) -> str | None:
