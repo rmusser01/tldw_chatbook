@@ -1,0 +1,53 @@
+name: Lint
+
+# Ruff lint gate (TASK-38600; ADR 287 backlog/decisions/287-ruff-lint-gate.md).
+#
+# Two ratchets over tldw_chatbook with selection F,B,ASYNC,PLE:
+#   gate-new      -- F must stay at ZERO (F-class findings are fixed for real,
+#                    never baselined; TASK-38600).
+#   gate-ratchet  -- per-rule counts for the remaining debt must never exceed
+#                    Tests/lint/ruff_baseline.txt. Shrinking is allowed and
+#                    printed; regrow only by lowering the baseline first.
+#
+# The ruff version is PINNED so rule behavior matches the baseline file (the
+# version that generated it is recorded in the baseline header). Bump the pin
+# and regenerate the baseline together:
+#   pip install ruff==<new> && python Tests/lint/ruff_gate.py --update-baseline
+
+on:
+  pull_request:
+  push:
+    branches: ["dev"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  gate-new:
+    name: F-rule gate (must be empty)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install pinned ruff
+        run: pip install ruff==0.16.6
+      - name: F rules must report nothing
+        run: |
+          # Exit non-zero on any F finding; concise output names every hit.
+          ruff check tldw_chatbook --select F --output-format concise
+
+  gate-ratchet:
+    name: Ratchet gate (no rule above baseline)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install pinned ruff
+        run: pip install ruff==0.16.6
+      - name: Compare per-rule counts against baseline
+        run: python Tests/lint/ruff_gate.py
