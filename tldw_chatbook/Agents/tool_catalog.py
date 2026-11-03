@@ -1248,7 +1248,8 @@ def build_gateable_tool(
     Args:
         entry: The table entry to construct.
         db_provider: ChaChaNotes DB getter handed to tool classes that
-            declare ``accepts_notes_db_provider``; others ignore it. ``None`` leaves the tool's own lazy default.
+            declare ``accepts_notes_db_provider``; others ignore it.
+            ``None`` leaves the tool's own lazy default.
 
     Returns:
         The instantiated ``Tool``.

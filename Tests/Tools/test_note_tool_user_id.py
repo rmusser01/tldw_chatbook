@@ -308,16 +308,22 @@ def test_note_tools_succeed_in_a_process_where_nothing_created_the_db():
     assert Path(out["db_path"]).is_relative_to(scratch), out["db_path"]
 
 
-@pytest.mark.asyncio
-async def test_service_cache_does_not_keep_the_db_alive(fake_service, tmp_path):
-    import gc
-    import weakref
-    db = _StubDB(str(tmp_path / "c.db"))
-    ref = weakref.ref(db)
-    await nmt.CreateNoteTool(db_provider=lambda: db).execute(title="a", content="c")
-    del db
-    gc.collect()
-    assert ref() is None, "the service cache must not extend the DB's lifetime"
+@pytest.mark.bootstrap_profile
+def test_service_cache_reuses_for_same_db_and_rebuilds_for_another(tmp_path):
+    """Real service, real tmp DBs: same DB -> same service; new DB -> new."""
+    from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
+
+    one = CharactersRAGDB(tmp_path / "one.db", "task-36945-4")
+    two = CharactersRAGDB(tmp_path / "two.db", "task-36945-4")
+    nmt._reset_notes_service_cache()
+    try:
+        first = nmt._notes_service(lambda: one)
+        assert nmt._notes_service(lambda: one) is first
+        second = nmt._notes_service(lambda: two)
+        assert second is not first
+        assert second.unified_db_template is two
+    finally:
+        nmt._reset_notes_service_cache()
 
 
 def test_registrar_default_getter_is_resolved_at_call_time(monkeypatch):

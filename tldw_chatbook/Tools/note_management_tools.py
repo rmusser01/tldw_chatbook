@@ -5,7 +5,6 @@ These tools allow LLMs to create, search, update, and manage notes.
 """
 
 import threading
-import weakref
 from pathlib import Path
 from typing import Any, Callable, Dict, Optional, Tuple
 
@@ -31,6 +30,10 @@ from ..config import load_settings
 #: repoints the data dir) still rebuilds rather than serving a service
 #: bound to the previous database.
 _SERVICE_LOCK = threading.Lock()
+# ponytail: holds (db, service) strongly -- at most ONE DB, the last one
+# supplied, stays alive until a different DB is supplied. CharactersRAGDB has
+# no cheap closed check, so a closed DB is not detected. Upgrade path: an
+# is_closed flag on the DB (then rebuild on it), or a per-DB cache.
 _SERVICE_CACHE: Optional[Tuple[Any, NotesInteropService]] = None
 
 
@@ -62,9 +65,7 @@ def _notes_service(db_provider: Callable[[], Any]) -> NotesInteropService:
         raise RuntimeError("The notes database is unavailable.")
 
     def _fresh(cached) -> bool:
-        # The weakref keeps the cache from extending the DB's lifetime; a
-        # dead ref or a different DB object means rebuild.
-        return cached is not None and cached[0]() is db
+        return cached is not None and cached[0] is db
 
     cached = _SERVICE_CACHE
     if _fresh(cached):
@@ -79,7 +80,7 @@ def _notes_service(db_provider: Callable[[], Any]) -> NotesInteropService:
             api_client_id="tool_executor",
             global_db_to_use=db,
         )
-        _SERVICE_CACHE = (weakref.ref(db), service)
+        _SERVICE_CACHE = (db, service)
         return service
 
 
