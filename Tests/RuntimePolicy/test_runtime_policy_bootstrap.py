@@ -9,7 +9,6 @@ from tldw_chatbook.runtime_policy.bootstrap import (
     set_authoritative_runtime_source,
 )
 from tldw_chatbook.runtime_policy.types import RuntimeSourceState
-from tldw_chatbook.state.app_state import AppState
 
 
 def _prepare_context(**kwargs):
@@ -109,35 +108,16 @@ def test_explicit_runtime_policy_path_never_gains_default_directory_authority(
     assert not explicit_policy_path.parent.exists()
 
 
-def test_app_state_round_trips_runtime_source_state():
-    original = AppState(
-        runtime_source=RuntimeSourceState(
-            active_source="server",
-            active_server_id="server-alpha",
-            server_configured=True,
-            server_reachability="reachable",
-            server_reachability_checked_at=datetime(
-                2026, 4, 21, 12, 0, tzinfo=timezone.utc
-            ),
-            server_auth_state="authenticated",
-            server_auth_checked_at=datetime(2026, 4, 21, 12, 5, tzinfo=timezone.utc),
-            last_known_server_label="Primary Server",
-        )
-    )
+def test_runtime_source_state_from_dict_ignores_non_mapping_payload():
+    """TASK-38613: preserved from the deleted AppState wrapper tests.
 
-    restored = AppState.from_dict(original.to_dict())
+    ``AppState.from_dict`` used to be the only exerciser of this branch; the
+    robustness lives in ``runtime_source_state_from_dict`` (non-Mapping
+    payload -> safe default), which stays guarded directly.
+    """
 
-    assert restored.runtime_source == original.runtime_source
-
-
-def test_app_state_from_dict_ignores_malformed_runtime_source_payload():
-    restored = AppState.from_dict(
-        {
-            "runtime_source": ["not", "a", "mapping"],
-        }
-    )
-
-    assert restored.runtime_source == RuntimeSourceState()
+    assert RuntimeSourceState.from_dict(["not", "a", "mapping"]) == RuntimeSourceState()
+    assert RuntimeSourceState.from_dict(None) == RuntimeSourceState()
 
 
 def test_runtime_source_state_store_round_trips_json(tmp_path):

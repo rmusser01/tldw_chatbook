@@ -61,6 +61,14 @@ class ConfigEncryption:
     TAG_SIZE = 16  # 128 bits for GCM
 
     # scrypt parameters. v1 used 2^20, which made normal config saves unusably slow.
+    #
+    # DECISION (2026-11-02 audit, TASK-38613): keep N=2^14 for v2 even though
+    # OWASP guidance now suggests 2^17. Derivation is memoized per password
+    # (`_derive_key_cached` above), so interactive cost is bounded, and KDF
+    # parameters are per-version: raising N in place would silently make every
+    # existing v2 ciphertext undecryptable. The path to a stronger KDF is a
+    # future v3 format with migration-on-write (re-encrypt values under v3
+    # params on next successful save), tracked as a follow-up note.
     SCRYPT_N = 16384  # CPU/memory cost
     LEGACY_SCRYPT_N = 1048576
     SCRYPT_R = 8  # Block size

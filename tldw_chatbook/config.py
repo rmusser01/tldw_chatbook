@@ -126,6 +126,19 @@ def _contains_literal_backslash_x(value: Any) -> bool:
 def dumps_cli_config(config_data: Mapping[str, Any]) -> str:
     """Retain the original codec and defer the exceptional literal encoder.
 
+    KNOWN TRADE-OFF (2026-11-02 audit, TASK-38613): this serialization is
+    comment-hostile. Every settings save round-trips through here into
+    ``toml.dumps``, which emits values only -- ALL user comments in
+    config.toml (e.g. the ~500-line commented first-run template) are
+    stripped by the first save that rewrites the file. The surrounding write
+    path (``_write_raw_cli_config_unlocked``) is otherwise exemplary --
+    atomic rename, parse-back verification, snapshots, locking -- and that
+    decision is ACCEPTED for now: a tomlkit round-trip was evaluated on
+    2026-11-02 and deferred as a follow-up, because swapping the encoder
+    risks subtle semantic drift versus ``toml.dumps`` and would force
+    re-qualification of the parse-back-verification guarantee the writer is
+    built on. Do not assume comments survive a save.
+
     Args:
         config_data: Original configuration mapping passed to the writer.
 
