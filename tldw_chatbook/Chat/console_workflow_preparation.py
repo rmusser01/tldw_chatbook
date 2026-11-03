@@ -195,9 +195,59 @@ class _PreparedWorkflowReply:
         if goal_provider_ref(self.resolution) != authorization.task.target:
             raise PermissionError("workflow native target changed")
 
-    async def _read(self, callback, *, roots=True, closing=False):
+    @contextmanager
+    def _unpublished_storage_return(self, publication):
+        """Prove this original unused frame returned its worker-owned handles."""
+        from tldw_chatbook.DB.workflow_runs import _WindowUnpublished
+
+        wave, source = self._wave, self.source
+        if (
+            type(publication) is not _WindowUnpublished
+            or wave is None
+            or source is None
+            or publication.store is not self.service.db.workflow_runs
+            or publication.phase is not self.phase
+            or publication.reservation is not wave.reservation
+            or wave.phase is not self.phase
+            or wave.runtime is not self.runtime
+            or self.runtime._workflow_waves.get(wave) is not wave
+            or self not in self.runtime._workflow_preparations
+            or not any(item is self for item in wave.prepared)
+            or source.workflow_preparation is not self
+            or self.service.db is not source.databases[0]
+            or self.service.persistence is not source.persistence
+            or getattr(self.service.persistence, "workspace_registry", None)
+            is not source.registry
+        ):
+            raise PermissionError("original unpublished frame storage required")
+        originals = []
+        for database in dict.fromkeys(db for db in source.databases if db is not None):
+            namespace = vars(database)
+            if namespace.get("is_memory_db") is True:
+                continue
+            slot = "_local" if namespace.get("_local") is not None else "_thread_local"
+            local = namespace.get(slot)
+            if local is None:
+                raise RuntimeError("original source database local unavailable")
+            originals.append((database, slot, local, getattr(local, "conn", None)))
+        try:
+            yield
+        finally:
+            # Check after BOTH the native frame/source and the outer storage
+            # scopes. Native close may suppress an error while retaining a live
+            # cache; frame flags or a later close cannot certify this return.
+            if not all(
+                vars(database).get(slot) is local
+                and getattr(local, "conn", None) is original
+                for database, slot, local, original in originals
+            ):
+                raise RuntimeError("original source database handle did not return")
+
+    async def _read(self, callback, *, roots=True, closing=False, _unpublished=None):
         """Own a complete finite callback; no native scope survives its return."""
 
+        if _unpublished is not None and not closing:
+            raise PermissionError("unpublished storage proof is close-only")
         retirement = []
 
         def invoke_owned():
@@ -277,7 +327,13 @@ class _PreparedWorkflowReply:
         def invoke():
             body_error = None
             try:
-                with owned_goal_storage(self.service), execution(self.bridge):
+                with (
+                    self._unpublished_storage_return(_unpublished)
+                    if _unpublished is not None
+                    else nullcontext(),
+                    owned_goal_storage(self.service),
+                    execution(self.bridge),
+                ):
                     try:
                         result = callback() if closing else invoke_owned()
                     except BaseException as error:
@@ -615,9 +671,11 @@ class _PreparedWorkflowReply:
             startup_instruction_snapshot=self._snapshot,
         )
 
-    async def close(self):
+    async def close(self, *, _unpublished=None):
         """Retire once after actual child drain and required durable publication."""
         if self._closed:
+            if _unpublished is not None:
+                raise PermissionError("unpublished frame close cannot be replayed")
             return
 
         def finish():
@@ -652,7 +710,7 @@ class _PreparedWorkflowReply:
                 self._closed = True
                 self._closing = False
 
-        await self._read(finish, roots=False, closing=True)
+        await self._read(finish, roots=False, closing=True, _unpublished=_unpublished)
         if self._wave is None:
             self._release_configuration()
 

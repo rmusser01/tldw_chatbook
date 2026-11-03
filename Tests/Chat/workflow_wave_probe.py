@@ -359,6 +359,133 @@ async def exercise():
                 )
         from tldw_chatbook.Chat.console_workflow_wave import run_workflow_wave
 
+        if sys.argv[1] == "window-owned-close-unknown":
+            import sqlite3
+
+            from tldw_chatbook.DB import private_sqlite
+            from tldw_chatbook.DB.store_kernel import SQLiteStoreKernel
+            from tldw_chatbook.DB.workflow_runs import _WindowUnpublished
+
+            with owned_goal_storage(service), db.transaction() as conn:
+                conn.execute(
+                    "CREATE TRIGGER wave_test_window_refusal BEFORE INSERT ON workflow_change_windows "
+                    "BEGIN SELECT RAISE(ABORT, 'native refused window insert'); END"
+                )
+            original_open = db.workflow_runs.open_change_window.__func__.__code__
+            original_close = SQLiteStoreKernel.close.__code__
+            workspace_db = registry.db
+            unpublished = []
+            fault = []
+            fault_attempts = []
+            injected_error = OSError("native owned workspace close refused")
+
+            def fail_original_owned_close(frame, event, argument):
+                if event == "return" and frame.f_code is original_open:
+                    if type(argument) is _WindowUnpublished:
+                        unpublished.append(argument)
+                    return
+                if (
+                    not unpublished
+                    or event != "c_call"
+                    or getattr(argument, "__name__", None) != "close"
+                ):
+                    return
+                receiver = getattr(argument, "__self__", None)
+                current = frame
+                while current is not None:
+                    if (
+                        current.f_code is original_close
+                        and current.f_locals.get("self") is workspace_db
+                    ):
+                        if receiver is not current.f_locals.get("conn"):
+                            return
+                        lease = private_sqlite._ordinary_connections.get(receiver)
+                        participant = getattr(lease, "resource_participant", None)
+                        if fault and receiver is not fault[0][0]:
+                            return
+                        if not fault:
+                            fault.append(
+                                (
+                                    receiver,
+                                    vars(workspace_db._thread_local),
+                                    lease,
+                                    participant,
+                                )
+                            )
+                        fault_attempts.append(threading.get_ident())
+                        raise injected_error
+                    current = current.f_back
+
+            def rearm_original_close_observer(frame, event, argument):
+                # CPython disables a profile callback after it raises. Observe
+                # the original catch passively so the same fault also reaches
+                # the outer owner's genuine retry, rather than healing it.
+                if (
+                    frame.f_code is original_close
+                    and event == "exception"
+                    and argument[1] is injected_error
+                ):
+                    sys.setprofile(fail_original_owned_close)
+                return rearm_original_close_observer
+
+            threading.settrace_all_threads(rearm_original_close_observer)
+            threading.setprofile_all_threads(fail_original_owned_close)
+            outcome = None
+            try:
+                await run_workflow_wave(phase, tuple(prepared))
+            except BaseException as error:  # noqa: BLE001 - isolated fault receipt records the actual native outcome
+                outcome = (type(error).__name__, str(error))
+            finally:
+                threading.setprofile_all_threads(None)
+                threading.settrace_all_threads(None)
+            facts = {
+                "fault_count": len(fault),
+                "fault_attempts": len(fault_attempts),
+                "unpublished_count": len(unpublished),
+                "waves": len(runtime._workflow_waves),
+                "fences": len(runtime.worktree_activity._waves),
+                "sources": runtime._first_send_sources,
+                "preparations": len(runtime._workflow_preparations),
+                "calls": calls,
+                "owners": len(owners),
+                "claims": len(runtime.worktree_activity._claims),
+                "outcome": outcome,
+            }
+            if fault:
+                connection, local_values, lease, participant = fault[0]
+                try:
+                    sqlite3.Connection.in_transaction.__get__(connection)
+                    live = True
+                except sqlite3.ProgrammingError:
+                    live = False
+                facts.update(
+                    original_workspace_receiver=True,
+                    live_handle=live,
+                    cached_original=local_values.get("conn") is connection,
+                    retained_lease=lease is not None
+                    and private_sqlite._ordinary_connections.get(connection) is lease,
+                    retained_participant=participant is not None
+                    and connection in participant.connections,
+                )
+            if runtime._workflow_waves:
+                try:
+                    await prepared[0].close(_unpublished=unpublished[0])
+                except PermissionError as error:
+                    facts["repeat_close_refused"] = (
+                        str(error) == "unpublished frame close cannot be replayed"
+                    )
+                else:
+                    facts["repeat_close_refused"] = False
+            with owned_goal_storage(service), db.connection() as conn:
+                facts["windows"] = conn.execute(
+                    "SELECT COUNT(*) FROM workflow_change_windows"
+                ).fetchone()[0]
+                facts["native_runs"] = len(db.list_runs(conversation))
+            print("WAVE_OWNED_CLOSE_FACTS " + json.dumps(facts), flush=True)
+            # An original failed native close intentionally retains its lease.
+            # Isolated process exit is not runtime/creator or physical drain.
+            os._exit(0 if len(fault) == len(unpublished) == 1 else 2)
+
         if sys.argv[1] in {"window-ack-unknown", "window-unwind-unknown"}:
             uncertain_ack = sys.argv[1] == "window-ack-unknown"
             original_open = db.workflow_runs.open_change_window.__func__.__code__

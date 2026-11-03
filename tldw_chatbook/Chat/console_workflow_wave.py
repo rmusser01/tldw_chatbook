@@ -282,7 +282,7 @@ class _WorkflowWave:
                 self.reservation, self.source, publication
             )
             for item in self.prepared:
-                await item.close()
+                await item.close(_unpublished=publication)
             self._release()
             raise publication.error
         baseline = await asyncio.shield(self.baseline_return)
