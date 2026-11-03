@@ -132,7 +132,9 @@ _BUDGETS: dict[str, int] = {
     # the row): 5687 -> 5689 (+2) -- the subscriptions backfill starter checks
     # activation against the wired DB's path instead of a checked config read
     # on the UI loop.
-    "tldw_chatbook/app.py": 5689,
+    # 2026-11-03, TASK-36945.3: 5689 -> 5686 (-3) -- the eager-dependency flag
+    # moved from on_mount to the entry points.
+    "tldw_chatbook/app.py": 5686,
     # TASK-34406.5: unchanged startup/footer wiring, born governed.
     "tldw_chatbook/app_startup.py": 176,
     # TASK-34406.7: app-owned served control and relay bodies, born governed.
