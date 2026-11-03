@@ -143,7 +143,7 @@ edits update the existing rows without rebuilding the editor.
 
 ## Splash subsystem
 
-`Widgets/splash_screen.py` (`SplashScreen`) with effects in `Utils/Splash_Screens/` by category (classic/environmental/tech/gaming/psychedelic/custom) plus custom cards from `examples/custom_splash_cards/`. Config under `[splash_screen]`: `enabled`, `duration` (default 7.0 s), `skip_on_keypress`, `show_progress`, `card_selection`. On close the app removes the splash widget, mounts the main UI, pushes the initial screen (first-run → Home; focus-mode request or default → Console/chat), and defers logging setup until then.
+`Widgets/splash_screen.py` (`SplashScreen`) with effects in `UI/Splash_Screens/` by category (classic/environmental/tech/gaming/psychedelic/custom) plus custom cards from `examples/custom_splash_cards/`. Config under `[splash_screen]`: `enabled`, `duration` (default 7.0 s), `skip_on_keypress`, `show_progress`, `card_selection`. On close the app removes the splash widget, mounts the main UI, pushes the initial screen (first-run → Home; focus-mode request or default → Console/chat), and defers logging setup until then.
 
 ## Failure and fallback behaviors
 

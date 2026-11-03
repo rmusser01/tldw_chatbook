@@ -790,6 +790,9 @@ tldw_chatbook.UI.Screens.study_scope_models
 tldw_chatbook.UI.Speech
 tldw_chatbook.UI.Speech.speech_settings_contracts
 tldw_chatbook.UI.Speech.speech_settings_model
+tldw_chatbook.UI.Splash_Screens
+tldw_chatbook.UI.Splash_Screens.base_effect
+tldw_chatbook.UI.Splash_Screens.card_definitions
 tldw_chatbook.UI.Views
 tldw_chatbook.UI.Views.RAGSearch
 tldw_chatbook.UI.Views.RAGSearch.search_handoff
@@ -811,9 +814,6 @@ tldw_chatbook.User_Governance_Interop.user_governance_scope_service
 tldw_chatbook.Utils
 tldw_chatbook.Utils.NotificationHelper
 tldw_chatbook.Utils.Splash
-tldw_chatbook.Utils.Splash_Screens
-tldw_chatbook.Utils.Splash_Screens.base_effect
-tldw_chatbook.Utils.Splash_Screens.card_definitions
 tldw_chatbook.Utils.Splash_Strings
 tldw_chatbook.Utils.Utils
 tldw_chatbook.Utils.adaptive_reader_state

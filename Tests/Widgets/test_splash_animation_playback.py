@@ -1,7 +1,7 @@
 """Playback-stability tests for the splash animation driver (task-31000).
 
 The splash animation is driven by Textual ``set_interval`` callbacks while the
-effects inside ``Utils/Splash_Screens`` derive their progression from
+effects inside ``UI/Splash_Screens`` derive their progression from
 ``time.time() - effect.start_time``. Textual timers permanently skip ticks
 that could not fire while the event loop was blocked, so under startup
 contention wall-clock time races ahead of rendered frames: reveals jump

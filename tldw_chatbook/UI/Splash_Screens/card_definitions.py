@@ -1,7 +1,7 @@
 """Predefined splash card definitions."""
 
-from ..Splash_Strings import splashscreen_message_selection
-from ..Splash import get_ascii_art
+from tldw_chatbook.Utils.Splash_Strings import splashscreen_message_selection
+from tldw_chatbook.Utils.Splash import get_ascii_art
 
 
 def get_all_card_definitions():

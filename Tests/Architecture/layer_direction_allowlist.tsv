@@ -135,6 +135,7 @@ tldw_chatbook.Third_Party.textual_fspicker.base_dialog	tldw_chatbook.Library.lib
 tldw_chatbook.Third_Party.textual_fspicker.base_dialog	tldw_chatbook.Widgets.enhanced_file_picker	lazy
 tldw_chatbook.Third_Party.textual_fspicker.base_dialog	tldw_chatbook.Widgets.modal_dismissal	top
 tldw_chatbook.Third_Party.textual_fspicker.parts.progressive_directory_navigation	tldw_chatbook.Notes.note_import_discovery	lazy
+tldw_chatbook.Utils.Splash_Screens	tldw_chatbook.UI.Splash_Screens	top
 tldw_chatbook.Utils.custom_tokenizers	tldw_chatbook.Backup_Recovery.storage_admission	top
 tldw_chatbook.Utils.db_status_manager	tldw_chatbook.Backup_Recovery.bootstrap	lazy
 tldw_chatbook.Utils.db_upgrade_notice	tldw_chatbook.DB.ChaChaNotes_DB	lazy

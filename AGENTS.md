@@ -236,7 +236,7 @@ variable is unset, which means off.
 - Password dialogs in widgets
 
 ### Splash Screen
-- 20+ animations in `Utils/Splash_Screens/` (by category; `Utils/splash_animations.py` is a compat stub)
+- 20+ animations in `UI/Splash_Screens/` (by category; `Utils/splash_animations.py` and `Utils/Splash_Screens/` are compat shims)
 - Config: `[splash_screen]` section
 - Custom cards in `examples/custom_splash_cards/`
 

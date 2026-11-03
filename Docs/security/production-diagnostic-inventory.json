@@ -3900,6 +3900,20 @@
       "reason": "remaining Chatbook production diagnostic owner"
     },
     {
+      "call_count": 4,
+      "diagnostic_digest": "cfcc86bd69d1deb760c5",
+      "owner": "TASK-494",
+      "path": "tldw_chatbook/UI/Splash_Screens/__init__.py",
+      "reason": "remaining Chatbook production diagnostic owner"
+    },
+    {
+      "call_count": 2,
+      "diagnostic_digest": "7e2adbc825eb37f572cb",
+      "owner": "TASK-494",
+      "path": "tldw_chatbook/UI/Splash_Screens/base_effect.py",
+      "reason": "remaining Chatbook production diagnostic owner"
+    },
+    {
       "call_count": 13,
       "diagnostic_digest": "6202f3df1dddd0273197",
       "owner": "TASK-494",
@@ -4107,20 +4121,6 @@
       "diagnostic_digest": "5e4abbacb06a7839e4c2",
       "owner": "TASK-494",
       "path": "tldw_chatbook/UI/Workflows_Modules/console_context.py",
-      "reason": "remaining Chatbook production diagnostic owner"
-    },
-    {
-      "call_count": 4,
-      "diagnostic_digest": "cfcc86bd69d1deb760c5",
-      "owner": "TASK-494",
-      "path": "tldw_chatbook/Utils/Splash_Screens/__init__.py",
-      "reason": "remaining Chatbook production diagnostic owner"
-    },
-    {
-      "call_count": 2,
-      "diagnostic_digest": "7e2adbc825eb37f572cb",
-      "owner": "TASK-494",
-      "path": "tldw_chatbook/Utils/Splash_Screens/base_effect.py",
       "reason": "remaining Chatbook production diagnostic owner"
     },
     {
@@ -10742,6 +10742,29 @@
     {
       "candidates": [
         {
+          "call_digest": "ba3cd09324a457e5",
+          "method": "debug",
+          "path_expressions": [
+            "full_module_name"
+          ],
+          "scope": "load_all_effects",
+          "status": "legacy_unreviewed"
+        },
+        {
+          "call_digest": "d4ff280e36d52663",
+          "method": "error",
+          "path_expressions": [
+            "full_module_name"
+          ],
+          "scope": "load_all_effects",
+          "status": "legacy_unreviewed"
+        }
+      ],
+      "path": "tldw_chatbook/UI/Splash_Screens/__init__.py"
+    },
+    {
+      "candidates": [
+        {
           "call_digest": "f147684903d90571",
           "method": "info",
           "path_expressions": [
@@ -10761,29 +10784,6 @@
         }
       ],
       "path": "tldw_chatbook/UI/Wizards/ChatbookImportWizard.py"
-    },
-    {
-      "candidates": [
-        {
-          "call_digest": "ba3cd09324a457e5",
-          "method": "debug",
-          "path_expressions": [
-            "full_module_name"
-          ],
-          "scope": "load_all_effects",
-          "status": "legacy_unreviewed"
-        },
-        {
-          "call_digest": "d4ff280e36d52663",
-          "method": "error",
-          "path_expressions": [
-            "full_module_name"
-          ],
-          "scope": "load_all_effects",
-          "status": "legacy_unreviewed"
-        }
-      ],
-      "path": "tldw_chatbook/Utils/Splash_Screens/__init__.py"
     },
     {
       "candidates": [
