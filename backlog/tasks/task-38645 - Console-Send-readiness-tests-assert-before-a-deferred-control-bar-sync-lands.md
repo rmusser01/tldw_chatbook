@@ -5,7 +5,7 @@ status: Done
 assignee:
 - '@claude'
 created_date: 2026-11-02 21:52
-updated_date: 2026-11-03 06:19
+updated_date: 2026-11-03 06:34
 labels:
 - follow-up
 - tests
@@ -73,7 +73,7 @@ Evidence at dev 18482c1cf7 (2026-11-03 05:59-06:10Z). Each loaded run had `Tests
   - Removal of 1facb4b8ef's `sendable_attachment_provider` wiring: 4 failed, 1 passed. The press test fails at `_send_state(send) == (False, False)`: Send reads `(True, True)`, disabled, while a press would send the image. The either-sync-site (`image`, both sites `(True, True)`), composer-resync and Workbench (`image`) tests fail at their assertions, each reading `(True, True)` against `(False, False)`. Dev's projection test passes.
 - Before the rebase (dev 2dcf038cb8, same load), when the helper covered five sites including the Workbench test's two: red at base in 5 of 10 runs (Workbench test 5 times, composer-resync 2, either-sync-site 1); green in 10 of 10, 4 passed each; the same two reverts red at the same assertions. Control for the wait: with the projection's `value = None` set just before the sync, the bare call failed the composer-resync test (`(True, True) == (False, False)`) and the helper passed it.
 - AC#2 re-worded by the coordinator after review (2026-11-03). The original wording, "each test still fails against the Send disagreements that TASK-33620.15.22 fixed", cannot hold for the positive press test. That test passed on the pre-fix code by design, as TASK-33620.15.22's merge evidence records. The new wording names the control that does prove the wait does not blunt it: removing the provider wiring.
-- The lesson this task adds to `backlog/docs/lessons-testing-evidence.md` still holds at 18482c1cf7, so its wording is unchanged. Dev's projection test agrees with it: a config lock held from another thread defers the bare sync only once the 1 s display proof has expired (the test holds `_settings_rebuild_lock()` and waits 1.05 s before the sync that returns False).
+- The lesson this task adds to `backlog/docs/lessons-testing-evidence.md` still holds at 18482c1cf7. Dev's projection test agrees with it: a config lock held from another thread defers the bare sync only once the 1 s display proof has expired (the test holds `_settings_rebuild_lock()` and waits 1.05 s before the sync that returns False). After review its wording was narrowed. It now says the 1.1 s proof-ageing control held no config lock, and it names that test as a second recipe for forcing a deferral. Its rule now reads "not a bare call whose return value is ignored". A comment above `_sync_controls` now says why the file has two sync helpers.
 - `./scripts/preflight.sh` passed at the rebased head.
 
 Files: Tests/UI/test_console_send_ready_attachment.py, backlog/docs/lessons-testing-evidence.md.
