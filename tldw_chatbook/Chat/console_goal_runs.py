@@ -30,7 +30,7 @@ from tldw_chatbook.Agents.goal_models import (
     GoalToolObservation,
 )
 from tldw_chatbook.Agents.goal_storage_lifetime import goal_authority_operation
-from tldw_chatbook.Agents.run_log import _setting
+from tldw_chatbook.Agents.run_log import setting as _setting
 from tldw_chatbook.Chat.console_provider_endpoints import (
     normalize_generic_endpoint_for_compare,
 )
@@ -916,7 +916,7 @@ class ConsoleGoalCoordinator:
             self._dispatch_goal_id = None
 
     async def _dispatch_owned(self, goal_id: str) -> GoalIterationResult:
-        from tldw_chatbook.Agents.agent_service import _coerce_autowake_enabled
+        from tldw_chatbook.Agents.agent_service_public import coerce_autowake_enabled
         from tldw_chatbook.Chat.console_chat_models import (
             ConsoleRunState,
             ConsoleRunStatus,
@@ -933,7 +933,7 @@ class ConsoleGoalCoordinator:
             )
         if goal.status != "ready" or goal.request is None:
             return GoalIterationResult(goal_id, 0, None, None, None, "goal_not_ready")
-        if not _coerce_autowake_enabled(_setting("goal_runs_enabled", False)):
+        if not coerce_autowake_enabled(_setting("goal_runs_enabled", False)):
             return GoalIterationResult(
                 goal_id, 0, None, None, None, "goal_runs_disabled"
             )

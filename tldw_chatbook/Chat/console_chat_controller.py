@@ -29137,7 +29137,7 @@ def _stock_console_tool_composition_current(controller):
     from tldw_chatbook.Agents import mcp_tool_provider as providers
     from tldw_chatbook.MCP.console_snapshot import standard_console_catalog_sources
 
-    if not providers._controller_factory_current(MCPToolProvider):
+    if not providers.controller_factory_current(MCPToolProvider):
         return False
     app = controller.app
     try:

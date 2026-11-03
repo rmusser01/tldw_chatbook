@@ -95,13 +95,13 @@ from tldw_chatbook.Agents.agent_models import (
 )
 from tldw_chatbook.Agents import agent_models as agent_models_constants
 from tldw_chatbook.Agents import agent_service as agent_service_module
+from tldw_chatbook.Agents import agent_service_public
 from tldw_chatbook.Agents.agent_service import (
     RUN_LOG_PROMPT_SECTION,
     SUBAGENT_SYSTEM_PROMPT,
     AgentService,
     FirstRequestSchemaPlan,
     RunLogRequestPlan,
-    _count_model_messages,
     build_first_request_schema_plan,
     build_run_log_request_plan,
 )
@@ -2784,7 +2784,7 @@ def _fenced_project_instruction_payload_fits(
     """Validate the exact transformed fenced request before ledger advance."""
     try:
         limit = get_model_token_limit(model, provider)
-        used = _count_model_messages(
+        used = agent_service_public.count_model_messages(
             _serialize_project_instruction_rows_for_transport(
                 messages, native_tools=False
             ),
@@ -4382,8 +4382,8 @@ def _console_first_request_runtime_context(
             definition_from_row(row)
             for row in db.list_agent_definitions(enabled_only=True)
         )
-    max_live = agent_service_module._coerce_max_live_subagents(
-        agent_service_module._setting(
+    max_live = agent_service_public.coerce_max_live_subagents(
+        agent_service_public.setting(
             agent_service_module.MAX_LIVE_SUBAGENTS_KEY,
             agent_service_module.DEFAULT_MAX_LIVE_SUBAGENTS,
         )
@@ -4929,7 +4929,7 @@ def build_console_first_request_plan(
                 budget_system_prompt = f"{budget_system_prompt}\n\n{canvas_guidance}"
             if workspace_note:
                 budget_system_prompt = f"{budget_system_prompt}\n\n{workspace_note}"
-            required_tokens = _count_model_messages(
+            required_tokens = agent_service_public.count_model_messages(
                 [
                     {"role": "system", "content": budget_system_prompt},
                     *messages,
@@ -4939,7 +4939,7 @@ def build_console_first_request_plan(
                 reasoning_replay=config.reasoning_replay,
             )
             if native_schema_rows:
-                required_tokens += _count_model_messages(
+                required_tokens += agent_service_public.count_model_messages(
                     [
                         {
                             "role": "system",
@@ -6436,7 +6436,7 @@ class ConsoleAgentBridge:
         from tldw_chatbook.Agents.agent_routing import (
             load_agents_routing_config as _load_spawn_routing,
         )
-        from tldw_chatbook.Agents.agent_service import _spawn_override_targets
+        from tldw_chatbook.Agents.agent_service_public import spawn_override_targets
 
         try:
             _spawn_routing_cfg = _load_spawn_routing()
@@ -6447,7 +6447,7 @@ class ConsoleAgentBridge:
             and _spawn_routing_cfg.spawn_override_enabled
         )
         chat_create_spawn_override_targets = (
-            _spawn_override_targets(load_settings(), _spawn_routing_cfg)
+            spawn_override_targets(load_settings(), _spawn_routing_cfg)
             if chat_create_spawn_override_enabled
             else ()
         )
@@ -9624,8 +9624,8 @@ class ConsoleAgentBridge:
         # _setting` is what tests monkeypatch to flip the kill switch
         # (e.g. `test_inline_fleet_off_spawn_still_produces_a_live_
         # subagent_row`), and a bound from-import would not see it.
-        max_live = agent_service_module._coerce_max_live_subagents(
-            agent_service_module._setting(
+        max_live = agent_service_public.coerce_max_live_subagents(
+            agent_service_public.setting(
                 agent_service_module.MAX_LIVE_SUBAGENTS_KEY,
                 agent_service_module.DEFAULT_MAX_LIVE_SUBAGENTS,
             )
@@ -9637,15 +9637,15 @@ class ConsoleAgentBridge:
         # same way -- construction for a new coordinator, an in-place
         # re-size for an existing one. Replacing the coordinator would
         # drop the retained transcripts along with every live handle.
-        retained_transcripts = agent_service_module._coerce_retained_transcripts(
-            agent_service_module._setting(
+        retained_transcripts = agent_service_public.coerce_retained_transcripts(
+            agent_service_public.setting(
                 agent_service_module.RETAINED_TRANSCRIPTS_KEY,
                 agent_service_module.DEFAULT_RETAINED_TRANSCRIPTS,
             )
         )
         retained_transcript_max_chars = (
-            agent_service_module._coerce_retained_transcript_max_chars(
-                agent_service_module._setting(
+            agent_service_public.coerce_retained_transcript_max_chars(
+                agent_service_public.setting(
                     agent_service_module.RETAINED_TRANSCRIPT_MAX_CHARS_KEY,
                     agent_service_module.DEFAULT_RETAINED_TRANSCRIPT_MAX_CHARS,
                 )

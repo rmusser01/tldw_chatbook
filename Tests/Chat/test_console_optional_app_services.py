@@ -71,7 +71,7 @@ def test_stock_catalog_checks_factory_before_evaluating_app_receiver(
             raise AttributeError("receiver unavailable")
 
     monkeypatch.setattr(
-        mcp_tool_provider, "_controller_factory_current", lambda _: factory_current
+        mcp_tool_provider, "controller_factory_current", lambda _: factory_current
     )
     if factory_current:
         with pytest.raises(AttributeError, match="receiver unavailable"):

@@ -206,7 +206,7 @@ def _default_readiness(app_config: Mapping[str, Any], provider: str) -> str | No
         resolve_console_provider_identity,
     )
     from tldw_chatbook.Chat.console_session_settings import (
-        _custom_endpoint_missing_key_readiness,
+        custom_endpoint_missing_key_readiness,
     )
     from tldw_chatbook.Chat.custom_endpoint_registry import (
         entry_for,
@@ -230,7 +230,7 @@ def _default_readiness(app_config: Mapping[str, Any], provider: str) -> str | No
     )(identity.readiness_key, app_config)
     if entry is not None and readiness.ready:
         readiness = (
-            _custom_endpoint_missing_key_readiness(
+            custom_endpoint_missing_key_readiness(
                 entry, identity.readiness_key, None
             )
             or readiness
@@ -414,10 +414,10 @@ def execution_provider_for_target(app_config: Mapping[str, Any], provider: str) 
     identity = resolve_console_provider_identity(family)
     if entry is not None:
         from tldw_chatbook.Chat.console_provider_gateway import (
-            _apply_custom_endpoint_engine_swap,
+            apply_custom_endpoint_engine_swap,
         )
 
-        identity = _apply_custom_endpoint_engine_swap(identity, entry, app_config)
+        identity = apply_custom_endpoint_engine_swap(identity, entry, app_config)
     return identity.execution_key or family
 
 

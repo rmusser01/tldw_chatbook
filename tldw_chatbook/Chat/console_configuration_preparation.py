@@ -880,10 +880,10 @@ def _composition_mcp_capture_current(creator, service):
         and checker.__globals__ is namespace
         and namespace is vars(controller_source)
         and checker(creator)
-        and provider_source._controller_factory_current(
+        and provider_source.controller_factory_current(
             controller_source.MCPToolProvider
         )
-        and provider_source._console_preparation_pipeline_current(preparation_source)
+        and provider_source.console_preparation_pipeline_current(preparation_source)
         and standard_console_catalog_sources(service)
     )
 

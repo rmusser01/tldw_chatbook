@@ -119,7 +119,7 @@ def _parse_env_bool(raw: str, key: str, default: bool) -> bool:
     return default
 
 
-def _setting(key: str, default):
+def setting(key: str, default):
     """Read one ``[agents]`` config key: env var, then TOML, then default.
 
     F3 (Qodo #3): CLAUDE.md's documented priority is "env vars ->
@@ -150,6 +150,9 @@ def _setting(key: str, default):
     except Exception:
         return default
     return default if value is None else value
+
+
+_setting = setting  # kept for existing importers/patch targets
 
 
 def _coerce_dir_name(value, default: str) -> str:

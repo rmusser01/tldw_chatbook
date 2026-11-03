@@ -12,6 +12,7 @@ import pytest
 pytestmark = pytest.mark.bootstrap_profile
 
 import tldw_chatbook.Chat.console_agent_bridge as bridge_module
+from tldw_chatbook.Agents import agent_service_public
 from Tests.private_profile import private_profile_test
 from tldw_chatbook.Agents.agent_service import AgentService, _count_model_messages
 from tldw_chatbook.Agents.canvas_tool_provider import (
@@ -371,13 +372,13 @@ def test_first_request_profile_budget_reserves_canvas_runtime_guidance(
     )
     authority = provider.issue_registration_authority()
     captured_system_prompts: list[str] = []
-    original_count = bridge_module._count_model_messages
+    original_count = agent_service_public.count_model_messages
 
     def capture(messages, model, provider_name, **kwargs):
         captured_system_prompts.append(str(messages[0].get("content", "")))
         return original_count(messages, model, provider_name, **kwargs)
 
-    monkeypatch.setattr(bridge_module, "_count_model_messages", capture)
+    monkeypatch.setattr(agent_service_public, "count_model_messages", capture)
 
     _plan(
         _ProfileContextBuilder(),

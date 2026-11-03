@@ -18,6 +18,7 @@ import pytest
 from loguru import logger
 
 import tldw_chatbook.Agents.agent_service as agent_service_module
+import tldw_chatbook.Agents.agent_service_public as agent_service_public
 from tldw_chatbook.Chat import console_agent_bridge
 import tldw_chatbook.Chat.console_agent_bridge as bridge_module
 from tldw_chatbook.Chat.console_agent_bridge import (
@@ -998,10 +999,9 @@ def test_fenced_nested_delivery_counts_exact_transformed_payload_before_mark(
         bridge_module, "get_model_token_limit", lambda *_: 100, raising=False
     )
     monkeypatch.setattr(
-        bridge_module,
-        "_count_model_messages",
+        agent_service_public,
+        "count_model_messages",
         lambda *_, **_kwargs: transformed_tokens,
-        raising=False,
     )
     marks = []
     real_mark = bridge_module.InstructionActivationLedger.mark_payload_sent
