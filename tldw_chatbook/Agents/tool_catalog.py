@@ -1430,7 +1430,13 @@ class BuiltinToolProvider:
         # [tools] gates that already govern them, which default to DISABLED:
         # this changes reachability, not the default posture. TASK-545 P2 adds
         # the mutating tools on the same terms.
-        for entry in _GATEABLE_BUILTINS:
+        from tldw_chatbook.Chat.console_workflow_preparation import (
+            current_planning_preparation,
+        )
+
+        for entry in (
+            () if current_planning_preparation() is not None else _GATEABLE_BUILTINS
+        ):
             try:
                 from ..config import coerce_bool_setting, get_cli_setting
 
@@ -2204,8 +2210,19 @@ class ToolCatalogRegistry:
 
     def list_catalog(self) -> list[ToolCatalogEntry]:
         entries = self._ensure_catalog_cache().entries
-        from .workflow_task_scope import current_task_authorization
+        from .workflow_task_scope import (
+            current_planning_authorization,
+            current_task_authorization,
+        )
 
+        planning = current_planning_authorization()
+        if planning is not None:
+            planning.check_preparation()
+            entries = tuple(
+                e
+                for e in entries
+                if planning.registry is self and planning.permits_name(e.name)
+            )
         task = current_task_authorization()
         if task is not None:
             if task._binding_state:
@@ -2387,6 +2404,13 @@ class ToolCatalogRegistry:
 
     def snapshot_for_hook(self, name: str) -> ToolDefinitionSnapshot:
         """Resolve current host identity and schema under the catalog lock."""
+        from .workflow_task_scope import current_planning_authorization
+
+        planning = current_planning_authorization()
+        if planning is not None:
+            if planning.registry is not self or not planning.permits_name(name):
+                raise ValueError("Tool outside workflow planning scope")
+            planning.check_preparation()
         with self._catalog_lock:
             record = self._owner_record_for_name(name)
             if record is None:
@@ -2428,6 +2452,15 @@ class ToolCatalogRegistry:
             )
 
     def load_schema(self, tool_id: str) -> ToolSchema:
+        from .workflow_task_scope import current_planning_authorization
+
+        planning = current_planning_authorization()
+        if planning is not None:
+            if planning.registry is not self or not any(
+                owner[0] == tool_id for _name, owner in planning.owners
+            ):
+                raise KeyError("Tool outside workflow planning scope")
+            planning.check_preparation()
         provider = self._owner_and_id(tool_id)
         if provider is None:
             raise KeyError(f"Unknown tool id: {tool_id}")
@@ -2585,6 +2618,13 @@ class ToolCatalogRegistry:
             "code_review_submit",
         }:
             return ToolResult(ok=False, error="role_denied", dispatch_state="not_started")
+        from .workflow_task_scope import current_planning_authorization
+
+        planning = current_planning_authorization()
+        if planning is not None and (
+            planning.registry is not self or not planning.permits_name(name)
+        ):
+            return ToolResult.blocked("Tool outside workflow planning scope")
         with self._catalog_lock:
             if expected_definition is not None:
                 try:
@@ -2883,4 +2923,30 @@ _NATIVE_ORDINARY_BUILTIN_IMPLEMENTATIONS = tuple(
         ),
     )
     if isinstance(function, type(lambda: None))
+)
+
+
+# Planning qualifies only these original always-on implementations; no optional
+# builtin is constructed to supply a planning schema or prospective descriptor.
+_PLANNING_PURE_TOOL_METHODS = tuple(
+    (cls, name, descriptor)
+    for cls in _NATIVE_ORDINARY_ALWAYS_ON_CLASSES
+    for name, descriptor in vars(cls).items()
+    if callable(descriptor) or isinstance(descriptor, property)
+)
+_PLANNING_PURE_TOOL_FUNCTIONS = tuple(
+    (
+        function,
+        function.__code__,
+        function.__defaults__,
+        function.__kwdefaults__,
+        tuple((function.__kwdefaults__ or {}).items()),
+        function.__closure__,
+        tuple((cell, cell.cell_contents) for cell in function.__closure__ or ()),
+    )
+    for _cls, _name, descriptor in _PLANNING_PURE_TOOL_METHODS
+    for function in (
+        descriptor.fget if isinstance(descriptor, property) else descriptor,
+    )
+    if hasattr(function, "__code__")
 )

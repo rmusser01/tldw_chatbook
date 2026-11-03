@@ -1794,11 +1794,19 @@ async def capture_console_turn_configuration_owned(
     from tldw_chatbook.DB.Workspace_DB import WorkspaceDB
     from tldw_chatbook.MCP.console_snapshot import _capture_console_definition_selection
 
+    from .console_workflow_preparation import current_planning_preparation
+
+    planning = current_planning_preparation(creator)
     attachment = _mcp_attachment_source(app, creator)
     require_current()
     if not isinstance(selection, ConsoleTurnCaptureSelection):
         raise TypeError("selection must be ConsoleTurnCaptureSelection")
     unused_trust = None
+    if planning is not None:
+        require_received_configuration_preparation(
+            planning._skill_preparation, app, store, creator, session_id=session_id
+        )
+        unused_trust = planning._skill_preparation.trust_source
     if _deferred_skills is not None:
         if (
             _prepared_skills is not None
@@ -1847,6 +1855,15 @@ async def capture_console_turn_configuration_owned(
 
     def current():
         _require_mcp_attachment_source(app, creator, attachment)
+        if planning is not None:
+            require_received_configuration_preparation(
+                planning._skill_preparation,
+                app,
+                store,
+                creator,
+                session_id=session_id,
+                on_loop=False,
+            )
         if _deferred_skills is not None:
             require_received_configuration_preparation(
                 _deferred_skills.preparation,
@@ -1923,7 +1940,7 @@ async def capture_console_turn_configuration_owned(
         )
     )
     maximum, mcp_sources, mcp_complete, mcp_pending = {}, (), True, False
-    if refs.mcp is not None:
+    if planning is None and refs.mcp is not None:
         mcp_selection = await _capture_console_definition_selection(
             refs.mcp,
             CONSOLE_MCP_BUILTIN_RAW_NAME_EXCLUSIONS,
@@ -1982,7 +1999,7 @@ async def capture_console_turn_configuration_owned(
             if "agent_run_budget_maximum" not in tools:
                 tools["agent_run_budget_maximum"] = console_run_budget()
             rag = {} if selection.rag_defaults is None else dict(selection.rag_defaults)
-            if "top_k" not in rag:
+            if planning is None and "top_k" not in rag:
                 rag["top_k"] = library_rag_profile_top_k()
             current()
             result = capture_console_turn_configuration(
@@ -2005,9 +2022,15 @@ async def capture_console_turn_configuration_owned(
                 _mcp_capture_pending=mcp_pending,
                 _skill_capture_pending=_deferred_skills is not None,
                 _require_current=current,
-                _plugin_service=refs.plugin,
+                _plugin_service=None if planning is not None else refs.plugin,
                 **(
-                    {}
+                    {
+                        "_skill_context_maximum": {},
+                        "_captured_character_authority": None,
+                        "_captured_prompt_transform_inputs": {},
+                    }
+                    if planning is not None
+                    else {}
                     if _prepared_skills is None and _deferred_skills is None
                     else {
                         "_skill_context_maximum": (

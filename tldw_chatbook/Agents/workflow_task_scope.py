@@ -639,17 +639,151 @@ def current_task_authorization() -> WorkflowTaskAuthorization | None:
     return _CURRENT.get()
 
 
+@dataclass(frozen=True, slots=True, init=False)
+class WorkflowPlanningAuthorization:
+    """Original planning restriction; never an execution task or child claim."""
+
+    prepared: object = field(repr=False)
+    phase: object = field(repr=False)
+    registry: object = field(repr=False)
+    binding: object = field(repr=False)
+    allowed: frozenset[str]
+    footprint: WorktreeFootprint = field(repr=False)
+    owners: tuple = field(repr=False)
+    schemas: tuple = field(repr=False)
+
+    def __init__(self, prepared, registry, allowed, *, _key):
+        if _key is not _KEY or prepared.phase.attempt.purpose != "planning":
+            _refuse("planning_custody_required")
+        object.__setattr__(self, "prepared", prepared)
+        object.__setattr__(self, "phase", prepared.phase)
+        object.__setattr__(self, "registry", registry)
+        object.__setattr__(self, "binding", prepared.binding)
+        object.__setattr__(
+            self,
+            "allowed",
+            frozenset(allowed) & (_PURE_BUILTINS | {"fs_read", "fs_list"}),
+        )
+        chain = capture_directory_chain(self.binding.root)
+        object.__setattr__(
+            self,
+            "footprint",
+            WorktreeFootprint(
+                reads=(WorktreeScope(chain.canonical_root, True, chain),)
+            ),
+        )
+        object.__setattr__(
+            self,
+            "owners",
+            tuple(
+                (name, registry.resolve_owner_for_name(name)) for name in self.allowed
+            ),
+        )
+        object.__setattr__(
+            self,
+            "schemas",
+            tuple(
+                (name, deepcopy(provider.load_schema(tool_id)))
+                for name, (tool_id, provider) in self.owners
+            ),
+        )
+
+    def permits_name(self, name):
+        return name in self.allowed or name in _DISCOVERY
+
+    def check_preparation(self):
+        prepared = self.prepared
+        if (
+            prepared.authorization is not self
+            or prepared not in prepared.runtime._workflow_preparations
+            or prepared._closed
+            or prepared._closing
+        ):
+            _refuse("planning_retired")
+        prepared.require_current()
+        self.phase.check()
+        prepared.check_local_sources()
+        if not self.binding.guard(False):
+            _refuse("binding_changed")
+        for name, owner in self.owners:
+            if self.registry.resolve_owner_for_name(name) != owner:
+                _refuse("provider_changed")
+        for name, schema in self.schemas:
+            tool_id, provider = self.registry.resolve_owner_for_name(name)
+            if provider.load_schema(tool_id) != schema:
+                _refuse("schema_changed")
+
+    def check(self):
+        from .execution_capacity import current_execution_owner
+
+        self.check_preparation()
+        prepared = self.prepared
+        owner = prepared.primary_owner
+        if (
+            owner is None
+            or current_execution_owner() is not owner
+            or prepared.native.service is not prepared.planning_service
+            or owner.run_id is None
+            or current_run_id() != owner.run_id
+            or prepared._planning_dispatch_closed
+        ):
+            _refuse("planning_native_owner_required")
+        prepared.runtime.worktree_activity.validate_opaque_claim(
+            prepared.primary_claim, owner=owner
+        )
+
+
+def _prepare_planning_authorization(prepared, registry, allowed):
+    return WorkflowPlanningAuthorization(prepared, registry, allowed, _key=_KEY)
+
+
+def current_planning_authorization():
+    from tldw_chatbook.Chat.console_workflow_preparation import (
+        current_planning_preparation,
+    )
+
+    prepared = current_planning_preparation()
+    if prepared is None:
+        return None
+    authorization = prepared.authorization
+    return (
+        authorization if type(authorization) is WorkflowPlanningAuthorization else None
+    )
+
+
+def _check_planning_call(authorization, call, registry):
+    if registry is not authorization.registry or not authorization.permits_name(
+        call.name
+    ):
+        _refuse("planning_tool_outside_scope")
+    authorization.check()
+    if call.name in _DISCOVERY:
+        return
+    _tool_id, provider = registry.resolve_owner_for_name(call.name)
+    if call.name in {"fs_read", "fs_list"}:
+        _check_paths(authorization, provider, call.name, call.args)
+
+
 def check_current_task_call(call: ToolCall, *, registry=None) -> None:
     authorization = _CURRENT.get()
     if authorization is not None:
         check_task_call(
             authorization, registry=registry or authorization.registry, call=call
         )
-    elif call.name == "run_skill_script":
+    elif (planning := current_planning_authorization()) is not None:
+        _check_planning_call(planning, call, registry or planning.registry)
+    else:
         from .automatic_work_runtime import current_automatic_work
 
         automatic = current_automatic_work()
-        if automatic is not None and automatic.workflow is not None:
+        if (
+            automatic is not None
+            and automatic.workflow is not None
+            and (
+                automatic.workflow.attempt.purpose == "planning"
+                or call.name == "run_skill_script"
+            )
+        ):
             _refuse("script_cleanup_unsupported")
 
 
@@ -657,7 +791,18 @@ def check_task_provider(provider, tool_id: str, args: dict) -> None:
     """Recheck the actual cached owner at the provider's post-wait effect seam."""
     authorization = _CURRENT.get()
     if authorization is None:
-        return
+        authorization = current_planning_authorization()
+        if authorization is None:
+            from .automatic_work_runtime import current_automatic_work
+
+            automatic = current_automatic_work()
+            if (
+                automatic is not None
+                and automatic.workflow is not None
+                and (automatic.workflow.attempt.purpose == "planning")
+            ):
+                _refuse("planning_custody_required")
+            return
     entries = authorization.registry._ensure_catalog_cache().entries
     entry = next((e for e in entries if e.id == tool_id or e.name == tool_id), None)
     if entry is None or authorization.registry.resolve_owner_for_name(entry.name) != (
@@ -665,6 +810,8 @@ def check_task_provider(provider, tool_id: str, args: dict) -> None:
         provider,
     ):
         _refuse("provider_changed")
-    check_task_call(
-        authorization, registry=authorization.registry, call=ToolCall(entry.name, args)
-    )
+    call = ToolCall(entry.name, args)
+    if type(authorization) is WorkflowPlanningAuthorization:
+        _check_planning_call(authorization, call, authorization.registry)
+    else:
+        check_task_call(authorization, registry=authorization.registry, call=call)

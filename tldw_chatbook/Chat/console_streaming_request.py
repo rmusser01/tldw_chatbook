@@ -658,6 +658,9 @@ def chat_call_impl(
             await _consume_body()
         else:
             with (
+                workflow_preparation._planning_storage_return()
+                if workflow_preparation.phase.attempt.purpose == "planning"
+                else bridge.contextlib.nullcontext(),
                 owned_goal_storage(workflow_preparation.service),
                 workflow_preparation.activate_source(),
             ):

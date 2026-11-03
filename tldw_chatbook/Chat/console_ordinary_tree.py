@@ -2309,3 +2309,7 @@ def _capture_personal_service(tree, instance):
             InMemoryProfileKeyProtector,
         )
     return native
+
+
+# Definition-time projection shared with prospective workflow metadata.
+_NATIVE_RAW_SHELL_METADATA = _function_record(_raw_shell_metadata)

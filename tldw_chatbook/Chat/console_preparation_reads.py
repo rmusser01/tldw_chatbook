@@ -290,3 +290,46 @@ async def await_finite_read[_Result](
         if not worker.cancelled():
             worker.exception()
         raise
+
+
+# Original finite read producers and concrete fields used by planning retirement.
+from inspect import getattr_static as _read_getattr_static
+
+_NATIVE_PLANNING_READ_RETURN = (
+    ConsolePreparationRead,
+    _HookSourceBinding,
+    _source_binding,
+    tuple(
+        (
+            function,
+            function.__code__,
+            function.__defaults__,
+            function.__kwdefaults__,
+            tuple((function.__kwdefaults__ or {}).items()),
+            function.__closure__,
+            tuple((cell, cell.cell_contents) for cell in function.__closure__ or ()),
+        )
+        for function in (
+            run_preparation_read,
+            _retire,
+            ConsolePreparationRead.__init__,
+            _HookSourceBinding.__init__,
+        )
+    ),
+    tuple(
+        (
+            owner,
+            tuple(
+                (name, _read_getattr_static(owner, name))
+                for name in (
+                    "__getattribute__",
+                    "__setattr__",
+                    "__new__",
+                    "__init__",
+                    *owner.__slots__,
+                )
+            ),
+        )
+        for owner in (ConsolePreparationRead, _HookSourceBinding)
+    ),
+)

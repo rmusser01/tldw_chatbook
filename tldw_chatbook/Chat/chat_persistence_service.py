@@ -4253,3 +4253,17 @@ class ChatPersistenceService:
             are omitted.
         """
         return self.db.get_generation_metadata_for_messages(message_ids)
+
+
+# Exact first-persistence producer records; ordinary behavior is unchanged.
+from .console_ordinary_tree import _function_record as _planning_function_record
+
+_NATIVE_PLANNING_PERSISTENCE_METHODS = tuple(
+    (name, method, _planning_function_record(method))
+    for name in (
+        "persist_console_conversation_with_policy",
+        "validate_workspace_target",
+        "create_conversation",
+    )
+    for method in (vars(ChatPersistenceService)[name],)
+)

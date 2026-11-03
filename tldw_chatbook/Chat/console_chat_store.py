@@ -22525,3 +22525,28 @@ _NATIVE_FIRST_LIBRARY_STORE = (
     _ordinary_function_record(ConsoleChatStore.publish_committed_identity.__wrapped__),
     _ordinary_function_record(ConsoleChatStore._session_or_raise),
 )
+
+
+# Planning's pre-request producer consumes the original native persistence return.
+_NATIVE_PLANNING_PERSISTENCE_STORE = tuple(
+    (
+        name,
+        method,
+        tuple(
+            _ordinary_function_record(function)
+            for function in (
+                method,
+                *([method.__wrapped__] if hasattr(method, "__wrapped__") else []),
+            )
+        ),
+    )
+    for name in (
+        "persist_session_if_needed",
+        "_persist_session_if_needed",
+        "stage_first_persistence",
+        "publish_committed_identity",
+        "publish_first_persisted_conversation",
+        "_session_or_raise",
+    )
+    for method in (vars(ConsoleChatStore)[name],)
+)

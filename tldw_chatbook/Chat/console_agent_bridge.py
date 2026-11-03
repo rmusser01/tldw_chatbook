@@ -2457,6 +2457,8 @@ class _ModelCallLifeline:
         "_shutdown_lock",
         "_shutdown_requested",
         "_operation",
+        "_cleanup_returned",
+        "_driver_returned",
     )
 
     def __init__(
@@ -2470,6 +2472,8 @@ class _ModelCallLifeline:
         self._shutdown_lock = threading.Lock()
         self._shutdown_requested = False
         self._operation: OwnedOperation | None = None
+        self._cleanup_returned = False
+        self._driver_returned = False
         self.loop = asyncio.new_event_loop()
         self._thread = threading.Thread(target=self._run, name=name, daemon=True)
 
@@ -2483,6 +2487,7 @@ class _ModelCallLifeline:
             finally:
                 if self._operation is not None:
                     self._operation.finish()
+                self._driver_returned = True
 
     async def _cleanup(self) -> None:
         try:
@@ -2491,8 +2496,14 @@ class _ModelCallLifeline:
                 for task in asyncio.all_tasks()
                 if task is not asyncio.current_task()
             ]
-            for task in pending:
-                task.cancel()
+            from .console_workflow_preparation import current_planning_preparation
+
+            planning = current_planning_preparation()
+            if planning is not None and planning.turn_lifeline is self:
+                planning._planning_return_source()
+            else:
+                for task in pending:
+                    task.cancel()
             try:
                 if pending:
                     await asyncio.gather(*pending, return_exceptions=True)
@@ -2506,6 +2517,7 @@ class _ModelCallLifeline:
                     # generic transport's chat_api_call): the model operation
                     # stays owned until it returns, as ADR-134 requires.
                     await self.loop.shutdown_default_executor()
+            self._cleanup_returned = True
         except BaseException:  # noqa: BLE001 -- cleanup cannot replace the run result
             logger.warning("model-call loop cleanup failed")
         finally:
@@ -2543,6 +2555,7 @@ class _ModelCallLifeline:
                     self._operation.mark_stopping()
                 if self._thread.ident is None:
                     self.loop.close()
+                    self._cleanup_returned = self._driver_returned = True
                 elif not self.loop.is_closed():
                     self.loop.call_soon_threadsafe(
                         lambda: self.loop.create_task(self._cleanup())
@@ -4928,6 +4941,8 @@ def build_console_first_request_plan(
     messages = agent_messages
     if turn_bundle_block:
         messages, _ = _append_to_last_user_message(agent_messages, turn_bundle_block)
+    from .console_workflow_preparation import current_planning_preparation
+
     schema_flags: dict[str, Any] = dict(
         skill_file_enabled=bool(skills_present and turn_skill_bindings),
         install_skill_enabled=install_skill_enabled,
@@ -4941,7 +4956,7 @@ def build_console_first_request_plan(
         spawn_override_targets=spawn_override_targets,
         # The run log itself still records a light run; its tools are not
         # part of the light surface.
-        run_log_active=run_log.requested and not light_surface,
+        run_log_active=run_log.requested and not light_surface and current_planning_preparation() is None,
         agent_definitions=agent_definitions,
         fleet_active=fleet_max_live > 1,
         # Live fleet construction opens an inbox before the first request.
@@ -6446,6 +6461,11 @@ class ConsoleAgentBridge:
         on_primary_budget_settled: Callable[[RunBudget | bool], None] | None = None,
         _workflow_preparation: Any | None = None,
     ):
+        from .console_workflow_preparation import current_planning_preparation
+
+        planning = current_planning_preparation()
+        if planning is not None and planning is not _workflow_preparation:
+            raise PermissionError("original planning producer required")
         replay = getattr(resolution, "reasoning_replay", None)
         if replay is not None and thinking_policy in {"include", "exclude"}:
             resolution = dataclass_replace(
@@ -6573,8 +6593,14 @@ class ConsoleAgentBridge:
         context: Mapping[str, Any] = skills_context or {}
         if self._skills_service is not None and skills_context is None:
             context = asyncio.run(self._skills_service.get_context(mode="local"))
-        plugin_service = getattr(
-            getattr(self._skills_service, "local_service", None), "plugin_service", None
+        plugin_service = (
+            None
+            if planning is not None
+            else getattr(
+                getattr(self._skills_service, "local_service", None),
+                "plugin_service",
+                None,
+            )
         )
         if restore_provider_continuation is not None:
             if plugin_service is not None:
@@ -6663,11 +6689,13 @@ class ConsoleAgentBridge:
             if run_budget is not None
             else console_run_budget()
         )
-        # A light run's sub-agent budget is zeroed in the plan itself
-        # (``build_console_first_request_plan``), the config this run uses.
-        runtime_definitions, fleet_max_live = _console_first_request_runtime_context(
-            self._db, run_budget
-        )
+        if planning is not None:
+            run_budget = dataclass_replace(run_budget, max_subagents=0)
+            runtime_definitions, fleet_max_live = (), 0
+        else:
+            runtime_definitions, fleet_max_live = (
+                _console_first_request_runtime_context(self._db, run_budget)
+            )
         if plugin_entries and not run_is_ephemeral:
             plugin_catalog = tuple(
                 row
@@ -6774,7 +6802,7 @@ class ConsoleAgentBridge:
         from tldw_chatbook.Agents.agent_service import spawn_override_targets
 
         try:
-            _spawn_routing_cfg = _load_spawn_routing()
+            _spawn_routing_cfg = None if planning is not None else _load_spawn_routing()
         except ValueError:
             _spawn_routing_cfg = None
         chat_create_spawn_override_enabled = bool(
@@ -6793,7 +6821,7 @@ class ConsoleAgentBridge:
                 shared_registry=self._registry,
                 shared_allowed_tools=self._allowed_tools,
                 context=context,
-                skills_present=self._skills_service is not None,
+                skills_present=planning is None and self._skills_service is not None,
                 mcp_provider=mcp_provider,
                 builtin_gate=builtin_gate,
                 local_provider=local_provider,
@@ -6819,9 +6847,10 @@ class ConsoleAgentBridge:
                 storage_provider=self._storage_provider,
             )
             planning_messages, catalog = _workflow_preparation.bind_catalog(catalog)
-            assistant_message_id = (
-                _workflow_preparation.authorization.claim.launch_run_id
-            )
+            if planning is None:
+                assistant_message_id = (
+                    _workflow_preparation.authorization.claim.launch_run_id
+                )
 
         first_request_plan = build_console_first_request_plan(
             storage_provider=self._storage_provider,
@@ -6829,7 +6858,7 @@ class ConsoleAgentBridge:
             shared_registry=self._registry,
             shared_allowed_tools=self._allowed_tools,
             context=context,
-            skills_present=self._skills_service is not None,
+            skills_present=planning is None and self._skills_service is not None,
             mcp_provider=mcp_provider,
             builtin_gate=builtin_gate,
             local_provider=local_provider,
@@ -6873,7 +6902,8 @@ class ConsoleAgentBridge:
             persona_policy_rules=persona_policy_rules,
             profile_context_service=profile_context_service,
             personal_context_snapshot=personal_context_snapshot,
-            progress_inbox_exists=self._session_progress_inbox(session_id) is not None,
+            progress_inbox_exists=planning is None
+            and self._session_progress_inbox(session_id) is not None,
             light_surface=light_surface,
         )
         self._remember_tool_surface(
@@ -7451,7 +7481,7 @@ class ConsoleAgentBridge:
                 "console-agent-loop",
                 close_current_loop=getattr(self._gateway, "aclose_current_loop", None),
             )
-            if _workflow_preparation is None
+            if _workflow_preparation is None or planning is not None
             else None
         )
         if _workflow_preparation is not None:
@@ -8619,11 +8649,15 @@ class ConsoleAgentBridge:
 
         def run_primary():
             nonlocal execution_owner, run_id, outcome, config, primary_started
-            if _workflow_preparation is not None or primary_started:
+            if (
+                _workflow_preparation is not None and planning is None
+            ) or primary_started:
                 raise PermissionError("primary dispatch unavailable")
             primary_started = True
             execution_owner = (
-                ordinary_tree.borrow(ordinary_tree.runtime, opaque=False)
+                planning._admit_planning_primary(service)
+                if planning is not None
+                else ordinary_tree.borrow(ordinary_tree.runtime, opaque=False)
                 if ordinary_tree is not None
                 else self.runtime_capacity.begin_execution(
                     origin=work_origin, conversation_id=conversation_id
@@ -8805,7 +8839,11 @@ class ConsoleAgentBridge:
                 if turn_lifeline is not None:
                     turn_lifeline.shutdown()
             finally:
-                if execution_owner is not None and ordinary_tree is None:
+                if (
+                    execution_owner is not None
+                    and ordinary_tree is None
+                    and planning is None
+                ):
                     execution_owner.finish_root()
             # TASK-1971: E snapshot on EVERY terminal path -- completed,
             # failed, cancelled, or crashed. A run that died halfway through
@@ -9056,7 +9094,7 @@ class ConsoleAgentBridge:
                     logger.opt(exception=True).warning(
                         "change_review: could not stamp/disclose diff feedback"
                     )
-        if _workflow_preparation is not None:
+        if _workflow_preparation is not None and (planning is None or outcome is None):
             return
         capture_outcome = (
             "complete"
@@ -12633,4 +12671,30 @@ _NATIVE_ORDINARY_COLLISION_METHODS = tuple(
     (name, value)
     for name, value in vars(_CollisionFilteredMCPProvider).items()
     if callable(value)
+)
+
+
+# Planning consumes these original producers and their actual return facts.
+from .console_ordinary_tree import _function_record as _planning_function_record
+
+_NATIVE_PLANNING_TRANSPORT = tuple(
+    (
+        owner,
+        name,
+        method,
+        tuple(
+            _planning_function_record(function)
+            for function in (
+                method,
+                *([method.__wrapped__] if hasattr(method, "__wrapped__") else []),
+            )
+        ),
+    )
+    for owner, names in (
+        (ConsoleAgentBridge, ("_prepare_native_reply",)),
+        (_ModelCallLifeline, ("__init__", "start", "shutdown", "_run", "_cleanup")),
+        (_StreamingModelAdapter, ("chat_call", "_chat_call_impl")),
+    )
+    for name in names
+    for method in (vars(owner)[name],)
 )

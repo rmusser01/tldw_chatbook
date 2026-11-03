@@ -6829,6 +6829,37 @@ class ConsoleRuntime:
             # Native waves must finish their actual B/E and child/source tails
             # before capacity and consent owners close. No new wave may enter.
             self._workflow_closing = True
+            # Planning retains the same native primary and source until its
+            # required terminal worker returns. Fence it before closing capacity.
+            planning = tuple(
+                prepared
+                for prepared in self._workflow_preparations
+                if prepared.phase is None
+                or prepared.phase.attempt.purpose == "planning"
+            )
+            planning_cancelled = False
+            for prepared in planning:
+                prepared.cancel_event.set()
+            for prepared in planning:
+                while not prepared._planning_preparation_returned.is_set():
+                    try:
+                        await asyncio.shield(
+                            prepared._planning_preparation_returned.wait()
+                        )
+                    except asyncio.CancelledError:
+                        planning_cancelled = True
+                driver = prepared._planning_driver
+                if driver is not None and driver is not asyncio.current_task():
+                    while not driver.done():
+                        try:
+                            await asyncio.shield(driver)
+                        except asyncio.CancelledError:
+                            planning_cancelled = True
+                        except BaseException:  # noqa: BLE001 - retain original uncertainty or inspect exact native failure.
+                            break
+                    if driver.done() and not driver.cancelled():
+                        driver.exception()
+                await prepared.close()
             waves = tuple(self._workflow_waves)
             for wave in waves:
                 wave.stopping.set()
@@ -6862,7 +6893,7 @@ class ConsoleRuntime:
                 timeout_seconds=timeout_seconds,
                 _recovery_owner=recovery_owner,
             )
-            if wave_cancelled:
+            if wave_cancelled or planning_cancelled:
                 raise asyncio.CancelledError
         finally:
             cancelled = False

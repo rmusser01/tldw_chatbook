@@ -382,23 +382,25 @@ def _list_relative_directory(
         raise LocalToolError(f"not a directory: {display_path or relative}")
     scanned: list[Path] = []
     scan_capped = False
-    for index, entry in enumerate(target.iterdir()):
-        if index >= MAX_SCAN_ENTRIES:
-            scan_capped = True
-            break
-        # Skipped entries still count against the scan cap: the cap bounds
-        # the WORK done, and a denied entry was still scanned.
-        entry_relative = _workspace_relative_path(entry, workspace)
-        if not _relative_target_is_safe(
-            entry_relative,
-            workspace,
-            sensitive_exclusions,
-            is_directory=entry.is_dir(),
-            resolved_workspace=resolved_workspace,
-            folded_exclusions=folded,
-        ):
-            continue
-        scanned.append(entry)
+    with os.scandir(target) as directory:
+        for index, native_entry in enumerate(directory):
+            if index >= MAX_SCAN_ENTRIES:
+                scan_capped = True
+                break
+            entry = Path(native_entry.path)
+            # Skipped entries still count against the scan cap: the cap bounds
+            # the WORK done, and a denied entry was still scanned.
+            entry_relative = _workspace_relative_path(entry, workspace)
+            if not _relative_target_is_safe(
+                entry_relative,
+                workspace,
+                sensitive_exclusions,
+                is_directory=entry.is_dir(),
+                resolved_workspace=resolved_workspace,
+                folded_exclusions=folded,
+            ):
+                continue
+            scanned.append(entry)
     entries = sorted(scanned, key=lambda p: (p.is_file(), p.name.lower()))
     lines = []
     for entry in entries[:max_entries]:
@@ -441,6 +443,55 @@ def read_file(
         sensitive_exclusions=sensitive_exclusions_under(Path(workspace_root).resolve()),
         display_path=path,
     )
+
+
+def _read_bounded_bytes(target: Path) -> bytes:
+    """Read one unchanged regular file, bounding both metadata and actual bytes.
+
+    The nonblocking, no-follow descriptor prevents a replacement FIFO or symlink
+    from turning a bounded read into an unbounded effect. Compare the descriptor
+    and path before and after reading; never stamp a changed or replaced file.
+    """
+    before = target.stat(follow_symlinks=False)
+    if not stat_module.S_ISREG(before.st_mode):
+        raise LocalToolError(f"file changed or is not regular: {target.name}")
+    if before.st_size > MAX_READ_FILE_BYTES:
+        raise LocalToolError(f"'{target.name}' is too large to read")
+
+    def version(info: os.stat_result) -> tuple[int, ...]:
+        return (
+            info.st_dev,
+            info.st_ino,
+            info.st_mode,
+            info.st_size,
+            info.st_mtime_ns,
+            info.st_ctime_ns,
+        )
+
+    flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_NONBLOCK", 0)
+    descriptor = os.open(target, flags)
+    try:
+        if version(os.fstat(descriptor)) != version(before):
+            raise LocalToolError(f"file changed while opening: {target.name}")
+        chunks: list[bytes] = []
+        total = 0
+        while True:
+            chunk = os.read(descriptor, min(1 << 20, MAX_READ_FILE_BYTES - total + 1))
+            if not chunk:
+                break
+            total += len(chunk)
+            if total > MAX_READ_FILE_BYTES:
+                raise LocalToolError(f"'{target.name}' is too large to read")
+            chunks.append(chunk)
+        if (
+            total != before.st_size
+            or version(os.fstat(descriptor)) != version(before)
+            or version(target.stat(follow_symlinks=False)) != version(before)
+        ):
+            raise LocalToolError(f"file changed while reading: {target.name}")
+        return b"".join(chunks)
+    finally:
+        os.close(descriptor)
 
 
 def _read_relative_file(
@@ -492,13 +543,7 @@ def _read_relative_file(
         or not target.is_file()
     ):
         raise LocalToolError(f"file not found: {display_path or relative}")
-    file_size = target.stat().st_size
-    if file_size > MAX_READ_FILE_BYTES:
-        raise LocalToolError(
-            f"'{display_path or relative}' is too large to read "
-            f"({file_size} bytes; maximum {MAX_READ_FILE_BYTES})"
-        )
-    data = target.read_bytes()
+    data = _read_bounded_bytes(target)
     if b"\x00" in data[:8192]:
         raise LocalToolError(
             f"'{display_path or relative}' appears to be binary; fs_read only reads text files"

@@ -2140,7 +2140,10 @@ def _call_with_timeout(
     from .workflow_task_scope import current_task_authorization
 
     workflow = current_task_authorization()
-    workflow_prepared = None
+    from ..Chat.console_workflow_preparation import current_planning_preparation
+
+    workflow_prepared = current_planning_preparation()
+    planning_prepared = workflow_prepared
     if workflow is not None:
         if (
             not workflow._binding_state
@@ -2188,7 +2191,8 @@ def _call_with_timeout(
                     # No original provider/source scope was attempted. Retire
                     # this unused operation under its captured worker storage.
                     box["result"] = ToolResult.blocked(str(error))
-                    operation.finish()
+                    if planning_prepared is None:
+                        operation.finish()
                     return
             try:
                 with (  # noqa: SIM117 - source and owner scopes have distinct custody
@@ -2230,8 +2234,10 @@ def _call_with_timeout(
                     retain_unknown_return()
                 raise
             finally:
-                if source_scope is not None and (
-                    ssh_call is None or not ssh_call.finished
+                if (
+                    source_scope is not None
+                    and planning_prepared is None
+                    and (ssh_call is None or not ssh_call.finished)
                 ):
                     try:
                         operation.finish()
@@ -2243,6 +2249,9 @@ def _call_with_timeout(
 
         try:
             with (
+                planning_prepared._planning_storage_return()
+                if planning_prepared is not None
+                else contextlib.nullcontext(),
                 owned_goal_storage(workflow_prepared.service)
                 if workflow_prepared is not None
                 else contextlib.nullcontext(),
@@ -2254,8 +2263,20 @@ def _call_with_timeout(
                 if automatic_work is not None:
                     automatic_work.check()
                 _admitted_call()
+            if planning_prepared is not None:
+                operation.finish()
         except BaseException as exc:  # noqa: BLE001 — surfaced as a failed ToolResult, never propagated to the worker's exit
             box["error"] = exc
+            if planning_prepared is not None:
+                # Only the original callback error can cross a positively returned
+                # storage/source scope. A changed unwind keeps the same operation.
+                if exc is box.get("call_error"):
+                    try:
+                        operation.finish()
+                    except BaseException:  # noqa: BLE001 - retain original uncertainty or inspect exact native failure.
+                        retain_unknown_return()
+                else:
+                    retain_unknown_return()
             if source_scope is not None and exc is not box.get("call_error"):
                 retain_unknown_return()
         finally:
@@ -2939,6 +2960,9 @@ class AgentService:
                 reasoning_replay=config.reasoning_replay,
             ),
         )
+        planning = getattr(self, "_workflow_planning_preparation", None)
+        if planning is not None:
+            planning.require_seed_in_payload(payload)
         return ModelRequest(
             messages=tuple(dict(message) for message in payload),
             tools=tuple(tools),
@@ -6071,6 +6095,15 @@ class AgentService:
         )
 
     def _finish_execution(self, owner):
+        prepared = getattr(self, "_workflow_planning_preparation", None)
+        if prepared is not None:
+            if (
+                prepared.planning_service is not self
+                or prepared.native.service is not self
+                or prepared.primary_owner is not owner
+            ):
+                raise PermissionError("original planning primary required")
+            return  # The original root owns native finalization and required storage.
         tree = getattr(self, "_ordinary_tree", None)
         if tree is not None:
             if owner is tree.owner:
@@ -6160,6 +6193,26 @@ class AgentService:
                         raise AutomaticWorkRefused(
                             "workflow_task_private_custody_required"
                         )
+                if (
+                    automatic_work is not None
+                    and automatic_work.workflow is not None
+                    and automatic_work.workflow.attempt.purpose == "planning"
+                ):
+                    from ..Chat.console_workflow_preparation import (
+                        current_planning_preparation,
+                    )
+
+                    prepared = current_planning_preparation()
+                    if (
+                        prepared is None
+                        or prepared.phase.context is not automatic_work
+                        or prepared.native.service is not self
+                        or prepared.primary_owner is not owner
+                    ):
+                        raise AutomaticWorkRefused(
+                            "workflow_planning_private_custody_required"
+                        )
+                    prepared._admit_planning_primary(self)
                 if workflow_task_authorization is not None:
                     authorization = workflow_task_authorization
                     authorization.check_preparation()
@@ -6709,6 +6762,21 @@ class AgentService:
         # Task 7: reused verbatim (not re-derived) as the gate on whether the
         # system prompt's RUN_LOG_PROMPT_SECTION gets appended below, so the
         # prompt can never mention a tool this run didn't actually disclose.
+        from .workflow_task_scope import current_planning_authorization
+
+        planning_authorization = current_planning_authorization()
+        if planning_authorization is not None:
+            active = [
+                schema
+                for schema in active
+                if planning_authorization.permits_name(schema.name)
+            ]
+            disclosed_names = {schema.name for schema in active}
+            runtime_schemas = [
+                schema
+                for schema in runtime_schemas
+                if planning_authorization.permits_name(schema.name)
+            ]
         if task_authorization is not None:
             active = [
                 schema
@@ -10475,7 +10543,10 @@ class AgentService:
         # _run_one, since they never call run_turn themselves. The catalog
         # is listed fresh at this point, so skill CRUD since the last run
         # is always picked up with no separate invalidation signal needed.
-        self.registry.reset_catalog_cache()
+        from ..Chat.console_workflow_preparation import current_planning_preparation
+
+        if current_planning_preparation() is None:
+            self.registry.reset_catalog_cache()
         # Fleet spec §4: definitions load ONCE per turn — the roster the
         # model sees in the spawn schema is exactly what resolves at spawn
         # time; Settings edits affect the NEXT turn, never an in-flight one.
@@ -10739,5 +10810,32 @@ _WORKFLOW_NATIVE_RECORDS = tuple(
         ),
     )
     for name in ("_run_owned",)
+    for method in (vars(AgentService)[name],)
+)
+
+
+# Planning's same native primary/model/tool receivers, captured at definition.
+from ..Chat.console_ordinary_tree import _function_record as _planning_function_record
+
+_NATIVE_PLANNING_SERVICE = tuple(
+    (
+        name,
+        method,
+        tuple(
+            _planning_function_record(function)
+            for function in (
+                method,
+                *([method.__wrapped__] if hasattr(method, "__wrapped__") else []),
+            )
+        ),
+    )
+    for name in (
+        "run_turn",
+        "_run_owned",
+        "_finish_execution",
+        "_build_model_request",
+        "_make_call_model",
+        "_make_invoke_tool",
+    )
     for method in (vars(AgentService)[name],)
 )

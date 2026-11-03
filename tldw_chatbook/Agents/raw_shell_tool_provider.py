@@ -136,6 +136,20 @@ def resolve_raw_shell_state(
     return "deny" if effective.state == "deny" else "ask"
 
 
+def raw_shell_schema(tool_id: str) -> ToolSchema:
+    """Return the one native descriptor; callers retain all eligibility gates."""
+    return ToolSchema(
+        id=tool_id,
+        name=RAW_SHELL_TOOL_NAME,
+        description=(
+            "Run a non-interactive command in a real host shell with the full "
+            "authority of the OS user. Every command requires visible approval "
+            "unless the user grants this Console session temporary authority."
+        ),
+        parameters=_MODEL_SCHEMA,
+    )
+
+
 class RawShellToolProvider:
     """Expose one conditional model schema and one always-projectable policy row."""
 
@@ -233,16 +247,7 @@ class RawShellToolProvider:
         name = tool_id.split(":", 1)[-1]
         if name != RAW_SHELL_TOOL_NAME or not self.catalog_enabled():
             raise KeyError(f"Raw shell tool is unavailable: {tool_id}")
-        return ToolSchema(
-            id=tool_id,
-            name=RAW_SHELL_TOOL_NAME,
-            description=(
-                "Run a non-interactive command in a real host shell with the full "
-                "authority of the OS user. Every command requires visible approval "
-                "unless the user grants this Console session temporary authority."
-            ),
-            parameters=_MODEL_SCHEMA,
-        )
+        return raw_shell_schema(tool_id)
 
     @staticmethod
     def hub_tool() -> HubTool:
@@ -697,3 +702,18 @@ __all__ = [
     "RawShellToolProvider",
     "resolve_raw_shell_state",
 ]
+
+
+# Original pure metadata for the conditional prospective planning descriptor.
+from copy import deepcopy as _planning_deepcopy
+
+_PLANNING_SHELL_SCHEMA = _planning_deepcopy(_MODEL_SCHEMA)
+_PLANNING_SHELL_DESCRIPTOR = (
+    raw_shell_schema,
+    raw_shell_schema.__code__,
+    raw_shell_schema.__defaults__,
+    raw_shell_schema.__kwdefaults__,
+    tuple((raw_shell_schema.__kwdefaults__ or {}).items()),
+    raw_shell_schema.__closure__,
+    tuple((c, c.cell_contents) for c in raw_shell_schema.__closure__ or ()),
+)

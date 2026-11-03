@@ -288,6 +288,9 @@ def make_call_model(
             ),
             continuation_owner_key=continuation_owner_key or "id",
         )
+        planning = getattr(self, "_workflow_planning_preparation", None)
+        if planning is not None:
+            planning.require_seed_in_payload(payload)
         if continuation_owner_key is not None and not gateway_prepares_continuation:
             payload = [
                 {
@@ -607,6 +610,9 @@ def make_invoke_tool(
     from .workflow_task_scope import current_task_authorization
 
     task_authorization = current_task_authorization()
+    from ..Chat.console_workflow_preparation import current_planning_preparation
+
+    planning = current_planning_preparation()
 
     def invoke_tool(call: ToolCall) -> ToolResult:
         if config.review_binding is not None and call.name not in {
@@ -647,8 +653,11 @@ def make_invoke_tool(
                 task_authorization.scope()
                 if task_authorization
                 else runtime.contextlib.nullcontext(),
+                planning.activate_source()
+                if planning is not None
+                else contextlib.nullcontext(),
                 owner.activate()
-                if task_authorization and owner
+                if (task_authorization or planning is not None) and owner
                 else runtime.contextlib.nullcontext(),
             ):
                 from ..Chat.console_ordinary_tree import current_ordinary_tree

@@ -16388,61 +16388,70 @@ class ConsoleChatController:
         else:
             root = project_root
             authority_scope = None
-        subscriptions_db = getattr(self.app, "subscriptions_db", None)
-        watchlists_service = WatchlistsToolService(
-            db_resolver=lambda: subscriptions_db,
-            # Owner-module loader (TASK-18609): constructing the store here
-            # violated the runtime-policy ownership boundary.
-            runtime_source_loader=load_default_runtime_source_state,
-        )
-        local_watchlists_service = getattr(self.app, "local_watchlists_service", None)
-        watchlist_bundle_service = getattr(self.app, "watchlist_bundle_service", None)
-        watchlists_coordinator = getattr(
-            self.app,
-            "watchlists_operation_coordinator",
-            None,
-        )
+        from .console_workflow_preparation import current_planning_preparation
 
-        def _create_collection(**kwargs: Any) -> Any:
-            if watchlist_bundle_service is None:
-                raise RuntimeError("Watchlists collection service unavailable")
-            return watchlist_bundle_service.create_with_sources(**kwargs)
-
-        def _update_collection_sources(**kwargs: Any) -> Any:
-            if watchlist_bundle_service is None:
-                raise RuntimeError("Watchlists collection service unavailable")
-            return watchlist_bundle_service.update_sources(**kwargs)
-
-        def _create_sources_batch(rows: list[Mapping[str, Any]]) -> Any:
-            if local_watchlists_service is None:
-                raise RuntimeError("Watchlists source service unavailable")
-            return local_watchlists_service.create_sources_exact_batch_sync(rows)
-
-        watchlists_command_service = getattr(
-            self.app, "watchlists_command_service", None
-        )
-        if watchlists_command_service is None:
-            watchlists_command_service = WatchlistsCommandService(
+        planning = current_planning_preparation(self)
+        watchlists_service = watchlists_command_service = None
+        if planning is None:
+            subscriptions_db = getattr(self.app, "subscriptions_db", None)
+            watchlists_service = WatchlistsToolService(
+                db_resolver=lambda: subscriptions_db,
+                # Owner-module loader (TASK-18609): constructing the store here
+                # violated the runtime-policy ownership boundary.
                 runtime_source_loader=load_default_runtime_source_state,
-                create_sources_batch=_create_sources_batch,
-                create_collection=_create_collection,
-                update_collection_sources=_update_collection_sources,
-                accept_source_checks=(
-                    watchlists_coordinator.submit_checks
-                    if watchlists_coordinator is not None
-                    else None
-                ),
-                accept_briefing=(
-                    watchlists_coordinator.submit_briefing
-                    if watchlists_coordinator is not None
-                    else None
-                ),
-                resolve_collection_sources=(
-                    watchlist_bundle_service.list_sources
-                    if watchlist_bundle_service is not None
-                    else None
-                ),
             )
+            local_watchlists_service = getattr(
+                self.app, "local_watchlists_service", None
+            )
+            watchlist_bundle_service = getattr(
+                self.app, "watchlist_bundle_service", None
+            )
+            watchlists_coordinator = getattr(
+                self.app,
+                "watchlists_operation_coordinator",
+                None,
+            )
+
+            def _create_collection(**kwargs: Any) -> Any:
+                if watchlist_bundle_service is None:
+                    raise RuntimeError("Watchlists collection service unavailable")
+                return watchlist_bundle_service.create_with_sources(**kwargs)
+
+            def _update_collection_sources(**kwargs: Any) -> Any:
+                if watchlist_bundle_service is None:
+                    raise RuntimeError("Watchlists collection service unavailable")
+                return watchlist_bundle_service.update_sources(**kwargs)
+
+            def _create_sources_batch(rows: list[Mapping[str, Any]]) -> Any:
+                if local_watchlists_service is None:
+                    raise RuntimeError("Watchlists source service unavailable")
+                return local_watchlists_service.create_sources_exact_batch_sync(rows)
+
+            watchlists_command_service = getattr(
+                self.app, "watchlists_command_service", None
+            )
+            if watchlists_command_service is None:
+                watchlists_command_service = WatchlistsCommandService(
+                    runtime_source_loader=load_default_runtime_source_state,
+                    create_sources_batch=_create_sources_batch,
+                    create_collection=_create_collection,
+                    update_collection_sources=_update_collection_sources,
+                    accept_source_checks=(
+                        watchlists_coordinator.submit_checks
+                        if watchlists_coordinator is not None
+                        else None
+                    ),
+                    accept_briefing=(
+                        watchlists_coordinator.submit_briefing
+                        if watchlists_coordinator is not None
+                        else None
+                    ),
+                    resolve_collection_sources=(
+                        watchlist_bundle_service.list_sources
+                        if watchlist_bundle_service is not None
+                        else None
+                    ),
+                )
 
         from tldw_chatbook.Agents.local_tool_provider import LocalToolProvider
 
@@ -16505,9 +16514,9 @@ class ConsoleChatController:
             admitted_roots=admitted_roots,
             project_index_service=project_index_service,
             project_index_scopes=project_index_scopes,
-            **self._todo_wiring(session_id),
-            **self._ask_user_wiring(session_id),
-            **self._character_wiring(session_id),
+            **({} if planning is not None else self._todo_wiring(session_id)),
+            **({} if planning is not None else self._ask_user_wiring(session_id)),
+            **({} if planning is not None else self._character_wiring(session_id)),
         )
         return provider, build_local_review_hook(provider, bound_request_approvals)
 
@@ -28925,7 +28934,11 @@ class ConsoleChatController:
             and previous_status is not ConsoleRunStatus.COMPLETED
             and target
         ):
-            self._maybe_schedule_micro_compaction(target)
+            from .console_workflow_preparation import current_planning_preparation
+
+            planning = current_planning_preparation(self)
+            if planning is None or planning.session.id != target:
+                self._maybe_schedule_micro_compaction(target)
         if self._buddy_sink is not None:
             context_owners = self._buddy_run_owner_context.get() or {}
             if run_state.status is ConsoleRunStatus.VALIDATING:
@@ -29564,4 +29577,31 @@ _NATIVE_ORDINARY_COMPOSITION_FUNCTIONS = tuple(
         tuple((cell, cell.cell_contents) for cell in function.__closure__ or ()),
     )
     for _name, function in _NATIVE_ORDINARY_COMPOSITION_METHODS
+)
+
+
+# Exact planning terminal consumers; ordinary dispatch remains unchanged.
+from .console_ordinary_tree import _function_record as _planning_function_record
+
+_NATIVE_PLANNING_FINALIZERS = tuple(
+    (name, method, _planning_function_record(method))
+    for name in (
+        "_finalize_agent_reply",
+        "_finalize_agent_success",
+        "_finalize_agent_cancelled",
+        "_finalize_agent_failure",
+        "_complete_agent_message",
+        "_record_run_assistant_message",
+        "_ensure_assistant_placeholder",
+        "_set_run_state",
+    )
+    for method in (vars(ConsoleChatController)[name],)
+)
+_NATIVE_PLANNING_CONSENT_HELPERS = tuple(
+    (function.__name__, _planning_function_record(function))
+    for function in (
+        resolve_project_instruction_binding,
+        commit_project_instruction_dispatch_decision,
+        build_project_instruction_dispatch_notice,
+    )
 )

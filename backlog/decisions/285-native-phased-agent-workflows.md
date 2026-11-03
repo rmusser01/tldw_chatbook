@@ -844,3 +844,63 @@ COST: bounded original-state/handle/function records and checks, plus replacing 
 
 
 FIX1 actual shutdown return refinement (WHAT/WHY/COST, before edit): native shutdown observation1F32.86 proves original terminal service returned awaiting_resume, SQL native completed/phase closed, and terminal callback returned after all original scopes; runtime's repeated begin_shutdown then re-delivered cancellation from the tracked reader. Retain a private same-cell terminal_scopes_returned fact assigned ONLY after every original terminal source/storage/handle scope returns. After the existing reader has consumed the actual worker RETURN, a CancelledError with this exact positive fact and still-current original source may retire the proven unused cell/root/claim, then re-raise cancellation. Other errors, missing return fact, changed source or native scope/handle uncertainty retain original protection. No retry/reset/new authority; cost one exact callback-return fact and a separate cancellation branch. This refines the earlier blanket cancelled-terminal retention rule: known positive return is not unknown cleanup.
+
+
+### Native read-only planning custody (Task 8F; approved before behavior)
+
+WHAT: Planning uses its distinct original typed purpose and the existing native
+Console preparation, one catalog/first request/AgentService, actual primary,
+provider client, lifeline and finalizer. Original per-session intake/primary token
+and source span a finite OPAQUE preparation owner, its actual retirement before
+project-instruction consent, and then one fresh primary owner before client or
+MODEL. Initial unsaved Chat request identity comes only after the same native
+store's original committed publication returns. Saved immutable requests are
+never rewritten. Forbidden tool-provider factories are suppressed before their
+callbacks, including configuration, local service wiring and builtin factories.
+Callable tools are only original physically bounded fs_list/fs_read and pure
+calculator/time, rechecked at the final native invocation with exact source,
+registry, provider, schema, permission, binding/root/exclusions and budget.
+
+Mandatory objective and exact repair/checkpoint/handoff evidence must fit the
+actual native input budget or refuse. The actual final_text is parsed once by
+strict WorkflowPlan validation; immutable request/target identities and native
+metadata are exact. Host verifier hashes come from original bounded native reads,
+never model-invented bytes. Missing future wrapper checks remain blocked until
+explicit revision after actual creation. No TaskAuth, execution phase, child
+allowance, second planner/catalog, auxiliary model, queue, poller or executor.
+
+The original primary root remains admitted and unretired through terminal work,
+without an extra scarce tool/model operation. Dispatch is closed. A private
+original receiver requires actual native model/tool/generator/lifeline client and
+driver-loop RETURN plus all host/source/storage/handle returns, and verifies
+empty native operations under a short pure capacity lock. The SAME live root and
+source then own the canonical FULL plan write. Its actual required worker/host/
+storage/source/handle RETURN precedes finish_root/on_drained and claim/source/
+intake/token release. Unknown proof retains the originals and charges. No SQL or
+callback runs under the capacity lock; root retention grants no new dispatch.
+
+WHY: existing task-only preparation cannot authorize planning, unbounded native
+observation/content reads cannot support physical read-only qualification, and
+root retirement before required storage would create a drain/write cycle. COST:
+exact process-local planning custody and receiving checks, bounded native read
+loops, conservative OPAQUE serialization and retained resources on uncertainty.
+Ordinary and execution/Goal source contracts remain unchanged. ADR required: no
+new ADR; existing backlog/decisions/285-native-phased-agent-workflows.md applies.
+Public Task8G journeys, WHOLE and root9/10 remain mandatory; parent AC stays open.
+
+
+Task 8F conditional future verifier metadata amendment: reuse the existing original `_raw_shell_metadata` projection on the captured native App, require the already-published original runtime/raw source association, and narrow by witnessed current permission, local-tools, kill, persona and profile policy. Factor one pure `raw_shell_schema` descriptor from the original provider; its ordinary name/live gates still run first. The same planning catalog may retain that source-qualified host descriptor for prospective tasks, never as a callable planning tool or a constructed shell provider. Original arming/source publication must precede planning; unavailable metadata remains explicit. Revalidate original descriptor/schema/eligibility and actual bounded wrapper SHA at plan acceptance; future task execution still requires all native arming/Ask/source/Task7 guards. Cost: conditional availability, extra source checks, no automatic arming or enrichment runtime. Original store persistence/publish producer records qualify the actual return before immutable request creation; ordinary bodies are unchanged.
+
+Original persistence extension: planning-only records cover ChatPersistenceService.persist_console_conversation_with_policy, validate_workspace_target and create_conversation, with original repository/DB binding and native store persist/stage/publish return. This closes replacement of the actual pre-request producer; ordinary method bodies and transaction semantics stay unchanged.
+
+
+Task 8F final receiving closure: suppress optional micro-compaction before its scheduler only for the current original planning preparation/controller/owning Chat, keeping SAME native finalizer and persistence. Definition-time finite native prepare/lifeline/primary/finalizer and consent-helper records guard the original receiving path; disallowed direct tool names are refused before schema/coercion reads as well as at final provider invocation. No general registry, alternative finalizer or ordinary behavior change. Earlier storage-retirement failures remain explicit until their own source proof.
+
+
+Task 8F native provider RETURN amendment: the original generic stream queues done before its guarded worker exits, so planning retains and awaits the SAME uncancelled worker_task and original off-loop close_completion under shield before native stream return. Preserve cancellation intent through actual returns. Planning propagates late worker/storage and response-close failure onto those same futures and retains the original prep/root/claim/token/charges; no plan can settle from a translated failure. Extend the existing planning storage-return check only with current-thread/source-participant lease, operation, pending-acquisition and retiring-thread before/after facts under a short pure lock, preserving borrowed originals. Exact original planning lifeline cleanup gathers pending native work without cancelling these futures; its existing bounded shutdown join remains and unknown return remains retained. Ordinary/execution behavior is unchanged. No new executor, registry, return framework or refill. Genuine held original worker RETURN RED: task-8f-worker-tail-red 1F21.92s, pre/post unchanged, planning incorrectly retired before the original worker return; this demonstrates this gap, not attribution of earlier intermittent storage failures.
+
+
+Task 8F final physical listing and negative receiving correction: Python 3.12 Path.iterdir materializes os.listdir before yielding, so replace only the existing native _list_relative_directory scan with context-managed os.scandir, consume at most MAX_SCAN_ENTRIES+1 native entries and retain existing exclusion/symlink/sort/output semantics. The iterator closes on cap/error/return. Genuine observation RED1F1.31s saw all20 names materialized despite cap3 (unchanged pre/post pins); pytest also emitted unrelated old temporary-directory cleanup warnings. No glob/grep expansion/new reader. Existing sticky planning provider-failure also fences require_current and actual model seed/stream receiving before schedule/effects; cleanup remains return-only, no new authority flag or retry/refill.
+
+
+Task 8F final original tracked-read proof: capture the SAME issued ConsolePreparationRead only inside its original invoke/source binding, checking exact creator/source/callback/issuing Task and active process/thread/task. Definition-time source records cover native read/binding classes, field descriptors, ContextVar, run_preparation_read and _retire; ordinary bodies remain unchanged. Before root finish require the SAME original producer Future physically done, uncancelled and exception-free, plus the SAME positively returned retired Future. Caller cancellation can mask a producer exception in the existing helper, so callback-local terminal completion alone cannot certify retirement. No new read/capability/map/E-cell. Genuine late-source-return plus concurrent cancellation RED1F16.45s demonstrated root wrongly retired; required canonical plan row alone remains distinct from live retirement.
