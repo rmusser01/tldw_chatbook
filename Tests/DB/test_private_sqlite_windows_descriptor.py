@@ -41,7 +41,7 @@ class _NativeIdentityProjection:
         return self._project(native_os.stat(path, follow_symlinks=False))
 
 
-@pytest.mark.parametrize("identity_kind", ["stat", "protocol"])
+@pytest.mark.parametrize("identity_kind", ["stat", "protocol", "preview"])
 @pytest.mark.parametrize("projected", [False, True], ids=["native", "distinct-stat"])
 def test_named_identity_accepts_held_file_and_rejects_replacement(
     tmp_path, monkeypatch, identity_kind, projected
@@ -57,7 +57,14 @@ def test_named_identity_accepts_held_file_and_rejects_replacement(
     monkeypatch.setattr(private_sqlite, "os", facade)
     try:
         native_os.write(descriptor, _database_bytes("original"))
-        identity = facade.fstat(descriptor)
+        if identity_kind == "preview":
+            from tldw_chatbook.DB import mobile_preview_lineage
+
+            monkeypatch.setattr(mobile_preview_lineage, "os", facade)
+            selected, identity = mobile_preview_lineage._existing_preview_target(path)
+            assert selected == path
+        else:
+            identity = facade.fstat(descriptor)
         if identity_kind == "protocol":
             identity = FileIdentity.from_stat(identity)
         private_sqlite.verify_expected_named_identity(path, identity)
