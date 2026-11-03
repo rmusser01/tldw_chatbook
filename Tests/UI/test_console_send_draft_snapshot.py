@@ -339,14 +339,16 @@ async def test_console_unknown_command_hint_restores_draft(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_console_armed_unknown_mouse_send_snapshots_before_skill_await(
+async def test_console_armed_unknown_tokenless_send_snapshots_before_skill_await(
     monkeypatch,
 ):
     """Skill parsing retains the captured send and preserves later typing.
 
-    The edit lands as the held skill read returns: one handled while the read
-    is pending would disarm the command (the composer's Changed handler)
-    before the send resumes. The received path's live-vs-stash check
+    ``handle_console_send_message`` is called directly, the tokenless path
+    the spoken "Console, send." takes. The edit lands as the held skill read
+    returns: one handled while the read is pending would disarm the command
+    (``ChatScreen._on_console_composer_draft_changed``) before the send
+    resumes. The received path's live-vs-stash check
     (``wiring.receive_console_visible_intent``) no longer refuses it with
     "Draft changed; Send again." (TASK-38689, owner decision 2026-11-03:
     TASK-340 wins). Nothing is isolated: hook review runs live, and with no
@@ -434,9 +436,9 @@ async def _speak_armed_send(monkeypatch, host, pilot, gateway, as_read_returns):
     send token, so ``wiring.receive_console_visible_intent`` gets no captured
     inputs. Sending an armed unknown command captures the draft, then awaits
     the skill context: the window between a tokenless capture and that check.
-    ``as_read_returns(composer)`` runs as the held read returns, before the
-    composer's Changed handler can disarm the command (one handled while the
-    read is pending would). Hook review runs live; with no hooks configured
+    ``as_read_returns(composer)`` runs as the held read returns, before
+    ``ChatScreen._on_console_composer_draft_changed`` can disarm the command
+    (one handled while the read is pending would). Hook review runs live; with no hooks configured
     nothing is reviewed, so it does not re-check the draft.
 
     Returns:
