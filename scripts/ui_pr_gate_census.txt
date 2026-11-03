@@ -1985,3 +1985,8 @@ Tests/UI/test_console_inspector_compact_access.py::test_default_layout_unchanged
 Tests/UI/test_console_inspector_compact_access.py::test_console_rail_scope_seeding_is_lossless_one_time_and_responsive_safe
 Tests/UI/test_console_inspector_compact_access.py::test_console_rail_writes_cannot_finish_with_stale_seed
 Tests/UI/test_console_inspector_compact_access.py::test_console_rail_scope_seed_preserves_explicit_left_open_intent
+
+# TASK-38649 (2026-11-03): a closing Console schedules no readiness retry, and a
+# cold refresh that keeps failing backs off instead of reading every 0.2 s.
+Tests/UI/test_console_readiness_config_projection.py::test_closed_readiness_owner_never_reads_or_publishes
+Tests/UI/test_console_readiness_config_projection.py::test_a_failing_cold_refresh_backs_off_and_a_publish_resets_it

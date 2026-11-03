@@ -754,6 +754,9 @@ MINIMUM_FILES = 1337
 # about 54-90 s serially, over the 30 s per-file budget. The floor is the
 # measured entry count.
 MINIMUM_FILES = 1349
+# TASK-38649 (2026-11-03): appends the closed-owner and retry-backoff readiness
+# nodes at the tail: 1,337 + 2.
+MINIMUM_FILES = 1351
 
 
 def read_census(path: Path) -> list[str]:
