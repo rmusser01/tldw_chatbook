@@ -47,6 +47,10 @@ def setup_projection(monkeypatch):
     return projection, requests, owner, identity, tasks, published
 
 
+def prepared(projection):
+    return {key: slot.prepared for key, slot in projection._tokenizers.items()}
+
+
 @pytest.mark.asyncio
 async def test_tokenizer_preparation_is_coalesced_off_loop(monkeypatch):
     projection, requests, _owner, _identity, tasks, published = setup_projection(
@@ -93,7 +97,15 @@ async def test_changed_owner_cannot_publish_tokenizer_readiness(monkeypatch, cha
             projection.screen._closing = True
         request.release.set()
         await asyncio.gather(*tasks)
-        assert projection._tokenizer_prepared is None
+        if change == "model":
+            # Another model is another slot, not another owner: the read in
+            # flight prepares only the slot it captured.
+            assert prepared(projection) == {
+                ("first", "provider"): True,
+                ("second", "provider"): False,
+            }
+        else:
+            assert prepared(projection) == {("first", "provider"): False}
     finally:
         for request in requests:
             request.release.set()
@@ -117,7 +129,7 @@ async def test_tokenizer_cancel_waits_for_physical_retirement(monkeypatch):
         request.release.set()
         await asyncio.gather(*tasks, return_exceptions=True)
         assert not projection._reads
-        assert projection._tokenizer_prepared is None
+        assert not any(prepared(projection).values())
     finally:
         for request in requests:
             request.release.set()
@@ -179,3 +191,53 @@ async def test_provider_label_and_config_key_share_one_preparation(
         assert projection.tokenizer_ready("model", provider)
     assert len(requests) == 1
     assert len(tasks) == before
+
+
+@pytest.mark.asyncio
+async def test_differing_models_keep_their_own_preparations(monkeypatch):
+    """TASK-38703 review round: the cost chip asks for the selection's model
+    (``explicit_model or configured_model``) and the context estimates for the
+    session's ``settings.model``. One slot recaptured on each ask, so when the
+    two differ every sync re-read config and published another sync."""
+    projection, requests, _owner, _identity, tasks, published = setup_projection(
+        monkeypatch
+    )
+
+    def sync():
+        return [
+            projection.tokenizer_ready("chip-model", "OpenAI"),
+            projection.tokenizer_ready("session-model", "openai"),
+        ]
+
+    try:
+        assert sync() == [False, False]
+        for _ in range(2):
+            for request in requests:
+                request.release.set()
+            await asyncio.gather(*tasks)
+        settled = (len(requests), len(tasks), len(published))
+        for _ in range(3):
+            assert sync() == [True, True]
+            await asyncio.gather(*tasks)
+        assert (len(requests), len(tasks), len(published)) == settled
+    finally:
+        for request in requests:
+            request.release.set()
+        await asyncio.gather(*tasks, return_exceptions=True)
+
+
+@pytest.mark.asyncio
+async def test_tokenizer_slots_stay_bounded(monkeypatch):
+    projection, requests, _owner, _identity, tasks, _published = setup_projection(
+        monkeypatch
+    )
+    try:
+        for index in range(spend.TOKENIZER_SLOTS + 3):
+            projection.tokenizer_ready(f"model-{index}", "provider")
+        assert [model for model, _provider in projection._tokenizers] == [
+            f"model-{index}" for index in range(3, spend.TOKENIZER_SLOTS + 3)
+        ]
+    finally:
+        for request in requests:
+            request.release.set()
+        await asyncio.gather(*tasks, return_exceptions=True)
