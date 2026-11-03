@@ -27,6 +27,8 @@ Found in the round-5 wave of the 2026-10-23 burn-down (TASK-38650's review, PR #
 **What may share the shape.** Other widgets also render a deferred snapshot when they are shown. The known one is TASK-35970's Character browser. `ConsoleCharacterContext.render_deferred` (console_character_context.py:225-252) starts the render as an asyncio task when the Character section opens, and nothing holds paints until it lands.
 
 Checked by reading the code on dev 9bbd5c2515; no stale frame has been observed. TASK-37021 covers a different Character case: the rail reveal from `on_show`, which renders after the first frame.
+
+Depends on TASK-38650 (in PR #3373).
 <!-- SECTION:DESCRIPTION:END -->
 
 ## Acceptance Criteria

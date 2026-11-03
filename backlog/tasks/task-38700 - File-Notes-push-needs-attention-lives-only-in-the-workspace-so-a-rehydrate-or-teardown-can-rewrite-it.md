@@ -29,10 +29,12 @@ A later Git rehydrate re-derives the phase from the owner snapshot in `_rehydrat
 - After an observer failure on an unsettled operation, the "same operation" branch resets the phase and view to `checking` or `pushing` (:4774-4783). That replaces the "needs attention" copy.
 
 **Lifecycle.** The observer task is never cancelled, either in `on_unmount` (:2662) or in `shutdown()`. That may be by design ("one process-lifetime observer", :4083). But its `except (asyncio.CancelledError, Exception)` (:4141) turns a loop-teardown cancellation into the same "needs attention" publication, and swallows the cancellation.
+
+Depends on TASK-38648 (in PR #3367).
 <!-- SECTION:DESCRIPTION:END -->
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
 - [ ] #1 After a push review admission failure and after a push observer failure, a Git rehydrate leaves the Session Git label and the push panel showing the same state the failure published, or both cleared together; a test drives each through a real rehydrate and fails on the base build
-- [ ] #2 Cancelling the push observer (workspace shutdown or loop teardown) publishes no 'needs attention' result, and the cancellation propagates; pinned by a test
+- [ ] #2 When the push observer task is cancelled (for example at loop teardown), it publishes no 'needs attention' result and the cancellation propagates; pinned by a test
 <!-- AC:END -->

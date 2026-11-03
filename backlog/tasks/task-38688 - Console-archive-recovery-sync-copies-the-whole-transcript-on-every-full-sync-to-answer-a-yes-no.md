@@ -31,6 +31,8 @@ Found in the round-5 wave of the 2026-10-23 burn-down (TASK-38652's work, PR #33
 **Prior art.** This is the shape TASK-24300 removed from the keystroke path; that task's guard covers the keystroke path only. The store already has lazy reads (`has_messages` at :11882, `iter_messages_newest_first` at :11929).
 
 PR #3366 adds a `current()` check right before this store read, so a fix should land after it. The cost is not measured; it grows with transcript length.
+
+Depends on TASK-38652 (in PR #3366).
 <!-- SECTION:DESCRIPTION:END -->
 
 ## Acceptance Criteria

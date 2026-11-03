@@ -27,7 +27,7 @@ The growth came from three commits, all with commit date 2026-10-31:
 
 The row was last set in e001557e30 (2026-09-25).
 
-The PR lane runs only six of this file's nodes, for the prompt-browse, prompts and media controllers (derived-artifacts.yml:369-375). So the red never reached a required check. The owner's 2026-10-31 size waiver covers re-pinning, as #3351 did for 18 module-size rows (TASK-38640).
+The PR lane runs only seven of this file's nodes (derived-artifacts.yml:369-375): `test_every_controller_file_has_a_budget_row`, and the grow and slack nodes for the prompt-browse, prompts and media controllers. So the red never reached a required check. The owner's 2026-10-31 size waiver covers re-pinning, as #3351 did for 18 module-size rows (TASK-38640).
 <!-- SECTION:DESCRIPTION:END -->
 
 ## Acceptance Criteria

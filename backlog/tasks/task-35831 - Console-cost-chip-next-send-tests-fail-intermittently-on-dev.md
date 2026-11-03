@@ -30,7 +30,7 @@ Found while checking PR #3169's rebase onto dev 0fef489ece (2026-10-20). Four Co
 
 <!-- SECTION:NOTES:BEGIN -->
 2026-11-03 evidence (dev 9bbd5c2515, round-5 filing of the 2026-10-23 burn-down): three whole-file runs (`-n 4`, load 21-29) had 3, 5 and 7 failures.
-- Three of those fail on every run. They are filed as TASK-38690.
+- Three of those fail on every run alone, and two of them also failed all three whole-file runs. They are filed as TASK-38690.
 - The "On next send —" label (this task's symptom) failed these, each in 1 of the 3 runs:
   - `test_followup_draft_does_not_change_completed_current_spend`;
   - `test_staged_evidence_changes_next_send_but_not_current_spend`;
