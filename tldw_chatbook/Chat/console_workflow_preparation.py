@@ -84,6 +84,7 @@ class _PreparedWorkflowReply:
         from .console_ordinary_tree import _capture_native_local_sources
 
         self._config_identity = config.current_config_identity()
+        self.local_providers = {}
         self.local_native, self.local_source_values, self.local_function_values = (
             _capture_native_local_sources(self.controller, local_tool_provider)
         )
@@ -112,7 +113,10 @@ class _PreparedWorkflowReply:
             raise PermissionError("workflow native source changed")
 
     def check_local_sources(self):
-        from .console_ordinary_tree import _function_unchanged
+        from .console_ordinary_tree import (
+            _check_local_provider_sources,
+            _function_unchanged,
+        )
 
         if any(
             not _function_unchanged(record) for record in self.local_function_values
@@ -123,6 +127,8 @@ class _PreparedWorkflowReply:
             for obj, name, value, code in self.local_source_values
         ):
             raise PermissionError("workflow native local source changed")
+        for provider, retained in self.local_providers.items():
+            _check_local_provider_sources(provider, retained)
 
     @contextmanager
     def activate_source(self):
@@ -310,6 +316,10 @@ class _PreparedWorkflowReply:
         if not self.authorization.physical_footprint.opaque:
             from tldw_chatbook.Agents.local_tool_provider import LocalToolProvider
 
+            from .console_ordinary_tree import _capture_local_provider_sources
+
+            providers = {}
+
             self.check_local_sources()
             for name in self.authorization.task.allowed_tools:
                 resolved = registry.resolve_owner_for_name(name)
@@ -325,6 +335,11 @@ class _PreparedWorkflowReply:
                         raise PermissionError(
                             "workflow bounded native tool source required"
                         )
+                    providers.setdefault(provider, []).append(name)
+            self.local_providers = {
+                provider: _capture_local_provider_sources(provider, names)
+                for provider, names in providers.items()
+            }
         self.check()
         if not set(self.authorization.task.allowed_tools).issubset(allowed):
             raise PermissionError("workflow native tools changed")

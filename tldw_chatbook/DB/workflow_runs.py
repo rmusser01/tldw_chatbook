@@ -44,6 +44,16 @@ class _WindowPublication:
     reservation: object
 
 
+@dataclass(frozen=True)
+class _WindowUnpublished:
+    """Original body refusal observed after FULL rollback and scope return."""
+
+    store: object
+    reservation: object
+    phase: object
+    error: BaseException
+
+
 class WorkflowRunsStore:
     """Storage only: construction and reads never recover, admit or dispatch work."""
 
@@ -595,32 +605,45 @@ class WorkflowRunsStore:
 
         if type(reservation) is not ChangeReviewReservation:
             raise TypeError("original change-review reservation required")
-        payload = self._window_roots(roots)
-        with self.db.automatic_work.transaction() as conn:
-            phase.check()
-            attempt = conn.execute(
-                "SELECT * FROM workflow_phase_attempts WHERE native_attempt_id=? AND workflow_id=?",
-                (phase.attempt.id, phase.attempt.workflow_id),
-            ).fetchone()
-            if attempt is None or attempt["status"] != "accepted":
-                raise ValueError("workflow_window_phase_required")
-            ordinal = conn.execute(
-                "SELECT COALESCE(MAX(ordinal),0)+1 FROM workflow_change_windows WHERE workflow_id=?",
-                (attempt["workflow_id"],),
-            ).fetchone()[0]
-            if ordinal > 64:
-                raise ValueError("workflow_window_count_bound")
-            self._capacity(conn, attempt["workflow_id"], 65536)
-            conn.execute(
-                "INSERT INTO workflow_change_windows(id,workflow_id,phase_attempt_id,ordinal,roots_json,state,reserved_bytes) VALUES (?,?,?,?,?,'active',65536)",
-                (
-                    reservation.id,
-                    attempt["workflow_id"],
-                    attempt["id"],
-                    ordinal,
-                    payload,
-                ),
-            )
+        body_error = None
+        try:
+            with self.db.automatic_work.transaction() as conn:
+                try:
+                    payload = self._window_roots(roots)
+                    phase.check()
+                    attempt = conn.execute(
+                        "SELECT * FROM workflow_phase_attempts WHERE native_attempt_id=? AND workflow_id=?",
+                        (phase.attempt.id, phase.attempt.workflow_id),
+                    ).fetchone()
+                    if attempt is None or attempt["status"] != "accepted":
+                        raise ValueError("workflow_window_phase_required")
+                    ordinal = conn.execute(
+                        "SELECT COALESCE(MAX(ordinal),0)+1 FROM workflow_change_windows WHERE workflow_id=?",
+                        (attempt["workflow_id"],),
+                    ).fetchone()[0]
+                    if ordinal > 64:
+                        raise ValueError("workflow_window_count_bound")
+                    self._capacity(conn, attempt["workflow_id"], 65536)
+                    conn.execute(
+                        "INSERT INTO workflow_change_windows(id,workflow_id,phase_attempt_id,ordinal,roots_json,state,reserved_bytes) VALUES (?,?,?,?,?,'active',65536)",
+                        (
+                            reservation.id,
+                            attempt["workflow_id"],
+                            attempt["id"],
+                            ordinal,
+                            payload,
+                        ),
+                    )
+                except BaseException as error:
+                    body_error = error
+                    raise
+        except BaseException as error:
+            # The original FULL context reraises the body only after rollback,
+            # policy restoration and its connection/storage scope have returned.
+            # Commit and replacement unwind errors carry no no-commit proof.
+            if error is not body_error:
+                raise
+            return _WindowUnpublished(self, reservation, phase, error)
         return _WindowPublication(self, reservation)
 
     def anchor_change_window(self, window_id, authorization, owner):

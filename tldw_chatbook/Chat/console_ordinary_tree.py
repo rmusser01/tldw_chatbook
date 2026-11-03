@@ -265,16 +265,8 @@ class _OrdinaryTurn:
             self._require_covered_root(provider._root, write=False)
             if provider._spill_dir is not None:
                 self._require_covered_root(provider._spill_dir.parent, write=True)
-        self.local_providers[provider] = (
-            tuple((name, specs[name]) for name in reachable),
-            tuple(
-                (alias, authority)
-                for alias, authority in (provider._admitted_roots or {}).items()
-            ),
-            tuple(
-                (alias, tuple(mapping.items()))
-                for alias, mapping in provider._path_specs_by_alias.items()
-            ),
+        self.local_providers[provider] = _capture_local_provider_sources(
+            provider, reachable
         )
 
     def bind_builtin_provider(self, provider, names):
@@ -351,25 +343,10 @@ class _OrdinaryTurn:
             if self.footprint.opaque:
                 return
             raise RuntimeError("ordinary local provider was not composed")
-        specs, roots, aliases = retained
-        original = dict(specs).get(name)
+        _check_local_provider_sources(provider, retained)
+        original = dict(retained[0]).get(name)
         if original is None or provider._specs.get(name) is not original:
             raise RuntimeError("ordinary local call outside original maximum")
-        current_roots = provider._admitted_roots or {}
-        if len(current_roots) != len(roots) or any(
-            current_roots.get(alias) is not authority for alias, authority in roots
-        ):
-            raise RuntimeError("ordinary local root source changed")
-        current_aliases = provider._path_specs_by_alias
-        if len(current_aliases) != len(aliases) or any(
-            alias not in current_aliases
-            or len(current_aliases[alias]) != len(entries)
-            or any(
-                current_aliases[alias].get(tool) is not spec for tool, spec in entries
-            )
-            for alias, entries in aliases
-        ):
-            raise RuntimeError("ordinary local handler source changed")
         if not self.footprint.opaque and provider._agent_roots:
             raise RuntimeError("ordinary local child root outside maximum")
 
@@ -1531,6 +1508,54 @@ def _capture_maximum(tree):
             ):
                 writes.append(scope)
     return WorktreeFootprint(tuple(reads), tuple(writes), opaque)
+
+
+def _capture_local_provider_sources(provider, names):
+    """Retain the actual composed receiving maps, not detached catalog labels."""
+    specs = tuple((name, provider._specs[name]) for name in names)
+    roots = tuple((provider._admitted_roots or {}).items())
+    aliases = tuple(
+        (alias, tuple(mapping.items()))
+        for alias, mapping in provider._path_specs_by_alias.items()
+    )
+    functions = tuple(
+        _function_record(handler)
+        for handler in dict.fromkeys(
+            spec.handler
+            for _, spec in (
+                *specs,
+                *(entry for _, entries in aliases for entry in entries),
+            )
+            if type(spec.handler) is FunctionType
+        )
+    )
+    return specs, roots, aliases, functions
+
+
+def _check_local_provider_sources(provider, retained):
+    """Reuse the original ordinary receiving-instance checks before effects."""
+    specs, roots, aliases, functions = retained
+    if any(provider._specs.get(name) is not spec for name, spec in specs):
+        raise RuntimeError("ordinary local call outside original maximum")
+    current_roots = provider._admitted_roots or {}
+    if len(current_roots) != len(roots) or any(
+        current_roots.get(alias) is not authority for alias, authority in roots
+    ):
+        raise RuntimeError("ordinary local root source changed")
+    current_aliases = provider._path_specs_by_alias
+    if (
+        len(current_aliases) != len(aliases)
+        or any(
+            alias not in current_aliases
+            or len(current_aliases[alias]) != len(entries)
+            or any(
+                current_aliases[alias].get(tool) is not spec for tool, spec in entries
+            )
+            for alias, entries in aliases
+        )
+        or any(not _function_unchanged(record) for record in functions)
+    ):
+        raise RuntimeError("ordinary local handler source changed")
 
 
 def _capture_native_local_sources(controller, local):

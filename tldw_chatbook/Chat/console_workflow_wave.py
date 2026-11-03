@@ -264,13 +264,27 @@ class _WorkflowWave:
                 await item.close()
             self._release()
             raise PermissionError("workflow window admission refused")
+        from tldw_chatbook.DB.workflow_runs import _WindowUnpublished
+
         with execution(self.bridge), owned_goal_storage(self.service):
-            self.publication = self.service.db.workflow_runs.open_change_window(
+            publication = self.service.db.workflow_runs.open_change_window(
                 self.phase, self.reservation, roots
             )
-            self.coordinator._activate_workflow_reservation(
-                self.reservation, self.source, self.publication
+            if type(publication) is not _WindowUnpublished:
+                self.publication = publication
+                self.coordinator._activate_workflow_reservation(
+                    self.reservation, self.source, self.publication
+                )
+        if type(publication) is _WindowUnpublished:
+            # A private no-commit outcome is consumable only after the original
+            # execution/storage scopes above have physically returned.
+            self.coordinator._cancel_unpublished_workflow(
+                self.reservation, self.source, publication
             )
+            for item in self.prepared:
+                await item.close()
+            self._release()
+            raise publication.error
         baseline = await asyncio.shield(self.baseline_return)
         roots = tuple(str(root) for root in self.reservation._handle.roots)
         disposition = (

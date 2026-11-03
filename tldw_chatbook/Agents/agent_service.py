@@ -2145,12 +2145,12 @@ def _call_with_timeout(
         if (
             not workflow._binding_state
             or workflow._binding_state[0][0] is not owner
-            or not workflow._bridge_preparation
         ):
             if operation is not None:
                 operation.finish()
             return ToolResult.blocked("workflow tool owner is not an original member")
-        workflow_prepared = workflow._bridge_preparation[0]
+        if workflow._bridge_preparation:
+            workflow_prepared = workflow._bridge_preparation[0]
     source_scope = (
         ordinary.source.activate
         if ordinary is not None
@@ -4906,10 +4906,15 @@ class AgentService:
             owner = None
             bound = False
             dispatched = False
+            bridge_preparation = (
+                authorization._bridge_preparation[0]
+                if authorization._bridge_preparation
+                else None
+            )
             try:
-                bridge_preparation = authorization._bridge_preparation[0]
                 if (
-                    bridge_preparation._wave is None
+                    bridge_preparation is not None
+                    and bridge_preparation._wave is None
                     and bridge_preparation.bridge.change_tracking_enabled
                 ):
                     raise PermissionError("original capture wave required")
@@ -4934,8 +4939,9 @@ class AgentService:
                             tracker.service.validate_task_inputs(
                                 authorization, json.loads(prepared.messages_json)
                             )
-                        bridge_preparation._close_operation = owner.reserve_tool()
-                        bridge_preparation._launch_operation = owner.reserve_tool()
+                        if bridge_preparation is not None:
+                            bridge_preparation._close_operation = owner.reserve_tool()
+                            bridge_preparation._launch_operation = owner.reserve_tool()
                     kwargs = dict(prepared.kwargs)
                     kwargs["messages"] = json.loads(prepared.messages_json)
                     kwargs["workflow_task_authorization"] = authorization
@@ -4979,7 +4985,10 @@ class AgentService:
 
             except BaseException:
                 if not dispatched:
-                    if bridge_preparation._close_operation is not None:
+                    if (
+                        bridge_preparation is not None
+                        and bridge_preparation._close_operation is not None
+                    ):
                         bridge_preparation._close_operation.finish()
                         bridge_preparation._close_operation = None
                     if owner is not None:
@@ -5855,9 +5864,11 @@ class AgentService:
                         admission_refused = True
                     finally:
                         try:
-                            if workflow_task_authorization := child_kwargs.get(
-                                "workflow_task_authorization"
-                            ):
+                            if (
+                                workflow_task_authorization := child_kwargs.get(
+                                    "workflow_task_authorization"
+                                )
+                            ) and workflow_task_authorization._bridge_preparation:
                                 bridge_preparation = (
                                     workflow_task_authorization._bridge_preparation[0]
                                 )
@@ -5870,7 +5881,7 @@ class AgentService:
                 tree = getattr(self, "_ordinary_tree", None)
                 if tree is None:
                     authorization = child_kwargs.get("workflow_task_authorization")
-                    if authorization is None:
+                    if authorization is None or not authorization._bridge_preparation:
                         run_original_child()
                     else:
                         bridge_preparation = authorization._bridge_preparation[0]
@@ -6007,12 +6018,13 @@ class AgentService:
                         and not native_thread_started
                         and not preserve_workflow_reservation
                     ):
-                        preparation = authorization._bridge_preparation[0]
                         with child_owner.activate():
                             self._finalize_workflow_child_log(
                                 authorization, status=RUN_ERROR
                             )
-                        preparation._close_on_native_owner(child_owner)
+                        if authorization._bridge_preparation:
+                            preparation = authorization._bridge_preparation[0]
+                            preparation._close_on_native_owner(child_owner)
                     if (
                         child_reservation is not None
                         and not preserve_workflow_reservation

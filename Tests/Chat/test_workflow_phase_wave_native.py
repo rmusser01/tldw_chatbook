@@ -189,3 +189,48 @@ def test_original_manual_admission_and_open_wave_ordering(tmp_path, ordering):
         script=Path(__file__).with_name("workflow_wave_probe.py").read_text(),
         timeout=70,
     )
+
+
+def test_changed_actual_alias_handler_refuses_before_undeclared_effect(tmp_path):
+    _run(
+        tmp_path,
+        "alias-handler",
+        "success",
+        script=Path(__file__).with_name("workflow_wave_probe.py").read_text(),
+        timeout=60,
+    )
+
+
+def test_known_window_rollback_retires_before_native_ordinary_send(tmp_path):
+    _run(
+        tmp_path,
+        "window-refused",
+        "success",
+        script=Path(__file__).with_name("workflow_wave_probe.py").read_text(),
+        timeout=60,
+    )
+
+
+@pytest.mark.parametrize("failure", ["window-ack-unknown", "window-unwind-unknown"])
+def test_unknown_window_publication_or_unwind_keeps_original_protection(
+    tmp_path, failure
+):
+    _run(
+        tmp_path,
+        failure,
+        "success",
+        script=Path(__file__).with_name("workflow_wave_probe.py").read_text(),
+        timeout=60,
+    )
+
+
+def test_changed_receiving_handler_after_original_permission_return_is_not_invoked(
+    tmp_path,
+):
+    _run(
+        tmp_path,
+        "alias-handler-after-permission",
+        "success",
+        script=Path(__file__).with_name("workflow_wave_probe.py").read_text(),
+        timeout=60,
+    )

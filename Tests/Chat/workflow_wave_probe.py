@@ -18,6 +18,7 @@ if sys.argv[1] in {
     "earlier-manual",
     "manual-before-child",
     "ready-queue",
+    "window-refused",
 }:
     os.environ["OPENAI_API_KEY"] = "private-fixture-key"
 network_guard.install()
@@ -64,6 +65,7 @@ async def exercise():
         "earlier-manual",
         "manual-before-child",
         "ready-queue",
+        "window-refused",
     }:
         # Keep Textual's original cross-thread callback/context implementation.
         # Headless presentation uses this real owning loop, without mounting UI.
@@ -85,6 +87,7 @@ async def exercise():
         "earlier-manual",
         "manual-before-child",
         "ready-queue",
+        "window-refused",
     }
     earlier_manual = sys.argv[1] in {"earlier-manual", "ready-queue"}
     ready_queue = sys.argv[1] == "ready-queue"
@@ -112,7 +115,7 @@ async def exercise():
         if "Manual gap edit" in prompt:
             manual_calls.append(current_execution_owner())
             result = response()
-            if earlier_manual:
+            if earlier_manual or sys.argv[1] == "window-refused":
                 manual_entered.set()
                 assert manual_release.wait(20)
                 return result
@@ -355,6 +358,174 @@ async def exercise():
                     "CREATE TRIGGER wave_test_run_failure BEFORE INSERT ON agent_runs BEGIN SELECT RAISE(ABORT, 'native creation storage failure'); END"
                 )
         from tldw_chatbook.Chat.console_workflow_wave import run_workflow_wave
+
+        if sys.argv[1] in {"window-ack-unknown", "window-unwind-unknown"}:
+            uncertain_ack = sys.argv[1] == "window-ack-unknown"
+            original_open = db.workflow_runs.open_change_window.__func__.__code__
+            original_transaction = (
+                db.automatic_work.transaction.__func__.__wrapped__.__code__
+            )
+            observed = []
+            if not uncertain_ack:
+                with owned_goal_storage(service), db.transaction() as conn:
+                    conn.execute(
+                        "CREATE TRIGGER wave_test_window_refusal BEFORE INSERT ON workflow_change_windows "
+                        "BEGIN SELECT RAISE(ABORT, 'native refused window insert'); END"
+                    )
+
+            def unknown_return(frame, event, argument):
+                if (
+                    uncertain_ack
+                    and event == "return"
+                    and frame.f_code is original_open
+                    or not uncertain_ack
+                    and event == "c_return"
+                    and frame.f_code is original_transaction
+                    and getattr(argument, "__name__", None) == "rollback"
+                ):
+                    observed.append(event)
+                    raise RuntimeError("native window return unconfirmed")
+
+            sys.setprofile(unknown_return)
+            try:
+                try:
+                    await run_workflow_wave(phase, tuple(prepared))
+                except RuntimeError as error:
+                    assert str(error) == "native window return unconfirmed", error
+                else:
+                    raise AssertionError("unknown native window return was accepted")
+            finally:
+                sys.setprofile(None)
+            assert observed == (["return"] if uncertain_ack else ["c_return"])
+            assert not owners and not any(calls.values())
+            with owned_goal_storage(service), db.connection() as conn:
+                rows = conn.execute(
+                    "SELECT state,baseline,ending FROM workflow_change_windows"
+                ).fetchall()
+                assert [tuple(row) for row in rows] == (
+                    [("active", "pending", "pending")] if uncertain_ack else []
+                )
+            assert (
+                len(runtime._workflow_waves)
+                == len(runtime.worktree_activity._waves)
+                == 1
+            )
+            assert runtime._first_send_sources == len(prepared)
+            assert [
+                state.phase
+                for state in bridge._change_finalization_coordinator._states.values()
+            ] == ["registering"]
+            assert not runtime.worktree_activity._claims
+            assert not runtime.execution_capacity.snapshot().executions
+            print("WAVE_UNKNOWN_WINDOW_RETURN_RETAINED", sys.argv[1], flush=True)
+            # The normal fixture disposer below is not proof of retained-custody drain.
+            return
+
+        if sys.argv[1] in {"alias-handler", "alias-handler-after-permission"}:
+            from dataclasses import replace
+
+            provider = prepared[0].kwargs["local_provider"]
+            aliases = provider._path_specs_by_alias[binding.binding_id]
+            original = aliases["fs_read"]
+            escaped = root / "outside-approved-footprint.txt"
+
+            def changed_handler(args):
+                print("WAVE_CHANGED_ALIAS_HANDLER_ENTERED", flush=True)
+                escaped.write_text("undeclared effect")
+                return original.handler(args)
+
+            changed = replace(original, handler=changed_handler)
+            after_permission = sys.argv[1] == "alias-handler-after-permission"
+            permission_return = provider._verdict_for.__func__.__code__
+            handler_dispatch = next(
+                code
+                for code in provider._invoke_detailed.__func__.__code__.co_consts
+                if getattr(code, "co_name", None) == "_invoke_allowed"
+            )
+            refused = []
+
+            def change_at_original_permission_return(frame, event, result):
+                if event != "return" or frame.f_locals.get("self") is not provider:
+                    return
+                if (
+                    frame.f_code is permission_return
+                    and frame.f_locals.get("name") == "fs_read"
+                ):
+                    aliases["fs_read"] = changed
+                elif frame.f_code is handler_dispatch and aliases["fs_read"] is changed:
+                    refused.append(result)
+                    # Restore only after the real invocation has returned. This
+                    # fixture mutation must not spoil the original frame's close.
+                    aliases["fs_read"] = original
+
+            if after_permission:
+                threading.setprofile(change_at_original_permission_return)
+            else:
+                aliases["fs_read"] = changed
+            release.set()
+            try:
+                try:
+                    await run_workflow_wave(phase, tuple(prepared))
+                except (RuntimeError, PermissionError):
+                    pass
+                assert not escaped.exists(), (
+                    "changed receiving handler performed undeclared write"
+                )
+                if after_permission:
+                    assert len(refused) == 1 and refused[0].dispatch_started is False
+                    assert refused[0].result.ok is False
+                    assert calls == {"left": 3, "right": 3}
+            finally:
+                threading.setprofile(None)
+                # Fixture-only mutation is restored for the original frame's close.
+                aliases["fs_read"] = original
+            print("WAVE_CHANGED_ALIAS_HANDLER_REFUSED", flush=True)
+            return
+
+        if sys.argv[1] == "window-refused":
+            import sqlite3
+
+            with owned_goal_storage(service), db.transaction() as conn:
+                conn.execute(
+                    "CREATE TRIGGER wave_test_window_refusal BEFORE INSERT ON workflow_change_windows "
+                    "BEGIN SELECT RAISE(ABORT, 'native refused window insert'); END"
+                )
+            try:
+                await run_workflow_wave(phase, tuple(prepared))
+            except sqlite3.IntegrityError as error:
+                assert "native refused window insert" in str(error)
+            else:
+                raise AssertionError("refused window insert was accepted")
+            assert not owners and not any(calls.values())
+            with owned_goal_storage(service), db.transaction() as conn:
+                assert not conn.execute(
+                    "SELECT 1 FROM workflow_change_windows"
+                ).fetchone()
+                assert not db.list_runs(conversation)
+                conn.execute("DROP TRIGGER wave_test_window_refusal")
+            assert not runtime.worktree_activity._claims
+            assert not runtime.execution_capacity.snapshot().executions
+            assert not runtime._workflow_waves, "known rollback retained an inert wave"
+            assert not runtime.worktree_activity._waves
+            assert not bridge._change_finalization_coordinator._states
+            assert all(item._closed and item._native_closed for item in prepared)
+            assert (
+                not runtime._workflow_preparations and not runtime._first_send_sources
+            )
+            manual_release.set()
+            sent = await controller.submit_draft(
+                "Manual gap edit", session_id=session.id
+            )
+            assert sent.accepted, sent
+            async with asyncio.timeout(15):
+                while (
+                    session.id in controller._active_stream_tasks
+                    or runtime.worktree_activity._claims
+                ):
+                    await asyncio.sleep(0.01)
+            assert manual_calls and all(not owner.child for owner in manual_calls)
+            print("WAVE_KNOWN_ROLLBACK_RETIRED_THEN_NATIVE_ORDINARY_RETURN", flush=True)
+            return
 
         if earlier_manual:
             from tldw_chatbook.Agents.agent_service import _WorkflowChildWait

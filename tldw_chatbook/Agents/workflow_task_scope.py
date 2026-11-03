@@ -233,9 +233,10 @@ class WorkflowTaskAuthorization:
                 owner_id=self.claim.owner_id,
             )
             self._binding_state.append((owner, activity_claim))
-        prepared = self._bridge_preparation[0]
-        if prepared._wave is not None:
-            prepared._wave.bind_member(self, owner)
+        if self._bridge_preparation:
+            prepared = self._bridge_preparation[0]
+            if prepared._wave is not None:
+                prepared._wave.bind_member(self, owner)
 
     def check(self) -> None:
         """Require the same live task, native run, owner and held activity claim."""

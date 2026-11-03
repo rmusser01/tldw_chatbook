@@ -464,6 +464,45 @@ class ChangeReviewFinalizationCoordinator:
             self._schedule_ready_locked()
             return public
 
+    def _cancel_unpublished_workflow(self, reservation, source, refusal):
+        """Retire only the exact original inert, conclusively unpublished window."""
+        from tldw_chatbook.DB.workflow_runs import _WindowUnpublished
+
+        wave = source.workflow_wave
+        if (
+            type(refusal) is not _WindowUnpublished
+            or wave is None
+            or refusal.store is not wave.service.db.workflow_runs
+            or refusal.phase is not wave.phase
+            or refusal.reservation is not reservation
+            or source is not wave.source
+            or source.issuer is not self._native
+        ):
+            raise ValueError("original unpublished workflow window required")
+        with self._lock:
+            state = self._states.get(reservation.id)
+            if (
+                state is None
+                or state.public is not reservation
+                or state.native_source is not source
+                or state.phase != "registering"
+                or state.operation_inflight
+                or state.pending_operation is not None
+                or state.cancelled
+                or reservation._completion.ticket is not None
+                or reservation._baseline_completion.ticket is not None
+            ):
+                raise ValueError("original unused workflow reservation required")
+            state.cancelled = True
+            self._complete_locked(state, published=False)
+            # _complete_locked appends this original source under the same lock.
+            # Its callback must return here, not later in another retirement batch.
+            retired = self._native_retirements.pop()
+            assert retired is source
+            close_unused = retired.close_unused
+            self._schedule_ready_locked()
+        close_unused()
+
     def _activate_workflow_reservation(self, reservation, source, publication):
         """Activate the same inert native reservation after its FULL publication."""
         from tldw_chatbook.DB.workflow_runs import _WindowPublication
