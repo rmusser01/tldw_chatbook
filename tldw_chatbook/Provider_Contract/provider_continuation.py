@@ -77,6 +77,9 @@ ContinuationState = Literal["active", "complete"]
 ContinuationCallState = Literal["pending", "executing", "completed", "failed"]
 
 # Row key marking ephemeral (non-persisted) project-instruction rows; never sent to providers.
+# It lives here, not in Chat, because the agent runtime must import it without Chat,
+# and this module is already loaded at boot (a new module would grow the boot census).
+# Chat.console_project_instructions re-exports it (TASK-36944.10).
 EPHEMERAL_ORIGIN_KEY = "_chatbook_ephemeral_origin"
 
 _MAX_PAYLOAD_BYTES = 8 * 1024 * 1024

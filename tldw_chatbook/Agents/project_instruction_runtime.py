@@ -12,7 +12,6 @@ from dataclasses import dataclass, field
 from pathlib import Path, PurePosixPath, PureWindowsPath
 from typing import TYPE_CHECKING, Any, Literal
 
-
 from tldw_chatbook.Provider_Contract.provider_continuation import EPHEMERAL_ORIGIN_KEY
 
 from .agent_models import (
