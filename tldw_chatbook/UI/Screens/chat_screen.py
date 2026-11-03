@@ -188,6 +188,7 @@ from ..Console_Modules import config_sync  # Resident at compose (context_spend)
 from ..Console_Modules.session import (
     _has_selected_text,
     _is_empty_select_value,
+    settings_revision_held,
 )
 from ...Chat.citation_trace_repository import ActiveCitationTraceState
 from ...Chat.console_chat_controller import (
@@ -3184,6 +3185,7 @@ class ChatScreen(BaseAppScreen):
         """
         controller = self._ensure_console_chat_controller()
         store = self._ensure_console_chat_store()
+        draft = suspended_draft  # identity checks below keep the original
         if transfer is None:
             session_id = store.active_session_id
             if session_id is None:
@@ -3203,10 +3205,6 @@ class ChatScreen(BaseAppScreen):
                 else store.session_context_policy_overrides(session_id),
                 exposed_fields=FULL_MODEL_DEFAULT_FIELDS,
             )
-            if suspended_draft is not None:  # TASK-35190: and the chat's own pair
-                initial_draft = remember_session_pair(
-                    initial_draft, store.session_settings(session_id)
-                )
         else:
             origin = transfer.origin
             session_id = origin.session_id
@@ -3228,6 +3226,28 @@ class ChatScreen(BaseAppScreen):
         )
         if prepared_context is None:
             return False
+        # TASK-36534: one read of the chat, after preparation, is what a
+        # suspended draft's untouched fields follow and its pair is kept with.
+        committed = store.session_settings(session_id)
+        if transfer is None and suspended_draft is not None:
+            from ...Widgets.Console.console_settings_unsaved import (
+                followed_suspended_draft,
+            )
+
+            draft = followed_suspended_draft(suspended_draft, committed)
+            if draft is not suspended_draft:
+                settings = draft.settings
+                initial_draft = self._console_settings_initial_draft(
+                    settings,
+                    draft.context_policy_overrides,
+                    exposed_fields=FULL_MODEL_DEFAULT_FIELDS,
+                )
+                active_provider = settings.provider
+                active_model = draft.provider_model_drafts.get(
+                    active_provider, settings.model
+                )
+            # TASK-35190: and the chat's own pair.
+            initial_draft = remember_session_pair(initial_draft, committed)
         effective_thinking_policy, context_owner_current = prepared_context
         context_estimate = self._context_spend._console_settings_context_estimate_for_session(
             session_id,
@@ -3250,6 +3270,7 @@ class ChatScreen(BaseAppScreen):
         modal_contract = _conversation_settings_modal_module()
         from ..Console_Modules.model_switcher import open_model_picker
 
+        current = store.session_settings(session_id)  # discovery above awaits
         modal = modal_contract.ConsoleSettingsModal(
             open_response_rules=lambda: self._response_rules_ui.open_manager(
                 self._console_runtime().ensure_response_rules().scopes(session_id)[0]
@@ -3258,8 +3279,7 @@ class ChatScreen(BaseAppScreen):
             chat_title=next(
                 (s.title for s in store.sessions() if s.id == session_id), ""
             ),
-            settings=store.session_settings(session_id)
-            or settings,  # committed: unsaved-edits baseline
+            settings=current or settings,  # committed: unsaved-edits baseline
             origin=origin,
             initial_draft=initial_draft,
             transfer=transfer,
@@ -3291,7 +3311,7 @@ class ChatScreen(BaseAppScreen):
             default_readiness_resolver=self._console_default_readiness,
             default_durability_state=self._console_default_durability_state(),
             default_recovery_handler=self._handle_console_default_recovery,
-            suspended_draft=suspended_draft,
+            suspended_draft=draft,
             connection_tester=lambda identity: self._test_console_connection(
                 identity, app_config=self._provider_readiness_app_config()
             ),
@@ -3339,7 +3359,9 @@ class ChatScreen(BaseAppScreen):
                 modal.disabled = True
             return transfer_outcome
 
-        if _pre_push_guard is not None and not _pre_push_guard():
+        if (_pre_push_guard is not None and not _pre_push_guard()) or (
+            suspended_draft is not None and current != committed
+        ):  # TASK-36534 backstop; the owner check after discovery refuses first
             return False
         try:
             await self.app.push_screen(modal, callback=apply_origin_result)
@@ -3540,7 +3562,12 @@ class ChatScreen(BaseAppScreen):
             ):
                 return False
             try:
-                return store.session_settings_revision(session_id) == settings_revision
+                return settings_revision_held(
+                    getattr(self, "_session", None),
+                    store,
+                    session_id,
+                    settings_revision,
+                )
             except KeyError:
                 return False
 
@@ -3680,9 +3707,11 @@ class ChatScreen(BaseAppScreen):
                     "The temporary conversation is no longer available. Its "
                     "Chat settings draft was not restored."
                 )
-            if (
-                store.session_settings_revision(target.session_id)
-                != target.settings_revision
+            if not settings_revision_held(
+                getattr(self, "_session", None),
+                store,
+                target.session_id,
+                target.settings_revision,
             ):
                 return (
                     "Chat settings changed while credentials were open. "

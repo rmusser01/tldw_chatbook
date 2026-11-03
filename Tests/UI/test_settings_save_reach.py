@@ -508,3 +508,501 @@ async def test_saving_default_b_states_its_reach_and_a_new_chat_takes_it(
             "openai",
             "gpt-4.1",
         )
+
+
+@pytest.mark.asyncio
+@private_profile_test
+@pytest.mark.parametrize(
+    "elsewhere",
+    [None, "settings", "context", "discovery"],
+    ids=["own-save", "settings-elsewhere", "context-elsewhere", "during-discovery"],
+)
+async def test_a_blank_chats_settings_draft_survives_its_own_credential_save(
+    request, monkeypatch, elsewhere
+):
+    """TASK-36534: the whole app on a private profile and the real router. A
+    blank chat's Chat settings picks a keyless provider's model and edits
+    Temperature; Configure credential's own Settings save makes that model the
+    default, which the blank chat takes (D1). Return reopens the draft intact.
+    A change made elsewhere meanwhile to the same chat's settings is refused,
+    a Context view edit too: it leaves the chat unused, so D1 still moves it."""
+    from dataclasses import replace
+
+    from Tests.UI.test_console_session_settings import (
+        _build_live_config_test_app,
+        _wait_for_screen,
+    )
+    from Tests.UI.test_destination_shells import _wait_for_selector
+    from tldw_chatbook import config as config_module
+    from tldw_chatbook.Chat.console_context_policy import (
+        ConsoleContextPolicyOverrides,
+        ContextCompactionMode,
+    )
+    from tldw_chatbook.Chat.provider_readiness import provider_config_key
+    from tldw_chatbook.UI.Navigation.main_navigation import NavigateToScreen
+    from tldw_chatbook.UI.Screens.settings_config_adapter import SettingsConfigAdapter
+    from tldw_chatbook.Widgets.Console.console_settings_modal import (
+        ConsoleSettingsModal,
+    )
+
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    config_module.load_cli_config_and_ensure_existence(force_reload=True)
+    adapter = SettingsConfigAdapter()
+    for section, values in (
+        ("splash_screen", {"enabled": False}),
+        ("first_run", {"setup_completed": True}),
+        ("chat_defaults", {"provider": "openai", "model": "gpt-4o-mini"}),
+    ):
+        assert adapter.save_values(section, values), section
+    config_module.load_settings(force_reload=True)
+    app = _build_live_config_test_app()
+
+    async with app.run_test(size=_SIZE) as pilot:
+        app.providers_models = {"OpenAI": ["gpt-4o-mini", "gpt-4o", "gpt-4.1"]}
+        app.post_message(NavigateToScreen("chat"))
+        console = await _wait_for_screen(app, pilot, "ChatScreen")
+        await _wait_for_selector(
+            console, pilot, "#console-settings-summary", timeout=_MOUNT_TIMEOUT
+        )
+        store = console._ensure_console_chat_store()
+        chat_id = store.active_session_id
+        # An earlier save the blank chat already took (D1), as first-run
+        # setup's would be: the handoff starts after that convergence.
+        assert adapter.save_values("chat_defaults", {"model": "gpt-4o"})
+        blank = console._session._ensure_active_console_session_settings()
+        assert (provider_config_key(blank.provider), blank.model) == (
+            "openai",
+            "gpt-4o",
+        )
+        assert await console._open_console_settings() is True
+        await _wait_until(
+            pilot, lambda: isinstance(app.screen, ConsoleSettingsModal), "Chat settings"
+        )
+        first = app.screen
+        await _wait_until(
+            pilot,
+            lambda: getattr(first, "_unsaved_baseline", None) is not None,
+            "Chat settings to settle",
+        )
+        first._model_picked(("openai", "gpt-4.1"))  # pick mode's result
+        await pilot.pause()
+        temperature = first.query_one("#console-settings-temperature", Input)
+        temperature.focus()
+        temperature.value = "0.9"
+        await pilot.pause()
+        labels = first._unsaved_field_labels()
+        assert set(labels) == {"Model", "Temperature"}
+        await pilot.click("#console-settings-configure-credential")
+
+        settings = await _wait_for_screen(app, pilot, "SettingsScreen")
+        await _wait_for_selector(
+            settings, pilot, "#settings-provider-api-key", timeout=_MOUNT_TIMEOUT
+        )
+        # Before the save, so the save's convergence comes after the edit.
+        if elsewhere == "settings":  # the same chat, edited in another view
+            store.replace_session_settings(chat_id, replace(blank, temperature=0.2))
+        elif elsewhere == "context":
+            store.set_session_context_policy_overrides(
+                chat_id,
+                ConsoleContextPolicyOverrides(
+                    compaction_mode=ContextCompactionMode.ASK
+                ),
+            )
+        settings.query_one("#settings-provider-api-key", Input).value = _FAKE_KEY
+        await pilot.pause()
+        settings.action_settings_save_category(allow_text_entry_focus=True)
+        await _wait_until(
+            pilot,
+            lambda: settings.query_one("#settings-provider-return").has_focus,
+            "the save to offer Return",
+        )
+        saved = config_module.load_settings(force_reload=True)["chat_defaults"]
+        assert (saved["provider"], saved["model"]) == ("openai", "gpt-4.1")
+        attempts: list[bool] = []
+        if elsewhere == "discovery":  # the chat moves again while models list
+            discover = console._providers_models_for_console_settings
+            reopen = console._reopen_suspended_console_settings
+
+            async def discovering(*args, **kwargs):
+                if not attempts:
+                    assert adapter.save_values("chat_defaults", {"max_tokens": 1234})
+                    console._session._ensure_active_console_session_settings()
+                return await discover(*args, **kwargs)
+
+            async def recording(*args, **kwargs):
+                attempts.append(await reopen(*args, **kwargs))
+                return attempts[-1]
+
+            monkeypatch.setattr(
+                console, "_providers_models_for_console_settings", discovering
+            )
+            monkeypatch.setattr(
+                console, "_reopen_suspended_console_settings", recording
+            )
+        settings.query_one("#settings-provider-return").press()
+
+        refused = (
+            "Chat settings changed while credentials were open. "
+            "The earlier draft was not restored."
+        )
+
+        def was_refused() -> bool:
+            return any(n.message == refused for n in app._notifications)
+
+        def reopened() -> bool:
+            return isinstance(app.screen, ConsoleSettingsModal) and (
+                app.screen is not first
+            )
+
+        await _wait_until(pilot, lambda: was_refused() or reopened(), "Return")
+        if elsewhere in ("settings", "context"):
+            assert was_refused()
+            assert not any(
+                isinstance(screen, ConsoleSettingsModal) for screen in app.screen_stack
+            )
+            if elsewhere == "settings":
+                assert store.session_settings(chat_id).temperature == 0.2
+            else:  # still unused, so D1 still moves the chat to the new default
+                await _wait_until(
+                    pilot,
+                    lambda: store.session_settings(chat_id).model == "gpt-4.1",
+                    "the unused chat to take the new default",
+                )
+            return
+        assert not was_refused()
+        returned = app.screen
+        await _wait_until(
+            pilot,
+            lambda: getattr(returned, "_unsaved_baseline", None) is not None,
+            "the reopened Chat settings to settle",
+        )
+        # The blank chat took the new default (D1); the draft came back whole.
+        converged = store.session_settings(chat_id)
+        assert (provider_config_key(converged.provider), converged.model) == (
+            "openai",
+            "gpt-4.1",
+        )
+        assert returned._current_model_value() == "gpt-4.1"
+        assert returned.query_one("#console-settings-temperature", Input).value == "0.9"
+        # Its markers compare with the converged chat: Model now equals the
+        # chat's own, so only the Temperature edit is still unsaved.
+        assert returned._unsaved_field_labels() == ("Temperature",)
+        if elsewhere == "discovery":
+            # The first try had followed the chat as it was before discovery
+            # moved it, so it did not open; the retry follows it as it is now.
+            assert attempts[0] is False
+            assert returned._build_draft().max_tokens == 1234
+            assert store.session_settings(chat_id).max_tokens == 1234
+
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_a_field_left_alone_follows_the_handoffs_own_save(request, monkeypatch):
+    """TASK-36534 review: Configure credential's Settings save also moves a
+    URL provider's Endpoint, which the unused chat takes (D1). The reopened
+    draft shows the new Endpoint, not as an unsaved edit and not the old URL
+    for Apply to write back; the Temperature edit stays edited and marked."""
+    from Tests.UI.test_console_session_settings import (
+        _build_live_config_test_app,
+        _wait_for_screen,
+    )
+    from Tests.UI.test_destination_shells import _wait_for_selector
+    from tldw_chatbook import config as config_module
+    from tldw_chatbook.UI.Navigation.main_navigation import NavigateToScreen
+    from tldw_chatbook.UI.Screens.settings_config_adapter import SettingsConfigAdapter
+    from tldw_chatbook.Widgets.Console.console_settings_modal import (
+        ConsoleSettingsModal,
+    )
+
+    old_url = "https://dashscope-intl.aliyuncs.com/compatible-mode/v1"
+    new_url = "https://dashscope.aliyuncs.com/compatible-mode/v1"
+    monkeypatch.delenv("DASHSCOPE_API_KEY", raising=False)
+    config_module.load_cli_config_and_ensure_existence(force_reload=True)
+    adapter = SettingsConfigAdapter()
+    for section, values in (
+        ("splash_screen", {"enabled": False}),
+        ("first_run", {"setup_completed": True}),
+        ("chat_defaults", {"provider": "qwencloud", "model": "qwen3.8-max"}),
+        ("api_settings.qwencloud", {"api_base_url": old_url}),
+    ):
+        assert adapter.save_values(section, values), section
+    config_module.load_settings(force_reload=True)
+    app = _build_live_config_test_app()
+
+    async with app.run_test(size=_SIZE) as pilot:
+        app.post_message(NavigateToScreen("chat"))
+        console = await _wait_for_screen(app, pilot, "ChatScreen")
+        await _wait_for_selector(
+            console, pilot, "#console-settings-summary", timeout=_MOUNT_TIMEOUT
+        )
+        store = console._ensure_console_chat_store()
+        chat_id = store.active_session_id
+        assert console._session._ensure_active_console_session_settings().base_url == (
+            old_url
+        )
+        assert await console._open_console_settings() is True
+        await _wait_until(
+            pilot, lambda: isinstance(app.screen, ConsoleSettingsModal), "Chat settings"
+        )
+        first = app.screen
+        await _wait_until(
+            pilot,
+            lambda: getattr(first, "_unsaved_baseline", None) is not None,
+            "Chat settings to settle",
+        )
+        temperature = first.query_one("#console-settings-temperature", Input)
+        temperature.focus()
+        temperature.value = "0.9"
+        await pilot.pause()
+        assert first._unsaved_field_labels() == ("Temperature",)
+        await pilot.click("#console-settings-configure-credential")
+
+        settings = await _wait_for_screen(app, pilot, "SettingsScreen")
+        await _wait_for_selector(
+            settings, pilot, "#settings-provider-api-key", timeout=_MOUNT_TIMEOUT
+        )
+        settings.query_one("#settings-provider-api-key", Input).value = _FAKE_KEY
+        settings.query_one("#settings-provider-endpoint-value", Input).value = new_url
+        await pilot.pause()
+        settings.action_settings_save_category(allow_text_entry_focus=True)
+        await _wait_until(
+            pilot,
+            lambda: settings.query_one("#settings-provider-return").has_focus,
+            "the save to offer Return",
+        )
+        settings.query_one("#settings-provider-return").press()
+        await _wait_until(
+            pilot,
+            lambda: (
+                isinstance(app.screen, ConsoleSettingsModal) and app.screen is not first
+            ),
+            "Chat settings to reopen",
+        )
+        returned = app.screen
+        await _wait_until(
+            pilot,
+            lambda: getattr(returned, "_unsaved_baseline", None) is not None,
+            "the reopened Chat settings to settle",
+        )
+        assert store.session_settings(chat_id).base_url == new_url  # D1
+        endpoint = returned.query_one("#console-settings-base-url", Input).value
+        assert endpoint == new_url
+        assert returned._build_draft().base_url != old_url
+        assert returned.query_one("#console-settings-temperature", Input).value == "0.9"
+        assert returned._unsaved_field_labels() == ("Temperature",)
+
+
+def test_a_held_settings_revision_spans_only_convergence(monkeypatch):
+    """TASK-36534: ``settings_revision_held`` accepts a suspended draft's
+    revision only while saved-default convergence alone moved the chat since:
+    at the run's start, inside it and at its end. An edit made elsewhere ends
+    the run, so a revision before it never holds again, even after the next
+    convergence."""
+    from types import SimpleNamespace
+
+    import tldw_chatbook.UI.Console_Modules.session as session_module
+    from tldw_chatbook.Chat.console_chat_store import ConsoleChatStore
+    from tldw_chatbook.Chat.console_context_policy import (
+        ConsoleContextPolicyOverrides,
+        ContextCompactionMode,
+    )
+    from tldw_chatbook.Chat.console_session_settings import ConsoleSessionSettings
+    from tldw_chatbook.UI.Console_Modules.session import (
+        ConsoleSessionController,
+        settings_revision_held,
+    )
+
+    store = ConsoleChatStore()
+    unused = ConsoleSessionSettings(provider="openai", model="gpt-4o-mini")
+    chat = store.create_session(settings=unused, canonical_settings_baseline=unused).id
+    controller = SimpleNamespace(
+        _screen=SimpleNamespace(),
+        _console_new_chat_default_generation=lambda: 0,
+        _provider_readiness_app_config=dict,  # a new mapping per read
+        _pristine_defaults_checked=None,
+        _default_convergences={},
+        _notify_stale_default_provider_swap=lambda *_args: None,
+    )
+
+    def converge(model: str, target: str = chat) -> None:
+        monkeypatch.setattr(
+            session_module,
+            "blank_console_session_settings",
+            lambda _config: ConsoleSessionSettings(provider="openai", model=model),
+        )
+        session = next(s for s in store.sessions() if s.id == target)
+        ConsoleSessionController._maybe_refresh_stale_default_console_settings(
+            controller, store, session
+        )
+        assert store.session_settings(target).model == model
+
+    def held(revision: int) -> bool:
+        return settings_revision_held(controller, store, chat, revision)
+
+    start = store.session_settings_revision(chat)
+    assert held(start) and not held(start + 1)
+    converge("gpt-4o")
+    converge("gpt-4.1")
+    assert [held(start + step) for step in range(4)] == [True, True, True, False]
+    # Another unused chat converging meanwhile leaves this chat's run alone.
+    other = store.create_session(settings=unused, canonical_settings_baseline=unused)
+    converge("gpt-4.1", other.id)
+    assert [held(start + step) for step in range(4)] == [True, True, True, False]
+
+    store.set_session_context_policy_overrides(  # the same chat, edited elsewhere
+        chat, ConsoleContextPolicyOverrides(compaction_mode=ContextCompactionMode.ASK)
+    )
+    edited = store.session_settings_revision(chat)
+    assert edited == start + 3
+    assert [held(start + step) for step in range(4)] == [False, False, False, True]
+
+    converge("gpt-5")
+    assert [held(start + step) for step in range(5)] == [
+        False,
+        False,
+        False,
+        True,
+        True,
+    ]
+    assert settings_revision_held(None, store, chat, edited + 1)
+    assert not settings_revision_held(None, store, chat, edited)
+
+
+def test_a_suspended_draft_follows_only_what_moved_under_its_own_pair():
+    """TASK-36534 review: a field the draft left alone follows the chat only
+    when the chat's own value moved since the capturing modal opened, and
+    only while the draft and the chat hold the same pair. A pick's rebased
+    values stay when nothing moved, or when the chat moved to another pair."""
+    from dataclasses import replace
+
+    from tldw_chatbook.Chat.console_context_policy import (
+        ConsoleContextPolicyOverrides,
+    )
+    from tldw_chatbook.Chat.console_session_settings import ConsoleSessionSettings
+    from tldw_chatbook.Widgets.Console.console_settings_modal import (
+        ConsoleSettingsDraftSnapshot,
+    )
+    from tldw_chatbook.Widgets.Console.console_settings_unsaved import (
+        chat_settings_values,
+        followed_suspended_draft,
+    )
+
+    old_url, new_url = "http://127.0.0.1:8000/v1", "http://127.0.0.1:8001/v1"
+    opened = ConsoleSessionSettings(
+        provider="vllm", model="old-model", base_url=old_url, temperature=0.7
+    )
+    picked = ConsoleSessionSettings(
+        provider="vllm", model="picked-model", base_url=old_url, temperature=0.4
+    )
+
+    def values(settings):
+        return chat_settings_values(settings, ConsoleContextPolicyOverrides(), None)
+
+    def snapshot(draft, edited, committed):
+        return ConsoleSettingsDraftSnapshot(
+            settings=draft,
+            context_policy_overrides=ConsoleContextPolicyOverrides(),
+            raw_values={
+                "console-settings-base-url": old_url,
+                "console-settings-temperature": "0.9",
+            },
+            provider_model_drafts={draft.provider: draft.model},
+            provider_base_url_drafts={draft.provider: old_url},
+            active_view="model",
+            scroll_anchor=0,
+            focus_control_id=None,
+            disclosure_state={
+                "advanced_generation": False,
+                "connection_details": False,
+            },
+            unsaved_baseline={
+                label: value
+                for label, value in values(opened).items()
+                if label in edited
+            },
+            unsaved_committed=committed,
+        )
+
+    # A pick's rebase in a chat that did not move: nothing follows it back.
+    kept = snapshot(picked, {"Model"}, values(opened))
+    assert followed_suspended_draft(kept, opened) is kept
+    # A draft that carries no committed values never follows.
+    legacy = snapshot(picked, {"Model"}, None)
+    assert followed_suspended_draft(legacy, replace(opened, base_url=new_url)) is legacy
+    # The chat moved to another pair: the pick keeps its own values.
+    other = ConsoleSessionSettings(
+        provider="ollama", model="other-model", base_url="http://127.0.0.1:11434/v1"
+    )
+    moved_away = snapshot(picked, {"Model"}, values(opened))
+    assert followed_suspended_draft(moved_away, other) is moved_away
+    # Same pair, the Endpoint moved: it follows; the Temperature edit stays.
+    left_alone = snapshot(opened, {"Temperature"}, values(opened))
+    followed = followed_suspended_draft(left_alone, replace(opened, base_url=new_url))
+    assert followed.settings.base_url == new_url
+    assert "console-settings-base-url" not in followed.raw_values
+    assert "vllm" not in followed.provider_base_url_drafts
+    assert followed.raw_values["console-settings-temperature"] == "0.9"
+    assert followed.settings.temperature == opened.temperature
+    # Same pair, a field left alone that the chat did not move: it stays,
+    # though it differs from the chat (a pick's rebase, say); the Endpoint,
+    # which the chat did move, follows.
+    rebased = snapshot(replace(opened, temperature=0.4), set(), values(opened))
+    only_url = followed_suspended_draft(rebased, replace(opened, base_url=new_url))
+    assert (only_url.settings.base_url, only_url.settings.temperature) == (
+        new_url,
+        0.4,
+    )
+    # The same pair spelled another way is still the chat's pair, picked or not.
+    respelled = replace(opened, provider="VLLM", base_url=new_url)
+    for edited in ({"Model"}, {"Temperature"}):
+        spelled = followed_suspended_draft(
+            snapshot(opened, edited, values(opened)), respelled
+        )
+        assert (spelled.settings.provider, spelled.settings.base_url) == (
+            "vllm",
+            new_url,
+        )
+
+
+@pytest.mark.parametrize("after_return", ["kept-invalid", "fixed"])
+@pytest.mark.asyncio
+async def test_an_invalid_context_edit_still_counts_after_the_round_trip(
+    after_return,
+):
+    """TASK-36534 review: an invalid Context and memory value is an edit the
+    suspended draft carries. The reopened Chat settings still asks about it
+    (TASK-33003.5); fixed back to the chat's value, nothing is unsaved."""
+    from Tests.UI.test_console_settings_unsaved_guard import (
+        _gesture,
+        _GuardHarness,
+        _modal,
+        _open,
+    )
+
+    app = _GuardHarness()
+    first = _modal(focus_context=True)
+    async with app.run_test(size=_SIZE) as pilot:
+        await _open(app, pilot, first)
+        trigger = first.query_one("#console-context-trigger-percent", Input)
+        chat_value = trigger.value
+        trigger.value = "not a percent"
+        await pilot.pause()
+        await pilot.pause()
+        assert first._unsaved_field_labels() == ("Context and memory",)
+        snapshot = first.capture_suspended_draft()
+        app.pop_screen()
+        await pilot.pause()
+
+        returned = _modal(suspended_draft=snapshot)
+        await _open(app, pilot, returned)
+        if after_return == "fixed":
+            returned.query_one(
+                "#console-context-trigger-percent", Input
+            ).value = chat_value
+            await pilot.pause()
+            await pilot.pause()
+            assert returned._unsaved_field_labels() == ()
+            return
+        assert returned._unsaved_field_labels() == ("Context and memory",)
+        await _gesture(pilot, "escape")
+        assert app.screen is returned  # Esc asks instead of discarding

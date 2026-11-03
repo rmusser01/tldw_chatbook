@@ -188,24 +188,27 @@ def test_snapshot_carries_the_unsaved_baseline_and_refuses_a_malformed_one() -> 
         disclosure_state={"advanced_generation": False, "connection_details": False},
     )
     mapping = snapshot.to_mapping()
-    # A draft captured before the modal's initial sync carries no baseline.
-    legacy = {key: value for key, value in mapping.items() if key != "unsaved_baseline"}
-    assert ConsoleSettingsDraftSnapshot.from_mapping(legacy).unsaved_baseline is None
-    for baseline in (
-        chat_settings_values(settings, ConsoleContextPolicyOverrides(), "Ada"),
-        chat_settings_values(settings, None, None),
-    ):
-        restored = ConsoleSettingsDraftSnapshot.from_mapping(
-            dict(mapping, unsaved_baseline=baseline)
-        )
-        assert restored is not None and restored.unsaved_baseline == baseline
-    for malformed in ({"Not a field": 1}, {"Model": object()}, ["Model"]):
-        assert (
-            ConsoleSettingsDraftSnapshot.from_mapping(
-                dict(mapping, unsaved_baseline=malformed)
+    # TASK-36534: the chat's committed values when the capturing modal opened
+    # travel the same way.
+    for key in ("unsaved_baseline", "unsaved_committed"):
+        # A draft captured before the modal's initial sync carries no baseline.
+        legacy = {name: value for name, value in mapping.items() if name != key}
+        assert getattr(ConsoleSettingsDraftSnapshot.from_mapping(legacy), key) is None
+        for baseline in (
+            chat_settings_values(settings, ConsoleContextPolicyOverrides(), "Ada"),
+            chat_settings_values(settings, None, None),
+        ):
+            restored = ConsoleSettingsDraftSnapshot.from_mapping(
+                dict(mapping, **{key: baseline})
             )
-            is None
-        )
+            assert restored is not None and getattr(restored, key) == baseline
+        for malformed in ({"Not a field": 1}, {"Model": object()}, ["Model"]):
+            assert (
+                ConsoleSettingsDraftSnapshot.from_mapping(
+                    dict(mapping, **{key: malformed})
+                )
+                is None
+            )
 
 
 @pytest.mark.asyncio
@@ -781,8 +784,9 @@ async def test_credential_round_trip_keeps_the_restored_edit_unsaved(
         store = console._ensure_console_chat_store()
         session = store.ensure_session()
         # The chat has its own settings, so a saved default never converges
-        # it. A blank chat converges to the new default and its return is
-        # refused (ADR-095 D1; TASK-36534).
+        # it and the Model edit still counts after the round trip. A blank
+        # chat takes the saved model (ADR-095 D1), which is then no longer an
+        # unsaved edit (TASK-36534; test_settings_save_reach.py pins that).
         assert store.replace_session_settings(session.id, committed).has_user_work
         # Directly replacing settings can leave a mount read on the old revision.
         # Publish this revision before opening the owner-checked settings modal.
@@ -803,6 +807,8 @@ async def test_credential_round_trip_keeps_the_restored_edit_unsaved(
         # model case names Model alone. It used to check a subset under Qodo
         # #2937's ruling that the Streaming re-base counted.
         assert labels == (("Temperature",) if edit == "temperature" else ("Model",))
+        sampling = ("temperature", "top_p", "min_p", "top_k", "max_tokens", "seed")
+        picked = {name: getattr(first._build_draft(), name) for name in sampling}
         await pilot.click("#console-settings-configure-credential")
 
         settings = None
@@ -834,6 +840,10 @@ async def test_credential_round_trip_keeps_the_restored_edit_unsaved(
             await pilot.pause(0.05)
         assert returned is not None
         await _settle(pilot, returned)
+        # TASK-36534 review: the chat did not move, so nothing in the draft
+        # follows it; the pick keeps its rebased sampling values.
+        draft = returned._build_draft()
+        assert {name: getattr(draft, name) for name in sampling} == picked
         assert returned._unsaved_field_labels() == labels
         assert _text(returned, "#console-settings-esc-hint") == esc_hint_copy(
             len(labels)
