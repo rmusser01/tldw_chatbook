@@ -5,7 +5,7 @@ status: Done
 assignee:
   - '@claude'
 created_date: 2026-11-03 05:51
-updated_date: 2026-11-03 08:03
+updated_date: 2026-11-03 08:32
 labels:
 - follow-up
 - console
@@ -84,6 +84,26 @@ On dev 18482c1cf7 every case stayed stale, and `_refresh` requested nothing (`re
 - **Census.** The closed-owner test and the new backoff test are appended at the `scripts/ui_pr_gate_census.txt` tail, and `MINIMUM_FILES` is now 1339.
 - **Vacuous disposed case.** The mounted test's `disposed` case now records that the refresh actually reached its disposed return (`disposed:_refresh`) and its retry guard (`disposed:_retired`), and asserts both.
 
+**Review round 2.**
+- **Important: retry timers were not coalesced.** Every failed or refused refresh scheduled its own timer, whoever had started the read. Each outside trigger therefore began another backed-off chain, and each chain kept firing at the 5 s cap. Examples of outside triggers: the 0.2 s run poll, a draft-spend or context read, a user sync.
+  - Fix: the projection keeps one `_retry_timer`. A new failure stops the pending timer and replaces it, and `_retry` clears the handle. Fakes that return None from `set_timer` are guarded. A replacement also lets an owner-change reset shorten a pending 5 s wait.
+  - Pin: `test_outside_runs_share_one_backed_off_retry_timer` runs an outside `run()` every 0.2 s for 2 s while reads fail, then counts live retry timers. Red at 2d14b2aac5 (`(11, 8)`: 11 timers, 8 still live); green now (at most 1).
+- **Minor: an incomplete fake.** The fake `_screen` in `test_console_shared_context_policy.py` lacked both `set_timer` and `_request_console_control_bar_sync`. Its refusal tests reached the retry branch, and the refresh task died with AttributeError, hidden by `gather(..., return_exceptions=True)`. The fake now has both no-ops.
+- **Hunt for other incomplete fakes.** A temporary, reverted instrumentation logged every retry branch reached on a screen missing either attribute. It ran across the 24 test files whose fakes can drive a readiness refresh (`native_chat_flow`, `internals_decomposition` and `rail_reconciliation` were left out: they define no fake `run_worker` and call no `_refresh`).
+  - Positive control: with the old `shared_context_policy` fake, the instrumentation logged 9 tests.
+  - With the fake fixed: no entries anywhere.
+  - Failures match the dev run of the same command, except one flaky switcher-probe test, which passed 3 of 3 on rerun.
+
+**Reviewer's chain probes, round 2.** Same machine. The probe copies `cs-impl3-chain-probe*.py` differ from the reviewer's in one line: their fake timer has the `stop()` that a Textual Timer has.
+
+| Scenario | 2d14b2aac5 | one timer |
+|---|---|---|
+| Idle, 30 s | 10 reads | 10 reads (0.3/s; settles to one read per 5 s) |
+| Outside `run()` every 0.7 s, 30 s | 158 reads, 5.3/s and climbing | 45 reads, 1.5/s, flat (the caller's own 1.4/s plus 2 retried syncs) |
+| 0.2 s poll for 10 s, then idle | 270 reads; 10 to 12/s once idle | 54 reads; 5/s during the poll (the poll's own reads); one read per 5 s once idle |
+
+All of them read nothing after `_closing`.
+
 **AC#3** does not apply: paths were stale, so the product code changed.
 
 **Closing and disposed (AC#4).** A closing screen or disposed runtime schedules nothing. `_retired()` makes the same check `run()` makes, both before the timer is scheduled and again when `_retry` fires. Textual also stops a screen's timers on unmount, and `_request_console_control_bar_sync` refuses a torn-down screen.
@@ -97,13 +117,17 @@ On dev 18482c1cf7 every case stayed stale, and `_refresh` requested nothing (`re
 - Backoff pin `test_a_failing_cold_refresh_backs_off_and_a_publish_resets_it`. Its reader always fails, and its fake retry re-enters `run()` the way the screen's sync does. It is red against a22c39efcc (`assert 4952 <= 5` reads in 2.5 s, because the fake runs the requested sync at once) and green with the backoff: 2 to 5 reads, delays 0.2, 0.4, 0.8 and 1.6, and back to 0.2 after a successful read.
 - The reviewer's probe (`cs-rev1-loop-probe.py`, whose fake gained one `set_timer` line, now `cs-impl2-loop-probe.py`) read 15 times in 3 s (5.0/s) at a22c39efcc. With the backoff it read 4 times in 3 s (1.3/s) and 8 times in 20 s (0.4/s); the steady state is one read per 5 s. Both read nothing after `_closing`.
 
+**Verification, review round 2 (one timer).** Load averages were 12 to 30.
+- `test_console_send_ready_attachment.py`, `test_console_readiness_config_projection.py` and `test_console_shared_context_policy.py`, two runs: 58 passed each. Both runs failed `mode_bar` and `settings_open_waits…`, which fail on dev too.
+- Size ratchets: 205 passed. `preflight.sh` passed.
+
 **Verification, review round 1 (backoff code).** Load averages were 19 to 32 on 18 CPUs.
 - The two edited files, plus `test_console_checked_display_scope.py` and `test_console_pricing_display.py`, ran three times: 100, 100 and 99 passed. Every run failed `mode_bar`, which fails on dev every run, and one run also failed `composer_resync`, a known flake that also failed on dev.
 - 30-file covering set plus `Tests/Performance/test_console_keystroke_work_census.py`: 385 passed, 7 failed.
   - `test_console_pricing_display.py::test_changed_adapter_equality_is_not_invoked_after_background_read` reaches the refusal path through the shared `test_console_checked_display_scope._screen` fake, which had no `set_timer`. That fake now has one, and the test passes.
   - `test_console_storage_units_stay_within_their_ratchets[untested]` and `[tested]` fail identically at 18482c1cf7, a22c39efcc and the backoff code: "trace GC pass os_opens: 57 > ceiling 54 x 1.05". The rest of the keystroke census passes.
   - `mode_bar`, `syncs_never_wait…[full-ui-held]`, `settings_open_waits…` and `active_run_copy…` also fail on dev.
-- Retry-recording files run again, together with `test_console_full_config_preparation.py` and `test_console_pending_attachment_stash.py`: every failure also fails on dev with the same command. No `set_timer` AttributeError appeared.
+- Retry-recording files run again, together with `test_console_full_config_preparation.py` and `test_console_pending_attachment_stash.py`: every failure also fails on dev with the same command. A refresh task that dies with AttributeError can be hidden by `gather(..., return_exceptions=True)`, so a passing test here proves nothing about an incomplete fake. Review round 2 found one, in `test_console_shared_context_policy.py`.
 - Census and lane CI tests (`Tests/CI` shard replay, census checker, shard count, P0 gate, workflow): 353 passed.
 - Size ratchets: 205 passed. `preflight.sh` passed; the census check reports 1339 entries against a floor of 1339.
 - Ruff on the touched files reports only findings that dev already has.
@@ -119,6 +143,7 @@ On dev 18482c1cf7 every case stayed stale, and `_refresh` requested nothing (`re
 - `Tests/UI/test_console_send_ready_attachment.py`
 - `Tests/UI/test_console_readiness_config_projection.py`
 - `Tests/UI/test_console_checked_display_scope.py` (the fake gains `set_timer`)
+- `Tests/UI/test_console_shared_context_policy.py` (the fake gains `set_timer` and `_request_console_control_bar_sync`)
 - `scripts/ui_pr_gate_census.txt` and `scripts/check_ui_pr_gate_census.py` (two tail nodes; floor 1339)
 - `Docs/Architecture/console.md` (the paragraph that describes this path)
 - `backlog/docs/lessons-testing-evidence.md`
