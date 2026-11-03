@@ -749,7 +749,7 @@ _BUDGETS: dict[str, int] = {
     # Console rail filter's count and page match titles, as a literal
     # substring), threaded through the shared filter and the page query.
     # 2026-10-30: re-measured after rebasing onto dev 134108dd84 (owner rule: the row is the exact measurement): 25693 -> 25705.
-    "tldw_chatbook/DB/ChaChaNotes_DB.py": 25851,
+    "tldw_chatbook/DB/ChaChaNotes_DB.py": 25854,  # 2026-11-03: +3 shared store-error import (TASK-36949.5)
     #: 2026-10-31, PR #3155 / TASK-18925: explicit user size-limit waiver.
     #: The OS notification defaults add 12 lines; pin the exact measurement.
     # PR3304, 2026-11-01: user size waiver; exact integration measurement.
@@ -876,7 +876,7 @@ _BUDGETS: dict[str, int] = {
     # allowlist entry; dev pinned this row while the branch was in flight.
     "tldw_chatbook/Model_Artifacts/service.py": 4896,
     "tldw_chatbook/Character_Chat/Character_Chat_Lib.py": 4775,
-    "tldw_chatbook/DB/Prompts_DB.py": 4670,
+    "tldw_chatbook/DB/Prompts_DB.py": 4673,  # 2026-11-03: +3 shared store-error import (TASK-36949.5)
     "tldw_chatbook/Chat/citation_trace_repository.py": 4717,
     # 2026-10-29, TASK-34000.28/.40 polish-1a (PR #3259), rebased onto dev
     # 38c9d2edcf: 4,646 -> 4,736 (+90: the filter fast path, kept draft and
