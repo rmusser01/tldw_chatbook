@@ -37,6 +37,9 @@ from tldw_chatbook.Chat.console_display_state import (
     ConsoleInspectorState,
 )
 from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
+from tldw_chatbook.Widgets.Console.console_bounded_section import (
+    ConsoleBoundedSection,
+)
 from tldw_chatbook.Widgets.Console.console_inspector_section import (
     ConsoleInspectorSection,
     ConsoleInspectorSectionState,
@@ -130,12 +133,32 @@ def _witness(rail: Widget) -> list[tuple]:
     ]
 
 
+async def _settled_witness(pilot, rail: Widget) -> list[tuple]:
+    """The rail's witness once it has settled.
+
+    Settled: no batch open, no bounded section with a reconcile pending, and
+    two pauses in a row leave the witness as it was. A fixed number of pauses
+    could sample before the bounded sections reconciled against their laid-out
+    viewport (TASK-38650 review: a run viewport 14 rows tall instead of 2).
+    """
+    previous = None
+    for _ in range(40):
+        await pilot.pause(0.05)
+        current = _witness(rail)
+        pending = any(
+            section._reconcile_scheduled
+            for section in rail.query(ConsoleBoundedSection)
+        )
+        if current == previous and not rail.app._batch_count and not pending:
+            return current
+        previous = current
+    raise AssertionError(f"the rail never settled: {current}")
+
+
 async def _never_hidden(widget: Widget) -> list[tuple]:
     host = _RailHost(widget)
     async with host.run_test(size=(40, 30)) as pilot:
-        await pilot.pause()
-        await pilot.pause()
-        return _witness(host.query_one("#rail"))
+        return await _settled_witness(pilot, host.query_one("#rail"))
 
 
 async def _changed_while_hidden(monkeypatch, widget: Widget, change) -> tuple:
@@ -153,10 +176,7 @@ async def _changed_while_hidden(monkeypatch, widget: Widget, change) -> tuple:
             await pilot.pause()
             hidden_calls = list(calls)
         ChatScreen._sync_console_rail_descendant_visibility(rail, True)
-        await pilot.pause()
-        await pilot.pause()
-        await pilot.pause()
-        return hidden_calls, _witness(rail)
+        return hidden_calls, await _settled_witness(pilot, rail)
 
 
 async def test_run_inspector_holds_a_rebuild_for_the_rails_opening(monkeypatch) -> None:

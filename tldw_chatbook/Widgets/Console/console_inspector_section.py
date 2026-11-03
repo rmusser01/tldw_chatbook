@@ -875,26 +875,23 @@ class ConsoleInspectorSection(RecomposeCaptureGuard, Vertical):
         self.recompose_count += 1
         self.refresh(recompose=True)
 
-    def rebuild_if_deferred(self) -> None:
+    def rebuild_if_deferred(self) -> bool:
         """Run the rebuild a collapsed rail held back (TASK-37000).
 
         The rail's opening cascade calls this once it has shown the section
         again, so the rebuild lands with the opening's own layout.
 
-        TASK-38650: ``delay_update`` holds the app's paints until this
-        widget's pump has started the recompose, whose own batch holds them
-        from there; its end is a timer, so it runs after the pump step queued
-        here. Without it, a screen update tick already queued when the rail
-        opened painted the held rows once.
+        Returns:
+            True when a rebuild was queued on this widget's message pump.
         """
         if not self._rail_rebuild_deferred:
-            return
+            return False
         self._rail_rebuild_deferred = False
         if not self.is_mounted:
-            return
+            return False
         self.recompose_count += 1
-        self.app.delay_update()
         self.refresh(recompose=True)
+        return True
 
     def _apply_state_updates(
         self,

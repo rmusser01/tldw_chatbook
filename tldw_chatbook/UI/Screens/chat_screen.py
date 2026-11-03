@@ -12633,8 +12633,14 @@ class ChatScreen(BaseAppScreen):
                 child.styles.display = "block" if prior_display else "none"
                 delattr(child, CONSOLE_RAIL_PRIOR_DISPLAY)
                 # TASK-37000: the rebuild a hidden child held for this opening.
-                if callable(getattr(child, "rebuild_if_deferred", None)):
-                    child.rebuild_if_deferred()
+                rebuild = getattr(child, "rebuild_if_deferred", None)
+                if callable(rebuild) and rebuild():
+                    # TASK-38650: no paint until it has run on the child's pump;
+                    # a screen tick queued before this opening painted the held
+                    # rows. ponytail: a pump busy in a slow handler holds every
+                    # paint that long; none of the rail's held widgets has one.
+                    child.app._begin_batch()
+                    child.call_next(child.app._end_batch)
                 continue
 
             if not hasattr(child, CONSOLE_RAIL_PRIOR_DISPLAY):
