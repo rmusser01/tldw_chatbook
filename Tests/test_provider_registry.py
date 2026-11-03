@@ -330,6 +330,77 @@ def test_custom_slot_keys_come_from_the_custom_records():
     assert set(PROVIDER_DISPLAY_NAMES) - KNOWN_PROVIDER_KEYS == {"custom_hosted"}
 
 
+# Frozen from the hand table at dc96c947e8: a record display_name drift must
+# update this deliberately, not silently relabel the UI.
+_EXPECTED_DISPLAY_NAMES = {
+    'anthropic': 'Anthropic',
+    'aphrodite': 'Aphrodite Engine',
+    'arcee': 'Arcee AI',
+    'azure': 'Azure OpenAI',
+    'baseten': 'Baseten',
+    'byteplus': 'ByteDance Seed (BytePlus)',
+    'cerebras': 'Cerebras',
+    'cloudflare': 'Cloudflare Workers AI',
+    'cohere': 'Cohere',
+    'commandcode': 'Command Code',
+    'custom': 'Custom OpenAI-compatible',
+    'custom_2': 'Custom OpenAI-compatible #2',
+    'custom_hosted': 'Custom Hosted',
+    'databricks': 'Databricks',
+    'deepinfra': 'DeepInfra',
+    'deepseek': 'DeepSeek',
+    'fireworks': 'Fireworks',
+    'gmi': 'GMI Cloud',
+    'google': 'Google Gemini',
+    'groq': 'Groq',
+    'huggingface': 'Hugging Face',
+    'kilo': 'Kilo Gateway',
+    'koboldcpp': 'KoboldCpp',
+    'llama_cpp': 'llama.cpp',
+    'local_llamacpp': 'llama.cpp (legacy alias)',
+    'local_llamafile': 'Llamafile',
+    'local_llm': 'Local LLM (legacy generic)',
+    'local_mlx_lm': 'MLX-LM (Apple silicon)',
+    'local_ollama': 'Ollama (legacy alias)',
+    'local_onnx': 'ONNX Runtime (local)',
+    'local_transformers': 'Transformers (local)',
+    'local_vllm': 'vLLM (legacy alias)',
+    'meta': 'Meta (Muse Spark)',
+    'mimo': 'Xiaomi MiMo',
+    'minimax': 'MiniMax',
+    'mistral': 'Mistral AI (legacy alias)',
+    'mistralai': 'Mistral AI',
+    'moonshot': 'Moonshot AI',
+    'nebius': 'Nebius Token Factory',
+    'nous': 'Nous Research',
+    'novita': 'Novita AI',
+    'nvidia': 'NVIDIA NIM',
+    'ollama': 'Ollama',
+    'ollama_cloud': 'Ollama Cloud',
+    'oobabooga': 'Text Generation WebUI (Oobabooga)',
+    'openai': 'OpenAI',
+    'opencode_zen': 'OpenCode Zen',
+    'openrouter': 'OpenRouter',
+    'polystrata': 'PolyStrata',
+    'qianfan': 'Baidu Qianfan',
+    'qwencloud': 'QwenCloud',
+    'sambanova': 'SambaNova',
+    'siliconflow': 'SiliconFlow',
+    'stepfun': 'StepFun',
+    'strata': 'Strata',
+    'tabbyapi': 'TabbyAPI',
+    'together': 'Together',
+    'tokenhub': 'Tencent TokenHub',
+    'upstage': 'Upstage',
+    'venice': 'Venice',
+    'vercel': 'Vercel AI Gateway',
+    'vllm': 'vLLM',
+    'wandb': 'W&B Inference (CoreWeave)',
+    'zai': 'Z.ai',
+    'zenmux': 'ZenMux',
+}
+
+
 def test_display_names_follow_records_and_overrides_are_not_redundant():
     from tldw_chatbook.Chat.provider_catalog import (
         _DISPLAY_NAME_OVERRIDES,
@@ -337,11 +408,8 @@ def test_display_names_follow_records_and_overrides_are_not_redundant():
     )
     from tldw_chatbook.provider_registry import normalize_provider_config_key as norm
 
+    assert PROVIDER_DISPLAY_NAMES == _EXPECTED_DISPLAY_NAMES
     by_key = {norm(r.key): r.display_name for r in ALL_RECORDS}
-    for key, label in PROVIDER_DISPLAY_NAMES.items():
-        if key in _DISPLAY_NAME_OVERRIDES:
-            assert label == _DISPLAY_NAME_OVERRIDES[key]
-            # An override equal to the record value is dead weight.
-            assert by_key.get(key) != label, key
-        else:
-            assert label == by_key[key], key
+    for key, label in _DISPLAY_NAME_OVERRIDES.items():
+        # An override equal to the record value is dead weight.
+        assert by_key.get(key) != label, key
