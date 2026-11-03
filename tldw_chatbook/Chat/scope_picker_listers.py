@@ -38,7 +38,7 @@ from typing import Any
 
 from tldw_chatbook.DB.Client_Media_DB_v2 import fetch_keywords_for_media_batch
 from tldw_chatbook.Library.library_fts_query import build_fts_match_query
-from tldw_chatbook.Widgets.Console.console_scope_picker_modal import (
+from tldw_chatbook.Chat.rag_scope import (
     SORT_TITLE,
     ScopeListItem,
     ScopeListPage,

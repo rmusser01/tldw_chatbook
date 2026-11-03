@@ -71,9 +71,8 @@ regardless of outcome -- callers read the outcome from ``on_save``, not from
 from __future__ import annotations
 
 import math
-from dataclasses import dataclass
 from datetime import datetime, timezone
-from typing import Awaitable, Callable, Optional, Protocol
+from typing import Callable, Optional
 
 from tldw_chatbook.Utils.input_validation import escape_markup
 from textual import on
@@ -91,67 +90,17 @@ from tldw_chatbook.Widgets.glyph_fallback import resolve_glyph
 from tldw_chatbook.Chat.rag_scope import (
     SOURCE_TYPE_MEDIA,
     SOURCE_TYPE_NOTE,
+    SORT_RECENT,
+    SORT_TITLE,
+    SORT_TYPE,
     RagScope,
     ScopeItem,
+    ScopeListItem,
+    ScopeListPage,
+    SourceLister,
+    TagCount,
+    TagLister,
 )
-
-# -- injected-lister protocols ------------------------------------------------
-
-
-@dataclass(frozen=True)
-class ScopeListItem:
-    """One row as returned by a ``SourceLister.list_page`` call."""
-
-    source_id: str
-    title: str
-    #: Sortable timestamp string (ISO-8601-ish); "" sorts last under Recent.
-    updated_at: str
-    tags: tuple[str, ...] = ()
-
-
-@dataclass(frozen=True)
-class ScopeListPage:
-    """Result of a single ``SourceLister.list_page`` call."""
-
-    items: tuple[ScopeListItem, ...]
-    #: Count of ALL items matching the text/tag filter (untruncated by
-    #: paging) -- used to decide whether a Next page exists.
-    total_matching: int
-
-
-class SourceLister(Protocol):
-    """Protocol implemented by ``media_lister`` / ``notes_lister``.
-
-    Both methods share the SAME ``text``/``tags`` filter contract so their
-    results describe the same logical filtered set for a given source type.
-    """
-
-    async def list_page(
-        self,
-        *,
-        text: str,
-        tags: tuple[str, ...],
-        sort: str,
-        offset: int,
-        limit: int,
-    ) -> ScopeListPage:
-        """Return one sorted, paginated page of full item details."""
-        ...
-
-    async def list_ids(self, *, text: str, tags: tuple[str, ...]) -> tuple[str, ...]:
-        """Return ALL matching ids (unpaginated, no item details)."""
-        ...
-
-
-@dataclass(frozen=True)
-class TagCount:
-    """One entry in a tag-vocabulary listing."""
-
-    tag: str
-    count: int
-
-
-TagLister = Callable[[str], Awaitable[tuple[TagCount, ...]]]
 
 # -- constants ----------------------------------------------------------------
 
@@ -159,9 +108,6 @@ TAB_ALL = "all"
 TAB_MEDIA = SOURCE_TYPE_MEDIA
 TAB_NOTE = SOURCE_TYPE_NOTE
 
-SORT_RECENT = "recent"
-SORT_TITLE = "title"
-SORT_TYPE = "type"
 _VALID_SORTS = (SORT_RECENT, SORT_TITLE, SORT_TYPE)
 
 VIEW_ALL = "all"

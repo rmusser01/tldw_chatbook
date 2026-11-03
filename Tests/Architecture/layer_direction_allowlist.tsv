@@ -28,7 +28,6 @@ tldw_chatbook.Chat.console_runtime	tldw_chatbook.Event_Handlers.Chat_Events.chat
 tldw_chatbook.Chat.console_runtime	tldw_chatbook.Widgets.Console.console_hooks_review_modal	lazy
 tldw_chatbook.Chat.console_speculative_voice_session	tldw_chatbook.Widgets.Console	lazy
 tldw_chatbook.Chat.console_voice_process	tldw_chatbook.Widgets.Console	lazy
-tldw_chatbook.Chat.scope_picker_listers	tldw_chatbook.Widgets.Console.console_scope_picker_modal	top
 tldw_chatbook.DB.AgentRuns_DB	tldw_chatbook.Agents.run_log	top
 tldw_chatbook.DB.AgentRuns_DB	tldw_chatbook.Backup_Recovery.participants	top
 tldw_chatbook.DB.AgentRuns_DB	tldw_chatbook.Provider_Contract.sampling_params	top
