@@ -2617,19 +2617,45 @@ def _derive_loop_targets(
 
 
 _STORE_CONSTRUCTIONS: dict[
-    tuple[int, str], tuple[ast.Module, tuple[ast.Call, ...]]
+    tuple[int, str],
+    tuple[ast.Module, tuple[ast.Call, ...], frozenset[str]],
 ] = {}
+_REFLECTIVE_WRITERS = frozenset({"setattr", "delattr", "__setattr__", "__delattr__"})
 
 
-def _store_constructions(module: ast.Module, store: str) -> tuple[ast.Call, ...]:
+def _own_self_spec_writes(module: ast.Module) -> set[int]:
+    """``self.spec`` writes in a method's own body, where ``self`` is its class's."""
+    return {
+        id(node)
+        for owner in ast.walk(module)
+        if isinstance(owner, ast.ClassDef)
+        for method in owner.body
+        if isinstance(method, (ast.FunctionDef, ast.AsyncFunctionDef))
+        and method.args.args
+        and method.args.args[0].arg == "self"
+        for node in _function_body_nodes(method)
+        if isinstance(node, ast.Attribute)
+        and node.attr == "spec"
+        and isinstance(node.value, ast.Name)
+        and node.value.id == "self"
+    }
+
+
+def _store_constructions(
+    module: ast.Module, store: str
+) -> tuple[tuple[ast.Call, ...], frozenset[str]]:
     """Every direct ``store(...)`` call in ``module``; any other use fails closed.
 
-    Memoized per module object: each keyword-store review re-reads the whole
-    production tree, and one walk of it costs seconds.
+    The same walk returns every attribute name ``module`` writes or deletes
+    through ``setattr``/``__setattr__`` (and the ``del`` forms), and fails on a
+    ``.spec`` write whose receiver is not a method's own ``self``: either can
+    swap a built store's spec, or force a field of its frozen spec, without
+    touching a construction. Memoized per module object: each keyword-store
+    review re-reads the whole production tree, and one walk of it costs seconds.
     """
     cached = _STORE_CONSTRUCTIONS.get((id(module), store))
     if cached is not None and cached[0] is module:
-        return cached[1]
+        return cached[1], cached[2]
     nodes = list(ast.walk(module))
     calls = tuple(
         node
@@ -2637,6 +2663,25 @@ def _store_constructions(module: ast.Module, store: str) -> tuple[ast.Call, ...]
         if isinstance(node, ast.Call) and _call_name(node) == store
     )
     direct = {id(call.func) for call in calls}
+    spec_writes = [
+        node
+        for node in nodes
+        if isinstance(node, ast.Attribute)
+        and node.attr == "spec"
+        and isinstance(node.ctx, (ast.Store, ast.Del))
+    ]
+    if spec_writes:
+        own = _own_self_spec_writes(module)
+        assert all(id(node) in own for node in spec_writes), (
+            ".spec was written outside its own class's methods"
+        )
+    reflected = frozenset(
+        name
+        for node in nodes
+        if isinstance(node, ast.Call) and _call_name(node) in _REFLECTIVE_WRITERS
+        for argument in node.args[:2]
+        if (name := _literal_string_value(argument)) is not None
+    )
     for node in nodes:
         referenced = (
             node.id
@@ -2659,8 +2704,8 @@ def _store_constructions(module: ast.Module, store: str) -> tuple[ast.Call, ...]
             and len(node.args) >= 2
             and _literal_string_value(node.args[1]) == store
         ), f"{store} was reflected through getattr()"
-    _STORE_CONSTRUCTIONS[(id(module), store)] = (module, calls)
-    return calls
+    _STORE_CONSTRUCTIONS[(id(module), store)] = (module, calls, reflected)
+    return calls, reflected
 
 
 def _derive_spec_field_targets(
@@ -2682,6 +2727,25 @@ def _derive_spec_field_targets(
     assert used == set(evidence.fields), (
         f"dynamic SQL spec fields changed: {sorted(used)}"
     )
+    spec_class = next(
+        (
+            node
+            for node in tree.body
+            if isinstance(node, ast.ClassDef) and node.name == evidence.spec
+        ),
+        None,
+    )
+    assert spec_class is not None and any(
+        isinstance(decorator, ast.Call)
+        and _call_name(decorator) == "dataclass"
+        and any(
+            keyword.arg == "frozen"
+            and isinstance(keyword.value, ast.Constant)
+            and keyword.value.value is True
+            for keyword in decorator.keywords
+        )
+        for decorator in spec_class.decorator_list
+    ), f"{evidence.spec} must be a @dataclass(frozen=True) beside {evidence.store}"
     stores = [
         node
         for node in ast.walk(tree)
@@ -2711,8 +2775,14 @@ def _derive_spec_field_targets(
     unique = {
         id(module): (name, module) for name, module in {**modules, "": tree}.items()
     }
+    reviewed = {"spec", *evidence.fields}
     for module_name, module in sorted(unique.values(), key=lambda item: item[0]):
-        for node in _store_constructions(module, evidence.store):
+        calls, reflected = _store_constructions(module, evidence.store)
+        assert not reflected & reviewed, (
+            f"{evidence.store}.spec or a reviewed {evidence.spec} field is "
+            "written reflectively"
+        )
+        for node in calls:
             constructions += 1
             spec = _literal_call_argument(node, _LiteralCallTarget("", 1, "spec"))
             if isinstance(spec, ast.Name):
@@ -5001,6 +5071,11 @@ def test_loop_target_evidence_rejects_unproven_loop_targets(
 
 
 _SPEC_STORE_SOURCE = """
+@dataclass(frozen=True)
+class KeywordStoreSpec:
+    link_table: str
+
+
 class KeywordStore:
     def __init__(self, db, spec):
         self.spec = spec
@@ -5101,6 +5176,68 @@ def test_spec_field_evidence_rejects_a_rebound_or_unreviewed_field(
     )
 
     with pytest.raises(AssertionError, match=error):
+        _derive_target_evidence(
+            ast.parse(store_source), _SPEC_EVIDENCE, imported_modules=hosts
+        )
+
+
+@pytest.mark.parametrize(
+    ("host", "error"),
+    [
+        ('store.spec = KeywordStoreSpec(link_table="messages")', "spec was written"),
+        ("del store.spec", "spec was written"),
+        ("holder.store.spec = other", "spec was written"),
+        ("def rebind(self, spec):\n    self.spec = spec", "spec was written"),
+        ('object.__setattr__(SPEC, "link_table", "messages")', "reflectively"),
+        ('setattr(store, "spec", other)', "reflectively"),
+        ('store.__setattr__("spec", other)', "reflectively"),
+        ('delattr(store, "spec")', "reflectively"),
+    ],
+)
+def test_spec_field_evidence_rejects_a_spec_rewritten_outside_its_store(
+    host: str, error: str
+) -> None:
+    """A host that swaps the store's spec, or forces a field of the frozen
+    spec, changes the table without touching any construction."""
+    hosts = _spec_hosts(
+        'store = KeywordStore(db, KeywordStoreSpec(link_table="Links"))\n' + host
+    )
+
+    with pytest.raises(AssertionError, match=error):
+        _derive_target_evidence(
+            ast.parse(_SPEC_STORE_SOURCE), _SPEC_EVIDENCE, imported_modules=hosts
+        )
+
+
+def test_spec_field_evidence_allows_another_class_own_spec_attribute() -> None:
+    """Another class's ``self.spec`` and unrelated reflective writes are not
+    the store's spec (production: the Console video and generation cards)."""
+    hosts = _spec_hosts(
+        'store = KeywordStore(db, KeywordStoreSpec(link_table="Links"))\n'
+        "class Card:\n"
+        "    def __init__(self, spec):\n"
+        "        self.spec = spec\n"
+        'setattr(widget, "label", "x")'
+    )
+
+    derived = _derive_target_evidence(
+        ast.parse(_SPEC_STORE_SOURCE), _SPEC_EVIDENCE, imported_modules=hosts
+    )
+
+    assert derived.targets == {"Links"}
+
+
+@pytest.mark.parametrize(
+    "decorator",
+    ["", "@dataclass\n", "@dataclass(frozen=False)\n", "@other(frozen=True)\n"],
+)
+def test_spec_field_evidence_requires_a_frozen_spec_class(decorator: str) -> None:
+    hosts = _spec_hosts(
+        'store = KeywordStore(db, KeywordStoreSpec(link_table="Links"))'
+    )
+    store_source = _SPEC_STORE_SOURCE.replace("@dataclass(frozen=True)\n", decorator)
+
+    with pytest.raises(AssertionError, match="frozen"):
         _derive_target_evidence(
             ast.parse(store_source), _SPEC_EVIDENCE, imported_modules=hosts
         )
