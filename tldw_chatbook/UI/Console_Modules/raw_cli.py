@@ -133,6 +133,7 @@ def prepare_visible_send(
     commit_captured: Callable[[ConsoleDraftStash], Any] | None = None,
     *,
     captured: bool = False,
+    raw_capture_scope: Callable[[], Any] = nullcontext,
 ) -> tuple[ConsoleDraftStash | None, Any | None, str, bool]:
     """Classify a visible draft and consume direct raw submissions.
 
@@ -150,9 +151,10 @@ def prepare_visible_send(
     if stash is not None:
         classified = classify_console_raw_draft(stash)
         if classified.kind == "raw":
-            if commit_captured is not None:
-                commit_captured(stash)
-            start_user_command(stash)
+            with raw_capture_scope():
+                if commit_captured is not None:
+                    commit_captured(stash)
+                start_user_command(stash)
             return stash, None, "", True
         if classified.kind == "escaped_chat":
             stash = unescape_console_raw_chat_stash(stash)
@@ -160,14 +162,23 @@ def prepare_visible_send(
     if stash is None and captured:
         return None, composer, "", False
     if stash is None and composer is not None:
-        stash = composer.stash_raw_cli_draft_for_send()
-        if stash is None and composer.draft_text().startswith(r"\! "):
+        candidate = (
+            composer.capture_draft_for_send()
+            if composer.draft_text().startswith("! ")
+            else None
+        )
+        if (
+            candidate is not None
+            and classify_console_raw_draft(candidate).kind == "raw"
+        ):
+            with raw_capture_scope():
+                composer.commit_captured_draft(candidate)
+                start_user_command(candidate)
+            return candidate, composer, "", True
+        if composer.draft_text().startswith(r"\! "):
             stash = composer.stash_draft_for_send()
         if stash is not None:
             classified = classify_console_raw_draft(stash)
-            if classified.kind == "raw":
-                start_user_command(stash)
-                return stash, composer, "", True
             if classified.kind == "escaped_chat":
                 stash = unescape_console_raw_chat_stash(stash)
     draft = (

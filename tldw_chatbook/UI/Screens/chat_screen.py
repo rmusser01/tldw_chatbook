@@ -18398,13 +18398,24 @@ class ChatScreen(BaseAppScreen):
             return False
         if self._session.refuse_send_from_unbound_composer():  # TASK-33622.7
             return False
-        stash, composer, draft, raw_cli_handled = raw_cli_ui.prepare_visible_send(
-            stash,
-            self._console_composer_or_none,
-            self._raw_cli.start_user_command,
-            commit_captured=partial(_commit_captured_console_draft, self, session_id),
-            captured=pending_send_token is not None,
-        )
+        try:
+            stash, composer, draft, raw_cli_handled = raw_cli_ui.prepare_visible_send(
+                stash,
+                self._console_composer_or_none,
+                self._raw_cli.start_user_command,
+                commit_captured=partial(
+                    _commit_captured_console_draft, self, session_id
+                ),
+                captured=pending_send_token is not None,
+                raw_capture_scope=lambda: (
+                    self._console_runtime()._first_send_source_scope()
+                ),
+            )
+        except RuntimeError as error:
+            if str(error) != "Console configuration is being saved; Send again.":
+                raise
+            self.app_instance.notify(str(error), severity="warning")
+            return False
         if raw_cli_handled:
             return False
         if not draft.strip() and self._console_pending_image_attachment() is None:

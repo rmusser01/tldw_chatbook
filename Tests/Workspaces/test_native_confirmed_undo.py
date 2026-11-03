@@ -377,6 +377,8 @@ async def test_finish_return_retains_original_worker_db_and_scratch(
             call, conn, thread = observed[0]
             assert thread != threading.get_ident() and conn is not None
             assert not call.retired.is_set() and root.exists()
+            assert call in call.source.issuer.pending
+            assert h.runtime._first_send_sources == 1
             with h.runtime.worktree_activity.prelaunch(
                 footprint=WorktreeFootprint(opaque=True)
             ) as claim:
@@ -389,6 +391,8 @@ async def test_finish_return_retains_original_worker_db_and_scratch(
         except asyncio.CancelledError:
             pass
         assert call.retired.is_set()
+        assert call not in call.source.issuer.pending
+        assert h.runtime._first_send_sources == 0
         assert await asyncio.to_thread(h.runtime.scratch_spaces.wait_for_cleanup, 3)
         assert not root.exists()
 
@@ -1028,3 +1032,21 @@ async def test_activation_entry_refusal_retires_without_effect_then_allows_later
         await pilot.click("#change-revert-yes")
         await screen.workers.wait_for_complete()
         assert (h.root / "edit.txt").read_text() == "before\n"
+
+
+async def test_undo_capture_refuses_before_generation_capture_during_publication(
+    undo_host,
+):
+    from tldw_chatbook.Workspaces.change_revert_ownership import capture_undo
+
+    h = undo_host
+    h.runtime._first_send_publishing = True
+    try:
+        with pytest.raises(RuntimeError, match="being saved"):
+            capture_undo(h.provider)
+        assert not h.provider._undo_native.pending
+        assert h.runtime._first_send_sources == 0
+        assert not h.runtime.execution_capacity.snapshot().executions
+        assert (h.root / "edit.txt").read_text() == "after\n"
+    finally:
+        h.runtime._first_send_publishing = False

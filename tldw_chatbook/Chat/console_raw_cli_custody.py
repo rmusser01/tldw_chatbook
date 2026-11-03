@@ -103,39 +103,46 @@ class NativeRawCliSource:
         self.pending = set()
 
     def capture(self, raw, session_id, invocation_id):
-        if raw is not self.raw:
-            raise RuntimeError("original RawCLI runtime changed")
-        call = _UserRawCliCall(self, session_id, invocation_id)
-        with call.activate():
-            call.check()
-            call.capacity = call.capacity or self.runtime.execution_capacity
-            call.activity = call.activity or self.runtime.worktree_activity
-            call.check()
-            with call.activity.prelaunch(
-                footprint=WorktreeFootprint(opaque=True)
-            ) as claim:
-                if claim is None:
-                    raise CapacityRefused("raw_cli_activity_busy")
-                owner = call.capacity.begin_execution(
-                    origin=WorkOrigin.MANUAL,
-                    conversation_id=call.session.persisted_conversation_id or "",
-                )
-                try:
-                    operation = owner.reserve_tool()
-                except BaseException:
-                    owner.finish_root()
-                    raise
-                try:
-                    with self.runtime._execution_capacity_lock:
-                        call.check_memory()
-                        claim.bind_owner(owner)
-                        call.owner, call.operation, call.claim = owner, operation, claim
-                        self.pending.add(call)
-                except BaseException:
-                    operation.finish()
-                    owner.finish_root()
-                    raise
-        return call
+        with self.runtime._first_send_source_scope():
+            if raw is not self.raw:
+                raise RuntimeError("original RawCLI runtime changed")
+            call = _UserRawCliCall(self, session_id, invocation_id)
+            with call.activate():
+                call.check()
+                call.capacity = call.capacity or self.runtime.execution_capacity
+                call.activity = call.activity or self.runtime.worktree_activity
+                call.check()
+                with call.activity.prelaunch(
+                    footprint=WorktreeFootprint(opaque=True)
+                ) as claim:
+                    if claim is None:
+                        raise CapacityRefused("raw_cli_activity_busy")
+                    owner = call.capacity.begin_execution(
+                        origin=WorkOrigin.MANUAL,
+                        conversation_id=call.session.persisted_conversation_id or "",
+                    )
+                    try:
+                        operation = owner.reserve_tool()
+                    except BaseException:
+                        owner.finish_root()
+                        raise
+                    try:
+                        with self.runtime._execution_capacity_lock:
+                            call.check_memory()
+                            claim.bind_owner(owner)
+                            call.owner, call.operation, call.claim = (
+                                owner,
+                                operation,
+                                claim,
+                            )
+                            self.pending.add(call)
+                            # Overlap capture with this original pending lifetime.
+                            self.runtime._first_send_sources += 1
+                    except BaseException:
+                        operation.finish()
+                        owner.finish_root()
+                        raise
+            return call
 
     async def drain(self):
         pending = tuple(self.pending)
@@ -455,5 +462,10 @@ class _UserRawCliCall:
             self.scratch_lease = None
         self.owner.finish_root()
         self.claim.settle(durable=True)
-        self.issuer.pending.discard(self)
+        with self.runtime._execution_capacity_lock:
+            # Lost original membership cannot prove release of its metadata.
+            if self in self.issuer.pending:
+                self.issuer.pending.remove(self)
+                self.runtime._first_send_sources -= 1
         self.retired.set()
+        self.runtime._wake_first_send()

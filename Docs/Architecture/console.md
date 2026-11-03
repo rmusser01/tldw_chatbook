@@ -269,8 +269,14 @@ Streaming details, transforms (skills → chat dictionaries → world info), swi
 A successful manual parent updates the app's onboarding flag immediately. The
 runtime retains the original intake config identity and app/controller/store
 objects for one deferred native one-key save. Received and mounted capture,
-direct submission, every queued/claimed prompt, and original ordinary trees
-block that save until their source lifetimes return. Election shares a metadata
+direct submission, every queued/claimed prompt, original ordinary trees, and
+the original admitted RawCLI/Undo pending members block that save until their
+source lifetimes return. RawCLI fences trusted raw classification before draft
+transfer and independently before native generation capture; other command
+routes keep their existing parsing. RawCLI/Undo pending membership carries
+the same metadata count through physical/required/host cleanup and canonical
+finish return, then wakes the save after original root/claim settlement. Lost
+original pending membership conservatively retains the count. Election shares a metadata
 lock with capture; asynchronous intake waits before capture and synchronous
 intake refuses before input transfer during the actual write. The native config
 transaction rechecks those original identities under its own lock.

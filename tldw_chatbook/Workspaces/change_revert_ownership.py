@@ -39,7 +39,8 @@ def capture_undo(provider):
         if getattr(provider, "_native_undo_expected", False):
             raise RevertRefusedError("original Undo source unavailable")
         return None
-    return _UndoConfirmation(issuer, provider)
+    with issuer.runtime._first_send_source_scope():
+        return _UndoConfirmation(issuer, provider)
 
 
 class NativeUndoIssuer:
@@ -184,21 +185,22 @@ class _UndoConfirmation:
             raise RevertRefusedError("original Undo snapshot changed")
 
     async def _admit(self, *, applying):
-        call = _UndoCall(self, applying=applying)
-        try:
-            await run_preparation_read(
-                call.admit,
-                creator=self.issuer,
-                session_id=None,
-                reads=self.runtime._preparation_reads,
-                require_current=self.check_memory,
-                source=self,
-            )
-            self.check_memory()
-            return call
-        except BaseException:
-            await call.cancel_unused()
-            raise
+        async with self.runtime._first_send_source_scope_async():
+            call = _UndoCall(self, applying=applying)
+            try:
+                await run_preparation_read(
+                    call.admit,
+                    creator=self.issuer,
+                    session_id=None,
+                    reads=self.runtime._preparation_reads,
+                    require_current=self.check_memory,
+                    source=self,
+                )
+                self.check_memory()
+                return call
+            except BaseException:
+                await call.cancel_unused()
+                raise
 
     async def prepare(self, callback, *, marshal, current):
         call = await self._admit(applying=False)
@@ -274,6 +276,8 @@ class _UndoCall:
                         claim.bind_owner(owner)
                         self.owner, self.operation, self.claim = owner, operation, claim
                         issuer.pending.add(self)
+                        # The admitted member carries capture through native return.
+                        s.runtime._first_send_sources += 1
                 except BaseException:
                     operation.finish()
                     owner.finish_root()
@@ -324,8 +328,11 @@ class _UndoCall:
         self.owner.finish_root()
         self.claim.settle(durable=True)
         with self.source.runtime._execution_capacity_lock:
-            self.source.issuer.pending.discard(self)
+            if self in self.source.issuer.pending:
+                self.source.issuer.pending.remove(self)
+                self.source.runtime._first_send_sources -= 1
         self.retired.set()
+        self.source.runtime._wake_first_send()
 
     def validate_root(self, root):
         s = self.source
