@@ -299,3 +299,61 @@ def test_deferred_seams_resolve_and_stay_single_sourced(tmp_path: Path) -> None:
         f"stderr={result.stderr[-4000:]}"
     )
     assert "DEFERRED_SEAMS_OK" in result.stdout
+
+
+def test_console_display_exports_load_only_for_rendering(tmp_path: Path) -> None:
+    """Pure display exports stay canonical without loading rail widgets on import."""
+    result = _run_isolated_python(
+        tmp_path,
+        """
+import importlib
+import sys
+
+import tldw_chatbook.app
+from tldw_chatbook.Chat import console_display_state as display
+
+owners = (
+    "tldw_chatbook.Chat.console_rail_state",
+    "tldw_chatbook.Chat.console_glyphs",
+    "tldw_chatbook.Widgets.destination_rail",
+    "tldw_chatbook.Chat.console_memory_banner",
+)
+assert not any(name in sys.modules for name in owners)
+try:
+    display.not_a_display_export
+except AttributeError:
+    pass
+else:
+    raise AssertionError("unknown presentation export was accepted")
+assert not any(name in sys.modules for name in owners)
+
+for module_name, names in (
+    (owners[0], ("CONSOLE_ROW_PROVIDER", "CONSOLE_ROW_EVIDENCE")),
+    (owners[3], (
+        "CONSOLE_SUMMARY_BANNER_COPY",
+        "ConsoleMemoryBannerPresentation",
+        "derive_console_memory_banner_presentation",
+    )),
+):
+    for name in names:
+        value = getattr(display, name)
+        canonical = importlib.import_module(module_name)
+        assert value is getattr(canonical, name), name
+        assert display.__dict__[name] is value, name
+assert all(name in sys.modules for name in owners)
+
+display.CONSOLE_ROW_PROVIDER = "provider-live-patch"
+display.CONSOLE_ROW_EVIDENCE = "evidence-live-patch"
+state = display.ConsoleInspectorState.from_values(
+    evidence_summary="captured", tool_count=3,
+)
+rows = {row.label: row for row in state.rows}
+assert rows["Provider"].code == "provider-live-patch"
+assert rows["Evidence"].code == "evidence-live-patch"
+assert rows["Tools"].value == "3 ready"
+""",
+    )
+    assert result.returncode == 0, (
+        f"display deferral check failed:\nstdout={result.stdout}\n"
+        f"stderr={result.stderr[-4000:]}"
+    )

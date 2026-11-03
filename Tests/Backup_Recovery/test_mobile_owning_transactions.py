@@ -1353,6 +1353,9 @@ def _resume_crashed_import(evidence):
     """Cold native process using the same isolated profile/default locations."""
     from pathlib import Path
 
+    from Tests.Backup_Recovery.test_mobile_owning_transactions import (
+        _native_terminal_interruption,
+    )
     from tldw_chatbook.Backup_Recovery import (
         bootstrap,
         config_adapter,
@@ -1483,6 +1486,8 @@ def test_imported_run_cannot_stamp_notes_but_fresh_manual_send_keeps_exact_pendi
     "native_module",
     [
         "tldw_chatbook.Chat.console_trace_native_reader",
+        "tldw_chatbook.Chat.console_trace_service",
+        "tldw_chatbook.Chat.console_prepared_request",
         "tldw_chatbook.Character_Chat.Chat_Dictionary_Lib",
         "tldw_chatbook.Chat.console_generation_settings_metadata",
         "tldw_chatbook.Chat.console_session_settings",
