@@ -26,9 +26,10 @@ has just been mounted and holds no focus (Textual does not carry focus across
 the remove/remount a recompose performs), so its opening announcement is
 filtered out here.
 
-`SourcesPane` deliberately does NOT use this gate: TASK-1100 relies on the
-row-0 highlight of a freshly populated sources table selecting the first
-source, which is what arms `Preview`/`Check now` on arrival.
+`SourcesPane` uses this gate too (TASK-38586): its row-0 arrival arming —
+selecting the first source so `Preview`/`Check now` start enabled —
+happens explicitly, once per pane instance, in `SourcesPane.compose()`,
+instead of riding on the announcement the gate filters out.
 """
 
 from __future__ import annotations

@@ -9,7 +9,7 @@ Related Task: [TASK-38600](../tasks/task-38600%20-%20Add-ruff-lint-gate-to-CI-an
 The 2026-11-02 bug sweep audit (bug-sweep-2026-11-02-dev.md, section 4) ran
 ruff 0.16.6 with `select = ["F", "B", "ASYNC", "PLE"]` over `tldw_chatbook`
 and found ~1,210 findings — including 126 unused imports (F401), 8 undefined
-names (F821), 7 redefinitions (F811), 5 unused locals (F841) and 1 pointless
+names (F821), 6 redefinitions (F811), 5 unused locals (F841) and 1 pointless
 f-string (F541). None of the repository's 24 CI workflows ran any linter, so
 this debt accumulated invisibly.
 
