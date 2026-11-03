@@ -13,6 +13,7 @@ import pytest
     [
         "tldw_chatbook.UI.Screens.settings_rag_profile_adapter",
         "tldw_chatbook.Tool_Packs",
+        "tldw_chatbook.Media_Creation",
         "tldw_chatbook.Widgets.Settings_Widgets.tool_pack_import_review",
     ],
 )
