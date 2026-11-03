@@ -5,7 +5,7 @@ status: Done
 assignee:
 - '@claude'
 created_date: 2026-10-24 00:44
-updated_date: 2026-11-03 21:44
+updated_date: 2026-11-03 22:24
 labels:
 - follow-up
 - library
@@ -58,7 +58,11 @@ Reason: Thread affinity of one owned resource inside the workspace; no architect
 - The test holds the Database detail fetch (`release_detail`) across the whole Files mount and initial scan. `_refresh_library_note_detail` bounds that load with `LIBRARY_NOTE_LOAD_DEADLINE_SECONDS = 3.0` (task-32050, 15b7293976).
 - Instrumented under that load, every failing run held the fetch 3.95-4.90 s and logged the deadline timeout, which leaves no session (`_library_note_detail` None).
 - The same four-at-a-time runs with the deadline patched to 30 s passed 4 of 4.
-- 4c7d47e45f (TASK-34000.28) touches neither that path nor the deadline, so this is a test load race, not that regression. It is reported as a proposed follow-up.
+- 4c7d47e45f (TASK-34000.28) touches neither that path nor the deadline, so this is a test load race, not that regression.
+
+**Follow-up folded in (coordinator request, same day).**
+- The load race is fixed in the test, not the product; the 3.0 s deadline is unchanged. The held fetch is released as soon as the source switch to Files is admitted (`source == "files"`), before the test waits for the Files mount and first scan. The fetch is still in flight across the switch, and the test still asserts the detail lands (`id == "db-note-1"`) both before and after the mount.
+- The leak check also had to become deterministic. With the shorter hold, the idle default pool often gave the open and the close the same thread, so the test passed 1 of 1 with the leak fix reverted. The test now installs `_ThreadPerCallExecutor` as the loop's default executor, which gives every `to_thread` call a new thread, as a loaded pool does. With the leak fix reverted it fails 5 of 5 (1 alone, then 4 at once) at `assert owned_replica._connection is None`. With the fix it passes 8 of 8, four at a time, at load 38-55 (raised to 35+ with self-terminating CPU burners).
 
 **Also.** Backup_Recovery workspace tests (`test_file_notes_maintenance.py`, `test_unsaved_editors.py`, `test_notes_recovery_controls.py`): 116 passed. Module size ratchet re-pinned 9568 -> 9582 with a dated comment.
 

@@ -7,6 +7,7 @@ import hashlib
 import sqlite3
 import threading
 from collections.abc import Callable
+from concurrent.futures import Future, ThreadPoolExecutor
 from contextlib import asynccontextmanager
 from dataclasses import replace
 from itertools import product
@@ -7248,11 +7249,35 @@ async def test_poll_completion_ignores_partially_detached_surface(
     replica.close()
 
 
+class _ThreadPerCallExecutor(ThreadPoolExecutor):
+    """Run every call on a new thread, as a busy default pool does (TASK-36531).
+
+    A file-backed replica closes only on the thread that opened it. An idle
+    pool often hands the open and the close the same thread and hides a
+    leak that a loaded one shows.
+    """
+
+    def submit(self, fn, /, *args, **kwargs):
+        future: Future = Future()
+
+        def run() -> None:
+            if not future.set_running_or_notify_cancel():
+                return
+            try:
+                future.set_result(fn(*args, **kwargs))
+            except BaseException as error:
+                future.set_exception(error)
+
+        threading.Thread(target=run, daemon=True).start()
+        return future
+
+
 @pytest.mark.asyncio
 async def test_library_database_files_switch_retains_workspace_and_database_canvas(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    asyncio.get_running_loop().set_default_executor(_ThreadPerCallExecutor())
     root = tmp_path / "notes"
     root.mkdir()
     (root / "library.md").write_text("library file", encoding="utf-8")
@@ -7322,6 +7347,15 @@ async def test_library_database_files_switch_retains_workspace_and_database_canv
             lambda: screen._notes_state.source == "files",
             "Files source handler did not run",
         )
+        # The Database fetch was in flight across the switch. Release it now,
+        # not after the Files mount: the product bounds a note load at
+        # LIBRARY_NOTE_LOAD_DEADLINE_SECONDS (3.0 s), and under load the mount
+        # and first scan alone took 3.95-4.90 s, timing the load out
+        # (TASK-36531).
+        release_detail.set()
+        await detail_task
+        assert screen._library_note_detail is not None
+        assert screen._library_note_detail["id"] == "db-note-1"
         await _wait_until(
             pilot,
             lambda: bool(screen.query("#library-file-notes-workspace")),
@@ -7345,10 +7379,6 @@ async def test_library_database_files_switch_retains_workspace_and_database_canv
         # task-2850: Files mode renders INSIDE the same rail + canvas frame
         # every other notes view uses -- it must never blank the rail.
         assert screen.query_one("#library-rail")
-
-        release_detail.set()
-        await detail_task
-        assert screen._library_note_detail is not None
         assert screen._library_note_detail["id"] == "db-note-1"
         screen._notes_state.view = "list"
         screen._notes_state.selected_note_id = None

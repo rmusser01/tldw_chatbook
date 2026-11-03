@@ -24537,3 +24537,4 @@ Run on its own at load average 34, the resize loop ended 9.3 s after mount. In a
 **What to do.**
 - Close a thread-affine repository on the thread that opened it. The fix gives the workspace a one-thread executor for both open and close.
 - To prove a close, capture the native handle beforehand and assert that the handle raises afterwards. Reusing the repository proves nothing.
+- Do not let the pool's scheduling decide the test. An idle default pool often hands the open and the close the same thread. Once the test stopped loading the pool, it passed with the fix reverted. Install a default executor that gives every call a new thread (`_ThreadPerCallExecutor` in `Tests/UI/test_library_file_notes_workspace.py`); then the leak fails every run.
