@@ -238,3 +238,23 @@ def test_settings_modules_import_without_reading_config(tmp_path: Path) -> None:
 
     assert result.returncode == 0, result.stderr
     assert json.loads(result.stdout.strip().splitlines()[-1]) == []
+
+
+def test_use_time_settings_reads_propagate_recovery_required() -> None:
+    """TASK-36945.3: the real accessor and guard raise through the use-time reads.
+
+    This file is NOT on ``keep_bootstrap_profile``, so the per-test sandbox
+    re-selects the config away from the one the participant was bound to, and
+    the guarded read raises ``raw_source_selection_changed``. Nothing is
+    patched: a swallowed read (``except Exception``) would turn this red.
+    """
+    import pytest
+
+    from tldw_chatbook.Backup_Recovery.bootstrap import RecoveryRequired
+    from tldw_chatbook.Local_Ingestion import Document_Processing_Lib as doc_lib
+    from tldw_chatbook.RAG_Search.simplified import rag_service
+
+    with pytest.raises(RecoveryRequired, match="raw_source_selection_changed"):
+        rag_service._rag_const("MAX_CITATION_MATCHES")
+    with pytest.raises(RecoveryRequired, match="raw_source_selection_changed"):
+        doc_lib._document_chunk_defaults()

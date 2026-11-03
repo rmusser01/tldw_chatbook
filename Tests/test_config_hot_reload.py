@@ -200,20 +200,3 @@ def test_import_time_settings_are_read_when_used_after_reload(tmp_path, monkeypa
     config_module.load_cli_config_and_ensure_existence(force_reload=True)
     assert rag_service.MAX_CITATION_MATCHES == 7
     assert doc_lib._document_chunk_defaults()["max_size"] == 222
-
-
-def test_use_time_settings_reads_propagate_recovery_required(monkeypatch):
-    """TASK-36945.3: a failing settings read is not swallowed into defaults."""
-    from tldw_chatbook.Backup_Recovery.bootstrap import RecoveryRequired
-    from tldw_chatbook.Local_Ingestion import Document_Processing_Lib as doc_lib
-    from tldw_chatbook.RAG_Search.simplified import rag_service
-
-    def boom(*args, **kwargs):
-        raise RecoveryRequired("raw_source_selection_changed")
-
-    monkeypatch.setattr(rag_service, "get_cli_setting", boom)
-    monkeypatch.setattr(doc_lib, "get_cli_setting", boom)
-    with pytest.raises(RecoveryRequired):
-        rag_service._rag_const("MAX_CITATION_MATCHES")
-    with pytest.raises(RecoveryRequired):
-        doc_lib._document_chunk_defaults()

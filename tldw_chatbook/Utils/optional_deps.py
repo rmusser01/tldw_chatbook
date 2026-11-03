@@ -1543,6 +1543,8 @@ def apply_config_eager_flags() -> None:
     global _initialized
     if _initialized or "PYTEST_CURRENT_TEST" in os.environ:
         return
+    from ..Backup_Recovery.bootstrap import RecoveryRequired
+
     try:
         from ..config import get_cli_setting
 
@@ -1552,6 +1554,8 @@ def apply_config_eager_flags() -> None:
             logger.info("Eager dependency checking enabled via config file")
             initialize_dependency_checks()
             _initialized = True
+    except RecoveryRequired:
+        raise
     except Exception as e:
         logger.debug(f"Could not check config for eager_dependency_check: {e}")
 

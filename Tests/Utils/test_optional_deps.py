@@ -626,3 +626,18 @@ def test_book_ingestion_lib_import_handling():
 
 if __name__ == "__main__":
     pytest.main([__file__])
+
+
+def test_apply_config_eager_flags_propagates_recovery_required(monkeypatch):
+    """TASK-36945.3: a recovery-state signal is not logged away at start-up."""
+    import pytest
+
+    from tldw_chatbook.Backup_Recovery.bootstrap import RecoveryRequired
+    from tldw_chatbook.Utils import optional_deps
+
+    monkeypatch.delenv("PYTEST_CURRENT_TEST", raising=False)
+    monkeypatch.setattr(optional_deps, "_initialized", False)
+    # Real accessor: the per-test sandbox re-selects the config source, so the
+    # guarded read raises raw_source_selection_changed.
+    with pytest.raises(RecoveryRequired, match="raw_source_selection_changed"):
+        optional_deps.apply_config_eager_flags()
