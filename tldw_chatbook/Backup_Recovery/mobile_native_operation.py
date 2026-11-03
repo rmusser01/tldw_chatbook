@@ -1,7 +1,5 @@
 """Fixed native owning transactions from one authenticated, retired input cohort."""
 
-from datetime import UTC
-
 from . import archive_reader, control_records
 from .mobile_content_graph import _ContentBlocker
 
@@ -650,7 +648,7 @@ def _required_handlers(plan, budget):
 
 def _consolidate(captured, *, password, cancel):
     """Derive complete input in this call; retain no reusable readiness object."""
-    from datetime import datetime
+    from tldw_chatbook.Utils.timestamps import utc_now_iso
 
     from tldw_chatbook.Chat.console_trace_read_budget import _TraceReadBudget
     from tldw_chatbook.DB.console_command_history import (
@@ -1445,7 +1443,7 @@ def _consolidate(captured, *, password, cancel):
                         owner, connection, operation_id, source_fingerprint, passive
                     )
                 verify_rows(connection, family)
-                stamp = datetime.now(UTC).isoformat()
+                stamp = utc_now_iso()
                 for key, raw in receipts[family]:
                     connection.execute(
                         "INSERT INTO mobile_consolidation_batches(operation_id,source_fingerprint,batch_key,mapping_json,committed_at) VALUES (?,?,?,?,?)",

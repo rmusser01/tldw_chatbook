@@ -8194,33 +8194,9 @@ DELETE FROM keywords
 
     def _migrate_from_v84_to_v85(self, conn: sqlite3.Connection) -> None:
         """Add local archive chronology while retaining shared sync events."""
-        self._require_migration_entry_version(conn, 84, "V84→V85")
-        migration_path = (
-            Path(__file__).parent
-            / "migrations"
-            / "chachanotes_v84_to_v85_archive_chronology.sql"
-        )
-        try:
-            with self.transaction(immediate=True) as cursor:
-                self._execute_migration_statements(
-                    cursor, migration_path.read_text(encoding="utf-8"), "V84→V85"
-                )
-                updated = cursor.execute(
-                    "UPDATE db_schema_version SET version = 85 "
-                    "WHERE schema_name = ? AND version = 84",
-                    (self._SCHEMA_NAME,),
-                )
-                if updated.rowcount != 1:
-                    raise SchemaError(
-                        "Archive chronology migration version update failed"
-                    )
-            if self._get_db_version(conn) != 85:
-                raise SchemaError("Archive chronology migration version check failed")
-        except (OSError, sqlite3.Error, CharactersRAGDBError, SchemaError) as exc:
-            raise SchemaError(
-                f"Migration from V84 to V85 failed for '{self._SCHEMA_NAME}': "
-                f"{type(exc).__name__}"
-            ) from exc
+        from . import chachanotes_recent_migrations
+
+        return chachanotes_recent_migrations._migrate_from_v84_to_v85(self, conn)
 
     def _migrate_from_v74_to_v75(self, conn: sqlite3.Connection) -> None:
         """Retain machine continuation dedup independently of checkpoints."""
@@ -8286,109 +8262,28 @@ DELETE FROM keywords
 
     def _migrate_from_v89_to_v90(self, conn: sqlite3.Connection) -> None:
         """Install durable consolidation batch evidence."""
-        self._require_migration_entry_version(conn, 89, "V89→V90")
-        path = (
-            Path(__file__).parent
-            / "migrations"
-            / "chachanotes_v89_to_v90_mobile_consolidation.sql"
-        )
-        try:
-            with self.transaction() as cursor:
-                self._execute_migration_statements(
-                    cursor, path.read_text(encoding="utf-8"), "V89→V90"
-                )
-                updated = cursor.execute(
-                    "UPDATE db_schema_version SET version = 90 WHERE schema_name = ? AND version = 89",
-                    (self._SCHEMA_NAME,),
-                )
-                if updated.rowcount != 1:
-                    raise SchemaError("V89→V90 version update failed")
-            if self._get_db_version(conn) != 90:
-                raise SchemaError("V89→V90 version check failed")
-        except (OSError, sqlite3.Error, CharactersRAGDBError, SchemaError) as exc:
-            raise SchemaError(
-                f"Migration V89→V90 failed: {type(exc).__name__}"
-            ) from exc
+        from . import chachanotes_recent_migrations
+
+        return chachanotes_recent_migrations._migrate_from_v89_to_v90(self, conn)
 
     def _migrate_from_v83_to_v84(self, conn: sqlite3.Connection) -> None:
         """Install independent source-bound regions and optional applied provenance."""
-        self._require_migration_entry_version(conn, 83, "V83→V84")
-        path = (
-            Path(__file__).parent
-            / "migrations"
-            / "chachanotes_v83_to_v84_portrait_regions.sql"
-        )
-        try:
-            with self.transaction() as cursor:
-                self._execute_migration_statements(
-                    cursor, path.read_text(encoding="utf-8"), "V83→V84"
-                )
-                changed = cursor.execute(
-                    "UPDATE db_schema_version SET version=84 WHERE schema_name=? AND version=83",
-                    (self._SCHEMA_NAME,),
-                )
-                if changed.rowcount != 1:
-                    raise SchemaError("V83→V84 version update failed")
-        except (OSError, sqlite3.Error, CharactersRAGDBError) as exc:
-            raise SchemaError(f"Migration V83→V84 failed: {type(exc).__name__}") from exc
+        from . import chachanotes_recent_migrations
+
+        return chachanotes_recent_migrations._migrate_from_v83_to_v84(self, conn)
 
 
     def _migrate_from_v82_to_v83(self, conn: sqlite3.Connection) -> None:
         """Install source-bound local portrait sets without sync triggers."""
-        self._require_migration_entry_version(conn, 82, "V82→V83")
-        path = (
-            Path(__file__).parent
-            / "migrations"
-            / "chachanotes_v82_to_v83_portrait_performance.sql"
-        )
-        try:
-            with self.transaction() as cursor:
-                self._execute_migration_statements(
-                    cursor, path.read_text(encoding="utf-8"), "V82→V83"
-                )
-                changed = cursor.execute(
-                    "UPDATE db_schema_version SET version=83 WHERE schema_name=? AND version=82",
-                    (self._SCHEMA_NAME,),
-                )
-                if changed.rowcount != 1:
-                    raise SchemaError("V82→V83 version update failed")
-        except (OSError, sqlite3.Error, CharactersRAGDBError) as exc:
-            raise SchemaError(f"Migration V82→V83 failed: {type(exc).__name__}") from exc
+        from . import chachanotes_recent_migrations
+
+        return chachanotes_recent_migrations._migrate_from_v82_to_v83(self, conn)
 
     def _migrate_from_v81_to_v82(self, conn: sqlite3.Connection) -> None:
         """Permit immutable sibling ties while preserving one root per Canvas."""
-        self._require_migration_entry_version(conn, 81, "V81→V82")
-        path = (
-            Path(__file__).parent
-            / "migrations"
-            / "chachanotes_v81_to_v82_canvas_sibling_sequences.sql"
-        )
-        try:
-            with self.transaction() as cursor:
-                predecessor = cursor.execute(
-                    "SELECT sql FROM sqlite_master WHERE type = 'index' "
-                    "AND name = 'idx_canvas_revisions_canvas_sequence'"
-                ).fetchone()
-                if predecessor is None or predecessor[0] != (
-                    "CREATE UNIQUE INDEX idx_canvas_revisions_canvas_sequence\n"
-                    "  ON canvas_revisions(canvas_id, sequence)"
-                ):
-                    raise SchemaError("incompatible Canvas sequence predecessor schema")
-                self._execute_migration_statements(
-                    cursor, path.read_text(encoding="utf-8"), "V81→V82"
-                )
-                updated = cursor.execute(
-                    "UPDATE db_schema_version SET version = 82 WHERE schema_name = ? AND version = 81",
-                    (self._SCHEMA_NAME,),
-                )
-                if updated.rowcount != 1:
-                    raise SchemaError("V81→V82 version update failed")
-            if self._get_db_version(conn) != 82:
-                raise SchemaError("V81→V82 version check failed")
-        except (OSError, sqlite3.Error, CharactersRAGDBError, SchemaError) as exc:
-            raise SchemaError(
-                f"Migration V81→V82 failed: {type(exc).__name__}"
-            ) from exc
+        from . import chachanotes_recent_migrations
+
+        return chachanotes_recent_migrations._migrate_from_v81_to_v82(self, conn)
 
     def _migrate_from_v80_to_v81(self, conn: sqlite3.Connection) -> None:
         """Install native local rules without adding sync or metadata payloads."""

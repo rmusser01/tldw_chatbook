@@ -14,11 +14,10 @@ import sqlite3
 import sys
 import uuid
 from contextlib import contextmanager, nullcontext
-from dataclasses import dataclass
 from datetime import datetime, timezone
 from functools import cached_property
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Iterator, Mapping, Sequence, Union, overload
+from typing import TYPE_CHECKING, Any, Iterator, Mapping, Sequence, Union
 
 from loguru import logger
 
@@ -27,6 +26,8 @@ from tldw_chatbook.Agents.agent_models import (
     AGENT_LIFECYCLE_INDEX_BASE,
     TERMINAL_RUN_STATUSES,
     AgentDefinition,
+    ConsoleActivityReceiptPage,
+    _canonical_step_payload,
     validate_agent_definition,
 )
 from tldw_chatbook.Agents.run_log import DEFAULT_MAX_RECORD_BYTES
@@ -268,49 +269,6 @@ class AgentStepConflictError(ValueError):
 
 class ConsoleActivityReceiptsUnavailable(RuntimeError):
     """The optional local Console activity-receipt capability is unavailable."""
-
-
-@dataclass(frozen=True)
-class ConsoleActivityReceiptPage:
-    """One bounded keyset page of current unseen activity receipts."""
-
-    rows: tuple[dict[str, Any], ...]
-    next_cursor: tuple[str, str] | None
-
-    def __iter__(self) -> Iterator[dict[str, Any]]:
-        return iter(self.rows)
-
-    def __len__(self) -> int:
-        return len(self.rows)
-
-    @overload
-    def __getitem__(self, index: int) -> dict[str, Any]: ...
-
-    @overload
-    def __getitem__(self, index: slice) -> tuple[dict[str, Any], ...]: ...
-
-    def __getitem__(
-        self, index: int | slice
-    ) -> dict[str, Any] | tuple[dict[str, Any], ...]:
-        return self.rows[index]
-
-
-def _canonical_step_payload(index: int, payload: dict) -> str:
-    """Validate and serialize one explicit-index step before locking SQLite."""
-    if type(index) is not int:
-        raise TypeError("step index must be an int")
-    if index < 0:
-        raise ValueError("step index must be non-negative")
-    if not isinstance(payload, dict):
-        raise TypeError("step payload must be a dict")
-    if "index" not in payload:
-        raise ValueError("step payload must include index")
-    payload_index = payload["index"]
-    if type(payload_index) is not int:
-        raise TypeError("step payload index must be an int")
-    if payload_index != index:
-        raise ValueError("step payload index must match sequence index")
-    return json.dumps(payload, sort_keys=True, separators=(",", ":"))
 
 
 @declare_store("db.agent_runs", closer="close", policy="db.base", finite_worker=False, read_only_policy="db.agent_runs.read")

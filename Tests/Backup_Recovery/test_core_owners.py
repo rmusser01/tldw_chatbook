@@ -136,7 +136,7 @@ def test_schema_policy_matches_installed_store(core_store):
     assert policy.versions == (
         (owner._CURRENT_SCHEMA_VERSION, 4, 5)
         if name == "prompts"
-        else (owner._CURRENT_SCHEMA_VERSION, 88, 87, 86, 85, 84, 83, 82, 81, 80, 79, 78, 77, 76, 75)
+        else (owner._CURRENT_SCHEMA_VERSION, 89, 88, 87, 86, 85, 84, 83, 82, 81, 80, 79, 78, 77, 76, 75)
         if name == "chachanotes"
         else (5, 4)
         if name == "library_collections"
@@ -144,7 +144,7 @@ def test_schema_policy_matches_installed_store(core_store):
     )
     assert policy.schema_sql[0] == (owner._CURRENT_SCHEMA_VERSION, actual)
     assert len(policy.schema_sql) == (
-        58
+        62
         if name == "chachanotes"
         else 3
         if name == "prompts"
@@ -166,6 +166,8 @@ def test_schema_policy_matches_installed_store(core_store):
             CHACHANOTES_V87_SCHEMAS,
             CHACHANOTES_V88_SCHEMAS,
             CHACHANOTES_V89_SCHEMAS,
+            CHACHANOTES_V90_SCHEMAS,
+            CHACHANOTES_MOBILE_V89_TO_V90_SQL,
             CHACHANOTES_ARCHIVE_V84_TO_V85_SQL,
             CHACHANOTES_MIXINS_V85_TO_V86_SQL,
             CHACHANOTES_CHILD_SEGMENTS_V86_TO_V87_SQL,
@@ -173,11 +175,13 @@ def test_schema_policy_matches_installed_store(core_store):
             CHACHANOTES_DROP_RESPONSE_REVISION_V88_TO_V89_SQL,
         )
 
-        assert policy.schema_sql[-14:] == tuple(
-            (86, schema) for schema in CHACHANOTES_V86_SCHEMAS
-        ) + tuple((87, schema) for schema in CHACHANOTES_V87_SCHEMAS) + tuple(
-            (88, schema) for schema in CHACHANOTES_V88_SCHEMAS
-        ) + tuple((89, schema) for schema in CHACHANOTES_V89_SCHEMAS[2:])
+        assert policy.schema_sql[-18:] == (
+            tuple((86, schema) for schema in CHACHANOTES_V86_SCHEMAS)
+            + tuple((87, schema) for schema in CHACHANOTES_V87_SCHEMAS)
+            + tuple((88, schema) for schema in CHACHANOTES_V88_SCHEMAS)
+            + tuple((89, schema) for schema in CHACHANOTES_V89_SCHEMAS)
+            + tuple((90, schema) for schema in CHACHANOTES_V90_SCHEMAS[2:])
+        )
         assert policy.migration_steps == (
             (76, 77, CHACHANOTES_NATIVE_V76_TO_V77_SQL),
             (77, 78, CHACHANOTES_FLEET_V77_TO_V78_SQL),
@@ -192,6 +196,7 @@ def test_schema_policy_matches_installed_store(core_store):
             (86, 87, CHACHANOTES_CHILD_SEGMENTS_V86_TO_V87_SQL),
             (87, 88, CHACHANOTES_LOCATOR_INDEXES_V87_TO_V88_SQL),
             (88, 89, CHACHANOTES_DROP_RESPONSE_REVISION_V88_TO_V89_SQL),
+            (89, 90, CHACHANOTES_MOBILE_V89_TO_V90_SQL),
         )
     elif name == "library_collections":
         from tldw_chatbook.DB.recovery_core_schema import COLLECTIONS_V4_TO_V5_SQL

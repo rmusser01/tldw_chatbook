@@ -149,8 +149,41 @@ def _native_state(chat, workspace, runs, registry, result, legacy):
                 (_MAX_REVISION, "binding-retired"),
             )
     else:
+        from dataclasses import replace
+
+        from Tests.Chat.test_console_transaction_contribution import _acceptance
+        from Tests.DB.test_console_prompt_mixins import attempt
+        from tldw_chatbook.Chat.chat_persistence_service import ChatPersistenceService
+        from tldw_chatbook.Chat.console_prompt_mixin_models import (
+            MixinPreferences,
+            MixinSelection,
+        )
+        from tldw_chatbook.Chat.console_prompt_mixin_service import (
+            MixinAttemptContribution,
+        )
+        from tldw_chatbook.DB.console_prompt_mixins import save_preferences
+
         result["portrait"] = _portrait(chat)
         result["review_attempt"] = _review_history(runs, conversation)
+        mixin_conversation = chat.add_conversation({"title": "Retained native mix-ins"})
+        batch = replace(
+            attempt(), user_message_id="user", assistant_message_id="assistant"
+        )
+        item = batch.snapshot.items[0]
+        service = ChatPersistenceService(chat)
+        with chat.transaction() as cursor:
+            checkpoint = service.console_dispatch_repository.insert_with_messages(
+                cursor, _acceptance(mixin_conversation, MixinAttemptContribution(batch))
+            )
+            assert checkpoint.mixin_snapshot_schema_version == 1
+            save_preferences(
+                cursor,
+                mixin_conversation,
+                expected_revision=0,
+                value=MixinPreferences(
+                    entries=(MixinSelection(item.source, True, item.name, "before", 7),)
+                ),
+            )
         result["canonical_rows"] = {
             "chat": {
                 table: _rows(chat, table)
@@ -158,6 +191,11 @@ def _native_state(chat, workspace, runs, registry, result, legacy):
                     "character_portrait_performances",
                     "character_portrait_performance_frames",
                     "character_portrait_regions",
+                    "console_prompt_mixin_preferences",
+                    "console_prompt_mixin_revisions",
+                    "console_prompt_mixin_attempts",
+                    "console_prompt_mixin_attempt_items",
+                    "console_dispatch_checkpoints",
                 )
             },
             "workspaces": {

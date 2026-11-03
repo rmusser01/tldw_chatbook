@@ -77,13 +77,9 @@ from ...Utils.input_validation import (
     validate_text_input,
 )
 from ...Widgets.confirmation_dialog import ConfirmationDialog
-from ...Widgets.Console import (
-    ConsoleWorkspaceContextTray,
-    ConsoleWorkspaceRenameModal,
-    ConsoleWorkspaceSwitcherModal,
-)
+from ...Widgets import Console as console_widgets
+from ...Widgets.Console import ConsoleWorkspaceContextTray
 from ...Widgets.Console.console_background_effect import active_console_transcript
-from ...Widgets.Console.console_scope_picker_modal import ConsoleScopePickerModal
 from ...Widgets.glyph_fallback import resolve_glyph
 from ...Widgets.project_skills_import_modal import maybe_offer_project_skills_import
 from ...Workspaces import (
@@ -147,6 +143,7 @@ if TYPE_CHECKING:
     from ...Widgets.workspace_create_modal import WorkspaceCreateResult
     from ..Screens.chat_screen import ChatScreen
 
+__getattr__ = console_widgets.__getattr__
 logger = logger.bind(module="ChatScreen")
 
 _CHARACTER_PRESENTATION_YIELD_SECONDS = 0.001
@@ -5084,6 +5081,8 @@ class ConsoleWorkspaceController:
                         workspace_id, rename=action == "restore_as"
                     )
 
+            from .workspace import ConsoleWorkspaceSwitcherModal
+
             self.push_screen(
                 ConsoleWorkspaceSwitcherModal(
                     workspaces=workspaces,
@@ -5209,6 +5208,8 @@ class ConsoleWorkspaceController:
                 return
             selected_record = record
             if rename:
+                from .workspace import ConsoleWorkspaceRenameModal
+
                 self.push_screen(
                     ConsoleWorkspaceRenameModal(
                         current_name=record.name, restoring=True
@@ -5263,6 +5264,8 @@ class ConsoleWorkspaceController:
             self.app_instance.notify(
                 f"Renamed workspace to {renamed.name}.", severity="information"
             )
+
+        from .workspace import ConsoleWorkspaceRenameModal
 
         self.push_screen(
             ConsoleWorkspaceRenameModal(current_name=record.name),
@@ -5820,6 +5823,8 @@ class ConsoleWorkspaceController:
             initial = None
 
         target_label = f"workspace '{active_workspace.name}'"
+        from .workspace import ConsoleScopePickerModal
+
         media_lister, notes_lister, tag_lister = self._console_scope_picker_listers()
 
         def _on_save(scope: Optional[RagScope]) -> None:
@@ -6619,109 +6624,32 @@ class ConsoleWorkspaceController:
         | CharacterConversationActivationRequest,
     ) -> ConsoleActivationCommit:
         """Open a target and capture only a runtime session created by this call."""
-        from ...Chat.console_conversation_activation import (
-            CharacterConversationActivationRequest,
-            ConsoleActivationCommit,
-        )
+        from . import workspace_activation
 
-        target = (
-            request.target
-            if isinstance(request, CharacterConversationActivationRequest)
-            else request
+        return await workspace_activation._open_character_conversation_activation(
+            self,
+            request,
         )
-        store = self._ensure_console_chat_store()
-        from ...Chat.console_chat_store import ConsoleSavedSessionCleanup
-
-        cleanup_owner = object()
-        opened = bool(
-            await self.open_console_workspace_conversation(
-                target.conversation_id, restore_cleanup_owner=cleanup_owner
-            )
-        )
-        session = next(
-            (
-                row
-                for row in store.sessions()
-                if row.persisted_conversation_id == target.conversation_id
-            ),
-            None,
-        )
-        owned = (
-            ConsoleSavedSessionCleanup(session, cleanup_owner)
-            if session is not None
-            else None
-        )
-        if opened:
-            # Widget.focus() is queued by Textual. This committed Character
-            # boundary must establish focus before the immediate exact-visible
-            # proof, including when activation began in a Context row.
-            try:
-                epoch = store.active_session_epoch()
-                projected = await self._screen._sync_native_console_transcript()
-                await asyncio.sleep(_CHARACTER_PRESENTATION_YIELD_SECONDS)
-                from ..Screens.chat_screen import _console_screen_is_torn_down as torn_down
-                if (
-                    projected is False
-                    or not self._screen_running_accessor() or torn_down(self._screen)  # quit precedes pump stop
-                    or self._ensure_console_chat_store() is not store
-                    or store.active_session_epoch() != epoch
-                ):
-                    return ConsoleActivationCommit(opened=False, owned_runtime_token=owned)
-                self._screen.set_focus(
-                    self._screen.query_one("#console-native-composer")
-                )
-            except asyncio.CancelledError:
-                # The caller has not received ownership yet. Settle only this
-                # exact cold runtime synchronously, then let it restore prior UI.
-                if owned is not None and owned.matches(
-                    store._sessions.get(owned.session.id)
-                ):
-                    store.rollback_restored_session(
-                        owned.session.id,
-                        expected_session=owned.session,
-                        prior_active_session_id=None,
-                        cleanup_owner=owned.owner,
-                    )
-                raise
-            except Exception:  # noqa: BLE001 - preserve the owned token for rollback
-                logger.opt(exception=True).warning(
-                    "Could not focus the committed character conversation"
-                )
-                opened = False
-        return ConsoleActivationCommit(opened=opened, owned_runtime_token=owned)
 
     async def _rollback_character_conversation_activation(
         self, owned_runtime: object
     ) -> bool:
         """Remove only the exact hydrated runtime owned by this activation."""
+        from . import workspace_activation
 
-        from ...Chat.console_chat_store import ConsoleSavedSessionCleanup
-
-        if not isinstance(owned_runtime, ConsoleSavedSessionCleanup):
-            return False
-        store = self._ensure_console_chat_store()
-        if not owned_runtime.matches(store._sessions.get(owned_runtime.session.id)):
-            return False
-        return store.rollback_restored_session(
-            owned_runtime.session.id,
-            expected_session=owned_runtime.session,
-            prior_active_session_id=None,
-            cleanup_owner=owned_runtime.owner,
+        return await workspace_activation._rollback_character_conversation_activation(
+            self,
+            owned_runtime,
         )
 
     def _commit_character_conversation_activation(self, owned_runtime: object) -> None:
         """Publish only after the outer exact visibility/focus attempt commits."""
-        from ...Chat.console_chat_store import ConsoleSavedSessionCleanup
+        from . import workspace_activation
 
-        if isinstance(owned_runtime, ConsoleSavedSessionCleanup):
-            store = self._ensure_console_chat_store()
-            if not owned_runtime.matches(store._sessions.get(owned_runtime.session.id)):
-                raise RuntimeError(
-                    "Character conversation owner changed before publication."
-                )
-            store.publish_restored_session(
-                owned_runtime.session, cleanup_owner=owned_runtime.owner
-            )
+        return workspace_activation._commit_character_conversation_activation(
+            self,
+            owned_runtime,
+        )
 
     async def _restore_character_conversation_prior_session(
         self, prior_active_session_id: str | None

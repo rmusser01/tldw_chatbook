@@ -17,7 +17,7 @@ documentation:
 - Docs/superpowers/plans/2026-10-25-shared-console-mobile-supervision-implementation.md
 - Docs/superpowers/specs/2026-10-25-shared-console-mobile-supervision-design.md
 - backlog/decisions/244-shared-console-ownership-and-mobile-supervision.md
-updated_date: 2026-11-02 17:38
+updated_date: 2026-11-03 07:03
 ---
 
 ## Description
@@ -80,6 +80,7 @@ R176 installed-lifecycle completion before code (existing ADR126/244; no new rul
 Test-only SafetyCopy precision before code: supersede add_note with actual update_conversation on the EXISTING canonical conversation, exact expected_version, after all original post-import assertions and immediately before target preview. Require full original live row after rollback and full edited row directly in the exact retained encrypted SafetyCopy via existing native lock/acquire/inert/restricted-copy validation. No product/API/permission/budget or real-profile change; original scenario remains separate.
 Diagnostic90 routine R176/V2 scope correction before code: native retained plan has6 agents.history directories but only default tool_sandbox in safety_scope;5 native agent_history/imports trees remain preserved outside it. BOTH installed helper needed/required loops select included agents.history IN existing plan.safety_scope. Keep exact selected preserve/root/dependency/publication/selector/private-copy/custody/accounting checks; unrelated members retain ordinary policy. No new ADR/ruling/owner/role/permission/budget or sourceproof change. Focused coexistence and selected-malformed controls, corrected reached-caller observer record/delegate/assert-after, then actual public positive + edited-row SafetyCopy. Root proposal gate r176-installed-history-scope-root-gate.json. Current AC/status unchanged.
 Latest native dev2acbcd42 precode preservation: adopt PR3332/ADR284 exact physical model-preparation daemon/service/capture ownership, controller→session maintenance_ready propagation and cleanup fencing through screen replacement. No local speech overlap/no storage or schema delta fromab. Browser disconnect stays view-only, phone Stop exactrun-only; no phone audio API/runtime replacement. Final native leaves HF_HUB_DISABLE_XET unchanged; opaque loading has NO automatic deadline. Merge precise speech/downloadguard diagnostic entries; selected private no-model/no-mic installed-stack native controls plus phone detach/Stop, no numericwaiver/unrelatedfollowup repair. Existing ADR284/244 applies, no new ADR/ruling/permission. See upstream-2ac-runtime-audit.md and adopted composition; rebase awaits root verified checkpoint. Current AC/status unchanged.
+2026-11-03 landing qualification (before test changes): preserve native prompt mix-ins at schema86 and append consolidation at87 under ADR244/ADR286. Extend the existing populated canonical/native85 public import and rollback case with real operational preferences, snapshots, attempts and checkpoint markers, checking retained rows after import and rollback. Requalify the source-claim/reference/quarantine/manual-turn/crash-recovery acceptance matrix on the final integrated source. No real-profile migration, authority expansion or limit increase. ADR required: no new ADR; direct existing native-preservation contract.
 <!-- SECTION:PLAN:END -->
 
 ## Implementation Notes

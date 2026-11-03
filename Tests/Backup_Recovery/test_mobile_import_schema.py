@@ -124,6 +124,7 @@ def test_all_registered_native_mobile_column_projections(tmp_path):
     import json
 
     from tldw_chatbook.Backup_Recovery.mobile_captured_sqlite import (
+        _FAMILIES,
         _native_column_layouts,
     )
     from tldw_chatbook.Backup_Recovery.mobile_plan_manifest import _TABLES
@@ -132,6 +133,10 @@ def test_all_registered_native_mobile_column_projections(tmp_path):
         _install_canvas_revision_payload_validator,
     )
 
+    assert next(row[3:] for row in _FAMILIES if row[0] == "chat") == (
+        (81, 82, 83, 84, 85),
+        87,
+    )
     specs = {(s.family, s.table): s for s in _TABLES}
     schemas = [
         ("runs", v, c, None) for v, c in _AGENT_RUNS_SCHEMA if v in (24, 25, 26, 27)
@@ -147,13 +152,13 @@ def test_all_registered_native_mobile_column_projections(tmp_path):
             for c in getattr(recovery_core_schema, f"CHACHANOTES_V{version}_SCHEMAS")
         ]
     for version, name in (
-        (81, 'CANVAS_V81'),
-        (82, 'CANVAS_V82'),
-        (83, 'PORTRAIT_V83'),
-        (84, 'REGIONS_V84'),
-        (85, 'ARCHIVE_V85'),
-        (86, 'MIXINS_V86'),
-        (87, 'MOBILE_V87'),
+        (81, "CANVAS_V81"),
+        (82, "CANVAS_V82"),
+        (83, "PORTRAIT_V83"),
+        (84, "REGIONS_V84"),
+        (85, "ARCHIVE_V85"),
+        (86, "MIXINS_V86"),
+        (87, "MOBILE_V87"),
     ):
         for catalog in getattr(recovery_operations, f"_SUBSCRIPTIONS_{name}_SCHEMAS"):
             for subscriptions_version in (2, 3):
@@ -193,6 +198,7 @@ def test_all_registered_native_mobile_column_projections(tmp_path):
                 )
                 columns = tuple(r[1] for r in metadata)
                 spec = specs.get((projected_family, table))
+                assert spec is not None or shared, (family, version, table)
                 if (not shared or spec is not None) and (
                     spec is None
                     or columns
@@ -217,6 +223,7 @@ def test_all_registered_native_mobile_column_projections(tmp_path):
                             "archive_revision",
                             "review_boundary_id",
                             "composition_recipe_json",
+                            "mixin_snapshot_schema_version",
                         }
                         defaults[column] = 0 if column == "archive_revision" else None
                 tables[table] = {
@@ -239,7 +246,7 @@ def test_all_registered_native_mobile_column_projections(tmp_path):
                         for row in metadata
                     ],
                     "disposition": "native_shared_backup_preserved_no_mobile_source_grant"
-                    if shared
+                    if shared or (family, version) in {("runs", 26), ("chat", 86)}
                     else (
                         "canonical_preserved"
                         if purpose == "canonical"
@@ -262,7 +269,7 @@ def test_all_registered_native_mobile_column_projections(tmp_path):
                     "version": version,
                     "subscriptions_version": subscriptions_version,
                     "mobile_member": "none"
-                    if shared or (family == "runs" and version == 26)
+                    if shared or (family, version) in {("runs", 26), ("chat", 86)}
                     else purpose,
                     "catalog_sha256": hashlib.sha256(
                         repr(catalog).encode()
@@ -274,3 +281,56 @@ def test_all_registered_native_mobile_column_projections(tmp_path):
     destination = tmp_path / "registered-native-column-inventory.json"
     destination.write_text(json.dumps(report, indent=2, sort_keys=True))
     assert not failures, failures
+
+
+@pytest.mark.parametrize("route", ["runtime", "recovery"])
+def test_native_mixin_v86_migrates_to_mobile_v87_without_losing_attempts(
+    tmp_path, route
+):
+    from Tests.ChaChaNotesDB.historical_bootstrap import chachanotes_db_at_version
+    from Tests.DB.test_console_prompt_mixins import attempt, saved_turn
+    from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
+    from tldw_chatbook.DB.console_prompt_mixins import read_attempt, write_attempt
+    from tldw_chatbook.DB.private_sqlite import copy_private_sqlite
+
+    source = tmp_path / "native-v86.sqlite"
+    with chachanotes_db_at_version(source, 86) as db:
+        conversation_id, messages = saved_turn(db)
+        with db.transaction() as cursor:
+            write_attempt(
+                cursor, conversation_id, batch=attempt(), native_message_ids=messages
+            )
+    original = source.read_bytes()
+    candidate = tmp_path / "mobile-v87.sqlite"
+    copy_private_sqlite("recovery.core.chachanotes", source, candidate)
+    if route == "runtime":
+        db = CharactersRAGDB(candidate, "mobile-mixin-migration")
+        db.close()
+    else:
+        owner = next(
+            owner
+            for owner in core_adapters()
+            if owner.owner_id == "db.chachanotes.primary"
+        )
+        assert validate_candidate(owner, candidate, Event(), migrate=True) == ()
+    with closing(sqlite3.connect(candidate)) as connection:
+        assert (
+            connection.execute(
+                "SELECT version FROM db_schema_version WHERE schema_name='rag_char_chat_schema'"
+            ).fetchone()[0]
+            == 87
+        )
+        assert (
+            read_attempt(
+                connection.cursor(), conversation_id, attempt_id="attempt"
+            ).snapshot
+            == attempt().snapshot
+        )
+        assert (
+            connection.execute(
+                "SELECT count(*) FROM mobile_consolidation_batches"
+            ).fetchone()[0]
+            == 0
+        )
+        assert connection.execute("PRAGMA foreign_key_check").fetchall() == []
+    assert source.read_bytes() == original

@@ -555,6 +555,11 @@ def _native_column_layouts(purpose, family, table, current, version):
         missing = ()
         if (family, table) == ("chat", "conversations") and version in (81, 82, 83, 84):
             missing = ("archived_at",)
+        elif (family, table) == (
+            "chat",
+            "console_dispatch_checkpoints",
+        ) and version <= 85:
+            missing = ("mixin_snapshot_schema_version",)
         elif (family, table) == ("workspaces", "workspace_records") and version in (
             8,
             9,
