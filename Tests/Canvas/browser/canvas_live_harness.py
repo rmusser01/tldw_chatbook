@@ -966,6 +966,7 @@ async def _construct_live_served_stack(
         tls_private_key=None if trusted_proxy else str(private_key),
         trusted_proxy_addresses=["127.0.0.1"] if trusted_proxy else [],
     )
+    server._app_argv = (sys.executable, "-u", "-m", child_module)
     server.command = f"exec {sys.executable} -u -m {child_module}"
     original_bundle = server._patched_textual_js
 

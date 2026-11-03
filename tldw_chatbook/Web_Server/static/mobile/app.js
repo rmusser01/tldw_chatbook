@@ -445,8 +445,8 @@
       (row.unknown || !row.receipt || ["pending", "outcome_unknown"].includes(row.receipt.state)));
   }
   function commandReviewLabel(id, row, target) {
-    const current = commandMatches(row, target) || (target && !target.handle_id && row.binding?.action === "decision" &&
-      state.renderedDecisions.some(round => draftKey(round) === draftKey(target) && commandMatches(row, round)));
+    const current = !row.receiptMissing && (commandMatches(row, target) || (target && !target.handle_id && row.binding?.action === "decision" &&
+      state.renderedDecisions.some(round => draftKey(round) === draftKey(target) && commandMatches(row, round))));
     const label = receiptLabel(row.receipt, row.unknown);
     if (current) return label;
     const binding = row.binding;
@@ -508,7 +508,7 @@
     // Preparing cannot retract a later native acceptance already observed on another request.
     if (receipt.state === "pending" && prior.receipt && prior.receipt.state !== "pending") return;
     prior.binding ||= Object.freeze({action: receipt.action, target: Object.freeze({...receipt.target})});
-    prior.receipt = receipt; prior.unknown = false;
+    prior.receipt = receipt; prior.unknown = false; prior.receiptMissing = false;
     state.outstandingCommands.set(receipt.command_id, prior);
     if (prior.submission && ["accepted", "queued", "applied"].includes(receipt.state)) clearAcceptedDraft(prior.submission);
     updateControls();
@@ -532,9 +532,14 @@
   }
   async function queryOutstanding() {
     for (const [id, command] of state.outstandingCommands) {
-      if (!command.unknown && ["applied", "refused", "expired"].includes(command.receipt?.state)) continue;
+      if (command.receiptMissing || (!command.unknown && ["applied", "refused", "expired"].includes(command.receipt?.state))) continue;
       try { applyReceipt(await api("GET", API_BASE + "/commands/" + encodeURIComponent(id))); }
-      catch (error) { command.unknown = true; updateControls(); }
+      catch (error) {
+        // A failed read cannot retract a native handoff or final result already observed.
+        command.unknown = !["accepted", "queued", "applied", "refused", "expired"].includes(command.receipt?.state);
+        if (!command.unknown && error === "unknown_command") command.receiptMissing = true;
+        updateControls();
+      }
     }
   }
   const submitting = new Set();
