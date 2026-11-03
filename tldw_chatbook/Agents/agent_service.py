@@ -3002,15 +3002,10 @@ class AgentService:
         return request, snapshot
 
     def _provider_is_ready(self, provider: str) -> bool:
-        """Readiness for a fallback candidate, reusing the Chat check."""
-        from tldw_chatbook.Chat.provider_readiness import get_provider_readiness
-        from tldw_chatbook.config import load_cli_config_and_ensure_existence
+        """Read current fallback readiness through the shared provider contract."""
+        from tldw_chatbook.Chat.provider_readiness import configured_provider_is_ready
 
-        return bool(
-            get_provider_readiness(
-                provider, load_cli_config_and_ensure_existence()
-            ).ready
-        )
+        return configured_provider_is_ready(provider)
 
     def _prune_send_payload(self, payload: list[dict], *, native: bool) -> list[dict]:
         """TASK-25911: shrink large stale tool results before eviction.

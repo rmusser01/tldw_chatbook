@@ -103,6 +103,7 @@ class _Restrictions:
         self.fleet_progress_migration = False
         self.browse_order_migration = False
         self.response_rules_migration = False
+        self.prompt_mixins_migration = False
         self.canvas_sibling_migration = False
         self.portrait_migration = None
         self.archive_chronology_migration = False
@@ -238,6 +239,16 @@ class _Restrictions:
             and database == "temp" and source is None):
             # SQLite's fixed table rename inspects its empty temp catalog.
             return sqlite3.SQLITE_OK
+        if (
+            self.migrating
+            and self.migration_owner == "db.prompts.primary"
+            and database == "temp"
+            and source is None
+            and first == "sqlite_temp_master"
+            and action in {sqlite3.SQLITE_READ, sqlite3.SQLITE_UPDATE}
+            and second in {"type", "name", "tbl_name", "sql"}
+        ):
+            return sqlite3.SQLITE_OK
         if database not in (None, "main"):
             return sqlite3.SQLITE_DENY
         if action in (
@@ -282,7 +293,7 @@ class _Restrictions:
             if self.migrating:
                 allowed |= {"printf", "sqlite_rename_test", "sqlite_rename_quotefix"}
                 if self.migration_owner == "db.prompts.primary":
-                    allowed.add("trim")
+                    allowed |= {"trim", "sqlite_rename_table"}
                 if self.migration_owner == "db.subscriptions":
                     allowed |= {"json_valid", "json_type", "json_extract", "json_set"}
                 if self.migration_owner == "db.dreams":
@@ -383,6 +394,52 @@ class _Restrictions:
                     and database == "main"
                     and source is None
                 )
+                if self.prompt_mixins_migration and source is None:
+                    tables = {
+                        "console_prompt_mixin_preferences",
+                        "console_prompt_mixin_revisions",
+                        "console_prompt_mixin_attempts",
+                        "console_prompt_mixin_attempt_items",
+                    }
+                    indexes = {
+                        "idx_console_mixin_revision_digest": "console_prompt_mixin_revisions",
+                        "idx_console_mixin_attempt_user": "console_prompt_mixin_attempts",
+                        "idx_console_mixin_attempt_assistant": "console_prompt_mixin_attempts",
+                        **{f"sqlite_autoindex_{table}_1": table for table in tables},
+                    }
+                    triggers = {
+                        "console_prompt_mixin_revision_immutable": "console_prompt_mixin_revisions",
+                        "console_prompt_mixin_attempt_anchor_insert": "console_prompt_mixin_attempts",
+                        "console_prompt_mixin_attempt_immutable": "console_prompt_mixin_attempts",
+                        "console_prompt_mixin_item_immutable": "console_prompt_mixin_attempt_items",
+                        "console_prompt_mixin_message_marker_preserve": "messages",
+                        "conversations_ad": "conversations",
+                    }
+                    allowed |= (
+                        action == sqlite3.SQLITE_ALTER_TABLE
+                        and first == "main"
+                        and second == "console_dispatch_checkpoints"
+                        or database == "main"
+                        and (
+                            action == sqlite3.SQLITE_CREATE_TABLE
+                            and first in tables
+                            or action == sqlite3.SQLITE_DROP_TRIGGER
+                            and first == "conversations_ad"
+                            and second == "conversations"
+                            or action == sqlite3.SQLITE_CREATE_TRIGGER
+                            and triggers.get(first) == second
+                            or action == sqlite3.SQLITE_CREATE_INDEX
+                            and indexes.get(first) == second
+                            or action == sqlite3.SQLITE_REINDEX
+                            and first in indexes
+                            or action in {sqlite3.SQLITE_INSERT, sqlite3.SQLITE_DELETE}
+                            and first == "sqlite_master"
+                            or action == sqlite3.SQLITE_UPDATE
+                            and first == "sqlite_master"
+                            and second
+                            in {"type", "name", "tbl_name", "rootpage", "sql"}
+                        )
+                    )
                 if self.archive_chronology_migration and source is None:
                     allowed |= (
                         action == sqlite3.SQLITE_ALTER_TABLE
@@ -788,7 +845,55 @@ class _Restrictions:
                 if allowed:
                     return sqlite3.SQLITE_OK
             if self.migration_owner == "db.prompts.primary":
-                allowed = (
+                prompt_indexes = {
+                    "idx_prompts_name",
+                    "idx_prompts_author",
+                    "idx_prompts_uuid",
+                    "idx_prompts_last_modified",
+                    "idx_prompts_deleted",
+                }
+                allowed_rebuild = source is None and (
+                    database == "main"
+                    and (
+                        action == sqlite3.SQLITE_CREATE_TABLE
+                        and first
+                        in {"Prompts_mixin_migration", "Prompts_sequence_migration"}
+                        or action == sqlite3.SQLITE_DROP_TABLE
+                        and first in {"Prompts", "Prompts_sequence_migration"}
+                        or action in {sqlite3.SQLITE_INSERT, sqlite3.SQLITE_DELETE}
+                        and first
+                        in {
+                            "sqlite_master",
+                            "Prompts",
+                            "Prompts_mixin_migration",
+                            "Prompts_sequence_migration",
+                            "sqlite_sequence",
+                        }
+                        or action == sqlite3.SQLITE_UPDATE
+                        and first == "sqlite_master"
+                        and second in {"type", "name", "tbl_name", "rootpage", "sql"}
+                        or action == sqlite3.SQLITE_UPDATE
+                        and first == "sqlite_sequence"
+                        and second in {"name", "seq"}
+                        or action
+                        in {sqlite3.SQLITE_CREATE_INDEX, sqlite3.SQLITE_REINDEX}
+                        and (
+                            first in prompt_indexes
+                            or first
+                            in {
+                                "sqlite_autoindex_Prompts_mixin_migration_1",
+                                "sqlite_autoindex_Prompts_mixin_migration_2",
+                            }
+                        )
+                        or action
+                        in {sqlite3.SQLITE_CREATE_TRIGGER, sqlite3.SQLITE_DROP_TRIGGER}
+                        and first == "prompts_validate_sync_update"
+                    )
+                    or action == sqlite3.SQLITE_ALTER_TABLE
+                    and (first, second, database)
+                    == ("main", "Prompts_mixin_migration", None)
+                )
+                allowed = allowed_rebuild or (
                     action == sqlite3.SQLITE_CREATE_TABLE
                     and first == "LocalPromptDrafts"
                     or action == sqlite3.SQLITE_CREATE_INDEX
@@ -920,6 +1025,7 @@ def _canvas_schema_access(connection, schema, restrictions=None):
         CHACHANOTES_V83_SCHEMAS,
         CHACHANOTES_V84_SCHEMAS,
         CHACHANOTES_V85_SCHEMAS,
+        CHACHANOTES_V86_SCHEMAS,
         CORE_SCHEMAS,
     )
 
@@ -946,6 +1052,7 @@ def _canvas_schema_access(connection, schema, restrictions=None):
         *CHACHANOTES_V83_SCHEMAS,
         *CHACHANOTES_V84_SCHEMAS,
         *CHACHANOTES_V85_SCHEMAS,
+        *CHACHANOTES_V86_SCHEMAS,
         *(sql for _, sql in _SUBSCRIPTIONS_SCHEMA),
     )
     if schema not in frozen:
@@ -1176,6 +1283,7 @@ def _validate_candidate(
                         CHACHANOTES_V82_SCHEMAS,
                         CHACHANOTES_V83_SCHEMAS,
                         CHACHANOTES_V84_SCHEMAS,
+                        CHACHANOTES_V85_SCHEMAS,
                     )
 
                     actual_sql = tuple(
@@ -1204,6 +1312,8 @@ def _validate_candidate(
                         and actual_sql in CHACHANOTES_V83_SCHEMAS
                         or version == 84
                         and actual_sql in CHACHANOTES_V84_SCHEMAS
+                        or version == 85
+                        and actual_sql in CHACHANOTES_V85_SCHEMAS
                     ):
                         return (("unsupported_schema_migration",), None)
                     shipped_checkpoint = actual_sql in CHACHANOTES_V76_SHIPPED_SCHEMAS
@@ -1236,14 +1346,16 @@ def _validate_candidate(
                                 shipped_checkpoint
                                 and version == 76
                                 or installed.owner_id == "db.chachanotes.primary"
-                                and version in (77, 78, 79, 80, 81, 84)
+                                and version in (77, 78, 79, 80, 81, 84, 85)
                             ):
                                 migration = (
                                     Path(__file__).resolve().parents[1]
                                     / "DB"
                                     / "migrations"
                                     / (
-                                        "chachanotes_v84_to_v85_archive_chronology.sql"
+                                        "chachanotes_prompt_mixins.sql"
+                                        if version == 85
+                                        else "chachanotes_v84_to_v85_archive_chronology.sql"
                                         if version == 84
                                         else "chachanotes_v81_to_v82_canvas_sibling_sequences.sql"
                                         if version == 81
@@ -1265,6 +1377,7 @@ def _validate_candidate(
                                 restrictions.response_rules_migration = version == 80
                                 restrictions.canvas_sibling_migration = version == 81
                                 restrictions.archive_chronology_migration = version == 84
+                                restrictions.prompt_mixins_migration = version == 85
                                 try:
                                     pending = ""
                                     for line in migration.read_text(
@@ -1300,6 +1413,7 @@ def _validate_candidate(
                                     restrictions.response_rules_migration = False
                                     restrictions.canvas_sibling_migration = False
                                     restrictions.archive_chronology_migration = False
+                                    restrictions.prompt_mixins_migration = False
                             restrictions.portrait_migration = (
                                 version
                                 if installed.owner_id == "db.chachanotes.primary"

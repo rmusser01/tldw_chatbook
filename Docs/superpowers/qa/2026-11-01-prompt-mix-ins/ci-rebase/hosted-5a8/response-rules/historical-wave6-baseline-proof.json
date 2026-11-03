@@ -1,0 +1,38 @@
+{
+  "qualification": "Read-only source/predicate proof, not rerun test claims. The first historical screen-size assertion fails identically before this PR; UI26 changes neither screen nor this historical test. No guard edited or exempted. Later assertions were not reached and are not claimed qualified.",
+  "refs": {
+    "dev": {
+      "ref": "88af9f937908b46e8c5f9f7fddd9e8748c917d46",
+      "test_file_sha256": "9fe0bb7d8abbe9b13a1a85d98ac930db028d3c166b9bcdf59bcadce04555a0fa",
+      "historical_function_ast_sha256": "00a239a26259d0830b3320461e02666674217f8959d5844e22c38e5fdc5dca25",
+      "current_screen_lines_at_ref": 24652,
+      "constants": {
+        "POST_IMAGE_BASELINE_LINES": 22172,
+        "POST_IMAGE_BASELINE_METHODS": 712
+      },
+      "same_first_failure_predicate": true
+    },
+    "b110": {
+      "ref": "b1108874cab28d23f660aa22c11c863466a84a8e",
+      "test_file_sha256": "9fe0bb7d8abbe9b13a1a85d98ac930db028d3c166b9bcdf59bcadce04555a0fa",
+      "historical_function_ast_sha256": "00a239a26259d0830b3320461e02666674217f8959d5844e22c38e5fdc5dca25",
+      "current_screen_lines_at_ref": 24675,
+      "constants": {
+        "POST_IMAGE_BASELINE_LINES": 22172,
+        "POST_IMAGE_BASELINE_METHODS": 712
+      },
+      "same_first_failure_predicate": true
+    },
+    "head5a8": {
+      "ref": "5a8f23eb9dfabeda25d46ed168d8ac675f483217",
+      "test_file_sha256": "9fe0bb7d8abbe9b13a1a85d98ac930db028d3c166b9bcdf59bcadce04555a0fa",
+      "historical_function_ast_sha256": "00a239a26259d0830b3320461e02666674217f8959d5844e22c38e5fdc5dca25",
+      "current_screen_lines_at_ref": 24590,
+      "constants": {
+        "POST_IMAGE_BASELINE_LINES": 22172,
+        "POST_IMAGE_BASELINE_METHODS": 712
+      },
+      "same_first_failure_predicate": true
+    }
+  }
+}

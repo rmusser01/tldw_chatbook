@@ -1580,3 +1580,59 @@ async def test_context_and_exchange_lists_wrap_rather_than_clip_their_labels(
     else:
         assert painted.count("claude-haiku-4-5") == 2, painted
         assert painted.count("capture: Safe") == 2, painted
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("original", ["used", "empty", "unavailable"])
+async def test_explicit_turn_inspection_uses_operational_mixins_without_trace(original):
+    from dataclasses import replace
+
+    from textual.widgets import TextArea
+
+    from Tests.DB.test_console_prompt_mixins import attempt
+    from tldw_chatbook.Chat.console_prompt_mixins import MixinSnapshotUnavailableError
+
+    calls = []
+
+    async def original_snapshot(message_id):
+        calls.append(message_id)
+        if original == "unavailable":
+            raise MixinSnapshotUnavailableError("mixin_retry_unavailable")
+        return attempt(empty=original == "empty").snapshot
+
+    bindings = _capture_policy_bindings_for_inspector()
+    capture_off = replace(bindings.read(), effective_capture_enabled=False)
+    bindings = replace(bindings, read=lambda: capture_off)
+    app = InspectorHarness(
+        **_default_kwargs(
+            initial_tab=TAB_EXCHANGE,
+            mixin_snapshot_loader=original_snapshot,
+            capture_policy_bindings=bindings,
+        )
+    )
+    async with app.run_test(size=(100, 30)) as pilot:
+        await pilot.pause()
+        modal = app.screen
+        assert calls == []
+        assert "Capture Off" in str(
+            modal.query_one("#console-inspector-policy-status", Static).render()
+        )
+        pane_id = "console-inspector-exchange-detail"
+        modal.query_one(f"#{pane_id}").select("turn:0")
+        await _wait_until(
+            pilot,
+            lambda: "Original mix-ins" in _detail_text(modal, pane_id),
+        )
+        text = modal.query_one(f"#{pane_id}").query_one(TextArea).text
+        assert calls == ["n1"]
+        if original == "used":
+            assert "PRIVATE BODY\n" in text and "PRIVATE NAME" in text
+            assert "conversation retains exact Retry instructions" in text
+            assert "Capture Off" in text and "trace purge does not remove" in text
+        elif original == "empty":
+            assert "None used for this attempt." in text
+        else:
+            assert (
+                "Original mix-ins unavailable" in text
+                and "Regenerate uses current choices" in text
+            )

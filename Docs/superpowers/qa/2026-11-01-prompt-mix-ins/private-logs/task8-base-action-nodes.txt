@@ -1,0 +1,339 @@
+FFFFFFFFFF                                                               [100%]
+=================================== FAILURES ===================================
+___ test_mermaid_fences_keep_html_ordinals_and_use_distinct_replay_identity ____
+
+    def test_mermaid_fences_keep_html_ordinals_and_use_distinct_replay_identity():
+        service = ConsoleMessageActionService()
+        message = ConsoleChatMessage(
+            id="mixed", role=ConsoleMessageRole.ASSISTANT,
+            persisted_message_id="persisted-mixed",
+            content=('```mermaid\nflowchart TD\nA --> B\n```\n'
+                     '```html\n<p>First</p>\n```\n'
+                     '```mermaid\nflowchart LR\nA --> B\n```\n'
+                     '```html\n<p>Second</p>\n```\n'),
+        )
+        blocks = assistant_canvas_html_blocks(message)
+        assert [(b.language, b.index, b.identity) for b in blocks] == [
+            ("mermaid", 0, "mixed:canvas-mermaid:0"),
+            ("html", 0, "mixed:canvas-html:0"),
+            ("mermaid", 1, "mixed:canvas-mermaid:1"),
+            ("html", 1, "mixed:canvas-html:1"),
+        ]
+        html = service.dispatch("canvas-open-0", message).canvas_block_ref
+        mermaid = service.dispatch("canvas-open-mermaid-0", message).canvas_block_ref
+>       assert html.language == "html"
+               ^^^^^^^^^^^^^
+E       AttributeError: 'NoneType' object has no attribute 'language'
+
+Tests/Chat/test_console_message_actions.py:59: AttributeError
+---------------------------- Captured stderr setup -----------------------------
+2026-11-01 17:15:13.567 | DEBUG    | tldw_chatbook.Utils.optional_deps:check_dependency:642 - ✅ huggingface_hub dependency found. Feature 'huggingface_hub' is enabled.
+2026-11-01 17:15:13.607 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:52 - PyAudio not available. Install with: pip install pyaudio
+2026-11-01 17:15:13.648 | INFO     | tldw_chatbook.Audio.recording_service:<module>:58 - Sounddevice backend available
+2026-11-01 17:15:13.649 | INFO     | tldw_chatbook.Audio.recording_service:<module>:73 - WebRTC VAD available for voice activity detection
+_________ test_oversized_mermaid_keeps_discovery_safe_and_refuses_open _________
+
+    def test_oversized_mermaid_keeps_discovery_safe_and_refuses_open():
+        message = ConsoleChatMessage(
+            id="large", role=ConsoleMessageRole.ASSISTANT,
+            content="```mermaid\n" + "é" * 4097 + "\n```",
+        )
+        assert len(assistant_canvas_html_blocks(message)) == 1
+        result = ConsoleMessageActionService().dispatch("canvas-open-mermaid-0", message)
+        assert result.status == "blocked"
+>       assert "8 KiB" in result.visible_copy
+E       AssertionError: assert '8 KiB' in 'Canvas is disabled. Restart Chatbook after re-enabling it.'
+E        +  where 'Canvas is disabled. Restart Chatbook after re-enabling it.' = ConsoleActionResult(action_id='canvas-open-mermaid-0', status='blocked', visible_copy='Canvas is disabled. Restart Cha... clipboard_text=None, target_message_id='large', target_content=None, target_invocation_id=None, canvas_block_ref=None).visible_copy
+
+Tests/Chat/test_console_message_actions.py:80: AssertionError
+_____ test_mermaid_compile_repair_does_not_advertise_v1_diagram_execution ______
+
+    def test_mermaid_compile_repair_does_not_advertise_v1_diagram_execution():
+        from tldw_chatbook.Canvas.compiler import CanvasCompileError
+        from tldw_chatbook.Canvas.models import CanvasCompatibilityIssue
+    
+        message = ConsoleChatMessage(id="diagram", role=ConsoleMessageRole.ASSISTANT,
+            content="```mermaid\nflowchart TD\nA --> B\n```")
+        reference = ConsoleMessageActionService().dispatch("canvas-open-mermaid-0", message).canvas_block_ref
+        error = CanvasCompileError((CanvasCompatibilityIssue(
+            code="profile-unavailable", message="Unavailable"),))
+>       result = message_actions.canvas_compile_repair_result("canvas-open-mermaid-0", message, reference, error)
+                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+Tests/Chat/test_console_message_actions.py:93: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+action_id = 'canvas-open-mermaid-0'
+message = ConsoleChatMessage(role=<ConsoleMessageRole.ASSISTANT: 'assistant'>, content='```mermaid\nflowchart TD\nA --> B\n```',...ion=None, generation_projection_quarantine_reason=None, video_metadata=None, live_activity='', live_activity_action='')
+reference = None
+error = CanvasCompileError('Canvas document is incompatible with the canvas-v1 runtime')
+
+    def canvas_compile_repair_result(
+        action_id: str,
+        message: ConsoleChatMessage,
+        reference: ConsoleCanvasBlockReference,
+        error: CanvasCompileError,
+    ) -> ConsoleActionResult:
+        """Return bounded repair guidance after off-loop import validation fails."""
+    
+        codes = ", ".join(issue.code for issue in error.issues) or "unsupported input"
+        return ConsoleActionResult(
+            action_id=action_id,
+            status="canvas_repair_requested",
+            visible_copy="Prepared a Canvas compatibility repair request.",
+            target_message_id=message.id,
+            target_content=(
+                (
+                    "Please rewrite Mermaid block "
+>                   if reference.language == "mermaid"
+                       ^^^^^^^^^^^^^^^^^^
+                    else "Please rewrite HTML block "
+                )
+                + f"{reference.block_index + 1} from your previous response as one "
+                + (
+                    "complete HTML document with escaped text-only Mermaid declarations. "
+                    "Use its exact admitted profile; unavailable profiles remain source-only. "
+                    if reference.language == "mermaid"
+                    else "self-contained Canvas V1 HTML document with inline CSS and JavaScript only. "
+                )
+                + f"Resolve these compatibility issues: {codes}."
+            ),
+            target_invocation_id=reference.identity,
+        )
+E       AttributeError: 'NoneType' object has no attribute 'language'
+
+tldw_chatbook/Chat/console_message_actions.py:381: AttributeError
+_____ test_canvas_html_actions_use_parsed_fences_and_stable_block_identity _____
+
+    def test_canvas_html_actions_use_parsed_fences_and_stable_block_identity():
+        service = ConsoleMessageActionService()
+        message = ConsoleChatMessage(
+            id="assistant-canvas",
+            role=ConsoleMessageRole.ASSISTANT,
+            content=(
+                "A prose mention of ```html is not a block.\n\n"
+                "```python\nprint('<p>not html</p>')\n```\n\n"
+                "```html\n<!doctype html><title>One</title><p>safe</p>\n```\n"
+            ),
+        )
+    
+        blocks = assistant_canvas_html_blocks(message)
+        actions = service.available_actions(message)
+    
+        assert len(blocks) == 1
+        assert blocks[0].identity == "assistant-canvas:canvas-html:0"
+        assert blocks[0].compatible is None
+        canvas_action_ids = [
+            action.action_id
+            for action in actions
+            if action.action_id.startswith("canvas-")
+        ]
+>       assert canvas_action_ids == [
+            "canvas-open-0",
+            "canvas-open-new-0",
+        ]
+E       AssertionError: assert [] == ['canvas-open...s-open-new-0']
+E         
+E         Right contains 2 more items, first extra item: 'canvas-open-0'
+E         Use -v to get more diff
+
+Tests/Chat/test_console_message_actions.py:122: AssertionError
+_______ test_canvas_candidate_defers_compatibility_validation_until_open _______
+
+    def test_canvas_candidate_defers_compatibility_validation_until_open():
+        service = ConsoleMessageActionService()
+        message = ConsoleChatMessage(
+            id="assistant-incompatible",
+            role=ConsoleMessageRole.ASSISTANT,
+            content="```html\n<script src='https://example.com/app.js'></script>\n```",
+        )
+    
+        block = assistant_canvas_html_blocks(message)[0]
+        result = service.dispatch("canvas-open-0", message)
+    
+        assert block.identity == "assistant-incompatible:canvas-html:0"
+>       assert result.status == "canvas_open_requested"
+E       AssertionError: assert 'blocked' == 'canvas_open_requested'
+E         
+E         - canvas_open_requested
+E         + blocked
+
+Tests/Chat/test_console_message_actions.py:152: AssertionError
+_____ test_canvas_action_discovery_and_dispatch_do_not_compile_candidates ______
+
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x110653140>
+
+    def test_canvas_action_discovery_and_dispatch_do_not_compile_candidates(
+        monkeypatch,
+    ):
+        service = ConsoleMessageActionService()
+        message = ConsoleChatMessage(
+            id="assistant-many-candidates",
+            role=ConsoleMessageRole.ASSISTANT,
+            content="".join(
+                f"```html\n<!doctype html><p>{index}</p>\n```\n" for index in range(8)
+            ),
+        )
+    
+        def fail_if_compiled(_source):
+            pytest.fail("candidate discovery/dispatch compiled on the caller thread")
+    
+        monkeypatch.setattr(
+            message_actions, "compile_canvas_document", fail_if_compiled, raising=False
+        )
+    
+        actions = service.available_actions(message)
+        result = service.dispatch("canvas-open-7", message)
+    
+>       assert len([item for item in actions if item.action_id.startswith("canvas-")]) == 16
+E       assert 0 == 16
+E        +  where 0 = len([])
+
+Tests/Chat/test_console_message_actions.py:180: AssertionError
+_______ test_refused_tool_marker_says_the_body_went_to_the_model[denied] _______
+
+status = 'denied'
+
+    @pytest.mark.parametrize(
+        "status", ["denied", "blocked_off", "blocked_kill_switch", "blocked"]
+    )
+    def test_refused_tool_marker_says_the_body_went_to_the_model(status: str):
+        """task-32279: what a refused step hides is the instruction the MODEL got.
+    
+        Live evidence: after a Deny, expanding the marker showed "Do not retry
+        this call..." under "Full output" -- reading as if the tool had produced
+        it.
+        """
+        message = ConsoleChatMessage(
+            role=ConsoleMessageRole.TOOL,
+            content="list_characters → ERROR: tool call denied by the user.",
+            tool_output_full="tool call denied by the user. Do not retry this call.",
+            activity_presentation=ConsoleActivityPresentation(
+                "tool", "list_characters", status
+            ),
+        )
+    
+        action = _tool_output_action(message)
+    
+        assert action is not None
+>       assert action.label == "Sent to the model"
+E       AssertionError: assert 'Full output' == 'Sent to the model'
+E         
+E         - Sent to the model
+E         + Full output
+
+Tests/Chat/test_console_message_actions.py:1453: AssertionError
+____ test_refused_tool_marker_says_the_body_went_to_the_model[blocked_off] _____
+
+status = 'blocked_off'
+
+    @pytest.mark.parametrize(
+        "status", ["denied", "blocked_off", "blocked_kill_switch", "blocked"]
+    )
+    def test_refused_tool_marker_says_the_body_went_to_the_model(status: str):
+        """task-32279: what a refused step hides is the instruction the MODEL got.
+    
+        Live evidence: after a Deny, expanding the marker showed "Do not retry
+        this call..." under "Full output" -- reading as if the tool had produced
+        it.
+        """
+        message = ConsoleChatMessage(
+            role=ConsoleMessageRole.TOOL,
+            content="list_characters → ERROR: tool call denied by the user.",
+            tool_output_full="tool call denied by the user. Do not retry this call.",
+            activity_presentation=ConsoleActivityPresentation(
+                "tool", "list_characters", status
+            ),
+        )
+    
+        action = _tool_output_action(message)
+    
+        assert action is not None
+>       assert action.label == "Sent to the model"
+E       AssertionError: assert 'Full output' == 'Sent to the model'
+E         
+E         - Sent to the model
+E         + Full output
+
+Tests/Chat/test_console_message_actions.py:1453: AssertionError
+_ test_refused_tool_marker_says_the_body_went_to_the_model[blocked_kill_switch] _
+
+status = 'blocked_kill_switch'
+
+    @pytest.mark.parametrize(
+        "status", ["denied", "blocked_off", "blocked_kill_switch", "blocked"]
+    )
+    def test_refused_tool_marker_says_the_body_went_to_the_model(status: str):
+        """task-32279: what a refused step hides is the instruction the MODEL got.
+    
+        Live evidence: after a Deny, expanding the marker showed "Do not retry
+        this call..." under "Full output" -- reading as if the tool had produced
+        it.
+        """
+        message = ConsoleChatMessage(
+            role=ConsoleMessageRole.TOOL,
+            content="list_characters → ERROR: tool call denied by the user.",
+            tool_output_full="tool call denied by the user. Do not retry this call.",
+            activity_presentation=ConsoleActivityPresentation(
+                "tool", "list_characters", status
+            ),
+        )
+    
+        action = _tool_output_action(message)
+    
+        assert action is not None
+>       assert action.label == "Sent to the model"
+E       AssertionError: assert 'Full output' == 'Sent to the model'
+E         
+E         - Sent to the model
+E         + Full output
+
+Tests/Chat/test_console_message_actions.py:1453: AssertionError
+______ test_refused_tool_marker_says_the_body_went_to_the_model[blocked] _______
+
+status = 'blocked'
+
+    @pytest.mark.parametrize(
+        "status", ["denied", "blocked_off", "blocked_kill_switch", "blocked"]
+    )
+    def test_refused_tool_marker_says_the_body_went_to_the_model(status: str):
+        """task-32279: what a refused step hides is the instruction the MODEL got.
+    
+        Live evidence: after a Deny, expanding the marker showed "Do not retry
+        this call..." under "Full output" -- reading as if the tool had produced
+        it.
+        """
+        message = ConsoleChatMessage(
+            role=ConsoleMessageRole.TOOL,
+            content="list_characters → ERROR: tool call denied by the user.",
+            tool_output_full="tool call denied by the user. Do not retry this call.",
+            activity_presentation=ConsoleActivityPresentation(
+                "tool", "list_characters", status
+            ),
+        )
+    
+        action = _tool_output_action(message)
+    
+        assert action is not None
+>       assert action.label == "Sent to the model"
+E       AssertionError: assert 'Full output' == 'Sent to the model'
+E         
+E         - Sent to the model
+E         + Full output
+
+Tests/Chat/test_console_message_actions.py:1453: AssertionError
+============================= slowest 25 durations =============================
+
+(25 durations < 1s hidden.)
+=========================== short test summary info ============================
+FAILED Tests/Chat/test_console_message_actions.py::test_mermaid_fences_keep_html_ordinals_and_use_distinct_replay_identity
+FAILED Tests/Chat/test_console_message_actions.py::test_oversized_mermaid_keeps_discovery_safe_and_refuses_open
+FAILED Tests/Chat/test_console_message_actions.py::test_mermaid_compile_repair_does_not_advertise_v1_diagram_execution
+FAILED Tests/Chat/test_console_message_actions.py::test_canvas_html_actions_use_parsed_fences_and_stable_block_identity
+FAILED Tests/Chat/test_console_message_actions.py::test_canvas_candidate_defers_compatibility_validation_until_open
+FAILED Tests/Chat/test_console_message_actions.py::test_canvas_action_discovery_and_dispatch_do_not_compile_candidates
+FAILED Tests/Chat/test_console_message_actions.py::test_refused_tool_marker_says_the_body_went_to_the_model[denied]
+FAILED Tests/Chat/test_console_message_actions.py::test_refused_tool_marker_says_the_body_went_to_the_model[blocked_off]
+FAILED Tests/Chat/test_console_message_actions.py::test_refused_tool_marker_says_the_body_went_to_the_model[blocked_kill_switch]
+FAILED Tests/Chat/test_console_message_actions.py::test_refused_tool_marker_says_the_body_went_to_the_model[blocked]
+10 failed in 0.77s

@@ -51,6 +51,7 @@ from textual.widgets import (
     Markdown,
     OptionList,
     SelectionList,
+    Select,
     Static,
     Switch,
     TextArea,
@@ -298,9 +299,6 @@ from ...Widgets.Console.prompt_variables_dialog import (
     PromptVariablesDialogRequest,
 )
 from ..Navigation.screen_state_store import ConsolePromptTargetProjection
-from ...Widgets.Library.prompt_delete_confirmation_modal import (
-    PromptDeleteDecision,
-)
 from ...Library.library_rag_answer_service import (
     LibraryRagAnswer,
     generate_library_rag_answer,
@@ -473,9 +471,6 @@ from ...Library.meeting_speaker_rename import (
     _meeting_speaker_legend_rows,
     can_rename_meeting_speakers,
 )
-from ...Widgets.Library.library_note_folder_dialog import (
-    LibraryNoteFolderNameDialog,
-)
 from ...Widgets.Library.library_emergency_return import LibraryEmergencyReturn
 from ...Widgets.glyph_fallback import ascii_glyph_mode
 from ...Widgets.Library.library_notes_canvas import (
@@ -552,10 +547,10 @@ from ..Library_Modules.skills_trust_modals import (
     SkillRecoveryReviewModal,
 )
 from .study_scope_models import (
-    MATERIAL_SOURCE_LIBRARY,
-    MATERIAL_TITLE_LIBRARY_SOURCES,
-    StudyScopeContext,
-    StudySourceItem,
+    MATERIAL_SOURCE_LIBRARY,  # noqa: F401 -- live defining globals for extracted helpers
+    MATERIAL_TITLE_LIBRARY_SOURCES,  # noqa: F401 -- live defining globals for extracted helpers
+    StudyScopeContext,  # noqa: F401 -- live defining globals for extracted helpers
+    StudySourceItem,  # noqa: F401 -- live defining globals for extracted helpers
 )
 
 if TYPE_CHECKING:
@@ -567,6 +562,7 @@ if TYPE_CHECKING:
     from ...Widgets.Library.library_file_notes_workspace import (
         LibraryFileNotesWorkspace,
     )
+    from ...Widgets.Library.prompt_delete_confirmation_modal import PromptDeleteDecision
     from ...Widgets.workspace_create_modal import WorkspaceCreateResult
     from ..Library_Modules.library_inspection_admission import PreparedLibraryInspection
     from ..Library_Modules.library_unavailable_navigation import (
@@ -814,10 +810,10 @@ from ..Library_Modules.screen_constants import (
     LIBRARY_NOTES_RAIL_ROWS,
     LIBRARY_NOTES_SOURCE_STRIP_CANVAS_KINDS,
     LIBRARY_RAG_ANSWERABLE_RETRIEVAL_STATUSES,
-    LIBRARY_STUDY_HANDOFF_LOCAL_MODE_COPY,
-    LIBRARY_STUDY_HANDOFF_MODES,
-    LIBRARY_STUDY_HANDOFF_OWNERSHIP_COPY,
-    LIBRARY_STUDY_HANDOFF_READY_COPY,
+    LIBRARY_STUDY_HANDOFF_LOCAL_MODE_COPY,  # noqa: F401 -- live defining globals for extracted helpers
+    LIBRARY_STUDY_HANDOFF_MODES,  # noqa: F401 -- live defining globals for extracted helpers
+    LIBRARY_STUDY_HANDOFF_OWNERSHIP_COPY,  # noqa: F401 -- live defining globals for extracted helpers
+    LIBRARY_STUDY_HANDOFF_READY_COPY,  # noqa: F401 -- live defining globals for extracted helpers
     LIBRARY_STUDY_HANDOFF_TITLES_CAP,
     LIBRARY_NAV_MODE_TO_ROW_ID,
     LIBRARY_STUDY_HANDOFF_ROW_IDS,
@@ -857,7 +853,7 @@ from ..Library_Modules.screen_helpers import (
     library_note_persisted_title,
     _ingestible_file_filters,
     _transcribe_cpp_gguf_filters,
-    _library_carries_forward_line,
+    _library_carries_forward_line,  # noqa: F401 -- live defining globals for extracted helpers
     _unbreakable_size_text,
     _active_library_principal_id,
     _active_library_sync_scope,
@@ -1539,7 +1535,7 @@ class LibraryScreen(BaseAppScreen):
         WorkbenchPaneTarget("library-canvas", ("library-prompts-filter",)),
         WorkbenchPaneTarget(
             "library-prompt-work-pane",
-            ("library-prompt-name", "library-prompt-detail-retry"),
+            ("library-prompt-name", "mixin-name", "library-prompt-detail-retry"),
         ),
     )
     _SKILLS_WORKBENCH_FOCUS_TARGETS = (
@@ -10455,6 +10451,7 @@ class LibraryScreen(BaseAppScreen):
             scope = {
                 "query": prompt_scope.query,
                 "collection_id": prompt_scope.collection_id,
+                **({"artifact_type": prompt_scope.artifact_type} if prompt_scope.artifact_type is not None else {}),
                 "sort_by": prompt_scope.sort_by,
                 "sort_order": prompt_scope.sort_order,
                 "page": prompt_scope.page,
@@ -10552,18 +10549,13 @@ class LibraryScreen(BaseAppScreen):
                     "page": normalized.page,
                 }
             elif row_id == LIBRARY_ROW_BROWSE_PROMPTS:
-                if set(raw_scope) != {
-                    "query",
-                    "collection_id",
-                    "sort_by",
-                    "sort_order",
-                    "page",
-                }:
+                if set(raw_scope) not in ({"query", "collection_id", "sort_by", "sort_order", "page"}, {"query", "collection_id", "sort_by", "sort_order", "page", "artifact_type"}):
                     return None
                 normalized_prompt = PromptBrowseScope(**raw_scope)
                 scope = {
                     "query": normalized_prompt.query,
                     "collection_id": normalized_prompt.collection_id,
+                    **({"artifact_type": normalized_prompt.artifact_type} if normalized_prompt.artifact_type is not None else {}),
                     "sort_by": normalized_prompt.sort_by,
                     "sort_order": normalized_prompt.sort_order,
                     "page": normalized_prompt.page,
@@ -14935,7 +14927,9 @@ class LibraryScreen(BaseAppScreen):
         self, kind: str
     ) -> LibraryStudyHandoffCanvasState:
         """Build one handoff owner's display-only snapshot."""
-        copy = self._study_handoff_copy(kind)
+        from ..Library_Modules.screen_helpers import study_handoff_copy
+
+        copy = study_handoff_copy(self, kind, source=globals())
         return LibraryStudyHandoffCanvasState(
             header=copy["header"],
             purpose=copy["purpose"],
@@ -14984,26 +14978,6 @@ class LibraryScreen(BaseAppScreen):
             if value:
                 return value
         return None
-
-    def _study_source_items(self) -> tuple[StudySourceItem, ...]:
-        source_items: list[StudySourceItem] = []
-        source_type_map = {
-            "notes": "note",
-            "media": "media",
-        }
-        for source_type, study_source_type in source_type_map.items():
-            for record in self._local_source_records[source_type]:
-                source_id = self._source_record_id(record)
-                if not source_id:
-                    continue
-                source_items.append(
-                    StudySourceItem(
-                        source_type=study_source_type,
-                        source_id=source_id,
-                        label=self._source_title(source_type, record),
-                    )
-                )
-        return tuple(source_items)
 
     def _source_count_metadata(self) -> dict[str, int | None]:
         metadata: dict[str, int | None] = {}
@@ -15061,79 +15035,6 @@ class LibraryScreen(BaseAppScreen):
                 )
             )
         return self._library_workspace_depth_state_cache
-
-    def _source_study_context(self) -> StudyScopeContext | None:
-        if not self._has_source_study_context():
-            return None
-        material_titles: list[str] = []
-        for source_type in ("notes", "media", "conversations"):
-            material_titles.extend(self._source_sample_titles(source_type))
-        return StudyScopeContext(
-            material_source=MATERIAL_SOURCE_LIBRARY,
-            material_title=MATERIAL_TITLE_LIBRARY_SOURCES,
-            material_summary=self._source_snapshot_body(),
-            material_titles=tuple(material_titles),
-            source_items=self._study_source_items(),
-            return_hint=MATERIAL_SOURCE_LIBRARY,
-        )
-
-    def _source_study_handoff_titles(self) -> tuple[str, ...]:
-        material_titles: list[str] = []
-        for source_type in ("notes", "media", "conversations"):
-            material_titles.extend(self._source_sample_titles(source_type))
-        return tuple(material_titles)
-
-    def _has_source_study_context(self) -> bool:
-        return self._has_local_sources()
-
-    def _study_handoff_copy(self, kind: str) -> dict[str, str]:
-        mode = LIBRARY_STUDY_HANDOFF_MODES.get(
-            kind,
-            LIBRARY_STUDY_HANDOFF_MODES["study"],
-        )
-        titles = self._source_study_handoff_titles()
-        has_context = self._has_source_study_context()
-        action_label = mode["action_label"]
-        if has_context and titles:
-            context_copy = _library_carries_forward_line(titles)
-        elif has_context:
-            context_copy = (
-                "Carries forward: Library source snapshot (titles unavailable)"
-            )
-        else:
-            # No Library sources at all: the carries-forward line is omitted
-            # entirely rather than stating the negative (the blocked
-            # "recovery" line below already carries that signal).
-            context_copy = ""
-        return {
-            "header": mode["header"],
-            "action_label": action_label,
-            "button_label": mode["button_label"],
-            "purpose": mode["purpose"],
-            "context": context_copy,
-            "owner": LIBRARY_STUDY_HANDOFF_OWNERSHIP_COPY,
-            "recovery": (
-                self._study_handoff_ready_copy()
-                if has_context
-                else (
-                    "Import sources or create notes first, or open "
-                    f"{action_label} globally without Library context."
-                )
-            ),
-        }
-
-    def _study_handoff_ready_copy(self) -> str:
-        """The readiness line for a hand-off that HAS a source snapshot.
-
-        TASK-34000.6 (S-05): "Source snapshot is ready." promised a
-        generation local mode cannot run (Study refuses with "Source
-        generation requires server mode."). In local mode the line says what
-        needs a server and what still works by hand; server mode keeps the
-        ready line.
-        """
-        if self._runtime_active_source() == "server":
-            return LIBRARY_STUDY_HANDOFF_READY_COPY
-        return LIBRARY_STUDY_HANDOFF_LOCAL_MODE_COPY
 
     def _runtime_active_source(self) -> str:
         """``"local"`` or ``"server"`` from the app's runtime policy state."""
@@ -23741,7 +23642,7 @@ class LibraryScreen(BaseAppScreen):
             self.call_after_refresh(self._sync_library_media_reader_layout_from_shell)
             self._request_library_media_browse(
                 self._library_media_browse_controller.mutation_refresh_scope,
-                focus_identity="#library-media-row-0",
+                focus_identity=None if keep_media_reader else "#library-media-row-0",
             )
             self._request_library_media_facets()
             # task-28245: entering the media area with an active review set
@@ -25724,13 +25625,13 @@ class LibraryScreen(BaseAppScreen):
 
     @on(Button.Pressed, "#library-prompts-empty-clear-filter")
     def handle_library_prompts_empty_clear_filter(self, event: Button.Pressed) -> None:
-        """Clear only the Prompt query and return to page one."""
+        """Clear the Prompt query/type filters and return to page one."""
         event.stop()
         if self._prompts_state.mutation_in_flight:
             return
         scope = self._library_prompt_browse_controller.scope
         self._request_library_prompts_browse(
-            dataclasses.replace(scope, query="", page=1),
+            dataclasses.replace(scope, query="", artifact_type=None, page=1),
             focus_identity="library-prompts-empty-clear-filter",
         )
 
@@ -28282,6 +28183,25 @@ class LibraryScreen(BaseAppScreen):
     def _enter_library_prompt_create_editor(self) -> None:
         return self._prompts_controller._enter_library_prompt_create_editor()
 
+    async def on_prompt_mixin_editor_save_requested(self, event) -> None:
+        event.stop()
+        self.run_worker(self._prompts_controller._await_library_prompt_save_call(self._prompts_controller._save_library_prompt()), exclusive=True, group="library_prompt_save")
+
+    async def on_prompt_mixin_editor_cancel_requested(self, event) -> None:
+        event.stop()
+        self._prompts_controller.handle_library_prompt_discard(event)
+
+    def on_prompt_mixin_editor_changed(self, event) -> None:
+        self._prompts_controller.handle_mixin_changed(event)
+
+    @on(Button.Pressed, "#library-prompts-new-mixin")
+    async def handle_new_mixin(self, event) -> None:
+        await self._prompts_controller.handle_new_mixin(event)
+
+    @on(Select.Changed, "#library-prompts-type-filter")
+    def handle_prompt_type_filter(self, event) -> None:
+        self._prompts_controller.handle_type_filter(event)
+
     def _reset_library_prompt_editor_state(self) -> None:
         """Clear all in-canvas Library prompt editor/save state.
 
@@ -28300,6 +28220,8 @@ class LibraryScreen(BaseAppScreen):
         self._prompts_state.status = ""
         self._prompts_state.conflict_snapshot = None
         self._prompts_state.block_state = None
+        self._prompts_state.mixin_draft = None
+        self._prompts_state.mixin_source_identity = None
         self._prompts_state.detached_structured = False
         self._prompts_state.include_starter_content = False
         self._clear_library_prompt_delete_pending()
@@ -28612,6 +28534,9 @@ class LibraryScreen(BaseAppScreen):
         if self._prompts_state.view != "editor":
             return
         editor_state = self._current_library_prompt_editor_state()
+        if editor_state.artifact_type == "mixin":
+            self._prompts_controller.enable_mixin_in_console()
+            return
         block_state = editor_state.block_editor_state
         if (
             editor_state.definition_state not in {"legacy", "supported_v2"}
@@ -31722,6 +31647,10 @@ class LibraryScreen(BaseAppScreen):
         Args:
             event: Press event from the new-folder action button.
         """
+        from ...Widgets.Library.library_note_folder_dialog import (
+            LibraryNoteFolderNameDialog,
+        )
+
         event.stop()
         selected = self._selected_library_notes_tree_row()
         if selected is not None and selected.kind == "folder" and selected.protected:
@@ -31749,6 +31678,10 @@ class LibraryScreen(BaseAppScreen):
     @on(Button.Pressed, "#library-notes-folder-rename")
     def handle_library_notes_folder_rename(self, event: Button.Pressed) -> None:
         """Rename the selected manual folder with optimistic locking."""
+        from ...Widgets.Library.library_note_folder_dialog import (
+            LibraryNoteFolderNameDialog,
+        )
+
         event.stop()
         selected = self._selected_library_notes_tree_row()
         if (
@@ -34446,7 +34379,7 @@ class LibraryScreen(BaseAppScreen):
 
         On success, the deleted item is dropped from the cached
         ``_local_source_records["media"]`` snapshot (matched via
-        ``_source_record_id``, the same id-key precedence ``_study_source_items``
+        ``_source_record_id``, the same id-key precedence ``study_source_items``
         uses) so the list view reflects the trash immediately, without
         waiting on a full snapshot re-fetch, and the canvas returns to its
         list view. task-3020 AC5: ``_local_source_counts["media"]`` is
@@ -38051,7 +37984,9 @@ class LibraryScreen(BaseAppScreen):
     def _open_study_section(self, initial_section: str = "dashboard") -> None:
         open_study_screen = getattr(self.app_instance, "open_study_screen", None)
         if callable(open_study_screen):
-            scope_context = self._source_study_context()
+            from ..Library_Modules.screen_helpers import source_study_context
+
+            scope_context = source_study_context(self, source=globals())
             if scope_context is None:
                 open_study_screen(initial_section=initial_section)
             else:

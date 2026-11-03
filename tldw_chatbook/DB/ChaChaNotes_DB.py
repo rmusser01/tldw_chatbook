@@ -536,65 +536,15 @@ def _unquote_sql_identifier(token: str) -> str:
 
 
 def _strip_leading_sql_noise(statement: str) -> str:
-    """Return ``statement`` without its leading whitespace and comments.
+    from .sql_validation import strip_leading_sql_noise
 
-    The migration scripts attach a header comment to the statement that
-    follows it, so the raw chunk cannot be pattern-matched directly. Only the
-    HEAD is trimmed; the statement handed to SQLite is always the original
-    text, so ``sqlite_master.sql`` is unaffected.
-
-    Args:
-        statement: One complete statement, possibly comment-prefixed.
-
-    Returns:
-        The statement text starting at its first SQL token, or ``""`` when the
-        chunk carries no SQL at all.
-    """
-    text = statement
-    while True:
-        text = text.lstrip()
-        if text.startswith("--"):
-            newline = text.find("\n")
-            if newline == -1:
-                return ""
-            text = text[newline + 1 :]
-            continue
-        if text.startswith("/*"):
-            end = text.find("*/")
-            if end == -1:
-                return ""
-            text = text[end + 2 :]
-            continue
-        return text
+    return strip_leading_sql_noise(statement)
 
 
 def _split_sql_statements(script: str) -> List[str]:
-    """Split a migration script into complete statements.
+    from .sql_validation import split_migration_statements
 
-    Uses ``sqlite3.complete_statement`` over accumulated lines -- the same
-    splitter the new-style migration steps already use for their on-disk
-    ``.sql`` files -- so trigger bodies containing ``;`` stay intact.
-
-    Args:
-        script: The full migration script text.
-
-    Returns:
-        The statements in source order, each keeping its original text
-        (leading comments included).
-
-    Raises:
-        SchemaError: If the script ends with an incomplete statement.
-    """
-    statements: List[str] = []
-    pending = ""
-    for line in script.splitlines(keepends=True):
-        pending += line
-        if sqlite3.complete_statement(pending):
-            statements.append(pending)
-            pending = ""
-    if pending.strip():
-        raise SchemaError("Migration script contains an incomplete SQL statement")
-    return statements
+    return split_migration_statements(script, error_type=SchemaError)
 
 
 from tldw_chatbook.DB.canvas_payload_validation import (
@@ -820,7 +770,7 @@ class CharactersRAGDB:
     """
 
     _CURRENT_SCHEMA_VERSION = (
-        85  # Local archive chronology after portrait regions (ADR-166).
+        86  # ADR-286 conversation-owned operational prompt mix-ins.
     )
     _SCHEMA_NAME = "rag_char_chat_schema"  # Used for the db_schema_version table
     _ALLOWED_CONVERSATION_STATES = ("in-progress", "resolved", "backlog", "non-viable")
@@ -8180,6 +8130,26 @@ DELETE FROM keywords
                 f"{type(exc).__name__}"
             ) from exc
 
+    def _migrate_from_v85_to_v86(self, conn: sqlite3.Connection) -> None:
+        """Install conversation-owned operational prompt mix-in records."""
+        self._require_migration_entry_version(conn, 85, "V85→V86")
+        path = Path(__file__).parent / "migrations" / "chachanotes_prompt_mixins.sql"
+        try:
+            with self.transaction() as cursor:
+                self._execute_migration_statements(
+                    cursor, path.read_text(encoding="utf-8"), "V85→V86"
+                )
+                updated = cursor.execute(
+                    "UPDATE db_schema_version SET version=86 WHERE schema_name=? AND version=85",
+                    (self._SCHEMA_NAME,),
+                )
+                if updated.rowcount != 1:
+                    raise SchemaError("V85→V86 version update failed")
+        except (OSError, sqlite3.Error, CharactersRAGDBError, SchemaError) as exc:
+            raise SchemaError(
+                f"Migration V85→V86 failed: {type(exc).__name__}"
+            ) from exc
+
     def _migrate_from_v84_to_v85(self, conn: sqlite3.Connection) -> None:
         """Add local archive chronology while retaining shared sync events."""
         self._require_migration_entry_version(conn, 84, "V84→V85")
@@ -8737,6 +8707,7 @@ DELETE FROM keywords
                     82: self._migrate_from_v82_to_v83,
                     83: self._migrate_from_v83_to_v84,
                     84: self._migrate_from_v84_to_v85,
+                    85: self._migrate_from_v85_to_v86,
                 }
 
                 if current_db_version == 0:

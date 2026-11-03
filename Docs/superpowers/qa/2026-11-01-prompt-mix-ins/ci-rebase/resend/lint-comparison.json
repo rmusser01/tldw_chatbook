@@ -1,0 +1,700 @@
+{
+  "tldw_chatbook/Chat/console_prompt_mixin_service.py": {
+    "base": {
+      "sha256": "3bf37499daa4a37d6a95871c553a703ee659c960fb38dfa05482303efe44a70e",
+      "lint": [],
+      "lint_exit": 0,
+      "format_changes": []
+    },
+    "current": {
+      "sha256": "9c3f4f01ae06db729ba9ac0e71a9c8a3a7af053af1e786ad4edfc3588cb110ac",
+      "lint": [],
+      "lint_exit": 0,
+      "format_changes": []
+    },
+    "new_format": [],
+    "lint_messages_same": true
+  },
+  "Tests/Chat/test_console_prompt_mixin_admission.py": {
+    "base": {
+      "sha256": "8b4053deec52af1049ba63ac6e1b3ae800e5865e4d75c93e73cc05e96eed3855",
+      "lint": [],
+      "lint_exit": 0,
+      "format_changes": []
+    },
+    "current": {
+      "sha256": "06f8e2dabc7a0cba5fe0206f5c76de01304af7cec0f1a6c278c295dd7e3dcc53",
+      "lint": [],
+      "lint_exit": 0,
+      "format_changes": []
+    },
+    "new_format": [],
+    "lint_messages_same": true
+  },
+  "Tests/UI/test_console_turn_resend_ui.py": {
+    "base": {
+      "sha256": "60b64f858fc04314bf6d2bf4bf41b795d8ef7148bb69bb7e5f6594adbdf6a939",
+      "lint": [
+        {
+          "cell": null,
+          "code": "I001",
+          "end_location": {
+            "column": 2,
+            "row": 45
+          },
+          "filename": "/Users/macbook-dev/.codex/worktrees/prompt-mix-ins/tldw_chatbook/Tests/UI/test_console_turn_resend_ui.py",
+          "fix": {
+            "applicability": "safe",
+            "edits": [
+              {
+                "content": "from __future__ import annotations\n\nimport asyncio\nimport sys\nimport threading\nimport time\n\nimport pytest\nfrom textual.app import ComposeResult\nfrom textual.widgets import Button\n\nfrom Tests.private_profile import private_profile_test\nfrom Tests.UI.consolidated_css import ConsolidatedCSSApp\nfrom Tests.UI.test_console_native_chat_flow import (\n    BlockedGateway,\n    FailThenRecoverGateway,\n    _apply_mounted_console_provider_config,\n    _build_console_send_test_app,\n    _ReadyResolutionGateway,\n    _select_llamacpp_console,\n    _visible_text,\n    _wait_for_text,\n)\nfrom Tests.UI.test_destination_shells import _wait_for_selector\nfrom Tests.UI.test_product_maturity_gate1_core_loop_screen_adaptation import (\n    ConsoleHarness,\n)\nfrom tldw_chatbook import config as config_module\nfrom tldw_chatbook.Chat.console_chat_models import (\n    ConsoleChatMessage,\n    ConsoleMessageRole,\n)\nfrom tldw_chatbook.Widgets.Console import ConsoleComposerBar\nfrom tldw_chatbook.Widgets.Console.console_transcript import (\n    _ACTION_TOOLTIPS,\n    ConsoleTranscript,\n)\n\n",
+                "end_location": {
+                  "column": 1,
+                  "row": 47
+                },
+                "location": {
+                  "column": 1,
+                  "row": 9
+                }
+              }
+            ],
+            "message": "Organize imports"
+          },
+          "location": {
+            "column": 1,
+            "row": 9
+          },
+          "message": "Import block is un-sorted or un-formatted",
+          "name": "unsorted-imports",
+          "noqa_row": 9,
+          "severity": "error",
+          "url": "https://docs.astral.sh/ruff/rules/unsorted-imports"
+        },
+        {
+          "cell": null,
+          "code": "I001",
+          "end_location": {
+            "column": 60,
+            "row": 945
+          },
+          "filename": "/Users/macbook-dev/.codex/worktrees/prompt-mix-ins/tldw_chatbook/Tests/UI/test_console_turn_resend_ui.py",
+          "fix": {
+            "applicability": "safe",
+            "edits": [
+              {
+                "content": "from tldw_chatbook.UI.Console_Modules.console_spend_projection import (\n    ConsoleReadinessConfigProjection,\n)\nfrom tldw_chatbook.UI.Screens.chat_screen import ChatScreen\n",
+                "end_location": {
+                  "column": 1,
+                  "row": 946
+                },
+                "location": {
+                  "column": 1,
+                  "row": 943
+                }
+              }
+            ],
+            "message": "Organize imports"
+          },
+          "location": {
+            "column": 1,
+            "row": 943
+          },
+          "message": "Import block is un-sorted or un-formatted",
+          "name": "unsorted-imports",
+          "noqa_row": 943,
+          "severity": "error",
+          "url": "https://docs.astral.sh/ruff/rules/unsorted-imports"
+        }
+      ],
+      "lint_exit": 1,
+      "format_changes": [
+        {
+          "before": [
+            "from tldw_chatbook.UI.Console_Modules.console_spend_projection import ConsoleReadinessConfigProjection"
+          ],
+          "after": [
+            "",
+            "from tldw_chatbook.UI.Console_Modules.console_spend_projection import (",
+            "    ConsoleReadinessConfigProjection,",
+            ")"
+          ]
+        }
+      ]
+    },
+    "current": {
+      "sha256": "60b64f858fc04314bf6d2bf4bf41b795d8ef7148bb69bb7e5f6594adbdf6a939",
+      "lint": [
+        {
+          "cell": null,
+          "code": "I001",
+          "end_location": {
+            "column": 2,
+            "row": 45
+          },
+          "filename": "/Users/macbook-dev/.codex/worktrees/prompt-mix-ins/tldw_chatbook/Tests/UI/test_console_turn_resend_ui.py",
+          "fix": {
+            "applicability": "safe",
+            "edits": [
+              {
+                "content": "from __future__ import annotations\n\nimport asyncio\nimport sys\nimport threading\nimport time\n\nimport pytest\nfrom textual.app import ComposeResult\nfrom textual.widgets import Button\n\nfrom Tests.private_profile import private_profile_test\nfrom Tests.UI.consolidated_css import ConsolidatedCSSApp\nfrom Tests.UI.test_console_native_chat_flow import (\n    BlockedGateway,\n    FailThenRecoverGateway,\n    _apply_mounted_console_provider_config,\n    _build_console_send_test_app,\n    _ReadyResolutionGateway,\n    _select_llamacpp_console,\n    _visible_text,\n    _wait_for_text,\n)\nfrom Tests.UI.test_destination_shells import _wait_for_selector\nfrom Tests.UI.test_product_maturity_gate1_core_loop_screen_adaptation import (\n    ConsoleHarness,\n)\nfrom tldw_chatbook import config as config_module\nfrom tldw_chatbook.Chat.console_chat_models import (\n    ConsoleChatMessage,\n    ConsoleMessageRole,\n)\nfrom tldw_chatbook.Widgets.Console import ConsoleComposerBar\nfrom tldw_chatbook.Widgets.Console.console_transcript import (\n    _ACTION_TOOLTIPS,\n    ConsoleTranscript,\n)\n\n",
+                "end_location": {
+                  "column": 1,
+                  "row": 47
+                },
+                "location": {
+                  "column": 1,
+                  "row": 9
+                }
+              }
+            ],
+            "message": "Organize imports"
+          },
+          "location": {
+            "column": 1,
+            "row": 9
+          },
+          "message": "Import block is un-sorted or un-formatted",
+          "name": "unsorted-imports",
+          "noqa_row": 9,
+          "severity": "error",
+          "url": "https://docs.astral.sh/ruff/rules/unsorted-imports"
+        },
+        {
+          "cell": null,
+          "code": "I001",
+          "end_location": {
+            "column": 60,
+            "row": 945
+          },
+          "filename": "/Users/macbook-dev/.codex/worktrees/prompt-mix-ins/tldw_chatbook/Tests/UI/test_console_turn_resend_ui.py",
+          "fix": {
+            "applicability": "safe",
+            "edits": [
+              {
+                "content": "from tldw_chatbook.UI.Console_Modules.console_spend_projection import (\n    ConsoleReadinessConfigProjection,\n)\nfrom tldw_chatbook.UI.Screens.chat_screen import ChatScreen\n",
+                "end_location": {
+                  "column": 1,
+                  "row": 946
+                },
+                "location": {
+                  "column": 1,
+                  "row": 943
+                }
+              }
+            ],
+            "message": "Organize imports"
+          },
+          "location": {
+            "column": 1,
+            "row": 943
+          },
+          "message": "Import block is un-sorted or un-formatted",
+          "name": "unsorted-imports",
+          "noqa_row": 943,
+          "severity": "error",
+          "url": "https://docs.astral.sh/ruff/rules/unsorted-imports"
+        }
+      ],
+      "lint_exit": 1,
+      "format_changes": [
+        {
+          "before": [
+            "from tldw_chatbook.UI.Console_Modules.console_spend_projection import ConsoleReadinessConfigProjection"
+          ],
+          "after": [
+            "",
+            "from tldw_chatbook.UI.Console_Modules.console_spend_projection import (",
+            "    ConsoleReadinessConfigProjection,",
+            ")"
+          ]
+        }
+      ]
+    },
+    "new_format": [],
+    "lint_messages_same": true
+  },
+  "Tests/UI/test_library_notes_move_never_false_conflicts.py": {
+    "base": {
+      "sha256": "6947c6036bf521985e9d1ec8f36badb810937dc1545c1b8d5d3a0adf377992e2",
+      "lint": [
+        {
+          "cell": null,
+          "code": "I001",
+          "end_location": {
+            "column": 2,
+            "row": 42
+          },
+          "filename": "/Users/macbook-dev/.codex/worktrees/prompt-mix-ins/tldw_chatbook/Tests/UI/test_library_notes_move_never_false_conflicts.py",
+          "fix": {
+            "applicability": "safe",
+            "edits": [
+              {
+                "content": "from __future__ import annotations\n\nimport sqlite3\nimport time\n\nimport pytest\nfrom textual.widgets import Button\n\nimport tldw_chatbook.Notes.note_folder_repository as folder_repository_module\nfrom Tests.UI.app_factory import _build_test_app\nfrom Tests.UI.library_quit_guard_support import SIZE, _NotesProfile, _open_notes, _until\nfrom Tests.UI.test_library_shell import (\n    LibraryProductionCSSHarness,\n    _active_library_screen,\n    _FakeSkillsScopeService,\n    _seed_conversations,\n    _wait_for_library_shell,\n)\nfrom tldw_chatbook.Library.library_notes_state import LibraryNotesFocusIdentity\nfrom tldw_chatbook.Library.library_notes_tree_paging import NotesBranchKey\nfrom tldw_chatbook.Notes.note_folder_repository import LocalNoteFolderRepository\nfrom tldw_chatbook.UI.Screens.library_screen import LibraryScreen\nfrom tldw_chatbook.Widgets.Library.library_note_folder_dialog import (\n    LibraryNoteFolderTargetDialog,\n)\n\n",
+                "end_location": {
+                  "column": 1,
+                  "row": 44
+                },
+                "location": {
+                  "column": 1,
+                  "row": 18
+                }
+              }
+            ],
+            "message": "Organize imports"
+          },
+          "location": {
+            "column": 1,
+            "row": 18
+          },
+          "message": "Import block is un-sorted or un-formatted",
+          "name": "unsorted-imports",
+          "noqa_row": 18,
+          "severity": "error",
+          "url": "https://docs.astral.sh/ruff/rules/unsorted-imports"
+        }
+      ],
+      "lint_exit": 1,
+      "format_changes": [
+        {
+          "before": [
+            "        lambda: (selected := screen._selected_library_notes_tree_row()) is not None",
+            "        and selected.note_id == note_id",
+            "        and bool(screen.query(\"#library-notes-placement-move\"))",
+            "        and not screen._library_notes_mutation_fenced(),"
+          ],
+          "after": [
+            "        lambda: (",
+            "            (selected := screen._selected_library_notes_tree_row()) is not None",
+            "            and selected.note_id == note_id",
+            "            and bool(screen.query(\"#library-notes-placement-move\"))",
+            "            and not screen._library_notes_mutation_fenced()",
+            "        ),"
+          ]
+        },
+        {
+          "before": [
+            "        lambda: _picker_rows(host)[:1] == [destination]",
+            "        and host.screen._shown_query == query,"
+          ],
+          "after": [
+            "        lambda: (",
+            "            _picker_rows(host)[:1] == [destination]",
+            "            and host.screen._shown_query == query",
+            "        ),"
+          ]
+        },
+        {
+          "before": [
+            "            lambda: screen._library_note_session.snapshot is not None",
+            "            and screen._library_note_session.snapshot.note_id == note_id",
+            "            and bool(screen.query(\"#library-note-context\")),"
+          ],
+          "after": [
+            "            lambda: (",
+            "                screen._library_note_session.snapshot is not None",
+            "                and screen._library_note_session.snapshot.note_id == note_id",
+            "                and bool(screen.query(\"#library-note-context\"))",
+            "            ),"
+          ]
+        },
+        {
+          "before": [
+            "            lambda: _row_for(screen, note_id, None) is None",
+            "            and \"\u25cb Move note\" in _painted(host),"
+          ],
+          "after": [
+            "            lambda: (",
+            "                _row_for(screen, note_id, None) is None",
+            "                and \"\u25cb Move note\" in _painted(host)",
+            "            ),"
+          ]
+        },
+        {
+          "before": [
+            "        for control in (\"#library-notes-placement-move\", \"#library-notes-placement-add\"):"
+          ],
+          "after": [
+            "        for control in (",
+            "            \"#library-notes-placement-move\",",
+            "            \"#library-notes-placement-add\",",
+            "        ):"
+          ]
+        },
+        {
+          "before": [
+            "async def test_a_genuine_conflict_offers_a_working_refresh(tmp_path, monkeypatch) -> None:"
+          ],
+          "after": [
+            "async def test_a_genuine_conflict_offers_a_working_refresh(",
+            "    tmp_path, monkeypatch",
+            ") -> None:"
+          ]
+        },
+        {
+          "before": [
+            "            lambda: (selected := screen._selected_library_notes_tree_row()) is not None",
+            "            and selected.folder_id == recipes",
+            "            and bool(screen.query(\"#library-notes-folder-move\")),"
+          ],
+          "after": [
+            "            lambda: (",
+            "                (selected := screen._selected_library_notes_tree_row()) is not None",
+            "                and selected.folder_id == recipes",
+            "                and bool(screen.query(\"#library-notes-folder-move\"))",
+            "            ),"
+          ]
+        },
+        {
+          "before": [
+            "            lambda: conflict in _status_line(host, screen)",
+            "            and \"Refresh\" in _status_line(host, screen),",
+            "            lambda: f\"the whole conflict sentence and Refresh: \"",
+            "            f\"{_status_line(host, screen)!r}\","
+          ],
+          "after": [
+            "            lambda: (",
+            "                conflict in _status_line(host, screen)",
+            "                and \"Refresh\" in _status_line(host, screen)",
+            "            ),",
+            "            lambda: (",
+            "                f\"the whole conflict sentence and Refresh: \"",
+            "                f\"{_status_line(host, screen)!r}\"",
+            "            ),"
+          ]
+        },
+        {
+          "before": [
+            "            lambda: screen.focused is not None",
+            "            and screen.focused is not refresh",
+            "            and screen.focused.id == \"library-notes-notice-refresh\","
+          ],
+          "after": [
+            "            lambda: (",
+            "                screen.focused is not None",
+            "                and screen.focused is not refresh",
+            "                and screen.focused.id == \"library-notes-notice-refresh\"",
+            "            ),"
+          ]
+        },
+        {
+          "before": [
+            "            lambda: not screen._notes_state.notice",
+            "            and (row := _folder_row(screen, recipes)) is not None",
+            "            and row.folder_version == loaded_version + 1,"
+          ],
+          "after": [
+            "            lambda: (",
+            "                not screen._notes_state.notice",
+            "                and (row := _folder_row(screen, recipes)) is not None",
+            "                and row.folder_version == loaded_version + 1",
+            "            ),"
+          ]
+        },
+        {
+          "before": [
+            "            lambda: conflict not in _painted(host)",
+            "            and not screen.query(\"#library-notes-notice-refresh\"),"
+          ],
+          "after": [
+            "            lambda: (",
+            "                conflict not in _painted(host)",
+            "                and not screen.query(\"#library-notes-notice-refresh\")",
+            "            ),"
+          ]
+        },
+        {
+          "before": [
+            "            lambda: screen.focused is not None",
+            "            and screen.focused.id == \"library-notes-filter\","
+          ],
+          "after": [
+            "            lambda: (",
+            "                screen.focused is not None",
+            "                and screen.focused.id == \"library-notes-filter\"",
+            "            ),"
+          ]
+        },
+        {
+          "before": [
+            "            lambda: screen.focused is not None",
+            "            and screen.focused.id != \"library-notes-filter\","
+          ],
+          "after": [
+            "            lambda: (",
+            "                screen.focused is not None",
+            "                and screen.focused.id != \"library-notes-filter\"",
+            "            ),"
+          ]
+        },
+        {
+          "before": [
+            "            lambda: (selected := screen._selected_library_notes_tree_row()) is not None",
+            "            and selected.folder_id == recipes",
+            "            and bool(screen.query(\"#library-notes-folder-move\")),"
+          ],
+          "after": [
+            "            lambda: (",
+            "                (selected := screen._selected_library_notes_tree_row()) is not None",
+            "                and selected.folder_id == recipes",
+            "                and bool(screen.query(\"#library-notes-folder-move\"))",
+            "            ),"
+          ]
+        },
+        {
+          "before": [
+            "            lambda: not previous.is_attached",
+            "            and screen.focused is screen.query_one(\"#library-notes-new\"),"
+          ],
+          "after": [
+            "            lambda: (",
+            "                not previous.is_attached",
+            "                and screen.focused is screen.query_one(\"#library-notes-new\")",
+            "            ),"
+          ]
+        }
+      ]
+    },
+    "current": {
+      "sha256": "6947c6036bf521985e9d1ec8f36badb810937dc1545c1b8d5d3a0adf377992e2",
+      "lint": [
+        {
+          "cell": null,
+          "code": "I001",
+          "end_location": {
+            "column": 2,
+            "row": 42
+          },
+          "filename": "/Users/macbook-dev/.codex/worktrees/prompt-mix-ins/tldw_chatbook/Tests/UI/test_library_notes_move_never_false_conflicts.py",
+          "fix": {
+            "applicability": "safe",
+            "edits": [
+              {
+                "content": "from __future__ import annotations\n\nimport sqlite3\nimport time\n\nimport pytest\nfrom textual.widgets import Button\n\nimport tldw_chatbook.Notes.note_folder_repository as folder_repository_module\nfrom Tests.UI.app_factory import _build_test_app\nfrom Tests.UI.library_quit_guard_support import SIZE, _NotesProfile, _open_notes, _until\nfrom Tests.UI.test_library_shell import (\n    LibraryProductionCSSHarness,\n    _active_library_screen,\n    _FakeSkillsScopeService,\n    _seed_conversations,\n    _wait_for_library_shell,\n)\nfrom tldw_chatbook.Library.library_notes_state import LibraryNotesFocusIdentity\nfrom tldw_chatbook.Library.library_notes_tree_paging import NotesBranchKey\nfrom tldw_chatbook.Notes.note_folder_repository import LocalNoteFolderRepository\nfrom tldw_chatbook.UI.Screens.library_screen import LibraryScreen\nfrom tldw_chatbook.Widgets.Library.library_note_folder_dialog import (\n    LibraryNoteFolderTargetDialog,\n)\n\n",
+                "end_location": {
+                  "column": 1,
+                  "row": 44
+                },
+                "location": {
+                  "column": 1,
+                  "row": 18
+                }
+              }
+            ],
+            "message": "Organize imports"
+          },
+          "location": {
+            "column": 1,
+            "row": 18
+          },
+          "message": "Import block is un-sorted or un-formatted",
+          "name": "unsorted-imports",
+          "noqa_row": 18,
+          "severity": "error",
+          "url": "https://docs.astral.sh/ruff/rules/unsorted-imports"
+        }
+      ],
+      "lint_exit": 1,
+      "format_changes": [
+        {
+          "before": [
+            "        lambda: (selected := screen._selected_library_notes_tree_row()) is not None",
+            "        and selected.note_id == note_id",
+            "        and bool(screen.query(\"#library-notes-placement-move\"))",
+            "        and not screen._library_notes_mutation_fenced(),"
+          ],
+          "after": [
+            "        lambda: (",
+            "            (selected := screen._selected_library_notes_tree_row()) is not None",
+            "            and selected.note_id == note_id",
+            "            and bool(screen.query(\"#library-notes-placement-move\"))",
+            "            and not screen._library_notes_mutation_fenced()",
+            "        ),"
+          ]
+        },
+        {
+          "before": [
+            "        lambda: _picker_rows(host)[:1] == [destination]",
+            "        and host.screen._shown_query == query,"
+          ],
+          "after": [
+            "        lambda: (",
+            "            _picker_rows(host)[:1] == [destination]",
+            "            and host.screen._shown_query == query",
+            "        ),"
+          ]
+        },
+        {
+          "before": [
+            "            lambda: screen._library_note_session.snapshot is not None",
+            "            and screen._library_note_session.snapshot.note_id == note_id",
+            "            and bool(screen.query(\"#library-note-context\")),"
+          ],
+          "after": [
+            "            lambda: (",
+            "                screen._library_note_session.snapshot is not None",
+            "                and screen._library_note_session.snapshot.note_id == note_id",
+            "                and bool(screen.query(\"#library-note-context\"))",
+            "            ),"
+          ]
+        },
+        {
+          "before": [
+            "            lambda: _row_for(screen, note_id, None) is None",
+            "            and \"\u25cb Move note\" in _painted(host),"
+          ],
+          "after": [
+            "            lambda: (",
+            "                _row_for(screen, note_id, None) is None",
+            "                and \"\u25cb Move note\" in _painted(host)",
+            "            ),"
+          ]
+        },
+        {
+          "before": [
+            "        for control in (\"#library-notes-placement-move\", \"#library-notes-placement-add\"):"
+          ],
+          "after": [
+            "        for control in (",
+            "            \"#library-notes-placement-move\",",
+            "            \"#library-notes-placement-add\",",
+            "        ):"
+          ]
+        },
+        {
+          "before": [
+            "async def test_a_genuine_conflict_offers_a_working_refresh(tmp_path, monkeypatch) -> None:"
+          ],
+          "after": [
+            "async def test_a_genuine_conflict_offers_a_working_refresh(",
+            "    tmp_path, monkeypatch",
+            ") -> None:"
+          ]
+        },
+        {
+          "before": [
+            "            lambda: (selected := screen._selected_library_notes_tree_row()) is not None",
+            "            and selected.folder_id == recipes",
+            "            and bool(screen.query(\"#library-notes-folder-move\")),"
+          ],
+          "after": [
+            "            lambda: (",
+            "                (selected := screen._selected_library_notes_tree_row()) is not None",
+            "                and selected.folder_id == recipes",
+            "                and bool(screen.query(\"#library-notes-folder-move\"))",
+            "            ),"
+          ]
+        },
+        {
+          "before": [
+            "            lambda: conflict in _status_line(host, screen)",
+            "            and \"Refresh\" in _status_line(host, screen),",
+            "            lambda: f\"the whole conflict sentence and Refresh: \"",
+            "            f\"{_status_line(host, screen)!r}\","
+          ],
+          "after": [
+            "            lambda: (",
+            "                conflict in _status_line(host, screen)",
+            "                and \"Refresh\" in _status_line(host, screen)",
+            "            ),",
+            "            lambda: (",
+            "                f\"the whole conflict sentence and Refresh: \"",
+            "                f\"{_status_line(host, screen)!r}\"",
+            "            ),"
+          ]
+        },
+        {
+          "before": [
+            "            lambda: screen.focused is not None",
+            "            and screen.focused is not refresh",
+            "            and screen.focused.id == \"library-notes-notice-refresh\","
+          ],
+          "after": [
+            "            lambda: (",
+            "                screen.focused is not None",
+            "                and screen.focused is not refresh",
+            "                and screen.focused.id == \"library-notes-notice-refresh\"",
+            "            ),"
+          ]
+        },
+        {
+          "before": [
+            "            lambda: not screen._notes_state.notice",
+            "            and (row := _folder_row(screen, recipes)) is not None",
+            "            and row.folder_version == loaded_version + 1,"
+          ],
+          "after": [
+            "            lambda: (",
+            "                not screen._notes_state.notice",
+            "                and (row := _folder_row(screen, recipes)) is not None",
+            "                and row.folder_version == loaded_version + 1",
+            "            ),"
+          ]
+        },
+        {
+          "before": [
+            "            lambda: conflict not in _painted(host)",
+            "            and not screen.query(\"#library-notes-notice-refresh\"),"
+          ],
+          "after": [
+            "            lambda: (",
+            "                conflict not in _painted(host)",
+            "                and not screen.query(\"#library-notes-notice-refresh\")",
+            "            ),"
+          ]
+        },
+        {
+          "before": [
+            "            lambda: screen.focused is not None",
+            "            and screen.focused.id == \"library-notes-filter\","
+          ],
+          "after": [
+            "            lambda: (",
+            "                screen.focused is not None",
+            "                and screen.focused.id == \"library-notes-filter\"",
+            "            ),"
+          ]
+        },
+        {
+          "before": [
+            "            lambda: screen.focused is not None",
+            "            and screen.focused.id != \"library-notes-filter\","
+          ],
+          "after": [
+            "            lambda: (",
+            "                screen.focused is not None",
+            "                and screen.focused.id != \"library-notes-filter\"",
+            "            ),"
+          ]
+        },
+        {
+          "before": [
+            "            lambda: (selected := screen._selected_library_notes_tree_row()) is not None",
+            "            and selected.folder_id == recipes",
+            "            and bool(screen.query(\"#library-notes-folder-move\")),"
+          ],
+          "after": [
+            "            lambda: (",
+            "                (selected := screen._selected_library_notes_tree_row()) is not None",
+            "                and selected.folder_id == recipes",
+            "                and bool(screen.query(\"#library-notes-folder-move\"))",
+            "            ),"
+          ]
+        },
+        {
+          "before": [
+            "            lambda: not previous.is_attached",
+            "            and screen.focused is screen.query_one(\"#library-notes-new\"),"
+          ],
+          "after": [
+            "            lambda: (",
+            "                not previous.is_attached",
+            "                and screen.focused is screen.query_one(\"#library-notes-new\")",
+            "            ),"
+          ]
+        }
+      ]
+    },
+    "new_format": [],
+    "lint_messages_same": true
+  }
+}

@@ -1270,7 +1270,11 @@ class PluginReviewModal(ModalScreen):
                 self.installation_id, **values
             )
         elif action.startswith("test-"):
-            runtime = getattr(self.app, "console_runtime", None)
+            app = self.app
+            try:
+                runtime = app.console_runtime
+            except AttributeError:
+                runtime = None
             store = runtime.chat_store if runtime is not None else None
             session = (
                 next(
@@ -1350,7 +1354,11 @@ class PluginReviewModal(ModalScreen):
             else draft.configuration
         )
         try:
-            owner = getattr(self.app, "local_mcp_control_service", None)
+            app = self.app
+            try:
+                owner = app.local_mcp_control_service
+            except AttributeError:
+                owner = None
             if owner is None:
                 raise ValueError("mcp_configuration_owner_unavailable")
             result = await self.operations.save_profile(review, owner)

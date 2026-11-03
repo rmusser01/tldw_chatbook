@@ -145,7 +145,7 @@ class GlobalFullCaptureConfirmation(SafeModalDismissMixin, ModalScreen[bool]):
     #global-full-body { height: 1fr; scrollbar-gutter: stable; }
     #global-full-message, #global-full-ack { height: auto; margin-top: 1; }
     #global-full-actions { height: 3; min-height: 3; align-horizontal: right; }
-    #global-full-actions Button { min-width: 14; margin-left: 1; }
+    #global-full-actions Button.global-full-action { min-width: 14; margin-left: 1; }
     """
 
     def compose(self) -> ComposeResult:
@@ -162,12 +162,17 @@ class GlobalFullCaptureConfirmation(SafeModalDismissMixin, ModalScreen[bool]):
                     id="global-full-ack",
                 )
             with Horizontal(id="global-full-actions"):
-                yield Button("Keep current policy", id="global-full-cancel")
+                yield Button(
+                    "Keep current policy",
+                    id="global-full-cancel",
+                    classes="global-full-action",
+                )
                 yield Button(
                     "Enable Global Full",
                     id="global-full-confirm",
                     variant="error",
                     disabled=True,
+                    classes="global-full-action",
                 )
 
     @on(Checkbox.Changed, "#global-full-ack")
@@ -240,7 +245,7 @@ class ConsoleCapturePolicyDialog(SafeModalDismissMixin, ModalScreen[None]):
     }
     #capture-policy-reason { color: $warning; }
     #capture-policy-actions { height: 3; min-height: 3; align-horizontal: right; }
-    #capture-policy-actions Button { min-width: 10; margin-left: 1; }
+    #capture-policy-actions Button.capture-policy-action { min-width: 10; margin-left: 1; }
     #capture-policy-status.-error { color: $error; }
     """
 
@@ -339,8 +344,17 @@ class ConsoleCapturePolicyDialog(SafeModalDismissMixin, ModalScreen[None]):
                 )
             yield Static(self.status_text, id="capture-policy-status", markup=False)
             with Horizontal(id="capture-policy-actions"):
-                yield Button("Cancel", id="capture-policy-cancel")
-                yield Button("Apply", id="capture-policy-apply", variant="primary")
+                yield Button(
+                    "Cancel",
+                    id="capture-policy-cancel",
+                    classes="capture-policy-action",
+                )
+                yield Button(
+                    "Apply",
+                    id="capture-policy-apply",
+                    variant="primary",
+                    classes="capture-policy-action",
+                )
 
     async def on_mount(self) -> None:
         self._sync_scope_guidance()
@@ -869,7 +883,7 @@ class ConsoleTracePrivacyDialog(SafeModalDismissMixin, ModalScreen[None]):
     }
     #trace-privacy-body { height: 1fr; scrollbar-gutter: stable; }
     #trace-privacy-actions { height: 3; min-height: 3; align-horizontal: right; }
-    #trace-privacy-actions Button { min-width: 10; margin-left: 1; }
+    #trace-privacy-actions Button.trace-privacy-action { min-width: 10; margin-left: 1; }
     #trace-privacy-status.-error { color: $error; }
     """
 
@@ -918,8 +932,15 @@ class ConsoleTracePrivacyDialog(SafeModalDismissMixin, ModalScreen[None]):
                     yield RadioButton("Off", id="trace-privacy-pii-off")
             yield Static(self.status_text, id="trace-privacy-status", markup=False)
             with Horizontal(id="trace-privacy-actions"):
-                yield Button("Cancel", id="trace-privacy-cancel")
-                yield Button("Apply", id="trace-privacy-apply", variant="primary")
+                yield Button(
+                    "Cancel", id="trace-privacy-cancel", classes="trace-privacy-action"
+                )
+                yield Button(
+                    "Apply",
+                    id="trace-privacy-apply",
+                    variant="primary",
+                    classes="trace-privacy-action",
+                )
 
     def on_mount(self) -> None:
         self._sync_choices()

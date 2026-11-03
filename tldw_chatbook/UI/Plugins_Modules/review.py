@@ -87,7 +87,10 @@ async def open_owned_plugin(
 
     from tldw_chatbook.Widgets.plugin_review_modal import PluginReviewModal
 
-    registry = getattr(app, "workspace_registry_service", None)
+    try:
+        registry = app.workspace_registry_service
+    except AttributeError:
+        registry = None
     workspace = (
         await asyncio.to_thread(registry.get_active_workspace) if registry else None
     )

@@ -1,0 +1,15 @@
+{
+  "product_commit": "d7744a78e9094ad4df08a6466fab6d4eb8f412ce",
+  "qualification": "Actual Textual PTY, current bounded Preview only; old live77 remains historical at 247c9eb. No provider Send or full replay.",
+  "profile": "/private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/mixins-task9-live-otdkzk5l/live",
+  "launcher": "Existing roleplay-library-layout-review-2026-10-01/harness/env.sh rp_app_env allowlist; console script, private HOME/XDG/config and null keyring",
+  "argv": "tmux -f /dev/null -L mixins-final-preview new-session -d -x 160 -y 45 -c \"$HARNESS_STATE/live/cwd\" \"${RP_ENV[@]}\" /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/tldw-cli --focus",
+  "actions": [
+    "Open saved Describe a lantern scene. chat",
+    "Menu \u2192 Prompts \u2192 Mix-ins",
+    "Preview next send; scroll existing workbench to recovery output",
+    "Ctrl+Q; verify app PID and private tmux server absent"
+  ],
+  "capture": "tmux capture-pane -p; tmux capture-pane -e -p -J",
+  "limitations": "Real PTY cells, not native OS paint; detached launch exit code unavailable. Existing private source missing from previous qualification. Lower DB owner still logs bounded transaction category=ValueError; controller emits info, not expected-error traceback."
+}

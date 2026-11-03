@@ -10,6 +10,8 @@ from unittest.mock import AsyncMock, Mock
 import pytest
 from textual.widgets import Button, Input, Select, Static, TextArea
 
+pytestmark = pytest.mark.bootstrap_profile
+
 from Tests.UI.test_library_prompts_canvas import (
     _build_test_app,
     _open_prompt_editor,
@@ -1033,3 +1035,66 @@ async def test_eighty_columns_protect_basic_editor_and_keep_restore_grips(
         assert shell.items_grip.region.width == 5
         assert shell.library_grip.region.right <= 80
         assert shell.items_grip.region.right <= 80
+
+
+@pytest.mark.bootstrap_profile
+@pytest.mark.asyncio
+async def test_mixin_enable_refuses_absent_target_and_replaced_source(tmp_path):
+    from Tests.UI.test_library_prompt_mixins import seed_mixin
+    from tldw_chatbook.Prompt_Management.prompt_variables import fingerprint_system_text
+    from tldw_chatbook.UI.Navigation.screen_state_store import (
+        ConsolePromptTargetProjection,
+    )
+
+    db, service = _real_prompt_scope_service(tmp_path)
+    (tmp_path / "other").mkdir(mode=0o700)
+    other_db, other_service = _real_prompt_scope_service(tmp_path / "other")
+    prompt_id = seed_mixin(db)
+    app = _build_test_app()
+    _wire_empty_non_prompt_services(app)
+    app.prompt_scope_service = service
+    app.console_prompt_target_projection = lambda: None
+    app.notify = Mock()
+    host = LibraryGlobalKeyProductionCSSHarness(app)
+    try:
+        async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+            screen = _active_library_screen(host)
+            await _wait_for_library_shell(screen, pilot)
+            await _open_prompt_editor(screen, pilot, prompt_id)
+            await _wait_for_condition(
+                pilot,
+                lambda: screen._prompts_state.editor_armed,
+                message="Mix-in editor not armed",
+            )
+            screen.query_one("#library-prompt-insert-console", Button).press()
+            await pilot.pause()
+            assert "Open Console once" in app.notify.call_args.args[0]
+            app.console_prompt_target_projection = lambda: (
+                ConsolePromptTargetProjection(
+                    "chat", fingerprint_system_text(""), "incarnation", 0
+                )
+            )
+            screen.query_one("#library-prompt-insert-console", Button).press()
+            await pilot.pause()
+            from tldw_chatbook.UI.Navigation.pending_handoff_store import (
+                ConsoleMixinEnableRequest,
+                HandoffChannel,
+            )
+
+            claim = app.pending_handoffs.claim(HandoffChannel.CONSOLE_PROMPT_INSERT)
+            assert claim is not None and type(claim.value) is ConsoleMixinEnableRequest
+            assert (
+                claim.value.source.record_uuid
+                == db.fetch_prompt_details(prompt_id)["uuid"]
+            )
+            assert host.seen_routes == ["chat"]
+            app.pending_handoffs.acknowledge(claim)
+            host.seen_routes.clear()
+            app.prompt_scope_service = other_service
+            screen.query_one("#library-prompt-insert-console", Button).press()
+            await pilot.pause()
+            assert "source" in app.notify.call_args.args[0]
+            assert host.seen_routes == []
+    finally:
+        db.close_connection()
+        other_db.close_connection()

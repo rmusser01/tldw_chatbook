@@ -26,6 +26,9 @@ from tldw_chatbook.Widgets.Console.console_transcript import (
     ConsoleTranscriptMessage,
 )
 
+# The transcript reads config; retain its collection-time admitted profile.
+pytestmark = pytest.mark.bootstrap_profile
+
 #: ~20 KB multi-line body (28 paragraphs that each wrap over several lines).
 _BIG_BODY = ("lorem ipsum dolor sit amet consectetur adipiscing elit " * 13 + "\n") * 28
 assert 18_000 < len(_BIG_BODY) < 24_000
@@ -126,7 +129,7 @@ async def test_drag_wraps_the_body_at_most_once_per_text_and_width():
             console_transcript_module.Content = real_content
         # One wrap rebuilds the memoized table after the cache_clear; the
         # other 29 moves must reuse it. (Pre-fix: one wrap per move = 30.)
-        assert wrap_calls <= 2, f"expected memoized wrap table, got {wrap_calls} wraps"
+        assert 1 <= wrap_calls <= 2, f"expected memoized wrap table, got {wrap_calls} wraps"
         # The drag still works: the selection followed the last move.
         selection = transcript.selection_manager.state.selection
         assert selection is not None

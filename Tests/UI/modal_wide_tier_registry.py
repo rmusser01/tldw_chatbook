@@ -63,6 +63,13 @@ from tldw_chatbook.Constants import WIDE_VIEWPORT_COLUMNS as WIDE_VIEWPORT_COLUM
 MODAL_WIDE_TIER_SKIPPED: dict[str, str] = {
     # -- inventory skip column (tiny-by-design / judgment) ------------------
     "PasswordDialog": "inventory #72: single-input dialog, scaling adds nothing",
+    "PluginAuthorityDialog": "masked passphrase input, inherits compact PasswordDialog geometry",
+    "NewCardModal": "single-title input, compact confirmation without a content browser",
+    "ConsoleCodeReviewModal": "95% of the viewport already, wider than the 85% tier",
+    "PluginReviewModal": "shared plugin-review-shell is already 90% of the viewport",
+    "PluginStatusModal": "shared plugin-review-shell is already 90% of the viewport",
+    "PluginVariableDialog": "shared plugin-review-shell is already 90% of the viewport",
+    "PluginAuthorityResetModal": "shared plugin-review-shell is already 90% of the viewport",
     "VoiceBlendDialog": "inventory #74: fixed 15-column slider grid, extra width is dead space",
     "ConfirmationDialog": "inventory #76: tiny-by-design confirm",
     "UnsavedChangesDialog": "tiny-by-design confirm (ConfirmationDialog family)",
@@ -329,7 +336,7 @@ MODAL_WIDE_TIER: tuple[tuple[str, int, str], ...] = (
     ("#video-capacity-dialog", 120, "Widgets/Console/console_video_capacity_modal.py"),
     ("#project-skills-modal", 120, "Widgets/project_skills_import_modal.py"),
     ("#console-prompt-picker-modal", 120, "css/features/_console_panels.tcss"),
-    ("#console-style-picker-modal", 120, "css/features/_console.tcss"),
+    ("#console-style-picker-modal", 120, "css/features/_console_prompts.tcss"),
     (".model-install-modal", 120, "Widgets/ModelArtifacts/install_modal.py"),
     (".local-gguf-import-modal", 120, "Widgets/ModelArtifacts/local_gguf_import.py"),
     (

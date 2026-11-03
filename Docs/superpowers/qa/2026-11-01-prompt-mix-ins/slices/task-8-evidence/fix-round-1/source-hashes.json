@@ -1,0 +1,10 @@
+{
+  "fix_base": "3c77bbbdd701052bb778eaf1bc09fea7b838c8ae",
+  "files": {
+    "Tests/UI/test_console_prompt_mixins.py": "1762beb99006e29ad84d75a962071601399f55c6446067e3af1c8a77a996e02d",
+    "backlog/tasks/task-38543 - Manage-chat-mix-ins-through-the-existing-composer-Prompts-action.md": "5ea988daf1f090626ba1a46e3d575a83e5aa6734fa61776027d39539affe2436",
+    "tldw_chatbook/UI/Console_Modules/prompts.py": "3272fff4dd107a1297adc6a85706d4fe759786c5be4e8c1ff45f8792cd620b1f",
+    "tldw_chatbook/Widgets/Console/console_prompt_mixins_view.py": "f6873d662f8134cc37a9b751f91ecdad97a3c2988d84bc170a8c850ec2e9876f",
+    "tldw_chatbook/Widgets/Console/console_prompts_modal.py": "4901c513f7dc77307f3b1571473b7b13eefdead54f0f2bb056ef8aa5d4bfe6e4"
+  }
+}

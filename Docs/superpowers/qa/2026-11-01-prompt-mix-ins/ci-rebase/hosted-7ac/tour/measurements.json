@@ -1,0 +1,93 @@
+{
+  "exitstatus": 0,
+  "observations": [
+    {
+      "keys": [
+        "ctrl+1"
+      ],
+      "start": 1866596.544314333,
+      "press_seconds": 2.0185177500825375,
+      "expected": "HomeScreen",
+      "arrived": true,
+      "wait_seconds": 3.9796803751960397,
+      "total_seconds": 5.998209666926414
+    },
+    {
+      "keys": [
+        "ctrl+2"
+      ],
+      "start": 1866602.54254,
+      "press_seconds": 1.4754079580307007,
+      "expected": "ChatScreen",
+      "arrived": true,
+      "wait_seconds": 5.092806125059724,
+      "total_seconds": 6.5682269998360425
+    },
+    {
+      "keys": [
+        "ctrl+3"
+      ],
+      "start": 1866609.1107845,
+      "press_seconds": 0.8723360411822796,
+      "expected": "LibraryScreen",
+      "arrived": true,
+      "wait_seconds": 0.4592007079627365,
+      "total_seconds": 1.3315452500246465
+    },
+    {
+      "keys": [
+        "ctrl+4"
+      ],
+      "start": 1866610.442341791,
+      "press_seconds": 1.1850240419153124,
+      "expected": "PersonasScreen",
+      "arrived": true,
+      "wait_seconds": 0.5269809160381556,
+      "total_seconds": 1.712012416915968
+    },
+    {
+      "keys": [
+        "ctrl+7"
+      ],
+      "start": 1866612.15437025,
+      "press_seconds": 1.0621954160742462,
+      "expected": "SchedulesWorkbench",
+      "arrived": true,
+      "wait_seconds": 0.48951062513515353,
+      "total_seconds": 1.5517171660903841
+    },
+    {
+      "keys": [
+        "ctrl+9"
+      ],
+      "start": 1866613.706096625,
+      "press_seconds": 1.0205684159882367,
+      "expected": "SettingsScreen",
+      "arrived": true,
+      "wait_seconds": 0.5211202499922365,
+      "total_seconds": 1.5416945000179112
+    },
+    {
+      "keys": [
+        "f2"
+      ],
+      "start": 1866615.247798541,
+      "press_seconds": 0.5581495419610292,
+      "expected": "LLMScreen",
+      "arrived": true,
+      "wait_seconds": 0.6335954579990357,
+      "total_seconds": 1.1917541248258203
+    },
+    {
+      "keys": [
+        "f4"
+      ],
+      "start": 1866616.439561791,
+      "press_seconds": 1.0290755000896752,
+      "expected": "SettingsScreen",
+      "arrived": true,
+      "wait_seconds": 0.4873155830428004,
+      "total_seconds": 1.516397959087044
+    }
+  ]
+}

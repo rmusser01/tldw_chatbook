@@ -1,0 +1,4 @@
+{
+  "sha256": "9f484ab7e04700d8776dbca7c856919c6165747f53fbe079e57dc5335b7bfe9c",
+  "raw_text": "<?xml version=\"1.0\" encoding=\"utf-8\"?><testsuites name=\"pytest tests\"><testsuite name=\"pytest\" errors=\"0\" failures=\"0\" skipped=\"0\" tests=\"0\" time=\"11.979\" timestamp=\"2026-11-02T06:02:34.285160-08:00\" hostname=\"Roberts-MacBook-Pro-2.local\" /></testsuites>"
+}

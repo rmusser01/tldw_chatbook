@@ -43,14 +43,18 @@ async def test_selection_preserves_untrusted_revision_and_durable_history(
 async def test_detached_presentation_waiter_does_not_cancel_submitted_commit(
     native_console, monkeypatch
 ):
-    from tldw_chatbook.UI.Plugins_Modules.operations import PluginOperations
+    from types import SimpleNamespace
+
+    from tldw_chatbook.UI.Plugins_Modules.operations import app_operations
 
     service = native_console.service
     installed = await native_console.install(enable=False)
     review = await service.review_activation(
         installed.installation_id, workspace_id="workspace-a", intent="enabled"
     )
-    operations = PluginOperations(service)
+    app = SimpleNamespace()
+    operations = app_operations(app, service)
+    assert app.plugin_operations is operations
     release = asyncio.Event()
     commit = service.commit
 
@@ -75,6 +79,8 @@ async def test_detached_presentation_waiter_does_not_cancel_submitted_commit(
     with pytest.raises(asyncio.CancelledError):
         await waiter
     assert not job.task.cancelled() and not job.task.done()
+    assert app_operations(app, service) is operations
+    assert job in operations.jobs.values()
     release.set()
     await job.task
     assert job.receipt.committed

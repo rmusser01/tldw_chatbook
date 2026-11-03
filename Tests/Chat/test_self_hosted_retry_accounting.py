@@ -251,9 +251,21 @@ async def test_capture_on_retry_retains_both_calls_usage_and_project_context(
                 user.persisted_message_id
             )
             assert len(captures) == 2
+            normalized_first = {
+                "audio_input": 0,
+                "audio_output": 0,
+                "cache_read": 0,
+                "cache_write": 0,
+                "model": "local-model",
+                "output": 0,
+                "partial": False,
+                "provider": "custom-openai-api" if provider == "custom" else "vllm",
+                "transcription_seconds": 0.0,
+                "uncached_input": 21,
+            }
             assert [json.loads(call.capture.usage_json) for call in captures] == [
-                first_usage,
-                _USAGE,
+                normalized_first,
+                {**normalized_first, "output": 5},
             ]
             assert all(
                 GUIDANCE in json.dumps(call.capture.request) for call in captures
@@ -268,11 +280,23 @@ async def test_capture_on_retry_retains_both_calls_usage_and_project_context(
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("action", ["retry", "capture_off", "foreign_owner"])
+@pytest.mark.parametrize(
+    ("action", "mixin_state"),
+    [
+        ("retry", "empty"),
+        ("capture_off", "empty"),
+        ("foreign_owner", "empty"),
+        ("capture_off", "source_changed"),
+        ("capture_off", "missing"),
+        ("capture_off", "corrupt"),
+    ],
+)
 @pytest.mark.parametrize("agent_mode", [True, False])
 async def test_fallback_trace_recovery_keeps_accepted_owner(
-    tmp_path, monkeypatch, action, agent_mode
+    tmp_path, monkeypatch, action, agent_mode, mixin_state
 ):
+    import json
+
     from Tests.Chat.test_console_project_instruction_traces import _project_console
 
     first_usage = {"prompt_tokens": 21, "completion_tokens": 0, "total_tokens": 21}
@@ -290,6 +314,23 @@ async def test_fallback_trace_recovery_keeps_accepted_owner(
             app.controller.update_agent_runtime(
                 enabled=agent_mode, bridge=app.controller._agent_bridge
             )
+            from Tests.Chat.test_console_prompt_mixin_admission import A, Scope
+            from tldw_chatbook.Chat.console_prompt_mixins import (
+                MixinPreferences,
+                MixinSelection,
+            )
+
+            scope = Scope()
+            scope.release.set()
+            app.controller.app.prompt_scope_service = scope
+            if mixin_state != "empty":
+                app.controller.prompt_mixin_service().replace_preferences(
+                    app.session.id,
+                    expected_revision=0,
+                    value=MixinPreferences(
+                        entries=(MixinSelection(A, True, "A", "before"),)
+                    ),
+                )
             original_bind = app.factory.repository.bind_call
             binds = 0
 
@@ -319,6 +360,30 @@ async def test_fallback_trace_recovery_keeps_accepted_owner(
             ]
             assert boundary._accepted_preparation is continuation
             assert server.stream_flags == [True]
+            service = app.controller.prompt_mixin_service()
+            original = app.store.get_message(submitted.assistant_message_id)
+            original_attempt = original.metadata.mixin_attempt_id
+            original_snapshot = await service.retry_snapshot(
+                app.session.id, assistant_message_id=original.id
+            )
+            reads_before = list(scope.calls)
+            with app.db.transaction() as cursor:
+                trace_count = cursor.execute(
+                    "SELECT COUNT(*) FROM console_trace_calls"
+                ).fetchone()[0]
+                if mixin_state == "missing":
+                    cursor.execute(
+                        "DELETE FROM console_prompt_mixin_attempts WHERE attempt_id=?",
+                        (original_attempt,),
+                    )
+                elif mixin_state == "corrupt":
+                    cursor.execute(
+                        "DELETE FROM console_prompt_mixin_attempt_items WHERE attempt_id=?",
+                        (original_attempt,),
+                    )
+            if mixin_state == "source_changed":
+                scope.source = object()
+                scope.records.clear()
             if action == "foreign_owner":
                 boundary._accepted_preparation = object()
             if action == "capture_off":
@@ -333,10 +398,46 @@ async def test_fallback_trace_recovery_keeps_accepted_owner(
                 )
                 return
             assistant = app.store.get_message(submitted.assistant_message_id)
+            assert scope.calls == reads_before
+            assert assistant.metadata.mixin_attempt_id == original_attempt
+            if mixin_state in {"missing", "corrupt"}:
+                assert assistant.status != "complete"
+                assert server.stream_flags == [True]
+                assert "Mix-in attempt could not be saved" in result.visible_copy
+                return
             assert assistant.status == "complete", (
                 result,
                 app.reservation_errors,
             )
+            assert (
+                await service.retry_snapshot(
+                    app.session.id, assistant_message_id=assistant.id
+                )
+                == original_snapshot
+            )
+            with app.db.transaction() as cursor:
+                assert (
+                    cursor.execute(
+                        "SELECT COUNT(*) FROM console_prompt_mixin_attempts"
+                    ).fetchone()[0]
+                    == 1
+                )
+                if action == "capture_off":
+                    assert (
+                        cursor.execute(
+                            "SELECT COUNT(*) FROM console_trace_calls"
+                        ).fetchone()[0]
+                        == trace_count
+                    )
+            for item in original_snapshot.items:
+                assert all(
+                    item.definition.body in json.dumps(payload)
+                    for payload in server.payloads
+                )
+                assert all(
+                    item.definition.body not in row.content
+                    for row in app.store.messages_for_session(app.session.id)
+                )
             assert assistant.content == _REPLY
             assert server.stream_flags == (
                 [True, False] if action == "retry" else [True, True, False]

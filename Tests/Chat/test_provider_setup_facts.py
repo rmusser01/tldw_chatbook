@@ -93,7 +93,7 @@ def test_the_route_suffix_has_one_owner_the_endpoint_contract_reads():
     from tldw_chatbook.Chat.provider_setup_facts import ROUTE_SUFFIXES
     from tldw_chatbook.provider_registry import RECORDS_BY_KEY
 
-    assert set(contract._ROUTE_OWNING_PRESETS) == set(ROUTE_SUFFIXES)
+    assert set(contract._route_owning_presets()) == set(ROUTE_SUFFIXES)
     for key, suffix in ROUTE_SUFFIXES.items():
         assert provider_setup_facts(key).route_suffix == suffix
         base = RECORDS_BY_KEY[key].default_base_url

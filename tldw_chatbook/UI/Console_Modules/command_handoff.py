@@ -34,7 +34,7 @@ before changing that chat stops when it no longer is
 (``refuse_if_chat_changed``), and one that awaits before answering answers in
 its own chat (``append_command_output``).
 
-Loaded on the first slash command, never on the boot path (ADR-097).
+Loaded on the first slash popup or command, never on the boot path (ADR-097).
 """
 
 from __future__ import annotations
@@ -52,6 +52,7 @@ from .command_draft import CAPTURED_COMMAND_DRAFT
 
 if TYPE_CHECKING:
     from tldw_chatbook.Chat.console_command_grammar import CommandParse
+    from tldw_chatbook.Chat.console_command_suggestions import CommandSuggestion
     from tldw_chatbook.Widgets.Console.console_composer_bar import ConsoleDraftStash
 
 COMMAND_WORKER_GROUP = "console-command"
@@ -214,3 +215,108 @@ def _repeat_key(session_id: str, captured: ConsoleDraftStash | str) -> tuple:
     if isinstance(captured, str):
         return (session_id, captured)
     return (session_id, captured.text, captured.edit_serial, captured.generation)
+
+
+def console_unknown_command_hint(self: Any, name: str) -> str:
+    """Return the Enter-again hint copy for an unrecognized `/name` draft.
+
+    Derived from the registry's own ``available_names()`` (Task 9) rather
+    than a hardcoded list, so a newly-registered command (e.g. `/skills`)
+    is reflected here automatically.
+    """
+    available = ", ".join(
+        f"/{name}" for name in self._console_command_registry.available_names()
+    )
+    return f"Unknown command /{name} — available: {available}. Press Enter again to send as text."
+
+
+def record_console_command_dispatch(
+    self: Any, parse: CommandParse, *, source: dict[str, Any]
+) -> None:
+    """Record an accepted command dispatch for usage ranking (TASK-18921).
+
+    Appends a minimal, content-free token — ``/<name>`` (plus the skill
+    name for ``/skills <name>`` invocations) — to the shared prompt
+    history, the existing local JSONL the ranking counts already mine.
+    Never records free-form command args. Fire-and-forget: history IO
+    is best-effort and must never delay or break a command, and the
+    command worker is never blocked on it. Ghost text is unaffected
+    (slash drafts never get ghost suggestions); Up-arrow recall gaining
+    past commands is the intended, standard-CLI reading of the store.
+    """
+    try:
+        history = self._ensure_console_prompt_history()
+        append = getattr(history, "append", None)
+        if not callable(append):
+            return
+        name = parse.name.lower()
+        if name == source["SKILLS_COMMAND_NAME"]:
+            first_arg = (parse.args or "").split()
+            text = (
+                f"{source['COMMAND_PREFIX']}{source['SKILLS_COMMAND_NAME']} {first_arg[0]}"
+                if first_arg
+                else f"{source['COMMAND_PREFIX']}{source['SKILLS_COMMAND_NAME']}"
+            )
+        else:
+            text = f"{source['COMMAND_PREFIX']}{name}"
+    except Exception:
+        return
+
+    async def _record() -> None:
+        try:
+            await history.append(text)
+        except Exception:
+            source["logger"].debug(
+                "Console command usage recording failed (best-effort)"
+            )
+
+    try:
+        source["asyncio"].get_running_loop().create_task(_record())
+    except RuntimeError:
+        # No running loop (a direct sync-context call): nothing to record.
+        pass
+
+
+def console_suggestion_usage_counts(
+    self: Any, *, source: dict[str, Any]
+) -> dict[str, int]:
+    """Return usage counts mined from the shared prompt history.
+
+    Best-effort display polish: every failure path returns an empty
+    mapping, which the ranking function treats as "no usage data" and
+    leaves the popup order identical to today's. Recomputed only when
+    the history store's ``revision`` moved (TASK-22218's cheap
+    invalidation key); ``entry_texts`` is an in-memory snapshot, so
+    this never blocks or triggers IO on the keystroke path.
+    """
+    try:
+        history = self._ensure_console_prompt_history()
+        revision = getattr(history, "revision", None)
+        entry_texts = getattr(history, "entry_texts", None)
+        if not isinstance(revision, int) or not callable(entry_texts):
+            return {}
+        cached = self._console_suggestion_usage_cache
+        if cached is not None and cached[0] == revision:
+            return cached[1]
+        counts = source["count_suggestion_usage"](entry_texts())
+    except Exception:
+        return {}
+    self._console_suggestion_usage_cache = (revision, counts)
+    return counts
+
+
+def rank_console_command_suggestions(
+    self: Any, suggestions: list[CommandSuggestion], *, source: dict[str, Any]
+) -> list[CommandSuggestion]:
+    """Rank popup suggestions by observed usage (TASK-18921).
+
+    Display-only: the filtered set is untouched when no row carries
+    usage (first run, or a fresh install), so matching and filtering
+    semantics are exactly today's.
+    """
+    if not suggestions:
+        return suggestions
+    counts = console_suggestion_usage_counts(self, source=source)
+    if not counts:
+        return suggestions
+    return source["rank_suggestions_by_usage"](suggestions, counts)

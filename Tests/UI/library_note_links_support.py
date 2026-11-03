@@ -109,18 +109,38 @@ async def _library(app, pilot):
     assert (
         screen._library_loaded and screen._library_lookup_error is None
     ), "Notes link setup never obtained a healthy source snapshot"
-    await _until(
-        pilot,
-        lambda: screen._library_loaded
-        and screen._library_lookup_error is None
-        and screen._library_snapshot_rendered_generation
-        == screen._library_snapshot_state_generation
-        and not screen._library_entry_reconcile_dirty
-        and not screen.query("#library-canvas-error")
-        and bool(screen.query("#library-row-browse-notes"))
-        and screen.query_one("#library-row-browse-notes").is_parent_active,
-        "the healthy Library source DOM",
-    )
+    try:
+        await _until(
+            pilot,
+            lambda: screen._library_loaded
+            and screen._library_lookup_error is None
+            and screen._library_snapshot_rendered_generation
+            == screen._library_snapshot_state_generation
+            and not screen._library_entry_reconcile_dirty
+            and not screen.query("#library-canvas-error")
+            and bool(screen.query("#library-row-browse-notes"))
+            and screen.query_one("#library-row-browse-notes").is_parent_active,
+            "the healthy Library source DOM",
+        )
+    except AssertionError as error:
+        rows = screen.query("#library-row-browse-notes")
+        row = screen.query_one("#library-row-browse-notes") if rows else None
+        current_screen = app.screen
+        snapshot = {
+            "loaded": screen._library_loaded,
+            "lookup_error_present": screen._library_lookup_error is not None,
+            "rendered_generation": screen._library_snapshot_rendered_generation,
+            "state_generation": screen._library_snapshot_state_generation,
+            "entry_reconcile_dirty": screen._library_entry_reconcile_dirty,
+            "canvas_error_present": bool(screen.query("#library-canvas-error")),
+            "notes_row_count": len(rows),
+            "notes_row_parent_active": row.is_parent_active if row is not None else None,
+            "library_is_current_screen": current_screen is screen,
+            "current_screen_type": type(current_screen).__name__,
+            "current_screen_id": current_screen.id,
+        }
+        error.add_note(f"Library source DOM readiness: {snapshot!r}")
+        raise
     return screen
 
 

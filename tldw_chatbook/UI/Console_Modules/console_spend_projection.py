@@ -477,30 +477,30 @@ class ConsoleReadinessConfigProjection:
         )
 
     async def _refresh(self, key: tuple) -> None:
-        reader = self.read_current
-        tokenizer_request = self._tokenizer_request
-        tokenizer_prepared = False
-        store = getattr(self.screen, "_console_chat_store", None)
-        settings_reader = getattr(store, "session_settings", None)
-        settings = (
-            settings_reader(key[5])
-            if callable(settings_reader) and key[5] is not None
-            else None
-        )
-        self._read_request = (
-            asyncio.get_running_loop(),
-            threading.current_thread(),
-            key,
-            settings,
-        )
-        from ...Chat.console_preparation_reads import run_preparation_read
-        from ...Chat.console_runtime import ConsoleRuntime
-
-        runtime = _readiness_runtime(self.screen)
-        observers = (
-            (runtime._preparation_reads,) if type(runtime) is ConsoleRuntime else ()
-        )
         try:
+            reader = self.read_current
+            tokenizer_request = self._tokenizer_request
+            tokenizer_prepared = False
+            store = getattr(self.screen, "_console_chat_store", None)
+            settings_reader = getattr(store, "session_settings", None)
+            settings = (
+                settings_reader(key[5])
+                if callable(settings_reader) and key[5] is not None
+                else None
+            )
+            self._read_request = (
+                asyncio.get_running_loop(),
+                threading.current_thread(),
+                key,
+                settings,
+            )
+            from ...Chat.console_preparation_reads import run_preparation_read
+            from ...Chat.console_runtime import ConsoleRuntime
+
+            runtime = _readiness_runtime(self.screen)
+            observers = (
+                (runtime._preparation_reads,) if type(runtime) is ConsoleRuntime else ()
+            )
             if getattr(self.screen, "_closing", False) or getattr(
                 runtime, "_disposed", False
             ):

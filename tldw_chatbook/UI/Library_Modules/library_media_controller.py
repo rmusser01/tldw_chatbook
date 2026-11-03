@@ -4762,44 +4762,9 @@ class LibraryMediaController:
                 ``_capture_library_media_focus_identity`` before the
                 recompose, or ``None`` to leave focus alone.
         """
-        if previous is None:
-            return
-        if self._library_pending_list_entry_focus or (
-            self._library_media_find_focus_pending
-        ):
-            return
-        focused = self.focused
-        if focused is not None and not focused.has_class(
-            LIBRARY_ADAPTIVE_READER_GRIP_CLASS
-        ):
-            return
-        try:
-            target = self.query_one(previous, Widget)
-        except (NoMatches, QueryError):
-            # The widget itself is gone (a row the write removed, the Find
-            # bar a mode switch closed): the list entry is the honest
-            # landing spot -- never the grip Textual would pick.
-            self._focus_library_list_entry()
-            return
-        if not target.focusable:
-            # Same failure, quieter: ``Screen.set_focus`` NO-OPS on a widget
-            # whose ``focusable`` is False, so treating this as success left
-            # focus on the grip. The media canvas and the viewer both
-            # compose gated actions disabled (Select all / Clear / Export /
-            # Analyze / Delete, Find, Generate) and those gates flip on
-            # exactly the recompose this seam wraps, so a captured id can
-            # come back unfocusable (review I1).
-            self._focus_library_list_entry()
-            return
-        # ``scroll_visible=False``: this seam restores FOCUS, never scroll
-        # position -- Media owns that separately (the stored viewer-return
-        # restore, and the wheel gesture that CANCELS it). Once the screen-
-        # level hook made this run after every whole-screen recompose, the
-        # default ``scroll_visible=True`` re-scrolled the focused row back
-        # into view and reinstated exactly the restore the user's wheel had
-        # just cancelled (``test_compact_media_viewer_back_wheel_scroll_
-        # cancels_stored_restore``, scroll_y 45 where the pin wants 0).
-        self.set_focus(target, scroll_visible=False)
+        from .canvas_sync import _restore_library_media_focus
+
+        return _restore_library_media_focus(self, previous, globals())
 
     def _sync_library_media_viewer_or_recompose(self) -> None:
         """Viewer-scoped recompose for an in-viewer sub-state flip.

@@ -7,12 +7,13 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Any, Literal
 
-from .prompt_artifact_codec import decode_prompt_artifact
-
-
-LOCAL_COMPILED_LANE_LIMIT = 20_000
-LOCAL_DEFINITION_LIMIT = 256_000
-LOCAL_REQUEST_LIMIT = 512_000
+from .prompt_artifact_codec import decode_prompt_artifact, deserialize_definition
+from .prompt_artifact_models import (
+    LOCAL_COMPILED_LANE_LIMIT,
+    LOCAL_DEFINITION_LIMIT,
+    LOCAL_REQUEST_LIMIT,
+    LiteralMixinDefinition,
+)
 
 
 @dataclass(frozen=True)
@@ -48,6 +49,7 @@ class PromptSourceCapabilities:
     definition_limit: int
     request_limit: int
     json_byte_measurement: CanonicalJSONByteMeasurement | None
+    mixin_snapshot_reads: bool = False
 
 
 class PromptCapabilityError(ValueError):
@@ -74,10 +76,13 @@ def local_prompt_capabilities() -> PromptSourceCapabilities:
     """Return capabilities guaranteed by the in-process local Prompt stack."""
     return PromptSourceCapabilities(
         backend="local",
-        structured_kinds=frozenset({(2, "block_prompt"), (2, "block_recipe")}),
-        artifact_types=frozenset({"prompt", "recipe"}),
+        structured_kinds=frozenset(
+            {(2, "block_prompt"), (2, "block_recipe"), (3, "text_mixin")}
+        ),
+        artifact_types=frozenset({"prompt", "recipe", "mixin"}),
         search=True,
         conditional_update=True,
+        mixin_snapshot_reads=True,
         compiled_lane_limit=LOCAL_COMPILED_LANE_LIMIT,
         definition_limit=LOCAL_DEFINITION_LIMIT,
         request_limit=LOCAL_REQUEST_LIMIT,
@@ -127,7 +132,7 @@ def _normalize_artifact_types(value: Any) -> frozenset[str] | None:
     if not all(isinstance(item, str) for item in value):
         return None
     normalized = frozenset(value)
-    if not normalized.issubset({"prompt", "recipe"}):
+    if not normalized.issubset({"prompt", "recipe", "mixin"}):
         return None
     return normalized
 
@@ -225,7 +230,7 @@ def validate_console_artifact_payload(
             f"artifact type {payload.get('artifact_type', 'prompt')!r}",
         )
     if (
-        decoded.state != "supported_v2"
+        decoded.state not in {"supported_v2", "supported_v3"}
         or raw_definition is None
         or decoded.definition is None
     ):
@@ -246,37 +251,45 @@ def validate_console_artifact_payload(
                 f"{field} exceeds {capabilities.compiled_lane_limit} characters."
             )
 
-    normalized_definition = {
-        "schema_version": decoded.definition.schema_version,
-        "kind": decoded.definition.kind,
-        "lanes": [
-            {
-                "id": lane.id,
-                "blocks": [
-                    {
-                        **{
-                            "id": block.id,
-                            "title": block.title,
-                            "syntax": block.syntax,
-                            "content": block.content,
-                        },
-                        **(
-                            {"xml_tag": block.xml_tag}
-                            if block.xml_tag is not None
-                            else {}
-                        ),
-                        **(
-                            {"mapping_hint": block.mapping_hint}
-                            if block.mapping_hint is not None
-                            else {}
-                        ),
-                    }
-                    for block in lane.blocks
-                ],
-            }
-            for lane in decoded.definition.lanes
-        ],
-    }
+    if isinstance(decoded.definition, LiteralMixinDefinition):
+        normalized_definition = {
+            "kind": decoded.definition.kind,
+            "schema_version": decoded.definition.schema_version,
+            "body": decoded.definition.body,
+            "placement": decoded.definition.placement,
+        }
+    else:
+        normalized_definition = {
+            "schema_version": decoded.definition.schema_version,
+            "kind": decoded.definition.kind,
+            "lanes": [
+                {
+                    "id": lane.id,
+                    "blocks": [
+                        {
+                            **{
+                                "id": block.id,
+                                "title": block.title,
+                                "syntax": block.syntax,
+                                "content": block.content,
+                            },
+                            **(
+                                {"xml_tag": block.xml_tag}
+                                if block.xml_tag is not None
+                                else {}
+                            ),
+                            **(
+                                {"mapping_hint": block.mapping_hint}
+                                if block.mapping_hint is not None
+                                else {}
+                            ),
+                        }
+                        for block in lane.blocks
+                    ],
+                }
+                for lane in decoded.definition.lanes
+            ],
+        }
     normalized_payload = dict(payload)
     normalized_payload.update(
         {
@@ -294,6 +307,64 @@ def validate_console_artifact_payload(
             f"prompt_definition exceeds {capabilities.definition_limit} UTF-8 bytes."
         )
     return normalized_payload
+
+
+def prepare_local_mixin_payload(
+    payload: dict[str, Any], *, existing: Mapping[str, Any] | None = None
+) -> dict[str, Any]:
+    """Validate canonical local mix-in writes and fence merged updates."""
+    raw = deserialize_definition(payload.get("prompt_definition"))
+    if not (
+        (existing is not None and existing.get("artifact_type") == "mixin")
+        or payload.get("artifact_type") == "mixin"
+        or (raw is not None and raw.get("kind") == "text_mixin")
+    ):
+        return payload
+    if (
+        existing is not None
+        and existing.get("artifact_type") == "mixin"
+        and payload.get("artifact_type", "mixin") != "mixin"
+    ):
+        raise ValueError("Mix-ins cannot be converted to another artifact type.")
+    if existing is None:
+        merged = dict(payload)
+    else:
+        fields = (
+            "name",
+            "author",
+            "details",
+            "keywords",
+            "artifact_type",
+            "prompt_format",
+            "prompt_schema_version",
+            "prompt_definition",
+            "system_prompt",
+            "user_prompt",
+        )
+        merged = {key: existing[key] for key in fields if key in existing}
+        merged.update(payload)
+    capabilities = local_prompt_capabilities()
+    validated = validate_console_artifact_payload(merged, capabilities)
+    validate_prompt_request_size(validated, capabilities)
+    if existing is None:
+        return validated
+    prepared = dict(payload)
+    prepared.update(
+        {
+            key: validated[key]
+            for key in (
+                "artifact_type",
+                "prompt_format",
+                "prompt_schema_version",
+                "prompt_definition",
+                "system_prompt",
+                "user_prompt",
+            )
+        }
+    )
+    if prepared.get("expected_version") is None:
+        prepared["expected_version"] = existing["version"]
+    return prepared
 
 
 def validate_prompt_request_size(

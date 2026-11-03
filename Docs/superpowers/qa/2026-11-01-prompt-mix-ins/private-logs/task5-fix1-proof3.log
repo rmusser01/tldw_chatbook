@@ -1,0 +1,7 @@
+..................                                                       [100%]
+============================= slowest 25 durations =============================
+1.15s call     Tests/Chat/test_console_prompt_mixin_retry.py::test_real_agent_tool_loop_reuses_once_composed_request[True-True]
+1.12s call     Tests/Chat/test_console_prompt_mixin_retry.py::test_real_agent_tool_loop_reuses_once_composed_request[True-False]
+
+(23 durations < 1s hidden.)
+18 passed, 32 deselected in 20.34s

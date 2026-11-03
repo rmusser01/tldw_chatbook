@@ -1,0 +1,87 @@
+Screen-owned split complete (features/_plugins.tcss): plugins=2,312B
+Screen-owned split complete (features/_library.tcss + features/_library_panels.tcss + features/_library_notes_panels.tcss + features/_library_artifacts.tcss): library=146,115B
+Screen-owned split complete (components/_settings_personal_context.tcss + features/_settings.tcss): settings=62,286B
+Screen-owned split complete (features/_evals.tcss): evals=41,497B
+Screen-owned split complete (features/_scheduling.tcss): scheduling=10,040B
+Screen-owned split complete (features/_workflows.tcss): workflows=7,753B
+Screen-owned split complete (features/_roleplay.tcss): roleplay=7,442B
+Screen-owned split complete (features/_console.tcss): console_delete_receipt=1,068B
+Screen-owned split complete (features/_notes.tcss): file_notes_history=2,129B
+Screen-owned split complete (features/_watchlists.tcss): watchlists=54,020B
+Processing CSS module 1 of 67
+Processing CSS module 2 of 67
+Processing CSS module 3 of 67
+Processing CSS module 4 of 67
+Processing CSS module 5 of 67
+Processing CSS module 6 of 67
+Processing CSS module 7 of 67
+Processing CSS module 8 of 67
+Processing CSS module 9 of 67
+Processing CSS module 10 of 67
+Processing CSS module 11 of 67
+Processing CSS module 12 of 67
+Processing CSS module 13 of 67
+Processing CSS module 14 of 67
+Processing CSS module 15 of 67
+Processing CSS module 16 of 67
+Processing CSS module 17 of 67
+Processing CSS module 18 of 67
+Processing CSS module 19 of 67
+Processing CSS module 20 of 67
+Processing CSS module 21 of 67
+Processing CSS module 22 of 67
+Processing CSS module 23 of 67
+Processing CSS module 24 of 67
+Processing CSS module 25 of 67
+Processing CSS module 26 of 67
+Processing CSS module 27 of 67
+Processing CSS module 28 of 67
+Processing CSS module 29 of 67
+Processing CSS module 30 of 67
+Processing CSS module 31 of 67
+Processing CSS module 32 of 67
+Processing CSS module 33 of 67
+Processing CSS module 34 of 67
+Processing CSS module 35 of 67
+Processing CSS module 36 of 67
+Processing CSS module 37 of 67
+Processing CSS module 38 of 67
+Processing CSS module 39 of 67
+Processing CSS module 40 of 67
+Processing CSS module 41 of 67
+Processing CSS module 42 of 67
+Processing CSS module 43 of 67
+Processing CSS module 44 of 67
+Processing CSS module 45 of 67
+Processing CSS module 46 of 67
+Processing CSS module 47 of 67
+Processing CSS module 48 of 67
+Processing CSS module 49 of 67
+Processing CSS module 50 of 67
+Processing CSS module 51 of 67
+Processing CSS module 52 of 67
+Processing CSS module 53 of 67
+Processing CSS module 54 of 67
+Processing CSS module 55 of 67
+Processing CSS module 56 of 67
+Processing CSS module 57 of 67
+Processing CSS module 58 of 67
+Processing CSS module 59 of 67
+Processing CSS module 60 of 67
+Processing CSS module 61 of 67
+Processing CSS module 62 of 67
+Processing CSS module 63 of 67
+Processing CSS module 64 of 67
+Processing CSS module 65 of 67
+Processing CSS module 66 of 67
+Processing CSS module 67 of 67
+CSS build complete
+Total size: 425,664 characters
+Widget defaults build complete
+Widget defaults: 148 classes, 82,986 + 74,096 characters
+Screen CSS build complete
+Screen CSS: 11 classes, 2,318 + 12,225 characters
+
+To use the modular CSS:
+1. Update app.py to use 'tldw_cli_modular.tcss'
+2. Run this script whenever you modify any module files

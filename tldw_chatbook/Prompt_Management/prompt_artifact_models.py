@@ -1,14 +1,25 @@
-"""Immutable models for Console schema-v2 prompt artifacts."""
+"""Immutable artifact values and pure record decoding for Console prompts."""
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+import json
+from dataclasses import dataclass, field
 from typing import Any, Literal, Mapping
 
+LOCAL_COMPILED_LANE_LIMIT = 20_000
+LOCAL_DEFINITION_LIMIT = 256_000
+LOCAL_REQUEST_LIMIT = 512_000
 
-ArtifactType = Literal["prompt", "recipe"]
+
+ArtifactType = Literal["prompt", "recipe", "mixin"]
 ArtifactDefinitionState = Literal[
-    "legacy", "supported_v2", "foreign_v1", "unsupported", "malformed", "mismatched"
+    "legacy",
+    "supported_v2",
+    "supported_v3",
+    "foreign_v1",
+    "unsupported",
+    "malformed",
+    "mismatched",
 ]
 BlockSyntax = Literal["freeform", "markdown", "xml"]
 
@@ -87,6 +98,29 @@ class BlockArtifactDefinition:
 
 
 @dataclass(frozen=True)
+class LiteralMixinDefinition:
+    """A literal instruction with an explicit placement."""
+
+    body: str = field(repr=False)
+    placement: Literal["before", "after"]
+    kind: Literal["text_mixin"] = "text_mixin"
+    schema_version: Literal[3] = 3
+
+    def __post_init__(self) -> None:
+        if type(self.body) is not str or not self.body.strip():
+            raise ValueError("Mix-in body must be a non-empty string.")
+        if type(self.placement) is not str or self.placement not in ("before", "after"):
+            raise ValueError("Invalid mix-in placement.")
+        if (
+            type(self.kind) is not str
+            or self.kind != "text_mixin"
+            or type(self.schema_version) is not int
+            or self.schema_version != 3
+        ):
+            raise ValueError("Invalid mix-in kind or schema version.")
+
+
+@dataclass(frozen=True)
 class LegacyLaneOrigin:
     """Original legacy bytes and a stable fingerprint for one lane."""
 
@@ -109,11 +143,99 @@ class DecodedPromptArtifact:
 
     state: ArtifactDefinitionState
     artifact_type: ArtifactType
-    definition: BlockArtifactDefinition | None
+    definition: BlockArtifactDefinition | LiteralMixinDefinition | None
     raw_definition: Mapping[str, Any] | None
     compiled_system: str
     compiled_user: str
     compatibility_stale: bool
+
+
+def _is_schema_version(value: Any, expected: int) -> bool:
+    """Require JSON integer schema versions without Python bool/float coercion."""
+    return type(value) is int and value == expected
+
+
+def deserialize_definition(value: Any) -> Mapping[str, Any] | None:
+    """Return a JSON-object definition, never guessing at non-object input."""
+    if isinstance(value, Mapping):
+        return dict(value)
+    if not isinstance(value, str):
+        return None
+    try:
+        parsed = json.loads(value)
+    except (TypeError, ValueError):
+        return None
+    return dict(parsed) if isinstance(parsed, Mapping) else None
+
+
+def _compatibility_text(record: Mapping[str, Any]) -> tuple[str, str]:
+    return str(record.get("system_prompt") or ""), str(record.get("user_prompt") or "")
+
+
+def _decoded(
+    *,
+    state: Literal["foreign_v1", "unsupported", "malformed", "mismatched"],
+    record: Mapping[str, Any],
+    artifact_type: ArtifactType,
+    raw: Mapping[str, Any] | None,
+) -> DecodedPromptArtifact:
+    system, user = _compatibility_text(record)
+    return DecodedPromptArtifact(
+        state=state,
+        artifact_type=artifact_type,
+        definition=None,
+        raw_definition=raw,
+        compiled_system=system,
+        compiled_user=user,
+        compatibility_stale=False,
+    )
+
+
+def decode_literal_mixin_v3(
+    record: Mapping[str, Any], *, raw: Mapping[str, Any] | None
+) -> DecodedPromptArtifact:
+    """Decode the closed literal mix-in shape without interpreting its body."""
+    artifact_type: ArtifactType = "mixin"
+    if record.get("prompt_format") != "structured":
+        return _decoded(
+            state="mismatched", record=record, artifact_type=artifact_type, raw=raw
+        )
+    if not _is_schema_version(record.get("prompt_schema_version"), 3):
+        return _decoded(
+            state="unsupported", record=record, artifact_type=artifact_type, raw=raw
+        )
+    if raw is None:
+        return _decoded(
+            state="malformed", record=record, artifact_type=artifact_type, raw=raw
+        )
+    if (
+        type(raw.get("kind")) is not str
+        or raw.get("kind") != "text_mixin"
+        or not _is_schema_version(raw.get("schema_version"), 3)
+    ):
+        return _decoded(
+            state="mismatched", record=record, artifact_type=artifact_type, raw=raw
+        )
+    try:
+        if set(raw) != {"kind", "schema_version", "body", "placement"}:
+            raise ValueError("Invalid mix-in fields.")
+        definition = LiteralMixinDefinition(
+            body=raw["body"], placement=raw["placement"]
+        )
+    except (KeyError, TypeError, ValueError):
+        return _decoded(
+            state="malformed", record=record, artifact_type=artifact_type, raw=raw
+        )
+    system, user = _compatibility_text(record)
+    return DecodedPromptArtifact(
+        state="supported_v3",
+        artifact_type=artifact_type,
+        definition=definition,
+        raw_definition=raw,
+        compiled_system="",
+        compiled_user=definition.body,
+        compatibility_stale=(system, user) != ("", definition.body),
+    )
 
 
 def outcome_first_recipe() -> BlockArtifactDefinition:

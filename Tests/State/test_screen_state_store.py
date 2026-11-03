@@ -210,6 +210,8 @@ def test_console_prompt_target_projection_is_minimal_frozen_and_safe() -> None:
     assert tuple(item.name for item in fields(projection)) == (
         "target_session_id",
         "system_fingerprint",
+        "target_incarnation_id",
+        "preference_revision",
     )
     assert not hasattr(projection, "__dict__")
     assert not hasattr(projection, "system_text")

@@ -1,0 +1,9 @@
+{
+  "pre_rebase_backup": "798222b480b587e2f2248de9fbd0edf3a773b34c",
+  "rebased_head_before_evidence_amend": "e407993a916736ba7175164e716c824379081c54",
+  "new_base": "2dcf038cb8be0af991f92c43b0c262f02471c51d",
+  "paths": 9684,
+  "all_previous_path_bytes_identical": true,
+  "ceiling_table_exact": true,
+  "qualification": "Runtime, tests, packaging, workflow and scripts byte-identical to the final tested pre-rebase source. Incoming dev changes only budget metadata/task docs; reviewed exact lower budget table retained."
+}

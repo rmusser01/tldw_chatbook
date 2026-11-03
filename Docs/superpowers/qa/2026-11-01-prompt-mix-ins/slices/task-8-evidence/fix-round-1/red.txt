@@ -1,0 +1,589 @@
+FFF                                                                      [100%]
+=================================== FAILURES ===================================
+______ test_held_projection_cannot_replace_browse_after_navigation[False] ______
+
+runtime = (<tldw_chatbook.DB.Prompts_DB.PromptsDatabase object at 0x11394b620>, <tldw_chatbook.Prompt_Management.prompt_scope_se...ct at 0x10a1aca70>), <tldw_chatbook.Chat.console_prompt_mixin_service.ConsolePromptMixinService object at 0x10a1af800>)
+failed = False
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize('failed', [False, True])
+    async def test_held_projection_cannot_replace_browse_after_navigation(runtime, failed):
+        import asyncio
+        from tldw_chatbook.Widgets.Console.console_prompts_browse import ConsolePromptsBrowse
+        from tldw_chatbook.Widgets.Console.console_prompt_mixins_view import ConsolePromptMixinsView
+    
+        _, scope, _, _, _, _ = runtime
+        await seed(scope)
+        app = WorkbenchHarness(runtime)
+        async with app.run_test(size=(100, 30)) as pilot:
+            app.pilot = pilot
+            await ready(app)
+            entered, release = asyncio.Event(), asyncio.Event()
+            original = app.flow.project
+            async def held(**kwargs):
+                projected = await original(**kwargs)
+                entered.set()
+                await asyncio.wait_for(release.wait(), 5)
+                if failed:
+                    raise ValueError('injected projection failure')
+                return projected
+            app.flow.project = held
+            worker = app.modal.run_worker(app.modal._refresh_mixins(), group='console-mixins')
+            try:
+                await asyncio.wait_for(entered.wait(), 5)
+                await app.modal.enter_mode('browse')
+                browse = app.modal.query_one(ConsolePromptsBrowse)
+                release.set()
+                await worker.wait()
+                assert app.modal.state.mode == 'browse'
+>               assert app.modal.query_one(ConsolePromptsBrowse) is browse
+                       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+Tests/UI/test_console_prompt_mixins.py:612: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = ConsolePromptsModal()
+selector = <class 'tldw_chatbook.Widgets.Console.console_prompts_browse.ConsolePromptsBrowse'>
+expect_type = None
+
+    def query_one(
+        self,
+        selector: str | type[QueryType],
+        expect_type: type[QueryType] | None = None,
+    ) -> QueryType | Widget:
+        """Get a widget from this widget's children that matches a selector or widget type.
+    
+        Args:
+            selector: A selector or widget type.
+            expect_type: Require the object be of the supplied type, or None for any type.
+    
+        Raises:
+            WrongType: If the wrong type was found.
+            NoMatches: If no node matches the query.
+    
+        Returns:
+            A widget matching the selector.
+        """
+        _rich_traceback_omit = True
+    
+        base_node = self._get_dom_base()
+    
+        if isinstance(selector, str):
+            query_selector = selector
+        else:
+            query_selector = selector.__name__
+    
+        if is_id_selector(query_selector):
+            cache_key = (base_node._nodes._updates, query_selector, expect_type)
+            cached_result = base_node._query_one_cache.get(cache_key)
+            if cached_result is not None:
+                return cached_result
+            if (
+                node := walk_breadth_search_id(
+                    base_node, query_selector[1:], with_root=False
+                )
+            ) is not None:
+                if expect_type is not None and not isinstance(node, expect_type):
+                    raise WrongType(
+                        f"Node matching {query_selector!r} is the wrong type; expected type {expect_type.__name__!r}, found {node}"
+                    )
+                base_node._query_one_cache[cache_key] = node
+                return node
+            raise NoMatches(f"No nodes match {query_selector!r} on {base_node!r}")
+    
+        try:
+            selector_set = parse_selectors(query_selector)
+        except TokenError:
+            raise InvalidQueryFormat(
+                f"Unable to parse {query_selector!r} as a query; check for syntax errors"
+            ) from None
+    
+        if all(selectors.is_simple for selectors in selector_set):
+            cache_key = (base_node._nodes._updates, query_selector, expect_type)
+            cached_result = base_node._query_one_cache.get(cache_key)
+            if cached_result is not None:
+                return cached_result
+        else:
+            cache_key = None
+    
+        for node in walk_breadth_first(base_node, with_root=False):
+            if not match(selector_set, node):
+                continue
+            if expect_type is not None and not isinstance(node, expect_type):
+                raise WrongType(
+                    f"Node matching {query_selector!r} is the wrong type; expected type {expect_type.__name__!r}, found {node}"
+                )
+            if cache_key is not None:
+                base_node._query_one_cache[cache_key] = node
+            return node
+    
+>       raise NoMatches(f"No nodes match {query_selector!r} on {base_node!r}")
+E       textual.css.query.NoMatches: No nodes match 'ConsolePromptsBrowse' on ConsolePromptsModal()
+
+../../../../Documents/GitHub/tldw_chatbook/.venv/lib/python3.12/site-packages/textual/dom.py:1533: NoMatches
+---------------------------- Captured stderr setup -----------------------------
+2026-11-01 17:42:28.416 | DEBUG    | tldw_chatbook.Utils.optional_deps:check_dependency:642 - ✅ huggingface_hub dependency found. Feature 'huggingface_hub' is enabled.
+2026-11-01 17:42:28.426 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:52 - PyAudio not available. Install with: pip install pyaudio
+2026-11-01 17:42:28.472 | INFO     | tldw_chatbook.Audio.recording_service:<module>:58 - Sounddevice backend available
+2026-11-01 17:42:28.474 | INFO     | tldw_chatbook.Audio.recording_service:<module>:73 - WebRTC VAD available for voice activity detection
+2026-11-01 17:42:28.480 | INFO     | tldw_chatbook.DB.Prompts_DB:__init__:405 - Initializing PromptsDatabase object for path: /private/tmp/task8-fix1-red/test_held_projection_cannot_re0/prompts.db [Client ID: workbench-test]
+2026-11-01 17:42:28.529 | DEBUG    | tldw_chatbook.DB.Prompts_DB:_get_thread_connection:557 - Opened/Reopened SQLite connection to /private/tmp/task8-fix1-red/test_held_projection_cannot_re0/prompts.db [Client: workbench-test, Thread: MainThread]
+2026-11-01 17:42:28.529 | INFO     | tldw_chatbook.DB.Prompts_DB:_initialize_schema:1135 - Checking DB schema. Current: 0, Code supports: 6
+2026-11-01 17:42:28.530 | INFO     | tldw_chatbook.DB.Prompts_DB:_initialize_schema:1170 - Applying migration: Initial prompts schema (v0 -> v1)
+2026-11-01 17:42:28.530 | INFO     | tldw_chatbook.DB.Prompts_DB:_apply_schema_v1:823 - Applying initial schema (Version 1) to DB: /private/tmp/task8-fix1-red/test_held_projection_cannot_re0/prompts.db...
+2026-11-01 17:42:28.530 | DEBUG    | tldw_chatbook.DB.Prompts_DB:transaction:744 - Started transaction.
+2026-11-01 17:42:28.530 | DEBUG    | tldw_chatbook.DB.Prompts_DB:_apply_schema_v1:834 - [Schema V1] Applying Core Schema + Version Update...
+2026-11-01 17:42:28.531 | DEBUG    | tldw_chatbook.DB.Prompts_DB:_apply_schema_v1:836 - [Schema V1] Core Schema script (incl. version update) executed.
+2026-11-01 17:42:28.531 | DEBUG    | tldw_chatbook.DB.Prompts_DB:_apply_schema_v1:860 - [Schema V1] Prompts table structure validated.
+2026-11-01 17:42:28.531 | DEBUG    | tldw_chatbook.DB.Prompts_DB:transaction:748 - Committed transaction.
+2026-11-01 17:42:28.531 | INFO     | tldw_chatbook.DB.Prompts_DB:_apply_schema_v1:869 - [Schema V1] Core Schema V1 applied and committed for DB: /private/tmp/task8-fix1-red/test_held_projection_cannot_re0/prompts.db.
+2026-11-01 17:42:28.531 | DEBUG    | tldw_chatbook.DB.Prompts_DB:_apply_schema_v1:873 - [Schema V1] Applying FTS Tables...
+2026-11-01 17:42:28.532 | INFO     | tldw_chatbook.DB.Prompts_DB:_apply_schema_v1:876 - [Schema V1] FTS Tables created successfully.
+2026-11-01 17:42:28.532 | INFO     | tldw_chatbook.DB.Prompts_DB:_initialize_schema:1170 - Applying migration: Add structured prompt metadata columns (v1 -> v2)
+2026-11-01 17:42:28.532 | INFO     | tldw_chatbook.DB.Prompts_DB:_apply_migration_v1_to_v2:887 - Applying prompts migration from version 1 to 2 for DB: /private/tmp/task8-fix1-red/test_held_projection_cannot_re0/prompts.db...
+2026-11-01 17:42:28.532 | DEBUG    | tldw_chatbook.DB.Prompts_DB:transaction:744 - Started transaction.
+2026-11-01 17:42:28.533 | DEBUG    | tldw_chatbook.DB.Prompts_DB:transaction:748 - Committed transaction.
+2026-11-01 17:42:28.533 | INFO     | tldw_chatbook.DB.Prompts_DB:_apply_migration_v1_to_v2:923 - Prompts migration to version 2 applied successfully for DB: /private/tmp/task8-fix1-red/test_held_projection_cannot_re0/prompts.db.
+2026-11-01 17:42:28.533 | INFO     | tldw_chatbook.DB.Prompts_DB:_initialize_schema:1170 - Applying migration: Add prompt artifact type (v2 -> v3)
+2026-11-01 17:42:28.533 | INFO     | tldw_chatbook.DB.Prompts_DB:_apply_migration_v2_to_v3:934 - Applying prompts migration from version 2 to 3 for DB: /private/tmp/task8-fix1-red/test_held_projection_cannot_re0/prompts.db...
+2026-11-01 17:42:28.533 | DEBUG    | tldw_chatbook.DB.Prompts_DB:transaction:744 - Started transaction.
+2026-11-01 17:42:28.533 | DEBUG    | tldw_chatbook.DB.Prompts_DB:transaction:748 - Committed transaction.
+2026-11-01 17:42:28.533 | INFO     | tldw_chatbook.DB.Prompts_DB:_initialize_schema:1170 - Applying migration: Add retained Prompt history index (v3 -> v4)
+2026-11-01 17:42:28.533 | INFO     | tldw_chatbook.DB.Prompts_DB:_apply_migration_v3_to_v4:969 - Applying prompts migration from version 3 to 4 for DB: /private/tmp/task8-fix1-red/test_held_projection_cannot_re0/prompts.db...
+2026-11-01 17:42:28.534 | DEBUG    | tldw_chatbook.DB.Prompts_DB:transaction:744 - Started transaction.
+2026-11-01 17:42:28.534 | DEBUG    | tldw_chatbook.DB.Prompts_DB:transaction:748 - Committed transaction.
+2026-11-01 17:42:28.534 | INFO     | tldw_chatbook.DB.Prompts_DB:_initialize_schema:1170 - Applying migration: Add local Console Prompt Draft Shelf (v4 -> v5)
+2026-11-01 17:42:28.534 | INFO     | tldw_chatbook.DB.Prompts_DB:_apply_migration_v4_to_v5:1033 - Applying prompts migration from version 4 to 5.
+2026-11-01 17:42:28.534 | DEBUG    | tldw_chatbook.DB.Prompts_DB:transaction:744 - Started transaction.
+2026-11-01 17:42:28.534 | DEBUG    | tldw_chatbook.DB.Prompts_DB:transaction:748 - Committed transaction.
+2026-11-01 17:42:28.534 | INFO     | tldw_chatbook.DB.Prompts_DB:_initialize_schema:1170 - Applying migration: Add literal mix-in artifact type (v5 -> v6)
+2026-11-01 17:42:28.535 | DEBUG    | tldw_chatbook.DB.Prompts_DB:transaction:744 - Started transaction.
+2026-11-01 17:42:28.536 | DEBUG    | tldw_chatbook.DB.Prompts_DB:transaction:748 - Committed transaction.
+2026-11-01 17:42:28.536 | DEBUG    | tldw_chatbook.DB.Prompts_DB:_initialize_schema:1184 - Verified FTS tables exist after migrations.
+2026-11-01 17:42:28.536 | INFO     | tldw_chatbook.DB.Prompts_DB:_initialize_schema:1190 - Database schema initialized/migrated to version 6.
+2026-11-01 17:42:28.536 | DEBUG    | tldw_chatbook.DB.Prompts_DB:__init__:457 - PromptsDatabase initialization completed successfully for /private/tmp/task8-fix1-red/test_held_projection_cannot_re0/prompts.db
+----------------------------- Captured stderr call -----------------------------
+2026-11-01 17:42:28.538 | DEBUG    | tldw_chatbook.DB.Prompts_DB:transaction:744 - Started transaction.
+2026-11-01 17:42:28.538 | DEBUG    | tldw_chatbook.DB.Prompts_DB:transaction:748 - Committed transaction.
+2026-11-01 17:42:28.538 | DEBUG    | tldw_chatbook.DB.Prompts_DB:execute_query:663 - Executing Query: SELECT * FROM Prompts WHERE uuid = ?... Params: (0922e7c7-42c9-492d-be69-97c757608934)
+2026-11-01 17:42:28.538 | DEBUG    | tldw_chatbook.DB.Prompts_DB:execute_query:663 - Executing Query: SELECT k.keyword FROM PromptKeywordsTable k
+                                             JOIN PromptKeywordLinks pkl ON k.id = pkl.keyword_id
+                   WHERE pkl.prompt_id = ? ORDER BY k.keyw... Params: (1)
+2026-11-01 17:42:28.539 | DEBUG    | tldw_chatbook.DB.Prompts_DB:transaction:744 - Started transaction.
+2026-11-01 17:42:28.539 | DEBUG    | tldw_chatbook.DB.Prompts_DB:transaction:748 - Committed transaction.
+2026-11-01 17:42:28.539 | DEBUG    | tldw_chatbook.DB.Prompts_DB:execute_query:663 - Executing Query: SELECT * FROM Prompts WHERE uuid = ?... Params: (38da92f7-4b1c-4455-bc15-e40b0b954db5)
+2026-11-01 17:42:28.539 | DEBUG    | tldw_chatbook.DB.Prompts_DB:execute_query:663 - Executing Query: SELECT k.keyword FROM PromptKeywordsTable k
+                                             JOIN PromptKeywordLinks pkl ON k.id = pkl.keyword_id
+                   WHERE pkl.prompt_id = ? ORDER BY k.keyw... Params: (2)
+2026-11-01 17:42:28.540 | DEBUG    | tldw_chatbook.DB.Prompts_DB:transaction:744 - Started transaction.
+2026-11-01 17:42:28.540 | DEBUG    | tldw_chatbook.DB.Prompts_DB:transaction:748 - Committed transaction.
+2026-11-01 17:42:28.540 | DEBUG    | tldw_chatbook.DB.Prompts_DB:execute_query:663 - Executing Query: SELECT * FROM Prompts WHERE uuid = ?... Params: (cc7534f3-0274-4a53-999c-1bcf24f9ed86)
+2026-11-01 17:42:28.540 | DEBUG    | tldw_chatbook.DB.Prompts_DB:execute_query:663 - Executing Query: SELECT k.keyword FROM PromptKeywordsTable k
+                                             JOIN PromptKeywordLinks pkl ON k.id = pkl.keyword_id
+                   WHERE pkl.prompt_id = ? ORDER BY k.keyw... Params: (3)
+2026-11-01 17:42:28.892 | DEBUG    | tldw_chatbook.DB.Prompts_DB:transaction:744 - Started transaction.
+2026-11-01 17:42:28.892 | DEBUG    | tldw_chatbook.DB.Prompts_DB:transaction:748 - Committed transaction.
+2026-11-01 17:42:29.036 | DEBUG    | tldw_chatbook.DB.Prompts_DB:transaction:744 - Started transaction.
+2026-11-01 17:42:29.036 | DEBUG    | tldw_chatbook.DB.Prompts_DB:transaction:748 - Committed transaction.
+--------------------------- Captured stderr teardown ---------------------------
+2026-11-01 17:42:29.159 | DEBUG    | tldw_chatbook.DB.Prompts_DB:close_connection:583 - Closed connection for thread MainThread.
+______ test_held_projection_cannot_replace_browse_after_navigation[True] _______
+
+runtime = (<tldw_chatbook.DB.Prompts_DB.PromptsDatabase object at 0x11ff6a870>, <tldw_chatbook.Prompt_Management.prompt_scope_se...ct at 0x11ff6ae40>), <tldw_chatbook.Chat.console_prompt_mixin_service.ConsolePromptMixinService object at 0x11ff6aed0>)
+failed = True
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize('failed', [False, True])
+    async def test_held_projection_cannot_replace_browse_after_navigation(runtime, failed):
+        import asyncio
+        from tldw_chatbook.Widgets.Console.console_prompts_browse import ConsolePromptsBrowse
+        from tldw_chatbook.Widgets.Console.console_prompt_mixins_view import ConsolePromptMixinsView
+    
+        _, scope, _, _, _, _ = runtime
+        await seed(scope)
+        app = WorkbenchHarness(runtime)
+        async with app.run_test(size=(100, 30)) as pilot:
+            app.pilot = pilot
+            await ready(app)
+            entered, release = asyncio.Event(), asyncio.Event()
+            original = app.flow.project
+            async def held(**kwargs):
+                projected = await original(**kwargs)
+                entered.set()
+                await asyncio.wait_for(release.wait(), 5)
+                if failed:
+                    raise ValueError('injected projection failure')
+                return projected
+            app.flow.project = held
+            worker = app.modal.run_worker(app.modal._refresh_mixins(), group='console-mixins')
+            try:
+                await asyncio.wait_for(entered.wait(), 5)
+                await app.modal.enter_mode('browse')
+                browse = app.modal.query_one(ConsolePromptsBrowse)
+                release.set()
+                await worker.wait()
+                assert app.modal.state.mode == 'browse'
+>               assert app.modal.query_one(ConsolePromptsBrowse) is browse
+                       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+Tests/UI/test_console_prompt_mixins.py:612: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = ConsolePromptsModal()
+selector = <class 'tldw_chatbook.Widgets.Console.console_prompts_browse.ConsolePromptsBrowse'>
+expect_type = None
+
+    def query_one(
+        self,
+        selector: str | type[QueryType],
+        expect_type: type[QueryType] | None = None,
+    ) -> QueryType | Widget:
+        """Get a widget from this widget's children that matches a selector or widget type.
+    
+        Args:
+            selector: A selector or widget type.
+            expect_type: Require the object be of the supplied type, or None for any type.
+    
+        Raises:
+            WrongType: If the wrong type was found.
+            NoMatches: If no node matches the query.
+    
+        Returns:
+            A widget matching the selector.
+        """
+        _rich_traceback_omit = True
+    
+        base_node = self._get_dom_base()
+    
+        if isinstance(selector, str):
+            query_selector = selector
+        else:
+            query_selector = selector.__name__
+    
+        if is_id_selector(query_selector):
+            cache_key = (base_node._nodes._updates, query_selector, expect_type)
+            cached_result = base_node._query_one_cache.get(cache_key)
+            if cached_result is not None:
+                return cached_result
+            if (
+                node := walk_breadth_search_id(
+                    base_node, query_selector[1:], with_root=False
+                )
+            ) is not None:
+                if expect_type is not None and not isinstance(node, expect_type):
+                    raise WrongType(
+                        f"Node matching {query_selector!r} is the wrong type; expected type {expect_type.__name__!r}, found {node}"
+                    )
+                base_node._query_one_cache[cache_key] = node
+                return node
+            raise NoMatches(f"No nodes match {query_selector!r} on {base_node!r}")
+    
+        try:
+            selector_set = parse_selectors(query_selector)
+        except TokenError:
+            raise InvalidQueryFormat(
+                f"Unable to parse {query_selector!r} as a query; check for syntax errors"
+            ) from None
+    
+        if all(selectors.is_simple for selectors in selector_set):
+            cache_key = (base_node._nodes._updates, query_selector, expect_type)
+            cached_result = base_node._query_one_cache.get(cache_key)
+            if cached_result is not None:
+                return cached_result
+        else:
+            cache_key = None
+    
+        for node in walk_breadth_first(base_node, with_root=False):
+            if not match(selector_set, node):
+                continue
+            if expect_type is not None and not isinstance(node, expect_type):
+                raise WrongType(
+                    f"Node matching {query_selector!r} is the wrong type; expected type {expect_type.__name__!r}, found {node}"
+                )
+            if cache_key is not None:
+                base_node._query_one_cache[cache_key] = node
+            return node
+    
+>       raise NoMatches(f"No nodes match {query_selector!r} on {base_node!r}")
+E       textual.css.query.NoMatches: No nodes match 'ConsolePromptsBrowse' on ConsolePromptsModal()
+
+../../../../Documents/GitHub/tldw_chatbook/.venv/lib/python3.12/site-packages/textual/dom.py:1533: NoMatches
+---------------------------- Captured stderr setup -----------------------------
+2026-11-01 17:42:29.278 | INFO     | tldw_chatbook.DB.Prompts_DB:__init__:405 - Initializing PromptsDatabase object for path: /private/tmp/task8-fix1-red/test_held_projection_cannot_re1/prompts.db [Client ID: workbench-test]
+2026-11-01 17:42:29.322 | DEBUG    | tldw_chatbook.DB.Prompts_DB:_get_thread_connection:557 - Opened/Reopened SQLite connection to /private/tmp/task8-fix1-red/test_held_projection_cannot_re1/prompts.db [Client: workbench-test, Thread: MainThread]
+2026-11-01 17:42:29.323 | INFO     | tldw_chatbook.DB.Prompts_DB:_initialize_schema:1135 - Checking DB schema. Current: 0, Code supports: 6
+2026-11-01 17:42:29.323 | INFO     | tldw_chatbook.DB.Prompts_DB:_initialize_schema:1170 - Applying migration: Initial prompts schema (v0 -> v1)
+2026-11-01 17:42:29.323 | INFO     | tldw_chatbook.DB.Prompts_DB:_apply_schema_v1:823 - Applying initial schema (Version 1) to DB: /private/tmp/task8-fix1-red/test_held_projection_cannot_re1/prompts.db...
+2026-11-01 17:42:29.323 | DEBUG    | tldw_chatbook.DB.Prompts_DB:transaction:744 - Started transaction.
+2026-11-01 17:42:29.323 | DEBUG    | tldw_chatbook.DB.Prompts_DB:_apply_schema_v1:834 - [Schema V1] Applying Core Schema + Version Update...
+2026-11-01 17:42:29.324 | DEBUG    | tldw_chatbook.DB.Prompts_DB:_apply_schema_v1:836 - [Schema V1] Core Schema script (incl. version update) executed.
+2026-11-01 17:42:29.324 | DEBUG    | tldw_chatbook.DB.Prompts_DB:_apply_schema_v1:860 - [Schema V1] Prompts table structure validated.
+2026-11-01 17:42:29.324 | DEBUG    | tldw_chatbook.DB.Prompts_DB:transaction:748 - Committed transaction.
+2026-11-01 17:42:29.324 | INFO     | tldw_chatbook.DB.Prompts_DB:_apply_schema_v1:869 - [Schema V1] Core Schema V1 applied and committed for DB: /private/tmp/task8-fix1-red/test_held_projection_cannot_re1/prompts.db.
+2026-11-01 17:42:29.324 | DEBUG    | tldw_chatbook.DB.Prompts_DB:_apply_schema_v1:873 - [Schema V1] Applying FTS Tables...
+2026-11-01 17:42:29.325 | INFO     | tldw_chatbook.DB.Prompts_DB:_apply_schema_v1:876 - [Schema V1] FTS Tables created successfully.
+2026-11-01 17:42:29.325 | INFO     | tldw_chatbook.DB.Prompts_DB:_initialize_schema:1170 - Applying migration: Add structured prompt metadata columns (v1 -> v2)
+2026-11-01 17:42:29.325 | INFO     | tldw_chatbook.DB.Prompts_DB:_apply_migration_v1_to_v2:887 - Applying prompts migration from version 1 to 2 for DB: /private/tmp/task8-fix1-red/test_held_projection_cannot_re1/prompts.db...
+2026-11-01 17:42:29.325 | DEBUG    | tldw_chatbook.DB.Prompts_DB:transaction:744 - Started transaction.
+2026-11-01 17:42:29.326 | DEBUG    | tldw_chatbook.DB.Prompts_DB:transaction:748 - Committed transaction.
+2026-11-01 17:42:29.326 | INFO     | tldw_chatbook.DB.Prompts_DB:_apply_migration_v1_to_v2:923 - Prompts migration to version 2 applied successfully for DB: /private/tmp/task8-fix1-red/test_held_projection_cannot_re1/prompts.db.
+2026-11-01 17:42:29.326 | INFO     | tldw_chatbook.DB.Prompts_DB:_initialize_schema:1170 - Applying migration: Add prompt artifact type (v2 -> v3)
+2026-11-01 17:42:29.326 | INFO     | tldw_chatbook.DB.Prompts_DB:_apply_migration_v2_to_v3:934 - Applying prompts migration from version 2 to 3 for DB: /private/tmp/task8-fix1-red/test_held_projection_cannot_re1/prompts.db...
+2026-11-01 17:42:29.326 | DEBUG    | tldw_chatbook.DB.Prompts_DB:transaction:744 - Started transaction.
+2026-11-01 17:42:29.326 | DEBUG    | tldw_chatbook.DB.Prompts_DB:transaction:748 - Committed transaction.
+2026-11-01 17:42:29.326 | INFO     | tldw_chatbook.DB.Prompts_DB:_initialize_schema:1170 - Applying migration: Add retained Prompt history index (v3 -> v4)
+2026-11-01 17:42:29.326 | INFO     | tldw_chatbook.DB.Prompts_DB:_apply_migration_v3_to_v4:969 - Applying prompts migration from version 3 to 4 for DB: /private/tmp/task8-fix1-red/test_held_projection_cannot_re1/prompts.db...
+2026-11-01 17:42:29.327 | DEBUG    | tldw_chatbook.DB.Prompts_DB:transaction:744 - Started transaction.
+2026-11-01 17:42:29.327 | DEBUG    | tldw_chatbook.DB.Prompts_DB:transaction:748 - Committed transaction.
+2026-11-01 17:42:29.327 | INFO     | tldw_chatbook.DB.Prompts_DB:_initialize_schema:1170 - Applying migration: Add local Console Prompt Draft Shelf (v4 -> v5)
+2026-11-01 17:42:29.327 | INFO     | tldw_chatbook.DB.Prompts_DB:_apply_migration_v4_to_v5:1033 - Applying prompts migration from version 4 to 5.
+2026-11-01 17:42:29.327 | DEBUG    | tldw_chatbook.DB.Prompts_DB:transaction:744 - Started transaction.
+2026-11-01 17:42:29.327 | DEBUG    | tldw_chatbook.DB.Prompts_DB:transaction:748 - Committed transaction.
+2026-11-01 17:42:29.327 | INFO     | tldw_chatbook.DB.Prompts_DB:_initialize_schema:1170 - Applying migration: Add literal mix-in artifact type (v5 -> v6)
+2026-11-01 17:42:29.327 | DEBUG    | tldw_chatbook.DB.Prompts_DB:transaction:744 - Started transaction.
+2026-11-01 17:42:29.329 | DEBUG    | tldw_chatbook.DB.Prompts_DB:transaction:748 - Committed transaction.
+2026-11-01 17:42:29.329 | DEBUG    | tldw_chatbook.DB.Prompts_DB:_initialize_schema:1184 - Verified FTS tables exist after migrations.
+2026-11-01 17:42:29.329 | INFO     | tldw_chatbook.DB.Prompts_DB:_initialize_schema:1190 - Database schema initialized/migrated to version 6.
+2026-11-01 17:42:29.329 | DEBUG    | tldw_chatbook.DB.Prompts_DB:__init__:457 - PromptsDatabase initialization completed successfully for /private/tmp/task8-fix1-red/test_held_projection_cannot_re1/prompts.db
+----------------------------- Captured stderr call -----------------------------
+2026-11-01 17:42:29.330 | DEBUG    | tldw_chatbook.DB.Prompts_DB:transaction:744 - Started transaction.
+2026-11-01 17:42:29.331 | DEBUG    | tldw_chatbook.DB.Prompts_DB:transaction:748 - Committed transaction.
+2026-11-01 17:42:29.331 | DEBUG    | tldw_chatbook.DB.Prompts_DB:execute_query:663 - Executing Query: SELECT * FROM Prompts WHERE uuid = ?... Params: (6edf2727-1a88-4b9e-9737-789962299234)
+2026-11-01 17:42:29.331 | DEBUG    | tldw_chatbook.DB.Prompts_DB:execute_query:663 - Executing Query: SELECT k.keyword FROM PromptKeywordsTable k
+                                             JOIN PromptKeywordLinks pkl ON k.id = pkl.keyword_id
+                   WHERE pkl.prompt_id = ? ORDER BY k.keyw... Params: (1)
+2026-11-01 17:42:29.331 | DEBUG    | tldw_chatbook.DB.Prompts_DB:transaction:744 - Started transaction.
+2026-11-01 17:42:29.331 | DEBUG    | tldw_chatbook.DB.Prompts_DB:transaction:748 - Committed transaction.
+2026-11-01 17:42:29.331 | DEBUG    | tldw_chatbook.DB.Prompts_DB:execute_query:663 - Executing Query: SELECT * FROM Prompts WHERE uuid = ?... Params: (985e9768-a522-40e3-8992-0031c66b78bd)
+2026-11-01 17:42:29.332 | DEBUG    | tldw_chatbook.DB.Prompts_DB:execute_query:663 - Executing Query: SELECT k.keyword FROM PromptKeywordsTable k
+                                             JOIN PromptKeywordLinks pkl ON k.id = pkl.keyword_id
+                   WHERE pkl.prompt_id = ? ORDER BY k.keyw... Params: (2)
+2026-11-01 17:42:29.332 | DEBUG    | tldw_chatbook.DB.Prompts_DB:transaction:744 - Started transaction.
+2026-11-01 17:42:29.332 | DEBUG    | tldw_chatbook.DB.Prompts_DB:transaction:748 - Committed transaction.
+2026-11-01 17:42:29.332 | DEBUG    | tldw_chatbook.DB.Prompts_DB:execute_query:663 - Executing Query: SELECT * FROM Prompts WHERE uuid = ?... Params: (17cb8f2e-79b0-4d21-8bb1-5c5a9c9239a3)
+2026-11-01 17:42:29.332 | DEBUG    | tldw_chatbook.DB.Prompts_DB:execute_query:663 - Executing Query: SELECT k.keyword FROM PromptKeywordsTable k
+                                             JOIN PromptKeywordLinks pkl ON k.id = pkl.keyword_id
+                   WHERE pkl.prompt_id = ? ORDER BY k.keyw... Params: (3)
+2026-11-01 17:42:29.373 | DEBUG    | tldw_chatbook.DB.Prompts_DB:transaction:744 - Started transaction.
+2026-11-01 17:42:29.374 | DEBUG    | tldw_chatbook.DB.Prompts_DB:transaction:748 - Committed transaction.
+2026-11-01 17:42:29.483 | DEBUG    | tldw_chatbook.DB.Prompts_DB:transaction:744 - Started transaction.
+2026-11-01 17:42:29.483 | DEBUG    | tldw_chatbook.DB.Prompts_DB:transaction:748 - Committed transaction.
+--------------------------- Captured stderr teardown ---------------------------
+2026-11-01 17:42:29.514 | DEBUG    | tldw_chatbook.DB.Prompts_DB:close_connection:583 - Closed connection for thread MainThread.
+______ test_held_save_preserves_newer_raw_editor_draft_and_can_save_again ______
+
+runtime = (<tldw_chatbook.DB.Prompts_DB.PromptsDatabase object at 0x1200e59d0>, <tldw_chatbook.Prompt_Management.prompt_scope_se...ct at 0x1200e7f80>), <tldw_chatbook.Chat.console_prompt_mixin_service.ConsolePromptMixinService object at 0x1200e7e00>)
+
+    @pytest.mark.asyncio
+    async def test_held_save_preserves_newer_raw_editor_draft_and_can_save_again(runtime):
+        import asyncio
+        from textual.widgets import TextArea
+        from tldw_chatbook.Widgets.Prompts.prompt_mixin_editor import PromptMixinEditor
+    
+        _, scope, _, origin, _, service = runtime
+        await seed(scope)
+        app = WorkbenchHarness(runtime)
+        async with app.run_test(size=(100, 30)) as pilot:
+            app.pilot = pilot
+            await ready(app)
+            await add(app, 'Style')
+            app.modal.query_one('#console-mixin-inspect-0', Button).press()
+            await _wait_for_condition(pilot, lambda: bool(app.modal.query(PromptMixinEditor)), message='Editor did not mount')
+            editor = app.modal.query_one(PromptMixinEditor)
+            editor.query_one('#mixin-body', TextArea).load_text('saved first draft')
+            entered, release = asyncio.Event(), asyncio.Event()
+            original = app.flow.save
+            async def held(*args):
+                entered.set()
+                await asyncio.wait_for(release.wait(), 5)
+                return await original(*args)
+            app.flow.save = held
+            app.modal.query_one('#console-mixins-save', Button).press()
+            try:
+                await asyncio.wait_for(entered.wait(), 5)
+                editor.query_one('#mixin-body', TextArea).load_text('newer unsaved draft')
+                release.set()
+                await app.workers.wait_for_complete()
+>               assert app.modal.query_one(PromptMixinEditor) is editor
+                       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+Tests/UI/test_console_prompt_mixins.py:648: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = ConsolePromptsModal()
+selector = <class 'tldw_chatbook.Widgets.Prompts.prompt_mixin_editor.PromptMixinEditor'>
+expect_type = None
+
+    def query_one(
+        self,
+        selector: str | type[QueryType],
+        expect_type: type[QueryType] | None = None,
+    ) -> QueryType | Widget:
+        """Get a widget from this widget's children that matches a selector or widget type.
+    
+        Args:
+            selector: A selector or widget type.
+            expect_type: Require the object be of the supplied type, or None for any type.
+    
+        Raises:
+            WrongType: If the wrong type was found.
+            NoMatches: If no node matches the query.
+    
+        Returns:
+            A widget matching the selector.
+        """
+        _rich_traceback_omit = True
+    
+        base_node = self._get_dom_base()
+    
+        if isinstance(selector, str):
+            query_selector = selector
+        else:
+            query_selector = selector.__name__
+    
+        if is_id_selector(query_selector):
+            cache_key = (base_node._nodes._updates, query_selector, expect_type)
+            cached_result = base_node._query_one_cache.get(cache_key)
+            if cached_result is not None:
+                return cached_result
+            if (
+                node := walk_breadth_search_id(
+                    base_node, query_selector[1:], with_root=False
+                )
+            ) is not None:
+                if expect_type is not None and not isinstance(node, expect_type):
+                    raise WrongType(
+                        f"Node matching {query_selector!r} is the wrong type; expected type {expect_type.__name__!r}, found {node}"
+                    )
+                base_node._query_one_cache[cache_key] = node
+                return node
+            raise NoMatches(f"No nodes match {query_selector!r} on {base_node!r}")
+    
+        try:
+            selector_set = parse_selectors(query_selector)
+        except TokenError:
+            raise InvalidQueryFormat(
+                f"Unable to parse {query_selector!r} as a query; check for syntax errors"
+            ) from None
+    
+        if all(selectors.is_simple for selectors in selector_set):
+            cache_key = (base_node._nodes._updates, query_selector, expect_type)
+            cached_result = base_node._query_one_cache.get(cache_key)
+            if cached_result is not None:
+                return cached_result
+        else:
+            cache_key = None
+    
+        for node in walk_breadth_first(base_node, with_root=False):
+            if not match(selector_set, node):
+                continue
+            if expect_type is not None and not isinstance(node, expect_type):
+                raise WrongType(
+                    f"Node matching {query_selector!r} is the wrong type; expected type {expect_type.__name__!r}, found {node}"
+                )
+            if cache_key is not None:
+                base_node._query_one_cache[cache_key] = node
+            return node
+    
+>       raise NoMatches(f"No nodes match {query_selector!r} on {base_node!r}")
+E       textual.css.query.NoMatches: No nodes match 'PromptMixinEditor' on ConsolePromptsModal()
+
+../../../../Documents/GitHub/tldw_chatbook/.venv/lib/python3.12/site-packages/textual/dom.py:1533: NoMatches
+---------------------------- Captured stderr setup -----------------------------
+2026-11-01 17:42:29.616 | INFO     | tldw_chatbook.DB.Prompts_DB:__init__:405 - Initializing PromptsDatabase object for path: /private/tmp/task8-fix1-red/test_held_save_preserves_newer0/prompts.db [Client ID: workbench-test]
+2026-11-01 17:42:29.655 | DEBUG    | tldw_chatbook.DB.Prompts_DB:_get_thread_connection:557 - Opened/Reopened SQLite connection to /private/tmp/task8-fix1-red/test_held_save_preserves_newer0/prompts.db [Client: workbench-test, Thread: MainThread]
+2026-11-01 17:42:29.655 | INFO     | tldw_chatbook.DB.Prompts_DB:_initialize_schema:1135 - Checking DB schema. Current: 0, Code supports: 6
+2026-11-01 17:42:29.655 | INFO     | tldw_chatbook.DB.Prompts_DB:_initialize_schema:1170 - Applying migration: Initial prompts schema (v0 -> v1)
+2026-11-01 17:42:29.656 | INFO     | tldw_chatbook.DB.Prompts_DB:_apply_schema_v1:823 - Applying initial schema (Version 1) to DB: /private/tmp/task8-fix1-red/test_held_save_preserves_newer0/prompts.db...
+2026-11-01 17:42:29.656 | DEBUG    | tldw_chatbook.DB.Prompts_DB:transaction:744 - Started transaction.
+2026-11-01 17:42:29.656 | DEBUG    | tldw_chatbook.DB.Prompts_DB:_apply_schema_v1:834 - [Schema V1] Applying Core Schema + Version Update...
+2026-11-01 17:42:29.657 | DEBUG    | tldw_chatbook.DB.Prompts_DB:_apply_schema_v1:836 - [Schema V1] Core Schema script (incl. version update) executed.
+2026-11-01 17:42:29.657 | DEBUG    | tldw_chatbook.DB.Prompts_DB:_apply_schema_v1:860 - [Schema V1] Prompts table structure validated.
+2026-11-01 17:42:29.657 | DEBUG    | tldw_chatbook.DB.Prompts_DB:transaction:748 - Committed transaction.
+2026-11-01 17:42:29.657 | INFO     | tldw_chatbook.DB.Prompts_DB:_apply_schema_v1:869 - [Schema V1] Core Schema V1 applied and committed for DB: /private/tmp/task8-fix1-red/test_held_save_preserves_newer0/prompts.db.
+2026-11-01 17:42:29.657 | DEBUG    | tldw_chatbook.DB.Prompts_DB:_apply_schema_v1:873 - [Schema V1] Applying FTS Tables...
+2026-11-01 17:42:29.658 | INFO     | tldw_chatbook.DB.Prompts_DB:_apply_schema_v1:876 - [Schema V1] FTS Tables created successfully.
+2026-11-01 17:42:29.658 | INFO     | tldw_chatbook.DB.Prompts_DB:_initialize_schema:1170 - Applying migration: Add structured prompt metadata columns (v1 -> v2)
+2026-11-01 17:42:29.658 | INFO     | tldw_chatbook.DB.Prompts_DB:_apply_migration_v1_to_v2:887 - Applying prompts migration from version 1 to 2 for DB: /private/tmp/task8-fix1-red/test_held_save_preserves_newer0/prompts.db...
+2026-11-01 17:42:29.658 | DEBUG    | tldw_chatbook.DB.Prompts_DB:transaction:744 - Started transaction.
+2026-11-01 17:42:29.659 | DEBUG    | tldw_chatbook.DB.Prompts_DB:transaction:748 - Committed transaction.
+2026-11-01 17:42:29.659 | INFO     | tldw_chatbook.DB.Prompts_DB:_apply_migration_v1_to_v2:923 - Prompts migration to version 2 applied successfully for DB: /private/tmp/task8-fix1-red/test_held_save_preserves_newer0/prompts.db.
+2026-11-01 17:42:29.659 | INFO     | tldw_chatbook.DB.Prompts_DB:_initialize_schema:1170 - Applying migration: Add prompt artifact type (v2 -> v3)
+2026-11-01 17:42:29.659 | INFO     | tldw_chatbook.DB.Prompts_DB:_apply_migration_v2_to_v3:934 - Applying prompts migration from version 2 to 3 for DB: /private/tmp/task8-fix1-red/test_held_save_preserves_newer0/prompts.db...
+2026-11-01 17:42:29.659 | DEBUG    | tldw_chatbook.DB.Prompts_DB:transaction:744 - Started transaction.
+2026-11-01 17:42:29.659 | DEBUG    | tldw_chatbook.DB.Prompts_DB:transaction:748 - Committed transaction.
+2026-11-01 17:42:29.660 | INFO     | tldw_chatbook.DB.Prompts_DB:_initialize_schema:1170 - Applying migration: Add retained Prompt history index (v3 -> v4)
+2026-11-01 17:42:29.660 | INFO     | tldw_chatbook.DB.Prompts_DB:_apply_migration_v3_to_v4:969 - Applying prompts migration from version 3 to 4 for DB: /private/tmp/task8-fix1-red/test_held_save_preserves_newer0/prompts.db...
+2026-11-01 17:42:29.660 | DEBUG    | tldw_chatbook.DB.Prompts_DB:transaction:744 - Started transaction.
+2026-11-01 17:42:29.660 | DEBUG    | tldw_chatbook.DB.Prompts_DB:transaction:748 - Committed transaction.
+2026-11-01 17:42:29.660 | INFO     | tldw_chatbook.DB.Prompts_DB:_initialize_schema:1170 - Applying migration: Add local Console Prompt Draft Shelf (v4 -> v5)
+2026-11-01 17:42:29.660 | INFO     | tldw_chatbook.DB.Prompts_DB:_apply_migration_v4_to_v5:1033 - Applying prompts migration from version 4 to 5.
+2026-11-01 17:42:29.660 | DEBUG    | tldw_chatbook.DB.Prompts_DB:transaction:744 - Started transaction.
+2026-11-01 17:42:29.660 | DEBUG    | tldw_chatbook.DB.Prompts_DB:transaction:748 - Committed transaction.
+2026-11-01 17:42:29.660 | INFO     | tldw_chatbook.DB.Prompts_DB:_initialize_schema:1170 - Applying migration: Add literal mix-in artifact type (v5 -> v6)
+2026-11-01 17:42:29.661 | DEBUG    | tldw_chatbook.DB.Prompts_DB:transaction:744 - Started transaction.
+2026-11-01 17:42:29.662 | DEBUG    | tldw_chatbook.DB.Prompts_DB:transaction:748 - Committed transaction.
+2026-11-01 17:42:29.662 | DEBUG    | tldw_chatbook.DB.Prompts_DB:_initialize_schema:1184 - Verified FTS tables exist after migrations.
+2026-11-01 17:42:29.662 | INFO     | tldw_chatbook.DB.Prompts_DB:_initialize_schema:1190 - Database schema initialized/migrated to version 6.
+2026-11-01 17:42:29.662 | DEBUG    | tldw_chatbook.DB.Prompts_DB:__init__:457 - PromptsDatabase initialization completed successfully for /private/tmp/task8-fix1-red/test_held_save_preserves_newer0/prompts.db
+----------------------------- Captured stderr call -----------------------------
+2026-11-01 17:42:29.663 | DEBUG    | tldw_chatbook.DB.Prompts_DB:transaction:744 - Started transaction.
+2026-11-01 17:42:29.664 | DEBUG    | tldw_chatbook.DB.Prompts_DB:transaction:748 - Committed transaction.
+2026-11-01 17:42:29.664 | DEBUG    | tldw_chatbook.DB.Prompts_DB:execute_query:663 - Executing Query: SELECT * FROM Prompts WHERE uuid = ?... Params: (cafb66e8-be20-4fbd-9b7a-d2101b051d00)
+2026-11-01 17:42:29.664 | DEBUG    | tldw_chatbook.DB.Prompts_DB:execute_query:663 - Executing Query: SELECT k.keyword FROM PromptKeywordsTable k
+                                             JOIN PromptKeywordLinks pkl ON k.id = pkl.keyword_id
+                   WHERE pkl.prompt_id = ? ORDER BY k.keyw... Params: (1)
+2026-11-01 17:42:29.665 | DEBUG    | tldw_chatbook.DB.Prompts_DB:transaction:744 - Started transaction.
+2026-11-01 17:42:29.665 | DEBUG    | tldw_chatbook.DB.Prompts_DB:transaction:748 - Committed transaction.
+2026-11-01 17:42:29.665 | DEBUG    | tldw_chatbook.DB.Prompts_DB:execute_query:663 - Executing Query: SELECT * FROM Prompts WHERE uuid = ?... Params: (efbe538c-317e-48c1-bf61-6686d274b68a)
+2026-11-01 17:42:29.665 | DEBUG    | tldw_chatbook.DB.Prompts_DB:execute_query:663 - Executing Query: SELECT k.keyword FROM PromptKeywordsTable k
+                                             JOIN PromptKeywordLinks pkl ON k.id = pkl.keyword_id
+                   WHERE pkl.prompt_id = ? ORDER BY k.keyw... Params: (2)
+2026-11-01 17:42:29.665 | DEBUG    | tldw_chatbook.DB.Prompts_DB:transaction:744 - Started transaction.
+2026-11-01 17:42:29.666 | DEBUG    | tldw_chatbook.DB.Prompts_DB:transaction:748 - Committed transaction.
+2026-11-01 17:42:29.666 | DEBUG    | tldw_chatbook.DB.Prompts_DB:execute_query:663 - Executing Query: SELECT * FROM Prompts WHERE uuid = ?... Params: (7f86106d-671e-43e2-9269-90360874b4ff)
+2026-11-01 17:42:29.666 | DEBUG    | tldw_chatbook.DB.Prompts_DB:execute_query:663 - Executing Query: SELECT k.keyword FROM PromptKeywordsTable k
+                                             JOIN PromptKeywordLinks pkl ON k.id = pkl.keyword_id
+                   WHERE pkl.prompt_id = ? ORDER BY k.keyw... Params: (3)
+2026-11-01 17:42:29.697 | DEBUG    | tldw_chatbook.DB.Prompts_DB:transaction:744 - Started transaction.
+2026-11-01 17:42:29.698 | DEBUG    | tldw_chatbook.DB.Prompts_DB:transaction:748 - Committed transaction.
+2026-11-01 17:42:29.877 | DEBUG    | tldw_chatbook.DB.Prompts_DB:_get_thread_connection:557 - Opened/Reopened SQLite connection to /private/tmp/task8-fix1-red/test_held_save_preserves_newer0/prompts.db [Client: workbench-test, Thread: asyncio_0]
+2026-11-01 17:42:29.878 | DEBUG    | tldw_chatbook.DB.Prompts_DB:transaction:744 - Started transaction.
+2026-11-01 17:42:29.878 | DEBUG    | tldw_chatbook.DB.Prompts_DB:transaction:748 - Committed transaction.
+2026-11-01 17:42:29.878 | DEBUG    | tldw_chatbook.DB.Prompts_DB:close_connection:583 - Closed connection for thread asyncio_0.
+2026-11-01 17:42:29.879 | DEBUG    | tldw_chatbook.DB.Prompts_DB:transaction:744 - Started transaction.
+2026-11-01 17:42:29.879 | DEBUG    | tldw_chatbook.DB.Prompts_DB:transaction:748 - Committed transaction.
+2026-11-01 17:42:29.920 | DEBUG    | tldw_chatbook.DB.Prompts_DB:_get_thread_connection:557 - Opened/Reopened SQLite connection to /private/tmp/task8-fix1-red/test_held_save_preserves_newer0/prompts.db [Client: workbench-test, Thread: asyncio_0]
+2026-11-01 17:42:29.920 | DEBUG    | tldw_chatbook.DB.Prompts_DB:transaction:744 - Started transaction.
+2026-11-01 17:42:29.920 | DEBUG    | tldw_chatbook.DB.Prompts_DB:transaction:748 - Committed transaction.
+2026-11-01 17:42:29.920 | DEBUG    | tldw_chatbook.DB.Prompts_DB:close_connection:583 - Closed connection for thread asyncio_0.
+2026-11-01 17:42:30.001 | DEBUG    | tldw_chatbook.DB.Prompts_DB:_get_thread_connection:557 - Opened/Reopened SQLite connection to /private/tmp/task8-fix1-red/test_held_save_preserves_newer0/prompts.db [Client: workbench-test, Thread: asyncio_0]
+2026-11-01 17:42:30.001 | DEBUG    | tldw_chatbook.DB.Prompts_DB:transaction:744 - Started transaction.
+2026-11-01 17:42:30.001 | DEBUG    | tldw_chatbook.DB.Prompts_DB:transaction:748 - Committed transaction.
+2026-11-01 17:42:30.001 | DEBUG    | tldw_chatbook.DB.Prompts_DB:close_connection:583 - Closed connection for thread asyncio_0.
+2026-11-01 17:42:30.026 | DEBUG    | tldw_chatbook.DB.Prompts_DB:execute_query:663 - Executing Query: SELECT * FROM Prompts WHERE uuid = ?... Params: (cafb66e8-be20-4fbd-9b7a-d2101b051d00)
+2026-11-01 17:42:30.026 | DEBUG    | tldw_chatbook.DB.Prompts_DB:execute_query:663 - Executing Query: SELECT k.keyword FROM PromptKeywordsTable k
+                                             JOIN PromptKeywordLinks pkl ON k.id = pkl.keyword_id
+                   WHERE pkl.prompt_id = ? ORDER BY k.keyw... Params: (1)
+2026-11-01 17:42:30.027 | DEBUG    | tldw_chatbook.DB.Prompts_DB:transaction:744 - Started transaction.
+2026-11-01 17:42:30.027 | DEBUG    | tldw_chatbook.DB.Prompts_DB:transaction:748 - Committed transaction.
+2026-11-01 17:42:30.027 | DEBUG    | tldw_chatbook.DB.Prompts_DB:execute_query:663 - Executing Query: SELECT * FROM Prompts WHERE uuid = ?... Params: (cafb66e8-be20-4fbd-9b7a-d2101b051d00)
+2026-11-01 17:42:30.027 | DEBUG    | tldw_chatbook.DB.Prompts_DB:execute_query:663 - Executing Query: SELECT k.keyword FROM PromptKeywordsTable k
+                                             JOIN PromptKeywordLinks pkl ON k.id = pkl.keyword_id
+                   WHERE pkl.prompt_id = ? ORDER BY k.keyw... Params: (1)
+2026-11-01 17:42:30.028 | DEBUG    | tldw_chatbook.DB.Prompts_DB:transaction:744 - Started transaction.
+2026-11-01 17:42:30.028 | DEBUG    | tldw_chatbook.DB.Prompts_DB:transaction:748 - Committed transaction.
+2026-11-01 17:42:30.074 | DEBUG    | tldw_chatbook.DB.Prompts_DB:_get_thread_connection:557 - Opened/Reopened SQLite connection to /private/tmp/task8-fix1-red/test_held_save_preserves_newer0/prompts.db [Client: workbench-test, Thread: asyncio_0]
+2026-11-01 17:42:30.074 | DEBUG    | tldw_chatbook.DB.Prompts_DB:transaction:744 - Started transaction.
+2026-11-01 17:42:30.074 | DEBUG    | tldw_chatbook.DB.Prompts_DB:transaction:748 - Committed transaction.
+2026-11-01 17:42:30.074 | DEBUG    | tldw_chatbook.DB.Prompts_DB:close_connection:583 - Closed connection for thread asyncio_0.
+--------------------------- Captured stderr teardown ---------------------------
+2026-11-01 17:42:30.119 | DEBUG    | tldw_chatbook.DB.Prompts_DB:close_connection:583 - Closed connection for thread MainThread.
+============================= slowest 25 durations =============================
+
+(9 durations < 1s hidden.)
+=========================== short test summary info ============================
+FAILED Tests/UI/test_console_prompt_mixins.py::test_held_projection_cannot_replace_browse_after_navigation[False]
+FAILED Tests/UI/test_console_prompt_mixins.py::test_held_projection_cannot_replace_browse_after_navigation[True]
+FAILED Tests/UI/test_console_prompt_mixins.py::test_held_save_preserves_newer_raw_editor_draft_and_can_save_again
+3 failed, 10 deselected in 3.66s

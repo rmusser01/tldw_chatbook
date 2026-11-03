@@ -1,0 +1,43 @@
+{
+  "base": "d83ca84cdbd8cb934ba747bcb7a2179b934904ed",
+  "argv": [
+    "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python",
+    "-m",
+    "pytest",
+    "-p",
+    "original_native_admission",
+    "Tests/Chat/test_console_chat_store_atomic_promotion.py::test_promotion_persists_sparse_context_policy_inside_the_bundle",
+    "-q",
+    "--tb=short",
+    "-p",
+    "no:cacheprovider",
+    "--basetemp",
+    "/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/mixins-original-attribution-uydjvxa4/promotion-sparse-original-pytest"
+  ],
+  "cwd": "/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/mixins-original-attribution-uydjvxa4/source",
+  "plugin": "/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/mixins-original-attribution-uydjvxa4/original_native_admission.py",
+  "exit_code": 1,
+  "failed": [
+    "FAILED Tests/Chat/test_console_chat_store_atomic_promotion.py::test_promotion_persists_sparse_context_policy_inside_the_bundle"
+  ],
+  "tail": [
+    "2026-11-01 19:32:16.669 | DEBUG    | tldw_chatbook.Chat.chat_persistence_service:__init__:325 - Recovered-media message source is unavailable.",
+    "2026-11-01 19:32:16.681 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24898 - Started outermost transaction on thread 8461753728.",
+    "2026-11-01 19:32:16.682 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24867 - Entered nested transaction level 2 on thread 8461753728.",
+    "2026-11-01 19:32:16.683 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:add_conversation:10969 - Added conversation ID: babe49db-b47a-4ac6-afcc-abb311ee2112.",
+    "2026-11-01 19:32:16.684 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24867 - Entered nested transaction level 2 on thread 8461753728.",
+    "2026-11-01 19:32:16.685 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24867 - Entered nested transaction level 2 on thread 8461753728.",
+    "2026-11-01 19:32:16.686 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_add_message_with_semantic_sidecars:13938 - Added message ID: 23a50890-f3e5-41b0-a017-7e8938da5295 to conversation babe49db-b47a-4ac6-afcc-abb311ee2112 (Image: No).",
+    "2026-11-01 19:32:16.687 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24867 - Entered nested transaction level 2 on thread 8461753728.",
+    "2026-11-01 19:32:16.688 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24867 - Entered nested transaction level 2 on thread 8461753728.",
+    "2026-11-01 19:32:16.689 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24867 - Entered nested transaction level 2 on thread 8461753728.",
+    "2026-11-01 19:32:16.689 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24867 - Entered nested transaction level 2 on thread 8461753728.",
+    "2026-11-01 19:32:16.690 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_exit_transaction:24963 - Transaction (outermost) committed successfully on thread 8461753728.",
+    "============================= slowest 25 durations =============================",
+    "",
+    "(3 durations < 1s hidden.)",
+    "=========================== short test summary info ============================",
+    "FAILED Tests/Chat/test_console_chat_store_atomic_promotion.py::test_promotion_persists_sparse_context_policy_inside_the_bundle",
+    "1 failed in 1.12s"
+  ]
+}

@@ -1,0 +1,25 @@
+{
+  "candidate": "5dac2bb0207285eca67d571565a3ee88113e4a84",
+  "clone_argv": [
+    "git",
+    "clone",
+    "--quiet",
+    "--no-local",
+    "--single-branch",
+    "--branch",
+    "codex/prompt-mix-ins",
+    "--depth",
+    "1",
+    "/Users/macbook-dev/.codex/worktrees/prompt-mix-ins/tldw_chatbook",
+    "/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/prompt-mixins-pr-d18dfic_/fresh-clone"
+  ],
+  "verifier_argv": [
+    "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python",
+    "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/verify_evidence.py",
+    "HEAD"
+  ],
+  "verifier_cwd": "/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/prompt-mixins-pr-d18dfic_/fresh-clone",
+  "historical_objects_available": false,
+  "exit_code": 0,
+  "qualification": "Fresh shallow single-branch clone has no historical source objects; current source/evidence checks pass and historical provenance is explicitly unavailable. Original repo ancestry check separately excludes old mixed commits."
+}

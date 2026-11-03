@@ -1,0 +1,13 @@
+........                                                                 [100%]
+============================= slowest 25 durations =============================
+5.00s call     Tests/UI/test_library_prompt_save_continuity.py::test_first_prompt_save_settles_items_without_leaving_editor[textual-light-size0-True]
+4.89s call     Tests/UI/test_library_prompt_save_continuity.py::test_first_prompt_save_settles_items_without_leaving_editor[textual-dark-size0-False]
+4.87s call     Tests/UI/test_library_prompt_save_continuity.py::test_first_prompt_save_settles_items_without_leaving_editor[textual-light-size0-False]
+4.77s call     Tests/UI/test_library_prompt_save_continuity.py::test_first_prompt_save_settles_items_without_leaving_editor[textual-dark-size1-True]
+4.48s call     Tests/UI/test_library_prompt_save_continuity.py::test_first_prompt_save_settles_items_without_leaving_editor[textual-light-size1-True]
+4.37s call     Tests/UI/test_library_prompt_save_continuity.py::test_first_prompt_save_settles_items_without_leaving_editor[textual-dark-size0-True]
+4.35s call     Tests/UI/test_library_prompt_save_continuity.py::test_first_prompt_save_settles_items_without_leaving_editor[textual-light-size1-False]
+3.94s call     Tests/UI/test_library_prompt_save_continuity.py::test_first_prompt_save_settles_items_without_leaving_editor[textual-dark-size1-False]
+
+(16 durations < 1s hidden.)
+8 passed in 40.79s

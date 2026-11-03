@@ -287,11 +287,14 @@ def get_prompt_by_name(name: str, include_deleted: bool = False) -> Optional[Dic
 
 
 def list_prompts(
-    page: int = 1, per_page: int = 10, include_deleted: bool = False
+    page: int = 1,
+    per_page: int = 10,
+    include_deleted: bool = False,
+    artifact_type: str | None = None,
 ) -> Tuple[List[Dict], int, int, int]:
     """Lists prompts with pagination. See PromptsDatabase.list_prompts for details."""
     db = get_db_instance()
-    return db.list_prompts(page, per_page, include_deleted)
+    return db.list_prompts(page, per_page, include_deleted, artifact_type)
 
 
 def fetch_prompt_details(
@@ -646,8 +649,9 @@ def _normalize_prompt_data(data: Dict[str, Any]) -> Dict[str, Any]:
     elif not isinstance(artifact_type, str) or artifact_type not in {
         "prompt",
         "recipe",
+        "mixin",
     }:
-        raise InputError("artifact_type must be either 'prompt' or 'recipe'.")
+        raise InputError("artifact_type must be 'prompt', 'recipe', or 'mixin'.")
 
     if normalized["prompt_schema_version"] is not None and not isinstance(
         normalized["prompt_schema_version"], int
@@ -757,6 +761,10 @@ def _restore_structured_markdown_prompt(parsed_data: Dict[str, Any]) -> bool:
     """Restore v2 structure, or report that foreign metadata needs a safe import."""
     artifact_type = parsed_data.pop("artifact_type_raw", None)
     structure_text = parsed_data.pop("structure_raw", None)
+    if artifact_type == "mixin":
+        from .prompt_chatbook_record import PromptChatbookRecordError
+
+        raise PromptChatbookRecordError("envelope")
     definition = _parse_fenced_structure(structure_text)
     if definition is None or not isinstance(artifact_type, str):
         return artifact_type is not None or structure_text is not None
@@ -789,6 +797,29 @@ def parse_markdown_prompts_from_content(content: str) -> List[Dict[str, Any]]:
     Parses Markdown content with custom '### SECTION_NAME ###' headers
     into a list of prompt dictionaries.
     """
+    from .prompt_chatbook_record import (
+        MIXIN_MARKDOWN_HEADER,
+        PromptChatbookRecordError,
+        decode_chatbook_prompt_record,
+    )
+
+    envelope_content = content.removeprefix("\ufeff")
+    if envelope_content.lstrip().startswith(MIXIN_MARKDOWN_HEADER):
+        match = re.fullmatch(
+            re.escape(MIXIN_MARKDOWN_HEADER) + r"\n\n```json\n([^\r\n]+)\n```\n?",
+            envelope_content,
+        )
+        if match is None:
+            raise PromptChatbookRecordError("envelope")
+        try:
+            record = json.loads(match.group(1))
+        except (TypeError, ValueError, RecursionError):
+            raise PromptChatbookRecordError("json") from None
+        decoded = decode_chatbook_prompt_record(record)
+        if decoded["artifact_type"] != "mixin":
+            raise PromptChatbookRecordError("type")
+        return [decoded]
+
     prompts_data = []
     parsed_data: Dict[str, Any] = {
         "name": None,
@@ -1144,9 +1175,12 @@ def import_prompts_from_files(
                         prompt_definition=prompt_data.get("prompt_definition"),
                         artifact_type=prompt_data.get("artifact_type"),
                     )
-                logger.info(
-                    f"Imported prompt '{prompt_name}' from {file_path_str}: {db_msg}"
-                )
+                if prompt_data.get("artifact_type") == "mixin":
+                    logger.info("Mix-in import completed.")
+                else:
+                    logger.info(
+                        f"Imported prompt '{prompt_name}' from {file_path_str}: {db_msg}"
+                    )
                 results.append(
                     {
                         "file_path": file_path_str,
@@ -1157,28 +1191,28 @@ def import_prompts_from_files(
                         "prompt_uuid": p_uuid,
                     }
                 )
-            except (InputError, ConflictError, DatabaseError, SchemaError) as e:
-                logger.error(
-                    f"Failed to add/update prompt '{prompt_name}' from {file_path_str}: {e}"
-                )
-                results.append(
-                    {
-                        "file_path": file_path_str,
-                        "prompt_name": prompt_name,
-                        "status": "failure",
-                        "message": f"Database error: {type(e).__name__} - {e}",
-                    }
-                )
             except Exception as e:
-                logger.opt(exception=True).error(
-                    f"Unexpected error importing prompt '{prompt_name}' from {file_path_str}: {e}"
-                )
+                if prompt_data.get("artifact_type") == "mixin":
+                    logger.error("Mix-in import failed category=database.")
+                    message = "Unable to import mix-in."
+                elif isinstance(
+                    e, (InputError, ConflictError, DatabaseError, SchemaError)
+                ):
+                    logger.error(
+                        f"Failed to add/update prompt '{prompt_name}' from {file_path_str}: {e}"
+                    )
+                    message = f"Database error: {type(e).__name__} - {e}"
+                else:
+                    logger.opt(exception=True).error(
+                        f"Unexpected error importing prompt '{prompt_name}' from {file_path_str}: {e}"
+                    )
+                    message = f"Unexpected error: {type(e).__name__} - {e}"
                 results.append(
                     {
                         "file_path": file_path_str,
                         "prompt_name": prompt_name,
                         "status": "failure",
-                        "message": f"Unexpected error: {type(e).__name__} - {e}",
+                        "message": message,
                     }
                 )
     return results

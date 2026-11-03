@@ -1,0 +1,4 @@
+{
+  "sha256": "33ce60a5bc5ac1176b74bdbd2e6f10c7ded221fe347655795d6c0936439d7b6e",
+  "raw_text": "<?xml version=\"1.0\" encoding=\"utf-8\"?><testsuites name=\"pytest tests\"><testsuite name=\"pytest\" errors=\"0\" failures=\"0\" skipped=\"0\" tests=\"1\" time=\"42.792\" timestamp=\"2026-11-02T08:44:21.197834-08:00\" hostname=\"Roberts-MacBook-Pro-2.local\"><testcase classname=\"Tests.Performance.test_ui_latency_guardrails\" name=\"test_destination_tour_stays_under_switch_budgets\" time=\"42.745\" /></testsuite></testsuites>"
+}

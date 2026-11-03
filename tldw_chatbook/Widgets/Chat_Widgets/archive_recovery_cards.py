@@ -270,24 +270,39 @@ class ArchiveRecoveryConfirmCard(Vertical):
     def on_mount(self) -> None:
         self.set_confirmation(self.confirmation)
 
-    def set_confirmation(self, card: RecoveryConfirmation | None) -> None:
-        """Synchronously update already mounted, exact-target controls."""
+    def set_confirmation(self, card: RecoveryConfirmation | None) -> bool:
+        """Adopt the latest payload; report whether fixed controls were updated."""
         previous = self.confirmation
         self.confirmation = card
         self.display = card is not None
+        new_request = card is not None and (
+            previous is None
+            or (previous.session_id, previous.request_id)
+            != (card.session_id, card.request_id)
+        )
+        if new_request:
+            self._consumed = False
+        for selector, control_type in (
+            ("#recovery-target", Static),
+            ("#recovery-effects", Static),
+            ("#recovery-scope", Select),
+            ("#recovery-confirm", RecoveryDecisionButton),
+            ("#recovery-cancel", RecoveryDecisionButton),
+            ("#recovery-rename", RecoveryDecisionButton),
+        ):
+            controls = self.query(control_type).filter(selector)
+            if not controls:
+                return False
+            control = controls.first()
+            if not control.is_mounted or control._pruning or control._closing:
+                return False
         for button in self.query(RecoveryDecisionButton):
             button.binding = (card.session_id, card.request_id) if card else None
         if card is None:
             self.query_one("#recovery-confirm", Button).disabled = True
-            return
-        if previous is None or previous.request_id != card.request_id:
-            self._consumed = False
+            return True
         scope = self.query_one("#recovery-scope", Select)
-        if (
-            previous is None
-            or previous.request_id != card.request_id
-            or scope.value is Select.NULL
-        ):
+        if new_request or scope.value is Select.NULL:
             scope.set_options([(SCOPE_LABELS[s], s) for s in card.allowed_scopes])
             scope.value = card.selected_scope or (
                 card.allowed_scopes[0] if len(card.allowed_scopes) == 1 else Select.NULL
@@ -313,6 +328,7 @@ class ArchiveRecoveryConfirmCard(Vertical):
             card.target.workspace and card.target.workspace.archived
         )
         self._sync_scope()
+        return True
 
     @on(Select.Changed, "#recovery-scope")
     def scope_changed(self) -> None:

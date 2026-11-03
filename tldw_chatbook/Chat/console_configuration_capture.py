@@ -331,6 +331,7 @@ def capture_console_turn_configuration(
     _captured_change_review: Any = _UNSET_CAPTURED_DOMAIN,
     _captured_character_authority: Any = _UNSET_CAPTURED_DOMAIN,
     _captured_prompt_transform_inputs: Any = _UNSET_CAPTURED_DOMAIN,
+    prompt_mixins=None,
 ) -> ConsoleTurnConfigurationSnapshot:
     """Capture common domain state using the adapters' explicit selected values.
 
@@ -410,6 +411,7 @@ def capture_console_turn_configuration(
             if _captured_character_authority is _UNSET_CAPTURED_DOMAIN
             else _captured_character_authority
         ),
+        **({} if prompt_mixins is None else {"prompt_mixins": prompt_mixins}),
         prompt_transform_inputs=(
             checked(capture_prompt_transform_inputs, app, session)
             if _captured_prompt_transform_inputs is _UNSET_CAPTURED_DOMAIN

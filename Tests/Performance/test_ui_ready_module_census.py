@@ -190,6 +190,10 @@ ABSENT_AT_READY_PREFIXES = (
     "tldw_chatbook.Tool_Packs",
 )
 ABSENT_AT_READY_MODULES = (
+    # Prompt Browse/Mix-ins is an explicit composer action, not mount work.
+    "tldw_chatbook.Widgets.Console.console_prompts_modal",
+    "tldw_chatbook.Widgets.Console.console_prompt_mixins_view",
+    "tldw_chatbook.Widgets.Prompts.prompt_mixin_editor",
     # Schema composition is first-send work; its frozen data type is already resident.
     "tldw_chatbook.Agents.first_request_schemas",
     # Local transcription failure attribution is first-failure work.
@@ -346,6 +350,11 @@ ABSENT_AT_READY_MODULES = (
 EXPECTED_AT_READY = (
     "tldw_chatbook.UI.Screens.chat_screen",
     "tldw_chatbook.Chat.console_chat_controller",
+    # The native Console mounts its bridge before ready. Its import closure
+    # must not be speculatively paid again in the first-send warm-up inventory.
+    "tldw_chatbook.Chat.console_agent_bridge",
+    # Served app wiring is also mounted before ready, not a lazy send cost.
+    "tldw_chatbook.app_served",
     "tldw_chatbook.app",
 )
 

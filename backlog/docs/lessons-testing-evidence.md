@@ -22618,6 +22618,8 @@ fixture path is corrected.
 **Incident, 2026-10-10.** The expanded retained-Eval full-App fixture passed on Linux and macOS but Windows rebackup reported operational_validation_unavailable, core_validation_unavailable and recovered_validation_unavailable for restored SQLite owners. Preserved item metadata and direct validator results traced their shared preview snapshot path. CI selected a private parent through TEMP/TMP; select_profile rebuilt the environment with an allowlist that kept TMPDIR but dropped TEMP/TMP. Passing the same private parent through the existing TMPDIR selector and asserting the selected parent made all 75 Windows cases pass (one FIFO capability skip). The native launch-selector regression then reproduced two failures for TEMP/TMP and passed all five home/temp cases after those platform selectors were added; provider and app overrides stayed excluded.
 
 **What to do.** Before treating several unavailable owner labels as separate schema or custody defects, preserve full fresh-child output and inspect the environment after profile selection. Verify tempfile's actual parent under that selected environment. Keep native ancestry and SQLite guards intact; repair selector loss rather than relaxing validation. The same run also showed why a full-App parent deadline must budget for cold startup separately from the capture watchdog: more than 30 seconds elapsed before a 30-second capture watchdog started inside a child with a 45-second overall deadline.
+**PR3346 follow-up, 2026-11-02.** All three recovery CI platforms failed the TEMP/TMP/TMPDIR selector cases before reaching their assertions: the autouse recovery fixture already created `tmp_path/private-temp`, and the test tried to create it again. The unchanged node reproduced three failures locally. Giving the test its own `native-temp-selection` child made all five cases pass, preserving the real native-temp and provider-override isolation assertions. Check fixture ownership before interpreting a setup failure as a profile-selection regression.
+
 ## Independent tree slices need exact row readiness
 
 TASK-34414, 2026-10-06: PR3029's Notes sync Delete/Undo test waited for any
@@ -24199,3 +24201,197 @@ registry and ownership predicate and passed in r-b3daab7d. This was proven
 source-inherited by exact dev-file comparison, not by a baseline execution.
 Normalize machine-readable relative keys at the producer; keep native FIFO
 coverage explicitly unavailable when os.mkfifo does not exist.
+
+## TASK-38537: Follow portable content through shared logging helpers
+
+The Mix-in archive regression used the same literal-body sentinel as a valid
+keyword. The real export/import round trip preserved the record but exposed the
+body in `KeywordStore.add_keyword_full` creation/reuse logs, downstream of the
+already sanitized Chatbook wrapper. The shared write sinks now emit fixed
+metadata/categories. A wrapper-only log assertion would have missed this leak;
+privacy evidence must include the real downstream storage helpers and accepted
+metadata carrying the same sensitive text.
+
+## Qualify soft-delete followed by hard purge against another live FTS owner (TASK-38538, 2026-11-01)
+
+While qualifying conversation-owned prompt mix-ins, two conversations titled
+`Mix-ins` exposed a pre-existing failure: soft-delete the first, purge it through
+`CanvasRepository.hard_purge_conversation`, then soft-delete the second. The final
+operation raised `sqlite3.DatabaseError: database disk image is malformed` on an
+exact archive of BASE `1e5b0c74a7b33000f09c96af635f086d9f3d1ea7`, without any mix-in
+changes. `conversations_au` had already removed the first FTS posting, but
+`conversations_ad` removed it again regardless of `old.deleted`.
+
+The v82 migration guards that hard-delete trigger with `old.deleted = 0`; tests
+now exercise the combined native lifecycle, the surviving same-title search and
+FTS integrity. Do not substitute separate fresh-owner deletion tests for this
+journey. Preserve historical schema catalogs when fixing a current trigger;
+qualify each retained catalog's migration to the corrected current catalog.
+
+## Shared temporary task prefixes do not prove evidence ownership (TASK-38544, 2026-11-01)
+
+Prompt mix-in QA initially copied 46 unrelated files because other work used the
+same task-number prefixes in a shared temporary directory. A provenance audit
+caught this before commit. Only the exact hash-verified copies were reversibly
+moved into the ignored workspace; original files remained untouched. Preserve
+evidence from explicit same-plan references or a known private fixture root,
+not a broad `taskN` filename match. Keep any ownership audit private, exclude
+unrelated contents from published QA, and regenerate/verify the final Git blob
+manifest after correcting the artifact set.
+
+The 2026-11-02 CI follow-up exposed a second packaging trap: flattening an
+explicit inventory still let two subprocess `restart-output.log` files overwrite
+one retained destination. Source-hash verification caught it before commit.
+Retain original relative directories, reject destination collisions, and verify
+the artifact map against every original hash as well as the final Git bytes.
+
+The later UI18 archive push was rejected because pytest duration node IDs included
+a constructed Stripe-shaped credential fixture. The fixture source was confirmed
+without printing its value. Two retained log copies now redact it explicitly,
+keeping original-log hashes, redacted hashes and fixture provenance; originals
+remain local. Hash fidelity alone does not make a raw test log publishable.
+
+## A restored resend fixture is not yet a fresh-Send owner (PR3346, 2026-11-01)
+
+The successive accepted mix-in placement regression initially failed only after reopen with `Durable Console Library policy no longer matches acceptance.` Read-only exception monitoring traced the original native transaction refusal: the reused resend helper restored messages/preferences but omitted the production asynchronous Library policy hydration. Calling `hydrate_session_library_policy` before the fresh Send restored the intended owner and proved B/A provider order after real SQLite flush/reopen. Do not label a reopen failure a fixture issue until the actual native refusal is captured, and do not replace a fresh Send with a metadata-only assertion or bypass the policy check.
+
+## A worker can switch an in-memory SQLite owner (PR3346)
+
+**Incident, 2026-11-02.** After a successful native turn commit, dozens of mounted Console tests emptied the draft but never reached the provider. The actual receipt save raised `no such table: messages`: its new unconditional worker path opened a thread-local `:memory:` connection with no schema. The existing native commit already handled this distinction. Keeping the real receipt callback on the memory owner's loop restored the original send, Stop, bridge and recovery journeys; file-backed writes still use the owned worker. Empty and nonempty real-SQLite receipt regressions fail before the fix and pass after it. Diagnose the refused durable operation before changing a UI wait budget.
+
+
+## Release test-owned transport barriers before disposing their owner (PR3346)
+
+**Incident, 2026-11-02.** Hosted UI shard 28 timed out in a response-rule case,
+then remained in teardown until the job was cancelled. The triggering hosted
+precondition did not reproduce locally. A separate bounded injection of an early
+assertion proved a cleanup defect: the scripted HTTP transport remained at
+`helper_release.wait`, while runtime disposal awaited physical helper retirement.
+Three async samples stayed there for 7.3 seconds; releasing the test event at 8 seconds
+allowed disposal and preserved the exact original assertion. The fixture now
+releases its helper and primary barriers before normal disposal, with native
+failure-retirement controls. Keep the unreproduced trigger separate from the
+proven cleanup defect; do not extend timeouts or relax cancellation ownership to
+make an unreleased test barrier disappear.
+
+
+## A test drain must yield for task retirement callbacks (PR3346)
+
+**Incident, 2026-11-02.** The Anthropic hidden-field Apply test timed out after
+180 seconds while its shared `_drain_settings_tasks` helper polled the settings
+owner's registry. A regression using the real durability owner reproduced a
+finished task still registered until its queued retirement callback ran. Gathering
+that already-finished task completed inline, so the helper's loop prevented the
+callback from running; a five-second watchdog caught the spin. Yielding once after
+the gather allows normal retirement while preserving the registry, errors and
+production durability owner. Do not treat an awaited completed future as proof
+that the event loop advanced.
+
+
+## Cover queued-worker setup with its settlement boundary (PR3346)
+
+**Incident, 2026-11-02.** A response-rule learn/repair/reopen journey hung while
+closing its chat. Hosted and local runs showed a readiness worker looking up the
+removed session before entering its `try/finally`; `KeyError` left `pending` true
+and its settlement event unset. Moving setup into the existing cold/refusal
+boundary preserves all source/publication and native-read retirement checks. A
+real-store race test proves no stale read or publication, settled waiters, and a
+successful retry for the current session. Setup before the first await can fail
+too; an async worker's cleanup boundary must cover it.
+
+## Wait for every asynchronous outcome asserted by a timer test (PR3346)
+
+**Incident, 2026-11-02.** The mounted idle-heap test waited for a weak reference
+to die, then immediately asserted that the `first_send_preimport` refreeze had
+run. Hosted CI recorded only `run_settled`. A controlled native ordering reproduced
+the same failure: the earlier real idle timer collected the cycle before the
+requested refreeze's quiet period elapsed. The test now waits for both existing
+outcomes within its original ten-second limit, retaining the real GC, timer,
+custody and exact-reason assertions. Collection by one idle request does not prove
+another request has completed; production scheduling needed no change.
+
+## A passing size-guard subset does not qualify independent owner limits (PR3346)
+
+**Incident, 2026-11-02.** Pre-merge review found the Mix-in branch's Library
+Prompts controller at 5,356 lines against its unchanged 5,100 cap, plus Browse
+and screen line/method overruns. Earlier checks had covered the general module
+ratchet and required CI, which selected only some general rows and omitted the
+independent Library/screen guards. The fixes use existing cohesive owners and
+lower exact pins; required CI now covers all general rows, canonical screens and
+the affected Library rows. Preserve previous selector coverage when replacing
+node lists with a whole file, and audit every applicable guard family. The
+unchanged Skills and historical Chat projection failures remain separately
+qualified rather than being hidden behind an all-guards-green claim.
+
+The same extraction exposed two literal-dependency syntax blind spots: dictionary
+lookups of the original logger disappeared from the diagnostic inventory, while
+dictionary lookups of the original QueryError classes lost static recognition.
+Positive and negative snippets failed before the recognizer fix. The final
+detectors retain unsafe-case checks, and a 132-call AST comparison proves that
+only three logger ownership locations changed, with identical messages,
+arguments, levels and sink topology. A source move must preserve guard coverage
+as well as runtime behavior.
+
+## A green rerun can hide an ownership defect (PR3346)
+
+The first hosted run on `5a8f23eb9d` failed a Reader identity assertion and a
+response-rules reopen. Both passed on a failed-only same-head rerun, but native
+contracts still reproduced real faults: a programmatic Media focus restore
+selected another document, and draft reconciliation read a closed visible chat
+before binding its replacement. Keep the failed observation and qualify the
+rerun separately; a passing retry does not establish a repair.
+
+The Media test initially chased a fleeting row-focus window with delayed queries
+and observers. A smaller explicit system-focus contract, followed by genuine
+Down/Up/Down selection, proved the required distinction. Textual's official
+`run_test(message_hook=...)` observes the actual event without replacing its
+handler; arrival alone is not completion, so the final case also observes the
+same screen pump and subsequent request retirement. Initial resize suppression
+clears through real input, not an elapsed quiet period; ordinary Tab established
+that prerequisite without assigning authority flags. No-event focus attempts
+must not create markers, and failed writes may clear only their own marker.
+
+The final census check also rejected two redundant new node selectors because
+their file was already selected whole. Preserve that existing coverage and add
+only genuinely uncovered nodes; entry counts are not test counts. Final evidence
+and the corrected enrollment are in
+`Docs/superpowers/qa/2026-11-01-prompt-mix-ins/ci-rebase/hosted-5a8/summary.md`.
+
+PR3346's subsequent wrong-family project-chat UAT found a queryable approval row
+before its header children existed. The original predicate returned that parent
+and the unchanged family/name assertion read an empty string. A native card
+probe confirmed Textual's register-before-Compose window; requiring each row's
+`is_mounted` waits for its child Compose/Mount publication. The permanent control
+also returns two rows and deliberately wrong header text after mounting, so
+readiness cannot hide the existing cardinality/content assertions. All four
+native UAT variants and the unchanged complete-receipt validator pass. See
+`Docs/superpowers/qa/2026-11-01-prompt-mix-ins/ci-rebase/hosted-4b1/summary.md`.
+
+PR3346's f70 UI19 failure finally exposed the earlier unexplained landing
+generation mismatch. A bounded native mount-boundary probe retained the original
+current snapshot-finish callback, invoked the original onboarding sync while the
+attached canvas had no children, and observed that same callback cleared by the
+shared failure path. The original readiness wait then failed at rendered0/state1
+with reconciliation still dirty. This demonstrates callback loss for that system
+event schedule; the hosted log corroborates the same missing-child failure but
+does not timestamp the injected ordering.
+
+Keep publication ownership with the landing canvas: if recomposition is already
+requested or active, adopt the newest state and use the existing recompose handoff.
+The pending-before-start window matters too: stored widget-set metadata can
+already describe new children while the DOM still contains the old set. Permanent
+tests cover both windows and exactly-once completion. Generic callback cleanup,
+route/generation fences and the original readiness deadline remain unchanged.
+
+PR3346's next admission-sensitive run failed before the resize journey: a recovery
+sync cleared a queryable confirmation card while its fixed buttons were absent.
+Native Compose and Unmount probes established both sides of the lifecycle;
+`is_mounted` is false inside the parent's mount callback but stays true after
+retirement. A separate real Select Unmount still exposed all six outer controls
+while its internal overlay was already gone. Check the actual typed children
+and native pruning/closing state, retain the newest payload for mount, and
+acknowledge only completed projection. A mounted parent alone proves neither
+child readiness nor continued availability. The original recovery source-remount
+test also queried a removed card inside its wait predicate; presence must precede
+the unchanged display/request conditions, without filtering expected content or
+extending the deadline. Evidence is retained in the hosted-97a QA phase.

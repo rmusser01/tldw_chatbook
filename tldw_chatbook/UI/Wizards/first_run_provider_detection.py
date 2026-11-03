@@ -185,7 +185,12 @@ class ProviderDetectionStep(SetupStep):
         relevant = not key or self._setup_facts(key).locality == "local"
         self._no_server_shown = bool(self._found_ever_scanned and not servers and relevant)
         if self._no_server_shown:
-            app_config = getattr(self.wizard.app_instance, "app_config", {}) or {}
+            app_owner = self.wizard.app_instance
+            try:
+                app_config = app_owner.app_config
+            except AttributeError:
+                app_config = {}
+            app_config = app_config or {}
             text.update(
                 f"Looked on this computer at {checked_addresses(app_config)} — "
                 "nothing answered."
@@ -485,7 +490,12 @@ class ProviderDetectionStep(SetupStep):
         user_requested: bool = False,
         quiet: bool = False,
     ) -> None:
-        app_config = getattr(self.wizard.app_instance, "app_config", {}) or {}
+        app_owner = self.wizard.app_instance
+        try:
+            app_config = app_owner.app_config
+        except AttributeError:
+            app_config = {}
+        app_config = app_config or {}
         state = "complete"
         try:
             servers = tuple(await self._local_discover(app_config) or ())

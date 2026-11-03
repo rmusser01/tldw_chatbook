@@ -2787,6 +2787,7 @@ def build_console_controllers(
         app_instance=screen.app_instance,
         composer_accessor=lambda: screen._console_composer_or_none(),
         chat_store_accessor=lambda: screen._ensure_console_chat_store(),
+        prompt_mixin_service_accessor=lambda: screen._ensure_console_chat_controller().prompt_mixin_service(),
         # Session <-> prompts seam (design spec: "a named callable
         # between them; design it deliberately, never a back-door
         # through the screen"). `self._session` was constructed above;
@@ -3498,7 +3499,10 @@ async def _capture_console_configuration_async(
     from tldw_chatbook.Backup_Recovery.bootstrap import RecoveryRequired
 
     app = screen.app_instance
-    app_config = getattr(app, "app_config", None)
+    try:
+        app_config = app.app_config
+    except AttributeError:
+        app_config = None
     runtime = screen._console_runtime()
     store = screen._ensure_console_chat_store()
     controller = screen._ensure_console_chat_controller()
@@ -3511,9 +3515,14 @@ async def _capture_console_configuration_async(
         session_id, context_provider=provider
     )
     current_provider = session_controller._build_console_turn_execution_context
+    if screen.app_instance is not app:
+        raise RecoveryRequired("console_snapshot_owner_changed")
+    try:
+        current_app_config = app.app_config
+    except AttributeError:
+        current_app_config = None
     if (
-        screen.app_instance is not app
-        or getattr(app, "app_config", None) is not app_config
+        current_app_config is not app_config
         or screen._console_runtime() is not runtime
         or runtime._chat_store is not store
         or runtime._chat_controller is not controller

@@ -149,7 +149,7 @@ class TraceExportDialog(SafeModalDismissMixin, ModalScreen[Path | None]):
         margin-top: 0;
         align-horizontal: right;
     }
-    #trace-export-actions Button {
+    #trace-export-actions Button.trace-export-action {
         min-width: 10;
         margin-left: 1;
     }
@@ -213,13 +213,18 @@ class TraceExportDialog(SafeModalDismissMixin, ModalScreen[Path | None]):
             )
             yield Static("", id="trace-export-status", markup=False)
             with Horizontal(id="trace-export-actions"):
-                yield Button("Browse…", id="trace-export-browse")
-                yield Button("Cancel", id="trace-export-cancel")
+                yield Button(
+                    "Browse…", id="trace-export-browse", classes="trace-export-action"
+                )
+                yield Button(
+                    "Cancel", id="trace-export-cancel", classes="trace-export-action"
+                )
                 yield Button(
                     "Export",
                     id="trace-export-submit",
                     variant="primary",
                     disabled=True,
+                    classes="trace-export-action",
                 )
 
     async def on_mount(self) -> None:

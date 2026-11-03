@@ -108,6 +108,16 @@ class ReceivedPreparationSource:
     config_identity: Any = field(repr=False)
     permissions: Any = field(repr=False)
     configuration_preparation: Any = field(default=None, repr=False)
+    prompt_scope: Any = field(default=None, repr=False)
+    prompt_sources: tuple = field(default=(), repr=False)
+
+
+def _prompt_scope_service(app):
+    """Read the optional source at the caller's exact capture/fence position."""
+    try:
+        return app.prompt_scope_service
+    except AttributeError:
+        return None
 
 
 def received_preparation_source(runtime, *, configuration_preparation=None):
@@ -123,6 +133,7 @@ def received_preparation_source(runtime, *, configuration_preparation=None):
         config.current_config_identity(),
         runtime._hook_permissions,
         configuration_preparation,
+        _prompt_scope_service(runtime._app),
     )
 
 
@@ -130,8 +141,16 @@ def require_received_source(runtime, record, source, *, inputs=True):
     import sys
 
     runtime._raise_if_disposed_or_session_fenced(record.session_id)
+    for backend, identity in source.prompt_sources:
+        try:
+            now = source.prompt_scope.mixin_source_identity(mode=backend)
+        except Exception:  # noqa: BLE001 - source uncertainty refuses admission.
+            raise RecoveryRequired("console_snapshot_owner_changed") from None
+        if now[0] != identity[0] or any(a is not b for a, b in zip(now[1:], identity[1:])):
+            raise RecoveryRequired("console_snapshot_owner_changed")
     if (
         runtime._app is not source.app
+        or _prompt_scope_service(source.app) is not source.prompt_scope
         or getattr(source.app, "app_config", None) is not source.app_config
         or runtime._chat_store is not source.store
         or runtime._chat_controller is not source.controller
@@ -198,6 +217,14 @@ async def _run_received_intent_bound(runtime, record, source):
     require_received_source(runtime, record, source)
     intent = record.received_intent
     controller, store = source.controller, source.store
+    from .console_prompt_mixins import MixinSnapshotUnavailableError
+    preferences = intent.inputs.prompt_mixin_preferences
+    if preferences is None:
+        raise MixinSnapshotUnavailableError("mixin_preferences_unavailable")
+    mixins = await controller.prompt_mixin_service().capture(
+        record.session_id, expected_revision=preferences.revision
+    )
+    require_received_source(runtime, record, source)
     chat_start = getattr(controller, "_chat_start", None)
     if chat_start is not None:
         await chat_start.withdraw_for_manual(record.session_id)
@@ -295,6 +322,7 @@ async def _run_received_intent_bound(runtime, record, source):
         selection=intent.selection,
         **({} if prepared_skills is None else {"_prepared_skills": prepared_skills}),
     )
+    configuration = replace(configuration, prompt_mixins=mixins)
     require_received_source(runtime, record, source)
     configuration = replace(
         configuration, recovery_user_origin=intent.recovery_user_origin
@@ -352,6 +380,10 @@ async def _run_received_intent_bound(runtime, record, source):
         kwargs["_before_admission"] = before_admission
         queued = await method(record.session_id, **kwargs)
         if queued.applied:
+            controller.prompt_mixin_service().publish_accepted_usage(
+                record.session_id, configuration.prompt_mixins,
+                observed_revision=preferences.revision if preferences is not None else None,
+            )
             try:
                 committed = store.commit_session_input_draft(intent.inputs)
                 if committed or intent._pressed_inputs is not None:
@@ -436,6 +468,16 @@ def accept_received_intent(
     source = received_preparation_source(
         self, configuration_preparation=_configuration_preparation
     )
+    preferences = intent.inputs.prompt_mixin_preferences
+    if preferences is not None:
+        try:
+            source.prompt_sources = tuple(
+                (backend, source.prompt_scope.mixin_source_identity(mode=backend))
+                for backend in dict.fromkeys(row.source.backend for row in preferences.entries if row.enabled)
+            )
+        except Exception:  # noqa: BLE001 - source uncertainty refuses admission.
+            from .console_prompt_mixins import MixinSnapshotUnavailableError
+            raise MixinSnapshotUnavailableError("mixin_source_unavailable") from None
     claim = None
     if intent.queue_revision is None:
         claim = store.claim_received_turn(
@@ -581,6 +623,12 @@ def publish_received_acceptance(self, record, controller) -> None:
             ):
                 return
             committed = store.commit_session_input_draft(captured)
+            if (intent is not None and request is not None
+                    and captured.prompt_mixin_preferences is not None):
+                controller.prompt_mixin_service().publish_accepted_usage(
+                    record.session_id, request.configuration.prompt_mixins,
+                    observed_revision=captured.prompt_mixin_preferences.revision,
+                )
             if committed or pressed is not None:
                 self._project_received_input(record, draft_committed=committed)
         except Exception as error:  # noqa: BLE001 - presentation cannot retract an already accepted domain outcome.

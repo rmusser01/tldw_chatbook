@@ -123,6 +123,7 @@ from .rail_section_layout import (
 OUTER_SECTION_SCROLL_HINT = "▼ more sections — scroll"
 CONSOLE_RETRY_GENERATION_SETTINGS_ID = "console-retry-generation-settings"
 CONSOLE_RETRY_CONTEXT_SETTINGS_ID = "console-retry-context-settings"
+CONSOLE_RETRY_PROMPT_MIXINS_ID = "console-retry-prompt-mixins"
 CONSOLE_RETRY_DEFAULT_SAVE_ID = "console-retry-default-save"
 CONSOLE_DISCARD_DEFAULT_RETRY_ID = "console-discard-default-retry"
 CONSOLE_REFRESH_RUNNING_APP_ID = "console-refresh-running-app"
@@ -785,9 +786,13 @@ class ConsoleLeftRail(Vertical):
         self._default_durability_state = default_state
         generation = failures.get(ConsoleSettingsComponent.GENERATION_SETTINGS)
         context = failures.get(ConsoleSettingsComponent.CONTEXT_POLICY)
+        mixins = failures.get(ConsoleSettingsComponent.PROMPT_MIXINS)
         default_copy = self._default_recovery_copy(default_state)
         has_warning = (
-            generation is not None or context is not None or bool(default_copy)
+            generation is not None
+            or context is not None
+            or mixins is not None
+            or bool(default_copy)
         )
 
         try:
@@ -808,6 +813,8 @@ class ConsoleLeftRail(Vertical):
             generation_group = self.query_one("#console-generation-recovery-row")
             context_group = self.query_one("#console-context-recovery-row")
             default_group = self.query_one("#console-default-recovery-row")
+            mixin_group = self.query_one("#console-mixin-recovery-row")
+            mixin_button = self.query_one(f"#{CONSOLE_RETRY_PROMPT_MIXINS_ID}", Button)
             generation_button = self.query_one(
                 f"#{CONSOLE_RETRY_GENERATION_SETTINGS_ID}", Button
             )
@@ -842,6 +849,12 @@ class ConsoleLeftRail(Vertical):
             context_static = self.query_one("#console-context-recovery-copy", Static)
             if context_static.content != context_copy:  # TASK-35028 gate
                 context_static.update(context_copy)
+        mixin_group.styles.display = "block" if mixins is not None else "none"
+        mixin_button.disabled = mixins is None
+        if mixins is not None:
+            mixin_button.console_settings_session_id = session_id
+            mixin_button.console_settings_revision = mixins.revision
+            mixin_button.console_settings_failure = mixins
         generation_button.disabled = generation is None
         context_button.disabled = context is None
 
@@ -2679,6 +2692,17 @@ class ConsoleLeftRail(Vertical):
                 ),
                 id="console-context-recovery-row",
             )
+            mixin_recovery = Vertical(
+                Static("Not saved: mix-in choices", markup=False),
+                Button(
+                    "Retry save",
+                    id=CONSOLE_RETRY_PROMPT_MIXINS_ID,
+                    classes="console-workspace-action",
+                    compact=True,
+                ),
+                id="console-mixin-recovery-row",
+            )
+            mixin_recovery.styles.display = "none"
             default_recovery = Vertical(
                 Static("", id="console-default-recovery-copy", markup=False),
                 Button(
@@ -2738,6 +2762,7 @@ class ConsoleLeftRail(Vertical):
                 recovery,
                 generation_recovery,
                 context_recovery,
+                mixin_recovery,
                 default_recovery,
                 system_line,
                 configure,

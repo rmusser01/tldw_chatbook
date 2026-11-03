@@ -37,6 +37,8 @@ from tldw_chatbook.Chat.console_trace_provenance import (
 )
 from tldw_chatbook.Chat.console_trace_runtime import ConsoleTraceBoundaryFactory
 
+pytestmark = pytest.mark.bootstrap_profile
+
 
 pytestmark = pytest.mark.bootstrap_profile
 

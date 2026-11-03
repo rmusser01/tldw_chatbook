@@ -177,3 +177,11 @@ ADR-014 (retire legacy navigation chrome), ADR-015 (shell destination IA), ADR-0
 - [console.md](./console.md) — the Console screen this shell hosts
 - [database-layer.md](./database-layer.md), [llm-providers.md](./llm-providers.md) — layers the shell composes
 - `Docs/Development/navigation-architecture-analysis.md` — historical analysis (screen-set paragraph is stale; rules still match)
+
+The app's first-send warmup completion is an explicit UI-loop callback.
+`Chat/console_first_send_modules.py` schedules the supplied completion through
+`call_from_thread`; `app_idle_warmup.py` resolves the current Console attachment
+and requests the existing idle refreeze. The domain warmup owner imports no UI.
+Config warnings load `app_config_notifications.py` only after detecting their
+existing failure/conflict condition. Notes startup outcome helpers live in
+`Notes/notes_sync_startup.py`; app wiring retains its lazy entry points.

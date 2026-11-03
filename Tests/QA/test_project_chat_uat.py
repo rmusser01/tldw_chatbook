@@ -90,6 +90,12 @@ async def wait_for(pilot, condition, phase, server, timeout=60):
     raise AssertionError(f"{phase}: condition not reached in {timeout}s")
 
 
+def mounted_approval_rows(console):
+    """Rows enter the DOM before their own Compose/Mount publishes children."""
+    rows = list(console.query(".approval-row"))
+    return rows if all(row.is_mounted for row in rows) else []
+
+
 async def click(pilot, selector, server):
     def actionable():
         matches = list(pilot.app.screen.query(selector))
@@ -208,7 +214,7 @@ async def test_project_chat_uat(
         "phases": [],
         "substitutions": [
             "scripted model HTTP responses",
-            "preconfigured provider/onboarding/read permissions",
+            "preconfigured provider/onboarding/read permissions and full-agent tool opt-in",
             "root pytest fixtures block unrelated default endpoint discovery",
         ],
     }
@@ -264,7 +270,12 @@ async def test_project_chat_uat(
                         "max_tokens": 256,
                     },
                     "console": console_settings,
-                    "tools": {"list_directory_enabled": variant == "wrong-family"},
+                    # This journey explicitly opts into workspace file tools.
+                    # Plain chat's default light surface intentionally omits them.
+                    "tools": {
+                        "full_agent_tools_enabled": True,
+                        "list_directory_enabled": variant == "wrong-family",
+                    },
                 }
             )
             from tldw_chatbook.app import TldwCli
@@ -445,7 +456,7 @@ async def test_project_chat_uat(
 
                         def listing_approval():
                             capture_progress()
-                            return list(console.query(".approval-row"))
+                            return mounted_approval_rows(console)
 
                         rows = await wait_for(
                             pilot,

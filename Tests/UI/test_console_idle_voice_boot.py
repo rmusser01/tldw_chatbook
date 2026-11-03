@@ -210,6 +210,51 @@ async def test_changed_voice_keyword_default_retains_live_callback(
 
 
 @private_profile_test
+@pytest.mark.parametrize(
+    "helper_name",
+    ["set_composer_voice_status", "sync_full_width_composer_voice_presentation"],
+)
+@pytest.mark.parametrize("change", ["body", "defaults", "keyword-defaults", "binding"])
+async def test_changed_extracted_idle_voice_source_keeps_original_callback(
+    request, monkeypatch, helper_name, change
+):
+    from types import FunctionType, SimpleNamespace
+
+    from tldw_chatbook.Widgets.Console import console_speech_controls as speech
+    from tldw_chatbook.Widgets.Console.console_composer_bar import ConsoleComposerBar
+
+    name = "tldw_chatbook.Chat.console_voice_input"
+    assert name not in sys.modules
+    function = getattr(speech, helper_name)
+    if change == "body":
+        monkeypatch.setattr(function, "__code__", function.__code__.replace())
+    elif change == "defaults":
+        monkeypatch.setattr(function, "__defaults__", (None,))
+    elif change == "keyword-defaults":
+        monkeypatch.setattr(function, "__kwdefaults__", {"message": "custom default"})
+    else:
+        replacement = FunctionType(
+            function.__code__,
+            dict(function.__globals__),
+            argdefs=function.__defaults__,
+            closure=function.__closure__,
+        )
+        replacement.__kwdefaults__ = function.__kwdefaults__
+        monkeypatch.setattr(speech, helper_name, replacement)
+    # Capture belongs to the defining presentation module, not the later reader.
+    from tldw_chatbook.UI.Console_Modules.composer_run_controls import (
+        sync_dictation_presentation,
+    )
+
+    composer = ConsoleComposerBar()
+    screen = SimpleNamespace(
+        _console_dictation_state="idle", app=SimpleNamespace(_ui_ready=False)
+    )
+    sync_dictation_presentation(screen, composer)
+    assert name in sys.modules, "changed extracted idle presentation was skipped"
+
+
+@private_profile_test
 @pytest.mark.parametrize("change", ["body", "nested-default"])
 async def test_preinstalled_voice_producer_remains_live_before_helper_import(
     request, monkeypatch, change

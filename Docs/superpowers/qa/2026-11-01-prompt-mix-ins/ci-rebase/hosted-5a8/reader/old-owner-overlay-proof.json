@@ -1,0 +1,10 @@
+{
+  "mode": "RED only; exact pre-fix method compiled in original module globals",
+  "source_path": "/Users/macbook-dev/.codex/worktrees/prompt-mix-ins/tldw_chatbook/tldw_chatbook/UI/Library_Modules/library_media_controller.py",
+  "source_sha256": "3051480add6edf724dc0fd7829dbb2194e2cde9764e587e0cf9cfca4939bf419",
+  "screen_sha256": "6d16398620b71765d1aaf49a35dedf3d61e8f275fb3f15c0db67ccaf8ede9eb4",
+  "helper_sha256": "cc43d84343e5f40581bede079d19fc5c64140366b2d053663423d0e6e221a341",
+  "test_sha256": "d283d15275448b8c03835e704a33bbf8f5098731cc689c97bace12cb7f4c84d0",
+  "old_method_ast_sha256": "bbacea49b510e7e64650ca0ceb5a91a94b68e9dbbdba0005992df458a897c456",
+  "only_method_replaced": "_restore_library_media_focus"
+}

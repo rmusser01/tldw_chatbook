@@ -1,0 +1,141 @@
+{
+  "qualification": "Read-only bounded export from isolated fixture after Ctrl+Q; no database or general message/provider archive. Current user strings below are explicitly created synthetic QA inputs.",
+  "attempts": [
+    {
+      "attempt_id": "d8457bd7-70f1-45dc-8ced-373b2d7b4ac8",
+      "user_message_id": "f1fedd75-020a-42a2-ab14-bc3c19551b57",
+      "assistant_message_id": "bda992df-7d3b-43ab-9242-5db5cb6532bd",
+      "retry_of_attempt_id": null,
+      "replaces_attempt_id": null,
+      "expected_item_count": 2
+    },
+    {
+      "attempt_id": "2281e834-fb4b-4fb6-b1d9-21889cfa9614",
+      "user_message_id": "988d9dbd-0e2d-4ae2-b1c4-971c87b2f4b0",
+      "assistant_message_id": "6ab867c9-67f8-4d02-84ff-b488cc13ad1e",
+      "retry_of_attempt_id": null,
+      "replaces_attempt_id": null,
+      "expected_item_count": 2
+    },
+    {
+      "attempt_id": "45ba40a1-0745-4bab-ac55-0ce54b35275c",
+      "user_message_id": "2c606600-0d43-457e-9882-13023093387f",
+      "assistant_message_id": "63c2c41f-85e1-40fe-845d-66bdf8474d2a",
+      "retry_of_attempt_id": null,
+      "replaces_attempt_id": null,
+      "expected_item_count": 2
+    },
+    {
+      "attempt_id": "5364cdfd-08d7-47d0-915a-91a1ea330f3f",
+      "user_message_id": "2c606600-0d43-457e-9882-13023093387f",
+      "assistant_message_id": "63c2c41f-85e1-40fe-845d-66bdf8474d2a",
+      "retry_of_attempt_id": "45ba40a1-0745-4bab-ac55-0ce54b35275c",
+      "replaces_attempt_id": "45ba40a1-0745-4bab-ac55-0ce54b35275c",
+      "expected_item_count": 2
+    },
+    {
+      "attempt_id": "ee81b7b1-0c9d-48bc-ac37-0ca74839a0c5",
+      "user_message_id": "2c606600-0d43-457e-9882-13023093387f",
+      "assistant_message_id": "8e27d201-a5ae-4fe1-ac22-b072327874ac",
+      "retry_of_attempt_id": null,
+      "replaces_attempt_id": "5364cdfd-08d7-47d0-915a-91a1ea330f3f",
+      "expected_item_count": 0
+    }
+  ],
+  "item_versions": [
+    {
+      "attempt_id": "d8457bd7-70f1-45dc-8ced-373b2d7b4ac8",
+      "ordinal": 0,
+      "record_version": 1,
+      "name": "Brief"
+    },
+    {
+      "attempt_id": "d8457bd7-70f1-45dc-8ced-373b2d7b4ac8",
+      "ordinal": 1,
+      "record_version": 1,
+      "name": "Scene"
+    },
+    {
+      "attempt_id": "2281e834-fb4b-4fb6-b1d9-21889cfa9614",
+      "ordinal": 0,
+      "record_version": 1,
+      "name": "Brief"
+    },
+    {
+      "attempt_id": "2281e834-fb4b-4fb6-b1d9-21889cfa9614",
+      "ordinal": 1,
+      "record_version": 1,
+      "name": "Scene"
+    },
+    {
+      "attempt_id": "45ba40a1-0745-4bab-ac55-0ce54b35275c",
+      "ordinal": 0,
+      "record_version": 1,
+      "name": "Brief"
+    },
+    {
+      "attempt_id": "45ba40a1-0745-4bab-ac55-0ce54b35275c",
+      "ordinal": 1,
+      "record_version": 1,
+      "name": "Scene"
+    },
+    {
+      "attempt_id": "5364cdfd-08d7-47d0-915a-91a1ea330f3f",
+      "ordinal": 0,
+      "record_version": 1,
+      "name": "Brief"
+    },
+    {
+      "attempt_id": "5364cdfd-08d7-47d0-915a-91a1ea330f3f",
+      "ordinal": 1,
+      "record_version": 1,
+      "name": "Scene"
+    }
+  ],
+  "clean_users": [
+    {
+      "id": "f1fedd75-020a-42a2-ab14-bc3c19551b57",
+      "content": "Describe a lantern scene."
+    },
+    {
+      "id": "988d9dbd-0e2d-4ae2-b1c4-971c87b2f4b0",
+      "content": "A queued second scene."
+    },
+    {
+      "id": "2c606600-0d43-457e-9882-13023093387f",
+      "content": "Retry original scene."
+    }
+  ],
+  "dispatch_checkpoints": 0,
+  "foreign_key_check": [],
+  "http_receipts": [
+    {
+      "time": "18:18:24",
+      "path": "/v1/chat/completions",
+      "model": "gpt-4.1-mini",
+      "stream": false,
+      "current_user": "Use at most three sentences.\n\nDescribe a scene as literal SVG text. Keep {{scene}} unchanged.\n\nDescribe a lantern scene."
+    },
+    {
+      "time": "18:18:25",
+      "path": "/v1/chat/completions",
+      "model": "gpt-4.1-mini",
+      "stream": false,
+      "current_user": "Use at most three sentences.\n\nDescribe a scene as literal SVG text. Keep {{scene}} unchanged.\n\nA queued second scene."
+    },
+    {
+      "time": "18:24:39",
+      "path": "/v1/chat/completions",
+      "model": "gpt-4.1-mini",
+      "stream": false,
+      "current_user": "Use at most three sentences.\n\nDescribe a scene as literal SVG text. Keep {{scene}} unchanged.\n\nRetry original scene."
+    },
+    {
+      "time": "18:25:19",
+      "path": "/v1/chat/completions",
+      "model": "gpt-4.1-mini",
+      "stream": false,
+      "current_user": "Retry original scene."
+    }
+  ]
+}

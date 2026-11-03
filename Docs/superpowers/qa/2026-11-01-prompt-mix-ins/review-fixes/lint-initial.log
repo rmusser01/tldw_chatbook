@@ -1,0 +1,33 @@
+{
+  "Tests/Chat/test_console_prompt_mixin_retry.py": [
+    {
+      "code": "RUF059",
+      "message": "Unpacked variable `service` is never used",
+      "count": 1,
+      "locations": [
+        {
+          "column": 5,
+          "row": 1555
+        }
+      ]
+    }
+  ],
+  "Tests/UI/test_console_prompt_mixins.py": [
+    {
+      "code": "I001",
+      "message": "Import block is un-sorted or un-formatted",
+      "count": 2,
+      "locations": [
+        {
+          "column": 5,
+          "row": 909
+        },
+        {
+          "column": 5,
+          "row": 942
+        }
+      ]
+    }
+  ]
+}
+Totals 236 239

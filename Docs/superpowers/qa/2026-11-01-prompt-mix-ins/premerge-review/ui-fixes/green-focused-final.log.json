@@ -1,0 +1,4 @@
+{
+  "sha256": "d73cfbe922aeef21606479f6d2fdea159194c04e14024adf1fb67fbc04fef67f",
+  "raw_text": "..........                                                               [100%]\n============================= slowest 25 durations =============================\n9.26s call     Tests/UI/test_library_prompt_mixins.py::test_literal_history_restore_keeps_kind_definition_and_guards[recipe-mixin]\n7.52s call     Tests/UI/test_library_prompt_mixins.py::test_literal_history_restore_keeps_kind_definition_and_guards[prompt-mixin]\n7.37s call     Tests/UI/test_library_prompt_mixins.py::test_literal_history_restore_keeps_kind_definition_and_guards[mixin-mixin]\n4.23s call     Tests/UI/test_library_prompt_mixins.py::test_literal_editor_metadata_survives_the_saved_info_mode\n3.31s call     Tests/UI/test_library_prompt_mixins.py::test_literal_save_keeps_live_defining_module_policy_callbacks\n\n(20 durations < 1s hidden.)\n10 passed in 38.18s\n"
+}

@@ -1,6 +1,6 @@
 import inspect
 from dataclasses import FrozenInstanceError, replace
-from unittest.mock import Mock
+from unittest.mock import AsyncMock, Mock
 
 import pytest
 
@@ -502,6 +502,7 @@ def test_browse_prompt_local_adapter_exposes_narrow_keyword_only_signature():
         "sort_order",
         "page",
         "page_size",
+        "artifact_type",
     )
     assert all(
         parameter.kind is inspect.Parameter.KEYWORD_ONLY
@@ -932,7 +933,6 @@ async def test_prompt_scope_saves_and_deletes_against_selected_backend():
         prompt_schema_version=1,
         prompt_definition={"schema_version": 1, "messages": []},
         artifact_type="recipe",
-        expected_version=5,
     )
     deleted = await service.delete_prompt(
         mode="server", prompt_identifier="server-uuid-9"
@@ -1886,9 +1886,9 @@ async def test_local_capabilities_are_frozen_known_in_process_and_use_canonical_
 
     assert capabilities.backend == "local"
     assert capabilities.structured_kinds == frozenset(
-        {(2, "block_prompt"), (2, "block_recipe")}
+        {(2, "block_prompt"), (2, "block_recipe"), (3, "text_mixin")}
     )
-    assert capabilities.artifact_types == frozenset({"prompt", "recipe"})
+    assert capabilities.artifact_types == frozenset({"prompt", "recipe", "mixin"})
     assert capabilities.search is True
     assert capabilities.conditional_update is True
     assert capabilities.compiled_lane_limit == 20_000
@@ -2667,3 +2667,162 @@ def test_prompt_batch_scope_methods_have_no_post_return_normalizer_or_server_pat
         source = inspect.getsource(getattr(PromptScopeService, method_name))
         assert "_normalize_prompt_record" not in source
         assert "server_service" not in source
+
+
+@pytest.mark.asyncio
+async def test_mixin_server_advertises_only_actual_kinds_but_cannot_capture_revisions():
+    health = modern_prompt_health(
+        structured_kinds=[{"schema_version": 3, "kind": "text_mixin"}]
+    )
+    health["capabilities"]["artifact_types"].append("mixin")
+    server = FakeServerPromptService(health=health)
+    service = PromptScopeService(
+        local_service=FakeLocalPromptService(), server_service=server
+    )
+    capabilities = await service.get_capabilities(mode="server")
+    assert capabilities.artifact_types == frozenset({"prompt", "recipe", "mixin"})
+    assert capabilities.structured_kinds == frozenset({(3, "text_mixin")})
+    assert capabilities.mixin_snapshot_reads is False
+    assert (await service.get_capabilities(mode="local")).mixin_snapshot_reads is True
+    with pytest.raises(PromptCapabilityError, match="revision-qualified"):
+        await service.read_mixin_records(
+            mode="server", record_uuids=("renamed-stable-uuid",)
+        )
+
+
+@pytest.mark.asyncio
+async def test_server_expected_version_never_silently_drops_write_precondition():
+    server = FakeServerPromptService(
+        health=modern_prompt_health(conditional_update=True)
+    )
+    service = PromptScopeService(local_service=None, server_service=server)
+    with pytest.raises(PromptCapabilityError, match="conditional update"):
+        await service.save_prompt(
+            mode="server", prompt_identifier="uuid", name="Changed", expected_version=2
+        )
+
+
+@pytest.mark.asyncio
+async def test_scope_server_adapter_refuses_conditional_update_without_client_contract():
+    client = Mock(update_prompt=AsyncMock(return_value={}))
+    server = ServerPromptService(client=client)
+    with pytest.raises(PromptCapabilityError, match="conditional update"):
+        await server.update_prompt("uuid", {"name": "Changed", "expected_version": 2})
+    assert client.mock_calls == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "support", ["missing", "type-only", "unsupported-schema", "supported"]
+)
+async def test_server_mixin_save_requires_actual_kind_and_type_support(support):
+    definition = {
+        "kind": "text_mixin",
+        "schema_version": 3,
+        "body": " literal ",
+        "placement": "after",
+    }
+    health = modern_prompt_health()
+    if support != "missing":
+        health["capabilities"]["artifact_types"].append("mixin")
+    if support == "supported":
+        health["capabilities"]["structured_kinds"].append(
+            {"schema_version": 3, "kind": "text_mixin"}
+        )
+    elif support == "unsupported-schema":
+        health["capabilities"]["structured_kinds"].append(
+            {"schema_version": 4, "kind": "text_mixin"}
+        )
+    server = FakeServerPromptService(health=health)
+    service = PromptScopeService(local_service=None, server_service=server)
+
+    async def save():
+        return await service.save_prompt(
+            mode="server",
+            name="Literal",
+            artifact_type="mixin",
+            prompt_format="structured",
+            prompt_schema_version=3,
+            prompt_definition=definition,
+        )
+
+    if support == "supported":
+        await save()
+        assert server.calls[-1][0] == "create_prompt"
+        assert server.calls[-1][1]["artifact_type"] == "mixin"
+        assert server.calls[-1][1]["prompt_definition"] == definition
+    else:
+        with pytest.raises(PromptCapabilityError):
+            await save()
+        assert not any(call[0] == "create_prompt" for call in server.calls)
+
+
+@pytest.mark.asyncio
+async def test_server_mixin_capture_refuses_denied_policy_and_changed_source_without_reads():
+    server = FakeServerPromptService()
+    policy = FakePolicyEnforcer.deny()
+    service = PromptScopeService(
+        local_service=FakeLocalPromptService(),
+        server_service=server,
+        policy_enforcer=policy,
+    )
+    with pytest.raises(PermissionError):
+        await service.read_mixin_records(mode="server", record_uuids=("stable-uuid",))
+    assert server.calls == []
+    policy.denied_reason = None
+    service.server_service = FakeServerPromptService()
+    with pytest.raises(PromptCapabilityError, match="revision-qualified"):
+        await service.read_mixin_records(mode="server", record_uuids=("stable-uuid",))
+    assert server.calls == service.server_service.calls == []
+
+
+@pytest.mark.asyncio
+async def test_mixin_capture_uses_uuid_after_local_rename(tmp_path):
+    database = PromptsDatabase(tmp_path / "mixins.db", client_id="mixin-rename")
+    service = PromptScopeService(
+        local_service=LocalPromptService(database), server_service=None
+    )
+    definition = {
+        "kind": "text_mixin",
+        "schema_version": 3,
+        "body": " literal ",
+        "placement": "before",
+    }
+    try:
+        saved = await service.save_prompt(
+            mode="local",
+            name="Original",
+            artifact_type="mixin",
+            prompt_format="structured",
+            prompt_schema_version=3,
+            prompt_definition=definition,
+        )
+        await service.save_prompt(
+            mode="local",
+            prompt_identifier=saved["uuid"],
+            name="Renamed",
+            artifact_type="mixin",
+            expected_version=saved["version"],
+        )
+        records = await service.read_mixin_records(
+            mode="local", record_uuids=(saved["uuid"],)
+        )
+        assert records[0]["uuid"] == saved["uuid"]
+        assert records[0]["name"] == "Renamed"
+        assert records[0]["version"] == saved["version"] + 1
+        assert records[0]["prompt_definition"] == definition
+    finally:
+        database.close_connection()
+
+
+@pytest.mark.asyncio
+async def test_mixin_snapshot_read_capability_is_enforced(monkeypatch):
+    local = FakeLocalPromptService()
+    capabilities = replace(local_prompt_capabilities(), mixin_snapshot_reads=False)
+    monkeypatch.setattr(
+        prompt_scope_module, "local_prompt_capabilities", lambda: capabilities
+    )
+    service = PromptScopeService(local_service=local, server_service=None)
+    with pytest.raises(PromptCapabilityError, match="mix-in snapshot reads"):
+        await service.read_mixin_records(mode="local", record_uuids=("uuid",))
+    assert local.calls == []

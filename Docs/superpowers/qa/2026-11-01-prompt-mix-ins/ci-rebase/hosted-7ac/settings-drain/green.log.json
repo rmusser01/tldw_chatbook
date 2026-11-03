@@ -1,0 +1,4 @@
+{
+  "sha256": "7a5d9c68d7347763f770c5562fa125b6ed3794013332baa9ad2d805d4a25cc6f",
+  "raw_text": "..                                                                       [100%]\n- generated xml file: /var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/mixins-ci-7ac-ui24-3o9r7m46/green.xml -\n============================= slowest 25 durations =============================\n9.13s call     Tests/UI/test_console_settings_hidden_fields.py::test_applying_on_anthropic_submits_none_of_the_hidden_fields\n\n(5 durations < 1s hidden.)\n2 passed in 10.86s\n"
+}

@@ -273,7 +273,6 @@ async def test_mounted_received_custody_blocks_completion_and_idle_timer_reclaim
         _received_console_case,
         _send,
     )
-    from tldw_chatbook.Chat import console_first_send_modules as warm
 
     class Cycle:
         pass
@@ -293,13 +292,12 @@ async def test_mounted_received_custody_blocks_completion_and_idle_timer_reclaim
             assert record.request is None and record.task is not None
             await asyncio.to_thread(
                 case.host.call_from_thread,
-                warm._request_idle_heap_refreeze,
-                case.host.app_instance,
+                case.host.app_instance._finish_first_send_warmup,
             )
             await asyncio.sleep(0.15)
-            assert (
-                not refreezer.actions
-            ), "maintenance ran during actual received custody"
+            assert not refreezer.actions, (
+                "maintenance ran during actual received custody"
+            )
             case.probe.release.set()
             await until(lambda: not case.runtime.has_custodied_turns(), timeout=20)
             await until(
@@ -315,10 +313,15 @@ async def test_mounted_received_custody_blocks_completion_and_idle_timer_reclaim
             # actual timer and real IdleHeapRefreezer must reclaim it.
             await asyncio.to_thread(
                 case.host.call_from_thread,
-                warm._request_idle_heap_refreeze,
-                case.host.app_instance,
+                case.host.app_instance._finish_first_send_warmup,
             )
-            await until(lambda: reference() is None, timeout=10)
+            # A prior run-settled timer can reclaim the cycle before this
+            # warmup request fires. Observe both outcomes within the same bound.
+            await until(
+                lambda: reference() is None
+                and ("refreeze", "first_send_preimport") in refreezer.actions,
+                timeout=10,
+            )
             assert ("refreeze", "first_send_preimport") in refreezer.actions
     finally:
         gc.unfreeze()

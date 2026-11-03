@@ -1,0 +1,58 @@
+{
+  "base-lint": {
+    "argv": [
+      "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/ruff",
+      "check",
+      "--no-cache",
+      "--output-format=json",
+      "--stdin-filename",
+      "Tests/QA/test_project_chat_uat.py",
+      "-"
+    ],
+    "exit_code": 1,
+    "stdout": "[\n  {\n    \"cell\": null,\n    \"code\": \"I001\",\n    \"end_location\": {\n      \"column\": 2,\n      \"row\": 32\n    },\n    \"filename\": \"/Users/macbook-dev/.codex/worktrees/prompt-mix-ins/tldw_chatbook/Tests/QA/test_project_chat_uat.py\",\n    \"fix\": {\n      \"applicability\": \"safe\",\n      \"edits\": [\n        {\n          \"content\": \"from __future__ import annotations\\n\\nimport asyncio\\nimport json\\nimport os\\nimport platform\\nimport sys\\nimport threading\\nimport time\\nimport traceback\\nimport uuid\\nfrom pathlib import Path\\n\\nimport pytest\\nfrom textual.events import Paste\\n\\nfrom Tests.private_profile import private_profile_test\\nfrom Tests.uat_project_chat_support import (\\n    MODEL,\\n    VARIANTS,\\n    assert_project_evidence,\\n    assert_project_ownership,\\n    disclosed_schemas,\\n    only_owned_server,\\n    project_chat_server,\\n)\\n\\n\",\n          \"end_location\": {\n            \"column\": 1,\n            \"row\": 34\n          },\n          \"location\": {\n            \"column\": 1,\n            \"row\": 7\n          }\n        }\n      ],\n      \"message\": \"Organize imports\"\n    },\n    \"location\": {\n      \"column\": 1,\n      \"row\": 7\n    },\n    \"message\": \"Import block is un-sorted or un-formatted\",\n    \"name\": \"unsorted-imports\",\n    \"noqa_row\": 7,\n    \"severity\": \"error\",\n    \"url\": \"https://docs.astral.sh/ruff/rules/unsorted-imports\"\n  }\n]",
+    "stderr": ""
+  },
+  "base-format": {
+    "argv": [
+      "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/ruff",
+      "format",
+      "--check",
+      "--no-cache",
+      "--stdin-filename",
+      "Tests/QA/test_project_chat_uat.py",
+      "-"
+    ],
+    "exit_code": 1,
+    "stdout": "",
+    "stderr": ""
+  },
+  "current-lint": {
+    "argv": [
+      "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/ruff",
+      "check",
+      "--no-cache",
+      "--output-format=json",
+      "--stdin-filename",
+      "Tests/QA/test_project_chat_uat.py",
+      "-"
+    ],
+    "exit_code": 1,
+    "stdout": "[\n  {\n    \"cell\": null,\n    \"code\": \"I001\",\n    \"end_location\": {\n      \"column\": 2,\n      \"row\": 32\n    },\n    \"filename\": \"/Users/macbook-dev/.codex/worktrees/prompt-mix-ins/tldw_chatbook/Tests/QA/test_project_chat_uat.py\",\n    \"fix\": {\n      \"applicability\": \"safe\",\n      \"edits\": [\n        {\n          \"content\": \"from __future__ import annotations\\n\\nimport asyncio\\nimport json\\nimport os\\nimport platform\\nimport sys\\nimport threading\\nimport time\\nimport traceback\\nimport uuid\\nfrom pathlib import Path\\n\\nimport pytest\\nfrom textual.events import Paste\\n\\nfrom Tests.private_profile import private_profile_test\\nfrom Tests.uat_project_chat_support import (\\n    MODEL,\\n    VARIANTS,\\n    assert_project_evidence,\\n    assert_project_ownership,\\n    disclosed_schemas,\\n    only_owned_server,\\n    project_chat_server,\\n)\\n\\n\",\n          \"end_location\": {\n            \"column\": 1,\n            \"row\": 34\n          },\n          \"location\": {\n            \"column\": 1,\n            \"row\": 7\n          }\n        }\n      ],\n      \"message\": \"Organize imports\"\n    },\n    \"location\": {\n      \"column\": 1,\n      \"row\": 7\n    },\n    \"message\": \"Import block is un-sorted or un-formatted\",\n    \"name\": \"unsorted-imports\",\n    \"noqa_row\": 7,\n    \"severity\": \"error\",\n    \"url\": \"https://docs.astral.sh/ruff/rules/unsorted-imports\"\n  }\n]",
+    "stderr": ""
+  },
+  "current-format": {
+    "argv": [
+      "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/ruff",
+      "format",
+      "--check",
+      "--no-cache",
+      "--stdin-filename",
+      "Tests/QA/test_project_chat_uat.py",
+      "-"
+    ],
+    "exit_code": 1,
+    "stdout": "",
+    "stderr": ""
+  }
+}

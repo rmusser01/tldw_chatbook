@@ -9,6 +9,38 @@ import urllib.request
 import pytest
 
 
+@pytest.mark.asyncio
+async def test_approval_readiness_waits_for_children_without_filtering_rows():
+    from textual.app import App
+
+    from Tests.QA.test_project_chat_uat import mounted_approval_rows
+    from tldw_chatbook.Widgets.Chat_Widgets.chat_approval_card import ChatApprovalCard
+
+    app = App()
+    async with app.run_test() as pilot:
+        card = ChatApprovalCard(id="chat-approval-card")
+        await app.mount(card)
+        assert mounted_approval_rows(card) == []
+        card.set_batch(
+            [{"llm_name": name} for name in ("unexpected_tool", "another_tool")],
+            timeout_seconds=0,
+            round_id="readiness",
+        )
+        rows = list(card.query(".approval-row"))
+        assert len(rows) == 2
+        assert not card.query(".approval-row-header")
+        assert mounted_approval_rows(card) == []
+
+        await pilot.pause()
+
+        assert mounted_approval_rows(card) == rows
+        header = " ".join(
+            str(item.renderable) for item in rows[0].query(".approval-row-header")
+        )
+        assert "unexpected_tool" in header
+        assert not ("Built-in" in header and "list_directory" in header)
+
+
 def evidence(native=False):
     args = {"root_alias": "folder-abcdef123456", "path": "README.md"}
     result = "1: Verification code: fixture-unique-9471"

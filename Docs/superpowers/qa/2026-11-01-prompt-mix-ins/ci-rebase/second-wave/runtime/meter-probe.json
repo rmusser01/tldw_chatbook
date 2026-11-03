@@ -1,0 +1,15 @@
+{
+  "argv": [
+    "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python",
+    "-m",
+    "pytest",
+    "Tests/Chat/test_console_light_surface_context_meter.py::test_a_local_reasoning_resolution_still_counts_the_light_set",
+    "-q",
+    "-p",
+    "no:cacheprovider",
+    "-p",
+    "meter_probe",
+    "--basetemp=/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/mixins-ci3346-wave2-runtime-7dha0tpm/meter-probe-tmp"
+  ],
+  "exit_code": 1
+}

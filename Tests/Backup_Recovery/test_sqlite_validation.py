@@ -491,7 +491,7 @@ def test_research_older_migration_preserves_committed_rows(tmp_path):
         ).fetchall() == [("nebula", 0)]
 
 
-@pytest.mark.parametrize("core_store", ["prompts"], indirect=True)
+@pytest.mark.parametrize("core_store", ["prompts-v5"], indirect=True)
 def test_prompt_v4_staged_migration_preserves_source_and_prompt_data(
     core_store,  # noqa: F811
     tmp_path,
@@ -511,7 +511,7 @@ def test_prompt_v4_staged_migration_preserves_source_and_prompt_data(
     candidate = tmp_path / "candidate.db"
     copyfile(source, candidate)
     assert validate_candidate(owner, candidate, Event(), migrate=True) == ()
-    assert validation.validated_schema_version(owner, candidate, Event()) == 5
+    assert validation.validated_schema_version(owner, candidate, Event()) == 6
     assert source.read_bytes() == before
     with closing(sqlite3.connect(candidate)) as db:
         assert db.execute("SELECT * FROM Prompts ORDER BY id").fetchall() == expected
@@ -527,7 +527,7 @@ def test_prompt_v4_staged_migration_preserves_source_and_prompt_data(
     assert validate_candidate(owner, candidate, Event(), migrate=False) == ()
 
 
-@pytest.mark.parametrize("core_store", ["prompts"], indirect=True)
+@pytest.mark.parametrize("core_store", ["prompts-v5"], indirect=True)
 @pytest.mark.parametrize("version", [4, 5])
 def test_prompt_migration_rejects_extra_trigger_before_writing(core_store, version):  # noqa: F811
     _, path, store, db = core_store
@@ -548,7 +548,7 @@ def test_prompt_migration_rejects_extra_trigger_before_writing(core_store, versi
     assert path.read_bytes() == before
 
 
-@pytest.mark.parametrize("core_store", ["prompts"], indirect=True)
+@pytest.mark.parametrize("core_store", ["prompts-v5"], indirect=True)
 @pytest.mark.parametrize("cancelled", [False, True])
 def test_prompt_failed_migration_rolls_back_created_table(
     core_store,  # noqa: F811
@@ -953,3 +953,74 @@ def test_native_rag_indexing_cannot_supply_foreign_policy(
     assert validate_candidate(ForeignOwner(), path, Event(), migrate=True) == (
         "unsupported_schema_policy",
     )
+
+
+def test_prompt_v5_to_v6_recovery_migration_preserves_rows(tmp_path, monkeypatch):
+    from tldw_chatbook.DB.Prompts_DB import PromptsDatabase
+
+    path = tmp_path / "v5.db"
+    with monkeypatch.context() as patch:
+        patch.setattr(PromptsDatabase, "_CURRENT_SCHEMA_VERSION", 5)
+        db = PromptsDatabase(path, "recovery-test")
+        db.add_prompt("old", None, None, user_prompt="nebula", keywords=["tag"])
+        db.get_connection().execute(
+            "UPDATE sqlite_sequence SET seq=50 WHERE name='Prompts'"
+        )
+        db.get_connection().commit()
+        db.close()
+    with closing(sqlite3.connect(path)) as conn:
+        old = conn.execute("SELECT * FROM Prompts").fetchall()
+        links = conn.execute("SELECT * FROM PromptKeywordLinks").fetchall()
+        history = conn.execute("SELECT * FROM sync_log ORDER BY change_id").fetchall()
+    owner = next(a for a in core_adapters() if a.owner_id == "db.prompts.primary")
+    assert max(owner.schema_policy().versions) == 6
+    assert validate_candidate(owner, path, Event(), migrate=True) == ()
+    assert validation.validated_schema_version(owner, path, Event()) == 6
+    with closing(sqlite3.connect(path)) as conn:
+        assert conn.execute(
+            "SELECT seq FROM sqlite_sequence WHERE name='Prompts'"
+        ).fetchone() == (50,)
+        assert conn.execute("SELECT * FROM Prompts").fetchall() == old
+        assert conn.execute("SELECT * FROM PromptKeywordLinks").fetchall() == links
+        assert (
+            conn.execute("SELECT * FROM sync_log ORDER BY change_id").fetchall()
+            == history
+        )
+        assert conn.execute(
+            "SELECT count(*) FROM prompts_fts WHERE prompts_fts MATCH 'nebula'"
+        ).fetchone() == (1,)
+    assert validate_candidate(owner, path, Event(), migrate=False) == ()
+
+
+def test_prompt_v6_recovery_migration_denial_rolls_back(tmp_path, monkeypatch):
+    from tldw_chatbook.DB.Prompts_DB import PromptsDatabase
+
+    path = tmp_path / "v5-denied.db"
+    with monkeypatch.context() as patch:
+        patch.setattr(PromptsDatabase, "_CURRENT_SCHEMA_VERSION", 5)
+        db = PromptsDatabase(path, "recovery-test")
+        db.add_prompt("old", None, None, user_prompt="keep")
+        db.close()
+    authorize = validation._Restrictions.authorize
+
+    def refuse_rebuild(self, action, first, second, database, source):
+        if action == sqlite3.SQLITE_DROP_TABLE and first == "Prompts":
+            return sqlite3.SQLITE_DENY
+        return authorize(self, action, first, second, database, source)
+
+    monkeypatch.setattr(validation._Restrictions, "authorize", refuse_rebuild)
+    owner = next(a for a in core_adapters() if a.owner_id == "db.prompts.primary")
+    assert validate_candidate(owner, path, Event(), migrate=True) == (
+        "sqlite_validation_unavailable",
+    )
+    assert validation.validated_schema_version(owner, path, Event()) == 5
+    with closing(sqlite3.connect(path)) as conn:
+        assert conn.execute("SELECT name, user_prompt FROM Prompts").fetchall() == [
+            ("old", "keep")
+        ]
+        assert (
+            conn.execute(
+                "SELECT name FROM sqlite_master WHERE name='Prompts_mixin_migration'"
+            ).fetchall()
+            == []
+        )

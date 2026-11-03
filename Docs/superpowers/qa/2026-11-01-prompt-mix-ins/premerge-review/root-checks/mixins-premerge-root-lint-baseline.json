@@ -1,0 +1,2287 @@
+[
+  {
+    "cell": null,
+    "code": "EXE001",
+    "end_location": {
+      "column": 23,
+      "row": 1
+    },
+    "filename": "/Users/macbook-dev/.codex/worktrees/prompt-mix-ins/tldw_chatbook/scripts/check_textual_worker_contract.py",
+    "fix": null,
+    "location": {
+      "column": 1,
+      "row": 1
+    },
+    "message": "Shebang is present but file is not executable",
+    "name": "shebang-not-executable",
+    "noqa_row": 182,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/shebang-not-executable"
+  },
+  {
+    "cell": null,
+    "code": "UP037",
+    "end_location": {
+      "column": 26,
+      "row": 622
+    },
+    "filename": "/Users/macbook-dev/.codex/worktrees/prompt-mix-ins/tldw_chatbook/scripts/check_textual_worker_contract.py",
+    "fix": {
+      "applicability": "safe",
+      "edits": [
+        {
+          "content": "_Module",
+          "end_location": {
+            "column": 26,
+            "row": 622
+          },
+          "location": {
+            "column": 17,
+            "row": 622
+          }
+        }
+      ],
+      "message": "Remove quotes"
+    },
+    "location": {
+      "column": 17,
+      "row": 622
+    },
+    "message": "Remove quotes from type annotation",
+    "name": "quoted-annotation",
+    "noqa_row": 622,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/quoted-annotation"
+  },
+  {
+    "cell": null,
+    "code": "UP037",
+    "end_location": {
+      "column": 35,
+      "row": 624
+    },
+    "filename": "/Users/macbook-dev/.codex/worktrees/prompt-mix-ins/tldw_chatbook/scripts/check_textual_worker_contract.py",
+    "fix": {
+      "applicability": "safe",
+      "edits": [
+        {
+          "content": "_Function | None",
+          "end_location": {
+            "column": 35,
+            "row": 624
+          },
+          "location": {
+            "column": 17,
+            "row": 624
+          }
+        }
+      ],
+      "message": "Remove quotes"
+    },
+    "location": {
+      "column": 17,
+      "row": 624
+    },
+    "message": "Remove quotes from type annotation",
+    "name": "quoted-annotation",
+    "noqa_row": 624,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/quoted-annotation"
+  },
+  {
+    "cell": null,
+    "code": "UP037",
+    "end_location": {
+      "column": 34,
+      "row": 625
+    },
+    "filename": "/Users/macbook-dev/.codex/worktrees/prompt-mix-ins/tldw_chatbook/scripts/check_textual_worker_contract.py",
+    "fix": {
+      "applicability": "safe",
+      "edits": [
+        {
+          "content": "_Function | None",
+          "end_location": {
+            "column": 34,
+            "row": 625
+          },
+          "location": {
+            "column": 16,
+            "row": 625
+          }
+        }
+      ],
+      "message": "Remove quotes"
+    },
+    "location": {
+      "column": 16,
+      "row": 625
+    },
+    "message": "Remove quotes from type annotation",
+    "name": "quoted-annotation",
+    "noqa_row": 625,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/quoted-annotation"
+  },
+  {
+    "cell": null,
+    "code": "UP037",
+    "end_location": {
+      "column": 22,
+      "row": 940
+    },
+    "filename": "/Users/macbook-dev/.codex/worktrees/prompt-mix-ins/tldw_chatbook/scripts/check_textual_worker_contract.py",
+    "fix": {
+      "applicability": "safe",
+      "edits": [
+        {
+          "content": "_Module",
+          "end_location": {
+            "column": 22,
+            "row": 940
+          },
+          "location": {
+            "column": 13,
+            "row": 940
+          }
+        }
+      ],
+      "message": "Remove quotes"
+    },
+    "location": {
+      "column": 13,
+      "row": 940
+    },
+    "message": "Remove quotes from type annotation",
+    "name": "quoted-annotation",
+    "noqa_row": 940,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/quoted-annotation"
+  },
+  {
+    "cell": null,
+    "code": "EXE001",
+    "end_location": {
+      "column": 23,
+      "row": 1
+    },
+    "filename": "/Users/macbook-dev/.codex/worktrees/prompt-mix-ins/tldw_chatbook/scripts/check_persistent_diagnostic_inventory.py",
+    "fix": null,
+    "location": {
+      "column": 1,
+      "row": 1
+    },
+    "message": "Shebang is present but file is not executable",
+    "name": "shebang-not-executable",
+    "noqa_row": 31,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/shebang-not-executable"
+  },
+  {
+    "cell": null,
+    "code": "SIM114",
+    "end_location": {
+      "column": 72,
+      "row": 280
+    },
+    "filename": "/Users/macbook-dev/.codex/worktrees/prompt-mix-ins/tldw_chatbook/scripts/check_persistent_diagnostic_inventory.py",
+    "fix": {
+      "applicability": "safe",
+      "edits": [
+        {
+          "content": " or isinstance(node, (ast.For, ast.AsyncFor))",
+          "end_location": {
+            "column": 77,
+            "row": 277
+          },
+          "location": {
+            "column": 77,
+            "row": 277
+          }
+        },
+        {
+          "content": "",
+          "end_location": {
+            "column": 1,
+            "row": 281
+          },
+          "location": {
+            "column": 1,
+            "row": 279
+          }
+        }
+      ],
+      "message": "Combine `if` branches"
+    },
+    "location": {
+      "column": 9,
+      "row": 277
+    },
+    "message": "Combine `if` branches using logical `or` operator",
+    "name": "if-with-same-arms",
+    "noqa_row": 277,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/if-with-same-arms"
+  },
+  {
+    "cell": null,
+    "code": "SIM114",
+    "end_location": {
+      "column": 41,
+      "row": 380
+    },
+    "filename": "/Users/macbook-dev/.codex/worktrees/prompt-mix-ins/tldw_chatbook/scripts/check_persistent_diagnostic_inventory.py",
+    "fix": {
+      "applicability": "safe",
+      "edits": [
+        {
+          "content": " or isinstance(child, ast.NamedExpr)",
+          "end_location": {
+            "column": 78,
+            "row": 377
+          },
+          "location": {
+            "column": 78,
+            "row": 377
+          }
+        },
+        {
+          "content": "",
+          "end_location": {
+            "column": 1,
+            "row": 381
+          },
+          "location": {
+            "column": 1,
+            "row": 379
+          }
+        }
+      ],
+      "message": "Combine `if` branches"
+    },
+    "location": {
+      "column": 13,
+      "row": 377
+    },
+    "message": "Combine `if` branches using logical `or` operator",
+    "name": "if-with-same-arms",
+    "noqa_row": 377,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/if-with-same-arms"
+  },
+  {
+    "cell": null,
+    "code": "SIM114",
+    "end_location": {
+      "column": 59,
+      "row": 618
+    },
+    "filename": "/Users/macbook-dev/.codex/worktrees/prompt-mix-ins/tldw_chatbook/scripts/check_persistent_diagnostic_inventory.py",
+    "fix": {
+      "applicability": "safe",
+      "edits": [
+        {
+          "content": " or isinstance(node, (ast.For, ast.AsyncFor))",
+          "end_location": {
+            "column": 77,
+            "row": 615
+          },
+          "location": {
+            "column": 77,
+            "row": 615
+          }
+        },
+        {
+          "content": "",
+          "end_location": {
+            "column": 1,
+            "row": 619
+          },
+          "location": {
+            "column": 1,
+            "row": 617
+          }
+        }
+      ],
+      "message": "Combine `if` branches"
+    },
+    "location": {
+      "column": 9,
+      "row": 615
+    },
+    "message": "Combine `if` branches using logical `or` operator",
+    "name": "if-with-same-arms",
+    "noqa_row": 615,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/if-with-same-arms"
+  },
+  {
+    "cell": null,
+    "code": "ISC004",
+    "end_location": {
+      "column": 27,
+      "row": 1420
+    },
+    "filename": "/Users/macbook-dev/.codex/worktrees/prompt-mix-ins/tldw_chatbook/scripts/check_persistent_diagnostic_inventory.py",
+    "fix": {
+      "applicability": "unsafe",
+      "edits": [
+        {
+          "content": "(",
+          "end_location": {
+            "column": 9,
+            "row": 1419
+          },
+          "location": {
+            "column": 9,
+            "row": 1419
+          }
+        },
+        {
+          "content": ")",
+          "end_location": {
+            "column": 27,
+            "row": 1420
+          },
+          "location": {
+            "column": 27,
+            "row": 1420
+          }
+        }
+      ],
+      "message": "Did you forget a comma?"
+    },
+    "location": {
+      "column": 9,
+      "row": 1419
+    },
+    "message": "Unparenthesized implicit string concatenation in collection",
+    "name": "implicit-string-concatenation-in-collection-literal",
+    "noqa_row": 1419,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/implicit-string-concatenation-in-collection-literal"
+  },
+  {
+    "cell": null,
+    "code": "ISC004",
+    "end_location": {
+      "column": 65,
+      "row": 1588
+    },
+    "filename": "/Users/macbook-dev/.codex/worktrees/prompt-mix-ins/tldw_chatbook/scripts/check_persistent_diagnostic_inventory.py",
+    "fix": {
+      "applicability": "unsafe",
+      "edits": [
+        {
+          "content": "(",
+          "end_location": {
+            "column": 9,
+            "row": 1587
+          },
+          "location": {
+            "column": 9,
+            "row": 1587
+          }
+        },
+        {
+          "content": ")",
+          "end_location": {
+            "column": 65,
+            "row": 1588
+          },
+          "location": {
+            "column": 65,
+            "row": 1588
+          }
+        }
+      ],
+      "message": "Did you forget a comma?"
+    },
+    "location": {
+      "column": 9,
+      "row": 1587
+    },
+    "message": "Unparenthesized implicit string concatenation in collection",
+    "name": "implicit-string-concatenation-in-collection-literal",
+    "noqa_row": 1587,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/implicit-string-concatenation-in-collection-literal"
+  },
+  {
+    "cell": null,
+    "code": "PLW1510",
+    "end_location": {
+      "column": 28,
+      "row": 1638
+    },
+    "filename": "/Users/macbook-dev/.codex/worktrees/prompt-mix-ins/tldw_chatbook/scripts/check_persistent_diagnostic_inventory.py",
+    "fix": {
+      "applicability": "displayonly",
+      "edits": [
+        {
+          "content": "check=False, ",
+          "end_location": {
+            "column": 9,
+            "row": 1640
+          },
+          "location": {
+            "column": 9,
+            "row": 1640
+          }
+        }
+      ],
+      "message": "Add explicit `check=False`"
+    },
+    "location": {
+      "column": 14,
+      "row": 1638
+    },
+    "message": "`subprocess.run` without explicit `check` argument",
+    "name": "subprocess-run-without-check",
+    "noqa_row": 1638,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/subprocess-run-without-check"
+  },
+  {
+    "cell": null,
+    "code": "PLW1510",
+    "end_location": {
+      "column": 30,
+      "row": 1644
+    },
+    "filename": "/Users/macbook-dev/.codex/worktrees/prompt-mix-ins/tldw_chatbook/scripts/check_persistent_diagnostic_inventory.py",
+    "fix": {
+      "applicability": "displayonly",
+      "edits": [
+        {
+          "content": "check=False, ",
+          "end_location": {
+            "column": 9,
+            "row": 1654
+          },
+          "location": {
+            "column": 9,
+            "row": 1654
+          }
+        }
+      ],
+      "message": "Add explicit `check=False`"
+    },
+    "location": {
+      "column": 16,
+      "row": 1644
+    },
+    "message": "`subprocess.run` without explicit `check` argument",
+    "name": "subprocess-run-without-check",
+    "noqa_row": 1644,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/subprocess-run-without-check"
+  },
+  {
+    "cell": null,
+    "code": "I001",
+    "end_location": {
+      "column": 82,
+      "row": 21
+    },
+    "filename": "/Users/macbook-dev/.codex/worktrees/prompt-mix-ins/tldw_chatbook/Tests/Architecture/test_persistent_diagnostic_inventory.py",
+    "fix": {
+      "applicability": "safe",
+      "edits": [
+        {
+          "content": "from __future__ import annotations\n\nimport ast\nimport copy\nimport hashlib\nimport json\nimport re\nimport subprocess\nimport sys\nfrom collections import Counter, defaultdict\nfrom functools import lru_cache\nfrom pathlib import Path\nfrom typing import Any\n\nimport pytest\n\nfrom scripts import check_persistent_diagnostic_inventory as diagnostic_inventory\nfrom Tests.LLM_Calls.summarization_diagnostic_guard import (\n    DiagnosticCall,\n    discover_diagnostic_calls,\n)\n\n",
+          "end_location": {
+            "column": 1,
+            "row": 24
+          },
+          "location": {
+            "column": 1,
+            "row": 1
+          }
+        }
+      ],
+      "message": "Organize imports"
+    },
+    "location": {
+      "column": 1,
+      "row": 1
+    },
+    "message": "Import block is un-sorted or un-formatted",
+    "name": "unsorted-imports",
+    "noqa_row": 1,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/unsorted-imports"
+  },
+  {
+    "cell": null,
+    "code": "PLW1510",
+    "end_location": {
+      "column": 23,
+      "row": 609
+    },
+    "filename": "/Users/macbook-dev/.codex/worktrees/prompt-mix-ins/tldw_chatbook/Tests/Architecture/test_persistent_diagnostic_inventory.py",
+    "fix": {
+      "applicability": "displayonly",
+      "edits": [
+        {
+          "content": "check=False, ",
+          "end_location": {
+            "column": 13,
+            "row": 611
+          },
+          "location": {
+            "column": 13,
+            "row": 611
+          }
+        }
+      ],
+      "message": "Add explicit `check=False`"
+    },
+    "location": {
+      "column": 9,
+      "row": 609
+    },
+    "message": "`subprocess.run` without explicit `check` argument",
+    "name": "subprocess-run-without-check",
+    "noqa_row": 609,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/subprocess-run-without-check"
+  },
+  {
+    "cell": null,
+    "code": "UP033",
+    "end_location": {
+      "column": 25,
+      "row": 1879
+    },
+    "filename": "/Users/macbook-dev/.codex/worktrees/prompt-mix-ins/tldw_chatbook/Tests/Architecture/test_persistent_diagnostic_inventory.py",
+    "fix": {
+      "applicability": "safe",
+      "edits": [
+        {
+          "content": "from functools import lru_cache, cache",
+          "end_location": {
+            "column": 32,
+            "row": 11
+          },
+          "location": {
+            "column": 1,
+            "row": 11
+          }
+        },
+        {
+          "content": "cache",
+          "end_location": {
+            "column": 25,
+            "row": 1879
+          },
+          "location": {
+            "column": 2,
+            "row": 1879
+          }
+        }
+      ],
+      "message": "Rewrite with `@functools.cache"
+    },
+    "location": {
+      "column": 11,
+      "row": 1879
+    },
+    "message": "Use `@functools.cache` instead of `@functools.lru_cache(maxsize=None)`",
+    "name": "lru-cache-with-maxsize-none",
+    "noqa_row": 1879,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/lru-cache-with-maxsize-none"
+  },
+  {
+    "cell": null,
+    "code": "ISC004",
+    "end_location": {
+      "column": 68,
+      "row": 481
+    },
+    "filename": "/Users/macbook-dev/.codex/worktrees/prompt-mix-ins/tldw_chatbook/Tests/Scripts/test_check_textual_worker_contract.py",
+    "fix": {
+      "applicability": "unsafe",
+      "edits": [
+        {
+          "content": "(",
+          "end_location": {
+            "column": 9,
+            "row": 480
+          },
+          "location": {
+            "column": 9,
+            "row": 480
+          }
+        },
+        {
+          "content": ")",
+          "end_location": {
+            "column": 68,
+            "row": 481
+          },
+          "location": {
+            "column": 68,
+            "row": 481
+          }
+        }
+      ],
+      "message": "Did you forget a comma?"
+    },
+    "location": {
+      "column": 9,
+      "row": 480
+    },
+    "message": "Unparenthesized implicit string concatenation in collection",
+    "name": "implicit-string-concatenation-in-collection-literal",
+    "noqa_row": 480,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/implicit-string-concatenation-in-collection-literal"
+  },
+  {
+    "cell": null,
+    "code": "ISC004",
+    "end_location": {
+      "column": 46,
+      "row": 651
+    },
+    "filename": "/Users/macbook-dev/.codex/worktrees/prompt-mix-ins/tldw_chatbook/Tests/Scripts/test_check_textual_worker_contract.py",
+    "fix": {
+      "applicability": "unsafe",
+      "edits": [
+        {
+          "content": "(",
+          "end_location": {
+            "column": 9,
+            "row": 650
+          },
+          "location": {
+            "column": 9,
+            "row": 650
+          }
+        },
+        {
+          "content": ")",
+          "end_location": {
+            "column": 46,
+            "row": 651
+          },
+          "location": {
+            "column": 46,
+            "row": 651
+          }
+        }
+      ],
+      "message": "Did you forget a comma?"
+    },
+    "location": {
+      "column": 9,
+      "row": 650
+    },
+    "message": "Unparenthesized implicit string concatenation in collection",
+    "name": "implicit-string-concatenation-in-collection-literal",
+    "noqa_row": 650,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/implicit-string-concatenation-in-collection-literal"
+  },
+  {
+    "cell": null,
+    "code": "ISC004",
+    "end_location": {
+      "column": 46,
+      "row": 823
+    },
+    "filename": "/Users/macbook-dev/.codex/worktrees/prompt-mix-ins/tldw_chatbook/Tests/Scripts/test_check_textual_worker_contract.py",
+    "fix": {
+      "applicability": "unsafe",
+      "edits": [
+        {
+          "content": "(",
+          "end_location": {
+            "column": 13,
+            "row": 822
+          },
+          "location": {
+            "column": 13,
+            "row": 822
+          }
+        },
+        {
+          "content": ")",
+          "end_location": {
+            "column": 46,
+            "row": 823
+          },
+          "location": {
+            "column": 46,
+            "row": 823
+          }
+        }
+      ],
+      "message": "Did you forget a comma?"
+    },
+    "location": {
+      "column": 13,
+      "row": 822
+    },
+    "message": "Unparenthesized implicit string concatenation in collection",
+    "name": "implicit-string-concatenation-in-collection-literal",
+    "noqa_row": 822,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/implicit-string-concatenation-in-collection-literal"
+  },
+  {
+    "cell": null,
+    "code": "ISC004",
+    "end_location": {
+      "column": 60,
+      "row": 957
+    },
+    "filename": "/Users/macbook-dev/.codex/worktrees/prompt-mix-ins/tldw_chatbook/Tests/Scripts/test_check_textual_worker_contract.py",
+    "fix": {
+      "applicability": "unsafe",
+      "edits": [
+        {
+          "content": "(",
+          "end_location": {
+            "column": 9,
+            "row": 956
+          },
+          "location": {
+            "column": 9,
+            "row": 956
+          }
+        },
+        {
+          "content": ")",
+          "end_location": {
+            "column": 60,
+            "row": 957
+          },
+          "location": {
+            "column": 60,
+            "row": 957
+          }
+        }
+      ],
+      "message": "Did you forget a comma?"
+    },
+    "location": {
+      "column": 9,
+      "row": 956
+    },
+    "message": "Unparenthesized implicit string concatenation in collection",
+    "name": "implicit-string-concatenation-in-collection-literal",
+    "noqa_row": 956,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/implicit-string-concatenation-in-collection-literal"
+  },
+  {
+    "cell": null,
+    "code": "ISC004",
+    "end_location": {
+      "column": 72,
+      "row": 960
+    },
+    "filename": "/Users/macbook-dev/.codex/worktrees/prompt-mix-ins/tldw_chatbook/Tests/Scripts/test_check_textual_worker_contract.py",
+    "fix": {
+      "applicability": "unsafe",
+      "edits": [
+        {
+          "content": "(",
+          "end_location": {
+            "column": 9,
+            "row": 959
+          },
+          "location": {
+            "column": 9,
+            "row": 959
+          }
+        },
+        {
+          "content": ")",
+          "end_location": {
+            "column": 72,
+            "row": 960
+          },
+          "location": {
+            "column": 72,
+            "row": 960
+          }
+        }
+      ],
+      "message": "Did you forget a comma?"
+    },
+    "location": {
+      "column": 9,
+      "row": 959
+    },
+    "message": "Unparenthesized implicit string concatenation in collection",
+    "name": "implicit-string-concatenation-in-collection-literal",
+    "noqa_row": 959,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/implicit-string-concatenation-in-collection-literal"
+  },
+  {
+    "cell": null,
+    "code": "ISC004",
+    "end_location": {
+      "column": 60,
+      "row": 965
+    },
+    "filename": "/Users/macbook-dev/.codex/worktrees/prompt-mix-ins/tldw_chatbook/Tests/Scripts/test_check_textual_worker_contract.py",
+    "fix": {
+      "applicability": "unsafe",
+      "edits": [
+        {
+          "content": "(",
+          "end_location": {
+            "column": 9,
+            "row": 962
+          },
+          "location": {
+            "column": 9,
+            "row": 962
+          }
+        },
+        {
+          "content": ")",
+          "end_location": {
+            "column": 60,
+            "row": 965
+          },
+          "location": {
+            "column": 60,
+            "row": 965
+          }
+        }
+      ],
+      "message": "Did you forget a comma?"
+    },
+    "location": {
+      "column": 9,
+      "row": 962
+    },
+    "message": "Unparenthesized implicit string concatenation in collection",
+    "name": "implicit-string-concatenation-in-collection-literal",
+    "noqa_row": 962,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/implicit-string-concatenation-in-collection-literal"
+  },
+  {
+    "cell": null,
+    "code": "ISC004",
+    "end_location": {
+      "column": 58,
+      "row": 1139
+    },
+    "filename": "/Users/macbook-dev/.codex/worktrees/prompt-mix-ins/tldw_chatbook/Tests/Scripts/test_check_textual_worker_contract.py",
+    "fix": {
+      "applicability": "unsafe",
+      "edits": [
+        {
+          "content": "(",
+          "end_location": {
+            "column": 9,
+            "row": 1138
+          },
+          "location": {
+            "column": 9,
+            "row": 1138
+          }
+        },
+        {
+          "content": ")",
+          "end_location": {
+            "column": 58,
+            "row": 1139
+          },
+          "location": {
+            "column": 58,
+            "row": 1139
+          }
+        }
+      ],
+      "message": "Did you forget a comma?"
+    },
+    "location": {
+      "column": 9,
+      "row": 1138
+    },
+    "message": "Unparenthesized implicit string concatenation in collection",
+    "name": "implicit-string-concatenation-in-collection-literal",
+    "noqa_row": 1138,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/implicit-string-concatenation-in-collection-literal"
+  },
+  {
+    "cell": null,
+    "code": "ISC004",
+    "end_location": {
+      "column": 40,
+      "row": 1199
+    },
+    "filename": "/Users/macbook-dev/.codex/worktrees/prompt-mix-ins/tldw_chatbook/Tests/Scripts/test_check_textual_worker_contract.py",
+    "fix": {
+      "applicability": "unsafe",
+      "edits": [
+        {
+          "content": "(",
+          "end_location": {
+            "column": 9,
+            "row": 1198
+          },
+          "location": {
+            "column": 9,
+            "row": 1198
+          }
+        },
+        {
+          "content": ")",
+          "end_location": {
+            "column": 40,
+            "row": 1199
+          },
+          "location": {
+            "column": 40,
+            "row": 1199
+          }
+        }
+      ],
+      "message": "Did you forget a comma?"
+    },
+    "location": {
+      "column": 9,
+      "row": 1198
+    },
+    "message": "Unparenthesized implicit string concatenation in collection",
+    "name": "implicit-string-concatenation-in-collection-literal",
+    "noqa_row": 1198,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/implicit-string-concatenation-in-collection-literal"
+  },
+  {
+    "cell": null,
+    "code": "ISC004",
+    "end_location": {
+      "column": 40,
+      "row": 1663
+    },
+    "filename": "/Users/macbook-dev/.codex/worktrees/prompt-mix-ins/tldw_chatbook/Tests/Scripts/test_check_textual_worker_contract.py",
+    "fix": {
+      "applicability": "unsafe",
+      "edits": [
+        {
+          "content": "(",
+          "end_location": {
+            "column": 9,
+            "row": 1662
+          },
+          "location": {
+            "column": 9,
+            "row": 1662
+          }
+        },
+        {
+          "content": ")",
+          "end_location": {
+            "column": 40,
+            "row": 1663
+          },
+          "location": {
+            "column": 40,
+            "row": 1663
+          }
+        }
+      ],
+      "message": "Did you forget a comma?"
+    },
+    "location": {
+      "column": 9,
+      "row": 1662
+    },
+    "message": "Unparenthesized implicit string concatenation in collection",
+    "name": "implicit-string-concatenation-in-collection-literal",
+    "noqa_row": 1662,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/implicit-string-concatenation-in-collection-literal"
+  },
+  {
+    "cell": null,
+    "code": "ISC004",
+    "end_location": {
+      "column": 51,
+      "row": 1772
+    },
+    "filename": "/Users/macbook-dev/.codex/worktrees/prompt-mix-ins/tldw_chatbook/Tests/Scripts/test_check_textual_worker_contract.py",
+    "fix": {
+      "applicability": "unsafe",
+      "edits": [
+        {
+          "content": "(",
+          "end_location": {
+            "column": 9,
+            "row": 1771
+          },
+          "location": {
+            "column": 9,
+            "row": 1771
+          }
+        },
+        {
+          "content": ")",
+          "end_location": {
+            "column": 51,
+            "row": 1772
+          },
+          "location": {
+            "column": 51,
+            "row": 1772
+          }
+        }
+      ],
+      "message": "Did you forget a comma?"
+    },
+    "location": {
+      "column": 9,
+      "row": 1771
+    },
+    "message": "Unparenthesized implicit string concatenation in collection",
+    "name": "implicit-string-concatenation-in-collection-literal",
+    "noqa_row": 1771,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/implicit-string-concatenation-in-collection-literal"
+  },
+  {
+    "cell": null,
+    "code": "ISC004",
+    "end_location": {
+      "column": 60,
+      "row": 1886
+    },
+    "filename": "/Users/macbook-dev/.codex/worktrees/prompt-mix-ins/tldw_chatbook/Tests/Scripts/test_check_textual_worker_contract.py",
+    "fix": {
+      "applicability": "unsafe",
+      "edits": [
+        {
+          "content": "(",
+          "end_location": {
+            "column": 9,
+            "row": 1885
+          },
+          "location": {
+            "column": 9,
+            "row": 1885
+          }
+        },
+        {
+          "content": ")",
+          "end_location": {
+            "column": 60,
+            "row": 1886
+          },
+          "location": {
+            "column": 60,
+            "row": 1886
+          }
+        }
+      ],
+      "message": "Did you forget a comma?"
+    },
+    "location": {
+      "column": 9,
+      "row": 1885
+    },
+    "message": "Unparenthesized implicit string concatenation in collection",
+    "name": "implicit-string-concatenation-in-collection-literal",
+    "noqa_row": 1885,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/implicit-string-concatenation-in-collection-literal"
+  },
+  {
+    "cell": null,
+    "code": "ISC004",
+    "end_location": {
+      "column": 60,
+      "row": 1902
+    },
+    "filename": "/Users/macbook-dev/.codex/worktrees/prompt-mix-ins/tldw_chatbook/Tests/Scripts/test_check_textual_worker_contract.py",
+    "fix": {
+      "applicability": "unsafe",
+      "edits": [
+        {
+          "content": "(",
+          "end_location": {
+            "column": 9,
+            "row": 1901
+          },
+          "location": {
+            "column": 9,
+            "row": 1901
+          }
+        },
+        {
+          "content": ")",
+          "end_location": {
+            "column": 60,
+            "row": 1902
+          },
+          "location": {
+            "column": 60,
+            "row": 1902
+          }
+        }
+      ],
+      "message": "Did you forget a comma?"
+    },
+    "location": {
+      "column": 9,
+      "row": 1901
+    },
+    "message": "Unparenthesized implicit string concatenation in collection",
+    "name": "implicit-string-concatenation-in-collection-literal",
+    "noqa_row": 1901,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/implicit-string-concatenation-in-collection-literal"
+  },
+  {
+    "cell": null,
+    "code": "ISC004",
+    "end_location": {
+      "column": 85,
+      "row": 1914
+    },
+    "filename": "/Users/macbook-dev/.codex/worktrees/prompt-mix-ins/tldw_chatbook/Tests/Scripts/test_check_textual_worker_contract.py",
+    "fix": {
+      "applicability": "unsafe",
+      "edits": [
+        {
+          "content": "(",
+          "end_location": {
+            "column": 9,
+            "row": 1911
+          },
+          "location": {
+            "column": 9,
+            "row": 1911
+          }
+        },
+        {
+          "content": ")",
+          "end_location": {
+            "column": 85,
+            "row": 1914
+          },
+          "location": {
+            "column": 85,
+            "row": 1914
+          }
+        }
+      ],
+      "message": "Did you forget a comma?"
+    },
+    "location": {
+      "column": 9,
+      "row": 1911
+    },
+    "message": "Unparenthesized implicit string concatenation in collection",
+    "name": "implicit-string-concatenation-in-collection-literal",
+    "noqa_row": 1911,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/implicit-string-concatenation-in-collection-literal"
+  },
+  {
+    "cell": null,
+    "code": "ISC004",
+    "end_location": {
+      "column": 80,
+      "row": 1921
+    },
+    "filename": "/Users/macbook-dev/.codex/worktrees/prompt-mix-ins/tldw_chatbook/Tests/Scripts/test_check_textual_worker_contract.py",
+    "fix": {
+      "applicability": "unsafe",
+      "edits": [
+        {
+          "content": "(",
+          "end_location": {
+            "column": 9,
+            "row": 1918
+          },
+          "location": {
+            "column": 9,
+            "row": 1918
+          }
+        },
+        {
+          "content": ")",
+          "end_location": {
+            "column": 80,
+            "row": 1921
+          },
+          "location": {
+            "column": 80,
+            "row": 1921
+          }
+        }
+      ],
+      "message": "Did you forget a comma?"
+    },
+    "location": {
+      "column": 9,
+      "row": 1918
+    },
+    "message": "Unparenthesized implicit string concatenation in collection",
+    "name": "implicit-string-concatenation-in-collection-literal",
+    "noqa_row": 1918,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/implicit-string-concatenation-in-collection-literal"
+  },
+  {
+    "cell": null,
+    "code": "ISC004",
+    "end_location": {
+      "column": 33,
+      "row": 1929
+    },
+    "filename": "/Users/macbook-dev/.codex/worktrees/prompt-mix-ins/tldw_chatbook/Tests/Scripts/test_check_textual_worker_contract.py",
+    "fix": {
+      "applicability": "unsafe",
+      "edits": [
+        {
+          "content": "(",
+          "end_location": {
+            "column": 9,
+            "row": 1925
+          },
+          "location": {
+            "column": 9,
+            "row": 1925
+          }
+        },
+        {
+          "content": ")",
+          "end_location": {
+            "column": 33,
+            "row": 1929
+          },
+          "location": {
+            "column": 33,
+            "row": 1929
+          }
+        }
+      ],
+      "message": "Did you forget a comma?"
+    },
+    "location": {
+      "column": 9,
+      "row": 1925
+    },
+    "message": "Unparenthesized implicit string concatenation in collection",
+    "name": "implicit-string-concatenation-in-collection-literal",
+    "noqa_row": 1925,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/implicit-string-concatenation-in-collection-literal"
+  },
+  {
+    "cell": null,
+    "code": "ISC004",
+    "end_location": {
+      "column": 74,
+      "row": 1976
+    },
+    "filename": "/Users/macbook-dev/.codex/worktrees/prompt-mix-ins/tldw_chatbook/Tests/Scripts/test_check_textual_worker_contract.py",
+    "fix": {
+      "applicability": "unsafe",
+      "edits": [
+        {
+          "content": "(",
+          "end_location": {
+            "column": 9,
+            "row": 1974
+          },
+          "location": {
+            "column": 9,
+            "row": 1974
+          }
+        },
+        {
+          "content": ")",
+          "end_location": {
+            "column": 74,
+            "row": 1976
+          },
+          "location": {
+            "column": 74,
+            "row": 1976
+          }
+        }
+      ],
+      "message": "Did you forget a comma?"
+    },
+    "location": {
+      "column": 9,
+      "row": 1974
+    },
+    "message": "Unparenthesized implicit string concatenation in collection",
+    "name": "implicit-string-concatenation-in-collection-literal",
+    "noqa_row": 1974,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/implicit-string-concatenation-in-collection-literal"
+  },
+  {
+    "cell": null,
+    "code": "ISC004",
+    "end_location": {
+      "column": 32,
+      "row": 1987
+    },
+    "filename": "/Users/macbook-dev/.codex/worktrees/prompt-mix-ins/tldw_chatbook/Tests/Scripts/test_check_textual_worker_contract.py",
+    "fix": {
+      "applicability": "unsafe",
+      "edits": [
+        {
+          "content": "(",
+          "end_location": {
+            "column": 9,
+            "row": 1984
+          },
+          "location": {
+            "column": 9,
+            "row": 1984
+          }
+        },
+        {
+          "content": ")",
+          "end_location": {
+            "column": 32,
+            "row": 1987
+          },
+          "location": {
+            "column": 32,
+            "row": 1987
+          }
+        }
+      ],
+      "message": "Did you forget a comma?"
+    },
+    "location": {
+      "column": 9,
+      "row": 1984
+    },
+    "message": "Unparenthesized implicit string concatenation in collection",
+    "name": "implicit-string-concatenation-in-collection-literal",
+    "noqa_row": 1984,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/implicit-string-concatenation-in-collection-literal"
+  },
+  {
+    "cell": null,
+    "code": "ISC004",
+    "end_location": {
+      "column": 62,
+      "row": 1995
+    },
+    "filename": "/Users/macbook-dev/.codex/worktrees/prompt-mix-ins/tldw_chatbook/Tests/Scripts/test_check_textual_worker_contract.py",
+    "fix": {
+      "applicability": "unsafe",
+      "edits": [
+        {
+          "content": "(",
+          "end_location": {
+            "column": 9,
+            "row": 1991
+          },
+          "location": {
+            "column": 9,
+            "row": 1991
+          }
+        },
+        {
+          "content": ")",
+          "end_location": {
+            "column": 62,
+            "row": 1995
+          },
+          "location": {
+            "column": 62,
+            "row": 1995
+          }
+        }
+      ],
+      "message": "Did you forget a comma?"
+    },
+    "location": {
+      "column": 9,
+      "row": 1991
+    },
+    "message": "Unparenthesized implicit string concatenation in collection",
+    "name": "implicit-string-concatenation-in-collection-literal",
+    "noqa_row": 1991,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/implicit-string-concatenation-in-collection-literal"
+  },
+  {
+    "cell": null,
+    "code": "ISC004",
+    "end_location": {
+      "column": 28,
+      "row": 2067
+    },
+    "filename": "/Users/macbook-dev/.codex/worktrees/prompt-mix-ins/tldw_chatbook/Tests/Scripts/test_check_textual_worker_contract.py",
+    "fix": {
+      "applicability": "unsafe",
+      "edits": [
+        {
+          "content": "(",
+          "end_location": {
+            "column": 9,
+            "row": 2063
+          },
+          "location": {
+            "column": 9,
+            "row": 2063
+          }
+        },
+        {
+          "content": ")",
+          "end_location": {
+            "column": 28,
+            "row": 2067
+          },
+          "location": {
+            "column": 28,
+            "row": 2067
+          }
+        }
+      ],
+      "message": "Did you forget a comma?"
+    },
+    "location": {
+      "column": 9,
+      "row": 2063
+    },
+    "message": "Unparenthesized implicit string concatenation in collection",
+    "name": "implicit-string-concatenation-in-collection-literal",
+    "noqa_row": 2063,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/implicit-string-concatenation-in-collection-literal"
+  },
+  {
+    "cell": null,
+    "code": "ISC004",
+    "end_location": {
+      "column": 28,
+      "row": 2078
+    },
+    "filename": "/Users/macbook-dev/.codex/worktrees/prompt-mix-ins/tldw_chatbook/Tests/Scripts/test_check_textual_worker_contract.py",
+    "fix": {
+      "applicability": "unsafe",
+      "edits": [
+        {
+          "content": "(",
+          "end_location": {
+            "column": 9,
+            "row": 2074
+          },
+          "location": {
+            "column": 9,
+            "row": 2074
+          }
+        },
+        {
+          "content": ")",
+          "end_location": {
+            "column": 28,
+            "row": 2078
+          },
+          "location": {
+            "column": 28,
+            "row": 2078
+          }
+        }
+      ],
+      "message": "Did you forget a comma?"
+    },
+    "location": {
+      "column": 9,
+      "row": 2074
+    },
+    "message": "Unparenthesized implicit string concatenation in collection",
+    "name": "implicit-string-concatenation-in-collection-literal",
+    "noqa_row": 2074,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/implicit-string-concatenation-in-collection-literal"
+  },
+  {
+    "cell": null,
+    "code": "ISC004",
+    "end_location": {
+      "column": 28,
+      "row": 2088
+    },
+    "filename": "/Users/macbook-dev/.codex/worktrees/prompt-mix-ins/tldw_chatbook/Tests/Scripts/test_check_textual_worker_contract.py",
+    "fix": {
+      "applicability": "unsafe",
+      "edits": [
+        {
+          "content": "(",
+          "end_location": {
+            "column": 9,
+            "row": 2084
+          },
+          "location": {
+            "column": 9,
+            "row": 2084
+          }
+        },
+        {
+          "content": ")",
+          "end_location": {
+            "column": 28,
+            "row": 2088
+          },
+          "location": {
+            "column": 28,
+            "row": 2088
+          }
+        }
+      ],
+      "message": "Did you forget a comma?"
+    },
+    "location": {
+      "column": 9,
+      "row": 2084
+    },
+    "message": "Unparenthesized implicit string concatenation in collection",
+    "name": "implicit-string-concatenation-in-collection-literal",
+    "noqa_row": 2084,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/implicit-string-concatenation-in-collection-literal"
+  },
+  {
+    "cell": null,
+    "code": "ISC004",
+    "end_location": {
+      "column": 32,
+      "row": 2100
+    },
+    "filename": "/Users/macbook-dev/.codex/worktrees/prompt-mix-ins/tldw_chatbook/Tests/Scripts/test_check_textual_worker_contract.py",
+    "fix": {
+      "applicability": "unsafe",
+      "edits": [
+        {
+          "content": "(",
+          "end_location": {
+            "column": 9,
+            "row": 2094
+          },
+          "location": {
+            "column": 9,
+            "row": 2094
+          }
+        },
+        {
+          "content": ")",
+          "end_location": {
+            "column": 32,
+            "row": 2100
+          },
+          "location": {
+            "column": 32,
+            "row": 2100
+          }
+        }
+      ],
+      "message": "Did you forget a comma?"
+    },
+    "location": {
+      "column": 9,
+      "row": 2094
+    },
+    "message": "Unparenthesized implicit string concatenation in collection",
+    "name": "implicit-string-concatenation-in-collection-literal",
+    "noqa_row": 2094,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/implicit-string-concatenation-in-collection-literal"
+  },
+  {
+    "cell": null,
+    "code": "ISC004",
+    "end_location": {
+      "column": 32,
+      "row": 2129
+    },
+    "filename": "/Users/macbook-dev/.codex/worktrees/prompt-mix-ins/tldw_chatbook/Tests/Scripts/test_check_textual_worker_contract.py",
+    "fix": {
+      "applicability": "unsafe",
+      "edits": [
+        {
+          "content": "(",
+          "end_location": {
+            "column": 9,
+            "row": 2126
+          },
+          "location": {
+            "column": 9,
+            "row": 2126
+          }
+        },
+        {
+          "content": ")",
+          "end_location": {
+            "column": 32,
+            "row": 2129
+          },
+          "location": {
+            "column": 32,
+            "row": 2129
+          }
+        }
+      ],
+      "message": "Did you forget a comma?"
+    },
+    "location": {
+      "column": 9,
+      "row": 2126
+    },
+    "message": "Unparenthesized implicit string concatenation in collection",
+    "name": "implicit-string-concatenation-in-collection-literal",
+    "noqa_row": 2126,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/implicit-string-concatenation-in-collection-literal"
+  },
+  {
+    "cell": null,
+    "code": "ISC004",
+    "end_location": {
+      "column": 71,
+      "row": 2152
+    },
+    "filename": "/Users/macbook-dev/.codex/worktrees/prompt-mix-ins/tldw_chatbook/Tests/Scripts/test_check_textual_worker_contract.py",
+    "fix": {
+      "applicability": "unsafe",
+      "edits": [
+        {
+          "content": "(",
+          "end_location": {
+            "column": 9,
+            "row": 2148
+          },
+          "location": {
+            "column": 9,
+            "row": 2148
+          }
+        },
+        {
+          "content": ")",
+          "end_location": {
+            "column": 71,
+            "row": 2152
+          },
+          "location": {
+            "column": 71,
+            "row": 2152
+          }
+        }
+      ],
+      "message": "Did you forget a comma?"
+    },
+    "location": {
+      "column": 9,
+      "row": 2148
+    },
+    "message": "Unparenthesized implicit string concatenation in collection",
+    "name": "implicit-string-concatenation-in-collection-literal",
+    "noqa_row": 2148,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/implicit-string-concatenation-in-collection-literal"
+  },
+  {
+    "cell": null,
+    "code": "ISC004",
+    "end_location": {
+      "column": 59,
+      "row": 2161
+    },
+    "filename": "/Users/macbook-dev/.codex/worktrees/prompt-mix-ins/tldw_chatbook/Tests/Scripts/test_check_textual_worker_contract.py",
+    "fix": {
+      "applicability": "unsafe",
+      "edits": [
+        {
+          "content": "(",
+          "end_location": {
+            "column": 9,
+            "row": 2157
+          },
+          "location": {
+            "column": 9,
+            "row": 2157
+          }
+        },
+        {
+          "content": ")",
+          "end_location": {
+            "column": 59,
+            "row": 2161
+          },
+          "location": {
+            "column": 59,
+            "row": 2161
+          }
+        }
+      ],
+      "message": "Did you forget a comma?"
+    },
+    "location": {
+      "column": 9,
+      "row": 2157
+    },
+    "message": "Unparenthesized implicit string concatenation in collection",
+    "name": "implicit-string-concatenation-in-collection-literal",
+    "noqa_row": 2157,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/implicit-string-concatenation-in-collection-literal"
+  },
+  {
+    "cell": null,
+    "code": "ISC004",
+    "end_location": {
+      "column": 62,
+      "row": 2255
+    },
+    "filename": "/Users/macbook-dev/.codex/worktrees/prompt-mix-ins/tldw_chatbook/Tests/Scripts/test_check_textual_worker_contract.py",
+    "fix": {
+      "applicability": "unsafe",
+      "edits": [
+        {
+          "content": "(",
+          "end_location": {
+            "column": 9,
+            "row": 2249
+          },
+          "location": {
+            "column": 9,
+            "row": 2249
+          }
+        },
+        {
+          "content": ")",
+          "end_location": {
+            "column": 62,
+            "row": 2255
+          },
+          "location": {
+            "column": 62,
+            "row": 2255
+          }
+        }
+      ],
+      "message": "Did you forget a comma?"
+    },
+    "location": {
+      "column": 9,
+      "row": 2249
+    },
+    "message": "Unparenthesized implicit string concatenation in collection",
+    "name": "implicit-string-concatenation-in-collection-literal",
+    "noqa_row": 2249,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/implicit-string-concatenation-in-collection-literal"
+  },
+  {
+    "cell": null,
+    "code": "ISC004",
+    "end_location": {
+      "column": 39,
+      "row": 2268
+    },
+    "filename": "/Users/macbook-dev/.codex/worktrees/prompt-mix-ins/tldw_chatbook/Tests/Scripts/test_check_textual_worker_contract.py",
+    "fix": {
+      "applicability": "unsafe",
+      "edits": [
+        {
+          "content": "(",
+          "end_location": {
+            "column": 9,
+            "row": 2263
+          },
+          "location": {
+            "column": 9,
+            "row": 2263
+          }
+        },
+        {
+          "content": ")",
+          "end_location": {
+            "column": 39,
+            "row": 2268
+          },
+          "location": {
+            "column": 39,
+            "row": 2268
+          }
+        }
+      ],
+      "message": "Did you forget a comma?"
+    },
+    "location": {
+      "column": 9,
+      "row": 2263
+    },
+    "message": "Unparenthesized implicit string concatenation in collection",
+    "name": "implicit-string-concatenation-in-collection-literal",
+    "noqa_row": 2263,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/implicit-string-concatenation-in-collection-literal"
+  },
+  {
+    "cell": null,
+    "code": "ISC004",
+    "end_location": {
+      "column": 83,
+      "row": 2270
+    },
+    "filename": "/Users/macbook-dev/.codex/worktrees/prompt-mix-ins/tldw_chatbook/Tests/Scripts/test_check_textual_worker_contract.py",
+    "fix": {
+      "applicability": "unsafe",
+      "edits": [
+        {
+          "content": "(",
+          "end_location": {
+            "column": 9,
+            "row": 2269
+          },
+          "location": {
+            "column": 9,
+            "row": 2269
+          }
+        },
+        {
+          "content": ")",
+          "end_location": {
+            "column": 83,
+            "row": 2270
+          },
+          "location": {
+            "column": 83,
+            "row": 2270
+          }
+        }
+      ],
+      "message": "Did you forget a comma?"
+    },
+    "location": {
+      "column": 9,
+      "row": 2269
+    },
+    "message": "Unparenthesized implicit string concatenation in collection",
+    "name": "implicit-string-concatenation-in-collection-literal",
+    "noqa_row": 2269,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/implicit-string-concatenation-in-collection-literal"
+  },
+  {
+    "cell": null,
+    "code": "ISC004",
+    "end_location": {
+      "column": 62,
+      "row": 2283
+    },
+    "filename": "/Users/macbook-dev/.codex/worktrees/prompt-mix-ins/tldw_chatbook/Tests/Scripts/test_check_textual_worker_contract.py",
+    "fix": {
+      "applicability": "unsafe",
+      "edits": [
+        {
+          "content": "(",
+          "end_location": {
+            "column": 9,
+            "row": 2277
+          },
+          "location": {
+            "column": 9,
+            "row": 2277
+          }
+        },
+        {
+          "content": ")",
+          "end_location": {
+            "column": 62,
+            "row": 2283
+          },
+          "location": {
+            "column": 62,
+            "row": 2283
+          }
+        }
+      ],
+      "message": "Did you forget a comma?"
+    },
+    "location": {
+      "column": 9,
+      "row": 2277
+    },
+    "message": "Unparenthesized implicit string concatenation in collection",
+    "name": "implicit-string-concatenation-in-collection-literal",
+    "noqa_row": 2277,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/implicit-string-concatenation-in-collection-literal"
+  },
+  {
+    "cell": null,
+    "code": "ISC004",
+    "end_location": {
+      "column": 28,
+      "row": 2303
+    },
+    "filename": "/Users/macbook-dev/.codex/worktrees/prompt-mix-ins/tldw_chatbook/Tests/Scripts/test_check_textual_worker_contract.py",
+    "fix": {
+      "applicability": "unsafe",
+      "edits": [
+        {
+          "content": "(",
+          "end_location": {
+            "column": 9,
+            "row": 2292
+          },
+          "location": {
+            "column": 9,
+            "row": 2292
+          }
+        },
+        {
+          "content": ")",
+          "end_location": {
+            "column": 28,
+            "row": 2303
+          },
+          "location": {
+            "column": 28,
+            "row": 2303
+          }
+        }
+      ],
+      "message": "Did you forget a comma?"
+    },
+    "location": {
+      "column": 9,
+      "row": 2292
+    },
+    "message": "Unparenthesized implicit string concatenation in collection",
+    "name": "implicit-string-concatenation-in-collection-literal",
+    "noqa_row": 2292,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/implicit-string-concatenation-in-collection-literal"
+  },
+  {
+    "cell": null,
+    "code": "ISC004",
+    "end_location": {
+      "column": 62,
+      "row": 2318
+    },
+    "filename": "/Users/macbook-dev/.codex/worktrees/prompt-mix-ins/tldw_chatbook/Tests/Scripts/test_check_textual_worker_contract.py",
+    "fix": {
+      "applicability": "unsafe",
+      "edits": [
+        {
+          "content": "(",
+          "end_location": {
+            "column": 9,
+            "row": 2311
+          },
+          "location": {
+            "column": 9,
+            "row": 2311
+          }
+        },
+        {
+          "content": ")",
+          "end_location": {
+            "column": 62,
+            "row": 2318
+          },
+          "location": {
+            "column": 62,
+            "row": 2318
+          }
+        }
+      ],
+      "message": "Did you forget a comma?"
+    },
+    "location": {
+      "column": 9,
+      "row": 2311
+    },
+    "message": "Unparenthesized implicit string concatenation in collection",
+    "name": "implicit-string-concatenation-in-collection-literal",
+    "noqa_row": 2311,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/implicit-string-concatenation-in-collection-literal"
+  },
+  {
+    "cell": null,
+    "code": "ISC004",
+    "end_location": {
+      "column": 52,
+      "row": 2668
+    },
+    "filename": "/Users/macbook-dev/.codex/worktrees/prompt-mix-ins/tldw_chatbook/Tests/Scripts/test_check_textual_worker_contract.py",
+    "fix": {
+      "applicability": "unsafe",
+      "edits": [
+        {
+          "content": "(",
+          "end_location": {
+            "column": 9,
+            "row": 2667
+          },
+          "location": {
+            "column": 9,
+            "row": 2667
+          }
+        },
+        {
+          "content": ")",
+          "end_location": {
+            "column": 52,
+            "row": 2668
+          },
+          "location": {
+            "column": 52,
+            "row": 2668
+          }
+        }
+      ],
+      "message": "Did you forget a comma?"
+    },
+    "location": {
+      "column": 9,
+      "row": 2667
+    },
+    "message": "Unparenthesized implicit string concatenation in collection",
+    "name": "implicit-string-concatenation-in-collection-literal",
+    "noqa_row": 2667,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/implicit-string-concatenation-in-collection-literal"
+  },
+  {
+    "cell": null,
+    "code": "ISC004",
+    "end_location": {
+      "column": 70,
+      "row": 2678
+    },
+    "filename": "/Users/macbook-dev/.codex/worktrees/prompt-mix-ins/tldw_chatbook/Tests/Scripts/test_check_textual_worker_contract.py",
+    "fix": {
+      "applicability": "unsafe",
+      "edits": [
+        {
+          "content": "(",
+          "end_location": {
+            "column": 9,
+            "row": 2677
+          },
+          "location": {
+            "column": 9,
+            "row": 2677
+          }
+        },
+        {
+          "content": ")",
+          "end_location": {
+            "column": 70,
+            "row": 2678
+          },
+          "location": {
+            "column": 70,
+            "row": 2678
+          }
+        }
+      ],
+      "message": "Did you forget a comma?"
+    },
+    "location": {
+      "column": 9,
+      "row": 2677
+    },
+    "message": "Unparenthesized implicit string concatenation in collection",
+    "name": "implicit-string-concatenation-in-collection-literal",
+    "noqa_row": 2677,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/implicit-string-concatenation-in-collection-literal"
+  },
+  {
+    "cell": null,
+    "code": "ISC004",
+    "end_location": {
+      "column": 53,
+      "row": 5270
+    },
+    "filename": "/Users/macbook-dev/.codex/worktrees/prompt-mix-ins/tldw_chatbook/Tests/Scripts/test_check_textual_worker_contract.py",
+    "fix": {
+      "applicability": "unsafe",
+      "edits": [
+        {
+          "content": "(",
+          "end_location": {
+            "column": 13,
+            "row": 5269
+          },
+          "location": {
+            "column": 13,
+            "row": 5269
+          }
+        },
+        {
+          "content": ")",
+          "end_location": {
+            "column": 53,
+            "row": 5270
+          },
+          "location": {
+            "column": 53,
+            "row": 5270
+          }
+        }
+      ],
+      "message": "Did you forget a comma?"
+    },
+    "location": {
+      "column": 13,
+      "row": 5269
+    },
+    "message": "Unparenthesized implicit string concatenation in collection",
+    "name": "implicit-string-concatenation-in-collection-literal",
+    "noqa_row": 5269,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/implicit-string-concatenation-in-collection-literal"
+  },
+  {
+    "cell": null,
+    "code": "ISC004",
+    "end_location": {
+      "column": 73,
+      "row": 5275
+    },
+    "filename": "/Users/macbook-dev/.codex/worktrees/prompt-mix-ins/tldw_chatbook/Tests/Scripts/test_check_textual_worker_contract.py",
+    "fix": {
+      "applicability": "unsafe",
+      "edits": [
+        {
+          "content": "(",
+          "end_location": {
+            "column": 13,
+            "row": 5274
+          },
+          "location": {
+            "column": 13,
+            "row": 5274
+          }
+        },
+        {
+          "content": ")",
+          "end_location": {
+            "column": 73,
+            "row": 5275
+          },
+          "location": {
+            "column": 73,
+            "row": 5275
+          }
+        }
+      ],
+      "message": "Did you forget a comma?"
+    },
+    "location": {
+      "column": 13,
+      "row": 5274
+    },
+    "message": "Unparenthesized implicit string concatenation in collection",
+    "name": "implicit-string-concatenation-in-collection-literal",
+    "noqa_row": 5274,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/implicit-string-concatenation-in-collection-literal"
+  },
+  {
+    "cell": null,
+    "code": "ISC004",
+    "end_location": {
+      "column": 64,
+      "row": 5337
+    },
+    "filename": "/Users/macbook-dev/.codex/worktrees/prompt-mix-ins/tldw_chatbook/Tests/Scripts/test_check_textual_worker_contract.py",
+    "fix": {
+      "applicability": "unsafe",
+      "edits": [
+        {
+          "content": "(",
+          "end_location": {
+            "column": 9,
+            "row": 5336
+          },
+          "location": {
+            "column": 9,
+            "row": 5336
+          }
+        },
+        {
+          "content": ")",
+          "end_location": {
+            "column": 64,
+            "row": 5337
+          },
+          "location": {
+            "column": 64,
+            "row": 5337
+          }
+        }
+      ],
+      "message": "Did you forget a comma?"
+    },
+    "location": {
+      "column": 9,
+      "row": 5336
+    },
+    "message": "Unparenthesized implicit string concatenation in collection",
+    "name": "implicit-string-concatenation-in-collection-literal",
+    "noqa_row": 5336,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/implicit-string-concatenation-in-collection-literal"
+  },
+  {
+    "cell": null,
+    "code": "PLW1510",
+    "end_location": {
+      "column": 29,
+      "row": 5379
+    },
+    "filename": "/Users/macbook-dev/.codex/worktrees/prompt-mix-ins/tldw_chatbook/Tests/Scripts/test_check_textual_worker_contract.py",
+    "fix": {
+      "applicability": "displayonly",
+      "edits": [
+        {
+          "content": "check=False, ",
+          "end_location": {
+            "column": 9,
+            "row": 5381
+          },
+          "location": {
+            "column": 9,
+            "row": 5381
+          }
+        }
+      ],
+      "message": "Add explicit `check=False`"
+    },
+    "location": {
+      "column": 15,
+      "row": 5379
+    },
+    "message": "`subprocess.run` without explicit `check` argument",
+    "name": "subprocess-run-without-check",
+    "noqa_row": 5379,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/subprocess-run-without-check"
+  }
+]

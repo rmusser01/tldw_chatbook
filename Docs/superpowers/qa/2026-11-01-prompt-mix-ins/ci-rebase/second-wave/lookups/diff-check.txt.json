@@ -1,0 +1,4 @@
+{
+  "sha256": "5f63ac1574853a42e5b2ad4e2390b4b3e7a02d4656d935876e9f233c6e3aa3de",
+  "raw_text": "git diff --check -- [the six files in files.json plus Tests/Chat/test_console_optional_app_services.py]\nexit_code=0\n"
+}

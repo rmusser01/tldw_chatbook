@@ -3,6 +3,9 @@
 # 2026-10-24 against $surface, $panel and each focus rule's own fill over the
 # 89 measurable themes (Tests/UI/test_theme_contrast.py).
 #
+# 2026-11-02: style-picker source moved to _console_prompts.tcss; its
+# unchanged edge retains the original measured debt qualification.
+#
 # One row per edge, tab-separated: source, selector, property, painted value.
 # The sweep skips exactly these edges. A new focus edge, or a listed one whose
 # value changes, is measured like any other. The guard fails when a row no
@@ -72,7 +75,7 @@ css/components/_widgets.tcss	ChatbooksWindowImproved .search-input:focus	border	
 css/components/_widgets.tcss	ChatbooksWindowImproved .search-input:focus	border-bottom	$ds-input-focus-accent
 css/core/_reset.tcss	*:focus	outline	$ds-focus-accent
 css/features/_chat.tcss	.rag-settings-panel:focus-within	border	$ds-focus-accent
-css/features/_console.tcss	#console-style-picker-filter:focus	border	$ds-input-focus-accent
+css/features/_console_prompts.tcss	#console-style-picker-filter:focus	border	$ds-input-focus-accent
 css/features/_console.tcss	.console-frame-solid.console-frame-left.console-edge-region-focused	border-left	$ds-focus-accent
 css/features/_console.tcss	.console-frame-solid.console-frame-right.console-edge-region-focused	border-right	$ds-focus-accent
 css/features/_console.tcss	.console-setup-modal-action:focus	border	$ds-focus-accent

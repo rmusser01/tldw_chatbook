@@ -54,6 +54,10 @@ from tldw_chatbook.Chat.console_generation_settings_metadata import (
     ConsoleGenerationSettingsSnapshot,
     parse_console_generation_settings,
 )
+from tldw_chatbook.Chat.console_prompt_mixins import (
+    MixinPreferenceRead,
+    decode_mixin_preferences,
+)
 from tldw_chatbook.Chat.console_prefill import (
     pinned_prefill_from_conversation_metadata,
 )
@@ -242,9 +246,13 @@ def console_messages_from_conversation_tree(
         )
         metadata = (
             None
-            if video_metadata is not None or fork_metadata is not None
+            if video_metadata is not None
             else MessageMetadata.from_json(raw_metadata_json)
         )
+        if fork_metadata is not None and (
+            metadata is None or metadata.mixin_snapshot_schema_version is None
+        ):
+            metadata = None
         raw_id = node.get("id")
         node_persisted_id = str(raw_id) if raw_id is not None else None
         generation_state = node.get("assistant_generation_state")
@@ -514,6 +522,8 @@ class ConsoleConversationHydrationData:
     active_leaf_before_id: str | None
     continuation_rows: list[dict[str, Any]] | None = field(repr=False)
     generation_rows: dict[str, Any] | None = field(repr=False)
+    mixin_preferences: MixinPreferenceRead | None = field(default=None, repr=False)
+    mixin_usage_counts: dict[str, int | None] = field(default_factory=dict, repr=False)
 
 
 async def prepare_console_session_data(
@@ -579,6 +589,38 @@ async def prepare_console_session_data(
                     logger.warning(
                         "Console resume generation-metadata batch fetch failed."
                     )
+            mixin_preferences = decode_mixin_preferences(None)
+            mixin_reader = getattr(
+                persistence, "get_conversation_mixin_preferences", None
+            )
+            if callable(mixin_reader):
+                try:
+                    mixin_preferences = mixin_reader(conversation_id)
+                except Exception:  # noqa: BLE001 - unreadable selections must remain unavailable.
+                    mixin_preferences = MixinPreferenceRead("corrupt", None, None)
+            mixin_counts = {}
+            attempt_reader = getattr(
+                persistence, "get_conversation_mixin_attempt", None
+            )
+            if callable(attempt_reader):
+                for row in continuation_rows or ():
+                    if str(row.get("sender", "")).lower() != "assistant":
+                        continue
+                    message_id = str(row["id"])
+                    try:
+                        replay = attempt_reader(
+                            conversation_id, assistant_message_id=message_id
+                        )
+                        mixin_counts[message_id] = (
+                            len(replay.snapshot.items)
+                            if replay.status == "recorded"
+                            and replay.snapshot is not None
+                            else 0
+                            if replay.status == "legacy"
+                            else None
+                        )
+                    except Exception:  # noqa: BLE001 - unknown/corrupt raw markers cannot imply legacy.
+                        mixin_counts[message_id] = None
             return ConsoleConversationHydrationData(
                 conversation_id,
                 tuple(nodes),
@@ -586,6 +628,8 @@ async def prepare_console_session_data(
                 before,
                 continuation_rows,
                 generation_rows,
+                mixin_preferences,
+                mixin_counts,
             )
         finally:
             if threaded:

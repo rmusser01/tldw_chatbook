@@ -12,6 +12,7 @@ import inspect
 import json
 import math
 import os
+import sys as _copy_source_sys
 import threading
 import uuid
 import weakref
@@ -28,7 +29,9 @@ from urllib.parse import urlparse, urlunparse
 
 import httpx
 from loguru import logger
-from rich.markup import escape as escape_markup
+from rich.markup import escape as escape_markup  # noqa: F401 -- live recovery-copy dependency
+
+from tldw_chatbook.Metrics.metrics_logger import log_counter
 
 from tldw_chatbook.Chat.Chat_Deps import (
     ChatAPIError,
@@ -1809,64 +1812,20 @@ def _flight_capture(
     )
 
 
+_PROVIDER_COPY_SOURCE = _copy_source_sys.modules[__name__]
+
+
 def _tool_definition_rejection_copy(
     provider_message: str,
     tools: Sequence[Mapping[str, Any]] | None,
 ) -> str | None:
-    """Return recovery copy when a provider 400 blames a sent tool definition.
+    """Delegate recovery copy while retaining the current defining dependencies."""
+    from .refused_stream import _tool_definition_rejection_copy as render
 
-    TASK-33621.1: OpenAI and Anthropic validate every tool schema before the
-    model runs, so a rejected tool definition fails the request on EVERY
-    model -- the model-picker advice below cannot help and must not be shown.
-    Only a tool name the request actually sent is ever echoed; the provider's
-    own text never reaches the copy.
-
-    The advice follows the tool's source, which its sent name tells apart:
-    every MCP-bridged tool is named ``mcp__<server>__<tool>``
-    (``MCP.tool_naming.llm_tool_name``), and every other tool is Chatbook's
-    own -- its rejection is a Chatbook bug to report, and not every such
-    tool has a switch to promise.
-
-    Args:
-        provider_message: The adapter exception's text (untrusted).
-        tools: The OpenAI-shape tool definitions this request sent.
-
-    Returns:
-        Copy naming the rejected tool, generic tool-definition copy when the
-        message blames a tool that cannot be named, or None otherwise.
-    """
-    if not tools:
-        return None
-    from tldw_chatbook.Agents.native_tools import (
-        blames_tool_definition,
-        rejected_tool_name,
-    )
-
-    name = rejected_tool_name(provider_message, tools)
-    if name is None:
-        if not blames_tool_definition(provider_message):
-            return None
-        # Blamed only through a marker in the provider's text: say what is
-        # likely, not what is certain.
-        return (
-            "The provider rejected one of the tool definitions sent with this "
-            "request before the model ran, so choosing another model is "
-            "unlikely to help. A tool from an MCP server is the likeliest "
-            "cause: turn MCP servers off on the MCP screen, then send again."
-        )
-    rejected = (
-        f"The provider rejected the tool definition for {escape_markup(name)} "
-        "before the model ran, so choosing another model will not help."
-    )
-    if name.startswith("mcp__"):
-        return (
-            f"{rejected} Turn off the MCP server that provides it on the MCP "
-            "screen, then send again."
-        )
-    return (
-        f"{rejected} It is one of Chatbook's own tools, so please report it. "
-        "If its tool group has a switch on the MCP screen, turning that off "
-        "lets you send meanwhile."
+    return render(
+        _PROVIDER_COPY_SOURCE,
+        provider_message,
+        tools,
     )
 
 
@@ -1880,58 +1839,29 @@ def _provider_error_copy_with_model_recovery(
     refused_stream: bool = False,
     model_unavailable: bool = False,
 ) -> str:
-    """Add safe recovery to provider bad-request copy.
+    """Delegate recovery copy while retaining the current defining dependencies."""
+    from .refused_stream import _provider_error_copy_with_model_recovery as render
 
-    A rejected tool definition gets tool copy (see
-    ``_tool_definition_rejection_copy``). A 404, or an explicit
-    ``model_not_found`` (``model_unavailable``) on any status, names the model
-    and says what to check: Fireworks, SambaNova, Nous and GMI answer an
-    unknown model, or one the key cannot use, that way (no-key probes
-    2026-09-30, TASK-33640). Any other 400 gets no model advice: it was never
-    evidence about the model (TASK-33621.11 AC#3).
-    """
-    if refused_stream and not _tool_definition_rejection_copy(provider_message, tools):
-        from tldw_chatbook.Chat.refused_stream import REFUSED_STREAM_ADVICE
-
-        copy = _provider_error_copy_with_model_recovery(
-            copy, model=model, status_code=status_code, provider_message=provider_message,
-            tools=tools, model_unavailable=model_unavailable,
-        )
-        return f"{copy} {REFUSED_STREAM_ADVICE}"
-    if status_code == 404 or model_unavailable:
-        model_id = _safe_model_id(model)
-        named = f" Selected model: {escape_markup(model_id)}." if model_id else ""
-        return (
-            f"{copy}{named} The provider could not find this model or "
-            "endpoint, or this key cannot use it. Check the model name and "
-            "the key, or choose another model from the model picker "
-            "(Alt+M: Switch model)."
-        )
-    if status_code != 400:
-        return copy
-    tool_copy = _tool_definition_rejection_copy(provider_message, tools)
-    return copy if tool_copy is None else f"{copy} {tool_copy}"
+    return render(
+        _PROVIDER_COPY_SOURCE,
+        copy,
+        model=model,
+        status_code=status_code,
+        provider_message=provider_message,
+        tools=tools,
+        refused_stream=refused_stream,
+        model_unavailable=model_unavailable,
+    )
 
 
 def _safe_model_id(model: str | None) -> str:
-    """The model id fit for user copy, or "" when it is absent or redacted.
+    """Delegate recovery copy while retaining the current defining dependencies."""
+    from .refused_stream import _safe_model_id as render
 
-    Args:
-        model: The selected model identifier.
-
-    Returns:
-        A printable, bounded model id; empty when it cannot be shown.
-    """
-    model_result = CredentialSanitizer().sanitize(model or "")
-    if (
-        not model_result.available
-        or model_result.redacted
-        or type(model_result.value) is not str
-    ):
-        return ""
-    return "".join(
-        character for character in model_result.value.strip() if character.isprintable()
-    )[:PROVIDER_ERROR_MODEL_ID_MAX_CHARS]
+    return render(
+        _PROVIDER_COPY_SOURCE,
+        model,
+    )
 
 
 def normalize_llamacpp_base_url(api_url: str | None) -> str:
@@ -7978,6 +7908,17 @@ class ConsoleProviderGateway:
             ),
             "prompt_caching": resolution.prompt_caching,
         }
+        if request.semantic.clean_history_message_index is not None:
+            if (
+                resolution.execution_key == "anthropic"
+                and request.cache_boundary is not None
+            ):
+                kwargs["console_cache_boundary"] = request.cache_boundary
+            else:
+                log_counter(
+                    "console_clean_history_cache_unavailable",
+                    labels={"reason": "adapter_capability_or_mapping"},
+                )
         local = supports_local_reasoning(
             resolution.execution_key or resolution.provider, resolution.model or ""
         )

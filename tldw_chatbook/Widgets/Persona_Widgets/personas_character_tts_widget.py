@@ -12,6 +12,17 @@ from textual.containers import Container, Horizontal, Vertical
 from textual.content import Content
 from textual.widgets import Button, Select, Static
 
+from tldw_chatbook.TTS import (
+    LoadedTTSProfile,
+    TTSProfileAvailability,
+    TTSProfileAvailabilitySnapshot,
+    TTSProfilePageSnapshot,
+)
+from tldw_chatbook.Widgets.Persona_Widgets.personas_state import (
+    _CharacterTTSControlSnapshot,
+    _CharacterTTSMixedSnapshot,
+)
+
 from ...TTS import ProfileAvailabilityState
 from ...TTS.profile_service import (
     ProfileRecoveryAction,
@@ -507,3 +518,133 @@ __all__ = [
     "CharacterTTSPresentationState",
     "PersonasCharacterTTSWidget",
 ]
+
+
+def _character_tts_availability_map(
+    page: TTSProfilePageSnapshot,
+    availability: TTSProfileAvailabilitySnapshot,
+) -> dict[UUID, TTSProfileAvailability]:
+    if availability.repository_generation != page.repository_generation or {
+        profile.profile_id for profile in page.profiles
+    } != {item.profile_id for item in availability.profiles}:
+        raise _CharacterTTSMixedSnapshot
+    return {item.profile_id: item for item in availability.profiles}
+
+def _character_tts_presentation_from_snapshot(
+    snapshot: _CharacterTTSControlSnapshot,
+    suggested_profile_id: UUID | None = None,
+) -> CharacterTTSPresentationState:
+    availability_by_id = {item.profile_id: item for item in snapshot.availability}
+    profiles = tuple(
+        CharacterTTSProfileOption(
+            profile_id=loaded.profile.profile_id,
+            display_name=loaded.profile.display_name,
+            availability=availability_by_id[loaded.profile.profile_id].state,
+            recovery_action=(
+                availability_by_id[loaded.profile.profile_id].recovery_action
+            ),
+            dependency=availability_by_id[loaded.profile.profile_id].dependency,
+        )
+        for loaded in snapshot.loaded_profiles
+    )
+    current = snapshot.current
+    if current is None:
+        status = "Using the global speech default."
+        if suggested_profile_id is not None:
+            suggested = next(
+                profile
+                for profile in profiles
+                if profile.profile_id == suggested_profile_id
+            )
+            status = (
+                f"Suggested: {suggested.display_name}. Choose it from Voice "
+                "Profile to assign it to this character."
+            )
+        return CharacterTTSPresentationState(
+            profiles=profiles,
+            selected_profile_id=None,
+            suggested_profile_id=suggested_profile_id,
+            status=status,
+            controls_enabled=True,
+        )
+
+    current_availability = availability_by_id[current.profile.profile_id]
+    count = snapshot.assignment_count
+    count_copy = (
+        "Assignment count unavailable"
+        if count is None
+        else f"Used by {count} character{'s' if count != 1 else ''}"
+    )
+    dependency = current_availability.dependency
+    if dependency.display:
+        status = (
+            f"{current.profile.display_name} · {dependency.display} · "
+            f"{count_copy}. Repair the compatible model dependency or remove "
+            "this assignment."
+        )
+    elif current_availability.state == "available":
+        status = f"{current.profile.display_name} · Available · {count_copy}."
+    elif current_availability.state == "unavailable":
+        status = (
+            f"{current.profile.display_name} · Unavailable · {count_copy}. "
+            "Repair the profile or remove this assignment."
+        )
+    elif current_availability.recovery_action == "refresh":
+        # audio.cpp's transient "unverified" -- Refresh is a real
+        # recovery for this provider, so naming it is honest.
+        status = (
+            f"{current.profile.display_name} · Unverified · {count_copy}. "
+            "Refresh or repair the profile; the assignment is preserved."
+        )
+    else:
+        # `recovery_action == "none"` means this provider has no
+        # catalog to preflight, so its "unverified" is permanent, not a
+        # transient glitch Refresh could resolve -- naming Refresh here
+        # would promise a recovery control can never perform (ADR-031).
+        # The state word itself also changes: bare "Unverified" would
+        # still misread as temporary even with an honest tail.
+        status = (
+            f"{current.profile.display_name} · No catalog check · "
+            f"{count_copy}. The exact selection is used as-is; the "
+            "assignment is preserved."
+        )
+    if dependency.advisory_display:
+        status = f"{status} {dependency.advisory_display}."
+    if suggested_profile_id is not None:
+        suggested = next(
+            profile
+            for profile in profiles
+            if profile.profile_id == suggested_profile_id
+        )
+        status = (
+            f"{status} Suggested: {suggested.display_name}. Choose it from "
+            "Voice Profile to replace this character's assignment."
+        )
+    return CharacterTTSPresentationState(
+        profiles=profiles,
+        selected_profile_id=current.profile.profile_id,
+        suggested_profile_id=suggested_profile_id,
+        status=status,
+        controls_enabled=True,
+        assignment_count=count,
+    )
+
+def _character_tts_profile_tokens(
+    snapshot: _CharacterTTSControlSnapshot,
+    profile_id: UUID,
+) -> tuple[LoadedTTSProfile, TTSProfileAvailability] | None:
+    loaded = next(
+        (
+            item
+            for item in snapshot.loaded_profiles
+            if item.profile.profile_id == profile_id
+        ),
+        None,
+    )
+    availability = next(
+        (item for item in snapshot.availability if item.profile_id == profile_id),
+        None,
+    )
+    if loaded is None or availability is None:
+        return None
+    return loaded, availability

@@ -1,0 +1,25 @@
+{
+  "base": "79e659dcde6f5360edb0070f9d184713bd8584d1",
+  "files": {
+    "Tests/UI/test_console_session_tab_close.py": {
+      "before_count": 5,
+      "after_count": 5,
+      "introduced": []
+    },
+    "Tests/UI/test_console_setup_card_keyboard.py": {
+      "before_count": 0,
+      "after_count": 0,
+      "introduced": []
+    },
+    "Tests/UI/test_app_quit_under_modal.py": {
+      "before_count": 0,
+      "after_count": 0,
+      "introduced": []
+    },
+    "tldw_chatbook/UI/Screens/settings_screen.py": {
+      "before_count": 117,
+      "after_count": 117,
+      "introduced": []
+    }
+  }
+}

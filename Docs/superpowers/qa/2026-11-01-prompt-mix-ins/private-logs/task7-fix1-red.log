@@ -1,0 +1,97 @@
+FF                                                                       [100%]
+=================================== FAILURES ===================================
+__ test_invalid_mixin_copy_action_keeps_raw_draft_then_recovers[save_as_new] ___
+Tests/UI/test_library_prompt_mixins.py:915: in test_invalid_mixin_copy_action_keeps_raw_draft_then_recovers
+    await _wait_for_condition(
+Tests/UI/test_library_shell.py:4040: in _wait_for_condition
+    raise AssertionError(message() if callable(message) else message)
+E   AssertionError: Invalid copy action did not show Instructions validation
+
+During handling of the above exception, another exception occurred:
+Tests/UI/test_library_prompt_mixins.py:833: in test_invalid_mixin_copy_action_keeps_raw_draft_then_recovers
+    async with host.run_test(size=(120, 40)) as pilot:
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/contextlib.py:231: in __aexit__
+    await self.gen.athrow(value)
+../../../../Documents/GitHub/tldw_chatbook/.venv/lib/python3.12/site-packages/textual/app.py:2218: in run_test
+    raise self._exception
+../../../../Documents/GitHub/tldw_chatbook/.venv/lib/python3.12/site-packages/textual/message_pump.py:663: in _process_messages_loop
+    await self._dispatch_message(message)
+../../../../Documents/GitHub/tldw_chatbook/.venv/lib/python3.12/site-packages/textual/message_pump.py:739: in _dispatch_message
+    await self._on_message(message)
+../../../../Documents/GitHub/tldw_chatbook/.venv/lib/python3.12/site-packages/textual/message_pump.py:829: in _on_message
+    await invoke(method, message)
+../../../../Documents/GitHub/tldw_chatbook/.venv/lib/python3.12/site-packages/textual/_callback.py:96: in invoke
+    return await _invoke(callback, *params)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../../../Documents/GitHub/tldw_chatbook/.venv/lib/python3.12/site-packages/textual/_callback.py:56: in _invoke
+    result = callback(*params[:parameter_count])
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+tldw_chatbook/UI/Screens/library_screen.py:28224: in handle_library_prompt_conflict_save_new
+    return self._prompts_controller.handle_library_prompt_conflict_save_new(event)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+tldw_chatbook/UI/Library_Modules/library_prompts_controller.py:5306: in handle_library_prompt_conflict_save_new
+    artifact_fields = self._library_prompt_artifact_fields() if artifact_type == "mixin" else {}
+                      ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+tldw_chatbook/UI/Library_Modules/library_prompts_controller.py:4004: in _library_prompt_artifact_fields
+    definition = self.query_one(PromptMixinEditor).read_definition()
+                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+tldw_chatbook/Widgets/Prompts/prompt_mixin_editor.py:60: in read_definition
+    return LiteralMixinDefinition(
+<string>:7: in __init__
+    ???
+tldw_chatbook/Prompt_Management/prompt_artifact_models.py:100: in __post_init__
+    raise ValueError("Mix-in body must be a non-empty string.")
+E   ValueError: Mix-in body must be a non-empty string.
+___ test_invalid_mixin_copy_action_keeps_raw_draft_then_recovers[duplicate] ____
+Tests/UI/test_library_prompt_mixins.py:915: in test_invalid_mixin_copy_action_keeps_raw_draft_then_recovers
+    await _wait_for_condition(
+Tests/UI/test_library_shell.py:4040: in _wait_for_condition
+    raise AssertionError(message() if callable(message) else message)
+E   AssertionError: Invalid copy action did not show Instructions validation
+
+During handling of the above exception, another exception occurred:
+Tests/UI/test_library_prompt_mixins.py:833: in test_invalid_mixin_copy_action_keeps_raw_draft_then_recovers
+    async with host.run_test(size=(120, 40)) as pilot:
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/contextlib.py:231: in __aexit__
+    await self.gen.athrow(value)
+../../../../Documents/GitHub/tldw_chatbook/.venv/lib/python3.12/site-packages/textual/app.py:2218: in run_test
+    raise self._exception
+../../../../Documents/GitHub/tldw_chatbook/.venv/lib/python3.12/site-packages/textual/message_pump.py:663: in _process_messages_loop
+    await self._dispatch_message(message)
+../../../../Documents/GitHub/tldw_chatbook/.venv/lib/python3.12/site-packages/textual/message_pump.py:739: in _dispatch_message
+    await self._on_message(message)
+../../../../Documents/GitHub/tldw_chatbook/.venv/lib/python3.12/site-packages/textual/message_pump.py:829: in _on_message
+    await invoke(method, message)
+../../../../Documents/GitHub/tldw_chatbook/.venv/lib/python3.12/site-packages/textual/_callback.py:96: in invoke
+    return await _invoke(callback, *params)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../../../Documents/GitHub/tldw_chatbook/.venv/lib/python3.12/site-packages/textual/_callback.py:56: in _invoke
+    result = callback(*params[:parameter_count])
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+tldw_chatbook/UI/Screens/library_screen.py:28075: in handle_library_prompt_duplicate
+    return self._prompts_controller.handle_library_prompt_duplicate(event)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+tldw_chatbook/UI/Library_Modules/library_prompts_controller.py:4226: in handle_library_prompt_duplicate
+    artifact_fields: dict[str, Any] = self._library_prompt_artifact_fields() if editor_state.artifact_type == "mixin" else {}
+                                      ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+tldw_chatbook/UI/Library_Modules/library_prompts_controller.py:4004: in _library_prompt_artifact_fields
+    definition = self.query_one(PromptMixinEditor).read_definition()
+                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+tldw_chatbook/Widgets/Prompts/prompt_mixin_editor.py:60: in read_definition
+    return LiteralMixinDefinition(
+<string>:7: in __init__
+    ???
+tldw_chatbook/Prompt_Management/prompt_artifact_models.py:100: in __post_init__
+    raise ValueError("Mix-in body must be a non-empty string.")
+E   ValueError: Mix-in body must be a non-empty string.
+============================= slowest 25 durations =============================
+18.14s call     Tests/UI/test_library_prompt_mixins.py::test_invalid_mixin_copy_action_keeps_raw_draft_then_recovers[save_as_new]
+16.86s call     Tests/UI/test_library_prompt_mixins.py::test_invalid_mixin_copy_action_keeps_raw_draft_then_recovers[duplicate]
+
+(4 durations < 1s hidden.)
+=========================== short test summary info ============================
+FAILED Tests/UI/test_library_prompt_mixins.py::test_invalid_mixin_copy_action_keeps_raw_draft_then_recovers[save_as_new]
+FAILED Tests/UI/test_library_prompt_mixins.py::test_invalid_mixin_copy_action_keeps_raw_draft_then_recovers[duplicate]
+2 failed, 20 deselected in 37.82s

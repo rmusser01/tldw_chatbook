@@ -12,6 +12,39 @@ from Tests.private_profile import private_profile_test
 pytestmark = [pytest.mark.bootstrap_profile, pytest.mark.timeout(300)]
 
 
+@pytest.mark.parametrize("pending_read", [False, True])
+def test_empty_image_selection_needs_no_reader_and_preserves_owned_work(
+    tmp_path, pending_read
+):
+    from types import SimpleNamespace
+
+    from tldw_chatbook.UI.Console_Modules.image import ConsoleImageController
+
+    def unexpected_worker(coro, **kwargs):
+        coro.close()
+        pytest.fail("An empty transcript cannot need a recovered-media read")
+
+    retained = object()
+    tasks = {retained} if pending_read else set()
+    rows, selection = {"prior": object()}, object()
+    owner = SimpleNamespace(
+        app_instance=SimpleNamespace(
+            recovered_media_root=tmp_path, recovered_media_profile="empty"
+        ),
+        _screen=SimpleNamespace(run_worker=unexpected_worker),
+        _recovered_image_tasks=tasks,
+        _recovered_image_paused=False,
+        _recovered_image_rows=rows,
+        _recovered_image_lookup=selection,
+    )
+    assert ConsoleImageController._recovered_console_image_specs(
+        owner, [], object(), object()
+    ) == ({}, set())
+    assert owner._recovered_image_tasks == ({retained} if pending_read else set())
+    assert owner._recovered_image_rows is rows
+    assert owner._recovered_image_lookup is selection
+
+
 @pytest.mark.asyncio
 @pytest.mark.parametrize("detached", [False, True], ids=["current", "detached"])
 @private_profile_test

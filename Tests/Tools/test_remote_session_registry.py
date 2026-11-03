@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import subprocess
+import sys
 import threading
 import time
 
@@ -10,6 +12,33 @@ import pytest
 from tldw_chatbook.Tools.remote_session_registry import RemoteSessionRegistry
 from tldw_chatbook.Tools.remote_session_worker import SessionStartError
 from tldw_chatbook.Tools.remote_workspace_transport import TransportFailure, TransportFailureKind
+
+
+def test_run_end_registry_retains_tombstones_without_loading_ssh_transport():
+    """A local run's cleanup owns retirement, but never needs SSH transport."""
+    subprocess.run(
+        [sys.executable, "-c", """
+import sys
+from tldw_chatbook.Tools.remote_session_registry import (
+    close_remote_sessions, close_all_remote_sessions, get_session_registry,
+)
+close_remote_sessions("retired-local-run")
+registry = get_session_registry()
+assert "retired-local-run" in registry._closed_keys
+assert "tldw_chatbook.Tools.remote_session_worker" not in sys.modules
+assert "tldw_chatbook.Tools.remote_workspace_transport" not in sys.modules
+close_all_remote_sessions()
+assert registry._shutdown
+assert "tldw_chatbook.Tools.remote_session_worker" not in sys.modules
+assert "tldw_chatbook.Tools.remote_workspace_transport" not in sys.modules
+from tldw_chatbook.Tools.remote_session_registry import SessionStartError
+from tldw_chatbook.Tools.remote_session_worker import SessionStartError as Original
+assert SessionStartError is Original
+"""],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
 
 
 class FakeWorker:
@@ -214,6 +243,22 @@ def test_app_exit_closes_sessions_before_masters_in_one_best_effort_try():
         for node in ast.walk(tree)
         if isinstance(node, ast.AsyncFunctionDef) and node.name == "on_unmount"
     )
+    assert any(
+        isinstance(node, ast.Await)
+        and isinstance(node.value, ast.Call)
+        and ast.unparse(node.value.func) == "_drain_app_unmount_services"
+        and ast.unparse(node.value.args[0]) == "self"
+        for node in ast.walk(unmount)
+    ), "The app must await its extracted service drain before leaving unmount"
+    services = ast.parse(
+        (Path(tldw_chatbook.__file__).parent / "app_shutdown.py").read_text("utf-8")
+    )
+    drain = next(
+        node
+        for node in ast.walk(services)
+        if isinstance(node, ast.AsyncFunctionDef)
+        and node.name == "_drain_app_unmount_services"
+    )
 
     def calls_in(stmts):
         found = []
@@ -228,7 +273,7 @@ def test_app_exit_closes_sessions_before_masters_in_one_best_effort_try():
 
     tries = [
         node
-        for node in ast.walk(unmount)
+        for node in ast.walk(drain)
         if isinstance(node, ast.Try) and calls_in(node.body)
     ]
     innermost = min(tries, key=lambda node: node.end_lineno - node.lineno)

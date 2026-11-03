@@ -1,0 +1,4 @@
+{
+  "sha256": "629a6081e9d9cc537ba91e7f8b9b8eda8e9d10a59bd8044aaa6b01736914efd4",
+  "raw_text": "..                                                                       [100%]\n============================= slowest 25 durations =============================\n44.27s call     Tests/UI/test_console_session_tab_close.py::test_session_close_pending_journeys\n34.32s call     Tests/UI/test_console_session_tab_close.py::test_session_close_race_geometry_and_fleet_journeys\n\n(4 durations < 1s hidden.)\n2 passed in 81.00s (0:01:20)\n"
+}

@@ -230,3 +230,4 @@ Do not reuse numbers.
 | [ADR-253](253-compact-discovery-before-plain-chat.md) | Accepted | Try budgeted compact discovery before plain chat and retain its ceiling during schema loading. |
 
 | [ADR-282: Opt-in Console OS notification dispatch](282-console-os-notification-dispatch.md) | Accepted | Separate default-off desktop channel with fixed argv, bounded literal identity, content-free diagnostics, and timeout ownership through orderly process exit. |
+| [ADR-286](286-console-prompt-mix-ins.md) | Accepted | Add literal Before/After Mix-in library artifacts through the existing composer Prompts button, with chat-owned selections, exact retry snapshots and current-send-only caching semantics. |

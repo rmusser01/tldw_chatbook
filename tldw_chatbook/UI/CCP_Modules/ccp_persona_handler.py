@@ -188,7 +188,11 @@ class CCPPersonaHandler:
             RuntimeError: When the scope service cannot list personas.
             ValueError: When the current mode cannot list them.
         """
-        service = getattr(self.app_instance, "character_persona_scope_service", None)
+        app_owner = self.app_instance
+        try:
+            service = app_owner.character_persona_scope_service
+        except AttributeError:
+            service = None
         if service is None or not hasattr(service, "list_persona_profiles"):
             raise RuntimeError("Persona service is unavailable.")
         return await self._page_persona_profiles(service)

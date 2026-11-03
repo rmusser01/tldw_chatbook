@@ -10,7 +10,7 @@ from collections.abc import Callable, Iterable, Iterator, Mapping, Sequence
 from contextlib import contextmanager, nullcontext
 from dataclasses import dataclass, field, replace
 from types import MappingProxyType
-from typing import TYPE_CHECKING, Generic, Literal, TypeVar, cast, overload
+from typing import TYPE_CHECKING, Literal, cast, overload
 from weakref import ReferenceType, ref
 
 from tldw_chatbook.Chat.console_prepared_request import freeze_json
@@ -556,379 +556,33 @@ class ReconstructedRequestHeader:
     system_composition: tuple[Mapping[str, object], ...]
 
 
-SurfaceReferenceKey = tuple[str, str, str]
+from . import console_trace_models as _trace_sequence_models
 
-
-class _SequenceNode:
-    """One mutable node in an ephemeral implicit sequence tree."""
-
-    __slots__ = (
-        "sequence",
-        "key",
-        "priority",
-        "left",
-        "right",
-        "parent",
-        "size",
-        "max_sequence",
-    )
-
-    def __init__(self, sequence: int, key: SurfaceReferenceKey) -> None:
-        self.sequence = sequence
-        self.key = key
-        self.priority = _sequence_priority(sequence)
-        self.left: _SequenceNode | None = None
-        self.right: _SequenceNode | None = None
-        self.parent: _SequenceNode | None = None
-        self.size = 1
-        self.max_sequence = sequence
-
-
-def _sequence_priority(sequence: int) -> int:
-    """Return a deterministic well-distributed treap priority."""
-
-    mask = (1 << 64) - 1
-    value = (sequence + 0x9E3779B97F4A7C15) & mask
-    value = ((value ^ (value >> 30)) * 0xBF58476D1CE4E5B9) & mask
-    value = ((value ^ (value >> 27)) * 0x94D049BB133111EB) & mask
-    return value ^ (value >> 31)
-
-
-def _sequence_size(node: _SequenceNode | None) -> int:
-    return 0 if node is None else node.size
-
-
-def _sequence_pull(node: _SequenceNode) -> None:
-    node.size = 1 + _sequence_size(node.left) + _sequence_size(node.right)
-    node.max_sequence = max(
-        node.sequence,
-        -1 if node.left is None else node.left.max_sequence,
-        -1 if node.right is None else node.right.max_sequence,
-    )
-    if node.left is not None:
-        node.left.parent = node
-    if node.right is not None:
-        node.right.parent = node
-
-
-def _sequence_merge(
-    left: _SequenceNode | None,
-    right: _SequenceNode | None,
-) -> _SequenceNode | None:
-    if left is None:
-        if right is not None:
-            right.parent = None
-        return right
-    if right is None:
-        left.parent = None
-        return left
-    if left.priority < right.priority:
-        left.right = _sequence_merge(left.right, right)
-        _sequence_pull(left)
-        left.parent = None
-        return left
-    right.left = _sequence_merge(left, right.left)
-    _sequence_pull(right)
-    right.parent = None
-    return right
-
-
-def _sequence_split(
-    root: _SequenceNode | None,
-    count: int,
-) -> tuple[_SequenceNode | None, _SequenceNode | None]:
-    if root is None:
-        return None, None
-    if _sequence_size(root.left) >= count:
-        left, root.left = _sequence_split(root.left, count)
-        _sequence_pull(root)
-        root.parent = None
-        if left is not None:
-            left.parent = None
-        return left, root
-    root.right, right = _sequence_split(
-        root.right,
-        count - _sequence_size(root.left) - 1,
-    )
-    _sequence_pull(root)
-    root.parent = None
-    if right is not None:
-        right.parent = None
-    return root, right
-
-
-def _sequence_rank(node: _SequenceNode) -> int:
-    rank = _sequence_size(node.left)
-    current = node
-    while current.parent is not None:
-        parent = current.parent
-        if current is parent.right:
-            rank += _sequence_size(parent.left) + 1
-        current = parent
-    return rank
-
-
-def _sequence_delete(
-    root: _SequenceNode | None,
-    node: _SequenceNode,
-) -> _SequenceNode | None:
-    position = _sequence_rank(node)
-    left, remainder = _sequence_split(root, position)
-    removed, right = _sequence_split(remainder, 1)
-    if removed is not node:
-        raise ValueError("surface_replacement_order")
-    node.left = node.right = node.parent = None
-    return _sequence_merge(left, right)
-
-
-def _sequence_insert(
-    root: _SequenceNode | None,
-    position: int,
-    node: _SequenceNode,
-) -> _SequenceNode | None:
-    left, right = _sequence_split(root, position)
-    return _sequence_merge(_sequence_merge(left, node), right)
-
-
-def _sequence_entries(
-    root: _SequenceNode | None,
-) -> tuple[tuple[int, SurfaceReferenceKey], ...]:
-    result: list[tuple[int, SurfaceReferenceKey]] = []
-    stack: list[_SequenceNode] = []
-    current = root
-    while current is not None or stack:
-        while current is not None:
-            stack.append(current)
-            current = current.left
-        current = stack.pop()
-        result.append((current.sequence, current.key))
-        current = current.right
-    return tuple(result)
-
-
-_SequenceValue = TypeVar("_SequenceValue")
-
-
-@dataclass(frozen=True, slots=True)
-class _PersistentSequenceNode(Generic[_SequenceValue]):
-    """One path-copying implicit-treap node for live surface projections."""
-
-    sequence: int
-    value: _SequenceValue
-    domain: str | None = None
-    left: _PersistentSequenceNode[_SequenceValue] | None = None
-    right: _PersistentSequenceNode[_SequenceValue] | None = None
-    priority: int = field(init=False)
-    size: int = field(init=False)
-    min_sequence: int = field(init=False)
-    max_sequence: int = field(init=False)
-    message_count: int = field(init=False)
-    continuation_count: int = field(init=False)
-
-    def __post_init__(self) -> None:
-        left = self.left
-        right = self.right
-        object.__setattr__(self, "priority", _sequence_priority(self.sequence))
-        object.__setattr__(
-            self,
-            "size",
-            1
-            + (0 if left is None else left.size)
-            + (0 if right is None else right.size),
-        )
-        object.__setattr__(
-            self,
-            "min_sequence",
-            min(
-                self.sequence,
-                self.sequence if left is None else left.min_sequence,
-                self.sequence if right is None else right.min_sequence,
-            ),
-        )
-        object.__setattr__(
-            self,
-            "max_sequence",
-            max(
-                self.sequence,
-                self.sequence if left is None else left.max_sequence,
-                self.sequence if right is None else right.max_sequence,
-            ),
-        )
-        object.__setattr__(
-            self,
-            "message_count",
-            int(self.domain == "messages_payload")
-            + (0 if left is None else left.message_count)
-            + (0 if right is None else right.message_count),
-        )
-        object.__setattr__(
-            self,
-            "continuation_count",
-            int(self.domain == "provider_continuations")
-            + (0 if left is None else left.continuation_count)
-            + (0 if right is None else right.continuation_count),
-        )
-
-
-def _persistent_size(
-    root: _PersistentSequenceNode[_SequenceValue] | None,
-) -> int:
-    return 0 if root is None else root.size
-
-
-def _persistent_merge(
-    left: _PersistentSequenceNode[_SequenceValue] | None,
-    right: _PersistentSequenceNode[_SequenceValue] | None,
-) -> _PersistentSequenceNode[_SequenceValue] | None:
-    if left is None:
-        return right
-    if right is None:
-        return left
-    if left.priority < right.priority:
-        return _PersistentSequenceNode(
-            left.sequence,
-            left.value,
-            left.domain,
-            left.left,
-            _persistent_merge(left.right, right),
-        )
-    return _PersistentSequenceNode(
-        right.sequence,
-        right.value,
-        right.domain,
-        _persistent_merge(left, right.left),
-        right.right,
-    )
-
-
-def _persistent_split(
-    root: _PersistentSequenceNode[_SequenceValue] | None,
-    count: int,
-) -> tuple[
-    _PersistentSequenceNode[_SequenceValue] | None,
-    _PersistentSequenceNode[_SequenceValue] | None,
-]:
-    if root is None:
-        return None, None
-    left_size = 0 if root.left is None else root.left.size
-    if left_size >= count:
-        left, remainder = _persistent_split(root.left, count)
-        return left, _PersistentSequenceNode(
-            root.sequence,
-            root.value,
-            root.domain,
-            remainder,
-            root.right,
-        )
-    remainder, right = _persistent_split(root.right, count - left_size - 1)
-    return (
-        _PersistentSequenceNode(
-            root.sequence,
-            root.value,
-            root.domain,
-            root.left,
-            remainder,
-        ),
-        right,
-    )
-
-
-def _persistent_first_position_in_range(
-    root: _PersistentSequenceNode[_SequenceValue] | None,
-    start: int,
-    end: int,
-) -> int | None:
-    if root is None or root.max_sequence < start or root.min_sequence > end:
-        return None
-    left = root.left
-    left_position = _persistent_first_position_in_range(left, start, end)
-    if left_position is not None:
-        return left_position
-    left_size = _persistent_size(left)
-    if start <= root.sequence <= end:
-        return left_size
-    right_position = _persistent_first_position_in_range(root.right, start, end)
-    if right_position is None:
-        return None
-    return left_size + 1 + right_position
-
-
-def _persistent_without_sequence_range(
-    root: _PersistentSequenceNode[_SequenceValue] | None,
-    start: int,
-    end: int,
-) -> _PersistentSequenceNode[_SequenceValue] | None:
-    if root is None or root.max_sequence < start or root.min_sequence > end:
-        return root
-    if start <= root.min_sequence and root.max_sequence <= end:
-        return None
-    left = _persistent_without_sequence_range(root.left, start, end)
-    right = _persistent_without_sequence_range(root.right, start, end)
-    if start <= root.sequence <= end:
-        return _persistent_merge(left, right)
-    if left is root.left and right is root.right:
-        return root
-    return _PersistentSequenceNode(
-        root.sequence,
-        root.value,
-        root.domain,
-        left,
-        right,
-    )
-
-
-def _persistent_insert_entries(
-    root: _PersistentSequenceNode[_SequenceValue] | None,
-    position: int,
-    entries: Iterable[tuple[int, _SequenceValue, str | None]],
-) -> _PersistentSequenceNode[_SequenceValue] | None:
-    inserted: _PersistentSequenceNode[_SequenceValue] | None = None
-    for sequence, value, domain in entries:
-        inserted = _persistent_merge(
-            inserted,
-            _PersistentSequenceNode(sequence, value, domain),
-        )
-    left, right = _persistent_split(root, position)
-    return _persistent_merge(_persistent_merge(left, inserted), right)
-
-
-def _persistent_iter(
-    root: _PersistentSequenceNode[_SequenceValue] | None,
-) -> Iterator[tuple[int, _SequenceValue, str | None]]:
-    stack: list[_PersistentSequenceNode[_SequenceValue]] = []
-    current = root
-    while current is not None or stack:
-        while current is not None:
-            stack.append(current)
-            current = current.left
-        current = stack.pop()
-        yield current.sequence, current.value, current.domain
-        current = current.right
-
-
-def _persistent_domain_count_before(
-    root: _PersistentSequenceNode[_SequenceValue] | None,
-    position: int,
-    domain: str,
-) -> int:
-    count = 0
-    current = root
-    remaining = position
-    while current is not None and remaining > 0:
-        left_size = _persistent_size(current.left)
-        if remaining <= left_size:
-            current = current.left
-            continue
-        if current.left is not None:
-            count += (
-                current.left.message_count
-                if domain == "messages_payload"
-                else current.left.continuation_count
-            )
-        count += int(current.domain == domain)
-        remaining -= left_size + 1
-        current = current.right
-    return count
+SurfaceReferenceKey = _trace_sequence_models.SurfaceReferenceKey
+_SequenceNode = _trace_sequence_models._SequenceNode
+_sequence_priority = _trace_sequence_models._sequence_priority
+_sequence_size = _trace_sequence_models._sequence_size
+_sequence_pull = _trace_sequence_models._sequence_pull
+_sequence_merge = _trace_sequence_models._sequence_merge
+_sequence_split = _trace_sequence_models._sequence_split
+_sequence_rank = _trace_sequence_models._sequence_rank
+_sequence_delete = _trace_sequence_models._sequence_delete
+_sequence_insert = _trace_sequence_models._sequence_insert
+_sequence_entries = _trace_sequence_models._sequence_entries
+_SequenceValue = _trace_sequence_models._SequenceValue
+_PersistentSequenceNode = _trace_sequence_models._PersistentSequenceNode
+_persistent_size = _trace_sequence_models._persistent_size
+_persistent_merge = _trace_sequence_models._persistent_merge
+_persistent_split = _trace_sequence_models._persistent_split
+_persistent_first_position_in_range = (
+    _trace_sequence_models._persistent_first_position_in_range
+)
+_persistent_without_sequence_range = (
+    _trace_sequence_models._persistent_without_sequence_range
+)
+_persistent_insert_entries = _trace_sequence_models._persistent_insert_entries
+_persistent_iter = _trace_sequence_models._persistent_iter
+_persistent_domain_count_before = _trace_sequence_models._persistent_domain_count_before
 
 
 @dataclass(frozen=True, slots=True)
@@ -3556,6 +3210,34 @@ class ConsoleTraceService:
         if allow_failed or complete_assistant_id is not None:
             try:
                 metadata = json.loads(raw_metadata or "{}")
+                if (
+                    type(metadata) is dict
+                    and "mixin_snapshot_schema_version" in metadata
+                ):
+                    from tldw_chatbook.DB.console_prompt_mixins import read_attempt
+
+                    attempt_id = metadata.get("mixin_attempt_id")
+                    anchors = cursor.execute(
+                        "SELECT user_message_id,assistant_message_id FROM console_prompt_mixin_attempts WHERE conversation_id=? AND attempt_id=?",
+                        (conversation_id, attempt_id),
+                    ).fetchone()
+                    if (
+                        type(metadata["mixin_snapshot_schema_version"]) is not int
+                        or metadata["mixin_snapshot_schema_version"] != 1
+                        or anchors is None
+                        or tuple(anchors) != (previous_turn_id, assistant_id)
+                        or read_attempt(
+                            cursor, conversation_id, attempt_id=attempt_id
+                        ).status
+                        != "recorded"
+                    ):
+                        return None
+                    metadata = {
+                        key: value
+                        for key, value in metadata.items()
+                        if key
+                        not in {"mixin_attempt_id", "mixin_snapshot_schema_version"}
+                    }
             except (TypeError, ValueError, RecursionError):
                 return None
             # This narrow recovery carries plain saved messages only. Canvas,
@@ -3681,6 +3363,124 @@ class ConsoleTraceService:
             seen.add(revision.source_message_id)
             next_turn_id = revision.source_message_id
         return None, ()
+
+    def operational_replacement_attempt(
+        self,
+        cursor: sqlite3.Cursor,
+        *,
+        conversation_id: str,
+        source_user_id: str,
+        current_user_id: str,
+        assistant_revision_id: str,
+        origin_call_id: str,
+    ) -> str | None:
+        """Prove a selected clean response from its exact accepted operational attempt."""
+        from tldw_chatbook.DB.console_prompt_mixins import read_attempt
+        from tldw_chatbook.Utils.input_validation import strict_json_loads
+
+        revision = self.repository.get_semantic_revision(cursor, assistant_revision_id)
+        if (
+            revision is None
+            or revision.normalized_role != "assistant"
+            or revision.source_conversation_id != conversation_id
+            or revision.live_message_id != revision.source_message_id
+        ):
+            return None
+        row = cursor.execute(
+            "SELECT response.metadata_json FROM messages response "
+            "JOIN messages current ON current.parent_message_id=response.id "
+            "JOIN messages source ON source.id=response.parent_message_id "
+            "WHERE response.id=? AND response.conversation_id=? AND response.deleted=0 "
+            "AND response.role='assistant' AND response.assistant_generation_state='complete' "
+            "AND current.id=? AND current.conversation_id=response.conversation_id "
+            "AND current.role='user' AND current.deleted=0 "
+            "AND source.id=? AND source.conversation_id=response.conversation_id "
+            "AND source.role='user' AND source.deleted=0 "
+            "AND NOT EXISTS(SELECT 1 FROM console_dispatch_checkpoints c "
+            "WHERE c.conversation_id=response.conversation_id AND c.user_message_id=source.id) "
+            "AND ?=(SELECT revision_id FROM console_trace_semantic_revisions "
+            "WHERE live_message_id=response.id ORDER BY revision_sequence DESC LIMIT 1)",
+            (
+                revision.source_message_id,
+                conversation_id,
+                current_user_id,
+                source_user_id,
+                assistant_revision_id,
+            ),
+        ).fetchone()
+        if row is None:
+            return None
+        try:
+            metadata = strict_json_loads(row[0])
+            if (
+                type(metadata) is not dict
+                or type(metadata.get("mixin_snapshot_schema_version")) is not int
+                or metadata["mixin_snapshot_schema_version"] != 1
+                or type(metadata.get("mixin_attempt_id")) is not str
+            ):
+                return None
+            attempt_id = metadata["mixin_attempt_id"]
+            anchors = cursor.execute(
+                "SELECT user_message_id,assistant_message_id,replaces_attempt_id,result_revision_id FROM console_prompt_mixin_attempts a "
+                "WHERE conversation_id=? AND attempt_id=? AND NOT EXISTS("
+                "SELECT 1 FROM console_prompt_mixin_attempts successor "
+                "WHERE successor.conversation_id=a.conversation_id "
+                "AND successor.assistant_message_id=a.assistant_message_id "
+                "AND successor.retry_of_attempt_id=a.attempt_id)",
+                (conversation_id, attempt_id),
+            ).fetchone()
+            if (
+                anchors is None
+                or tuple(anchors[:2]) != (source_user_id, revision.source_message_id)
+                or anchors[2] is None
+                or anchors[3] != assistant_revision_id
+                or read_attempt(cursor, conversation_id, attempt_id=attempt_id).status
+                != "recorded"
+            ):
+                return None
+            # An actual accepted replacement must lead to this exact traced call.
+            # Each hop is bounded, immutable, and independently readable.
+            seen = {attempt_id}
+            predecessor = anchors[2]
+            for _ in range(MAX_SURFACE_REPLACEMENT_SPAN):
+                if predecessor in seen:
+                    return None
+                seen.add(predecessor)
+                prior = cursor.execute(
+                    "SELECT user_message_id,replaces_attempt_id,trace_call_id FROM console_prompt_mixin_attempts "
+                    "WHERE conversation_id=? AND attempt_id=?",
+                    (conversation_id, predecessor),
+                ).fetchone()
+                if (
+                    prior is None
+                    or prior[0] != source_user_id
+                    or read_attempt(
+                        cursor, conversation_id, attempt_id=predecessor
+                    ).status
+                    != "recorded"
+                ):
+                    return None
+                if prior[2] == origin_call_id:
+                    call = self.repository.get_call(cursor, origin_call_id)
+                    owner = (
+                        None
+                        if call is None
+                        else self.repository.get_owner(cursor, call.owner_id)
+                    )
+                    if (
+                        call is not None
+                        and call.turn_id == source_user_id
+                        and owner is not None
+                        and owner.conversation_id == conversation_id
+                    ):
+                        return attempt_id
+                    return None
+                predecessor = prior[1]
+                if predecessor is None:
+                    return None
+            return None
+        except (ValueError, TypeError, RecursionError):
+            return None
 
     def _validate_completed_tool_turn(
         self,

@@ -20,6 +20,7 @@ import tldw_chatbook.app  # noqa: F401  -- collection-time import (lessons-testi
 import tldw_chatbook.UI.Persona_Modules.roleplay_frame_state as frame_state
 import tldw_chatbook.UI.Screens.personas_screen as personas_screen_module
 import tldw_chatbook.Widgets.Persona_Widgets.personas_library_pane as pane_module
+import tldw_chatbook.Widgets.Persona_Widgets.roleplay_item_list as item_list_module
 from rich.style import Style
 from textual import events
 from textual.app import ComposeResult
@@ -625,9 +626,10 @@ def test_the_screen_keeps_the_list_seams_tests_patch():
 def test_the_items_list_uses_only_public_option_list_api():
     """Spec 1.5.6: public ``OptionList`` API only. Textual's private line and
     render caches (``_lines``, ``_clear_caches``) change between releases."""
-    source = Path(pane_module.__file__).read_text(encoding="utf-8")
-    for private in ("._lines", "._clear_caches", "._option_render_cache"):
-        assert private not in source, private
+    for module in (pane_module, item_list_module):
+        source = Path(module.__file__).read_text(encoding="utf-8")
+        for private in ("._lines", "._clear_caches", "._option_render_cache"):
+            assert private not in source, private
 
 
 def test_a_fence_differs_when_any_field_differs():
@@ -779,7 +781,7 @@ def test_the_window_state_has_no_second_copy_in_the_list_or_the_screen():
         "_reload_on_return",
         "_character_page_generation",
     )
-    for module in (pane_module, personas_screen_module):
+    for module in (pane_module, item_list_module, personas_screen_module):
         source = Path(module.__file__).read_text(encoding="utf-8")
         for name in names:
             assert not re.search(rf"(?<![A-Za-z0-9_]){name}(?![A-Za-z0-9_])", source), (

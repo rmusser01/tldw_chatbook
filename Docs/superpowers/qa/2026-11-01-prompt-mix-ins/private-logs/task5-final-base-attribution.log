@@ -1,0 +1,29 @@
+FFFFFFFFFFF                                                              [100%]
+=================================== FAILURES ===================================
+/private/tmp/task5-baseline/Tests/Chat/test_console_trace_current_turn_transforms.py:278: AssertionError: (ConsoleSubmitResult(accepted=True, should_clear_draft=True, visible_copy='Trace capture could not start. Retry, Send ...='4d3c10f1-a0ce-4a8c-9d5c-44c642de4d08', provider_started=False, queue_notice=''), ['completed_tool_turn_unavailable'])
+/private/tmp/task5-baseline/Tests/Chat/test_console_trace_current_turn_transforms.py:267: AssertionError: assert 'error' == 'stopped'
+/private/tmp/task5-baseline/Tests/Chat/test_console_regenerate_branching.py:170: AssertionError: assert '1b3a98c2-609...-94e29853177a' == '56f74e7d-274...-95b2ac849408'
+/private/tmp/task5-baseline/Tests/Chat/test_console_regenerate_branching.py:197: AssertionError: assert ['f9b9e683-7a...c81bf8667d79'] == ['f9b9e683-7a...1465900fe599']
+/private/tmp/task5-baseline/tldw_chatbook/Chat/console_chat_store.py:17740: RuntimeError: Generation projection persistence is unavailable.
+/private/tmp/task5-baseline/tldw_chatbook/Chat/console_chat_store.py:17740: RuntimeError: Generation projection persistence is unavailable.
+/private/tmp/task5-baseline/tldw_chatbook/Chat/console_chat_controller.py:19916: TypeError: test_edit_and_resend_skill_refusal_leaves_no_pending_node.<locals>._refuse() takes 1 positional argument but 2 were given
+/private/tmp/task5-baseline/Tests/Chat/test_console_edit_resend.py:369: assert False is True
+/private/tmp/task5-baseline/Tests/Chat/test_console_turn_resend.py:547: ValueError: not enough values to unpack (expected 2, got 1)
+/Users/macbook-dev/.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/base_events.py:691: RuntimeError: coroutine raised StopIteration
+/Users/macbook-dev/.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/base_events.py:691: RuntimeError: coroutine raised StopIteration
+============================= slowest 25 durations =============================
+
+(25 durations < 1s hidden.)
+=========================== short test summary info ============================
+FAILED Tests/Chat/test_console_trace_current_turn_transforms.py::test_next_send_after_failed_transformed_call[error]
+FAILED Tests/Chat/test_console_trace_current_turn_transforms.py::test_next_send_after_failed_transformed_call[stopped]
+FAILED Tests/Chat/test_console_regenerate_branching.py::test_regenerate_stream_failure_retains_failed_sibling_and_restores_anchor
+FAILED Tests/Chat/test_console_regenerate_branching.py::test_regenerate_mid_conversation_failure_restores_selected_anchor_not_former_tail
+FAILED Tests/Chat/test_console_regenerate_branching.py::test_regenerate_persists_new_sibling_when_store_has_persistence
+FAILED Tests/Chat/test_console_edit_resend.py::test_edit_and_resend_forks_user_sibling_and_streams_reply
+FAILED Tests/Chat/test_console_edit_resend.py::test_edit_and_resend_skill_refusal_leaves_no_pending_node
+FAILED Tests/Chat/test_console_edit_resend.py::test_edit_and_resend_carries_anchor_attachments
+FAILED Tests/Chat/test_console_turn_resend.py::test_refused_echo_resend_consumes_its_recovery_and_the_composer_copy
+FAILED Tests/Chat/test_console_turn_resend.py::test_resend_applies_the_vision_gate_to_the_turns_attachments
+FAILED Tests/Chat/test_console_turn_resend.py::test_refused_echo_resend_sends_its_own_restaged_attachments_once
+11 failed in 4.99s

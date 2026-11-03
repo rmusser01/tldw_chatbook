@@ -131,10 +131,16 @@ def _runtime(host: Any) -> Any:
     app = getattr(host, "app_instance", None)
     # Listener registration/removal must not invoke the app's lazy property
     # (or wait on its construction lock). Async readers prepare it below.
-    state = getattr(app, "__dict__", {})
+    try:
+        state = app.__dict__
+    except AttributeError:
+        state = {}
     if "_notes_sync_runtime_owner" in state:
         return state["_notes_sync_runtime_owner"]
-    return getattr(app, "notes_sync_runtime_owner", None)
+    try:
+        return app.notes_sync_runtime_owner
+    except AttributeError:
+        return None
 
 
 async def _prepare_runtime(host: Any) -> Any:
@@ -149,12 +155,14 @@ async def _prepare_runtime(host: Any) -> Any:
         # The original app property coalesces construction under its lock;
         # this waiter and its checked config reads stay off the UI loop.
         runtime = await run_service(reader)
-        if (
-            runtime is None
-            and getattr(host.app_instance, "_notes_sync_runtime_build_failure", None)
-            is not None
-        ):
-            return _COULD_NOT_SAY
+        if runtime is None:
+            app = host.app_instance
+            try:
+                build_failure = app._notes_sync_runtime_build_failure
+            except AttributeError:
+                build_failure = None
+            if build_failure is not None:
+                return _COULD_NOT_SAY
         return runtime
     return None
 

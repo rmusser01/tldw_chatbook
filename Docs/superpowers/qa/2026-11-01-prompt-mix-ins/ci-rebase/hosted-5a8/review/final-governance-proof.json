@@ -1,0 +1,85 @@
+{
+  "budget_tables": {
+    "Tests/Architecture/test_module_size_ratchet.py": {
+      "head5a8": {
+        "old_rows": 98,
+        "removed": [],
+        "raised": []
+      },
+      "dev88af": {
+        "old_rows": 83,
+        "removed": [],
+        "raised": []
+      }
+    },
+    "Tests/Architecture/test_library_modules_size_ratchet.py": {
+      "head5a8": {
+        "old_rows": 25,
+        "removed": [],
+        "raised": []
+      },
+      "dev88af": {
+        "old_rows": 25,
+        "removed": [],
+        "raised": []
+      }
+    },
+    "Tests/Architecture/test_screen_size_ratchet.py": {
+      "head5a8": {
+        "old_rows": 2,
+        "removed": [],
+        "raised": []
+      },
+      "dev88af": {
+        "old_rows": 2,
+        "removed": [],
+        "raised": []
+      }
+    }
+  },
+  "exact_final_sizes": {
+    "tldw_chatbook/UI/Console_Modules/session.py": {
+      "lines": 6973
+    },
+    "tldw_chatbook/UI/Console_Modules/composer_run_controls.py": {
+      "lines": 1567
+    },
+    "tldw_chatbook/UI/Library_Modules/library_media_controller.py": {
+      "lines": 5246
+    },
+    "tldw_chatbook/UI/Library_Modules/canvas_sync.py": {
+      "lines": 1314
+    },
+    "tldw_chatbook/UI/Screens/library_screen.py": {
+      "lines": 38177,
+      "direct_methods": 1373
+    }
+  },
+  "census": {
+    "old_count": 1335,
+    "new_count": 1336,
+    "old_prefix_unchanged": true,
+    "appended": [
+      "Tests/UI/test_response_rules_end_to_end.py::test_close_during_resume_retires_the_old_visible_draft"
+    ],
+    "floor": 1336,
+    "reader_cases_use_existing_whole_file": "Tests/UI/test_library_rail_switch_keeps_reader_and_note.py",
+    "new_reader_case_names": [
+      "test_programmatic_media_row_restore_keeps_reader_until_user_keys",
+      "test_programmatic_media_restore_releases_only_its_failed_focus_marker"
+    ],
+    "new_appended_overlap_with_old_entries": []
+  },
+  "fast_lane": {
+    "old_count": 161,
+    "new_count": 163,
+    "old_order_and_entries_unchanged": true,
+    "added": [
+      "Tests/Architecture/test_library_modules_size_ratchet.py::test_controller_does_not_grow_past_its_budget[tldw_chatbook/UI/Library_Modules/library_media_controller.py]",
+      "Tests/Architecture/test_library_modules_size_ratchet.py::test_budget_is_not_left_slack_after_a_move[tldw_chatbook/UI/Library_Modules/library_media_controller.py]"
+    ],
+    "both_added_selectors_in_workflow": true
+  },
+  "all_checks_pass": true,
+  "metadata_correction": "Supersedes prior 1338 census claim: the two reader node selectors overlapped an existing whole-file entry. Root removed only those redundant new entries; original prefix remains exact."
+}

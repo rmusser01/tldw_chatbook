@@ -1952,3 +1952,19 @@ Tests/UI/test_console_projection_restyles.py
 # (plus the quiet-gap file's three send-start cases, moved here). Eleven cases,
 # about 26 s locally at load 6; appended at the tail, so no slot moves.
 Tests/UI/test_console_send_start_window.py
+
+# PR3346: reviewed cleanup, failure-diagnostic and extraction identity controls.
+Tests/UI/test_console_response_rules.py::test_fixture_failure_retires_held_transport
+Tests/UI/test_library_note_links_readiness_diagnostics.py
+Tests/UI/test_roleplay_extraction_identity.py
+# PR3346: completed-task retirement must advance the event loop.
+Tests/UI/test_console_provider_apply_defaults_flow.py::test_settings_task_drain_yields_for_completed_task_retirement
+# PR3346: a closed owner must settle cold readiness and permit current retry.
+Tests/UI/test_console_readiness_config_projection.py::test_closed_session_before_readiness_worker_entry_settles_and_retries
+# PR3346 pre-merge review: preserve screen derivations and live worker lookup.
+Tests/UI/test_screen_derivation_helpers.py
+Tests/UI/test_library_prompt_browse_controller.py::test_controller_live_reads_replaced_screen_worker
+# PR3346: reader regressions use the existing whole-file slot; append closed-owner coverage.
+Tests/UI/test_response_rules_end_to_end.py::test_close_during_resume_retires_the_old_visible_draft
+# PR3346: pending/active landing recomposition must retain snapshot completion.
+Tests/UI/test_library_landing_recompose_publication.py

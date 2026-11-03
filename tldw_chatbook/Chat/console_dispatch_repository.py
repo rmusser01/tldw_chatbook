@@ -64,6 +64,7 @@ _OWNER_SELECT = """
     SELECT checkpoint.assistant_message_id, checkpoint.user_message_id,
            checkpoint.conversation_id, checkpoint.schema_version,
            checkpoint.preparation_id, checkpoint.attempt_id, checkpoint.state,
+           checkpoint.mixin_snapshot_schema_version,
            checkpoint.checkpoint_revision, checkpoint.user_message_version,
            checkpoint.assistant_message_version, checkpoint.origin,
            checkpoint.queue_entry_id, checkpoint.agent_chat_start_attempt_id, checkpoint.frozen_authority_json,
@@ -451,11 +452,24 @@ class ConsoleDispatchRepository:
             acceptance.conversation_id,
         ) as writer:
             for contribution in acceptance.contributions:
-                contribution.write(
-                    writer=writer,
-                    conversation_id=acceptance.conversation_id,
-                    message_ids=message_ids,
-                )
+                if isinstance(
+                    contribution, ConsoleExactNativeIdTransactionContribution
+                ):
+                    # Fresh acceptance persists the staged native owner IDs unchanged.
+                    contribution.write_exact(
+                        writer=writer,
+                        conversation_id=acceptance.conversation_id,
+                        native_message_ids={
+                            acceptance.user_message_id: acceptance.user_message_id,
+                            acceptance.assistant_message_id: acceptance.assistant_message_id,
+                        },
+                    )
+                else:
+                    contribution.write(
+                        writer=writer,
+                        conversation_id=acceptance.conversation_id,
+                        message_ids=message_ids,
+                    )
         row = cursor.execute(
             _OWNER_SELECT + " WHERE checkpoint.assistant_message_id = ?",
             (acceptance.assistant_message_id,),
@@ -1887,6 +1901,7 @@ class ConsoleDispatchRepository:
                 agent_chat_start_attempt_id=row["agent_chat_start_attempt_id"],
                 queue_entry_id=row["queue_entry_id"],
                 frozen_authority=frozen_authority,
+                mixin_snapshot_schema_version=row["mixin_snapshot_schema_version"],
                 resolved_destination=parse_console_resolved_destination_json(
                     row["resolved_destination_json"]
                 ),

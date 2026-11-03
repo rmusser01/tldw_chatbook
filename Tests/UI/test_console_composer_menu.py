@@ -92,9 +92,12 @@ def test_prompts_entry_is_stable_visible_and_descriptive():
 
     prompts = entries[0]
     assert prompts.action_id == "prompts"
-    assert prompts.label == "Browse Prompt Library…"
+    assert prompts.label == "Prompts · 0 mix-ins…"
     assert prompts.enabled is True
-    assert prompts.description == "Browse saved Prompts and Recipes"
+    assert (
+        prompts.description
+        == "Browse saved Prompts and Recipes; manage enabled mix-ins for this chat"
+    )
 
 
 @pytest.mark.unit
@@ -112,7 +115,7 @@ def test_nonblank_draft_adds_a_direct_improve_destination_before_library():
     assert drafted[0].label == "Improve current draft…"
     assert drafted[0].enabled is True
     assert drafted[1].label == "Save draft to shelf…"
-    assert drafted[2].label == "Browse Prompt Library…"
+    assert drafted[2].label == "Prompts · 0 mix-ins…"
 
 
 @pytest.mark.unit

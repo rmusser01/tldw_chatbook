@@ -246,8 +246,11 @@ class PluginOperations:
 
 def app_operations(app, service):
     """Retain one lazy UI state object even on embedded/test app shells."""
-    owner = getattr(app, "_plugin_operations", None)
+    try:
+        owner = app.plugin_operations
+    except AttributeError:
+        owner = None
     if owner is None:
         owner = PluginOperations(service)
-        app._plugin_operations = owner
+        app.plugin_operations = owner
     return owner

@@ -1,0 +1,1 @@
+{"memory": true, "thread": 6269169664, "main_thread": 8461753728, "exception": "OperationalError", "message": "no such table: messages"}

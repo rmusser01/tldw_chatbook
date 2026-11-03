@@ -1,0 +1,68 @@
+{
+  "tldw_chatbook/UI/Console_Modules/console_spend_projection.py": {
+    "sha256": "24b767b3a15ff6ab80b7daf704e7ebaaed5aeb5343dc758c5864d61c86f442e8",
+    "old_lines": 1866,
+    "new_lines": 1866,
+    "baseline_lint": [
+      {
+        "code": "I001",
+        "message": "Import block is un-sorted or un-formatted",
+        "source": "from __future__ import annotations"
+      },
+      {
+        "code": "I001",
+        "message": "Import block is un-sorted or un-formatted",
+        "source": "from ...model_capabilities import get_model_capabilities"
+      },
+      {
+        "code": "S110",
+        "message": "`try`-`except`-`pass` detected, consider logging the exception",
+        "source": "except Exception:  # noqa: BLE001 - unknown metadata is not zero overhead."
+      },
+      {
+        "code": "SIM103",
+        "message": "Return the negated condition directly",
+        "source": "if time.monotonic() - proof.at >= min(1.0, projection.max_age):"
+      }
+    ],
+    "baseline_format_exit": 1,
+    "current_lint": [
+      {
+        "code": "I001",
+        "message": "Import block is un-sorted or un-formatted",
+        "source": "from __future__ import annotations"
+      },
+      {
+        "code": "I001",
+        "message": "Import block is un-sorted or un-formatted",
+        "source": "from ...model_capabilities import get_model_capabilities"
+      },
+      {
+        "code": "S110",
+        "message": "`try`-`except`-`pass` detected, consider logging the exception",
+        "source": "except Exception:  # noqa: BLE001 - unknown metadata is not zero overhead."
+      },
+      {
+        "code": "SIM103",
+        "message": "Return the negated condition directly",
+        "source": "if time.monotonic() - proof.at >= min(1.0, projection.max_age):"
+      }
+    ],
+    "current_format_exit": 1,
+    "added_lint": [],
+    "setup_order_unchanged": true,
+    "handlers_finally_unchanged": true,
+    "post_try_publication_unchanged": true
+  },
+  "Tests/UI/test_console_readiness_config_projection.py": {
+    "sha256": "59346b62a8494893623b2e6176fe7f7cd234cc771a07c4e0d8c913c91a5bdf43",
+    "old_lines": 884,
+    "new_lines": 929,
+    "baseline_lint": [],
+    "baseline_format_exit": 1,
+    "current_lint": [],
+    "current_format_exit": 1,
+    "added_lint": [],
+    "new_test_formatted": true
+  }
+}

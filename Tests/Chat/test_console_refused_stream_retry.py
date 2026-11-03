@@ -427,7 +427,7 @@ def test_self_hosted_retry_that_also_fails_shows_the_retry_failure(tmp_path):
     assert server.stream_flags == [True, False]
     assert signals.usage_payloads() == []
     copy = _copy(outcome)
-    assert "400" in copy and "model picker" in copy, copy
+    assert "400" in copy and _REFUSAL in copy, copy
     assert _STREAMING_ADVICE not in copy, copy
 
 
@@ -438,7 +438,7 @@ def test_self_hosted_retry_that_also_fails_shows_the_retry_failure(tmp_path):
 def test_cloud_refused_stream_is_not_retried_and_names_streaming(tmp_path, provider):
     """A cloud 400 is usually a real request error: no silent second call.
 
-    The failure names the Streaming setting beside the model advice
+    The failure names the Streaming setting and its actual settings locations
     (TASK-37180). ``zenmux`` stands for the strict hosted-engine presets.
     ``custom-ep:box`` is a named OpenAI-compatible custom endpoint: it runs
     through the same hosted engine, whose traced request does not align, so
@@ -456,7 +456,7 @@ def test_cloud_refused_stream_is_not_retried_and_names_streaming(tmp_path, provi
     copy = _copy(outcome)
     assert "400" in copy, copy
     assert _REFUSAL in copy, copy
-    assert "model picker" in copy, copy
+    assert "Chat settings" in copy and "config.toml" in copy, copy
     assert _STREAMING_ADVICE in copy, copy
 
 
@@ -472,7 +472,7 @@ def test_cloud_refusal_of_a_request_that_was_not_streamed_does_not_name_streamin
     assert outcome.status != "done"
     assert server.stream_flags == [False]
     copy = _copy(outcome)
-    assert "400" in copy and "model picker" in copy, copy
+    assert "400" in copy and _REFUSAL in copy, copy
     assert _STREAMING_ADVICE not in copy, copy
 
 

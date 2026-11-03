@@ -1,0 +1,105 @@
+{
+  "lowered": {
+    "tldw_chatbook/Agents/agent_service.py": [
+      9715,
+      9714
+    ],
+    "tldw_chatbook/Chat/chat_persistence_service.py": [
+      4272,
+      4239
+    ],
+    "tldw_chatbook/Chat/citation_trace_repository.py": [
+      4719,
+      4717
+    ],
+    "tldw_chatbook/Chat/console_chat_controller.py": [
+      29323,
+      29162
+    ],
+    "tldw_chatbook/Chat/console_chat_store.py": [
+      22369,
+      22317
+    ],
+    "tldw_chatbook/Chat/console_display_state.py": [
+      2908,
+      2875
+    ],
+    "tldw_chatbook/Chat/console_provider_gateway.py": [
+      8528,
+      8487
+    ],
+    "tldw_chatbook/Chat/console_runtime.py": [
+      7091,
+      7070
+    ],
+    "tldw_chatbook/Chat/console_trace_service.py": [
+      6765,
+      6587
+    ],
+    "tldw_chatbook/DB/ChaChaNotes_DB.py": [
+      25870,
+      25851
+    ],
+    "tldw_chatbook/DB/Prompts_DB.py": [
+      4760,
+      4670
+    ],
+    "tldw_chatbook/LLM_Calls/LLM_API_Calls.py": [
+      5176,
+      5167
+    ],
+    "tldw_chatbook/UI/Console_Modules/session.py": [
+      7005,
+      6990
+    ],
+    "tldw_chatbook/UI/Console_Modules/workspace.py": [
+      8938,
+      8935
+    ],
+    "tldw_chatbook/UI/Persona_Modules/roleplay_frame_state.py": [
+      855,
+      818
+    ],
+    "tldw_chatbook/UI/Screens/personas_screen.py": [
+      16859,
+      16829
+    ],
+    "tldw_chatbook/Widgets/Console/console_composer_bar.py": [
+      7195,
+      7189
+    ],
+    "tldw_chatbook/Widgets/Console/console_transcript.py": [
+      8584,
+      8556
+    ],
+    "tldw_chatbook/Widgets/Persona_Widgets/personas_library_pane.py": [
+      1297,
+      992
+    ],
+    "tldw_chatbook/app.py": [
+      5704,
+      5687
+    ],
+    "tldw_chatbook/app_command_providers.py": [
+      1123,
+      1121
+    ],
+    "tldw_chatbook/app_service_wiring.py": [
+      3701,
+      3693
+    ]
+  },
+  "new": {
+    "Chat/console_agent_reply.py": 1150,
+    "Chat/console_settings_persistence.py": 788,
+    "Chat/console_memory_banner.py": 207,
+    "Chat/console_trace_maintenance_runtime.py": 186,
+    "DB/prompt_export.py": 242,
+    "Notes/notes_sync_startup.py": 34,
+    "UI/Console_Modules/session_prompt_seed.py": 109,
+    "Widgets/Console/console_selection_geometry.py": 52,
+    "Widgets/Persona_Widgets/roleplay_item_list.py": 620,
+    "app_config_notifications.py": 54,
+    "app_idle_warmup.py": 18
+  }
+}

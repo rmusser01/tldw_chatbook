@@ -26,6 +26,7 @@ from tldw_chatbook.Chat.console_history_budget import (
     count_provider_continuation_tokens,
 )
 from tldw_chatbook.Chat.console_project_instructions import EPHEMERAL_ORIGIN_KEY
+from tldw_chatbook.Chat.console_prompt_mixins import MixinAttemptSnapshot
 from tldw_chatbook.Chat.console_thinking_history import (
     EffectiveThinkingHistoryPolicy,
     ThinkingOwnerGroup,
@@ -55,6 +56,48 @@ from tldw_chatbook.Chat.local_reasoning import (
 )
 from tldw_chatbook.Chat.provider_continuation import ContinuationOwnerGroup
 from tldw_chatbook.Chat.thinking_blocks import ThinkingHistoryPolicy
+
+MIXIN_ATTEMPT_KEY = "_tldw_mixin_attempt"
+
+
+def compose_current_mixin_messages(
+    messages: list[dict[str, Any]],
+    snapshot: MixinAttemptSnapshot,
+    *,
+    user_message_id: str,
+    attempt_id: str,
+) -> list[dict[str, Any]]:
+    """Compose the exact native user anchor once; never select a trailing hook row."""
+    from .console_prompt_mixins import (
+        MixinSnapshotUnavailableError,
+        compose_mixin_content,
+    )
+
+    if not snapshot.items:
+        return messages
+    positions = [
+        i
+        for i, row in enumerate(messages)
+        if row.get("_native_message_id") == user_message_id
+    ]
+    if len(positions) != 1 or messages[positions[0]].get("role") != "user":
+        raise MixinSnapshotUnavailableError("mixin_anchor_unavailable")
+    index = positions[0]
+    row = messages[index]
+    if MIXIN_ATTEMPT_KEY in row:
+        if row[MIXIN_ATTEMPT_KEY] != attempt_id:
+            raise MixinSnapshotUnavailableError("mixin_attempt_changed")
+        return messages
+    return [
+        *messages[:index],
+        {
+            **row,
+            "content": compose_mixin_content(thaw_json(row["content"]), snapshot),
+            MIXIN_ATTEMPT_KEY: attempt_id,
+        },
+        *messages[index + 1 :],
+    ]
+
 
 MINIMUM_SAFETY_MARGIN_TOKENS = 512
 MEMORY_OPEN_TAG = "<chatbook_conversation_memory>"
@@ -173,6 +216,36 @@ def _is_tool_loop_row(row: Mapping[str, Any]) -> bool:
     )
 
 
+def _cache_structure_fingerprint(messages: Sequence[Mapping[str, Any]]) -> str:
+    """Bind a private cache boundary to one exact wire projection."""
+    return hashlib.sha256(
+        json.dumps(
+            thaw_json(tuple(messages)),
+            sort_keys=True,
+            separators=(",", ":"),
+            ensure_ascii=False,
+        ).encode("utf-8")
+    ).hexdigest()
+
+
+@dataclass(frozen=True, slots=True)
+class ConsoleCacheBoundary:
+    """Ephemeral, verified clean-history end in adapter-input coordinates."""
+
+    clean_history_message_index: int
+    semantic_structure_fingerprint: str = field(repr=False)
+
+    def matches(self, messages: Sequence[Mapping[str, Any]]) -> bool:
+        """Refuse stale, changed or out-of-range adapter inputs."""
+        index = self.clean_history_message_index
+        return (
+            type(index) is int
+            and 0 <= index < len(messages) - 1
+            and self.semantic_structure_fingerprint
+            == _cache_structure_fingerprint(messages)
+        )
+
+
 @dataclass(frozen=True, slots=True)
 class ConsoleConversationUnit:
     """One complete user/exchange/tool group eligible for atomic removal."""
@@ -223,6 +296,9 @@ class PreparedConsoleRequest:
     tools: tuple[Mapping[str, Any], ...] = field(default=(), repr=False)
     provenance: ConsoleRequestProvenance | None = field(default=None, repr=False)
     capture_durability: Literal["durable", "temporary"] | None = None
+    clean_history_message_index: int | None = field(
+        default=None, init=False, repr=False
+    )
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "system", _freeze_messages(self.system))
@@ -254,6 +330,17 @@ class PreparedConsoleRequest:
                 "compactable entries must be ConsoleConversationUnit values."
             )
         object.__setattr__(self, "compactable", units)
+        # The composition owner stamps only applied, nonempty mix-ins.
+        if units and any(MIXIN_ATTEMPT_KEY in row for row in self.active_request):
+            object.__setattr__(
+                self,
+                "clean_history_message_index",
+                len(self.system)
+                + len(self.memory)
+                + len(self.mandatory)
+                + sum(len(unit.messages) for unit in units)
+                - 1,
+            )
         frozen_tools = freeze_json(tuple(self.tools))
         if not isinstance(frozen_tools, tuple):  # pragma: no cover
             raise TypeError("Frozen tools must remain a tuple.")
@@ -618,6 +705,9 @@ class PreparedProviderRequest:
     thinking_policy: ThinkingHistoryPolicy = "auto"
     effective_thinking_policy: EffectiveThinkingHistoryPolicy = "auto"
     provenance: ProviderRequestProvenance | None = field(default=None, repr=False)
+    cache_boundary: ConsoleCacheBoundary | None = field(
+        default=None, init=False, repr=False
+    )
 
     live_native_custody: object | None = field(default=None, repr=False, compare=False)
 
@@ -672,6 +762,15 @@ class PreparedProviderRequest:
         expected_system, expected_payload, expected_messages = _serialize_messages(
             self.semantic,
             self.wire_style,
+        )
+        object.__setattr__(
+            self,
+            "cache_boundary",
+            _prepare_cache_boundary(
+                self.semantic,
+                self.wire_style,
+                self.messages_payload,
+            ),
         )
         expected_tools = freeze_json(tuple(self.semantic.tools))
         if (
@@ -978,7 +1077,10 @@ def build_console_request(
         raise ValueError("A Console provider request requires an active request.")
 
     starts = [index for index, row in enumerate(history) if _starts_user_turn(row)]
-    active_start = starts[-1] if starts else 0
+    anchors = [index for index, row in enumerate(history) if MIXIN_ATTEMPT_KEY in row]
+    if len(anchors) > 1:
+        raise ValueError("mixin_anchor_unavailable")
+    active_start = anchors[0] if anchors else starts[-1] if starts else 0
     compactable_rows = history[:active_start]
     active = history[active_start:]
     compactable_descriptors = history_descriptors[:active_start]
@@ -1352,6 +1454,8 @@ def _serialize_messages(
             for key, value in message.items()
             if key
             not in {
+                MIXIN_ATTEMPT_KEY,
+                "_native_message_id",
                 MEMORY_OWNER_KEY,
                 CONTINUATION_OWNER_KEY,
                 THINKING_OWNER_KEY,
@@ -1399,6 +1503,26 @@ def _serialize_messages(
         + payload
     )
     return system_message, tuple(payload), counted
+
+
+def _prepare_cache_boundary(
+    semantic: PreparedConsoleRequest,
+    wire_style: WireStyle,
+    payload: Sequence[Mapping[str, Any]],
+) -> ConsoleCacheBoundary | None:
+    boundary = semantic.clean_history_message_index
+    if boundary is None:
+        return None
+    transformed, origins = _project_runtime_guidance(semantic)
+    offset = len(transformed) - len(payload) if wire_style == "single_preamble" else 0
+    for position, (indices, _rewritten) in enumerate(origins):
+        if boundary in indices:
+            # A conversion that folds active content into history has no safe end.
+            index = position - offset
+            if max(indices) != boundary or not 0 <= index < len(payload) - 1:
+                return None
+            return ConsoleCacheBoundary(index, _cache_structure_fingerprint(payload))
+    return None
 
 
 def _serialize_provenance(

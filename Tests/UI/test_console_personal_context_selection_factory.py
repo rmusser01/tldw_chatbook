@@ -79,6 +79,29 @@ class _Controller:
         self.valid = AsyncMock(return_value=True)
         self.release: asyncio.Event | None = None
         self.canvas_current = True
+        self.mixin_revision = 0
+        self.mixin_source = object()
+
+    def prompt_mixin_service(self):
+        def capture(_session_id, *, expected_revision):
+            source = self.mixin_source
+
+            def current():
+                if (
+                    self.mixin_revision != expected_revision
+                    or self.mixin_source is not source
+                ):
+                    raise ValueError("mixin_preview_stale")
+
+            current()
+            return current
+
+        return SimpleNamespace(
+            preferences=lambda _session_id: SimpleNamespace(
+                revision=self.mixin_revision
+            ),
+            _capture_currentness=capture,
+        )
 
     def capture_personal_context_preview_guard(self, _session_id):
         return lambda: self.canvas_current
@@ -257,4 +280,20 @@ async def test_screen_factory_does_not_choose_among_multiple_diagnostics():
     result = await factory()
 
     assert result is controller.snapshot
+    controller.valid.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("change", ["revision", "source"])
+async def test_screen_factory_invalidates_changed_mixin_choices_and_source(change):
+    screen, controller = _Screen(), _Controller()
+    factory, *_ = ChatScreen._console_inspector_next_send_factories(
+        screen, controller, "session-1"
+    )
+    result = await factory()
+    if change == "revision":
+        controller.mixin_revision += 1
+    else:
+        controller.mixin_source = object()
+    assert not await result.is_current()
     controller.valid.assert_not_awaited()

@@ -1,0 +1,236 @@
+{
+  "reviewer": "/root/archive_card_review",
+  "review_mode": "Read-only review; writes only this private artifact directory.",
+  "reviewed_at_utc": "2026-11-03T03:33:27.930272+00:00",
+  "published_base": "97a53c67aefeb64fab42eca1592dc2cf7d6bff46",
+  "head_at_review": "97a53c67aefeb64fab42eca1592dc2cf7d6bff46",
+  "dev_context": "2dcf038cb8be0af991f92c43b0c262f02471c51d",
+  "qualification": "Final uncommitted four-file archive repair over published97a; source hashes identify reviewed bytes. Supersedes earlier three-file review. No future commit, CI or merge qualification.",
+  "source_files": [
+    {
+      "path": "/Users/macbook-dev/.codex/worktrees/prompt-mix-ins/tldw_chatbook/tldw_chatbook/Widgets/Chat_Widgets/archive_recovery_cards.py",
+      "sha256": "09dbf4d4aa057226bd6413355cb6f36976c918272dee58b70d0ccb4599a93635",
+      "bytes": 15179,
+      "lines": 386,
+      "base_sha256": "73dd384559576c65571360c1617eb95e060d919ae4e34b4075b9b9c8d7a35edd",
+      "changed_from_base": true
+    },
+    {
+      "path": "/Users/macbook-dev/.codex/worktrees/prompt-mix-ins/tldw_chatbook/tldw_chatbook/UI/Console_Modules/archive_recovery.py",
+      "sha256": "78633b9869709537a3347dac2d946a18a3c8e1229bdd6301bae1b95609456070",
+      "bytes": 21294,
+      "lines": 529,
+      "base_sha256": "952060a486eb55e41d6629a9e0df3e3c058f788f4aafb17c1a987b0e06eedca6",
+      "changed_from_base": true
+    },
+    {
+      "path": "/Users/macbook-dev/.codex/worktrees/prompt-mix-ins/tldw_chatbook/Tests/UI/test_console_archive_recovery_cards.py",
+      "sha256": "1eb600b90b9cb7b1ecdefd8a46e6265a0089ec4877cb673b9fbe62f8b112e6ad",
+      "bytes": 23980,
+      "lines": 684,
+      "base_sha256": "4a640928c400d64489b69768e6aef20d2a824e99932f89a985cd0052968d530c",
+      "changed_from_base": true
+    },
+    {
+      "path": "/Users/macbook-dev/.codex/worktrees/prompt-mix-ins/tldw_chatbook/Tests/UI/test_console_archive_recovery_flow.py",
+      "sha256": "61f08968e823054d0b558b0e7341e5f1476a177004df2da2d80944124756bbb6",
+      "bytes": 78136,
+      "lines": 1899,
+      "base_sha256": "78188e64736fbe7ce509004b93ce5ac41c38c605c78e2c5d03524ec0b77bc45f",
+      "changed_from_base": true
+    },
+    {
+      "path": "/Users/macbook-dev/.codex/worktrees/prompt-mix-ins/tldw_chatbook/Tests/UI/test_console_partial_resize.py",
+      "sha256": "1856a1c4c967382e1c18c836dffabab3bd9cfe2f4786ae22ef70f7b3dc5edd23",
+      "bytes": 2275,
+      "lines": 59,
+      "base_sha256": "1856a1c4c967382e1c18c836dffabab3bd9cfe2f4786ae22ef70f7b3dc5edd23",
+      "changed_from_base": false
+    }
+  ],
+  "requirements": [
+    "Task38544 AC30 and final refinement recorded before edits",
+    "ADR166 exact one-shot archive recovery consent",
+    "Console archive authority design 2026-09-17"
+  ],
+  "observed_owner_evidence": [
+    {
+      "path": "/private/tmp/mixins-97a-archive-fix/native-lifecycle-original.log",
+      "sha256": "3a0348b3d611d668a5136e7b5dc9db2a08255b05284743233e85979ba1fe0e64",
+      "bytes": 4979
+    },
+    {
+      "path": "/private/tmp/mixins-97a-archive-fix/regressions-red.log",
+      "sha256": "bc55fbb9a44319398e1b1ccab17b2a71473f860a6f20a9d3c222f18d73d017e7",
+      "bytes": 115934
+    },
+    {
+      "path": "/private/tmp/mixins-97a-archive-fix/regressions-first-green.log",
+      "sha256": "b3a852c42025e183972b2e4aaddce1c1b757baee371b6b8ec98475880b1ed2fd",
+      "bytes": 159507
+    },
+    {
+      "path": "/private/tmp/mixins-97a-archive-fix/regressions-corrected-green.log",
+      "sha256": "e5bd1d60083c7d9abc407e19709636a325041ecd04fae02281cbcca087dac8fb",
+      "bytes": 223
+    },
+    {
+      "path": "/private/tmp/mixins-97a-archive-fix/final-widgets-resize.log",
+      "sha256": "446e978d0c2f23e09423e1696e35eab2435d93eb6019ef692e0b87574ec9f531",
+      "bytes": 938
+    },
+    {
+      "path": "/private/tmp/mixins-97a-archive-fix/final-native-flows.log",
+      "sha256": "e6091affbd439c1b0cf101cacdcda27614e45998c405a886e022897fcf32e916",
+      "bytes": 172773
+    },
+    {
+      "path": "/private/tmp/mixins-97a-archive-fix/native-select-retirement-probe.log",
+      "sha256": "e082c551f0127a96624fb22032499cfbc701d524c54ded4c110cf1194d538b6c",
+      "bytes": 4715
+    },
+    {
+      "path": "/private/tmp/mixins-97a-archive-fix/native_select_retirement_probe.py",
+      "sha256": "e478eba5e142bf0fc24e3d6e4f91e72eab972739e8a01b5d42cdc647ee2fb9cb",
+      "bytes": 1331
+    },
+    {
+      "path": "/private/tmp/mixins-97a-archive-fix/scope-retirement-red.log",
+      "sha256": "c1da87e253380bdb045a4bcdf0d36d7be5f625905e44323cb3f99eed0b3b11ec",
+      "bytes": 9315
+    },
+    {
+      "path": "/private/tmp/mixins-97a-archive-fix/source-preservation.json",
+      "sha256": "c4748512bfe06a7849a53a2cef01d18292f5da03f38652cb3dfdc4e5fbee4792",
+      "bytes": 152
+    },
+    {
+      "path": "/private/tmp/mixins-97a-archive-fix/check_source_preservation.py",
+      "sha256": "b301da4f534cc16fd651e7903b9d97bde19b7baa6a1719a907afdc44442645cd",
+      "bytes": 1869
+    },
+    {
+      "path": "/private/tmp/mixins-97a-archive-fix/source-frozen-before.sha256",
+      "sha256": "00b0cc90400b90dbd62b2e7fe5bf61eb59a12afcae9c5849bd42ead6ce4309e6",
+      "bytes": 473
+    },
+    {
+      "path": "/private/tmp/mixins-97a-archive-fix/source-frozen-after.sha256",
+      "sha256": "00b0cc90400b90dbd62b2e7fe5bf61eb59a12afcae9c5849bd42ead6ce4309e6",
+      "bytes": 473
+    },
+    {
+      "path": "/private/tmp/mixins-97a-archive-fix/ruff-97a-four.json",
+      "sha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "bytes": 2
+    },
+    {
+      "path": "/private/tmp/mixins-97a-archive-fix/ruff-frozen.json",
+      "sha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "bytes": 2
+    },
+    {
+      "path": "/private/tmp/mixins-97a-archive-fix/format-frozen-card.log",
+      "sha256": "fd2299c9f1c6dc869070883e281051bfe93aacf66c1a3b0069f45b4aa410ca50",
+      "bytes": 25
+    },
+    {
+      "path": "/private/tmp/mixins-97a-archive-fix/format-frozen-view.log",
+      "sha256": "fd2299c9f1c6dc869070883e281051bfe93aacf66c1a3b0069f45b4aa410ca50",
+      "bytes": 25
+    },
+    {
+      "path": "/private/tmp/mixins-97a-archive-fix/format-frozen-tests.log",
+      "sha256": "fd2299c9f1c6dc869070883e281051bfe93aacf66c1a3b0069f45b4aa410ca50",
+      "bytes": 25
+    },
+    {
+      "path": "/private/tmp/mixins-97a-archive-fix/format-frozen-flow.log",
+      "sha256": "fd2299c9f1c6dc869070883e281051bfe93aacf66c1a3b0069f45b4aa410ca50",
+      "bytes": 25
+    },
+    {
+      "path": "/private/tmp/mixins-97a-archive-fix/run_final_cohort.py",
+      "sha256": "a8aa596e0089798bb80ed39b5bb58cdb06700b3594bf32f79295d3043ae4a112",
+      "bytes": 1178
+    },
+    {
+      "path": "/private/tmp/mixins-97a-archive-fix/frozen-native.log",
+      "sha256": "52fda3d0e0c57069ca96a8525df131acfb7d8d15fe70f73822f157ed11bb8c42",
+      "bytes": 1372
+    },
+    {
+      "path": "/private/tmp/mixins-97a-archive-fix/frozen-native.xml",
+      "sha256": "017e66c1a5604a1ad660c11fcc061972456f3a1f9dbe3db01f3d35b24df415e9",
+      "bytes": 5566
+    },
+    {
+      "path": "/private/tmp/mixins-97a-archive-fix/frozen-native-result.json",
+      "sha256": "c84ccceeb0968858a0d36ed6196ed6389f484aa0bb78317ac0619814cd6523d4",
+      "bytes": 763
+    },
+    {
+      "path": "/private/tmp/mixins-97a-archive-fix/final-report.json",
+      "sha256": "6d12b407d61a23b397671129cd6470af8322c57b7ea1f3fdaa47cb42645e57be",
+      "bytes": 4641
+    },
+    {
+      "path": "/private/tmp/mixins-97a-archive-fix/artifact-inventory.json",
+      "sha256": "f4c18856c01200fc3807ee2aaa516fd0c43d661a0de8d417f2d3461038fc625c",
+      "bytes": 7338
+    }
+  ],
+  "tests_run_by_reviewer": [],
+  "final_native_evidence": {
+    "case_count": 34,
+    "failures": 0,
+    "errors": 0,
+    "skipped": 0,
+    "pytest_seconds": 50.8,
+    "process_receipt_seconds": 54.7794229160063,
+    "exit_code": 0,
+    "select_retirement_case": {
+      "classname": "Tests.UI.test_console_archive_recovery_cards",
+      "name": "test_partial_controls_cannot_acknowledge_or_answer_replacement[scope_unmount]",
+      "time": "0.131"
+    }
+  },
+  "source_preservation": {
+    "flow_only_two_presence_prefixes": true,
+    "existing_card_tests_byte_identical": true,
+    "scope_and_typed_decision_handlers_byte_identical": true
+  },
+  "result": {
+    "critical": [],
+    "important": [],
+    "minor": [],
+    "ready_for_scoped_integration": true
+  },
+  "closed_findings": [
+    {
+      "severity": "Important",
+      "issue": "All six outer controls can remain queryable and mounted while native Select internal children have retired; the earlier mounted-only gate still allowed SelectOverlay NoMatches.",
+      "superseded_card_sha256": "a6bd686a15d5694cc3c1ecee77b4254b256e4aa3af05f221797c0a355304b8cb",
+      "resolution": "Refuse native _pruning/_closing controls within the same six-control readiness loop before rendering.",
+      "evidence": [
+        "native-select-retirement-probe.log",
+        "scope-retirement-red.log",
+        "frozen-native.xml"
+      ],
+      "state": "Closed: permanent actual Select-Unmount regression failed before guard and passed in final frozen34case cohort."
+    }
+  ],
+  "qualification_history": [
+    "Old product behavior produced8native regression failures in1.91s.",
+    "First draft used unsupported DOMQuery.filter(type); native run failed. Corrected query(type).filter(selector) before source qualification.",
+    "Earlier30case widget/resize cohort passed but was superseded by the real Select-retirement finding.",
+    "Extra native source-remount flow failed in its unchanged query_one readiness predicate during remove/mount; only presence prefixes were added to both exact remount waits. Original condition AST, all assertions and timeouts are preserved; final flow passes.",
+    "Earlier original local resize-band observation remains an unconfirmed separate precondition; no causal claim is made for it."
+  ],
+  "remaining_qualification": "Parent owns unchanged startup/size checks, exact publication/head qualification, protected hosted CI and actual merge. No source finding remains in this bounded repair.",
+  "owner_inventory_verified": {
+    "count": 37,
+    "all_bytes_and_sha256_match": true,
+    "before_after_source_hashes_identical": true
+  }
+}

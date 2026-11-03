@@ -1169,3 +1169,14 @@ def chat_api_key_value_to_persist(
     if candidate == field_state.value:
         return None
     return candidate
+
+
+def configured_provider_is_ready(provider: str) -> bool:
+    """Readiness for a fallback candidate, reusing the Chat check."""
+    from tldw_chatbook.config import load_cli_config_and_ensure_existence
+
+    return bool(
+        get_provider_readiness(
+            provider, load_cli_config_and_ensure_existence()
+        ).ready
+    )

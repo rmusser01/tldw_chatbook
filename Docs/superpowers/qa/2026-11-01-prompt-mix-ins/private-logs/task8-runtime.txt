@@ -1,0 +1,11 @@
+....................................................................     [100%]
+============================= slowest 25 durations =============================
+3.64s call     Tests/UI/test_console_prompt_mixins.py::test_real_console_prompts_action_retains_browse_and_controls_runtime
+2.71s call     Tests/UI/test_console_prompt_mixins.py::test_mounted_selection_order_toggles_reopen_and_origin_fence
+1.35s call     Tests/Chat/test_console_prompt_mixin_retry.py::test_retry_original_regenerate_current_and_clean_history[False]
+1.23s call     Tests/Chat/test_console_prompt_mixin_retry.py::test_real_agent_tool_loop_reuses_once_composed_request[True-False]
+1.17s call     Tests/Chat/test_console_prompt_mixin_retry.py::test_retry_original_regenerate_current_and_clean_history[True]
+1.12s call     Tests/Chat/test_console_prompt_mixin_retry.py::test_real_agent_tool_loop_reuses_once_composed_request[True-True]
+
+(19 durations < 1s hidden.)
+68 passed in 81.22s (0:01:21)

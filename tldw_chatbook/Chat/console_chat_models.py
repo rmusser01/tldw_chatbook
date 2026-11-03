@@ -1352,6 +1352,11 @@ class ConsoleChatMessage:
     #: while the primary's tool call has run long enough to offer it. Same
     #: ownership and lifetime rules as ``live_activity``.
     live_activity_action: str = ""
+    # Derived only from verified operational receipts; never Retry authority.
+    mixin_usage_count: int | None = field(default=None, repr=False)
+    mixin_replay_status: Literal["legacy", "recorded", "unavailable"] | None = field(
+        default=None, repr=False
+    )
 
 
 #: Field names per message class, for ``copy_console_message``.
@@ -1408,6 +1413,10 @@ class ConsoleVariant:
     provider_continuation_actions_enabled: bool = True
     assistant_generation_state: str | None = None
     id: str = field(default_factory=lambda: str(uuid4()))
+    mixin_usage_count: int | None = field(default=None, repr=False)
+    mixin_replay_status: Literal["legacy", "recorded", "unavailable"] | None = field(
+        default=None, repr=False
+    )
 
 
 @dataclass

@@ -100,3 +100,8 @@ def test_auxiliary_routing_never_touches_the_send_path():
     send_method = source[source.index("async def _run_agent_reply") :]
     send_method = send_method[: send_method.index("\n    async def ", 10)]
     assert "_auxiliary_compaction_resolution" not in send_method
+    from tldw_chatbook.Chat import console_agent_reply
+
+    assert "_auxiliary_compaction_resolution" not in inspect.getsource(
+        console_agent_reply._run_agent_reply
+    )

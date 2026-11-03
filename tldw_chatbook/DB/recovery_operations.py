@@ -1503,6 +1503,8 @@ _SUBSCRIPTIONS_SCHEMA += (
 
 def _subscriptions_chachanotes_stamps(schema):
     """Return embedded stamps for a matched complete Subscription catalog."""
+    if schema in _SUBSCRIPTIONS_MIXINS_V86_SCHEMAS:
+        return ((86,),)
     if schema in _SUBSCRIPTIONS_ARCHIVE_V85_SCHEMAS:
         return ((85,),)
     if schema in _SUBSCRIPTIONS_REGIONS_V84_SCHEMAS:
@@ -1674,6 +1676,7 @@ from .recovery_core_schema import (
     CHACHANOTES_V83_SCHEMAS,
     CHACHANOTES_V84_SCHEMAS,
     CHACHANOTES_V85_SCHEMAS,
+    CHACHANOTES_V86_SCHEMAS,
     _installed_schema_order,
 )
 
@@ -1683,6 +1686,7 @@ from .recovery_core_schema import (
     _SUBSCRIPTIONS_PORTRAIT_V83_SCHEMAS,
     _SUBSCRIPTIONS_REGIONS_V84_SCHEMAS,
     _SUBSCRIPTIONS_ARCHIVE_V85_SCHEMAS,
+    _SUBSCRIPTIONS_MIXINS_V86_SCHEMAS,
 ) = (
     tuple(
         tuple(
@@ -1708,6 +1712,7 @@ from .recovery_core_schema import (
         CHACHANOTES_V83_SCHEMAS,
         CHACHANOTES_V84_SCHEMAS,
         CHACHANOTES_V85_SCHEMAS,
+        CHACHANOTES_V86_SCHEMAS,
     )
 )
 _SUBSCRIPTIONS_SCHEMA += tuple(
@@ -1718,6 +1723,7 @@ _SUBSCRIPTIONS_SCHEMA += tuple(
         + _SUBSCRIPTIONS_PORTRAIT_V83_SCHEMAS
         + _SUBSCRIPTIONS_REGIONS_V84_SCHEMAS
         + _SUBSCRIPTIONS_ARCHIVE_V85_SCHEMAS
+        + _SUBSCRIPTIONS_MIXINS_V86_SCHEMAS
     )
 )
 

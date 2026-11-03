@@ -1,0 +1,109 @@
+{
+  "files": [
+    {
+      "path": "/private/tmp/mixins-f095-firstsend/report.md",
+      "bytes": 4304,
+      "sha256": "c9f4f5b592a375766dd277d55dd0bc491dd69baa4ef993350fa3845bf7bdf6e3"
+    },
+    {
+      "path": "/private/tmp/mixins-f095-firstsend/red.log",
+      "bytes": 8951,
+      "sha256": "fc625f375d1be3b650f1702752450bd472643f27efe04f949f5fa3e1b8a689ea"
+    },
+    {
+      "path": "/private/tmp/mixins-f095-firstsend/green.log",
+      "bytes": 3936,
+      "sha256": "7d3a9e6a53e25d4e1fb9660f0c4d345cbaab8501a2d96c1a4793afb0f91403b2"
+    },
+    {
+      "path": "/private/tmp/mixins-f095-firstsend/green.xml",
+      "bytes": 1931,
+      "sha256": "d0169d835073b2a952100f451d42e57fb1156ab5bdfa96e3fd423d5cd61a767d"
+    },
+    {
+      "path": "/private/tmp/mixins-f095-firstsend/run_controls.py",
+      "bytes": 1639,
+      "sha256": "980a918c4b4d0213d4a186504835e4d4fb8d5720868400ac19bfc59cd161828c"
+    },
+    {
+      "path": "/private/tmp/mixins-f095-firstsend/static.py",
+      "bytes": 1601,
+      "sha256": "224c7f9eb1de6a96f8305dc51e73850bbe4188e6bbf6240ec27b35f699a74eaf"
+    },
+    {
+      "path": "/private/tmp/mixins-f095-firstsend/lint-source.json",
+      "bytes": 786,
+      "sha256": "31c41972cc801ebafafc20976c85e684eaacde676442338079e825fad22f3a52"
+    },
+    {
+      "path": "/private/tmp/mixins-f095-firstsend/unchanged-web-tool-bodies.json",
+      "bytes": 1354,
+      "sha256": "54b8b102c4611f9051ab11239ebc989569fe9f68618c90e9c9b3d5ab4e3dfd02"
+    },
+    {
+      "path": "/private/tmp/mixins-f095-firstsend/lean_html_probe.py",
+      "bytes": 1521,
+      "sha256": "bcb99f3d6d26aaa2c41cd55c659ebcd3467927355d28b591d0ea05ef2e592ace"
+    },
+    {
+      "path": "/private/tmp/mixins-f095-firstsend/lean-html-order.json",
+      "bytes": 825,
+      "sha256": "0b98ea1a0c1ff18ad37b2a3eb62a75a9b67e3334830610eac7a5bf839dcd6fe8"
+    },
+    {
+      "path": "/private/tmp/mixins-f095-firstsend/patch.diff",
+      "bytes": 5226,
+      "sha256": "3680a315fef34df84ecb3a410464b56ca97aed2f6925eea9762dd6104d62829b"
+    },
+    {
+      "path": "/private/tmp/mixins-f095-firstsend/format.log",
+      "bytes": 25,
+      "sha256": "fd2299c9f1c6dc869070883e281051bfe93aacf66c1a3b0069f45b4aa410ca50"
+    },
+    {
+      "path": "/private/tmp/mixins-f095-firstsend/source-final.json",
+      "bytes": 695,
+      "sha256": "a2a00dd77fdb5bb4f2e6aaa732f0fcfda768e798170c76677063c6051f044ed1"
+    },
+    {
+      "path": "/private/tmp/mixins-f095-firstsend/inventory.py",
+      "bytes": 1097,
+      "sha256": "3d12698f801c3bb8760dde2cb3cc800ea00510817185fb8100fdd807d3eca5e9"
+    },
+    {
+      "path": "/private/tmp/mixins-ci-f095-ui16-red.log",
+      "bytes": 246220,
+      "sha256": "41c0b500dace47f73acac8ac11ecdc23d27c6f377d675806ca538b86845b1b5d"
+    },
+    {
+      "path": "/private/tmp/mixins-perf-f095-firstsend.log",
+      "bytes": 2063,
+      "sha256": "4611131aa98840ac1a35cd5be659ff39f5ce2d0acb02f7808bc89091ca96231f"
+    },
+    {
+      "path": "/private/tmp/mixins-perf-f095-firstsend-test_ui_ready_module_census-_boot_and_census.json",
+      "bytes": 49847,
+      "sha256": "3d37e781185d322dd492b622984fb27ca34fbd7cd56d8a16b73371eff50f7792"
+    },
+    {
+      "path": "/private/tmp/mixins-perf-f095-firstsend-test_boot_worker_census-_boot_and_census.json",
+      "bytes": 6138,
+      "sha256": "022e98c23f9ff6195481768ae62390c67a023a35c3797edb1306818d4c5bacbd"
+    },
+    {
+      "path": "/private/tmp/mixins-perf-f095-firstsend-test_screen_preimport_payload_budget-_run_census.json",
+      "bytes": 35127,
+      "sha256": "91b0c80c0eaefe59edfffa711c4b4a6c7061d60f8549383ab9148e694e9d51c6"
+    },
+    {
+      "path": "/private/tmp/mixins-perf-f095-firstsend-test_screen_preimport_payload_budget-warmup.json",
+      "bytes": 24403,
+      "sha256": "08210bc96a9ec8f51a5b8a55feb3f7f2b3deab4bb6f3e493203733b7d6206c26"
+    },
+    {
+      "path": "/private/tmp/mixins-perf-probe.py",
+      "bytes": 1590,
+      "sha256": "0e671fdc3e15b81d7d06a185610de510d45640aedfa8c195131656e4c0d4dd1c"
+    }
+  ]
+}

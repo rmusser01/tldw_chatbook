@@ -1,0 +1,19 @@
+{
+  "argv": [
+    "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python",
+    "-m",
+    "pytest",
+    "-q",
+    "-p",
+    "no:cacheprovider",
+    "Tests/Chat/test_console_prompt_mixin_retry.py::test_successive_accepted_placement_observations_append_in_observed_order[True]",
+    "Tests/UI/test_console_prompt_mixins.py::test_artifact_capture_completion_cannot_replace_newer_work[unmount-prompt]",
+    "Tests/UI/test_console_prompt_mixins.py::test_artifact_capture_completion_cannot_replace_newer_work[unmount-recipe]",
+    "Tests/UI/test_console_prompt_mixins.py::test_accepted_layout_observation_invalidates_old_workbench_intent",
+    "Tests/Chat/test_console_prompt_mixin_retry.py::test_refused_native_send_keeps_usage_facts_until_acceptance",
+    "Tests/Chat/test_console_prompt_mixin_retry.py::test_used_revision_flush_reopen_and_racing_selection_cas",
+    "--basetemp=/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/prompt-mixins-pr-d18dfic_/rereview-fixes/controls1-tmp"
+  ],
+  "exit_code": 1,
+  "seconds": 15.59529185295105
+}

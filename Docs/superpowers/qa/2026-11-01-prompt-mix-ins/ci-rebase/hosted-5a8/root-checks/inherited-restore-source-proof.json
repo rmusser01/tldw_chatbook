@@ -1,0 +1,21 @@
+{
+  "path": "tldw_chatbook/UI/Library_Modules/library_media_controller.py",
+  "identical_original_method": true,
+  "revisions": [
+    {
+      "revision": "88af9f937908b46e8c5f9f7fddd9e8748c917d46",
+      "file_sha256": "0ae6bbd979af84482e989688dea88fcdcc534e3a400d1b1e1098bf86dbfacdf9",
+      "method_ast_sha256": "37582bde62457fdf454b40819b4f213aa3f3aa0413366c5e680291ba3d3d6de8"
+    },
+    {
+      "revision": "b1108874cab28d23f660aa22c11c863466a84a8e",
+      "file_sha256": "0ae6bbd979af84482e989688dea88fcdcc534e3a400d1b1e1098bf86dbfacdf9",
+      "method_ast_sha256": "37582bde62457fdf454b40819b4f213aa3f3aa0413366c5e680291ba3d3d6de8"
+    },
+    {
+      "revision": "5a8f23eb9dfabeda25d46ed168d8ac675f483217",
+      "file_sha256": "0ae6bbd979af84482e989688dea88fcdcc534e3a400d1b1e1098bf86dbfacdf9",
+      "method_ast_sha256": "37582bde62457fdf454b40819b4f213aa3f3aa0413366c5e680291ba3d3d6de8"
+    }
+  ]
+}

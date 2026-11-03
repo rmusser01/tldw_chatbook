@@ -235,3 +235,46 @@ def test_shutdown_publication_cannot_start_another_timer():
     attention.LibraryNotesSyncAttentionListener(host)(object())
     assert app.timers == []
     assert host.scheduled == []
+
+
+@pytest.mark.parametrize("cached", [None, object()])
+def test_cached_runtime_listener_does_not_construct_lazy_owner(cached):
+    class App:
+        def __init__(self):
+            self._notes_sync_runtime_owner = cached
+
+        @property
+        def notes_sync_runtime_owner(self):
+            raise AssertionError("listener must not construct the runtime")
+
+    assert attention._runtime(SimpleNamespace(app_instance=App())) is cached
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("prepared", [None, object()])
+async def test_prepare_runtime_checks_failure_only_after_empty_preparation(prepared):
+    failure_reads = []
+
+    class App:
+        _notes_sync_runtime_owner = None
+
+        def __init__(self):
+            self._notes_sync_runtime_owner = None
+
+        def _read_notes_sync_runtime_owner_safe(self):
+            return prepared
+
+        @property
+        def _notes_sync_runtime_build_failure(self):
+            failure_reads.append("failure")
+            assert prepared is None
+            return RuntimeError("unavailable")
+
+    async def run_service(reader):
+        return reader()
+
+    result = await attention._prepare_runtime(
+        SimpleNamespace(app_instance=App(), _run_library_service_call=run_service)
+    )
+    assert result is (attention._COULD_NOT_SAY if prepared is None else prepared)
+    assert failure_reads == (["failure"] if prepared is None else [])

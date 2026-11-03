@@ -80,7 +80,7 @@ ADR-126 (`126-complete-local-backup-and-recovery.md`, rev 4 with amendments), AD
 
 ## Verified gotchas
 
-1. The schema catalogs are **exact-SQL**: requalification compares actual installed schema text, not version labels — relabeling is forbidden by the module header.
+1. Prompt archives at schema v4 and v5 are retained and migrate to v6 on a staged copy; v6 is validated against the installed catalog. The schema catalogs are **exact-SQL**: requalification compares actual installed schema text, not version labels — relabeling is forbidden by the module header.
 2. `run_finite_local_worker` closes only caches that worker acquired; exact repository classes confer authority ("subclasses confer no authority").
 3. `settings_backup_helpers.py` documents a **retired** UI kept alive by tests and the TTS-profile backup contract — the user-facing surface is the Backup & Restore screen.
 4. Restoring an old DB does not auto-activate its contents — imported history stays inert until fresh live claims are allocated.
@@ -109,3 +109,19 @@ owner policy inside the private attempt home. After committed profile validation
 both fresh selection and launch derive portable home/roaming selectors from that
 attempt, ignoring inherited APPDATA. A subsequent move acquires those pet files
 again. Other files under the pet directory remain unsupported durable content.
+
+## Prompt mix-in operational content (ADR-286)
+
+The four conversation-owned `console_prompt_mixin_*` tables belong to the existing
+whole-ChaChaNotes backup cohort. They need no sidecar owner, new source authority,
+separate data group or reference-counting service. Maintenance capture retains
+preferences and exact used bodies even when diagnostic trace capture is off.
+
+The installed v86 schema catalog includes the operational tables, immutable-row
+and marker-preservation triggers, dispatch marker, and corrected conversation FTS
+purge trigger. Retained v81–v85 catalogs stay historical. Disposable candidate
+migration executes only the installed `chachanotes_prompt_mixins.sql` through the
+existing restricted authorizer; validation compares the complete resulting SQL
+catalog and foreign keys. Runtime constructors and source files are not used as
+restore candidates. Existing restored-profile admission and activation gates
+remain authoritative.

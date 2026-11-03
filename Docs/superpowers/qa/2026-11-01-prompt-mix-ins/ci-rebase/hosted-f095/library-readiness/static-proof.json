@@ -1,0 +1,33 @@
+{
+  "Tests/UI/library_note_links_support.py": {
+    "before_lint": [
+      [
+        "I001",
+        "Import block is un-sorted or un-formatted"
+      ],
+      [
+        "B023",
+        "Function definition does not bind loop variable `previous_generation`"
+      ]
+    ],
+    "after_lint": [
+      [
+        "I001",
+        "Import block is un-sorted or un-formatted"
+      ],
+      [
+        "B023",
+        "Function definition does not bind loop variable `previous_generation`"
+      ]
+    ],
+    "added_lint": [],
+    "sha256": "27fc9262e89732e2fc93bf4564d2159a8f7da6502875ff1418e7a72d3a9a532c",
+    "exact_wait_call_and_predicate_ast_unchanged": true
+  },
+  "Tests/UI/test_library_note_links_readiness_diagnostics.py": {
+    "before_lint": [],
+    "after_lint": [],
+    "added_lint": [],
+    "sha256": "546fe8e103474859902128bccca92e0d040d55b089a51385492a455b51a558b9"
+  }
+}

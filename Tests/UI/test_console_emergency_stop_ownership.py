@@ -173,12 +173,16 @@ async def test_repeated_cancel_retains_physical_write_across_screen_instances(
             write.cancel()
             await asyncio.sleep(0)
         assert not write.done(), "cancellation retired a still-running native write"
+        owned_write = first.app_instance.console_emergency_stop_write
+        assert owned_write is not None and not owned_write.done()
         result = await stop._write_off_loop(second, EmergencyStopState(active=True))
         assert result is False
         assert any("already being changed" in text for text in first.notices)
         release.set()
         with pytest.raises(asyncio.CancelledError):
             await write
+        assert first.app_instance.console_emergency_stop_write is None
+        assert owned_write.done()
         assert not read_emergency_stop(path).active
         assert not stop.held(first)
         assert stop.CLEARED_NOTICE not in first.notices
@@ -216,7 +220,7 @@ async def test_rejected_executor_submission_cannot_write_and_allows_retry(
         await asyncio.to_thread(thread.join, 5)
         assert not thread.is_alive()
     assert not path.exists()
-    assert getattr(screen.app_instance, "_console_emergency_stop_write", None) is None
+    assert getattr(screen.app_instance, "console_emergency_stop_write", None) is None
     assert any("RuntimeError" in message for message in screen.notices)
     assert all("private executor detail" not in message for message in screen.notices)
     assert await stop._write_off_loop(screen, EmergencyStopState(active=True))

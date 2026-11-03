@@ -1,0 +1,26 @@
+{
+  "Tests/UI/modal_wide_tier_registry.py": {
+    "before": 1,
+    "after": 1,
+    "unchanged_findings": [
+      [
+        "PLC0414",
+        "Import alias does not rename original package"
+      ]
+    ]
+  },
+  "tldw_chatbook/css/build_css.py": {
+    "before": 2,
+    "after": 2,
+    "unchanged_findings": [
+      [
+        "FURB167",
+        "Use of regular expression alias `re.M`"
+      ],
+      [
+        "FURB167",
+        "Use of regular expression alias `re.S`"
+      ]
+    ]
+  }
+}

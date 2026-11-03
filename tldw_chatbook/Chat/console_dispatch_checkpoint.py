@@ -182,6 +182,7 @@ class ConsoleDispatchCheckpoint:
     resolved_destination: ConsoleResolvedDestination
     reconstructability: ConsoleDispatchReconstructability
     agent_chat_start_attempt_id: str | None = None
+    mixin_snapshot_schema_version: int | None = None
 
 
 @dataclass(frozen=True, slots=True)

@@ -1,0 +1,15 @@
+.F                                                                       [100%]
+=================================== FAILURES ===================================
+______________ test_first_native_acceptance_publishes_usage[True] ______________
+Tests/Chat/test_console_prompt_mixin_retry.py:1665: in test_first_native_acceptance_publishes_usage
+    assert accepted.accepted and accepted.provider_started, accepted
+E   AssertionError: ConsoleSubmitResult(accepted=True, should_clear_draft=True, visible_copy='answer', session_closed=False, session_id='f...ext_epoch=0, preparation_id=None, provider_started=False, queue_notice='', cancelled_draft_revision=None, blocker=None)
+E   assert (True and False)
+E    +  where True = ConsoleSubmitResult(accepted=True, should_clear_draft=True, visible_copy='answer', session_closed=False, session_id='f...ext_epoch=0, preparation_id=None, provider_started=False, queue_notice='', cancelled_draft_revision=None, blocker=None).accepted
+E    +  and   False = ConsoleSubmitResult(accepted=True, should_clear_draft=True, visible_copy='answer', session_closed=False, session_id='f...ext_epoch=0, preparation_id=None, provider_started=False, queue_notice='', cancelled_draft_revision=None, blocker=None).provider_started
+============================= slowest 25 durations =============================
+
+(6 durations < 1s hidden.)
+=========================== short test summary info ============================
+FAILED Tests/Chat/test_console_prompt_mixin_retry.py::test_first_native_acceptance_publishes_usage[True]
+1 failed, 1 passed in 1.96s

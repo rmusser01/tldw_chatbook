@@ -21,6 +21,7 @@ from ...Widgets.Console.console_send_authority_summary import (
 
 if TYPE_CHECKING:
     from ...Chat.console_chat_models import ConsoleContextSnapshot
+    from ...Chat.console_prompt_mixins import MixinAttemptSnapshot
     from ...Widgets.Console.console_next_send_selection import (
         ConsoleNextSendSelectionResult,
     )
@@ -103,6 +104,11 @@ def build_next_send_factories(
             controller._lifecycle_revision_for(session_id),
             captured_turn_context,
         )
+        mixin_service = controller.prompt_mixin_service()
+        mixin_preferences = mixin_service.preferences(session_id)
+        mixin_current = mixin_service._capture_currentness(
+            session_id, expected_revision=mixin_preferences.revision
+        )
         captured_selection: list[tuple[Any, Any, Any]] = []
         snapshot = await controller.build_context_snapshot(
             draft=current_draft,
@@ -123,6 +129,7 @@ def build_next_send_factories(
             try:
                 return (
                     canvas_current()
+                    and mixin_current() is None
                     and owner
                     == (
                         controller.store.active_session_id,
@@ -166,6 +173,37 @@ def build_next_send_factories(
     token_estimate = _estimate_factory()
     in_progress = controller.run_state.status in owner.CONSOLE_ACTIVE_RUN_STATUSES
     return _factory, _estimate_factory, token_estimate, in_progress
+
+
+def build_mixin_snapshot_loader(
+    controller: Any, session_id: str, target_is_current: Callable[[], bool]
+) -> Callable[[str], Awaitable[MixinAttemptSnapshot]]:
+    """Read original operational instructions only for explicit turn inspection."""
+    store = controller.store
+    session = next((item for item in store.sessions() if item.id == session_id), None)
+    incarnation = session.incarnation_id if session is not None else None
+
+    async def load(message_id: str) -> MixinAttemptSnapshot:
+        if (
+            not target_is_current()
+            or controller.store is not store
+            or store._sessions.get(session_id) is not session
+            or session is None
+            or session.incarnation_id != incarnation
+        ):
+            raise ValueError("mixin_inspection_stale")
+        snapshot = await controller.prompt_mixin_service().retry_snapshot(
+            session_id, assistant_message_id=message_id
+        )
+        if (
+            not target_is_current()
+            or controller.store is not store
+            or store._sessions.get(session_id) is not session
+        ):
+            raise ValueError("mixin_inspection_stale")
+        return snapshot
+
+    return load
 
 
 def _pending_method_metadata(function):

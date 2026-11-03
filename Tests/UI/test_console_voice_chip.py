@@ -32,6 +32,39 @@ class ProductionCssComposerApp(ComposerApp):
     ]
 
 
+@pytest.mark.asyncio
+async def test_voice_presentation_reads_current_composer_helper_bindings(monkeypatch):
+    from tldw_chatbook.Widgets.Console import console_composer_bar as owner
+
+    app = ProductionCssComposerApp()
+    async with app.run_test(size=(120, 35)) as pilot:
+        await pilot.pause()
+        composer = app.query_one(ConsoleComposerBar)
+        cleared, swapped = [], []
+        original_clear = owner._clear_static_content
+        original_swap = owner._swap_size_class
+
+        def clear(widget):
+            cleared.append(widget)
+            return original_clear(widget)
+
+        def swap(widget, prefix, wanted):
+            swapped.append((widget, prefix, wanted))
+            return original_swap(widget, prefix, wanted)
+
+        monkeypatch.setattr(owner, "resolve_glyph", lambda _name: "REC")
+        monkeypatch.setattr(owner, "_clear_static_content", clear)
+        monkeypatch.setattr(owner, "_swap_size_class", swap)
+        composer.set_voice_status(STATE_LISTENING, elapsed_seconds=3)
+        await pilot.pause()
+        chip = composer.query_one("#console-voice-status", Static)
+        assert "REC 0:03" in _painted(chip)
+        composer.set_voice_status(STATE_IDLE)
+        await pilot.pause()
+        assert chip in cleared
+        assert (chip, "w-", "w-0") in swapped
+
+
 def _visible(widget) -> bool:
     """True only when the widget and every ancestor are displayed.
 

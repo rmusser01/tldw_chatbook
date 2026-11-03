@@ -1,0 +1,4 @@
+{
+  "sha256": "c7bbbb0ab79b2babe98a74488758fe6b56fc05f9044438363b4db9789057f51d",
+  "raw_text": "2026-11-02T15:43:12.8712404Z Tests/Performance/test_ui_latency_guardrails.py::test_destination_tour_stays_under_switch_budgets PASSED [  7%]\n2026-11-02T15:44:55.8816938Z Tests/Performance/test_ui_latency_guardrails.py::test_destination_tour_css_sources_stay_below_parse_cache PASSED [ 15%]\n2026-11-02T15:45:37.4221115Z ======================== 13 passed in 218.13s (0:03:38) ========================\n2026-11-02T15:46:13.1882703Z ============================= 36 passed in 33.62s ==============================\n2026-11-02T15:48:49.1041431Z ============ 28 passed, 4 skipped, 4 warnings in 153.67s (0:02:33) =============\n2026-11-02T15:48:53.3686683Z =================== 2 failed, 24 passed, 1 xfailed in 2.15s ====================\n"
+}

@@ -1,0 +1,45 @@
+F                                                                        [100%]
+=================================== FAILURES ===================================
+___________ test_library_mixin_save_conflict_export_and_dirty_escape ___________
+/private/tmp/task7-review-invalid-probe.py:18: in probe
+    async with host.run_test(size=(120, 40)) as pilot:
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/contextlib.py:217: in __aexit__
+    await anext(self.gen)
+../../../../Documents/GitHub/tldw_chatbook/.venv/lib/python3.12/site-packages/textual/app.py:2218: in run_test
+    raise self._exception
+../../../../Documents/GitHub/tldw_chatbook/.venv/lib/python3.12/site-packages/textual/message_pump.py:663: in _process_messages_loop
+    await self._dispatch_message(message)
+../../../../Documents/GitHub/tldw_chatbook/.venv/lib/python3.12/site-packages/textual/message_pump.py:739: in _dispatch_message
+    await self._on_message(message)
+../../../../Documents/GitHub/tldw_chatbook/.venv/lib/python3.12/site-packages/textual/message_pump.py:829: in _on_message
+    await invoke(method, message)
+../../../../Documents/GitHub/tldw_chatbook/.venv/lib/python3.12/site-packages/textual/_callback.py:96: in invoke
+    return await _invoke(callback, *params)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../../../Documents/GitHub/tldw_chatbook/.venv/lib/python3.12/site-packages/textual/_callback.py:56: in _invoke
+    result = callback(*params[:parameter_count])
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+tldw_chatbook/UI/Screens/library_screen.py:28224: in handle_library_prompt_conflict_save_new
+    return self._prompts_controller.handle_library_prompt_conflict_save_new(event)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+tldw_chatbook/UI/Library_Modules/library_prompts_controller.py:5306: in handle_library_prompt_conflict_save_new
+    artifact_fields = self._library_prompt_artifact_fields() if artifact_type == "mixin" else {}
+                      ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+tldw_chatbook/UI/Library_Modules/library_prompts_controller.py:4004: in _library_prompt_artifact_fields
+    definition = self.query_one(PromptMixinEditor).read_definition()
+                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+tldw_chatbook/Widgets/Prompts/prompt_mixin_editor.py:60: in read_definition
+    return LiteralMixinDefinition(
+<string>:7: in __init__
+    ???
+tldw_chatbook/Prompt_Management/prompt_artifact_models.py:100: in __post_init__
+    raise ValueError("Mix-in body must be a non-empty string.")
+E   ValueError: Mix-in body must be a non-empty string.
+============================= slowest 25 durations =============================
+4.08s call     Tests/UI/test_library_prompt_mixins.py::test_library_mixin_save_conflict_export_and_dirty_escape
+
+(2 durations < 1s hidden.)
+=========================== short test summary info ============================
+FAILED Tests/UI/test_library_prompt_mixins.py::test_library_mixin_save_conflict_export_and_dirty_escape
+1 failed in 6.38s

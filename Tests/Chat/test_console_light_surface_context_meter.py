@@ -121,6 +121,29 @@ def _row_names(rows) -> set[str]:
     return {row["function"]["name"] for row in rows}
 
 
+def _assert_fenced_preflight_matches_send(
+    bridge, gateway, session, assistant, resolution
+):
+    request = [{"role": "user", "content": "Reply with just: hi"}]
+    # Preview uses the latest composed workspace/profile context. Establish it
+    # through a real send, just as the existing request-representation control.
+    assert (
+        _send(
+            bridge, session, assistant, resolution, local_provider=_AskUserProvider()
+        ).status
+        == "done"
+    )
+    rows, tools = _capacity_request(bridge, resolution, session.id, request)
+    outcome = _send(
+        bridge, session, assistant, resolution, local_provider=_AskUserProvider()
+    )
+    assert outcome.status == "done"
+    assert rows == gateway.messages_seen[-1]
+    assert tools == (gateway.tools_seen[-1] or []) == []
+    assert all(f'"name": "{name}"' in rows[0]["content"] for name in LIGHT)
+    assert rows[0]["content"].count('  "name": "') == len(LIGHT)
+
+
 def test_the_preflight_counts_the_light_surface_the_send_carries(tmp_path):
     """A fresh profile, a model with a known large window: the preflight's
     accounting gets exactly the light set's rows."""
@@ -137,16 +160,25 @@ def test_a_window_too_small_for_the_light_set_counts_what_the_plan_sends(tmp_pat
     """A llama.cpp server whose window nobody verified is planned as 4,096
     tokens, where the light set does not fit and the request carries no
     tools. The meter agrees with the planner either way."""
-    bridge, _gateway, _session, _assistant = _production_bridge(tmp_path, [])
+    from Tests.Chat.test_console_agent_bridge import _test_resolution
+
+    bridge, gateway, session, assistant = _production_bridge(tmp_path, [["hi"], ["hi"]])
     resolution = _llama(ContextWindowResolution(32_000, "application fallback", False))
 
     rows = _preflight_tools(bridge, resolution)
-    # The same window with a verified, roomy size: the set fits, so the
-    # all-or-nothing comparison below is not vacuous.
-    roomy = _preflight_tools(
-        bridge, _llama(ContextWindowResolution(32_768, "server metadata", True))
+    # Fenced schemas belong to the prepared system prompt, not tools=.
+    # Prove the same roomy request actually sends the entire light set.
+    _assert_fenced_preflight_matches_send(
+        bridge,
+        gateway,
+        session,
+        assistant,
+        _test_resolution(
+            provider="llama_cpp",
+            execution_key="llama_cpp",
+            context_window=ContextWindowResolution(32_768, "server metadata", True),
+        ),
     )
-    assert _row_names(roomy) == LIGHT
     plan = build_console_first_request_plan(
         shared_registry=bridge._registry,
         shared_allowed_tools=bridge._allowed_tools,
@@ -196,7 +228,7 @@ def test_a_local_reasoning_resolution_still_counts_the_light_set(tmp_path):
     from Tests.Chat.test_console_agent_bridge import _test_resolution
     from tldw_chatbook.Chat.local_reasoning import resolve_reasoning_policy
 
-    bridge, _gateway, session, _assistant = _production_bridge(tmp_path, [])
+    bridge, gateway, session, assistant = _production_bridge(tmp_path, [["hi"], ["hi"]])
     resolution = replace(
         _test_resolution(
             model="qwen2.5-0.5b-instruct-q4_k_m.gguf",
@@ -206,9 +238,9 @@ def test_a_local_reasoning_resolution_still_counts_the_light_set(tmp_path):
         reasoning_replay=resolve_reasoning_policy("auto", template=None),
     )
 
-    rows = _preflight_tools(bridge, resolution, session_id=session.id)
-
-    assert _row_names(rows) == LIGHT
+    _assert_fenced_preflight_matches_send(
+        bridge, gateway, session, assistant, resolution
+    )
 
 
 def _roomy_native():

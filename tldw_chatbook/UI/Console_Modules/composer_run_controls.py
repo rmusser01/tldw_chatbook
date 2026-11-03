@@ -44,6 +44,7 @@ from textual.widgets import Button, Static
 from ...Chat.console_display_state import ConsoleAttachmentBlock
 from ...Utils.input_validation import escape_markup
 from ...Widgets.Console import console_composer_bar as composer_module
+from ...Widgets.Console import console_speech_controls as speech_module
 from ...Widgets.Console.console_composer_bar import ConsoleComposerBar
 from ...Widgets.Console.console_composer_menu_modal import (
     ACTION_IMPROVE_CURRENT_DRAFT,
@@ -115,6 +116,19 @@ def sync_dictation_presentation(screen: Any, composer: ConsoleComposerBar) -> No
                 composer_module._load_console_voice_states,
                 *composer_module._IDLE_VOICE_LOADER,
             )
+        )
+        callbacks.extend(
+            (
+                getattr(speech_module, name, None)
+                if function.__globals__ is namespace and function.__closure__ is closure
+                else None,
+                function,
+                code,
+                defaults,
+                kwdefaults,
+                values,
+            )
+            for name, function, code, defaults, kwdefaults, values, namespace, closure in speech_module._IDLE_COMPOSER_PRESENTATION_CALLBACKS
         )
         if all(
             current is function
@@ -698,7 +712,14 @@ def schedule_emergency_stop_refresh(screen: Any) -> None:
         import asyncio
 
         # ADR-097: the stop's module and its disk read start after first paint.
-        while not getattr(screen.app, "_ui_ready", True):
+        while True:
+            app = screen.app
+            try:
+                ui_ready = app._ui_ready
+            except AttributeError:
+                ui_ready = True
+            if ui_ready:
+                break
             await asyncio.sleep(0.1)
         from . import emergency_stop_hold
 
@@ -762,7 +783,22 @@ def composer_menu_state(screen: Any) -> dict[str, Any]:
     save_enables_capture, next_send_capture = (
         _save_chat_capture(screen) if ephemeral else (None, None)
     )
+    store = getattr(screen, "_console_chat_store", None)
+    session = (
+        next(
+            (item for item in store.sessions() if item.id == store.active_session_id),
+            None,
+        )
+        if store is not None
+        else None
+    )
+    preferences = (
+        session.prompt_mixin_preferences.preferences if session is not None else None
+    )
     return {
+        "mixin_count": sum(row.enabled for row in preferences.entries)
+        if preferences is not None
+        else None,
         "attachment_kind": screen._console_pending_attachment_kind(),
         "ephemeral": ephemeral,
         "save_enables_capture": save_enables_capture,
@@ -856,6 +892,33 @@ def run_composer_menu_action(screen: Any, action_id: str) -> None:
         screen.app_instance.notify(reason, severity="warning")
         return
     screen._handle_console_composer_menu_choice(action_id)
+
+
+def consume_visible_agent_handoff(self: Any, store: Any, composer: Any) -> None:
+    """Consume the accepted handoff only from its exact visible draft revision."""
+    captured = self._visible_agent_handoff_draft
+    if captured is None:
+        return
+    session_id, incarnation, revision, snapshot = captured
+    session = next((row for row in store.sessions() if row.id == session_id), None)
+    if session is None or session.incarnation_id != incarnation:
+        self._visible_agent_handoff_draft = None
+        return
+    if session.agent_handoff_state != "consumed":
+        return
+    self._visible_agent_handoff_draft = None
+    live_snapshot = composer.capture_draft_snapshot()
+    if (
+        self._console_visible_draft_session_id == session_id
+        and session.agent_handoff_revision == revision + 1
+        and live_snapshot.generation == snapshot.generation
+        and live_snapshot.edit_serial == snapshot.edit_serial
+        and live_snapshot.segments == snapshot.segments
+    ):
+        # Caret/selection navigation does not author a new draft. Keep
+        # widget generation, authored revision and segment identity fenced.
+        if composer.commit_captured_draft(composer.capture_draft_for_send()):
+            self._console_draft_switch_snapshot = None
 
 
 def _publish_console_authored_draft(self, draft: str, token: tuple[int, int]) -> bool:

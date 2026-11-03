@@ -230,6 +230,12 @@ async def mounted_rules_console(tmp_path, size=(80, 24)):
         try:
             yield case
         finally:
+            # An assertion can fail before a test reaches its own release block.
+            # Retire fixture-owned transport holds before the runtime waits for
+            # physical helper cleanup; keep the original test failure intact.
+            for release in (case.primary_release, case.helper_release):
+                if release is not None:
+                    release.set()
             await owner.dispose()
 
 

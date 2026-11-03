@@ -1118,3 +1118,97 @@ CORE_SCHEMAS = tuple(
 CHACHANOTES_ARCHIVE_V84_TO_V85_SQL = (
     "UPDATE db_schema_version SET version=85 WHERE schema_name='rag_char_chat_schema' AND version=84",
 )
+
+# Prompt v6 rebuilds only Prompts; retain exact v4/v5 catalogs for archives.
+PROMPTS_V5_SCHEMA = next(
+    sql for owner, _, sql in CORE_SCHEMAS if owner == "db.prompts.primary"
+)
+PROMPTS_V6_TABLE_SQL = """CREATE TABLE "Prompts" (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    name TEXT NOT NULL UNIQUE,
+    author TEXT,
+    details TEXT,
+    system_prompt TEXT,
+    user_prompt TEXT,
+    uuid TEXT UNIQUE NOT NULL,
+    last_modified DATETIME NOT NULL,
+    version INTEGER NOT NULL DEFAULT 1,
+    client_id TEXT NOT NULL,
+    deleted BOOLEAN NOT NULL DEFAULT 0,
+    prev_version INTEGER,
+    merge_parent_uuid TEXT,
+    prompt_format TEXT NOT NULL DEFAULT 'legacy',
+    prompt_schema_version INTEGER,
+    prompt_definition TEXT,
+    artifact_type TEXT NOT NULL DEFAULT 'prompt'
+        CHECK(artifact_type IN ('prompt', 'recipe', 'mixin'))
+)"""
+PROMPTS_V6_SCHEMA = tuple(
+    PROMPTS_V6_TABLE_SQL if sql.startswith("CREATE TABLE Prompts (") else sql
+    for sql in PROMPTS_V5_SCHEMA
+)
+CORE_SCHEMAS = tuple(
+    (owner, 6, PROMPTS_V6_SCHEMA)
+    if owner == "db.prompts.primary"
+    else (owner, version, sql)
+    for owner, version, sql in CORE_SCHEMAS
+)
+
+# ADR-286: exact installed operational mix-in catalog; v85 stays historical.
+CHACHANOTES_V86_ADDITIONS = (
+    "CREATE TRIGGER console_prompt_mixin_message_marker_preserve\nAFTER UPDATE OF metadata_json ON messages\nWHEN json_valid(OLD.metadata_json)\n AND json_type(OLD.metadata_json, '$.mixin_snapshot_schema_version') IS NOT NULL\n AND (NOT json_valid(NEW.metadata_json)\n      OR json_extract(NEW.metadata_json, '$.mixin_attempt_id') IS NOT json_extract(OLD.metadata_json, '$.mixin_attempt_id')\n      OR json_extract(NEW.metadata_json, '$.mixin_snapshot_schema_version') IS NOT json_extract(OLD.metadata_json, '$.mixin_snapshot_schema_version'))\n AND NOT EXISTS (\n    SELECT 1 FROM console_prompt_mixin_attempts AS successor\n    JOIN console_prompt_mixin_attempts AS predecessor\n      ON predecessor.conversation_id=successor.conversation_id\n     AND predecessor.attempt_id=successor.retry_of_attempt_id\n    WHERE successor.conversation_id=NEW.conversation_id\n      AND successor.assistant_message_id=NEW.id\n      AND predecessor.assistant_message_id=NEW.id\n      AND predecessor.user_message_id=successor.user_message_id\n      AND successor.attempt_id=json_extract(NEW.metadata_json, '$.mixin_attempt_id')\n      AND predecessor.attempt_id=json_extract(OLD.metadata_json, '$.mixin_attempt_id')\n      AND json_type(NEW.metadata_json, '$.mixin_snapshot_schema_version')='integer'\n      AND json_extract(NEW.metadata_json, '$.mixin_snapshot_schema_version')=1\n )\nBEGIN\n    UPDATE messages SET metadata_json=json_set(CASE WHEN json_type(NEW.metadata_json) = 'object' THEN NEW.metadata_json ELSE '{}' END,\n        '$.mixin_attempt_id', json_extract(OLD.metadata_json, '$.mixin_attempt_id'),\n        '$.mixin_snapshot_schema_version', json_extract(OLD.metadata_json, '$.mixin_snapshot_schema_version'))\n    WHERE id=NEW.id;\nEND",
+    "CREATE INDEX idx_console_mixin_attempt_assistant ON console_prompt_mixin_attempts(assistant_message_id)",
+    "CREATE INDEX idx_console_mixin_attempt_user ON console_prompt_mixin_attempts(user_message_id)",
+    "CREATE INDEX idx_console_mixin_revision_digest\nON console_prompt_mixin_revisions(conversation_id, digest)",
+    "CREATE TABLE console_prompt_mixin_attempt_items (\n    conversation_id TEXT NOT NULL,\n    attempt_id TEXT NOT NULL,\n    ordinal INTEGER NOT NULL CHECK(ordinal >= 0),\n    snapshot_id TEXT NOT NULL,\n    PRIMARY KEY(conversation_id, attempt_id, ordinal),\n    FOREIGN KEY(conversation_id, attempt_id)\n        REFERENCES console_prompt_mixin_attempts(conversation_id, attempt_id) ON DELETE CASCADE,\n    FOREIGN KEY(conversation_id, snapshot_id)\n        REFERENCES console_prompt_mixin_revisions(conversation_id, snapshot_id)\n)",
+    "CREATE TABLE console_prompt_mixin_attempts (\n    conversation_id TEXT NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,\n    attempt_id TEXT NOT NULL,\n    schema_version INTEGER NOT NULL CHECK(schema_version = 1),\n    user_message_id TEXT REFERENCES messages(id) ON DELETE SET NULL,\n    assistant_message_id TEXT REFERENCES messages(id) ON DELETE SET NULL,\n    retry_of_attempt_id TEXT,\n    replaces_attempt_id TEXT,\n    result_revision_id TEXT REFERENCES console_trace_semantic_revisions(revision_id) ON DELETE SET NULL,\n    trace_call_id TEXT REFERENCES console_trace_calls(call_id) ON DELETE SET NULL,\n    expected_item_count INTEGER NOT NULL CHECK(expected_item_count >= 0),\n    PRIMARY KEY(conversation_id, attempt_id),\n    FOREIGN KEY(conversation_id, replaces_attempt_id)\n        REFERENCES console_prompt_mixin_attempts(conversation_id, attempt_id)\n        DEFERRABLE INITIALLY DEFERRED,\n    FOREIGN KEY(conversation_id, retry_of_attempt_id)\n        REFERENCES console_prompt_mixin_attempts(conversation_id, attempt_id)\n        DEFERRABLE INITIALLY DEFERRED\n)",
+    "CREATE TABLE console_prompt_mixin_preferences (\n    conversation_id TEXT PRIMARY KEY REFERENCES conversations(id) ON DELETE CASCADE,\n    schema_version INTEGER NOT NULL CHECK(schema_version > 0),\n    revision INTEGER NOT NULL CHECK(revision >= 0),\n    selection_json TEXT NOT NULL CHECK(length(CAST(selection_json AS BLOB)) <= 512000)\n)",
+    "CREATE TABLE console_prompt_mixin_revisions (\n    conversation_id TEXT NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,\n    snapshot_id TEXT NOT NULL,\n    digest TEXT NOT NULL CHECK(length(digest) = 64),\n    authority_key TEXT NOT NULL,\n    backend TEXT NOT NULL CHECK(backend IN ('local', 'server')),\n    record_uuid TEXT NOT NULL,\n    record_version INTEGER NOT NULL CHECK(record_version > 0),\n    name TEXT NOT NULL,\n    placement TEXT NOT NULL CHECK(placement IN ('before', 'after')),\n    body TEXT NOT NULL CHECK(length(body) > 0 AND length(body) <= 20000),\n    PRIMARY KEY(conversation_id, snapshot_id)\n)",
+    "CREATE TRIGGER console_prompt_mixin_attempt_anchor_insert\nBEFORE INSERT ON console_prompt_mixin_attempts BEGIN\n    SELECT RAISE(ABORT, 'mixin_anchor_ownership') WHERE\n        NEW.result_revision_id IS NOT NULL OR NEW.trace_call_id IS NOT NULL OR\n        (NEW.replaces_attempt_id IS NOT NULL AND NOT EXISTS (\n            SELECT 1 FROM console_prompt_mixin_attempts p WHERE p.conversation_id=NEW.conversation_id\n              AND p.attempt_id=NEW.replaces_attempt_id AND p.user_message_id=NEW.user_message_id)) OR\n        (NEW.user_message_id IS NOT NULL AND NOT EXISTS (\n            SELECT 1 FROM messages WHERE id=NEW.user_message_id\n              AND conversation_id=NEW.conversation_id AND sender='user')) OR\n        (NEW.assistant_message_id IS NOT NULL AND NOT EXISTS (\n            SELECT 1 FROM messages WHERE id=NEW.assistant_message_id\n              AND conversation_id=NEW.conversation_id AND sender='assistant'));\nEND",
+    "CREATE TRIGGER console_prompt_mixin_attempt_immutable\nBEFORE UPDATE ON console_prompt_mixin_attempts BEGIN\n    SELECT RAISE(ABORT, 'mixin_immutable_attempt') WHERE\n        NEW.conversation_id IS NOT OLD.conversation_id OR\n        NEW.attempt_id IS NOT OLD.attempt_id OR\n        NEW.schema_version IS NOT OLD.schema_version OR\n        NEW.retry_of_attempt_id IS NOT OLD.retry_of_attempt_id OR\n        NEW.replaces_attempt_id IS NOT OLD.replaces_attempt_id OR\n        (NEW.result_revision_id IS NOT OLD.result_revision_id AND OLD.result_revision_id IS NOT NULL\n         AND (NEW.result_revision_id IS NOT NULL OR EXISTS (\n             SELECT 1 FROM console_trace_semantic_revisions WHERE revision_id=OLD.result_revision_id))) OR\n        (NEW.trace_call_id IS NOT OLD.trace_call_id AND OLD.trace_call_id IS NOT NULL\n         AND (NEW.trace_call_id IS NOT NULL OR EXISTS (\n             SELECT 1 FROM console_trace_calls WHERE call_id=OLD.trace_call_id))) OR\n        NEW.expected_item_count IS NOT OLD.expected_item_count OR\n        (NEW.user_message_id IS NOT OLD.user_message_id AND NEW.user_message_id IS NOT NULL) OR\n        (NEW.assistant_message_id IS NOT OLD.assistant_message_id AND NEW.assistant_message_id IS NOT NULL);\n    SELECT RAISE(ABORT, 'mixin_result_seal_ownership') WHERE\n        NEW.result_revision_id IS NOT OLD.result_revision_id AND NEW.result_revision_id IS NOT NULL\n        AND NOT EXISTS (\n            SELECT 1 FROM console_trace_semantic_revisions r\n            JOIN messages m ON m.id=r.live_message_id\n            WHERE r.revision_id=NEW.result_revision_id AND r.source_message_id=NEW.assistant_message_id\n              AND r.source_conversation_id=NEW.conversation_id AND r.normalized_role='assistant'\n              AND m.conversation_id=NEW.conversation_id AND m.deleted=0\n              AND m.assistant_generation_state='complete' AND NEW.replaces_attempt_id IS NOT NULL\n              AND json_extract(m.metadata_json,'$.mixin_attempt_id')=NEW.attempt_id\n              AND json_extract(m.metadata_json,'$.mixin_snapshot_schema_version')=1\n              AND r.revision_sequence=(SELECT MAX(revision_sequence) FROM console_trace_semantic_revisions\n                  WHERE live_message_id=m.id));\n    SELECT RAISE(ABORT, 'mixin_trace_seal_ownership') WHERE\n        NEW.trace_call_id IS NOT OLD.trace_call_id AND NEW.trace_call_id IS NOT NULL\n        AND NOT EXISTS (\n            SELECT 1 FROM console_trace_calls c\n            JOIN console_trace_owners o ON o.owner_id=c.owner_id\n            JOIN console_dispatch_checkpoints d ON d.conversation_id=o.conversation_id\n            WHERE c.call_id=NEW.trace_call_id AND c.turn_id=NEW.user_message_id\n              AND c.call_sequence=0 AND o.conversation_id=NEW.conversation_id\n              AND d.attempt_id=NEW.attempt_id AND d.assistant_message_id=NEW.assistant_message_id\n              AND d.user_message_id=NEW.user_message_id AND d.mixin_snapshot_schema_version=1);\nEND",
+    "CREATE TRIGGER console_prompt_mixin_item_immutable\nBEFORE UPDATE ON console_prompt_mixin_attempt_items BEGIN\n    SELECT RAISE(ABORT, 'mixin_immutable_item');\nEND",
+    "CREATE TRIGGER console_prompt_mixin_revision_immutable\nBEFORE UPDATE ON console_prompt_mixin_revisions BEGIN\n    SELECT RAISE(ABORT, 'mixin_immutable_revision');\nEND",
+)
+
+
+def _mixin_checkpoint_schema(schema):
+    return tuple(
+        sql.replace(
+            "updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP",
+            "updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP, mixin_snapshot_schema_version INTEGER",
+        )
+        if sql.startswith(
+            (
+                'CREATE TABLE "console_dispatch_checkpoints" (',
+                "CREATE TABLE console_dispatch_checkpoints (",
+            )
+        )
+        else sql.replace(
+            "WHERE old.title IS NOT NULL;",
+            "WHERE old.deleted = 0 AND old.title IS NOT NULL;",
+        )
+        if sql.startswith("CREATE TRIGGER conversations_ad\n")
+        else sql
+        for sql in schema
+    )
+
+
+CHACHANOTES_V86_SCHEMAS = tuple(
+    tuple(
+        sorted(
+            _mixin_checkpoint_schema(schema) + CHACHANOTES_V86_ADDITIONS,
+            key=_installed_schema_order,
+        )
+    )
+    for schema in CHACHANOTES_V85_SCHEMAS
+)
+CHACHANOTES_DICTIONARY_UPDATE_SCHEMA = CHACHANOTES_V86_SCHEMAS[1]
+CORE_SCHEMAS = tuple(
+    (owner, 86, CHACHANOTES_V86_SCHEMAS[0])
+    if owner == "db.chachanotes.primary"
+    else (owner, version, sql)
+    for owner, version, sql in CORE_SCHEMAS
+)
+CHACHANOTES_MIXINS_V85_TO_V86_SQL = (
+    "UPDATE db_schema_version SET version=86 WHERE schema_name='rag_char_chat_schema' AND version=85",
+)

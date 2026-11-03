@@ -178,6 +178,8 @@ NATIVE_CHOICE_BAR_OVERRIDES = (
 #: #2707's Settings workspace pickers). The base highlighted rule still gives
 #: the row its text style.
 NATIVE_CHOICE_FOCUS_CUE_OVERRIDES = (
+    # The inspector removes its outline; the focused cursor carries the cue.
+    ".inspector-section-list:focus > .option-list--option-highlighted",
     "#console-workspace-tree:focus > .tree--cursor",
     "#settings-workspace-persona-picker:focus > .option-list--option-highlighted",
     "#settings-workspace-profile-picker:focus > .option-list--option-highlighted",
@@ -1744,6 +1746,19 @@ def test_bundled_native_choice_and_tree_states_match_source_contracts():
         assert_native_row_hover_state_contract(css_block(text, selector))
 
     assert_all_native_choice_selectors_follow_contracts(text)
+
+
+def test_inspector_section_cursor_keeps_its_content_safe_focus_cue():
+    for text in (
+        (CSS_DIR / "features/_console_panels.tcss").read_text(encoding="utf-8"),
+        _bundle_union_text(),
+    ):
+        assert "outline: none;" in css_block(text, ".inspector-section-list:focus")
+        block = css_block(
+            text, ".inspector-section-list:focus > .option-list--option-highlighted"
+        )
+        assert_native_choice_focus_cue_contract(block)
+        assert "text-style: bold underline;" in block
 
 
 def test_file_notes_tree_cursor_uses_readable_high_contrast_focus_contract():

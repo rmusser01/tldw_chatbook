@@ -47,7 +47,7 @@ Console attention event callbacks use `ConsoleRuntime.request_console_attention_
 
 Ordinary resume prepares the original active-workspace registry read after successful FULL sync and before restoring runtime answerability (TASK-35593). `prepare_console_workspace_reconciliation` supplies a single-use result to the original synchronous reconciler in that resume stack. Native admission, current registry generation, source/session/view checks and physical retirement remain intact; workspace repair and subsequent resume actions retain their order. Explicit saved-chat resume and custom callbacks keep their original routes. The prepared result is discarded at the end of the stack and is not a reusable display or authority cache.
 
-FULL synchronization awaits the existing stock `ConsoleReadinessConfigProjection.warm()` before synchronous rail/control presentation (TASK-35594). This avoids entering native config admission on the UI thread when the display projection expires. The await is outside the workspace build scope and config operation; source/session ownership is checked by the existing projection, and the screen rechecks its attach visit and maintenance state before rendering. Refusal retains whole-FULL replay without declaring attach complete. Direct/custom presentation keeps its original fallback, live actions keep their checks, and cancellation retains the finite native read until physical retirement. No display lifetime is extended and general narrow polling remains Proposed (ADR-231).
+FULL synchronization awaits the existing stock `ConsoleReadinessConfigProjection.warm()` before synchronous rail/control presentation (TASK-35594). This avoids entering native config admission on the UI thread when the display projection expires. The await is outside the workspace build scope and config operation; source/session ownership is checked by the existing projection, and the screen rechecks its attach visit and maintenance state before rendering. Refusal retains whole-FULL replay without declaring attach complete. Direct/custom presentation keeps its original fallback, live actions keep their checks, and cancellation retains the finite native read until physical retirement. No display lifetime is extended and general narrow polling remains Proposed (ADR-231). A queued readiness refresh keeps its entry-time session lookup inside the same cold/refusal cleanup boundary as the native read. If that session closes before worker entry, the worker publishes nothing and settles pending waiters; the next current-owner request can retry. Cancellation still retains an issued finite read until physical retirement.
 
 
 Finite preparation callbacks temporarily use at most1ms interpreter thread handoffs to reduce scheduling convoys across fresh native reads (TASK-34406.11, ADR230). The existing bookkeeping lock counts overlapping physical callbacks; last exit restores the prior value if still owned. Lower prior or later different external settings remain. This affects interpreter scheduling only: original source, permission, native ownership and cancellation checks are unchanged.
@@ -133,6 +133,14 @@ final disabled, tooltip, queue and setup states (TASK-35614).
 Top-to-bottom inside `#console-shell`: a `DestinationHeader` with speech controls; hidden legacy compat statics kept for contract tests; a dispatch-recovery callout; the dense `ConsoleControlBar`; then the main grid — left `ConsoleRailHandle` → `ConsoleLeftRail` (3fr) → center column (13fr, hosting either the transcript region or the embedded terminal workspace) → `ConsoleInspectorRail` (4fr) → right handle. Below the grid: status chips (position from `[console] status_chips_position`), staged evidence strip, dispatch-recovery region, prompt-queue region, the `ConsoleComposerBar`, command popup, and setup modal.
 
 Multiple chats are store-level `ConsoleChatSession`s, one per tab on the session surface's tab strip. Sessions bind to workspaces via `session.workspace_id` (default the global workspace). Streamed transcript and background-run activity are projected by `_sync_native_console_chat_ui`, including its `set_interval(0.2 s)` poll; the timer deliberately does not stop while any session still has an in-flight run. Session switches call `UI/Console_Modules/session.py::_bind_composer_to_active_session()` before the first await: they save the outgoing draft, load the selected chat's draft, and update the active-tab highlight and title immediately. The shared tab/switcher activation path also focuses the composer before awaiting; background switches preserve keyboard focus.
+
+`ConsoleSessionController._sync_console_session_draft` treats an already closed
+outgoing owner's optional snapshot as absent and continues binding the active
+chat. Current-active snapshot reads retain their failure behavior; surviving
+resident revisions and typed suffixes retain their original reconciliation.
+Exact visible handoff consumption delegates to the existing
+`composer_run_controls.consume_visible_agent_handoff`, preserving the original
+incarnation, revision, generation, edit-serial and segment checks.
 
 Character-picker creation and character/persona Start Chat handoffs align the
 workspace registry with the selected conversation through
@@ -250,6 +258,8 @@ Approval requests surface as `ChatApprovalCard` widgets in the session surface's
 Recovery runtime, provider implementation and native cards load on first use, after the initial interactive frame. Reserved tool names stay in the resident catalog. An optional disposable `prepare_view` hook mounts controls only after runtime custody has captured a manual or queued turn, then rechecks custody before submission; current answerability still gates admission. View syncs serialize initialization and require actual DOM attachment before and after awaited mounts; Textual's latched `is_mounted` flag alone is insufficient during app exit. Trace-transform validators live in `console_prepared_request.py` with the controller class/static call seams and live controller-global reads retained; recovery-only rider and review collection stay in the first-use recovery runtime.
 
 The extracted `console_interrupt_rounds.build_tool_review_hook` handles search Persona approvals through the existing per-call review path. Restoration always uses a fresh exact-target/scope confirmation. `UI/Console_Modules/archive_recovery.py` renders trusted cards and receipts; explicit Open navigates only after settled effects and preserves original history and the source draft. Shutdown drains admitted archive work before current native owners close. Chronology appends chat schema85/workspace10 and remains local-only.
+
+Confirmation cards retain the latest payload before their fixed controls mount, and their native mount callback renders that payload. A view acknowledges projection only after all six typed controls are mounted and outside native pruning/closing. Parent and child `is_mounted` flags can remain latched during retirement; a Select may already have lost its internal overlay. Deferred or retiring controls return false without changing exact-request, scope, expiry or one-shot consent gates.
 
 ## Branching, rewind, and variants
 
@@ -450,3 +460,171 @@ applicable under the publication lock. Manual stage publication acquires boundar
 admission before publication, after source callbacks. Guard exit also runs after
 publication unlock. Stop can therefore acquire publication while a reader awaits
 its UI guard; the reader subsequently fails closed on revoked authority.
+Applied nonempty mix-ins also delimit a private clean-history cache boundary in
+`console_prepared_request.py`. Windowing recomputes it from retained units before
+the active turn; the frozen adapter-input witness survives system extraction and
+private-key stripping. Only the Anthropic adapter consumes it, mapping the exact
+source end through conversion and omitting stale/ambiguous ends within its existing
+four-breakpoint budget. Empty/disabled mix-ins preserve prior wire behavior.
+OpenAI retains automatic caching and its existing stable key; explicit history
+breakpoints are unavailable in the current client capability contract. See
+[provider caching qualification](llm-providers.md#cache-qualification-checked-2026-11-01).
+
+Operational prompt mix-in persistence is defined by ADR-286. Immutable values and
+strict preference codecs live in `Chat/console_prompt_mixin_models.py`;
+`console_prompt_mixins.py` retains the public reexports and composition helpers; the frozen
+`MixinAttemptContribution` lives in `Chat/console_prompt_mixin_service.py` and
+borrows the existing acceptance/promotion transaction. Exact native anchors,
+conversation-owned retry rows and body-free message/checkpoint markers survive
+fork, promotion and terminal metadata writes. The strict fork envelope admits only
+the validated companion marker pair, retaining status, attachment labels and trace
+aliases without authority. Nonobject JSON metadata rewrites normalize to an object
+before restoring the durable marker pair. Current-send composition borrows this seam without activating inherited chat choices.
+The decorated controller entry delegates its agent loop to
+`console_agent_reply.py`, retaining the controller's task/default contracts and
+live defining-module dependencies. `console_settings_persistence.py` holds the
+existing serialized settings drain; its task handles and CAS state remain on the
+store. Fork projections live in `console_chat_fork.py`, sequence primitives in
+`console_trace_models.py`, and memory-banner presentation in
+`console_memory_banner.py`. Legacy maintenance starts through the runtime's
+original readiness/delay gate before loading `console_trace_maintenance_runtime.py`.
+These extractions preserve the existing authority and cancellation owners.
+
+Receipt saves keep memory-backed SQLite on its owning loop, as native turn commits do; file-backed saves use the existing owned DB worker and cancellation retirement. The Subscription hybrid recovery catalog composes the frozen schema-86 lineages and requires their exact embedded stamp.
+
+
+`ConsolePromptMixinService` now owns live selection CAS and admission capture.
+`ConsoleSessionInputSnapshot` freezes the originating chat's references and
+preference revision synchronously at received Send/Queue intake; the received
+claim and checked configuration identity refuse changes during later native work.
+The legacy direct submit path carries only the added frozen value and input
+witness until its original configuration-resolution point, preserving existing
+attachment/prefill custody. New automatic origins and hook/native follow-ups get
+explicit empty mix-ins.
+
+`PromptScopeService.mixin_source_identity` qualifies local UUIDs with a stable,
+credential-free digest of the selected Prompt DB lexical path and exact backend/DB
+object fences. Memory authorities have process-local lifetime. Coherent local
+reads use the existing finite preparation-read owner, including cancellation
+retirement and a five-second preparation deadline; current server capability
+refuses capture. Bodies remain representation-hidden in
+`ConsoleTurnConfigurationSnapshot.prompt_mixins`, request custody, and detached
+execution copies. A queued text edit retains its admitted mix-ins while keeping
+existing behavior for the other edit-time configuration fields; drain never reads
+the library again. No configuration JSON recovery codec or persistent queue is
+introduced. Durable attempt recording and composition use the same frozen execution input.
+
+Selection saves join `ConsoleSettingsDurabilityOwner` and the store's existing
+serialized settings drain as `PROMPT_MIXINS`. Rapid edits coalesce, native writes
+retain exact session/incarnation/binding identity, and stale results cannot publish
+into replacement chats. The existing Model recovery surface adds a failure-only
+row with exact failure/revision retry. Supported selections round-trip through
+private session state and the existing off-loop hydration batch; temporary
+promotion seeds them through the existing restricted INSERT transaction capability.
+Unknown/corrupt preferences stay unavailable and preserved, and new/copy/fork
+chats start empty. Retry lookup maps legacy attempts to empty, returns recorded
+empty distinctly, and refuses missing new-format records; persisted lookup also
+checks the exact assistant anchor. Normal mix-in controls remain in the future
+Prompts/Workbench integration.
+
+Already-complete supplied custody/configuration is authoritative, including an
+explicit or default-empty snapshot. Custom complete-input callers opt into
+capture through the preparation seam or supply the exact frozen value; the runtime
+does not guess whether empty means uncaptured. Tool/transport continuation keeps
+the accepted envelope, while a new machine-origin turn starts empty.
+
+Direct uncustodied capture also retains the service's private body-free source
+currentness guard until admission. Queue rechecks after hook preparation and just
+before enqueue. Manual Submit rechecks after hook/library/provider preparation,
+before acceptance, and on the owning loop after the durable handoff drain before
+issuing its native commit. Pending `_PreparedSendContinuation` keeps the same
+representation-hidden witness/guard across pause and resume. A stale preaccept
+source fails the optimistic echo and abandons the preparation through the existing
+rollback path; drafts and attachments remain staged. Already-accepted/postcommit
+envelopes and supplied complete configurations do not acquire this guard or reload
+library bodies. No callback is stored in frozen configuration or serialized data.
+
+
+ADR-286 current-send composition is owned by `compose_current_mixin_messages` in
+`console_prepared_request.py`. It wraps the exact native current-user row after
+ordinary text transforms, retaining a private attempt marker through semantic
+preparation and agent/tool continuations; serialization removes it. Canonical
+messages, history, retrieval and summary input remain clean. Retry and accepted
+stopped-empty Resend read the original operational record (including recorded
+empty), while Regenerate, edit-and-resend and explicit Continue capture current
+choices. Raw damaged markers refuse Retry before dispatch.
+
+Initial acceptance contributes the frozen attempt to the native transaction.
+Replay accepts it before provider entry; a new empty regeneration assistant and
+its attempt share the existing `create_message` transaction. A failed write
+publishes neither row identity nor provider work. Temporary sessions retain full
+`MixinAttemptWrite` batches by attempt identity, including predecessors; promotion
+writes every batch once through the exact native-to-durable map, then publishes
+the latest marker. Contribution identity hashes all frozen fields, including the
+full literal body, rather than embedding bodies in fingerprint diagnostics.
+
+The unreleased v86 marker-preservation trigger permits only the exact recorded
+same-owner predecessor/successor transition. It continues to preserve valid markers
+against arbitrary metadata writes. The exact recovery schema catalog changes with
+that trigger; the schema version is 86 on current dev.
+
+Context Next Send uses the same literal composition and source fences with
+`capture(publish_facts=False)`: it does not publish last-used/reconciliation facts,
+schedule preference writes, or call the model. Prepared token/cost projections
+include the bodies as mandatory active input; overflow retains existing recovery.
+
+
+Task-38540 review refinement: synthetic Continue input is constructed and given an
+exact native anchor by the shared continuation helper, including Retry and
+Regenerate after restart. Accepted Retry/Regenerate and stopped-empty original
+Resend record `replaces_attempt_id`; an ordinary new Continue is not a replacement.
+Regenerate omits this optional relationship when the exact original snapshot is
+unavailable or corrupt, so valid current choices remain usable. Exact Retry still
+refuses; the new attempt must persist before dispatch and cannot restore trace
+history through the damaged original.
+
+The existing v86 attempt table now also has set-once `trace_call_id` and
+`result_revision_id` proof fields. Initial FRESH/AGENT_FIRST call reservation binds
+the call through the exact native dispatch checkpoint in that transaction. Tool
+loops never replace this binding. A complete replacement's result revision seals
+inside the existing generation settlement transaction. Clean-source restoration
+requires a bounded accepted replacement chain to the exact origin call and exact
+sealed result equality, so a surviving marker cannot authorize first responses or
+post-result edits. FK deletion clears unavailable proof without deleting snapshots
+or blocking diagnostic GC. Fork clears all three authority fields. Promotion
+keeps accepted relationship/history but leaves result/trace seals unset for old
+temporary attempts, which never owned a durable captured origin. New durable
+attempts establish their own proof. The exact recovery table/guard catalog follows
+these unreleased v86 changes.
+
+### Mix-in controls and selected-generation display
+
+The existing composer Menu → Prompts action opens Browse; its Mix-ins section owns enabled references and Before/After order. A queued entry retains its accepted snapshot even after Library edits, toggles or tab switches. Reopen restores references/flags/order; live and durable preference CAS revisions have distinct lifetimes. New/copy/fork chats do not inherit active selections.
+
+Browse → Mix-ins admits its mode transition and definition read through a modal-owned worker. Close and Back remain responsive while a read is held; mode, source, session and unmount fences reject late publication. Original mix-in inspection explains that exact Retry content is retained with the chat even with diagnostic Capture Off, independently of trace purge.
+
+`ConsoleChatMessage.mixin_usage_count` and `ConsoleVariant.mixin_usage_count` are transient display projections. Generation capture/apply moves the count with that generation; a manual or unqualified replacement carries `None`. This prevents the prior generation's Retry label leaking onto a replacement. Operational snapshot validation remains the only Retry authority. Unknown counts do not mean zero.
+
+
+Final fork/replay ownership (ADR-286): the immutable fork fence and snapshot carry
+`MixinForkState`, read in the existing caller-cursor owner for saved sources and
+from owned receipts for temporary sources. The shared historical read/write seam
+remaps copied anchors and retains Retry predecessors outside the prefix with null
+anchors; fresh `MixinAttemptWrite` still requires two real live anchors. The SQL
+copier inserts retained records before publishing each source marker exactly once,
+including same-row Retry chains. Forks clear replacement/trace proof fields and
+active choices. Temporary fork history survives source closure and is imported by
+the restricted promotion contribution before any subsequent fresh Retry batches.
+The live publication derives marker/count/classification from this owned state,
+without render-time reads. Unavailable/partial/future markers remain unavailable;
+unreadable generic metadata carries only an unavailable discriminator, never its
+body or an invented receipt. `mixin_replay_status` is a transient display refusal
+classification and travels with generation selection; it grants no Retry authority.
+
+New current-choice Regenerate, edit-and-resend and Continue retain the shared
+body-free capture-currentness witness across provider/hook/transform waits and
+check before mutation/admission. Original Retry and already accepted configurations
+remain source-independent. Expected unavailable/stale mix-in Preview failures
+return bounded disable/remove/refresh guidance without unexpected-error traceback;
+unexpected failures retain their diagnostic path. Ordinary server Browse checks
+snapshot capability before entering Mix-ins and retains its server view on refusal.

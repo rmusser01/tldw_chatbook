@@ -518,7 +518,10 @@ class ProviderListStep(ProviderKeyEntryStep):
 
     def _list_app_config(self) -> Mapping[str, Any]:
         app_instance = getattr(getattr(self, "wizard", None), "app_instance", None)
-        config = getattr(app_instance, "app_config", None)
+        try:
+            config = app_instance.app_config
+        except AttributeError:
+            config = None
         return config if isinstance(config, Mapping) else {}
 
     def _build_list(self) -> ListBuild:

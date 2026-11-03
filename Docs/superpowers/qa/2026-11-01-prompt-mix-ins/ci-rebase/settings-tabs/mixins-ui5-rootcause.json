@@ -1,0 +1,183 @@
+{
+  "base": "62a169f906508ed02bd7546ab278d916638d1607",
+  "source_comparison": {
+    "tldw_chatbook/UI/Screens/settings_screen.py": {
+      "identical": true,
+      "dev_sha256": "0ea5826210588ef12390a58c9e3335f495bb06395b705211d4fcf3e87e874672",
+      "current_sha256": "0ea5826210588ef12390a58c9e3335f495bb06395b705211d4fcf3e87e874672"
+    },
+    "tldw_chatbook/UI/Settings_Modules/settings_quit_guard.py": {
+      "identical": true,
+      "dev_sha256": "800ec127721093810e6b392a794e9a3114cf5d8c5638af8ea2fbfe3d11514f85",
+      "current_sha256": "800ec127721093810e6b392a794e9a3114cf5d8c5638af8ea2fbfe3d11514f85"
+    },
+    "tldw_chatbook/UI/Settings_Modules/providers_models_card.py": {
+      "identical": true,
+      "dev_sha256": "72d25f8d165a7f397aa83f05b80912694e7bda7df43b6b5abeeec6591ac58d27",
+      "current_sha256": "72d25f8d165a7f397aa83f05b80912694e7bda7df43b6b5abeeec6591ac58d27"
+    },
+    "tldw_chatbook/Widgets/Console/console_setup_modal.py": {
+      "identical": true,
+      "dev_sha256": "c80ab61a536737de8c6da19221d342912c0bedb380309c8ec4669e28bc4ecb8e",
+      "current_sha256": "c80ab61a536737de8c6da19221d342912c0bedb380309c8ec4669e28bc4ecb8e"
+    }
+  },
+  "status_probe_exit": 0,
+  "status_updates": [
+    {
+      "method": "_update_draft_status_widgets",
+      "event": "call",
+      "category": "internal-prompts",
+      "active": "overview",
+      "screen": 4650212752,
+      "raw": null,
+      "loaded": "None",
+      "status": "No unsaved changes",
+      "caller": "_refresh_internal_prompts_customized_widgets:26395"
+    },
+    {
+      "method": "_update_draft_status_widgets",
+      "event": "return",
+      "category": "internal-prompts",
+      "active": "overview",
+      "screen": 4650212752,
+      "raw": null,
+      "loaded": "None",
+      "status": "No unsaved changes"
+    },
+    {
+      "method": "_update_draft_status_widgets",
+      "event": "call",
+      "category": "internal-prompts",
+      "active": "providers-models",
+      "screen": 4650212752,
+      "raw": [
+        false,
+        "10"
+      ],
+      "loaded": "enabled=False keep_count=10",
+      "status": "No unsaved changes",
+      "caller": "_refresh_internal_prompts_customized_widgets:26395"
+    },
+    {
+      "method": "_update_draft_status_widgets",
+      "event": "return",
+      "category": "internal-prompts",
+      "active": "providers-models",
+      "screen": 4650212752,
+      "raw": [
+        false,
+        "10"
+      ],
+      "loaded": "enabled=False keep_count=10",
+      "status": "No unsaved changes"
+    },
+    {
+      "method": "_update_draft_status_widgets",
+      "event": "call",
+      "category": "providers-models",
+      "active": "providers-models",
+      "screen": 4650212752,
+      "raw": [
+        false,
+        "10"
+      ],
+      "loaded": "enabled=False keep_count=10",
+      "caller": "_snapshot_preferences_changed:9426"
+    },
+    {
+      "method": "_update_draft_status_widgets",
+      "event": "return",
+      "category": "providers-models",
+      "active": "providers-models",
+      "screen": 4650212752,
+      "raw": [
+        false,
+        "10"
+      ],
+      "loaded": "enabled=False keep_count=10"
+    },
+    {
+      "method": "_update_draft_status_widgets",
+      "event": "call",
+      "category": "providers-models",
+      "active": "providers-models",
+      "screen": 4650212752,
+      "raw": [
+        false,
+        "11"
+      ],
+      "loaded": "enabled=False keep_count=10",
+      "status": "No unsaved changes",
+      "caller": "_snapshot_preferences_changed:9426"
+    },
+    {
+      "method": "_update_draft_status_widgets",
+      "event": "return",
+      "category": "providers-models",
+      "active": "providers-models",
+      "screen": 4650212752,
+      "raw": [
+        false,
+        "11"
+      ],
+      "loaded": "enabled=False keep_count=10",
+      "status": "Unsaved changes"
+    },
+    {
+      "method": "_update_draft_status_widgets",
+      "event": "call",
+      "category": "internal-prompts",
+      "active": "providers-models",
+      "screen": 4880787616,
+      "raw": [
+        false,
+        "11"
+      ],
+      "loaded": "enabled=False keep_count=10",
+      "status": "Unsaved changes",
+      "caller": "_refresh_internal_prompts_customized_widgets:26395"
+    },
+    {
+      "method": "_update_draft_status_widgets",
+      "event": "return",
+      "category": "internal-prompts",
+      "active": "providers-models",
+      "screen": 4880787616,
+      "raw": [
+        false,
+        "11"
+      ],
+      "loaded": "enabled=False keep_count=10",
+      "status": "No unsaved changes"
+    },
+    {
+      "method": "_update_draft_status_widgets",
+      "event": "call",
+      "category": "providers-models",
+      "active": "providers-models",
+      "screen": 4880787616,
+      "raw": [
+        false,
+        "11"
+      ],
+      "loaded": "enabled=False keep_count=10",
+      "status": "No unsaved changes",
+      "caller": "_snapshot_preferences_changed:9426"
+    },
+    {
+      "method": "_update_draft_status_widgets",
+      "event": "return",
+      "category": "providers-models",
+      "active": "providers-models",
+      "screen": 4880787616,
+      "raw": [
+        false,
+        "11"
+      ],
+      "loaded": "enabled=False keep_count=10",
+      "status": "Unsaved changes"
+    }
+  ],
+  "qualification": "Uninstrumented exact current pair failed2; read-only profile observer perturbed timing and snapshot case passed, while capturing inactive INTERNAL_PROMPTS refresh overwriting dirty Providers & Models header. No dev runtime run."
+}

@@ -30,6 +30,7 @@
 #
 import json
 import sqlite3
+import sys as _export_sys
 import threading
 import time
 import uuid
@@ -138,7 +139,7 @@ class PromptNameConflictError(ConflictError):
 
 # --- Database Class ---
 class PromptsDatabase:
-    _CURRENT_SCHEMA_VERSION = 5
+    _CURRENT_SCHEMA_VERSION = 6
     _PROMPT_HISTORY_INDEX_NAME = "idx_sync_log_prompt_history"
     _PROMPT_HISTORY_INDEX_COLUMNS = (
         ("entity", False),
@@ -812,6 +813,11 @@ class PromptsDatabase:
             "function": "_apply_migration_v4_to_v5",
             "description": "Add local Console Prompt Draft Shelf",
         },
+        5: {
+            "to_version": 6,
+            "function": "_apply_migration_v5_to_v6",
+            "description": "Add literal mix-in artifact type",
+        },
     }
 
     def _apply_schema_v1(self, conn: sqlite3.Connection):
@@ -1090,6 +1096,38 @@ class PromptsDatabase:
             )
             raise DatabaseError(f"Migration v4->v5 failed: {e}") from e
 
+    def _apply_migration_v5_to_v6(self, conn: sqlite3.Connection):
+        """Rebuild the artifact constraint in a single checked transaction."""
+        sql = (
+            Path(__file__).parent / "migrations" / "prompts_literal_mixins.sql"
+        ).read_text(encoding="utf-8")
+        if conn.in_transaction:
+            raise SchemaError("Mix-in migration requires its own transaction.")
+        foreign_keys = conn.execute("PRAGMA foreign_keys").fetchone()[0]
+        conn.execute("PRAGMA foreign_keys = OFF")
+        try:
+            with self.transaction():
+                objects = conn.execute(
+                    "SELECT sql FROM sqlite_master WHERE tbl_name = 'Prompts' "
+                    "AND type IN ('index', 'trigger') AND sql IS NOT NULL ORDER BY type, name"
+                ).fetchall()
+                statement = ""
+                for line in sql.splitlines(keepends=True):
+                    statement += line
+                    if sqlite3.complete_statement(statement):
+                        conn.execute(statement)
+                        statement = ""
+                if statement.strip():
+                    raise SchemaError("Incomplete mix-in migration statement.")
+                for row in objects:
+                    conn.execute(row[0])
+                if conn.execute("PRAGMA foreign_key_check").fetchone() is not None:
+                    raise SchemaError(
+                        "Foreign key check failed after mix-in migration."
+                    )
+        finally:
+            conn.execute(f"PRAGMA foreign_keys = {int(foreign_keys)}")
+
     def _initialize_schema(self):
         conn = self.get_connection()
         try:
@@ -1196,8 +1234,9 @@ class PromptsDatabase:
         if not isinstance(artifact_type, str) or artifact_type not in {
             "prompt",
             "recipe",
+            "mixin",
         }:
-            raise InputError("artifact_type must be either 'prompt' or 'recipe'.")
+            raise InputError("artifact_type must be 'prompt', 'recipe', or 'mixin'.")
         return artifact_type
 
     @staticmethod
@@ -2766,6 +2805,53 @@ class PromptsDatabase:
         ):
             raise DatabaseError("Failed to read Prompt export snapshot.") from None
 
+    def fetch_mixin_snapshot(
+        self, record_uuids: tuple[str, ...]
+    ) -> tuple[dict[str, Any], ...]:
+        """Read exact active mix-ins and versions under one SQLite snapshot."""
+        from ..Prompt_Management.prompt_artifact_models import (
+            decode_literal_mixin_v3,
+            deserialize_definition,
+        )
+
+        if not isinstance(record_uuids, tuple) or any(
+            not isinstance(value, str) or not value for value in record_uuids
+        ):
+            raise ValueError("Mix-in UUIDs must be a tuple of non-empty strings.")
+        if len(set(record_uuids)) != len(record_uuids):
+            raise ValueError("Mix-in UUIDs must be unique.")
+        rows_by_uuid: dict[str, dict[str, Any]] = {}
+        with self.transaction() as conn:
+            batch_size = min(900, conn.getlimit(sqlite3.SQLITE_LIMIT_VARIABLE_NUMBER))
+            if batch_size < 1:
+                raise ValueError("SQLite cannot bind mix-in UUIDs.")
+            for start in range(0, len(record_uuids), batch_size):
+                batch = record_uuids[start : start + batch_size]
+                placeholders = ", ".join("?" for _ in batch)
+                rows = conn.execute(
+                    f"SELECT uuid, version, name, artifact_type, prompt_format, prompt_schema_version, "
+                    f"prompt_definition, system_prompt, user_prompt FROM Prompts "
+                    f"WHERE deleted = 0 AND uuid IN ({placeholders})",
+                    batch,
+                ).fetchall()
+                for row in rows:
+                    record = dict(row)
+                    if record["artifact_type"] != "mixin":
+                        raise ValueError("Requested mix-in is unsupported.")
+                    decoded = decode_literal_mixin_v3(
+                        record, raw=deserialize_definition(record["prompt_definition"])
+                    )
+                    if (
+                        decoded.state != "supported_v3"
+                        or decoded.artifact_type != "mixin"
+                    ):
+                        raise ValueError("Requested mix-in is unsupported.")
+                    record["prompt_definition"] = dict(decoded.raw_definition)
+                    rows_by_uuid[record["uuid"]] = record
+            if len(rows_by_uuid) != len(record_uuids):
+                raise ValueError("Requested mix-in is missing or deleted.")
+            return tuple(rows_by_uuid[value] for value in record_uuids)
+
     def get_prompt_by_id(
         self, prompt_id: int, include_deleted: bool = False
     ) -> Optional[Dict]:
@@ -2890,7 +2976,11 @@ class PromptsDatabase:
             raise DatabaseError(f"Failed fetch prompt by name: {e}") from e
 
     def list_prompts(
-        self, page: int = 1, per_page: int = 10, include_deleted: bool = False
+        self,
+        page: int = 1,
+        per_page: int = 10,
+        include_deleted: bool = False,
+        artifact_type: str | None = None,
     ) -> Tuple[List[Dict], int, int, int]:
         start_time = time.time()
 
@@ -2901,13 +2991,15 @@ class PromptsDatabase:
         offset = (page - 1) * per_page
 
         include_deleted_flag = 1 if include_deleted else 0
+        if artifact_type is not None:
+            self._normalize_artifact_type(artifact_type)
 
         try:
             with self.transaction() as conn:
                 cursor = conn.cursor()
                 cursor.execute(
-                    "SELECT COUNT(*) FROM Prompts WHERE ? = 1 OR deleted = 0",
-                    (include_deleted_flag,),
+                    "SELECT COUNT(*) FROM Prompts WHERE (? = 1 OR deleted = 0) AND (? IS NULL OR artifact_type = ?)",
+                    (include_deleted_flag, artifact_type, artifact_type),
                 )
                 total_items = cursor.fetchone()[0]
 
@@ -2925,10 +3017,19 @@ class PromptsDatabase:
                                 CASE WHEN length(trim(coalesce(user_prompt, ''))) > 0 THEN 1 ELSE 0 END
                                     AS has_user_prompt
                                 FROM Prompts
-                                WHERE ? = 1 OR deleted = 0
+                                WHERE (? = 1 OR deleted = 0) AND (? IS NULL OR artifact_type = ?)
                                 ORDER BY last_modified DESC, id DESC
                                 LIMIT ? OFFSET ?"""
-                    cursor.execute(query, (include_deleted_flag, per_page, offset))
+                    cursor.execute(
+                        query,
+                        (
+                            include_deleted_flag,
+                            artifact_type,
+                            artifact_type,
+                            per_page,
+                            offset,
+                        ),
+                    )
                     results_data = [dict(row) for row in cursor.fetchall()]
 
             total_pages = ceil(total_items / per_page) if total_items > 0 else 0
@@ -2988,6 +3089,7 @@ class PromptsDatabase:
         sort_order: str = "desc",
         page: int = 1,
         page_size: int = 50,
+        artifact_type: str | None = None,
     ) -> tuple[list[dict], int, int, int]:
         """Browse one exact, stable page of active local Prompts and Recipes.
 
@@ -3039,6 +3141,10 @@ class PromptsDatabase:
         join_sql = ""
         conditions = ["p.deleted = 0"]
         params: list[Any] = []
+        if artifact_type is not None:
+            self._normalize_artifact_type(artifact_type)
+            conditions.append("p.artifact_type = ?")
+            params.append(artifact_type)
         if collection_id is not None:
             join_sql = (
                 "JOIN LocalPromptCollectionItems AS pci ON pci.prompt_id = p.id "
@@ -3470,6 +3576,7 @@ class PromptsDatabase:
         results_per_page: int = 20,
         include_deleted: bool = False,
         fts_match_query: Optional[str] = None,
+        artifact_type: str | None = None,
     ) -> Tuple[List[Dict[str, Any]], int]:
         """Searches prompts using FTS.
 
@@ -3526,6 +3633,10 @@ class PromptsDatabase:
         conditions = []
         params = []
 
+        if artifact_type is not None:
+            self._normalize_artifact_type(artifact_type)
+            conditions.append("p.artifact_type = ?")
+            params.append(artifact_type)
         if not include_deleted:
             conditions.append("p.deleted = 0")
 
@@ -4526,226 +4637,25 @@ def export_prompts_formatted(
     include_associated_keywords: bool = True,  # Renamed for clarity
     markdown_template_name: Optional[str] = "Basic Template",  # Name of template
 ) -> Tuple[str, str]:
-    import csv
-    import tempfile
-    import os
-    import zipfile  # For markdown if multiple files
-    from datetime import datetime
+    """Export through the existing public DB surface and current dependencies."""
+    from .prompt_export import export_prompts_formatted as export
 
-    if not isinstance(db_instance, PromptsDatabase):
-        raise TypeError("db_instance must be a PromptsDatabase object.")
-
-    logging.debug(
-        f"export_prompts_formatted (format: {export_format}) from DB: {db_instance.db_path_str}"
+    return export(
+        _PROMPT_EXPORT_SOURCE,
+        db_instance,
+        export_format,
+        filter_keywords,
+        include_system,
+        include_user,
+        include_details,
+        include_author,
+        include_associated_keywords,
+        markdown_template_name,
     )
 
-    # --- Fetch Prompts Data ---
-    # Build base query parts
-    select_fields = ["p.id", "p.name", "p.uuid"]  # Always include id, name, uuid
-    if include_author:
-        select_fields.append("p.author")
-    if include_details:
-        select_fields.append("p.details")
-    if include_system:
-        select_fields.append("p.system_prompt")
-    if include_user:
-        select_fields.append("p.user_prompt")
 
-    query_sql = f"SELECT DISTINCT {', '.join(select_fields)} FROM Prompts p"
-    query_params = []
-
-    # Keyword filtering
-    if filter_keywords and len(filter_keywords) > 0:
-        normalized_filter_keywords = [
-            db_instance._normalize_keyword(k)
-            for k in filter_keywords
-            if k and k.strip()
-        ]
-        if normalized_filter_keywords:
-            placeholders = ",".join(["?"] * len(normalized_filter_keywords))
-            query_sql += f"""
-                JOIN PromptKeywordLinks pkl ON p.id = pkl.prompt_id
-                JOIN PromptKeywordsTable pkw ON pkl.keyword_id = pkw.id
-                WHERE p.deleted = 0 AND pkw.deleted = 0 AND pkw.keyword IN ({placeholders})
-            """
-            query_params.extend(normalized_filter_keywords)
-        else:  # No valid filter keywords, so just filter active prompts
-            query_sql += " WHERE p.deleted = 0"
-    else:  # No keyword filter, just active prompts
-        query_sql += " WHERE p.deleted = 0"
-
-    query_sql += " ORDER BY p.name COLLATE NOCASE"
-
-    try:
-        cursor = db_instance.execute_query(query_sql, tuple(query_params))
-        prompts_data = [dict(row) for row in cursor.fetchall()]
-
-        if not prompts_data:
-            return "No prompts found matching the criteria for export.", "None"
-
-        # Fetch associated keywords for each prompt if needed
-        if include_associated_keywords:
-            for prompt_dict in prompts_data:
-                prompt_dict["keywords_list"] = db_instance.fetch_keywords_for_prompt(
-                    prompt_dict["id"], include_deleted=False
-                )
-
-        # --- Perform Export ---
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        output_file_path = "None"
-
-        if export_format == "csv":
-            # TASK-32806.7: unique, O_EXCL, 0600 -- not a guessable
-            # world-readable name in the shared temp dir.
-            _fd, temp_csv_file = tempfile.mkstemp(
-                prefix="prompts_export_", suffix=".csv"
-            )
-            os.close(_fd)
-            header_row = ["Name", "UUID"]  # Start with common fields
-            if include_author:
-                header_row.append("Author")
-            if include_details:
-                header_row.append("Details")
-            if include_system:
-                header_row.append("System Prompt")
-            if include_user:
-                header_row.append("User Prompt")
-            if include_associated_keywords:
-                header_row.append("Keywords")
-
-            with open(temp_csv_file, "w", newline="", encoding="utf-8") as csvfile:
-                writer = csv.writer(csvfile)
-                writer.writerow(header_row)
-                for p_data in prompts_data:
-                    row_to_write = [p_data["name"], p_data["uuid"]]
-                    if include_author:
-                        row_to_write.append(p_data.get("author", ""))
-                    if include_details:
-                        row_to_write.append(p_data.get("details", ""))
-                    if include_system:
-                        row_to_write.append(p_data.get("system_prompt", ""))
-                    if include_user:
-                        row_to_write.append(p_data.get("user_prompt", ""))
-                    if include_associated_keywords:
-                        row_to_write.append(", ".join(p_data.get("keywords_list", [])))
-                    writer.writerow(row_to_write)
-            output_file_path = temp_csv_file
-            status_msg = f"Successfully exported {len(prompts_data)} prompts to CSV."
-
-        elif export_format == "markdown":
-            # TASK-32806.7: the zip previously went to a guessable world-readable
-            # temp name; mkstemp makes it unique and 0600.
-            _zip_fd, zip_file_path = tempfile.mkstemp(
-                prefix="prompts_export_markdown_", suffix=".zip"
-            )
-            os.close(_zip_fd)
-
-            templates = {
-                "Basic Template": """# {name} ({uuid})
-{author_section}
-{details_section}
-{system_section}
-{user_section}
-{keywords_section}
-""",
-                "Detailed Template": """# {name}
-**UUID**: {uuid}
-
-## Author
-{author_section}
-
-## Description
-{details_section}
-
-## System Prompt
-```
-{system_prompt_content}
-```
-
-## User Prompt
-```
-{user_prompt_content}
-```
-
-## Keywords
-{keywords_section}
-""",
-            }
-            chosen_template_str = templates.get(
-                markdown_template_name, templates["Basic Template"]
-            )
-
-            with zipfile.ZipFile(zip_file_path, "w", zipfile.ZIP_DEFLATED) as zipf:
-                used_arcname_keys: set[str] = set()
-                for p_data in prompts_data:
-                    author_sec = (
-                        f"**Author**: {p_data['author']}"
-                        if include_author and p_data.get("author")
-                        else ""
-                    )
-                    details_sec = (
-                        f"**Details**: {p_data['details']}"
-                        if include_details and p_data.get("details")
-                        else ""
-                    )
-                    system_sec = (
-                        f"**System Prompt**:\n```\n{p_data['system_prompt']}\n```"
-                        if include_system and p_data.get("system_prompt")
-                        else ""
-                    )
-                    user_sec = (
-                        f"**User Prompt**:\n```\n{p_data['user_prompt']}\n```"
-                        if include_user and p_data.get("user_prompt")
-                        else ""
-                    )
-                    keywords_sec = (
-                        f"**Keywords**: {', '.join(p_data['keywords_list'])}"
-                        if include_associated_keywords and p_data.get("keywords_list")
-                        else ""
-                    )
-
-                    md_content = chosen_template_str.format(
-                        name=p_data["name"],
-                        uuid=p_data["uuid"],
-                        author_section=author_sec,
-                        details_section=details_sec,
-                        system_section=system_sec,  # For Basic Template direct injection
-                        system_prompt_content=p_data.get(
-                            "system_prompt", ""
-                        ),  # For Detailed Template
-                        user_section=user_sec,  # For Basic Template direct injection
-                        user_prompt_content=p_data.get(
-                            "user_prompt", ""
-                        ),  # For Detailed Template
-                        keywords_section=keywords_sec,
-                    ).strip()  # Clean up extra newlines if sections are empty
-
-                    # Unique, collision-safe filename; writestr straight into
-                    # the archive (no leaking on-disk staging copy). See
-                    # _markdown_export_arcname for the disambiguation contract.
-                    arcname = _markdown_export_arcname(
-                        p_data["name"], p_data["id"], used_arcname_keys
-                    )
-                    zipf.writestr(arcname, md_content)
-
-            output_file_path = zip_file_path
-            status_msg = f"Successfully exported {len(prompts_data)} prompts to Markdown in a ZIP file."
-        else:
-            raise ValueError(
-                f"Unsupported export_format: {export_format}. Must be 'csv' or 'markdown'."
-            )
-
-        logging.info(status_msg)
-        return status_msg, output_file_path
-
-    except (DatabaseError, sqlite3.Error, ValueError) as e:
-        error_msg = f"Error exporting prompts: {e}"
-        logging.opt(exception=True).error(error_msg)
-        return error_msg, "None"
-    except Exception as e:  # Catch any other unexpected error
-        error_msg = f"Unexpected error exporting prompts: {e}"
-        logging.opt(exception=True).error(error_msg)
-        return error_msg, "None"
+# Retain the actual defining module across reload/replacement, not a copied namespace.
+_PROMPT_EXPORT_SOURCE = _export_sys.modules[__name__]
 
 
 # Import after the legacy standalone surface is defined. Importing this submodule

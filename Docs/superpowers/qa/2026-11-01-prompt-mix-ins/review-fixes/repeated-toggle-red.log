@@ -1,0 +1,14 @@
+F                                                                        [100%]
+=================================== FAILURES ===================================
+__________ test_accepted_toggle_preserves_editor_dirtied_during_apply __________
+Tests/UI/test_console_prompt_mixins.py:1054: in test_accepted_toggle_preserves_editor_dirtied_during_apply
+    assert checkbox.value is False
+E   AssertionError: assert True is False
+E    +  where True = Checkbox(id='console-mixin-enabled-0', classes='-on').value
+============================= slowest 25 durations =============================
+1.27s call     Tests/UI/test_console_prompt_mixins.py::test_accepted_toggle_preserves_editor_dirtied_during_apply
+
+(2 durations < 1s hidden.)
+=========================== short test summary info ============================
+FAILED Tests/UI/test_console_prompt_mixins.py::test_accepted_toggle_preserves_editor_dirtied_during_apply
+1 failed in 3.10s

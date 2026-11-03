@@ -120,6 +120,7 @@ import functools
 import inspect
 import os
 import threading
+import sys as _maintenance_source_sys
 import time
 from dataclasses import dataclass, field, replace
 from datetime import datetime, timezone
@@ -148,7 +149,7 @@ from tldw_chatbook.Chat.console_onboarding_state import (
     coerce_console_first_send_completed,
 )
 from tldw_chatbook.Chat.console_scratch_space import ConsoleScratchSpaceManager
-from tldw_chatbook.DB.base_db import run_owned_db_call
+from tldw_chatbook.DB.base_db import run_owned_db_call  # noqa: F401 -- live maintenance dependency
 
 from . import console_attention_preparation as _attention_preparation
 
@@ -1087,6 +1088,9 @@ CONSOLE_VIEW_HOOK_SLOTS: tuple[ConsoleViewHookSlot, ...] = (
         "`ConsoleRuntime._rearm_delivery_ui_hook`.",
     ),
 )
+
+
+_RUNTIME_MAINTENANCE_SOURCE = _maintenance_source_sys.modules[__name__]
 
 
 class ConsoleRuntime:
@@ -4858,11 +4862,6 @@ class ConsoleRuntime:
         except RuntimeError:
             return
 
-        def provider_active() -> bool:
-            controller = self._chat_controller
-            tasks = getattr(controller, "_active_stream_tasks", None)
-            return bool(tasks)
-
         async def run() -> None:
             while not self._disposed and not getattr(self._app, "_ui_ready", True):
                 await asyncio.sleep(0.05)
@@ -4871,172 +4870,11 @@ class ConsoleRuntime:
             await asyncio.sleep(LEGACY_TRACE_MAINTENANCE_READY_DELAY_SECONDS)
             if self._disposed:
                 return
-            from tldw_chatbook.Chat.console_trace_maintenance import (
-                LegacyTraceMaintenance,
-            )
+            from .console_trace_maintenance_runtime import run_legacy_trace_maintenance
 
-            maintenance = LegacyTraceMaintenance(
-                database,
-                normalizer=normalizer_factory(),
-                provider_active=provider_active,
+            await run_legacy_trace_maintenance(
+                self, database, normalizer_factory, _source=_RUNTIME_MAINTENANCE_SOURCE
             )
-            from tldw_chatbook.Chat.chat_persistence_service import (
-                trace_maintenance_work_generation,
-            )
-
-            last_provider_activity = time.monotonic()
-            last_physical_attempt = 0.0
-            last_collected_epoch: int | None = None
-            pending_gc_result: Any | None = None
-            # PERF-10 (TASK-33269): once a pass finds nothing to normalize and
-            # the GC interval has not elapsed, park. Parked, the loop does no
-            # database work (each run_batch was a write transaction, an
-            # admission and a helper-spawning connection, once a second
-            # forever). It wakes when an exchange row is written, and once per
-            # GC interval regardless: trace-call state, retention roots,
-            # semantic revisions and other processes advance the graph epoch
-            # without signalling, and a failed GC attempt must be retried.
-            parked = False
-            seen_work = trace_maintenance_work_generation()
-            while not self._disposed:
-                if parked:
-                    await asyncio.sleep(LEGACY_TRACE_MAINTENANCE_PARK_POLL_SECONDS)
-                    if trace_maintenance_work_generation() != seen_work or (
-                        time.monotonic() - last_physical_attempt
-                        >= TRACE_PHYSICAL_MAINTENANCE_INTERVAL_SECONDS
-                    ):
-                        parked = False
-                    continue
-                # TASK-33801: an exchange written since the last pass -- while
-                # parked, during that pass or its cleanup -- means this pass has
-                # work, so it skips the idle check's extra admission.
-                current_work = trace_maintenance_work_generation()
-                if current_work != seen_work:
-                    maintenance.expect_work = True
-                seen_work = current_work
-                try:
-                    result = await run_owned_db_call(database, maintenance.run_batch)
-                except Exception as exc:  # noqa: BLE001 - retry remains restart-safe
-                    logger.warning(
-                        "legacy trace maintenance paused after {}",
-                        type(exc).__name__,
-                    )
-                    await asyncio.sleep(LEGACY_TRACE_MAINTENANCE_RETRY_DELAY_SECONDS)
-                    continue
-                if result.logical_complete:
-                    now = time.monotonic()
-                    if provider_active():
-                        last_provider_activity = now
-                        await asyncio.sleep(1.0)
-                        continue
-                    if (
-                        now - last_physical_attempt
-                        < TRACE_PHYSICAL_MAINTENANCE_INTERVAL_SECONDS
-                    ):
-                        parked = True
-                        continue
-                    last_physical_attempt = now
-                    try:
-                        from tldw_chatbook.Chat.console_trace_maintenance import (
-                            PhysicalTraceCompactor,
-                            TraceGarbageCollector,
-                        )
-                        from tldw_chatbook.Chat.console_trace_models import (
-                            new_opaque_id,
-                        )
-                        from tldw_chatbook.config import (
-                            resolve_trace_compaction_policy,
-                        )
-
-                        controller = self._chat_controller
-                        pause = getattr(
-                            controller,
-                            "pause_trace_maintenance_dispatch",
-                            lambda: None,
-                        )
-                        resume = getattr(
-                            controller,
-                            "resume_trace_maintenance_dispatch",
-                            lambda: None,
-                        )
-                        app_config = getattr(self._app, "app_config", {}) or {}
-                        console_config = (
-                            app_config.get("console", {})
-                            if isinstance(app_config, Mapping)
-                            else {}
-                        )
-                        controller_idle = getattr(
-                            controller,
-                            "trace_maintenance_idle_seconds",
-                            None,
-                        )
-                        collector = TraceGarbageCollector(database)
-                        current_epoch = await run_owned_db_call(database,
-                            collector.current_graph_epoch
-                        )
-                        if (
-                            pending_gc_result is not None
-                            and getattr(pending_gc_result, "marked_epoch", None) != current_epoch
-                        ):
-                            # A deferred physical pass cannot pin a stale logical
-                            # graph after admission, settlement or revocation.
-                            pending_gc_result = None
-                        if pending_gc_result is None:
-                            if current_epoch == last_collected_epoch:
-                                await asyncio.sleep(1.0)
-                                continue
-                            pending_gc_result = await run_owned_db_call(database,
-                                collector.collect,
-                                request_id=f"auto-{new_opaque_id()}",
-                            )
-                            last_collected_epoch = int(
-                                getattr(
-                                    pending_gc_result,
-                                    "marked_epoch",
-                                    current_epoch,
-                                )
-                            )
-                        compactor = PhysicalTraceCompactor(
-                            database,
-                            policy=resolve_trace_compaction_policy(console_config),
-                            provider_active=provider_active,
-                            idle_seconds=(
-                                controller_idle
-                                if callable(controller_idle)
-                                else lambda: max(
-                                    0.0, time.monotonic() - last_provider_activity
-                                )
-                            ),
-                            pause_dispatch=pause,
-                            resume_dispatch=resume,
-                            cancel_requested=lambda: self._disposed,
-                        )
-                        outcome = await run_owned_db_call(database,
-                            compactor.run_after_gc,
-                            pending_gc_result,
-                        )
-                        if outcome.reason_code == "logical_gc_unavailable":
-                            pending_gc_result = None
-                            last_collected_epoch = None
-                        elif outcome.completed or (
-                            outcome.reason_code
-                            not in TRACE_PHYSICAL_MAINTENANCE_RETRYABLE_REASONS
-                        ):
-                            pending_gc_result = None
-                    except ImportError:
-                        # Narrow test doubles may provide only the legacy worker.
-                        pass
-                    except Exception as exc:  # noqa: BLE001 - durable retry state
-                        logger.warning(
-                            "trace physical maintenance paused after {}",
-                            type(exc).__name__,
-                        )
-                    await asyncio.sleep(1.0)
-                    continue
-                if not result.admitted:
-                    await asyncio.sleep(1.0)
-                    continue
-                await asyncio.sleep(0)
 
         self._legacy_trace_maintenance_task = loop.create_task(run())
 

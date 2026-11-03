@@ -1,0 +1,9 @@
+[
+  "tldw_chatbook/Chat/console_chat_controller.py",
+  "tldw_chatbook/Chat/console_chat_store.py",
+  "tldw_chatbook/Chat/chat_persistence_service.py",
+  "tldw_chatbook/Chat/console_trace_service.py",
+  "tldw_chatbook/Chat/console_display_state.py",
+  "tldw_chatbook/Chat/console_chat_fork.py",
+  "tldw_chatbook/Chat/console_trace_models.py"
+]

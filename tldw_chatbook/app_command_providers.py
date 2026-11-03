@@ -253,22 +253,10 @@ def _display_key(key: str) -> str:
 
 
 def _bindings_to_shortcuts(bindings: Any) -> tuple[tuple[str, str], ...]:
-    """Flatten BINDINGS entries into (key, description) pairs for help display.
+    """Project current binding classes and glyphs through the help renderer."""
+    from .UI.Workbench.help import binding_shortcuts
 
-    Accepts both Binding objects and the legacy tuple form so any screen's
-    BINDINGS can be rendered as truthful shortcut help. Keys render as
-    display glyphs (TASK-32887): the Evals help leaked the raw binding
-    identifiers ``left_square_bracket``/``right_square_bracket`` as copy.
-    """
-    pairs: list[tuple[str, str]] = []
-    for entry in bindings or ():
-        if isinstance(entry, Binding):
-            pairs.append((_display_key(entry.key), entry.description))
-        elif isinstance(entry, (tuple, list)) and entry:
-            key = _display_key(str(entry[0]))
-            description = str(entry[2]) if len(entry) > 2 else ""
-            pairs.append((key, description))
-    return tuple(pairs)
+    return binding_shortcuts(bindings, display_key=_display_key, binding_type=Binding)
 
 
 class TabNavigationProvider(Provider):

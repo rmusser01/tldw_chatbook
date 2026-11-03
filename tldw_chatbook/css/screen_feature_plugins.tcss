@@ -220,6 +220,7 @@ $ds-widgets-skeleton-title-share: 60%;
 $ds-messages-scroll-cap: 50vh;
 $ds-note-folder-picker-max-height: 50vh;
 $ds-messages-text-scroll-cap: 40vh;
+$ds-setup-provider-list-max-height: 40vh;
 $ds-console-frame: #6f7782;
 $ds-tool-preview-max-height: 3;
 
@@ -319,7 +320,7 @@ $ds-portrait-review-lines: 13;
 #plugins-panes { height: $ds-height-fill; min-height: $ds-size-0; }
 #plugins-list-pane { width: $ds-sidebar-width; min-width: $ds-sidebar-min-width; height: $ds-height-fill; }
 #plugins-list { height: $ds-height-fill; border: solid $ds-grid-line; }
-#plugins-list:focus { border: solid $ds-focus-accent; }
+#plugins-list:focus { border: solid $ds-active-fg; }
 #plugins-detail-pane { width: $ds-width-fill; height: $ds-height-fill; padding-left: $ds-space-inset; }
 #plugins-detail-scroll { height: $ds-height-fill; border: solid $ds-grid-line; padding: $ds-space-0 $ds-space-inset; }
 #plugins-detail, #plugins-readme { height: auto; }

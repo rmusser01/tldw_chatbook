@@ -72,6 +72,7 @@ def build_composer_menu_entries(
     improvement_undo_available: bool = False,
     save_enables_capture: bool | None = None,
     next_send_capture: bool | None = None,
+    mixin_count: int | None = 0,
 ) -> tuple[ComposerMenuEntry, ...]:
     """Build the menu rows for the current composer state.
 
@@ -147,8 +148,10 @@ def build_composer_menu_entries(
         ),
         ComposerMenuEntry(
             ACTION_PROMPTS,
-            "Browse Prompt Library…",
-            "Browse saved Prompts and Recipes",
+            f"Prompts · {mixin_count} mix-ins…"
+            if mixin_count is not None
+            else "Prompts · choices unavailable…",
+            "Browse saved Prompts and Recipes; manage enabled mix-ins for this chat",
         ),
         ComposerMenuEntry(
             # CN-03 (TASK-2154.13): this entry opens the file picker
@@ -302,6 +305,7 @@ class ConsoleComposerMenuModal(SafeModalDismissMixin, ModalScreen["str | None"])
         improvement_undo_available: bool = False,
         save_enables_capture: bool | None = None,
         next_send_capture: bool | None = None,
+        mixin_count: int | None = 0,
         **kwargs: Any,
     ) -> None:
         """Initialize the menu.
@@ -332,6 +336,7 @@ class ConsoleComposerMenuModal(SafeModalDismissMixin, ModalScreen["str | None"])
             improvement_undo_available=improvement_undo_available,
             save_enables_capture=save_enables_capture,
             next_send_capture=next_send_capture,
+            mixin_count=mixin_count,
         )
 
     def compose(self) -> ComposeResult:

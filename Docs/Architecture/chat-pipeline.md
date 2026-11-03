@@ -122,3 +122,29 @@ When the agent runtime is enabled, sends route through `_run_agent_reply` (the a
 - [console.md](./console.md) — send lifecycle, approvals, run states
 - [llm-providers.md](./llm-providers.md) — the provider handlers under `stream_chat`
 - [character-chat.md](./character-chat.md) — dictionaries, world info, roleplay identity
+
+
+### Current-send prompt mix-ins (ADR-286)
+
+Captured `MixinAttemptSnapshot` values apply literally after ordinary current-user
+transforms at the exact native user anchor. Strings use two-newline separators;
+multipart requests retain their original parts between added text parts. The
+semantic `_tldw_mixin_attempt` marker prevents repeated wrapping and never appears
+on provider wire values. Agent/tool preparation reuses the admitted envelope.
+Canonical messages and exported/history/compaction/retrieval inputs exclude the
+injected instructions; only the current prepared request includes them.
+
+Trace provenance uses the `prompt_mixins` transform/section, pinning the saved
+clean user revision and the policy-masked provider artifact. Exact operational
+retry storage remains independent of capture and its credential/PII redaction.
+The existing completed-turn clean-source restoration may carry a body-free
+`replacement_attempt_id` after accepted replacement. Persistence revalidates the
+exact current operational record and marker, no newer same-assistant successor,
+a bounded explicit replacement chain reaching the exact originating trace call,
+and equality with that replacement's atomically sealed result revision. It also
+checks same conversation/origin user, latest complete selected assistant revision, actual
+next-user parent and absence of pending dispatch. Origin/terminal/policy/range and
+descriptor checks remain; ordinary response-link equality is unchanged. Invalid
+proof never licenses old tool/output bodies or prior injected instructions.
+
+The integrated local-source qualification in `Tests/Chat/test_console_prompt_mixin_journey.py` records adapter-entry messages and independently reads native attempt anchors. With capture off it covers ordinary/character queue A → Library B/off → original Retry A → current regeneration off/B → clean later history. Explicit Continue uses its synthetic current-user envelope while retaining the original durable source anchor. See [qualification evidence](../superpowers/qa/2026-11-01-prompt-mix-ins/verification.md) for executed cases and limits.

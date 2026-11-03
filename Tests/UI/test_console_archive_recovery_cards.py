@@ -53,6 +53,183 @@ def confirmation(*, expired=False):
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("boundary", ["compose", "scope_mount"])
+@pytest.mark.parametrize("updates", ["empty", "replace", "clear"])
+async def test_pending_controls_render_latest_confirmation_on_mount(boundary, updates):
+    from dataclasses import replace
+
+    from textual.events import Compose, Mount
+
+    from tldw_chatbook.Widgets.Chat_Widgets.archive_recovery_cards import (
+        RecoveryDecisionButton,
+    )
+
+    first = confirmation()
+    latest = replace(
+        first,
+        session_id="latest-source",
+        request_id="latest-request",
+        selected_scope="chat_only",
+        target=replace(first.target, title="Latest target"),
+    )
+    payloads = {
+        "empty": [None],
+        "replace": [first, latest],
+        "clear": [first, latest, None],
+    }[updates]
+    card = ArchiveRecoveryConfirmCard()
+    observed = []
+
+    class PendingCardApp(RecoveryCardApp):
+        def compose(self):
+            yield card
+
+    def update_pending_controls(message):
+        sender = message._sender
+        at_boundary = (
+            isinstance(message, Compose) and sender is card
+            if boundary == "compose"
+            else isinstance(message, Mount)
+            and isinstance(sender, Select)
+            and sender.id == "recovery-scope"
+        )
+        if not at_boundary:
+            return
+        assert not card.is_mounted
+        for payload in payloads:
+            assert card.set_confirmation(payload) is False
+        observed.append(True)
+
+    app = PendingCardApp(None)
+    async with app.run_test(message_hook=update_pending_controls) as pilot:
+        assert observed == [True]
+        assert not app.decisions
+        expected = latest if updates == "replace" else None
+        assert card.confirmation is expected
+        assert card.display == (expected is not None)
+        button = card.query_one("#recovery-confirm", RecoveryDecisionButton)
+        for control in card.query(RecoveryDecisionButton):
+            assert control.is_mounted
+            assert control.binding == (
+                (latest.session_id, latest.request_id) if expected else None
+            )
+        if expected is None:
+            assert button.disabled
+            return
+        assert card.query_one("#recovery-scope", Select).value == "chat_only"
+        assert str(button.label) == "Confirm restore · Latest target"
+        assert not button.disabled
+        await pilot.click("#recovery-confirm")
+        await pilot.pause()
+        assert len(app.decisions) == 1
+        decision = app.decisions[0]
+        assert (
+            decision.session_id,
+            decision.request_id,
+            decision.allow,
+            decision.scope,
+        ) == ("latest-source", "latest-request", True, "chat_only")
+        assert button.disabled
+
+
+@pytest.mark.asyncio
+async def test_queryable_retiring_confirmation_clears_without_children():
+    from textual.containers import Vertical
+
+    from tldw_chatbook.UI.Console_Modules.archive_recovery import (
+        ConsoleArchiveRecoveryView,
+    )
+
+    observed = []
+
+    class RetiringCard(ArchiveRecoveryConfirmCard):
+        def on_unmount(self):
+            assert self.is_mounted
+            assert not self.children
+            assert self.app.view._confirmation() is self
+            observed.append(self.app.view.show_confirmation(None))
+            assert self.confirmation is None
+            assert not self.display
+
+    class RetiringCardApp(RecoveryCardApp):
+        def compose(self):
+            self.view = ConsoleArchiveRecoveryView(self.screen)
+            with Vertical(id="console-archive-recovery-controls"):
+                yield RetiringCard(self.confirmation)
+
+    app = RetiringCardApp(confirmation())
+    async with app.run_test():
+        await app.query_one(RetiringCard).remove()
+        assert observed == [False]
+        assert not app.decisions
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("boundary", ["target_removed", "scope_unmount"])
+async def test_partial_controls_cannot_acknowledge_or_answer_replacement(boundary):
+    from dataclasses import replace
+    from types import SimpleNamespace
+
+    from textual.containers import Vertical
+    from textual.events import Unmount
+
+    from tldw_chatbook.UI.Console_Modules.archive_recovery import (
+        ConsoleArchiveRecoveryView,
+    )
+    from tldw_chatbook.Widgets.Chat_Widgets.archive_recovery_cards import (
+        RecoveryDecisionButton,
+    )
+
+    first = replace(confirmation(), selected_scope="chat_only")
+    latest = replace(first, request_id="replacement")
+    observed = []
+    card = scope = old_event = None
+
+    class PartialCardApp(RecoveryCardApp):
+        def compose(self):
+            self.screen._console_chat_store = SimpleNamespace(
+                active_session_id="source"
+            )
+            self.screen._console_runtime = lambda: SimpleNamespace(view=self.screen)
+            self.view = ConsoleArchiveRecoveryView(self.screen)
+            with Vertical(id="console-archive-recovery-controls"):
+                yield ArchiveRecoveryConfirmCard(first)
+
+    def check_replacement():
+        assert app.view.is_answerable("source")
+        observed.append(app.view.show_confirmation(latest))
+        assert observed == [False]
+        assert card.confirmation is latest
+        card.post_message(old_event)
+
+    def observe_retirement(message):
+        if (
+            boundary == "scope_unmount"
+            and isinstance(message, Unmount)
+            and message._sender is scope
+        ):
+            assert scope.is_mounted
+            assert not scope.children
+            assert len(card.children) == 6
+            check_replacement()
+
+    app = PartialCardApp(first)
+    async with app.run_test(message_hook=observe_retirement) as pilot:
+        card = app.query_one(ArchiveRecoveryConfirmCard)
+        scope = card.query_one("#recovery-scope", Select)
+        button = card.query_one("#recovery-confirm", RecoveryDecisionButton)
+        old_event = RecoveryDecisionButton.Pressed(button)
+        if boundary == "target_removed":
+            await card.query_one("#recovery-target").remove()
+            check_replacement()
+        else:
+            await scope.remove()
+        await pilot.pause()
+        assert observed == [False]
+        assert not app.decisions
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("keyboard", [False, True])
 async def test_visible_scope_is_exact_one_shot_decision(keyboard):
     app = RecoveryCardApp(confirmation())

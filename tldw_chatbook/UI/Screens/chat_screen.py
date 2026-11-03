@@ -143,6 +143,7 @@ from ..Console_Modules.left_rail import (
     CONSOLE_DISMISS_DEFAULT_REFRESH_ID,
     CONSOLE_REFRESH_RUNNING_APP_ID,
     CONSOLE_RETRY_CONTEXT_SETTINGS_ID,
+    CONSOLE_RETRY_PROMPT_MIXINS_ID,
     CONSOLE_RETRY_DEFAULT_SAVE_ID,
     CONSOLE_RETRY_GENERATION_SETTINGS_ID,
     ConsoleLeftRail,
@@ -289,9 +290,9 @@ from ...Chat.console_command_grammar import (
     STOP_COMMAND_HANDLER_ID,
     REWIND_COMMAND_NAME,
     SKILLS_COMMAND_HANDLER_ID,
-    SKILLS_COMMAND_NAME,
+    SKILLS_COMMAND_NAME,  # noqa: F401 -- live defining globals for extracted helpers
     STREAM_VIDEO_COMMAND_HANDLER_ID,
-    COMMAND_PREFIX,
+    COMMAND_PREFIX,  # noqa: F401 -- live defining globals for extracted helpers
     CommandParse,
     ConsoleCommandRegistry,
     default_console_registry,
@@ -421,10 +422,10 @@ from ...Chat.console_live_work import (
     launch_targets_chatbook_artifact,
 )
 from ...Chat.console_command_suggestions import (
-    CommandSuggestion,
+    CommandSuggestion,  # noqa: F401 -- live defining globals for extracted helpers
     completion_context_for_draft,
-    count_suggestion_usage,
-    rank_suggestions_by_usage,
+    count_suggestion_usage,  # noqa: F401 -- live defining globals for extracted helpers
+    rank_suggestions_by_usage,  # noqa: F401 -- live defining globals for extracted helpers
     suggestions_for_draft,
     _COMMAND_DESCRIPTIONS,
 )
@@ -5912,6 +5913,7 @@ class ChatScreen(BaseAppScreen):
 
     @on(Button.Pressed, f"#{CONSOLE_RETRY_GENERATION_SETTINGS_ID}")
     @on(Button.Pressed, f"#{CONSOLE_RETRY_CONTEXT_SETTINGS_ID}")
+    @on(Button.Pressed, f"#{CONSOLE_RETRY_PROMPT_MIXINS_ID}")
     async def on_console_settings_component_retry(
         self,
         event: Button.Pressed,
@@ -5926,6 +5928,8 @@ class ChatScreen(BaseAppScreen):
         component = (
             ConsoleSettingsComponent.GENERATION_SETTINGS
             if event.button.id == CONSOLE_RETRY_GENERATION_SETTINGS_ID
+            else ConsoleSettingsComponent.PROMPT_MIXINS
+            if event.button.id == CONSOLE_RETRY_PROMPT_MIXINS_ID
             else ConsoleSettingsComponent.CONTEXT_POLICY
         )
         owner = ChatScreen._console_settings_durability_owner(self)
@@ -5938,6 +5942,8 @@ class ChatScreen(BaseAppScreen):
                 session_id=session_id,
                 component=component,
                 revision=revision,
+                **({"_expected_failure": getattr(event.button, "console_settings_failure", None)}
+                   if component is ConsoleSettingsComponent.PROMPT_MIXINS else {}),
             ),
             name=f"console-settings-retry-{session_id}-{component.value}-{revision}",
         )
@@ -10675,14 +10681,21 @@ class ChatScreen(BaseAppScreen):
             staged_source_count=console_staged_source_count(pending_launch),
             tool_count=self._console_tool_count(),
             tools_estimate=True,
-            selected_tool_count=getattr(self.app_instance, "console_selected_tool_counts", {}).get(
-                getattr(active_session, "id", None)
-            ),
+            selected_tool_count=self._console_selected_tool_count(active_session),
             mcp_tool_count=self._console_mcp_tool_count(),
             approval_count=self._console_pending_approval_count(),
             system_prompt_set=bool(getattr(settings, "system_prompt", None)),
             emergency_stop_held=bool(self._console_emergency_stop_copy),
         )
+
+    def _console_selected_tool_count(self, session: Any) -> int | None:
+        """Read the current session's selected-tool projection from its app owner."""
+        app = self.app_instance
+        try:
+            counts = app.console_selected_tool_counts
+        except AttributeError:
+            counts = {}
+        return counts.get(getattr(session, "id", None))
 
     def _sync_console_cost_chip(self) -> None:
         """Refresh through the current Screen presentation entry."""
@@ -11125,7 +11138,12 @@ class ChatScreen(BaseAppScreen):
             state = self._context_spend._console_context_control_state_for_session(captured_session_id)
             return state.safe_input_ceiling_tokens, state.response_max_tokens
 
+        from ..Console_Modules.inspector_data import build_mixin_snapshot_loader
+
         inspector = ConsoleConversationInspector(
+            mixin_snapshot_loader=build_mixin_snapshot_loader(
+                controller, captured_session_id, target_is_current
+            ),
             context_budget_provider=context_budget,
             conversation_title=captured_session.title
             if captured_session is not None
@@ -17853,7 +17871,12 @@ class ChatScreen(BaseAppScreen):
                 await self._sync_native_console_transcript()
                 if not poll_is_current():
                     return False
-                if getattr(self.app_instance, "_ui_ready", True):
+                app = self.app_instance
+                try:
+                    ui_ready = app._ui_ready
+                except AttributeError:
+                    ui_ready = True
+                if ui_ready:
                     await self._archive_recovery_view().sync()
                 if not poll_is_current():
                     return False
@@ -18443,8 +18466,12 @@ class ChatScreen(BaseAppScreen):
                 self._console_unknown_send_armed = None
             else:
                 self._console_unknown_send_armed = draft
+                from ..Console_Modules.command_handoff import (
+                    console_unknown_command_hint,
+                )
+
                 await self._append_native_console_system_message(
-                    self._console_unknown_command_hint(parse.name)
+                    console_unknown_command_hint(self, parse.name)
                 )
                 return False
 
@@ -18517,18 +18544,6 @@ class ChatScreen(BaseAppScreen):
         for command in default_console_registry().commands()
     }
 
-    def _console_unknown_command_hint(self, name: str) -> str:
-        """Return the Enter-again hint copy for an unrecognized `/name` draft.
-
-        Derived from the registry's own ``available_names()`` (Task 9) rather
-        than a hardcoded list, so a newly-registered command (e.g. `/skills`)
-        is reflected here automatically.
-        """
-        available = ", ".join(
-            f"/{name}" for name in self._console_command_registry.available_names()
-        )
-        return f"Unknown command /{name} — available: {available}. Press Enter again to send as text."
-
     async def _dispatch_console_command(self, parse: CommandParse) -> None:
         """Dispatch a parsed Console slash command to its handler.
 
@@ -18590,50 +18605,10 @@ class ChatScreen(BaseAppScreen):
         handler = dispatch_map.get(handler_id)
         if handler is None:
             return
-        self._record_console_command_dispatch(parse)
+        from ..Console_Modules.command_handoff import record_console_command_dispatch
+
+        record_console_command_dispatch(self, parse, source=globals())
         await handler(parse)
-
-    def _record_console_command_dispatch(self, parse: CommandParse) -> None:
-        """Record an accepted command dispatch for usage ranking (TASK-18921).
-
-        Appends a minimal, content-free token — ``/<name>`` (plus the skill
-        name for ``/skills <name>`` invocations) — to the shared prompt
-        history, the existing local JSONL the ranking counts already mine.
-        Never records free-form command args. Fire-and-forget: history IO
-        is best-effort and must never delay or break a command, and the
-        command worker is never blocked on it. Ghost text is unaffected
-        (slash drafts never get ghost suggestions); Up-arrow recall gaining
-        past commands is the intended, standard-CLI reading of the store.
-        """
-        try:
-            history = self._ensure_console_prompt_history()
-            append = getattr(history, "append", None)
-            if not callable(append):
-                return
-            name = parse.name.lower()
-            if name == SKILLS_COMMAND_NAME:
-                first_arg = (parse.args or "").split()
-                text = (
-                    f"{COMMAND_PREFIX}{SKILLS_COMMAND_NAME} {first_arg[0]}"
-                    if first_arg
-                    else f"{COMMAND_PREFIX}{SKILLS_COMMAND_NAME}"
-                )
-            else:
-                text = f"{COMMAND_PREFIX}{name}"
-        except Exception:
-            return
-
-        async def _record() -> None:
-            try:
-                await history.append(text)
-            except Exception:
-                logger.debug("Console command usage recording failed (best-effort)")
-
-        try:
-            asyncio.get_running_loop().create_task(_record())
-        except RuntimeError:
-            # No running loop (a direct sync-context call): nothing to record.
-            pass
 
     async def _console_command_help(self, parse: CommandParse) -> None:
         """TASK-25908: list console commands, or detail one, from the live
@@ -21180,47 +21155,6 @@ class ChatScreen(BaseAppScreen):
     #: on the instance, so screens never share a cache.
     _console_suggestion_usage_cache: tuple[int, dict[str, int]] | None = None
 
-    def _console_suggestion_usage_counts(self) -> dict[str, int]:
-        """Return usage counts mined from the shared prompt history.
-
-        Best-effort display polish: every failure path returns an empty
-        mapping, which the ranking function treats as "no usage data" and
-        leaves the popup order identical to today's. Recomputed only when
-        the history store's ``revision`` moved (TASK-22218's cheap
-        invalidation key); ``entry_texts`` is an in-memory snapshot, so
-        this never blocks or triggers IO on the keystroke path.
-        """
-        try:
-            history = self._ensure_console_prompt_history()
-            revision = getattr(history, "revision", None)
-            entry_texts = getattr(history, "entry_texts", None)
-            if not isinstance(revision, int) or not callable(entry_texts):
-                return {}
-            cached = self._console_suggestion_usage_cache
-            if cached is not None and cached[0] == revision:
-                return cached[1]
-            counts = count_suggestion_usage(entry_texts())
-        except Exception:
-            return {}
-        self._console_suggestion_usage_cache = (revision, counts)
-        return counts
-
-    def _rank_console_command_suggestions(
-        self, suggestions: list[CommandSuggestion]
-    ) -> list[CommandSuggestion]:
-        """Rank popup suggestions by observed usage (TASK-18921).
-
-        Display-only: the filtered set is untouched when no row carries
-        usage (first run, or a fresh install), so matching and filtering
-        semantics are exactly today's.
-        """
-        if not suggestions:
-            return suggestions
-        counts = self._console_suggestion_usage_counts()
-        if not counts:
-            return suggestions
-        return rank_suggestions_by_usage(suggestions, counts)
-
     def _sync_console_command_popup(self) -> None:
         """Show/hide the slash-command popup from the current composer draft.
 
@@ -21264,7 +21198,11 @@ class ChatScreen(BaseAppScreen):
         # TASK-18921: rank the filtered set by observed usage (most-used
         # first); with no usage data the order is exactly what it was
         # before, so this is display polish only.
-        suggestions = self._rank_console_command_suggestions(suggestions)
+        from ..Console_Modules.command_handoff import rank_console_command_suggestions
+
+        suggestions = rank_console_command_suggestions(
+            self, suggestions, source=globals()
+        )
         if (
             context_info is not None
             and self._console_popup_dismissed_context == context_info[0]

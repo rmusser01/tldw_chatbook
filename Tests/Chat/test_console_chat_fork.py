@@ -839,6 +839,7 @@ def test_fork_records_are_frozen_slotted_contracts() -> None:
                 "lineage",
                 "image_selections",
                 "trace_boundary",
+                "prompt_mixin_history",
             ),
         ),
         (
@@ -957,6 +958,7 @@ def test_fork_records_are_frozen_slotted_contracts() -> None:
                 "configuration",
                 "citation_links",
                 "trace_boundary",
+                "prompt_mixin_history",
             ),
         ),
     ),

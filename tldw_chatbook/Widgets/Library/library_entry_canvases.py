@@ -427,11 +427,16 @@ class LibraryLandingCanvas(_RetainedSyncCallback, Vertical):
         sync_load_failure_callout(self.query_one("#library-hub-load-failure"), failure)
 
     def sync_state(self, state: LibraryLandingCanvasState) -> None:
-        """Patch stable fields, recomposing only when the widget set changes."""
+        """Patch stable fields or defer through an owned recomposition."""
         previous_key = self._widget_set_key(self.state)
         self.state = state
         self._deferred_sync_serial += 1
-        if self._widget_set_key(state) != previous_key:
+        # Pending and active recomposition own both children and publication.
+        if (
+            self._recompose_required
+            or self.lock.is_locked
+            or self._widget_set_key(state) != previous_key
+        ):
             self.refresh(recompose=True)
             return
         purpose = self.query_one("#library-canvas-landing", Static)

@@ -61,6 +61,7 @@ class TraceProvenanceSource(str, Enum):
     SKILL_RENDER = "skill_render"
     WORLD_INFO = "world_info"
     DICTIONARY_TRANSFORM = "dictionary_transform"
+    PROMPT_MIXINS = "prompt_mixins"
     CITATION_EVIDENCE = "citation_evidence"
     PREFILL = "prefill"
 
@@ -95,6 +96,7 @@ class TraceTransformKind(str, Enum):
     MESSAGE_REWRITE = "message_rewrite"
     RUNTIME_GUIDANCE = "runtime_guidance"
     CURRENT_TURN_TEXT = "current_turn_text"
+    PROMPT_MIXINS = "prompt_mixins"
     WINDOWING = "windowing"
 
 
@@ -656,12 +658,20 @@ def _validate_derived_shape(descriptor: DerivedTraceProvenance) -> None:
                 "runtime guidance requires its result/control source and exact guidance inputs"
             )
         return
-    if transform is TraceTransformKind.CURRENT_TURN_TEXT:
+    if transform in {
+        TraceTransformKind.CURRENT_TURN_TEXT,
+        TraceTransformKind.PROMPT_MIXINS,
+    }:
         if (
             len(descriptor.inputs) != 1
             or type(descriptor.inputs[0]) is not SavedRevisionTraceProvenance
             or artifact is None
-            or artifact.source is not TraceProvenanceSource.ACTIVE_REQUEST
+            or artifact.source
+            is not (
+                TraceProvenanceSource.PROMPT_MIXINS
+                if transform is TraceTransformKind.PROMPT_MIXINS
+                else TraceProvenanceSource.ACTIVE_REQUEST
+            )
         ):
             raise TraceProvenanceAlignmentError(
                 "current-turn text requires one saved source and its active artifact"
@@ -785,10 +795,10 @@ def current_turn_source_revision_id(descriptor: TraceProvenance) -> str | None:
     """
     if type(descriptor) is SavedRevisionTraceProvenance:
         return descriptor.revision_id
-    if (
-        type(descriptor) is DerivedTraceProvenance
-        and descriptor.transform is TraceTransformKind.CURRENT_TURN_TEXT
-    ):
+    if type(descriptor) is DerivedTraceProvenance and descriptor.transform in {
+        TraceTransformKind.CURRENT_TURN_TEXT,
+        TraceTransformKind.PROMPT_MIXINS,
+    }:
         return descriptor.inputs[0].revision_id
     return None
 
@@ -876,6 +886,8 @@ def _descriptor_matches_category(
             for item in descriptor.inputs[1:]
         )
     if type(descriptor) is DerivedTraceProvenance and descriptor.artifact is not None:
+        if descriptor.transform is TraceTransformKind.PROMPT_MIXINS:
+            return TraceProvenanceSource.ACTIVE_REQUEST in artifact_sources
         return descriptor.artifact.source in artifact_sources
     if type(descriptor) is SavedRevisionTraceProvenance:
         return allow_saved

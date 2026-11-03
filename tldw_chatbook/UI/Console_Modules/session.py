@@ -213,6 +213,7 @@ from ...Chat.console_switcher_state import (
 from ...Chat.thinking_blocks import normalize_thinking_history_policy
 from ...Chat.console_scratch_space import ConsoleScratchSnapshot
 from ...Chat.console_turn_context import ConsoleTurnConfigurationSnapshot
+from ...Chat.console_prompt_mixins import decode_mixin_preferences, encode_mixin_preferences
 from ...Chat.provider_catalog import provider_display_name
 from ...Chat.provider_readiness import provider_config_key
 from ...Character_Chat.visual_identity import (
@@ -583,72 +584,12 @@ class CharacterSessionPromptSeed:
 def _character_session_prompt_seed(
     card: Mapping[str, Any], name_hint: str = "", *, user_name: str = "User"
 ) -> CharacterSessionPromptSeed:
-    """Return trusted sources and safe projections from a character card.
+    from .session_prompt_seed import _character_session_prompt_seed as build_seed
 
-    Joins the card's prompt-bearing fields into the Console session's system
-    prompt and picks the seeded greeting from ``first_message``.
-
-    task-1744: the join itself (field order, labels, and macro resolution)
-    is ``Character_Chat_Lib.compose_character_card_text`` -- the same
-    function the character-probe eval engine uses
-    (``Evals.character_probe.prompt.compose_system_prompt``), so a probe run
-    predicts exactly what this seeds into a real Console session. This
-    includes ``message_example`` and ``post_history_instructions``, which
-    Console did not send before task-1744; that is a deliberate,
-    user-visible change to every character session's system prompt, not an
-    incidental refactor.
-
-    Args:
-        card: The character card record.
-        name_hint: Fallback display name when the card has none.
-
-    Returns:
-        The character name, exact templates, and current safe projections.
-    """
-    # Local import matches this module's existing convention of deferring
-    # Character_Chat submodule imports (they pull in Pillow and
-    # CharactersRAGDB) rather than importing them at module scope.
-    from ...Character_Chat.Character_Chat_Lib import (
-        compose_character_card_template,
-    )
-
-    name = str(card.get("name") or name_hint or "").strip() or "Character"
-    # Cards are written against SillyTavern-style macros; compose_character_card_text
-    # resolves {{char}}/{{user}} (and aliases) before the text reaches
-    # session settings, or they leak verbatim into every provider payload
-    # (task-1530). "User" matches the greeting-display substitution used
-    # across the Personas surfaces. A card with no prompt-bearing text at
-    # all falls back to a fixed instruction -- Console, not the shared
-    # composer, owns that fallback, since it is not meaningful to the eval
-    # engine's own empty-card handling (an intentionally blank system
-    # message, see compose_system_prompt).
-    system_template = (
-        compose_character_card_template(
-            name=name,
-            system_prompt=str(card.get("system_prompt") or ""),
-            personality=str(card.get("personality") or ""),
-            description=str(card.get("description") or ""),
-            scenario=str(card.get("scenario") or ""),
-            message_example=str(card.get("message_example") or ""),
-            post_history_instructions=str(card.get("post_history_instructions") or ""),
-        )
-        or "Stay in character."
-    )
-    greeting_template = str(card.get("first_message") or "")
-    return CharacterSessionPromptSeed(
-        name=name,
-        system_template=system_template,
-        system_prompt=expand_character_template(
-            system_template,
-            user_name=user_name,
-            character_name=name,
-        ),
-        greeting_template=greeting_template,
-        greeting=expand_character_template(
-            greeting_template,
-            user_name=user_name,
-            character_name=name,
-        ),
+    return build_seed(
+        card, name_hint, user_name=user_name,
+        seed_type=CharacterSessionPromptSeed,
+        expand_character_template=expand_character_template,
     )
 
 
@@ -664,22 +605,13 @@ class PersonaSessionPromptSeed:
 def _persona_session_prompt_seed(
     profile: Mapping[str, Any], name_hint: str = "", *, user_name: str = "User"
 ) -> PersonaSessionPromptSeed:
-    """Return the trusted persona source and its safe projection.
+    from .session_prompt_seed import _persona_session_prompt_seed as build_seed
 
-    Unlike character cards there is no multi-field join: a persona profile
-    contributes its ``system_prompt`` field verbatim as the trusted
-    template, and there is no greeting.
-    """
-    raw_name = str(profile.get("name") or "").strip() or str(name_hint or "").strip()
-    name = sanitize_character_display_label(raw_name, max_characters=180) or "Persona"
-    template = str(profile.get("system_prompt") or "")
-    system_prompt = (
-        expand_character_template(template, user_name=user_name, character_name=name)
-        if template.strip()
-        else ""
-    )
-    return PersonaSessionPromptSeed(
-        name=name, system_template=template, system_prompt=system_prompt
+    return build_seed(
+        profile, name_hint, user_name=user_name,
+        seed_type=PersonaSessionPromptSeed,
+        expand_character_template=expand_character_template,
+        sanitize_character_display_label=sanitize_character_display_label,
     )
 
 
@@ -5554,29 +5486,9 @@ class ConsoleSessionController:
 
     def _consume_visible_agent_handoff(self, store: Any, composer: Any) -> None:
         """Apply an accepted handoff receipt only to its exact visible revision."""
-        captured = self._visible_agent_handoff_draft
-        if captured is None:
-            return
-        session_id, incarnation, revision, snapshot = captured
-        session = next((row for row in store.sessions() if row.id == session_id), None)
-        if session is None or session.incarnation_id != incarnation:
-            self._visible_agent_handoff_draft = None
-            return
-        if session.agent_handoff_state != "consumed":
-            return
-        self._visible_agent_handoff_draft = None
-        live_snapshot = composer.capture_draft_snapshot()
-        if (
-            self._console_visible_draft_session_id == session_id
-            and session.agent_handoff_revision == revision + 1
-            and live_snapshot.generation == snapshot.generation
-            and live_snapshot.edit_serial == snapshot.edit_serial
-            and live_snapshot.segments == snapshot.segments
-        ):
-            # Caret/selection navigation does not author a new draft. Keep
-            # widget generation, authored revision and segment identity fenced.
-            if composer.commit_captured_draft(composer.capture_draft_for_send()):
-                self._console_draft_switch_snapshot = None
+        from .composer_run_controls import consume_visible_agent_handoff
+
+        consume_visible_agent_handoff(self, store, composer)
 
     def initialize_composer_draft(self, composer: Any) -> None:
         """Bind the initial visible draft before the composer accepts edits."""
@@ -5691,8 +5603,11 @@ class ConsoleSessionController:
                 typed_suffix = live_text[len(snap_text) :]
             known_revision = self._console_visible_draft_revision
             if live_text.startswith(snap_text) and known_revision is not None:
-                current = store.session_input_snapshot(visible_session_id)
-                if current.draft_revision != known_revision:
+                try:
+                    current = store.session_input_snapshot(visible_session_id)
+                except KeyError:
+                    current = None  # The old composer owner may already be closed.
+                if current is not None and current.draft_revision != known_revision:
                     save_text = current.draft
                     resident_draft_changed = True
         if visible_session_id is not None:
@@ -5867,7 +5782,11 @@ class ConsoleSessionController:
             True when the action was refused.
         """
         if self._conversation_activation_depth > 0:
-            monitor = getattr(self.app_instance, "ui_responsiveness_monitor", None)
+            app_owner = self.app_instance
+            try:
+                monitor = app_owner.ui_responsiveness_monitor
+            except AttributeError:
+                monitor = None
             if monitor is not None:
                 monitor.record_diagnostic(
                     "console",
@@ -6106,6 +6025,12 @@ class ConsoleSessionController:
                     session.canonical_settings_baseline
                 )
             ),
+            "prompt_mixin_preferences": (
+                json.loads(encode_mixin_preferences(session.prompt_mixin_preferences.preferences))
+                if session.prompt_mixin_preferences.preferences is not None
+                else session.prompt_mixin_preferences.raw
+            ),
+            "prompt_mixin_durable_revision": session.prompt_mixin_durable_revision,
             "context_policy_overrides": session.context_policy_overrides.to_dict(),
             "thinking_history_policy": session.thinking_history_policy,
             "updated_at": session.updated_at,
@@ -6165,6 +6090,10 @@ class ConsoleSessionController:
                 if raw_session.get("persisted_conversation_id") is not None
                 else None
             ),
+            prompt_mixin_preferences=decode_mixin_preferences(raw_session.get("prompt_mixin_preferences")),
+            prompt_mixin_durable_revision=(raw_session.get("prompt_mixin_durable_revision", 0)
+                if type(raw_session.get("prompt_mixin_durable_revision", 0)) is int
+                and raw_session.get("prompt_mixin_durable_revision", 0) >= 0 else 0),
             settings=self._restore_console_settings(raw_session.get("settings")),
             canonical_settings_baseline=self._restore_console_settings(
                 raw_session.get("canonical_settings_baseline")

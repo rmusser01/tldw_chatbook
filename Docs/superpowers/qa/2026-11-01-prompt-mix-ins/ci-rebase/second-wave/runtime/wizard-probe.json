@@ -1,0 +1,13 @@
+{
+  "argv": [
+    "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python",
+    "-m",
+    "pytest",
+    "Tests/Wizards/test_first_run_setup_integration.py::test_a_listed_model_setup_saves_leaves_the_saved_model_list_alone",
+    "-q",
+    "-p",
+    "no:cacheprovider",
+    "--basetemp=/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/mixins-ci3346-wave2-runtime-7dha0tpm/wizard-probe-tmp"
+  ],
+  "exit_code": 1
+}

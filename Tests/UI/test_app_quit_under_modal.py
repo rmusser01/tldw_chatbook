@@ -988,6 +988,32 @@ async def _settings_snapshot_keep(app, pilot):
     return app.screen.query_one("#settings-snapshot-keep", Input)
 
 
+async def test_inactive_prompt_refresh_keeps_provider_snapshot_dirty_status():
+    """A background category refresh cannot replace the active draft status."""
+    from tldw_chatbook.UI.Screens.settings_config_models import SettingsCategoryId
+
+    app = _build_test_app(configured_default="settings")
+    async with app.run_test(size=(190, 55)) as pilot:
+        keep = await _settings_snapshot_keep(app, pilot)
+        keep.value = str(int(keep.value) + 1)
+        settings = app.screen
+        await _until(pilot, settings._snapshot_preferences_dirty, "the staged edit")
+        status = settings.query_one("#settings-selected-category-draft-status")
+        assert str(status.render()) == "Unsaved changes"
+        banner = settings.query_one("#settings-category-state-banner")
+        previous_banner = str(banner.render())
+
+        settings._refresh_internal_prompts_customized_widgets()
+
+        assert str(status.render()) == "Unsaved changes"
+        assert str(banner.render()) == previous_banner
+        assert banner.has_class("settings-dirty-category")
+        provider = settings.query_one(
+            f"#settings-category-{SettingsCategoryId.PROVIDERS_MODELS.value}"
+        )
+        assert str(provider.label).endswith(" *")
+
+
 async def test_a_snapshot_preference_edit_is_kept_and_asked_about_from_console(
     monkeypatch,
 ):

@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import asyncio
 
+from dataclasses import replace
 from collections.abc import Awaitable, Callable
 from typing import TYPE_CHECKING, Any
 
@@ -161,7 +162,7 @@ async def _resend_turn(
     )
     snapshot = tuple((row.id, row.status, row.content) for row in messages)
 
-    async def replay(resolution, context, hook_rows):
+    async def replay(resolution, context, hook_rows, mixin_current):
         current = store.messages_for_session(session_id)
         if (
             resend_target_id(current) != message_id
@@ -178,14 +179,35 @@ async def _resend_turn(
                 reply.id, resolution, context, hook_rows
             )
         return await controller._continue_from_message_body(
-            message_id, resolution, context, hook_rows, resend=True
+            message_id,
+            resolution,
+            context,
+            hook_rows,
+            resend=True,
+            mixin_retry_of_attempt_id=(
+                reply.metadata.mixin_attempt_id
+                if reply is not None and reply.metadata is not None
+                else None
+            ),
         )
 
-    return await _replay_message(controller, message_id, replay, prompt=user.content)
+    return await _replay_message(
+        controller,
+        message_id,
+        replay,
+        prompt=user.content,
+        original_assistant_id=reply.id if reply is not None else None,
+    )
 
 
 async def _replay_message(
-    controller, message_id, operation, *, queue_authorization=None, prompt=None
+    controller,
+    message_id,
+    operation,
+    *,
+    queue_authorization=None,
+    prompt=None,
+    original_assistant_id=None,
 ):
     """Run an in-place replay under normal Send's exact submission owner."""
     from tldw_chatbook.Agents.automatic_work_runtime import manual_work_scope
@@ -236,7 +258,63 @@ async def _replay_message(
             session = next(
                 row for row in controller.store.sessions() if row.id == session_id
             )
-            configuration = controller.resolve_turn_configuration_snapshot(session_id)
+            from .console_prompt_mixins import (
+                MixinPreferenceConflictError,
+                MixinSnapshotUnavailableError,
+                MixinSourceChangedError,
+            )
+
+            service = controller.prompt_mixin_service()
+            mixin_current = None
+            original_incarnation = session.incarnation_id
+            original_binding = session.conversation_binding_revision
+            original_metadata = (
+                controller.store.get_message(original_assistant_id).metadata
+                if original_assistant_id is not None
+                else None
+            )
+            try:
+                if original_assistant_id is None:
+                    mixin_current = service._capture_currentness(
+                        session_id,
+                        expected_revision=service.preferences(session_id).revision,
+                    )
+                mixins = (
+                    await service.retry_snapshot(
+                        session_id, assistant_message_id=original_assistant_id
+                    )
+                    if original_assistant_id is not None
+                    else await service.capture(
+                        session_id,
+                        expected_revision=service.preferences(session_id).revision,
+                    )
+                )
+            except (
+                MixinSnapshotUnavailableError,
+                MixinPreferenceConflictError,
+                MixinSourceChangedError,
+            ) as exc:
+                if (
+                    isinstance(exc, MixinSnapshotUnavailableError)
+                    and original_assistant_id is not None
+                    and controller.store._sessions.get(session_id) is session
+                    and session.incarnation_id == original_incarnation
+                    and session.conversation_binding_revision == original_binding
+                    and controller.store.session_id_for_message(original_assistant_id)
+                    == session_id
+                ):
+                    original = controller.store._message_or_raise(original_assistant_id)
+                    if original.metadata == original_metadata:
+                        original.mixin_usage_count = None
+                return refused(
+                    "Original mix-ins are unavailable. Regenerate with current choices instead."
+                    if original_assistant_id
+                    else "Mix-ins are unavailable; draft kept."
+                )
+            configuration = replace(
+                controller.resolve_turn_configuration_snapshot(session_id),
+                prompt_mixins=mixins,
+            )
             rejection = await controller._prepare_submission_hooks(
                 session, configuration, origin, queue_authorization, recovery=True
             )
@@ -296,7 +374,9 @@ async def _replay_message(
                 )
             ):
                 return refused("Turn changed before replay; try again.")
-            return await operation(resolution, context, hook_rows)
+            if refusal := controller._current_mixin_refusal(session_id, mixin_current):
+                return refusal
+            return await operation(resolution, context, hook_rows, mixin_current)
 
     return await controller._submit_draft_lifecycle(
         prompt, session_id=session_id, origin=origin, _operation=replay

@@ -7,6 +7,8 @@ from typing import Any
 
 CHATBOOK_PROMPT_RECORD_SCHEMA = "tldw-chatbook-prompt"
 CHATBOOK_PROMPT_RECORD_VERSION = 1
+CHATBOOK_MIXIN_RECORD_VERSION = 2
+MIXIN_MARKDOWN_HEADER = "# Chatbook mix-in"
 
 _PORTABLE_FIELD_KEYS = (
     "name",
@@ -74,15 +76,16 @@ def _validate_new_record(payload: Mapping[str, Any]) -> dict[str, Any]:
     if payload["record_schema"] != CHATBOOK_PROMPT_RECORD_SCHEMA:
         raise _invalid("schema")
     record_version = payload["record_version"]
-    if (
-        type(record_version) is not int
-        or record_version != CHATBOOK_PROMPT_RECORD_VERSION
+    if type(record_version) is not int or record_version != (
+        CHATBOOK_MIXIN_RECORD_VERSION
+        if payload["artifact_type"] == "mixin"
+        else CHATBOOK_PROMPT_RECORD_VERSION
     ):
         raise _invalid("version")
 
     record: dict[str, Any] = {
         "record_schema": CHATBOOK_PROMPT_RECORD_SCHEMA,
-        "record_version": CHATBOOK_PROMPT_RECORD_VERSION,
+        "record_version": record_version,
         "name": _validate_name(payload["name"]),
     }
     for key in _NULLABLE_TEXT_KEYS[:-1]:
@@ -96,7 +99,7 @@ def _validate_new_record(payload: Mapping[str, Any]) -> dict[str, Any]:
     record["keywords"] = list(keywords)
 
     artifact_type = payload["artifact_type"]
-    if artifact_type not in ("prompt", "recipe"):
+    if artifact_type not in ("prompt", "recipe", "mixin"):
         raise _invalid("field")
     record["artifact_type"] = artifact_type
 
@@ -110,6 +113,31 @@ def _validate_new_record(payload: Mapping[str, Any]) -> dict[str, Any]:
         raise _invalid("field")
     record["prompt_schema_version"] = prompt_schema_version
     record["prompt_definition"] = _validate_nullable_text(payload["prompt_definition"])
+    if artifact_type == "mixin":
+        from .prompt_source_capabilities import (
+            local_prompt_capabilities,
+            validate_console_artifact_payload,
+            validate_prompt_request_size,
+        )
+
+        try:
+            capabilities = local_prompt_capabilities()
+            definition = record["prompt_definition"]
+            if (
+                not isinstance(definition, str)
+                or len(definition.encode("utf-8")) > capabilities.definition_limit
+            ):
+                raise ValueError("definition size")
+            validate_prompt_request_size(record, capabilities)
+            validated = validate_console_artifact_payload(record, capabilities)
+            validate_prompt_request_size(validated, capabilities)
+            if (record["system_prompt"], record["user_prompt"]) != (
+                validated["system_prompt"],
+                validated["user_prompt"],
+            ):
+                raise ValueError("compatibility")
+        except (TypeError, ValueError, RecursionError):
+            raise _invalid("definition") from None
     return record
 
 
@@ -156,7 +184,7 @@ def encode_chatbook_prompt_record(detail: Mapping[str, Any]) -> dict[str, Any]:
         detail: Mapping containing every portable Prompt field.
 
     Returns:
-        A detached, strictly validated version-1 Prompt record.
+        A detached, strictly validated Prompt/Recipe-v1 or Mix-in-v2 record.
 
     Raises:
         PromptChatbookRecordError: If a required field is missing or invalid.
@@ -167,7 +195,11 @@ def encode_chatbook_prompt_record(detail: Mapping[str, Any]) -> dict[str, Any]:
         raise _invalid("shape")
     record = {
         "record_schema": CHATBOOK_PROMPT_RECORD_SCHEMA,
-        "record_version": CHATBOOK_PROMPT_RECORD_VERSION,
+        "record_version": (
+            CHATBOOK_MIXIN_RECORD_VERSION
+            if detail["artifact_type"] == "mixin"
+            else CHATBOOK_PROMPT_RECORD_VERSION
+        ),
         **{key: detail[key] for key in _PORTABLE_FIELD_KEYS},
     }
     return _validate_new_record(record)

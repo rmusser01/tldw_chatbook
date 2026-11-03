@@ -115,6 +115,31 @@ def test_a_lookup_in_the_try_body_is_still_treated_as_guarded():
     assert _w002(_IN_TRY_BODY) == []
 
 
+@pytest.mark.parametrize(
+    ("catcher", "protected"),
+    [
+        ('source_globals["QueryError"]', True),
+        ('source_globals["NoMatches"]', True),
+        ('(source_globals["NoMatches"], source_globals["QueryError"])', True),
+        ('source_globals["ValueError"]', False),
+        ("source_globals[error_name]", False),
+        ("source_globals[0]", False),
+    ],
+)
+def test_w002_literal_dependency_catchers_preserve_lookup_protection(
+    catcher, protected
+):
+    source = _IN_TRY_BODY.replace("except Exception:", f"except {catcher}:")
+    expected = [] if protected else ["tldw_chatbook/UI/sample.py::run"]
+    assert _w002(source) == expected
+
+
+@pytest.mark.parametrize("source", [_IN_EXCEPT, _IN_ELSE, _IN_FINALLY])
+def test_w002_literal_dependency_catchers_do_not_protect_other_clauses(source):
+    source = source.replace("except Exception:", 'except source_globals["QueryError"]:')
+    assert _w002(source) == ["tldw_chatbook/UI/sample.py::run"]
+
+
 def test_an_outer_try_still_protects_an_inner_finally():
     """The ascent must CONTINUE past a non-guarding `Try`, not break out of
     the loop: an enclosing `try` legitimately covers the inner `finally`."""
@@ -5549,3 +5574,55 @@ def test_write_carries_a_w002_review_note_forward_too(monkeypatch, tmp_path):
     assert rows == [f"{_SAMPLE_M}::run\t1\t{note}"]
     monkeypatch.setattr("sys.argv", ["check_textual_worker_contract.py"])
     assert _mod.main() == 0
+
+
+@pytest.mark.parametrize("waiting_selector", [False, True])
+def test_w003_agent_reply_late_callback_keeps_concrete_owner(waiting_selector):
+    """The actual extracted seam retains both safe and waiting bindings."""
+    controller_path = _mod.REPO_ROOT / "tldw_chatbook/Chat/console_chat_controller.py"
+    controller_tree = ast.parse(controller_path.read_text())
+    controller = next(
+        node
+        for node in controller_tree.body
+        if isinstance(node, ast.ClassDef) and node.name == "ConsoleChatController"
+    )
+    facade = next(
+        node
+        for node in controller.body
+        if isinstance(node, ast.AsyncFunctionDef) and node.name == "_run_agent_reply"
+    )
+    owner = ast.parse("""
+import asyncio
+class ConsoleChatController:
+    def __init__(self, select_project_instruction_binding=None):
+        self._select_project_instruction_binding = select_project_instruction_binding
+    def start(self):
+        asyncio.create_task(self._run_agent_reply())
+class Screen:
+    async def _select_project_instruction_binding(self, *args):
+        return await self.app.push_screen_wait(Modal())
+""")
+    owner.body[1].body.append(facade)
+    selection = (
+        "screen._select_project_instruction_binding" if waiting_selector else "None"
+    )
+    owner.body.extend(
+        ast.parse(
+            "def construct(screen):\n"
+            "    return ConsoleChatController(select_project_instruction_binding="
+            + selection
+            + ")\n"
+        ).body
+    )
+    helper_path = _mod.REPO_ROOT / "tldw_chatbook/Chat/console_agent_reply.py"
+    rows = _mod.collect_w003(
+        [
+            (owner, _mod.REPO_ROOT / "tldw_chatbook/UI/late_owner.py"),
+            (ast.parse(helper_path.read_text()), helper_path),
+        ]
+    )
+    expected = (
+        "tldw_chatbook/UI/late_owner.py::ConsoleChatController.start->_run_agent_reply"
+        " => tldw_chatbook/UI/late_owner.py::Screen._select_project_instruction_binding"
+    )
+    assert rows == ([expected] if waiting_selector else [])

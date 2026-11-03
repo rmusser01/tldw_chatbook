@@ -16,7 +16,7 @@ from textual import events, on
 from textual.app import ComposeResult
 from textual.css.query import NoMatches
 from textual.containers import Horizontal, Vertical, VerticalScroll
-from textual.widgets import Button, Checkbox, Input, Static, TextArea
+from textual.widgets import Button, Checkbox, Input, Select, Static, TextArea
 
 from tldw_chatbook.Library.library_prompts_state import (
     LibraryPromptDeleteReceipt,
@@ -93,6 +93,9 @@ def _compact_receipt_name(value: str, limit: int = 42) -> str:
     return normalized[: limit - 1].rstrip() + "…"
 
 
+from ..Prompts.prompt_mixin_editor import PromptMixinEditor
+
+
 class LibraryPromptsListCanvas(PostRecomposeCallback, Vertical):
     """Render the Library prompts canvas: the list view, or the prompt editor.
 
@@ -160,6 +163,7 @@ class LibraryPromptsListCanvas(PostRecomposeCallback, Vertical):
         sort_mode: str = "newest",
         filter_value: str = "",
         browse_result: PromptBrowseResult | None = None,
+        browse_loading: bool = False,
         pager: LibraryPagerDisplay | None = None,
         mode: str = "list",
         editor_state: PromptEditorState | None = None,
@@ -199,6 +203,7 @@ class LibraryPromptsListCanvas(PostRecomposeCallback, Vertical):
         self.sort_choices_visible = sort_choices_visible
         self.filter_value = filter_value
         self.browse_result = browse_result
+        self.browse_loading = browse_loading
         self.pager = pager
         self.mode = mode
         self.editor_state = editor_state
@@ -259,6 +264,7 @@ class LibraryPromptsListCanvas(PostRecomposeCallback, Vertical):
         sort_mode: str,
         filter_value: str,
         browse_result: PromptBrowseResult | None,
+        browse_loading: bool = False,
         pager: LibraryPagerDisplay | None,
         mode: str,
         editor_state: PromptEditorState | None,
@@ -325,6 +331,7 @@ class LibraryPromptsListCanvas(PostRecomposeCallback, Vertical):
         self.sort_mode = sort_mode
         self.filter_value = filter_value
         self.browse_result = browse_result
+        self.browse_loading = browse_loading
         self.pager = pager
         self.mode = mode
         # `compose()` only builds #library-prompt-more-actions-region in
@@ -363,10 +370,30 @@ class LibraryPromptsListCanvas(PostRecomposeCallback, Vertical):
         self.identity_mismatch = identity_mismatch
         self.detail_notice = detail_notice
         self.detail_retryable = detail_retryable
+        for button in self.query("#library-prompts-new-mixin"):
+            button.disabled = True
+        self.queue_default_after_recompose(self._sync_new_mixin_action)
         self.refresh(recompose=True)
+
+    def on_mount(self) -> None:
+        self._sync_new_mixin_action()
+
+    def _sync_new_mixin_action(self) -> None:
+        if getattr(self, "_recompose_required", False):
+            return
+        for button in self.query("#library-prompts-new-mixin"):
+            button.disabled = self.mutation_in_flight or self.browse_loading
 
     async def set_editor_mode(self, mode: str) -> None:
         """Switch mounted Prompt presentations without rebuilding either draft."""
+        is_mixin = (
+            self.editor_state is not None
+            and self.editor_state.artifact_type == "mixin"
+            and (
+                self.editor_state.mixin_definition is not None
+                or self.editor_state.mixin_draft is not None
+            )
+        )
         requested = coerce_prompt_editor_mode(mode)
         focused = self.app.focused
         basic_region = self.query_one("#library-prompt-basic-region")
@@ -395,12 +422,14 @@ class LibraryPromptsListCanvas(PostRecomposeCallback, Vertical):
         self.editor_mode = requested
         effective = (
             "advanced"
-            if requested == "basic" and self.basic_unavailable_reason
+            if is_mixin or (requested == "basic" and self.basic_unavailable_reason)
             else requested
         )
-        self.query_one("#library-prompt-basic-region").display = effective == "basic"
+        self.query_one("#library-prompt-basic-region").display = (
+            effective == "basic" and not is_mixin
+        )
         self.query_one("#library-prompt-advanced-region").display = (
-            effective == "advanced"
+            effective == "advanced" and not is_mixin
         )
         self.query_one("#library-prompt-info-region").display = effective == "info"
         self.query_one("#library-prompt-artifact-status").display = (
@@ -496,7 +525,11 @@ class LibraryPromptsListCanvas(PostRecomposeCallback, Vertical):
                 state = self.capture_live_block_state()
             self._sync_block_preview(state)
         source = editor_state.source.title()
-        kind = editor_state.artifact_type.title()
+        kind = (
+            "Mix-in"
+            if editor_state.artifact_type == "mixin"
+            else editor_state.artifact_type.title()
+        )
         format_label = definition_state_display_label(editor_state.definition_state)
         self.query_one("#library-prompt-artifact-status", Static).update(
             f"{kind} · {source} · {format_label}"
@@ -533,7 +566,13 @@ class LibraryPromptsListCanvas(PostRecomposeCallback, Vertical):
         save.disabled = busy or (not is_new and not self.can_update_original)
         use_console = self.query_one("#library-prompt-insert-console", Button)
         use_console.display = clean_saved
-        use_console.disabled = busy
+        use_console.disabled = busy or (
+            state.artifact_type == "mixin"
+            and (
+                state.mixin_definition is None
+                or not (state.capabilities and state.capabilities.mixin_snapshot_reads)
+            )
+        )
         # task-32074 (fix round 2): keep the row's own display in lockstep
         # with its one control -- see the matching compose-time assignment.
         self.query_one("#library-prompt-header-actions").display = clean_saved
@@ -606,6 +645,35 @@ class LibraryPromptsListCanvas(PostRecomposeCallback, Vertical):
             classes="destination-section",
             markup=False,
         )
+        type_filter = Select(
+            (
+                ("All types", "all"),
+                ("Prompts", "prompt"),
+                ("Recipes", "recipe"),
+                ("Mix-ins", "mixin"),
+            ),
+            value=(browse_result.scope.artifact_type or "all")
+            if browse_result is not None
+            else "all",
+            allow_blank=False,
+            id="library-prompts-type-filter",
+            classes="form-select",
+            disabled=self.mutation_in_flight,
+        )
+        type_filter._library_type_value = (
+            (browse_result.scope.artifact_type or "all")
+            if browse_result is not None
+            else "all"
+        )
+        yield type_filter
+        yield Button(
+            "New mix-in",
+            id="library-prompts-new-mixin",
+            classes="library-canvas-action",
+            compact=True,
+            disabled=True,
+            tooltip="Prompt list is refreshing." if self.browse_loading else None,
+        )
         fresh_empty_status = (
             browse_result.status
             if browse_result is not None
@@ -628,10 +696,7 @@ class LibraryPromptsListCanvas(PostRecomposeCallback, Vertical):
                     id="library-prompts-filter",
                     value=self.filter_value,
                 )
-                empty_copy = (
-                    f'No prompts match "{browse_result.scope.query}". '
-                    "Clear the search or try different words."
-                )
+                empty_copy = "No items match this search and type. Clear the filter or choose another type."
                 action_label = "Clear filter"
                 action_id = "library-prompts-empty-clear-filter"
             elif fresh_empty_status == "empty_collection":
@@ -1248,9 +1313,14 @@ class LibraryPromptsListCanvas(PostRecomposeCallback, Vertical):
         editor_state = self.editor_state
         if editor_state is None:
             return
+        is_mixin = editor_state.artifact_type == "mixin" and (
+            editor_state.mixin_definition is not None
+            or editor_state.mixin_draft is not None
+        )
         effective_mode = (
             "advanced"
-            if self.editor_mode == "basic" and self.basic_unavailable_reason
+            if is_mixin
+            or (self.editor_mode == "basic" and self.basic_unavailable_reason)
             else self.editor_mode
         )
         item_locked = (
@@ -1299,12 +1369,23 @@ class LibraryPromptsListCanvas(PostRecomposeCallback, Vertical):
                     compact=True,
                     disabled=item_locked,
                 )
-                yield Static("Name", classes="library-prompt-field-label", markup=False)
-                yield Input(
-                    value=editor_state.name,
-                    id="library-prompt-name",
-                    disabled=item_locked,
-                )
+                if is_mixin:
+                    mixin_editor = PromptMixinEditor(
+                        editor_state.name, editor_state.mixin_definition
+                    )
+                    if editor_state.mixin_draft is not None:
+                        mixin_editor.draft = editor_state.mixin_draft
+                    mixin_editor.disabled = item_locked
+                    yield mixin_editor
+                else:
+                    yield Static(
+                        "Name", classes="library-prompt-field-label", markup=False
+                    )
+                    yield Input(
+                        value=editor_state.name,
+                        id="library-prompt-name",
+                        disabled=item_locked,
+                    )
                 # Task 8b U4: rendered label only -- the DB/record field name
                 # (``details``, ``#library-prompt-details``) is untouched.
                 yield Static(
@@ -1315,7 +1396,9 @@ class LibraryPromptsListCanvas(PostRecomposeCallback, Vertical):
                     id="library-prompt-details",
                     disabled=item_locked,
                 )
-                with Horizontal(id="library-prompt-mode-controls"):
+                modes = Horizontal(id="library-prompt-mode-controls")
+                modes.display = not is_mixin
+                with modes:
                     basic_mode = Button(
                         "Basic",
                         id="library-prompt-mode-basic",
@@ -1362,17 +1445,31 @@ class LibraryPromptsListCanvas(PostRecomposeCallback, Vertical):
                 header_actions.add_class("h-auto")
                 with header_actions:
                     use_console = Button(
-                        "Use in Console",
+                        "Enable in current chat"
+                        if editor_state.artifact_type == "mixin"
+                        else "Use in Console",
                         id="library-prompt-insert-console",
                         classes="library-canvas-action console-action-primary",
                         compact=True,
-                        disabled=item_locked,
+                        disabled=item_locked
+                        or (
+                            editor_state.artifact_type == "mixin"
+                            and (
+                                not is_mixin
+                                or not (
+                                    editor_state.capabilities
+                                    and editor_state.capabilities.mixin_snapshot_reads
+                                )
+                            )
+                        ),
                     )
                     use_console.display = (
                         not self.conflict
                         and editor_state.prompt_id is not None
                         and not self.dirty
                     )
+                    if is_mixin and use_console.disabled:
+                        use_console.tooltip = "This source does not support revision-qualified mix-in reads."
                     yield use_console
                 # task-32074 (fix round 2): the row itself carries
                 # ``ds-toolbar`` (min-height 1, a raised background), so with
@@ -1389,7 +1486,7 @@ class LibraryPromptsListCanvas(PostRecomposeCallback, Vertical):
                 )
                 artifact_status = Static(
                     (
-                        f"{editor_state.artifact_type.title()} · "
+                        f"{'Mix-in' if editor_state.artifact_type == 'mixin' else editor_state.artifact_type.title()} · "
                         f"{editor_state.source.title()} · "
                         f"{definition_state_display_label(editor_state.definition_state)}"
                     ),
@@ -1413,7 +1510,7 @@ class LibraryPromptsListCanvas(PostRecomposeCallback, Vertical):
                     else ""
                 )
                 advanced_region = Vertical(id="library-prompt-advanced-region")
-                advanced_region.display = effective_mode == "advanced"
+                advanced_region.display = effective_mode == "advanced" and not is_mixin
                 with advanced_region:
                     if block_state is not None:
                         block_editor = PromptBlockEditor(
@@ -1459,7 +1556,7 @@ class LibraryPromptsListCanvas(PostRecomposeCallback, Vertical):
                             )
                         yield convert
                 basic_region = Vertical(id="library-prompt-basic-region")
-                basic_region.display = effective_mode == "basic"
+                basic_region.display = effective_mode == "basic" and not is_mixin
                 with basic_region:
                     yield Static(
                         "Instructions",
@@ -1522,12 +1619,12 @@ class LibraryPromptsListCanvas(PostRecomposeCallback, Vertical):
                     markup=False,
                 )
                 info_region = Vertical(id="library-prompt-info-region")
-                info_region.display = effective_mode == "info"
+                info_region.display = effective_mode == "info" and not is_mixin
                 with info_region:
                     yield Static(
                         (
                             f"Persisted source: {editor_state.source.title()} · "
-                            f"{editor_state.artifact_type.title()} · "
+                            f"{'Mix-in' if editor_state.artifact_type == 'mixin' else editor_state.artifact_type.title()} · "
                             f"{definition_state_display_label(editor_state.definition_state)}"
                         ),
                         id="library-prompt-info-provenance",
@@ -1568,7 +1665,9 @@ class LibraryPromptsListCanvas(PostRecomposeCallback, Vertical):
                             disabled=item_locked,
                         )
                 advanced_extras = Vertical(id="library-prompt-advanced-extras")
-                advanced_extras.display = effective_mode in {"advanced", "info"}
+                advanced_extras.display = (
+                    effective_mode in {"advanced", "info"} and not is_mixin
+                )
                 with advanced_extras:
                     if self.membership_state is not None:
                         yield Static(
@@ -1625,7 +1724,9 @@ class LibraryPromptsListCanvas(PostRecomposeCallback, Vertical):
             with Vertical(id="library-prompt-editor-actions"):
                 is_new = editor_state.prompt_id is None
                 save = Button(
-                    "Save prompt" if is_new else "Save changes",
+                    ("Save mix-in" if is_mixin else "Save prompt")
+                    if is_new
+                    else "Save changes",
                     id="library-prompt-save",
                     classes="library-canvas-action console-action-primary",
                     compact=True,
@@ -1634,7 +1735,10 @@ class LibraryPromptsListCanvas(PostRecomposeCallback, Vertical):
                         or self.write_in_flight
                         or (
                             not is_new
-                            and (block_state is None or not self.can_update_original)
+                            and (
+                                (block_state is None and not is_mixin)
+                                or not self.can_update_original
+                            )
                         )
                     ),
                 )

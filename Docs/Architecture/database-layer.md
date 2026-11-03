@@ -61,7 +61,7 @@ The single write seam is `add_media_with_keywords`: URL/content-hash dedup with 
 
 ## Satellite databases (one-liners)
 
-- `Prompts_DB` — prompts + keywords, own migrations to v4, Python-side FTS, soft deletes, expected-version conflicts, Prompt/Recipe discriminator.
+- `Prompts_DB` — prompts + keywords, own migrations to v6, Python-side FTS, soft deletes, expected-version conflicts, and Prompt/Recipe/Mix-in discriminator. The v5-to-v6 file-backed rebuild preserves IDs, sequence, references, indexes, FTS and retained sync history; recovery accepts exact v4/v5 catalogs and migrates staged copies under its restricted authorizer.
 - `Evals_DB` — eval tasks/models/runs/results + FTS; version tracked via `PRAGMA user_version` (no version table).
 - `Subscriptions_DB` — watchlist/subscription state + briefing provenance; FTS-with-LIKE-fallback at the search boundary ("the search box must never raise into the reader").
 - `AgentRuns_DB` — agent run/step records (run trees; outliving sub-agent rows).
@@ -105,3 +105,45 @@ cannot restore that authority. Prepared abort removes its exact active link and
 reservation, while accepted/completed/uncertain attempts retain links and charges.
 The existing restart audit requires review and cannot recover ephemeral bundles.
 Source, report and grant bodies are never stored in this link.
+
+## Operational Console prompt mix-ins (ADR-286)
+
+ChaChaNotes v86 installs `chachanotes_prompt_mixins.sql`. The caller-cursor
+repository `DB/console_prompt_mixins.py` stores local conversation preferences,
+immutable used definitions, attempts and ordered attempt items in four
+`console_prompt_mixin_*` tables. Preferences have their own CAS revision; corrupt
+or future formats are preserved and unavailable to ordinary saves. Definitions
+are bounded by the existing Prompt limits. A digest narrows reuse candidates,
+but complete source/version/name/placement/body equality decides reuse.
+
+Attempts retain exact instructions independently of diagnostic capture. Explicit
+zero-item records mean recorded-empty; missing marked records, damaged item counts
+or invalid snapshots mean unavailable. Body-free `mixin_attempt_id` and
+`mixin_snapshot_schema_version` facts live in assistant metadata; an update trigger
+preserves them through terminal projections. Active dispatch checkpoints also
+carry the nullable schema marker. Legacy unmarked attempts remain distinguishable.
+
+`MixinAttemptContribution` uses the existing transaction writer's narrow
+`append_mixin_attempt` capability. Fresh durable acceptance persists staged native
+IDs unchanged and passes an exact identity map; promotion passes its existing
+native-to-durable map. Legacy contributions retain their separate role aliases.
+The contribution's frozen values participate in durable acceptance fingerprints;
+bodies are never generic metadata or log fields.
+
+Fork transactions copy each referenced snapshot once into destination ownership,
+remap anchors and preserve historical retry markers without copying preferences.
+Message deletion nulls anchors; conversation hard purge cascades records. The v86
+migration also fixes `conversations_ad` to avoid deleting an already soft-deleted
+FTS posting twice. Historical v81–v85 catalogs remain unchanged.
+
+Qualification uses disposable real databases for v85→v86 candidate migration, capture-off restore, temporary promotion, copy/fork and source purge; source candidate bytes remain unchanged during restore validation. The installed-distribution contract checks SQL migration inclusion in both wheel and source archive. These snapshots retain exact instruction content even when diagnostic capture is off: trace deletion alone does not delete operational Retry content. See [QA evidence and limits](../superpowers/qa/2026-11-01-prompt-mix-ins/verification.md).
+
+The migration statement parser and leading-comment scanner live in
+`DB/sql_validation.py`; ChaChaNotes supplies its original schema error type.
+The public `Prompts_DB.export_prompts_formatted` delegates lazily to
+`DB/prompt_export.py`, keeping current DB dependency bindings and legacy export
+formats. A filtered selection containing Mix-ins is refused before output creation;
+the typed Library/Chatbook export preserves their canonical definition and placement.
+Sealed citation row-set comparison lives in
+`Chat/citation_artifact_ownership.py` and uses the repository's already acquired
+connection; transaction and seal ownership remain on the repository.

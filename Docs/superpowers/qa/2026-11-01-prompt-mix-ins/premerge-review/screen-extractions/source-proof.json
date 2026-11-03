@@ -1,0 +1,32 @@
+[
+  {
+    "path": "tldw_chatbook/UI/Library_Modules/library_prompt_browse_controller.py",
+    "baseline_sha256": "28123851b4e6b91d76d58e95a0f1213de7bcf01d2691012c154e5a5155a5423d",
+    "sha256": "7235d29b0bde74739ebf04584aeb598840daeb57a3a2cee8ba0fa1947c7146e8",
+    "lines": 281
+  },
+  {
+    "path": "tldw_chatbook/UI/Screens/library_screen.py",
+    "baseline_sha256": "1cb8f9303131434ab7d54c7261a2ca8a21f11ea04617bce32ddb9b3a45026c12",
+    "sha256": "4a9d1e181d38389cbb1c34fcbdbc35f844a8a51acd911c70877c24158ea3b8a2",
+    "lines": 38177
+  },
+  {
+    "path": "tldw_chatbook/UI/Screens/chat_screen.py",
+    "baseline_sha256": "e4edb075a5911a3ef35e2b1a3b68f7bb494bbbc52455fcdb8f93391e476f9986",
+    "sha256": "4872ae6e12b298f4423248afca852612685e2587aef6590cb78bd7ac5d0a4ab8",
+    "lines": 24590
+  },
+  {
+    "path": "tldw_chatbook/UI/Library_Modules/screen_helpers.py",
+    "baseline_sha256": "dbba381d92054806fbf9a1803d0281da5b11883148057fa5ad74ff22076d9db4",
+    "sha256": "a27dc9b3ceacb8b0c6b3a4611db1ad084d9d6816a825915fd0cfd20ae052bcea",
+    "lines": 401
+  },
+  {
+    "path": "tldw_chatbook/UI/Console_Modules/command_handoff.py",
+    "baseline_sha256": "ea2efc96013b3b217c8ff6a5a773aacb12fdf3ff9fb660fa5c3522364393a0fc",
+    "sha256": "2f34cf636715500bbc85c142f834b9d5b083c8cdfcb0945f36a053dce4eb9480",
+    "lines": 322
+  }
+]

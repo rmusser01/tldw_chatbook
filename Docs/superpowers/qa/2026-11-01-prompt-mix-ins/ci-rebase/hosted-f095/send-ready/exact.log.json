@@ -1,0 +1,4 @@
+{
+  "sha256": "38c1e38ebfa1a9debbfa790dfa510c0306c735ee4a8c40e4210558d42ee11159",
+  "raw_text": ".                                                                        [100%]\n- generated xml file: /var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/mixins-ci-f095-ui3-anqs9n0b/exact.xml -\n============================= slowest 25 durations =============================\n3.07s call     Tests/UI/test_console_send_ready_attachment.py::test_the_workbench_send_action_agrees_with_the_composer_send\n\n(2 durations < 1s hidden.)\n1 passed in 4.81s\n"
+}

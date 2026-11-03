@@ -1,0 +1,282 @@
+{
+  "root": "/private/tmp/mixins-reader-restore-final",
+  "ownership": "Only artifacts created by this reader-restore task; prior diagnosis artifacts outside this directory are referenced separately and untouched. Inventory excludes itself.",
+  "entries": [
+    {
+      "path": "REPORT.md",
+      "kind": "owned evidence file",
+      "bytes": 5555,
+      "sha256": "607c6c2ceb9c3c14c31f55b47486a6d0413941d7ae50ecb9b7a60c1da105ae16"
+    },
+    {
+      "path": "before-canvas_sync.py",
+      "kind": "owned evidence file",
+      "bytes": 65277,
+      "sha256": "be3818993acb97c09b5ce98c951f8d7108cc1d48a4c65d52967bc9fe25847c19"
+    },
+    {
+      "path": "before-library_media_controller.py",
+      "kind": "owned evidence file",
+      "bytes": 246404,
+      "sha256": "0ae6bbd979af84482e989688dea88fcdcc534e3a400d1b1e1098bf86dbfacdf9"
+    },
+    {
+      "path": "before-library_screen.py",
+      "kind": "owned evidence file",
+      "bytes": 1768259,
+      "sha256": "6d16398620b71765d1aaf49a35dedf3d61e8f275fb3f15c0db67ccaf8ede9eb4"
+    },
+    {
+      "path": "before-source-proof.json",
+      "kind": "owned evidence file",
+      "bytes": 662,
+      "sha256": "b95986cc2a6c69e8f3be89a3d9580dd92ffbfe2c25e2359f05acf3a1f24f4d5e"
+    },
+    {
+      "path": "before-test_library_rail_switch_keeps_reader_and_note.py",
+      "kind": "owned evidence file",
+      "bytes": 25206,
+      "sha256": "6e0ea55da6d9cb4c57be3642e250562f44e9c18d979d44efbcfb17ec645eef0c"
+    },
+    {
+      "path": "commands.json",
+      "kind": "owned evidence file",
+      "bytes": 8764,
+      "sha256": "1986e534f582dc84b0323aa265fe276d0583f52ad0bf6f01b303354c497709b1"
+    },
+    {
+      "path": "exact-final-green-tmp",
+      "kind": "owned pytest fixture/profile scratch; not source evidence",
+      "files": 2,
+      "bytes": 4898816
+    },
+    {
+      "path": "exact-final-green.log",
+      "kind": "owned evidence file",
+      "bytes": 510,
+      "sha256": "f813db35a245afe8cf135da2e828e9dc64b3fa20f80fbb5fd2f58f77bd2da0b9"
+    },
+    {
+      "path": "final-approved-green-tmp",
+      "kind": "owned pytest fixture/profile scratch; not source evidence",
+      "files": 4,
+      "bytes": 9797632
+    },
+    {
+      "path": "final-approved-green.log",
+      "kind": "owned evidence file",
+      "bytes": 764,
+      "sha256": "dd56722ee1596c7e86f17c86bc3600e2f48ee1206370025dedb358b875e081ca"
+    },
+    {
+      "path": "final-approved-old-red-tmp",
+      "kind": "owned pytest fixture/profile scratch; not source evidence",
+      "files": 1,
+      "bytes": 2449408
+    },
+    {
+      "path": "final-approved-old-red.log",
+      "kind": "owned evidence file",
+      "bytes": 92433,
+      "sha256": "6b22d3951a0a4a90d77178c355878afcf6ee6c0801ddd09ed7dd661d79e10a99"
+    },
+    {
+      "path": "final-bytes-red-tmp",
+      "kind": "owned pytest fixture/profile scratch; not source evidence",
+      "files": 1,
+      "bytes": 2449408
+    },
+    {
+      "path": "final-bytes-red.log",
+      "kind": "owned evidence file",
+      "bytes": 92406,
+      "sha256": "0e770b9858bf4d36a2c7d4fec146c6abcf43437d3a770694cd0301ba3b4dd3f0"
+    },
+    {
+      "path": "final-frozen-proof.json",
+      "kind": "owned evidence file",
+      "bytes": 2196,
+      "sha256": "c6fc88e176277c9d4a5f69b27096a72db98f970a24575420d743bbf8e98a0751"
+    },
+    {
+      "path": "final-frozen-verification.log",
+      "kind": "owned evidence file",
+      "bytes": 2196,
+      "sha256": "c6fc88e176277c9d4a5f69b27096a72db98f970a24575420d743bbf8e98a0751"
+    },
+    {
+      "path": "final-lint-delta.json",
+      "kind": "owned evidence file",
+      "bytes": 83,
+      "sha256": "01609991f4948950ceea72d0957a485508bdb1fb4baf16d6aff7444367ec0bee"
+    },
+    {
+      "path": "frozen-green-tmp",
+      "kind": "owned pytest fixture/profile scratch; not source evidence",
+      "files": 4,
+      "bytes": 9797632
+    },
+    {
+      "path": "frozen-green.log",
+      "kind": "owned evidence file",
+      "bytes": 763,
+      "sha256": "24de392ebb0271931858a2a69d215526c44af79cb175833eac723fe7d3e811ba"
+    },
+    {
+      "path": "frozen-old-red.log",
+      "kind": "owned evidence file",
+      "bytes": 92406,
+      "sha256": "6a0efdd034588e98a9e4971d5839af5fcc71fc9b5898a0857473a2cce9184d61"
+    },
+    {
+      "path": "green-tmp",
+      "kind": "owned pytest fixture/profile scratch; not source evidence",
+      "files": 1,
+      "bytes": 2449408
+    },
+    {
+      "path": "green.log",
+      "kind": "owned evidence file",
+      "bytes": 348,
+      "sha256": "5f0cfbc1996fdb91f8ab8bb496408144d2633541bd186bfbf456537838fbaec3"
+    },
+    {
+      "path": "lint-after.json",
+      "kind": "owned evidence file",
+      "bytes": 233284,
+      "sha256": "d0c1db1691f050d5a83f6a616980f8c277f0cb41ddef370904e535effdf5f305"
+    },
+    {
+      "path": "lint-before.json",
+      "kind": "owned evidence file",
+      "bytes": 236766,
+      "sha256": "20cd0db3a59b100aad42e529eb14135b87f46987c71ab438ed3604a112d37fbb"
+    },
+    {
+      "path": "lint-delta.json",
+      "kind": "owned evidence file",
+      "bytes": 362,
+      "sha256": "2deaa849ef63c23c0184ab3f3b847ae47d5fb89498e79c7b5443e865100f5e0b"
+    },
+    {
+      "path": "lint-published-baseline.json",
+      "kind": "owned evidence file",
+      "bytes": 233285,
+      "sha256": "4c29637c8e3fe17a402d46f0712926121c576229f62069c319e2c915d0c7ceac"
+    },
+    {
+      "path": "marker-lifetime.log",
+      "kind": "owned evidence file",
+      "bytes": 162,
+      "sha256": "125e0b37fb217e6a2b6f9b6ae08dc147e76ee0212da66168575d53060fb18985"
+    },
+    {
+      "path": "marker_lifetime_self_check.py",
+      "kind": "owned evidence file",
+      "bytes": 2998,
+      "sha256": "6062fd3fd2f21f092d3cbfd55561a3aecbb840abf892ca1763736e5ae2da0791"
+    },
+    {
+      "path": "move-and-original-test-proof.json",
+      "kind": "owned evidence file",
+      "bytes": 1614,
+      "sha256": "d280ba19be593465fb11ef2476a6947923cfa10e15611cf3aca6d200112d0f49"
+    },
+    {
+      "path": "old-owner-overlay-proof.json",
+      "kind": "owned evidence file",
+      "bytes": 728,
+      "sha256": "aadf9dc371215952d5a884ed21dcaaf9f7b9772282d13f99edfd9ced79dea512"
+    },
+    {
+      "path": "old_restore_owner.py",
+      "kind": "owned evidence file",
+      "bytes": 2849,
+      "sha256": "c3c1771e302330411c55955bc3240b20cecdaf8e1c4df4eb7c3492b5b645bee3"
+    },
+    {
+      "path": "qualification-old-red-tmp",
+      "kind": "owned pytest fixture/profile scratch; not source evidence",
+      "files": 1,
+      "bytes": 2449408
+    },
+    {
+      "path": "qualification-old-red.log",
+      "kind": "owned evidence file",
+      "bytes": 92429,
+      "sha256": "db2967772e56f3ee2b2786a76c8265af3344b3a401b28670b82707a44a77853d"
+    },
+    {
+      "path": "red-native-tmp",
+      "kind": "owned pytest fixture/profile scratch; not source evidence",
+      "files": 1,
+      "bytes": 2449408
+    },
+    {
+      "path": "red-native.log",
+      "kind": "owned evidence file",
+      "bytes": 93565,
+      "sha256": "c62f43360de5200ab6786d3baebfac45d196973214d45c27c83023d807d1f9c0"
+    },
+    {
+      "path": "red-tmp",
+      "kind": "owned pytest fixture/profile scratch; not source evidence",
+      "files": 1,
+      "bytes": 2449408
+    },
+    {
+      "path": "red-valid-tmp",
+      "kind": "owned pytest fixture/profile scratch; not source evidence",
+      "files": 1,
+      "bytes": 2449408
+    },
+    {
+      "path": "red-valid.log",
+      "kind": "owned evidence file",
+      "bytes": 97403,
+      "sha256": "61349d68f8ceb2a459d2a376b2dc98c9f6d2753a4f0c88aa3c9bd69b5d64dc20"
+    },
+    {
+      "path": "red.log",
+      "kind": "owned evidence file",
+      "bytes": 94029,
+      "sha256": "973df3e52c2f33926f60ca2368339eaa4434c2e1a72cecdee3fe756054214ebd"
+    },
+    {
+      "path": "setup-probe-tmp",
+      "kind": "owned pytest fixture/profile scratch; not source evidence",
+      "files": 1,
+      "bytes": 2449408
+    },
+    {
+      "path": "setup-probe.log",
+      "kind": "owned evidence file",
+      "bytes": 90997,
+      "sha256": "4f9a25a73b0f2fc62144fdb99b47acfed3bb0f0caf3850aa93943fbbb6d2bf04"
+    },
+    {
+      "path": "verify_frozen.py",
+      "kind": "owned evidence file",
+      "bytes": 6472,
+      "sha256": "906465e3f83c591b899bf10df7568f5825955d08b41e426790336e349a74dd5e"
+    },
+    {
+      "path": "wiring-tmp",
+      "kind": "owned pytest fixture/profile scratch; not source evidence",
+      "files": 0,
+      "bytes": 0
+    },
+    {
+      "path": "wiring.log",
+      "kind": "owned evidence file",
+      "bytes": 209,
+      "sha256": "94645893015cc6ca2475b016e42fe3b7fc14eddba00845c59668049c60f95c1f"
+    },
+    {
+      "path": "write_report.py",
+      "kind": "owned evidence file",
+      "bytes": 13384,
+      "sha256": "bd68db5cda5966f8e4f58c058d98e52e87625eafc3c33e58ebe4838df6baa472"
+    }
+  ]
+}

@@ -5647,3 +5647,6 @@ send carried by its request body (`--log-prompts-dir`), and by outcome where the
 outcome alone proves the path (here, the light set without `read_file` while
 Read file is on). Do not treat the Context view's "Model window" as proof of
 the window that send was planned against.
+## A Select constructor choice is not yet its reactive value (TASK-38542)
+
+**2026-11-01.** The new Library type filter recorded `Select.value` before mount as its initial choice. Textual still returned `Select.NULL`; mounting the retained All-types page then emitted a change that superseded the user's pending Mix-ins request. Retain the requested constructor choice itself when distinguishing mount events. The real-DB production-style regression now verifies 22 filtered mix-ins stay on a 20-row first page and a two-row second page.

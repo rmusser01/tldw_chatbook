@@ -1,0 +1,34 @@
+[
+  {
+    "argv": [
+      "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python",
+      "-m",
+      "pytest",
+      "Tests/Architecture/test_module_size_ratchet.py",
+      "-q",
+      "-p",
+      "no:cacheprovider",
+      "--basetemp=/private/tmp/mixins-4b1-rebase/size-pytest"
+    ],
+    "log": "size-guards.log",
+    "result": "201 passed in2.45s",
+    "exit_code": 0
+  },
+  {
+    "argv": [
+      "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python",
+      "-m",
+      "pytest",
+      "Tests/CI/test_ci_queue_pressure_contract.py",
+      "Tests/CI/test_derived_artifacts_workflow.py",
+      "Tests/CI/test_ui_pr_gate_census_checker.py",
+      "-q",
+      "-p",
+      "no:cacheprovider",
+      "--basetemp=/private/tmp/mixins-4b1-rebase/ci-pytest"
+    ],
+    "log": "ci-contracts.log",
+    "result": "254 passed in53.80s",
+    "exit_code": 0
+  }
+]

@@ -111,6 +111,7 @@ def test_config_load_failure_warns_with_error_severity():
     assert kwargs.get("severity") == "error"
     assert kwargs.get("timeout") == 60
     assert kwargs.get("title") == "Config file failed to load"
+    assert kwargs.get("markup") is False
     message = _args[0] if _args else kwargs.get("message", "")
     assert str(failure.path) in message
     assert failure.message in message

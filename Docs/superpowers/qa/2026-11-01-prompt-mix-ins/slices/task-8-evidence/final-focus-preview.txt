@@ -1,0 +1,10 @@
+.........................                                                [100%]
+============================= slowest 25 durations =============================
+5.67s call     Tests/UI/test_console_prompt_mixins.py::test_real_console_prompts_action_retains_browse_and_controls_runtime[size0]
+4.85s call     Tests/UI/test_console_prompt_mixins.py::test_real_console_prompts_action_retains_browse_and_controls_runtime[size2]
+4.77s call     Tests/UI/test_console_prompt_mixins.py::test_real_console_prompts_action_retains_browse_and_controls_runtime[size1]
+2.15s call     Tests/UI/test_console_prompt_mixins.py::test_mounted_selection_order_toggles_reopen_and_origin_fence
+1.07s call     Tests/UI/test_console_prompt_mixins.py::test_shared_editor_dirty_close_invalid_save_and_version_change_preserve_draft
+
+(20 durations < 1s hidden.)
+25 passed in 27.82s

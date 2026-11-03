@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import json
 from collections.abc import Mapping
 from typing import Any, Literal, cast
 
@@ -12,56 +11,20 @@ from .prompt_artifact_models import (
     DecodedPromptArtifact,
     PromptBlock,
     PromptLane,
+    _compatibility_text,
+    _decoded,
+    _is_schema_version,
+    decode_literal_mixin_v3,
+    deserialize_definition,
 )
 from .prompt_block_compiler import compile_block_artifact
 
 
-def _is_schema_version(value: Any, expected: int) -> bool:
-    """Require JSON integer schema versions without Python bool/float coercion."""
-    return type(value) is int and value == expected
-
-
-def deserialize_definition(value: Any) -> Mapping[str, Any] | None:
-    """Return a JSON-object definition, never guessing at non-object input."""
-    if isinstance(value, Mapping):
-        return dict(value)
-    if not isinstance(value, str):
-        return None
-    try:
-        parsed = json.loads(value)
-    except (TypeError, ValueError):
-        return None
-    return dict(parsed) if isinstance(parsed, Mapping) else None
-
-
 def _artifact_type(record: Mapping[str, Any]) -> ArtifactType:
     raw_artifact_type = str(record.get("artifact_type") or "prompt")
-    if raw_artifact_type not in {"prompt", "recipe"}:
+    if raw_artifact_type not in {"prompt", "recipe", "mixin"}:
         raise ValueError(f"Unsupported artifact_type: {raw_artifact_type!r}")
     return cast(ArtifactType, raw_artifact_type)
-
-
-def _compatibility_text(record: Mapping[str, Any]) -> tuple[str, str]:
-    return str(record.get("system_prompt") or ""), str(record.get("user_prompt") or "")
-
-
-def _decoded(
-    *,
-    state: Literal["foreign_v1", "unsupported", "malformed", "mismatched"],
-    record: Mapping[str, Any],
-    artifact_type: ArtifactType,
-    raw: Mapping[str, Any] | None,
-) -> DecodedPromptArtifact:
-    system, user = _compatibility_text(record)
-    return DecodedPromptArtifact(
-        state=state,
-        artifact_type=artifact_type,
-        definition=None,
-        raw_definition=raw,
-        compiled_system=system,
-        compiled_user=user,
-        compatibility_stale=False,
-    )
 
 
 def foreign_definition(
@@ -171,6 +134,10 @@ def decode_console_v2(
 def decode_prompt_artifact(record: Mapping[str, Any]) -> DecodedPromptArtifact:
     """Classify a prompt record without allowing one schema to impersonate another."""
     artifact_type = _artifact_type(record)
+    if artifact_type == "mixin":
+        return decode_literal_mixin_v3(
+            record, raw=deserialize_definition(record.get("prompt_definition"))
+        )
     if str(record.get("prompt_format") or "legacy") == "legacy":
         system, user = _compatibility_text(record)
         return DecodedPromptArtifact(

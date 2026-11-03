@@ -1,0 +1,48 @@
+{
+  "base": "5a8f23eb9dfabeda25d46ed168d8ac675f483217",
+  "old_count": 1335,
+  "new_count": 1336,
+  "old_prefix_exact": true,
+  "appended": [
+    "Tests/UI/test_response_rules_end_to_end.py::test_close_during_resume_retires_the_old_visible_draft"
+  ],
+  "floor": 1336,
+  "reader_whole_file_already_in_old_prefix": true,
+  "new_reader_cases_defined": {
+    "test_programmatic_media_row_restore_keeps_reader_until_user_keys": true,
+    "test_programmatic_media_restore_releases_only_its_failed_focus_marker": true
+  },
+  "reader_nodes_covered_by_existing_whole_file": [
+    "Tests/UI/test_library_rail_switch_keeps_reader_and_note.py::test_programmatic_media_row_restore_keeps_reader_until_user_keys",
+    "Tests/UI/test_library_rail_switch_keeps_reader_and_note.py::test_programmatic_media_restore_releases_only_its_failed_focus_marker"
+  ],
+  "new_appended_overlap_with_old_entries": [],
+  "census_identity": {
+    "bytes": 182027,
+    "sha256": "58561a8e9d9e369e41fb7c74a240da87fc2b4ac8d3c349a4a39b48f9adacb8d3"
+  },
+  "checker_identity": {
+    "bytes": 74249,
+    "sha256": "8c086e0280b84572d724b304a9da8ac8bad9d1c897dfc86752f1b3998a24756e"
+  },
+  "root_proof_identities": {
+    "/private/tmp/mixins-reader-root-final/census-proof.json": {
+      "bytes": 444,
+      "sha256": "695670806e849a6b11da58a74635112e77b4e4b4544afdc1910b0f7195ada9ce"
+    },
+    "/private/tmp/mixins-reader-root-final/ci-enrollment-proof.json": {
+      "bytes": 439,
+      "sha256": "d63bca86f117dd97520d756cdc85b95dba4c1ec1a28903956e50eaffbdc47f2c"
+    }
+  },
+  "frozen_sources_still_match": {
+    "tldw_chatbook/UI/Console_Modules/session.py": true,
+    "tldw_chatbook/UI/Console_Modules/composer_run_controls.py": true,
+    "Tests/UI/test_response_rules_end_to_end.py": true,
+    "tldw_chatbook/UI/Library_Modules/library_media_controller.py": true,
+    "tldw_chatbook/UI/Library_Modules/canvas_sync.py": true,
+    "Tests/UI/test_library_rail_switch_keeps_reader_and_note.py": true,
+    "tldw_chatbook/UI/Screens/library_screen.py": true
+  },
+  "all_checks_pass": true
+}

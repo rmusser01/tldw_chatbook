@@ -1,0 +1,470 @@
+{
+  "Tests/Backup_Recovery/test_core_owners.py": {
+    "base_needs_format": false,
+    "current_needs_format": false
+  },
+  "Tests/Backup_Recovery/test_prompt_mixin_restore.py": {
+    "base_needs_format": false,
+    "current_needs_format": false
+  },
+  "Tests/Backup_Recovery/test_sqlite_validation.py": {
+    "base_needs_format": false,
+    "current_needs_format": true
+  },
+  "Tests/Character_Chat/test_prompt_cache_review_regressions.py": {
+    "base_needs_format": true,
+    "current_needs_format": true
+  },
+  "Tests/Chat/test_anthropic_caching_degrade.py": {
+    "base_needs_format": false,
+    "current_needs_format": false
+  },
+  "Tests/Chat/test_cache_usage_metrics.py": {
+    "base_needs_format": false,
+    "current_needs_format": false
+  },
+  "Tests/Chat/test_console_chat_fork.py": {
+    "base_needs_format": false,
+    "current_needs_format": false
+  },
+  "Tests/Chat/test_console_edit_resend.py": {
+    "base_needs_format": false,
+    "current_needs_format": false
+  },
+  "Tests/Chat/test_console_first_send_atomicity.py": {
+    "base_needs_format": true,
+    "current_needs_format": true
+  },
+  "Tests/Chat/test_console_prompt_mixin_admission.py": {
+    "base_needs_format": false,
+    "current_needs_format": false
+  },
+  "Tests/Chat/test_console_prompt_mixin_caching.py": {
+    "base_needs_format": false,
+    "current_needs_format": false
+  },
+  "Tests/Chat/test_console_prompt_mixin_composition.py": {
+    "base_needs_format": false,
+    "current_needs_format": false
+  },
+  "Tests/Chat/test_console_prompt_mixin_forks.py": {
+    "base_needs_format": false,
+    "current_needs_format": false
+  },
+  "Tests/Chat/test_console_prompt_mixin_journey.py": {
+    "base_needs_format": false,
+    "current_needs_format": false
+  },
+  "Tests/Chat/test_console_prompt_mixin_retry.py": {
+    "base_needs_format": false,
+    "current_needs_format": false
+  },
+  "Tests/Chat/test_console_prompt_mixin_values.py": {
+    "base_needs_format": false,
+    "current_needs_format": false
+  },
+  "Tests/Chat/test_console_received_intent_transitions.py": {
+    "base_needs_format": true,
+    "current_needs_format": true
+  },
+  "Tests/Chat/test_console_regenerate_branching.py": {
+    "base_needs_format": false,
+    "current_needs_format": false
+  },
+  "Tests/Chat/test_console_settings_apply_store.py": {
+    "base_needs_format": false,
+    "current_needs_format": true
+  },
+  "Tests/Chat/test_console_trace_current_turn_transforms.py": {
+    "base_needs_format": true,
+    "current_needs_format": true
+  },
+  "Tests/Chatbooks/test_chatbook_prompt_round_trip.py": {
+    "base_needs_format": false,
+    "current_needs_format": false
+  },
+  "Tests/DB/test_console_prompt_mixins.py": {
+    "base_needs_format": false,
+    "current_needs_format": true
+  },
+  "Tests/DB/test_migration_file_sources.py": {
+    "base_needs_format": false,
+    "current_needs_format": false
+  },
+  "Tests/Library/test_library_prompts_state.py": {
+    "base_needs_format": false,
+    "current_needs_format": true
+  },
+  "Tests/Library/test_prompt_export_roundtrip.py": {
+    "base_needs_format": false,
+    "current_needs_format": false
+  },
+  "Tests/Prompt_Management/test_prompt_chatbook_record.py": {
+    "base_needs_format": false,
+    "current_needs_format": false
+  },
+  "Tests/Prompt_Management/test_prompt_mixins.py": {
+    "base_needs_format": false,
+    "current_needs_format": false
+  },
+  "Tests/Prompt_Management/test_prompt_scope_service.py": {
+    "base_needs_format": false,
+    "current_needs_format": false
+  },
+  "Tests/Prompt_Management/test_server_prompt_service.py": {
+    "base_needs_format": false,
+    "current_needs_format": false
+  },
+  "Tests/Prompts_DB/test_prompts_db_retained_history.py": {
+    "base_needs_format": false,
+    "current_needs_format": true
+  },
+  "Tests/State/test_screen_state_store.py": {
+    "base_needs_format": false,
+    "current_needs_format": false
+  },
+  "Tests/UI/test_chat_screen_console_inspector_loader.py": {
+    "base_needs_format": true,
+    "current_needs_format": true
+  },
+  "Tests/UI/test_console_composer_menu.py": {
+    "base_needs_format": true,
+    "current_needs_format": true
+  },
+  "Tests/UI/test_console_conversation_inspector.py": {
+    "base_needs_format": false,
+    "current_needs_format": true
+  },
+  "Tests/UI/test_console_personal_context_selection_factory.py": {
+    "base_needs_format": true,
+    "current_needs_format": true
+  },
+  "Tests/UI/test_console_prompt_mixins.py": {
+    "base_needs_format": false,
+    "current_needs_format": false
+  },
+  "Tests/UI/test_console_prompt_picker.py": {
+    "base_needs_format": false,
+    "current_needs_format": true
+  },
+  "Tests/UI/test_console_prompts_modal.py": {
+    "base_needs_format": false,
+    "current_needs_format": false
+  },
+  "Tests/UI/test_library_prompt_mixins.py": {
+    "base_needs_format": false,
+    "current_needs_format": true
+  },
+  "Tests/UI/test_library_prompts_reader.py": {
+    "base_needs_format": false,
+    "current_needs_format": true
+  },
+  "Tests/UI/test_polling_recovery_status_updates.py": {
+    "base_needs_format": false,
+    "current_needs_format": true
+  },
+  "Tests/tldw_api/test_prompt_chatbook_schemas.py": {
+    "base_needs_format": false,
+    "current_needs_format": false
+  },
+  "tldw_chatbook/Backup_Recovery/sqlite_validation.py": {
+    "base_needs_format": true,
+    "current_needs_format": true
+  },
+  "tldw_chatbook/Chat/Chat_Functions.py": {
+    "base_needs_format": true,
+    "current_needs_format": true
+  },
+  "tldw_chatbook/Chat/chat_persistence_service.py": {
+    "base_needs_format": true,
+    "current_needs_format": true
+  },
+  "tldw_chatbook/Chat/console_chat_controller.py": {
+    "base_needs_format": true,
+    "current_needs_format": true
+  },
+  "tldw_chatbook/Chat/console_chat_fork.py": {
+    "base_needs_format": false,
+    "current_needs_format": false
+  },
+  "tldw_chatbook/Chat/console_chat_models.py": {
+    "base_needs_format": false,
+    "current_needs_format": false
+  },
+  "tldw_chatbook/Chat/console_chat_store.py": {
+    "base_needs_format": true,
+    "current_needs_format": true
+  },
+  "tldw_chatbook/Chat/console_configuration_capture.py": {
+    "base_needs_format": false,
+    "current_needs_format": false
+  },
+  "tldw_chatbook/Chat/console_configuration_preparation.py": {
+    "base_needs_format": true,
+    "current_needs_format": true
+  },
+  "tldw_chatbook/Chat/console_conversation_hydration.py": {
+    "base_needs_format": false,
+    "current_needs_format": true
+  },
+  "tldw_chatbook/Chat/console_dispatch_checkpoint.py": {
+    "base_needs_format": false,
+    "current_needs_format": false
+  },
+  "tldw_chatbook/Chat/console_dispatch_repository.py": {
+    "base_needs_format": true,
+    "current_needs_format": true
+  },
+  "tldw_chatbook/Chat/console_message_actions.py": {
+    "base_needs_format": true,
+    "current_needs_format": true
+  },
+  "tldw_chatbook/Chat/console_native_commit.py": {
+    "base_needs_format": true,
+    "current_needs_format": true
+  },
+  "tldw_chatbook/Chat/console_prepared_request.py": {
+    "base_needs_format": true,
+    "current_needs_format": true
+  },
+  "tldw_chatbook/Chat/console_prompt_mixin_service.py": {
+    "base_needs_format": false,
+    "current_needs_format": true
+  },
+  "tldw_chatbook/Chat/console_prompt_mixins.py": {
+    "base_needs_format": false,
+    "current_needs_format": false
+  },
+  "tldw_chatbook/Chat/console_prompt_queue.py": {
+    "base_needs_format": true,
+    "current_needs_format": true
+  },
+  "tldw_chatbook/Chat/console_prompt_queue_coordinator.py": {
+    "base_needs_format": true,
+    "current_needs_format": true
+  },
+  "tldw_chatbook/Chat/console_provider_gateway.py": {
+    "base_needs_format": true,
+    "current_needs_format": true
+  },
+  "tldw_chatbook/Chat/console_received_dispatch.py": {
+    "base_needs_format": true,
+    "current_needs_format": true
+  },
+  "tldw_chatbook/Chat/console_received_intent.py": {
+    "base_needs_format": true,
+    "current_needs_format": true
+  },
+  "tldw_chatbook/Chat/console_received_turn.py": {
+    "base_needs_format": true,
+    "current_needs_format": true
+  },
+  "tldw_chatbook/Chat/console_trace_continuation.py": {
+    "base_needs_format": false,
+    "current_needs_format": true
+  },
+  "tldw_chatbook/Chat/console_trace_final_values.py": {
+    "base_needs_format": true,
+    "current_needs_format": true
+  },
+  "tldw_chatbook/Chat/console_trace_provenance.py": {
+    "base_needs_format": false,
+    "current_needs_format": false
+  },
+  "tldw_chatbook/Chat/console_trace_runtime.py": {
+    "base_needs_format": true,
+    "current_needs_format": true
+  },
+  "tldw_chatbook/Chat/console_trace_service.py": {
+    "base_needs_format": true,
+    "current_needs_format": true
+  },
+  "tldw_chatbook/Chat/console_transaction_contribution.py": {
+    "base_needs_format": false,
+    "current_needs_format": false
+  },
+  "tldw_chatbook/Chat/console_turn_context.py": {
+    "base_needs_format": true,
+    "current_needs_format": true
+  },
+  "tldw_chatbook/Chat/console_turn_resend.py": {
+    "base_needs_format": false,
+    "current_needs_format": false
+  },
+  "tldw_chatbook/Chat/message_metadata.py": {
+    "base_needs_format": false,
+    "current_needs_format": false
+  },
+  "tldw_chatbook/DB/ChaChaNotes_DB.py": {
+    "base_needs_format": true,
+    "current_needs_format": true
+  },
+  "tldw_chatbook/DB/Prompts_DB.py": {
+    "base_needs_format": false,
+    "current_needs_format": true
+  },
+  "tldw_chatbook/DB/console_prompt_mixins.py": {
+    "base_needs_format": false,
+    "current_needs_format": false
+  },
+  "tldw_chatbook/DB/keyword_store.py": {
+    "base_needs_format": false,
+    "current_needs_format": false
+  },
+  "tldw_chatbook/DB/recovery_core.py": {
+    "base_needs_format": false,
+    "current_needs_format": false
+  },
+  "tldw_chatbook/DB/recovery_core_schema.py": {
+    "base_needs_format": true,
+    "current_needs_format": true
+  },
+  "tldw_chatbook/LLM_Calls/LLM_API_Calls.py": {
+    "base_needs_format": true,
+    "current_needs_format": true
+  },
+  "tldw_chatbook/Library/library_prompts_state.py": {
+    "base_needs_format": false,
+    "current_needs_format": true
+  },
+  "tldw_chatbook/Prompt_Management/Prompts_Interop.py": {
+    "base_needs_format": false,
+    "current_needs_format": false
+  },
+  "tldw_chatbook/Prompt_Management/local_prompt_service.py": {
+    "base_needs_format": false,
+    "current_needs_format": false
+  },
+  "tldw_chatbook/Prompt_Management/prompt_artifact_codec.py": {
+    "base_needs_format": false,
+    "current_needs_format": false
+  },
+  "tldw_chatbook/Prompt_Management/prompt_artifact_models.py": {
+    "base_needs_format": false,
+    "current_needs_format": true
+  },
+  "tldw_chatbook/Prompt_Management/prompt_batch_models.py": {
+    "base_needs_format": false,
+    "current_needs_format": true
+  },
+  "tldw_chatbook/Prompt_Management/prompt_chatbook_record.py": {
+    "base_needs_format": false,
+    "current_needs_format": false
+  },
+  "tldw_chatbook/Prompt_Management/prompt_markdown_export.py": {
+    "base_needs_format": false,
+    "current_needs_format": false
+  },
+  "tldw_chatbook/Prompt_Management/prompt_normalizers.py": {
+    "base_needs_format": false,
+    "current_needs_format": false
+  },
+  "tldw_chatbook/Prompt_Management/prompt_scope_service.py": {
+    "base_needs_format": true,
+    "current_needs_format": true
+  },
+  "tldw_chatbook/Prompt_Management/prompt_source_capabilities.py": {
+    "base_needs_format": false,
+    "current_needs_format": false
+  },
+  "tldw_chatbook/Prompt_Management/server_prompt_adapter.py": {
+    "base_needs_format": false,
+    "current_needs_format": false
+  },
+  "tldw_chatbook/Prompt_Management/server_prompt_service.py": {
+    "base_needs_format": false,
+    "current_needs_format": false
+  },
+  "tldw_chatbook/UI/Console_Modules/composer_run_controls.py": {
+    "base_needs_format": true,
+    "current_needs_format": true
+  },
+  "tldw_chatbook/UI/Console_Modules/inspector_data.py": {
+    "base_needs_format": true,
+    "current_needs_format": true
+  },
+  "tldw_chatbook/UI/Console_Modules/left_rail.py": {
+    "base_needs_format": false,
+    "current_needs_format": true
+  },
+  "tldw_chatbook/UI/Console_Modules/prompts.py": {
+    "base_needs_format": false,
+    "current_needs_format": true
+  },
+  "tldw_chatbook/UI/Console_Modules/session.py": {
+    "base_needs_format": true,
+    "current_needs_format": true
+  },
+  "tldw_chatbook/UI/Console_Modules/wiring.py": {
+    "base_needs_format": true,
+    "current_needs_format": true
+  },
+  "tldw_chatbook/UI/Library_Modules/library_prompt_browse_controller.py": {
+    "base_needs_format": false,
+    "current_needs_format": true
+  },
+  "tldw_chatbook/UI/Library_Modules/library_prompts_controller.py": {
+    "base_needs_format": true,
+    "current_needs_format": true
+  },
+  "tldw_chatbook/UI/Library_Modules/library_prompts_state.py": {
+    "base_needs_format": true,
+    "current_needs_format": true
+  },
+  "tldw_chatbook/UI/Library_Modules/prompt_save_ack.py": {
+    "base_needs_format": false,
+    "current_needs_format": true
+  },
+  "tldw_chatbook/UI/Navigation/pending_handoff_store.py": {
+    "base_needs_format": true,
+    "current_needs_format": true
+  },
+  "tldw_chatbook/UI/Navigation/screen_state_store.py": {
+    "base_needs_format": false,
+    "current_needs_format": true
+  },
+  "tldw_chatbook/UI/Screens/chat_screen.py": {
+    "base_needs_format": true,
+    "current_needs_format": true
+  },
+  "tldw_chatbook/UI/Screens/library_screen.py": {
+    "base_needs_format": true,
+    "current_needs_format": true
+  },
+  "tldw_chatbook/Widgets/Console/console_composer_menu_modal.py": {
+    "base_needs_format": false,
+    "current_needs_format": false
+  },
+  "tldw_chatbook/Widgets/Console/console_conversation_inspector.py": {
+    "base_needs_format": true,
+    "current_needs_format": true
+  },
+  "tldw_chatbook/Widgets/Console/console_prompt_mixins_view.py": {
+    "base_needs_format": false,
+    "current_needs_format": false
+  },
+  "tldw_chatbook/Widgets/Console/console_prompts_browse.py": {
+    "base_needs_format": false,
+    "current_needs_format": false
+  },
+  "tldw_chatbook/Widgets/Console/console_prompts_modal.py": {
+    "base_needs_format": false,
+    "current_needs_format": true
+  },
+  "tldw_chatbook/Widgets/Console/console_prompts_state.py": {
+    "base_needs_format": false,
+    "current_needs_format": false
+  },
+  "tldw_chatbook/Widgets/Library/library_prompts_canvas.py": {
+    "base_needs_format": false,
+    "current_needs_format": true
+  },
+  "tldw_chatbook/Widgets/Prompts/prompt_mixin_editor.py": {
+    "base_needs_format": false,
+    "current_needs_format": false
+  },
+  "tldw_chatbook/tldw_api/prompt_chatbook_schemas.py": {
+    "base_needs_format": false,
+    "current_needs_format": false
+  }
+}

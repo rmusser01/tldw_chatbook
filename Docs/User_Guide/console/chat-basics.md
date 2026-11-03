@@ -307,7 +307,7 @@ to clear only the exact revision that was saved. If you edit the composer or
 switch sessions while the save is finishing, the newer text is kept. Saving a
 draft never sends it and does not call the configured model.
 
-Open **Browse Prompt Library…** and switch the source to **Draft Shelf** to
+Open **Prompts** and switch the source to **Draft Shelf** to
 search or page through saved drafts. The search field keeps keyboard focus:
 type to filter, use **Up/Down** to highlight a result, and press **Enter** to
 open it. A draft can be edited, inserted at the current composer caret without
@@ -320,6 +320,34 @@ The Draft Shelf is device-local and holds 100 entries. At 100 of 100, new
 saves are blocked until you delete one; the app never silently evicts an older
 draft. Shelf entries do not sync, export, or appear as Library Prompts until
 you explicitly promote them.
+
+### Chat mix-ins
+
+Open **Menu > Prompts**, then **Mix-ins** in the existing Prompt Workbench.
+The Prompts entry reports the number enabled, including unavailable enabled
+choices. Browse, edit and Improve remain in the same Workbench.
+
+Add a Library mix-in, then use its checkbox, **Move up/down**, **Inspect / Edit**
+or **Remove**. Before entries run before your current message; After entries run
+after it. Disabled entries keep their position, and Library sorting does not
+change this order. Removing a choice does not delete the Library record. New
+chats start with no choices. Close or Escape keeps choice changes; Library edits
+have their own Save and discard confirmation. **Retry saving choices** appears
+only when live choices have not been saved.
+
+**Preview next send** shows the current definitions and the same composed preview
+as Context > Next send. It does not save choices or mark definitions used.
+Updated Library definitions apply to future sends. Placement edits move to the
+end of their new group. Unavailable disabled choices do not block sending;
+enabled unavailable choices must be disabled, removed or recovered. The current
+Server source cannot enable mix-ins because it lacks coherent revision reads.
+
+Used instructions are retained with the attempt. Select its turn in the
+Conversation Inspector to inspect original mix-ins even after Library changes
+or deletion. **Retry with original mix-ins** uses that captured set; an original
+empty set keeps the **Retry** label. When the original is unavailable,
+**Regenerate with current mix-ins** is explicit about using current choices.
+Mix-ins do not alter the stored user message or the System prompt.
 
 ### Improving the current draft
 
@@ -337,8 +365,7 @@ guided format, **Saved Recipe** to reuse a format from **Library > Prompts**, or
 Goal, Context and evidence, Constraints, and Output; **Show 5 optional blocks**
 reveals Role, Personality, Collaboration style, Success criteria, and Stop
 rules without discarding edits. If model improvement is unavailable, use
-**Configure provider / model** from the same surface. Choose **Browse Prompt
-Library…** instead when you want a saved Prompt or Recipe; that destination
+**Configure provider / model** from the same surface. Choose **Prompts** instead when you want a saved Prompt or Recipe; that destination
 remains available when the composer is empty.
 Choosing **Replace draft automatically** returns to the composer with a
 **Draft improved** row. Use **Undo** to restore the exact original draft, or

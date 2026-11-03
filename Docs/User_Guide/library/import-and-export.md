@@ -564,6 +564,12 @@ imported items afterwards.
 - **Export is local-only.** In server mode the rail's Export row is
   disabled ("Export packages local content only.") — switch the Library
   back to local to package content.
+- **Mix-ins keep their own identity.** Their Chatbook Prompt records use version
+  2 and preserve the exact stored definition, literal body and placement. Prompt
+  and Recipe records remain version 1. Imported library entries are not enabled
+  in a chat. Mix-in Markdown uses a distinct JSON envelope; malformed or unknown
+  versions fail without falling back to an ordinary Prompt. See
+  [portable mix-in definitions](prompts.md#portable-mix-in-definitions).
 - **Prompt records are portable, not database backups.** They preserve current
   Prompt/Recipe content, separate System/User lanes, keywords, type/format/schema,
   and stored definition. They exclude source IDs/UUIDs, versions, source

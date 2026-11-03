@@ -229,6 +229,17 @@ async def test_preparing_changed_source_after_original_tab_await_replays_full(
 
         completed_display = []
 
+        def completed_display_is_idle():
+            return (
+                bool(completed_display)
+                and controls.preparing_poll_record(console) is record
+                and not console._console_sync_in_progress
+                and console._console_session_tabs_sync_calls == 0
+                and not getattr(
+                    console, "_console_control_bar_replay_whole_sync", False
+                )
+            )
+
         def completed_original_display(kind, label, frame, value):
             if (
                 kind == sys.monitoring.events.PY_RETURN
@@ -254,17 +265,28 @@ async def test_preparing_changed_source_after_original_tab_await_replays_full(
                     )
                 )
             assert await _until(
-                lambda: (
-                    bool(completed_display)
-                    and controls.preparing_poll_record(console) is record
-                    and not console._console_sync_in_progress
-                    and console._console_session_tabs_sync_calls == 0
-                    and not getattr(
-                        console, "_console_control_bar_replay_whole_sync", False
-                    )
-                ),
+                completed_display_is_idle,
                 max(0, setup_deadline - asyncio.get_running_loop().time()),
             ), "No original natural Preparing display completed before the tab hold"
+            # The first display can launch image recovery for the received
+            # rows. Its real publication is FULL and may otherwise win the
+            # held tab lock before the timer, making that timer correctly
+            # decline overlapping work. Join only those exact image workers;
+            # a worker failure must fail setup rather than be suppressed.
+            image_workers = tuple(
+                worker for worker in console.workers
+                if worker.group == "console-recovered-images"
+            )
+            for worker in image_workers:
+                async with asyncio.timeout(
+                    max(0, setup_deadline - asyncio.get_running_loop().time())
+                ):
+                    await worker.wait()
+            completed_display.clear()
+            assert await _until(
+                completed_display_is_idle,
+                max(0, setup_deadline - asyncio.get_running_loop().time()),
+            ), "No original natural display completed after image recovery settled"
         assert type(lock) is asyncio.Lock and not lock.locked()
         await lock.acquire()
         owned_lock = True

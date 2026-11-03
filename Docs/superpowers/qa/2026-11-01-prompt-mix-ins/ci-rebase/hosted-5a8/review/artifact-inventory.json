@@ -1,0 +1,179 @@
+{
+  "root": "/private/tmp/mixins-reader-restore-review",
+  "self_exclusion": "This inventory excludes itself to avoid recursive hashing. Only direct files authored by this reviewer are listed.",
+  "entries": [
+    {
+      "path": "current-budget-comparison.json",
+      "role": "Superseded intermediate pin comparison before final exact recipient pin",
+      "bytes": 5684,
+      "sha256": "24dc212dff391045c337d557c5a51a53632b38eb6760c16c8100dad0be543111"
+    },
+    {
+      "path": "final-governance-proof.json",
+      "role": "Final independent caps/selectors/census verification",
+      "bytes": 2647,
+      "sha256": "cc0e8f3aa5dec5de7fb972a44920d6228e7f1f93a0722f816f0a0d390050f6ad"
+    },
+    {
+      "path": "final-source-evidence-proof.json",
+      "role": "Final independent frozen source/artifact/AST verification",
+      "bytes": 4273,
+      "sha256": "222edca071c40b330e2f9663640f46c6b82a9db0e9203f91727776dbf3ae98d8"
+    },
+    {
+      "path": "inherited-owner-identity-proof.json",
+      "role": "Independent dev/b110/5a8 original method AST identity",
+      "bytes": 718,
+      "sha256": "4902258638a40d52a9722f3887345fae38aa47383b7eaccfbe890ba2d5b21d0a"
+    },
+    {
+      "path": "interim-review.md",
+      "role": "Superseded interim verdict; not final clearance",
+      "bytes": 2611,
+      "sha256": "4d31046cfe6c488b9ada916c42117f2db3186834b2ca0c2b145bfc2ea1e713ba"
+    },
+    {
+      "path": "metadata-addendum.md",
+      "role": "Final correction superseding premature 1338 claim; valid census1336 coverage",
+      "bytes": 1850,
+      "sha256": "e2f58bf11165a987254e2bcc30e8e57835c1d8bf9ff8f11ec26b740e942e75f6"
+    },
+    {
+      "path": "metadata-correction-proof.json",
+      "role": "Independent corrected census coverage/root proof/source identity verification",
+      "bytes": 2051,
+      "sha256": "a18ff60d059076bace887ab1d3cf74d79d9ef59411d74b3404bf6712cbafed62"
+    },
+    {
+      "path": "review.md",
+      "role": "Final technical verdict; supersedes interim review",
+      "bytes": 8666,
+      "sha256": "550e5c584fe3ae02bbb1c66c25ea50b9e357f749ad0af69d8125524bd1b6e39f"
+    },
+    {
+      "path": "root-packaging-addendum.md",
+      "role": "Final read-only root verification/report/package addendum; no fresh-hosted claim",
+      "bytes": 3340,
+      "sha256": "e4fc68ff6fb11bc0b7224edef734fe77f9538796262d9a316ba0324c50d874f1"
+    },
+    {
+      "path": "ui26-independent-static-proof.json",
+      "role": "Independent UI26 moved body/facade/test AST and identity checks",
+      "bytes": 1105,
+      "sha256": "28cbbcaf2a620f38bd63d6b2130961a53144a285211ff2854bee7bcd519a2d2f"
+    },
+    {
+      "path": "ui31-independent-actual-source-proof.json",
+      "role": "Superseded intermediate source snapshot before final formatting/test freeze",
+      "bytes": 2184,
+      "sha256": "993a3c23465463e28e38b3080899454c7213f1c914ce4efa7d40895d22a8083d"
+    }
+  ],
+  "external_inventory_identities": {
+    "/private/tmp/mixins-5a8-ui26-diagnosis/evidence-inventory.json": {
+      "bytes": 12707,
+      "sha256": "158387decfa6819946e60d5b367e3249f56c2fce26cb2fe83f16a04ca691e035"
+    },
+    "/private/tmp/mixins-reader-restore-final/artifact-inventory.json": {
+      "bytes": 8784,
+      "sha256": "61149b1efdbcfaf26ba2f62ac7923b98884367854f344ae46c5e817685bc7116"
+    }
+  },
+  "scope": "Bounded technical follow-up and final root summary/package review. Census1336 and FastLane163 valid. Root addendum supersedes pending-local-check statements; corrected-head hosted CI/publication/merge remain unclaimed. Recorded snapshot metadata and selected frozen files rechecked, without duplicate tests or large trace rehash.",
+  "metadata_correction_inputs": {
+    "/private/tmp/mixins-reader-root-final/census-proof.json": {
+      "bytes": 444,
+      "sha256": "695670806e849a6b11da58a74635112e77b4e4b4544afdc1910b0f7195ada9ce"
+    },
+    "/private/tmp/mixins-reader-root-final/ci-enrollment-proof.json": {
+      "bytes": 439,
+      "sha256": "d63bca86f117dd97520d756cdc85b95dba4c1ec1a28903956e50eaffbdc47f2c"
+    }
+  },
+  "root_packaging_review_inputs": {
+    "/Users/macbook-dev/.codex/worktrees/prompt-mix-ins/tldw_chatbook/Docs/superpowers/qa/2026-11-01-prompt-mix-ins/ci-rebase/hosted-5a8/summary.md": {
+      "bytes": 8236,
+      "sha256": "680e8375b0758c993fc3fd1d1bee6f88832c1c9c5cc78765d1d381f3a5df1cfa"
+    },
+    "/Users/macbook-dev/.codex/worktrees/prompt-mix-ins/tldw_chatbook/Docs/superpowers/qa/2026-11-01-prompt-mix-ins/ci-rebase/hosted-5a8/artifact-map.json": {
+      "bytes": 61034,
+      "sha256": "20329e4a1b6c639ff0a32139e9e6b94ac0b3d0c6b96ef94d765d396e67d343bb"
+    },
+    "/private/tmp/mixins-reader-root-final/final-five-proof.json": {
+      "bytes": 553,
+      "sha256": "4e4315d8b37b9299f06f8735e7b86f6bd02813131581deb261ff7b13d83403f3"
+    },
+    "/private/tmp/mixins-reader-root-final/perf-source-before.json": {
+      "bytes": 562543,
+      "sha256": "6861d12aef8569b3aa5067fdafc37139faf462e5621bfff0296d417a1434215b"
+    },
+    "/private/tmp/mixins-reader-root-final/perf-source-after.json": {
+      "bytes": 562542,
+      "sha256": "1c089e6c4bd97260ed7f6df48c23ec972f4cc69b61aa3429ba633485f265d391"
+    },
+    "/private/tmp/mixins-reader-root-final/frozen-architecture-commands-results.json": {
+      "bytes": 2116,
+      "sha256": "27eb58bc4e4106f4431ecda84fb9e9c4328ba1cc8ab27a67a9ab0f7e401cbea8"
+    },
+    "/private/tmp/mixins-reader-root-final/frozen-ci-contracts-commands-results.json": {
+      "bytes": 606,
+      "sha256": "b3ec4ab94d34d556a7d094abb755dadddbc0c3206df47a6a533e680d02b8119e"
+    },
+    "/private/tmp/mixins-reader-root-final/frozen-preflights-commands-results.json": {
+      "bytes": 1410,
+      "sha256": "cfc6c54551ea8e7ed78cc64a8e32bf7473897ea9f017f7535384980dc2554bbb"
+    },
+    "/private/tmp/mixins-reader-root-final/frozen-architecture-0.log": {
+      "bytes": 1301,
+      "sha256": "bf3fc81ef3b28402ce8d2d2796109cc3647ac4d9a81d2a8f4dbe9abd981b4e6c"
+    },
+    "/private/tmp/mixins-reader-root-final/frozen-ci-contracts-0.log": {
+      "bytes": 2194,
+      "sha256": "3c1c06e1e538708be65a07d8c265fbe231356e5cbf801f3b7b0b832f260a0870"
+    },
+    "/private/tmp/mixins-reader-root-final/final-five.log": {
+      "bytes": 2064,
+      "sha256": "340c4b913dd0154e656db2abe4a02175766a07f2c76fa55d9dbe5a378275be20"
+    },
+    "/private/tmp/mixins-package-hosted5a8.py": {
+      "bytes": 5125,
+      "sha256": "e872a68f11f6d7c2213f3e16e4f32ab83c4fc38390c1ac4831b484fa6c21478d"
+    }
+  },
+  "root_packaging_independent_checks": {
+    "snapshot_path_count": 3452,
+    "snapshot_metadata_checks": {
+      "head": true,
+      "cwd": true,
+      "path_roots": true,
+      "paths": true,
+      "manifest_sha256": true,
+      "product_diff_sha256": true,
+      "observing_driver_sha256": true
+    },
+    "stored_manifest_digest_recomputed": true,
+    "original_guard_files_byte_identical": {
+      "Tests/Performance/test_ui_ready_module_census.py": true,
+      "Tests/Performance/test_screen_preimport_payload_budget.py": true,
+      "Tests/Performance/test_textual_css_fastpath.py": true,
+      "Tests/Performance/test_boot_worker_census.py": true
+    },
+    "seven_frozen_hashes_match": {
+      "tldw_chatbook/UI/Console_Modules/session.py": true,
+      "tldw_chatbook/UI/Console_Modules/composer_run_controls.py": true,
+      "Tests/UI/test_response_rules_end_to_end.py": true,
+      "tldw_chatbook/UI/Library_Modules/library_media_controller.py": true,
+      "tldw_chatbook/UI/Library_Modules/canvas_sync.py": true,
+      "Tests/UI/test_library_rail_switch_keeps_reader_and_note.py": true,
+      "tldw_chatbook/UI/Screens/library_screen.py": true
+    },
+    "artifact_map_checks": {
+      "source_identity_count_at_review": 132,
+      "retained_paths_unique": true,
+      "every_retained_path_exists": true,
+      "all_retained_paths_within_package": true,
+      "before_after_source_hashes_match_map": true
+    },
+    "large_trace_or_all_artifact_rehash_repeated": false
+  }
+}

@@ -360,6 +360,7 @@ class ConsoleConversationInspector(SafeModalDismissMixin, ModalScreen[None]):
         capture_revision_provider: Callable[[], int | None] | None = None,
         capture_policy_bindings: CapturePolicyBindings | None = None,
         initial_tab: str = TAB_NEXT_SEND,
+        mixin_snapshot_loader: Callable | None = None,
         context_budget_provider: Callable[[], tuple[int | None, int | None]]
         | None = None,
     ) -> None:
@@ -470,6 +471,7 @@ class ConsoleConversationInspector(SafeModalDismissMixin, ModalScreen[None]):
             for turn in turns
             if turn.index in contributing_indices or turn.role == "assistant"
         }
+        self._mixin_snapshot_loader = mixin_snapshot_loader
         self._exchanges_loader = exchanges_loader
         self._snapshot_factory = snapshot_factory
         self._token_estimate = token_estimate
@@ -834,6 +836,32 @@ class ConsoleConversationInspector(SafeModalDismissMixin, ModalScreen[None]):
             )
             return
         pane.set_detail(key, "Loading captured calls…", prefix)
+        mixin_detail = ""
+        if self._mixin_snapshot_loader is not None and (
+            (turn is not None and turn.role == "assistant")
+            or (usage_item is not None and usage_item.row.role == "assistant")
+        ):
+            try:
+                snapshot = await self._mixin_snapshot_loader(message_id)
+                mixin_detail = (
+                    "Original mix-ins\n"
+                    "This conversation retains exact Retry instructions even with "
+                    "Capture Off; trace purge does not remove them.\n\n"
+                ) + (
+                    "\n\n".join(
+                        f"{item.definition.placement.title()} · {item.name} · v{item.record_version}\n{item.definition.body}"
+                        for item in snapshot.items
+                    )
+                    or "None used for this attempt."
+                )
+            except Exception:  # noqa: BLE001 - never substitute current Library bodies.
+                mixin_detail = "Original mix-ins unavailable. Exact Retry is unavailable; Regenerate uses current choices."
+            if (
+                generation != self._disclosure_generation
+                or not self.is_mounted
+                or not self._capture_revision_is_current()
+            ):
+                return
         try:
             if message_id not in self._trace_calls:
                 captures = await self._exchanges_loader(message_id)
@@ -872,6 +900,8 @@ class ConsoleConversationInspector(SafeModalDismissMixin, ModalScreen[None]):
                 key,
                 "Usage & captured calls" if usage_item else "Captured calls",
                 prefix
+                + "\n\n"
+                + mixin_detail
                 + "\n\n"
                 + (
                     detail

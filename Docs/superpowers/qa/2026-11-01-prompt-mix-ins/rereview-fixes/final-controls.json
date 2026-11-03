@@ -1,0 +1,21 @@
+{
+  "argv": [
+    "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python",
+    "-m",
+    "pytest",
+    "-q",
+    "-p",
+    "no:cacheprovider",
+    "Tests/Chat/test_console_prompt_mixin_retry.py::test_current_choice_routes_publish_accepted_layout",
+    "Tests/UI/test_console_prompt_mixins.py::test_artifact_capture_completion_cannot_replace_newer_work",
+    "Tests/UI/test_console_prompts_modal.py::test_supported_prompt_recipe_copy_and_legacy_open_without_side_effects",
+    "Tests/UI/test_console_prompts_modal.py::test_leaving_saved_recipe_chooser_clears_selection_intent",
+    "Tests/UI/test_console_prompt_mixins.py::test_accepted_toggle_preserves_editor_dirtied_during_apply",
+    "Tests/UI/test_console_prompt_mixins.py::test_accepted_layout_observation_invalidates_old_workbench_intent",
+    "Tests/Chat/test_console_received_intent_transitions.py::test_mixin_change_during_original_configuration_worker_refuses_draft",
+    "Tests/Chat/test_console_received_intent_transitions.py::test_received_mixin_capture_holds_chat_a_while_b_choices_change",
+    "--basetemp=/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/prompt-mixins-pr-d18dfic_/rereview-fixes/final-controls-tmp"
+  ],
+  "exit_code": 1,
+  "seconds": 19.541062116622925
+}

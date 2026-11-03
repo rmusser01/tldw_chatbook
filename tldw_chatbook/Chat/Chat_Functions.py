@@ -24,7 +24,18 @@ import re
 from ..Utils.secure_temp_files import create_secure_temp_file, secure_delete_file
 import time
 from datetime import datetime
-from typing import Any, Callable, Dict, List, Literal, Mapping, Optional, Tuple, Union
+from typing import (
+    TYPE_CHECKING,
+    Any,
+    Callable,
+    Dict,
+    List,
+    Literal,
+    Mapping,
+    Optional,
+    Tuple,
+    Union,
+)
 
 #
 # 3rd-party Libraries
@@ -141,6 +152,10 @@ from .thinking_blocks import (  # noqa: E402
     normalize_thinking_history_policy,
     thinking_envelope_to_exchange,
 )
+
+if TYPE_CHECKING:
+    from .console_prepared_request import ConsoleCacheBoundary
+
 #
 ####################################################################################################
 #
@@ -411,6 +426,7 @@ PROVIDER_PARAM_MAP = {
         # Deliberately absent from every other provider's map: the loop below
         # only forwards mapped keys, so non-Anthropic calls drop it silently.
         "prompt_caching": "prompt_caching",
+        "console_cache_boundary": "console_cache_boundary",
     },
     "cohere": {
         "api_key": "api_key",
@@ -1150,6 +1166,7 @@ def chat_api_call(
     request_retries: Optional[int] = None,
     request_retry_delay: Optional[float] = None,
     *,
+    console_cache_boundary: "ConsoleCacheBoundary | None" = None,
     api_key_resolved: bool | None = None,
     chat_template_kwargs: dict[str, Any] | None = None,
 ):
@@ -1203,6 +1220,8 @@ def chat_api_call(
             breakpoint (multi-turn callers such as the Console gateway). Only
             `PROVIDER_PARAM_MAP["anthropic"]` maps it, so it is silently
             dropped for every other provider.
+        console_cache_boundary: Private verified clean-history boundary; only the
+            Anthropic adapter consumes it, never a request JSON field.
 
     Returns:
         The LLM's response. This can be a string for non-streaming responses or

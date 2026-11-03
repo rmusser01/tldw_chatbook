@@ -1,0 +1,24 @@
+{
+  "argv": [
+    "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python",
+    "-m",
+    "pytest",
+    "Tests/UI/test_console_turn_resend_ui.py::test_r_presses_the_rows_resend_or_retry[a1-console-message-action-retry-a1]",
+    "Tests/UI/test_console_turn_resend_ui.py::test_console_resend_click_re_runs_a_failed_turn_in_place",
+    "Tests/UI/test_console_turn_resend_ui.py::test_console_poll_outlives_a_turn_the_controller_has_not_started",
+    "Tests/UI/test_console_turn_resend_ui.py::test_console_r_resends_a_refused_echo_as_one_message",
+    "Tests/UI/test_console_turn_resend_ui.py::test_resend_poll_survives_initial_hook_admission_read",
+    "Tests/UI/test_console_turn_resend_ui.py::test_transcript_resend_retains_failed_rows_until_connection_is_ready",
+    "Tests/UI/test_console_idle_heap_refreeze.py::test_console_refreezes_after_painting_a_conversation_and_after_a_run_settles",
+    "Tests/UI/test_library_notes_move_never_false_conflicts.py::test_new_note_keeps_focus_after_a_targeted_notes_refresh",
+    "-q",
+    "-p",
+    "no:cacheprovider",
+    "--timeout=300",
+    "--basetemp=/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/mixins-ci3346-ui18-idymhtpd/current-tmp",
+    "--junitxml=/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/mixins-ci3346-ui18-idymhtpd/current.xml"
+  ],
+  "cwd": "/Users/macbook-dev/.codex/worktrees/prompt-mix-ins/tldw_chatbook",
+  "exit_code": 1,
+  "elapsed": 66.20624470897019
+}

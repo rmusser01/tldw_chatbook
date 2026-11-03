@@ -1,0 +1,75 @@
+{
+  "base": "963fe12e87ae4d2fb415bff3814943ca448cb0e0",
+  "files": {
+    "Tests/Chat/test_console_prompt_mixin_admission.py": {
+      "base_count": 0,
+      "current_count": 0,
+      "introduced": []
+    },
+    "Tests/Chat/test_console_prompt_mixin_retry.py": {
+      "base_count": 0,
+      "current_count": 0,
+      "introduced": []
+    },
+    "Tests/DB/test_console_prompt_mixins.py": {
+      "base_count": 0,
+      "current_count": 0,
+      "introduced": []
+    },
+    "Tests/UI/test_console_prompt_mixins.py": {
+      "base_count": 0,
+      "current_count": 0,
+      "introduced": []
+    },
+    "tldw_chatbook/Chat/console_chat_controller.py": {
+      "base_count": 184,
+      "current_count": 184,
+      "introduced": []
+    },
+    "tldw_chatbook/Chat/console_native_commit.py": {
+      "base_count": 2,
+      "current_count": 2,
+      "introduced": []
+    },
+    "tldw_chatbook/Chat/console_prompt_mixin_service.py": {
+      "base_count": 0,
+      "current_count": 0,
+      "introduced": []
+    },
+    "tldw_chatbook/DB/recovery_core.py": {
+      "base_count": 3,
+      "current_count": 3,
+      "introduced": []
+    },
+    "tldw_chatbook/DB/sql_validation.py": {
+      "base_count": 5,
+      "current_count": 5,
+      "introduced": []
+    },
+    "tldw_chatbook/UI/Console_Modules/prompts.py": {
+      "base_count": 28,
+      "current_count": 28,
+      "introduced": []
+    },
+    "tldw_chatbook/UI/Library_Modules/prompt_save_ack.py": {
+      "base_count": 0,
+      "current_count": 0,
+      "introduced": []
+    },
+    "tldw_chatbook/Widgets/Console/console_prompt_mixins_view.py": {
+      "base_count": 0,
+      "current_count": 0,
+      "introduced": []
+    },
+    "tldw_chatbook/Widgets/Console/console_prompts_browse.py": {
+      "base_count": 0,
+      "current_count": 0,
+      "introduced": []
+    },
+    "tldw_chatbook/Widgets/Console/console_prompts_modal.py": {
+      "base_count": 14,
+      "current_count": 14,
+      "introduced": []
+    }
+  }
+}

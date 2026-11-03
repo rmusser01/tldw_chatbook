@@ -1,0 +1,4 @@
+{
+  "sha256": "6d0c29e1892f347e8c57657f8a2e3c7c2880ee25e280623c87aa1ba2bc614b01",
+  "raw_text": "Verified moved declarations/bodies: 68\nVerified shared literal/value declarations: 18\nAll matched with only documented explicit-dependency normalization and late parent import.\n"
+}

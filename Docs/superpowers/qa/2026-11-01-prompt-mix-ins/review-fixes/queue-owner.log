@@ -1,0 +1,7 @@
+..                                                                       [100%]
+============================= slowest 25 durations =============================
+2.01s call     Tests/Chat/test_console_prompt_mixin_journey.py::test_local_queue_retry_current_regenerate_reopen[False]
+1.64s call     Tests/Chat/test_console_prompt_mixin_journey.py::test_local_queue_retry_current_regenerate_reopen[True]
+
+(4 durations < 1s hidden.)
+2 passed in 5.26s

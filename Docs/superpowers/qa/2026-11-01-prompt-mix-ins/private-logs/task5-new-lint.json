@@ -1,0 +1,177 @@
+[
+  {
+    "cell": null,
+    "code": "RUF059",
+    "end_location": {
+      "column": 12,
+      "row": 184
+    },
+    "filename": "/Users/macbook-dev/.codex/worktrees/prompt-mix-ins/tldw_chatbook/Tests/Chat/test_console_prompt_mixin_retry.py",
+    "fix": {
+      "applicability": "unsafe",
+      "edits": [
+        {
+          "content": "_service",
+          "end_location": {
+            "column": 12,
+            "row": 184
+          },
+          "location": {
+            "column": 5,
+            "row": 184
+          }
+        }
+      ],
+      "message": "Prefix it with an underscore or any other dummy variable pattern"
+    },
+    "location": {
+      "column": 5,
+      "row": 184
+    },
+    "message": "Unpacked variable `service` is never used",
+    "name": "unused-unpacked-variable",
+    "noqa_row": 184,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/unused-unpacked-variable"
+  },
+  {
+    "cell": null,
+    "code": "RUF059",
+    "end_location": {
+      "column": 12,
+      "row": 245
+    },
+    "filename": "/Users/macbook-dev/.codex/worktrees/prompt-mix-ins/tldw_chatbook/Tests/Chat/test_console_prompt_mixin_retry.py",
+    "fix": {
+      "applicability": "unsafe",
+      "edits": [
+        {
+          "content": "_service",
+          "end_location": {
+            "column": 12,
+            "row": 245
+          },
+          "location": {
+            "column": 5,
+            "row": 245
+          }
+        }
+      ],
+      "message": "Prefix it with an underscore or any other dummy variable pattern"
+    },
+    "location": {
+      "column": 5,
+      "row": 245
+    },
+    "message": "Unpacked variable `service` is never used",
+    "name": "unused-unpacked-variable",
+    "noqa_row": 245,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/unused-unpacked-variable"
+  },
+  {
+    "cell": null,
+    "code": "C408",
+    "end_location": {
+      "column": 10,
+      "row": 396
+    },
+    "filename": "/Users/macbook-dev/.codex/worktrees/prompt-mix-ins/tldw_chatbook/Tests/Chat/test_console_prompt_mixin_retry.py",
+    "fix": {
+      "applicability": "unsafe",
+      "edits": [
+        {
+          "content": "{\n            \"conversation_id\": conversation,\n            \"source_user_id\": h.store.get_message(\n                first.user_message_id\n            ).persisted_message_id,\n            \"current_user_id\": current.persisted_message_id,\n            \"assistant_revision_id\": revision,\n        }",
+          "end_location": {
+            "column": 10,
+            "row": 396
+          },
+          "location": {
+            "column": 18,
+            "row": 389
+          }
+        }
+      ],
+      "message": "Rewrite as a literal"
+    },
+    "location": {
+      "column": 18,
+      "row": 389
+    },
+    "message": "Unnecessary `dict()` call (rewrite as a literal)",
+    "name": "unnecessary-collection-call",
+    "noqa_row": 389,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/unnecessary-collection-call"
+  },
+  {
+    "cell": null,
+    "code": "I001",
+    "end_location": {
+      "column": 91,
+      "row": 427
+    },
+    "filename": "/Users/macbook-dev/.codex/worktrees/prompt-mix-ins/tldw_chatbook/Tests/Chat/test_console_prompt_mixin_retry.py",
+    "fix": {
+      "applicability": "safe",
+      "edits": [
+        {
+          "content": "            from tldw_chatbook.Chat.console_prompt_mixins import MixinAttemptWrite\n            from tldw_chatbook.DB.console_prompt_mixins import (\n                read_attempt,\n                write_attempt,\n            )\n",
+          "end_location": {
+            "column": 1,
+            "row": 428
+          },
+          "location": {
+            "column": 1,
+            "row": 426
+          }
+        }
+      ],
+      "message": "Organize imports"
+    },
+    "location": {
+      "column": 13,
+      "row": 426
+    },
+    "message": "Import block is un-sorted or un-formatted",
+    "name": "unsorted-imports",
+    "noqa_row": 426,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/unsorted-imports"
+  },
+  {
+    "cell": null,
+    "code": "RUF059",
+    "end_location": {
+      "column": 12,
+      "row": 529
+    },
+    "filename": "/Users/macbook-dev/.codex/worktrees/prompt-mix-ins/tldw_chatbook/Tests/Chat/test_console_prompt_mixin_retry.py",
+    "fix": {
+      "applicability": "unsafe",
+      "edits": [
+        {
+          "content": "_service",
+          "end_location": {
+            "column": 12,
+            "row": 529
+          },
+          "location": {
+            "column": 5,
+            "row": 529
+          }
+        }
+      ],
+      "message": "Prefix it with an underscore or any other dummy variable pattern"
+    },
+    "location": {
+      "column": 5,
+      "row": 529
+    },
+    "message": "Unpacked variable `service` is never used",
+    "name": "unused-unpacked-variable",
+    "noqa_row": 529,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/unused-unpacked-variable"
+  }
+]

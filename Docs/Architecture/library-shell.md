@@ -23,6 +23,13 @@ This document describes the Library destination: the rail/canvas navigation mode
 4. Leaving side-effects: media browse invalidates unless the target is media; collections capture unmounts unless the target is collections. When mounted, context application runs as a worker that first flushes pending editor saves — a save-guard refusal aborts the switch and keeps the current route.
 5. Row selection → `build_library_shell_state` → one canvas child (conversations / media / notes / prompts / skills / export / search / ingest / landing). **Collections is the exception** — it changes whole-route topology (rail scopes + Items + Work panes) and goes through the central recompose path instead of the one-child seam.
 
+`LibraryLandingCanvas.sync_state` adopts the latest display state before deciding
+how to publish it. Pending recomposition or the native recompose lock uses the
+existing recompose path, preserving the queued snapshot completion while children
+are absent or still describe the older widget set. Settled canvases retain the
+in-place patch path. This keeps the current generation/route completion fence
+intact when onboarding refreshes the retained landing during snapshot rendering.
+
 ## Notes-sync preparation
 
 Library construction reuses an already-built Notes-sync owner without invoking
@@ -45,9 +52,22 @@ initial readers share one outcome.
 
 Media canvas views: list / viewer / trash through one shared builder. Read-it-later is a `MediaReadItLaterState` row in the media DB (Home deep-links via the browse-subview context); reading progress is upserted per item and surfaced through the reading service. Saving a single reading item deliberately restores a trashed duplicate (an explicit user decision); the **bulk** import path stays non-restoring.
 
+`LibraryMediaController._restore_library_media_focus` delegates its captured
+focus restoration to the existing `canvas_sync` owner. The synchronous focus
+write records the exact programmatic target until its native focus event is
+consumed, so rebuilding Items preserves the loaded Reader. Same-target no-ops
+create no marker; failed focus writes clear only their own marker. Genuine
+keyboard focus changes retain the ordinary row-selection and loading path.
+Rail entry also uses its existing `keep_media_reader` decision to omit a
+competing explicit first-row intent when preserving a settled reader or dirty
+form. Fresh entry keeps the original first-row argument.
+
 ## Notes, prompts and skills surfaces
 
 - Notes Markdown/text export captures its payload, validated destination and existing Notes operation token before admitting a screen-owned `library-note-export` worker in `UI/Library_Modules/library_file_export.py`. FileSave and explicit Replace callbacks return after admission; only the synchronous atomic write runs in a thread. Late no-clobber collisions reopen the existing confirmation on-loop; metadata recheck failures use recoverable export feedback. Notes keeps its single-operation admission and region-scoped result handling; a later worker does not cancel an accepted write. Native screen retirement stops UI publication while an already-running atomic write can finish. Mounted private-profile regressions use the real picker/writer with seeded Notes service stand-ins, verify App key dispatch before writer release, literal output bytes/source preservation, failure/retry, collisions and changed result owners. Existing format and newline policy remain with the shared writer.
+- The local Prompt library stores schema-v3 `text_mixin` artifacts with a literal body and before/after placement. Their canonical definition is projected to an empty System field and literal User field; Prompt insertion and System replacement require `artifact_type=prompt`. `PromptScopeService.read_mixin_records` reads exact active UUIDs and versions in one local SQLite snapshot under the detail policy.
+- Library dispatches supported schema-v3 mix-ins to the shared literal `PromptMixinEditor`; the parent retains private raw drafts, expected versions and exact source objects. Type filtering is part of the count/page scope. `ConsoleMixinEnableRequest` shares the Prompt one-shot slot and TTL, carries only a source reference plus exact session/incarnation/preference revision and transient scope/backend/DB identity fences, and is consumed through runtime `enable_reference` CAS; it never applies Prompt lanes.
+- Literal Mix-ins expose Author and Keywords regardless of the ordinary Prompt editor mode. Retained History recognizes the literal editor as compatible, restores through the existing expected-version/source/dirty gates, and opens the restored artifact kind as a new current version.
 - Prompts canvas consumes `PromptsDatabase` row shapes with typed conflicts (`ExpectedVersionConflictError`, `PromptNameConflictError`) classified at save; create vs browse is an editor-view sentinel, not a separate canvas. Prompt insertion into the Console is covered in [chat-pipeline.md](./chat-pipeline.md).
 - Pending Prompt Save uses `UI/Library_Modules/prompt_save_ack.py`: the existing scope service writes the submitted snapshot, then the controller adopts the committed identity/version while retaining newer raw metadata and Basic/Advanced block controls as dirty. The next Save updates that same record. Basic first-block mounts and Save acknowledgement re-read both live lanes after structural awaits and refresh every affected Advanced card; obsolete queued semantic projections cannot replace the current child state. Back/navigation/quit use the existing dirty guards.
 - Saved Prompt Markdown export captures the live editor payload and picked destination in `UI/Library_Modules/library_file_export.py`. Both FileSave and explicit Replace callbacks synchronously hand the write to a screen-owned `library-prompt-export` worker; only `write_export_text` runs in a thread. No-clobber collisions reopen the existing Replace confirmation on the UI loop. Completion and failure use the captured Prompt identity through the existing reporter, preserving the current editor's status/focus after navigation. Independent exports keep their own payload/destination and are not cancelled by a later export.
@@ -108,3 +128,5 @@ includes lazy owner construction, retaining borrowed handles. The existing
 Dreams story/goals modals retain writes and capability-specific actions, with
 captured profile/owner getters and a refresh deferred until modal return.
 ADR-196 extends the ADR-172 fixed composite; no aggregate store or schema is added.
+
+Mixin edits affect future captures, including Regenerate and explicit Continue; queued/running attempts and original Retry retain their captured definitions. Workbench and Library share `PromptMixinEditor`. Held completions are fenced to the current mode/view/editor and raw draft; a save returns its exact saved record without discarding newer unsaved typing. The [integrated QA record](../superpowers/qa/2026-11-01-prompt-mix-ins/verification.md) distinguishes production PTY interactions from deterministic adapters and prior Pilot captures.

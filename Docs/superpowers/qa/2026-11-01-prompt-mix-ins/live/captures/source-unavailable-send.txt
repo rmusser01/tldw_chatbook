@@ -1,0 +1,45 @@
+   New tab     Settings     ⚓      Context rail     Search Library     Help
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+                             │ Conversation | Describe a lantern scene.                                                                              │
+                  Context ◂  │         Chat 1         ✕  Describe a lantern…  ✕    New tab     Temporary                                             │
+   Terminal                  │                                                                                                                       │
+ ──────────────────────────  │ Each tab runs its own agent — up to 3 in parallel (change in Settings > Console Behavior).                         ✕  │
+ Workspaces             ▸    │  ▊  (mock reply) You said: "Use at most three sentences.                                                              │
+ ──────────────────────────  │  ▊                                                                                                                    │
+ Conversations          ▾    │  ▊  Describe a scene as literal SVG text. Keep {{scene}} unchanged.                                                   │
+     Archive this chat       │  ▊                                                                                                                    │
+      Archived chats         │  ▊  Describe a lantern scene.". Staying in character as You are a capable assistant with optional tools. Answer       │
+     Search all chats…       │  ▊  dire. The wind shifts, a lantern flickers, and the story moves forward one beat.                                  │
+   Describe a lantern        │  ▊                                                                                                                    │
+   scene.                    │  ▊                                                                                                                    │
+                             │  ──────────────────────────────────────────────────────────────────────────────────────────────────────────────────   │
+  ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎  Clear    │   User                                                                                                                │
+  ▊  Filter      ▎           │   A queued second scene.                                                                                              │
+  ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎           │  ──────────────────────────────────────────────────────────────────────────────────────────────────────────────────   │
+                             │  ▊ Assistant                                                                                                          │
+   New conversation          │  ▊                                                                                                                    │
+  Chats                 ▾    │  ▊  (mock reply) You said: "Use at most three sentences.                                                              │◂ Inspect
+    Today                    │  ▊                                                                                                                    │
+   Chat 1              💬    │  ▊  Describe a scene as literal SVG text. Keep {{scene}} unchanged.                                                   │
+   Describe a lanter…  💬    │  ▊                                                                                                                    │
+                             │  ▊  A queued second scene.". Staying in character as You are a capable assistant with optional tools. Answer          │
+ ──────────────────────────  │  ▊  dire. The wind shifts, a lantern flickers, and the story moves forward one beat.                                  │
+ Character · No chats   ▸    │  ▊                                                                                                                    │
+ ──────────────────────────  │  ▊                                                                                                                    │
+ Model                  ▸    │  ──────────────────────────────────────────────────────────────────────────────────────────────────────────────────   │
+ ──────────────────────────  │   User                                                                                                                │
+ Agent                  ▸    │   Retry original scene.                                                                                               │
+ ──────────────────────────  │  ──────────────────────────────────────────────────────────────────────────────────────────────────────────────────   │
+ Details                ▸    │  ▊ Assistant (2/2)                                                                                                    │
+                             │  ▊                                                                                                                    │
+                             │  ▊  (mock reply) You said: "Retry original scene.". Staying in character as You are a capable assistant with          │
+                             │  ▊  optional tools. Answer dire. The wind shifts, a lantern flickers, and the story moves forward one beat.           │
+                             │  ▊                                                                                                                    │
+                             │  ▊                                                                                                                    │
+                             │  ──────────────────────────────────────────────────────────────────────────────────────────────────────────────────   │
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ Provider: OpenAI · Model: gpt-4.1-mini · System Prompt: off · Assistant: General · Sources: 0 · Tools: 5 ready · Approvals: 0 pending · Context 0% · Curre◀ ▶
+
+█  Composer ▾  Menu  Preserve this unsent source-loss draft.                                                           Send | $       Dictate
+
+  Ctrl+Shift+F focus | F6 next pane | F1 help | Alt+M switch model | Ctrl+O chat settings | Ctrl+K switch session | Ctrl+T new tab | Ctrl+P · Ctrl+Q

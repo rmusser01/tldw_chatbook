@@ -1,0 +1,64 @@
+{
+  "owned_files": [
+    {
+      "path": "/private/tmp/mixins-7ac-tour/report.md",
+      "bytes": 4620,
+      "sha256": "9595ef3e4061db4070e5cd078e8d7875e5c5d8744dfa624144fc427219652c98"
+    },
+    {
+      "path": "/private/tmp/mixins-7ac-tour/tour_observer.py",
+      "bytes": 1353,
+      "sha256": "7beccff764965d58bf7e1d30e2dc2c258975464a8b79e774066e2b9b869e0d61"
+    },
+    {
+      "path": "/private/tmp/mixins-7ac-tour/measurements.json",
+      "bytes": 2218,
+      "sha256": "a65f70fa56492eb39d03b692722559c5c992f9118318b5a6ccf2264a0f583ede"
+    },
+    {
+      "path": "/private/tmp/mixins-7ac-tour/run.log",
+      "bytes": 403,
+      "sha256": "95872b7a90b03094ad54cc6ba82fef143a2188d23acb3ac8cad66fcdb2e07125"
+    },
+    {
+      "path": "/private/tmp/mixins-7ac-tour/result.xml",
+      "bytes": 403,
+      "sha256": "a46b9f750840bd57c770c5144e7e50a957818a3f09f8bcf17e9891ea153fb645"
+    },
+    {
+      "path": "/private/tmp/mixins-7ac-tour/source-proof.json",
+      "bytes": 2404,
+      "sha256": "43cd2eabd02a262c83ac8f454cd42d3607e6122bf6570aa955b2241998cb941c"
+    },
+    {
+      "path": "/private/tmp/mixins-7ac-tour/production-diff.patch",
+      "bytes": 2686,
+      "sha256": "301f87494f701d5b767f414de2af2f31d5f4dfd160e50816accbaa801a3076ba"
+    },
+    {
+      "path": "/private/tmp/mixins-7ac-tour/f095-ci-extract.txt",
+      "bytes": 730,
+      "sha256": "c7bbbb0ab79b2babe98a74488758fe6b56fc05f9044438363b4db9789057f51d"
+    },
+    {
+      "path": "/private/tmp/mixins-7ac-tour/7ac-ci-extract.txt",
+      "bytes": 1414,
+      "sha256": "432b9dc9a37b8ccde9cd4b86779ecedf5861f2f9aeabdc7e523b5828ab0be7ab"
+    },
+    {
+      "path": "/private/tmp/mixins-7ac-tour/pytest/test_destination_tour_stays_un0/private-profile-process/pytest.log",
+      "bytes": 1352,
+      "sha256": "14d0a7a3961af3f995a42d1b3b9c83dd179f1d8a248cdf265792952cec5c0715"
+    },
+    {
+      "path": "/private/tmp/mixins-7ac-tour/pytest/test_destination_tour_stays_un0/private-profile-process/pytest.xml",
+      "bytes": 403,
+      "sha256": "33ce60a5bc5ac1176b74bdbd2e6f10c7ded221fe347655795d6c0936439d7b6e"
+    }
+  ],
+  "inputs": [
+    "/private/tmp/mixins-ci-f095-perf-red.log",
+    "/private/tmp/mixins-ci-7ac-perf-red.log"
+  ],
+  "excluded": "Ephemeral private profile/SQLite files and Python cache are not report artifacts."
+}

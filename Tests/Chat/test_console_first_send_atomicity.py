@@ -484,7 +484,7 @@ async def test_identity_publication_retry_preserves_newer_settings_lineage(
         expected_staged=False,
     )
 
-    assert final.written_components == frozenset(ConsoleSettingsComponent)
+    assert final.written_components == frozenset({ConsoleSettingsComponent.GENERATION_SETTINGS, ConsoleSettingsComponent.CONTEXT_POLICY})
     assert final.failed_components == frozenset()
     assert session.settings_persistence_failures == {}
     durable_generation = persistence.get_conversation_generation_settings(

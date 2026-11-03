@@ -1,0 +1,75 @@
+{
+  "revision": "b1108874cab28d23f660aa22c11c863466a84a8e",
+  "records": [
+    {
+      "screen": "tldw_chatbook/UI/Screens/library_screen.py",
+      "key": "library",
+      "method": "_study_source_items",
+      "line": 14980,
+      "source": "def _study_source_items(self) -> tuple[StudySourceItem, ...]:\n    source_items: list[StudySourceItem] = []\n    source_type_map = {\n        \"notes\": \"note\",\n        \"media\": \"media\",\n    }\n    for source_type, study_source_type in source_type_map.items():\n        for record in self._local_source_records[source_type]:\n            source_id = self._source_record_id(record)\n            if not source_id:\n                continue\n            source_items.append(\n                StudySourceItem(\n                    source_type=study_source_type,\n                    source_id=source_id,\n                    label=self._source_title(source_type, record),\n                )\n            )\n    return tuple(source_items)\n"
+    },
+    {
+      "screen": "tldw_chatbook/UI/Screens/library_screen.py",
+      "key": "library",
+      "method": "_source_study_context",
+      "line": 15057,
+      "source": "def _source_study_context(self) -> StudyScopeContext | None:\n    if not self._has_source_study_context():\n        return None\n    material_titles: list[str] = []\n    for source_type in (\"notes\", \"media\", \"conversations\"):\n        material_titles.extend(self._source_sample_titles(source_type))\n    return StudyScopeContext(\n        material_source=MATERIAL_SOURCE_LIBRARY,\n        material_title=MATERIAL_TITLE_LIBRARY_SOURCES,\n        material_summary=self._source_snapshot_body(),\n        material_titles=tuple(material_titles),\n        source_items=self._study_source_items(),\n        return_hint=MATERIAL_SOURCE_LIBRARY,\n    )\n"
+    },
+    {
+      "screen": "tldw_chatbook/UI/Screens/library_screen.py",
+      "key": "library",
+      "method": "_source_study_handoff_titles",
+      "line": 15072,
+      "source": "def _source_study_handoff_titles(self) -> tuple[str, ...]:\n    material_titles: list[str] = []\n    for source_type in (\"notes\", \"media\", \"conversations\"):\n        material_titles.extend(self._source_sample_titles(source_type))\n    return tuple(material_titles)\n"
+    },
+    {
+      "screen": "tldw_chatbook/UI/Screens/library_screen.py",
+      "key": "library",
+      "method": "_has_source_study_context",
+      "line": 15078,
+      "source": "def _has_source_study_context(self) -> bool:\n    return self._has_local_sources()\n"
+    },
+    {
+      "screen": "tldw_chatbook/UI/Screens/library_screen.py",
+      "key": "library",
+      "method": "_study_handoff_copy",
+      "line": 15081,
+      "source": "def _study_handoff_copy(self, kind: str) -> dict[str, str]:\n    mode = LIBRARY_STUDY_HANDOFF_MODES.get(\n        kind,\n        LIBRARY_STUDY_HANDOFF_MODES[\"study\"],\n    )\n    titles = self._source_study_handoff_titles()\n    has_context = self._has_source_study_context()\n    action_label = mode[\"action_label\"]\n    if has_context and titles:\n        context_copy = _library_carries_forward_line(titles)\n    elif has_context:\n        context_copy = (\n            \"Carries forward: Library source snapshot (titles unavailable)\"\n        )\n    else:\n        # No Library sources at all: the carries-forward line is omitted\n        # entirely rather than stating the negative (the blocked\n        # \"recovery\" line below already carries that signal).\n        context_copy = \"\"\n    return {\n        \"header\": mode[\"header\"],\n        \"action_label\": action_label,\n        \"button_label\": mode[\"button_label\"],\n        \"purpose\": mode[\"purpose\"],\n        \"context\": context_copy,\n        \"owner\": LIBRARY_STUDY_HANDOFF_OWNERSHIP_COPY,\n        \"recovery\": (\n            self._study_handoff_ready_copy()\n            if has_context\n            else (\n                \"Import sources or create notes first, or open \"\n                f\"{action_label} globally without Library context.\"\n            )\n        ),\n    }\n"
+    },
+    {
+      "screen": "tldw_chatbook/UI/Screens/library_screen.py",
+      "key": "library",
+      "method": "_study_handoff_ready_copy",
+      "line": 15117,
+      "source": "def _study_handoff_ready_copy(self) -> str:\n    \"\"\"The readiness line for a hand-off that HAS a source snapshot.\n\n    TASK-34000.6 (S-05): \"Source snapshot is ready.\" promised a\n    generation local mode cannot run (Study refuses with \"Source\n    generation requires server mode.\"). In local mode the line says what\n    needs a server and what still works by hand; server mode keeps the\n    ready line.\n    \"\"\"\n    if self._runtime_active_source() == \"server\":\n        return LIBRARY_STUDY_HANDOFF_READY_COPY\n    return LIBRARY_STUDY_HANDOFF_LOCAL_MODE_COPY\n"
+    },
+    {
+      "screen": "tldw_chatbook/UI/Screens/chat_screen.py",
+      "key": "chat",
+      "method": "_console_unknown_command_hint",
+      "line": 18543,
+      "source": "def _console_unknown_command_hint(self, name: str) -> str:\n    \"\"\"Return the Enter-again hint copy for an unrecognized `/name` draft.\n\n    Derived from the registry's own ``available_names()`` (Task 9) rather\n    than a hardcoded list, so a newly-registered command (e.g. `/skills`)\n    is reflected here automatically.\n    \"\"\"\n    available = \", \".join(\n        f\"/{name}\" for name in self._console_command_registry.available_names()\n    )\n    return f\"Unknown command /{name} \u2014 available: {available}. Press Enter again to send as text.\"\n"
+    },
+    {
+      "screen": "tldw_chatbook/UI/Screens/chat_screen.py",
+      "key": "chat",
+      "method": "_record_console_command_dispatch",
+      "line": 18619,
+      "source": "def _record_console_command_dispatch(self, parse: CommandParse) -> None:\n    \"\"\"Record an accepted command dispatch for usage ranking (TASK-18921).\n\n    Appends a minimal, content-free token \u2014 ``/<name>`` (plus the skill\n    name for ``/skills <name>`` invocations) \u2014 to the shared prompt\n    history, the existing local JSONL the ranking counts already mine.\n    Never records free-form command args. Fire-and-forget: history IO\n    is best-effort and must never delay or break a command, and the\n    command worker is never blocked on it. Ghost text is unaffected\n    (slash drafts never get ghost suggestions); Up-arrow recall gaining\n    past commands is the intended, standard-CLI reading of the store.\n    \"\"\"\n    try:\n        history = self._ensure_console_prompt_history()\n        append = getattr(history, \"append\", None)\n        if not callable(append):\n            return\n        name = parse.name.lower()\n        if name == SKILLS_COMMAND_NAME:\n            first_arg = (parse.args or \"\").split()\n            text = (\n                f\"{COMMAND_PREFIX}{SKILLS_COMMAND_NAME} {first_arg[0]}\"\n                if first_arg\n                else f\"{COMMAND_PREFIX}{SKILLS_COMMAND_NAME}\"\n            )\n        else:\n            text = f\"{COMMAND_PREFIX}{name}\"\n    except Exception:\n        return\n\n    async def _record() -> None:\n        try:\n            await history.append(text)\n        except Exception:\n            logger.debug(\"Console command usage recording failed (best-effort)\")\n\n    try:\n        asyncio.get_running_loop().create_task(_record())\n    except RuntimeError:\n        # No running loop (a direct sync-context call): nothing to record.\n        pass\n"
+    },
+    {
+      "screen": "tldw_chatbook/UI/Screens/chat_screen.py",
+      "key": "chat",
+      "method": "_console_suggestion_usage_counts",
+      "line": 21206,
+      "source": "def _console_suggestion_usage_counts(self) -> dict[str, int]:\n    \"\"\"Return usage counts mined from the shared prompt history.\n\n    Best-effort display polish: every failure path returns an empty\n    mapping, which the ranking function treats as \"no usage data\" and\n    leaves the popup order identical to today's. Recomputed only when\n    the history store's ``revision`` moved (TASK-22218's cheap\n    invalidation key); ``entry_texts`` is an in-memory snapshot, so\n    this never blocks or triggers IO on the keystroke path.\n    \"\"\"\n    try:\n        history = self._ensure_console_prompt_history()\n        revision = getattr(history, \"revision\", None)\n        entry_texts = getattr(history, \"entry_texts\", None)\n        if not isinstance(revision, int) or not callable(entry_texts):\n            return {}\n        cached = self._console_suggestion_usage_cache\n        if cached is not None and cached[0] == revision:\n            return cached[1]\n        counts = count_suggestion_usage(entry_texts())\n    except Exception:\n        return {}\n    self._console_suggestion_usage_cache = (revision, counts)\n    return counts\n"
+    },
+    {
+      "screen": "tldw_chatbook/UI/Screens/chat_screen.py",
+      "key": "chat",
+      "method": "_rank_console_command_suggestions",
+      "line": 21231,
+      "source": "def _rank_console_command_suggestions(\n    self, suggestions: list[CommandSuggestion]\n) -> list[CommandSuggestion]:\n    \"\"\"Rank popup suggestions by observed usage (TASK-18921).\n\n    Display-only: the filtered set is untouched when no row carries\n    usage (first run, or a fresh install), so matching and filtering\n    semantics are exactly today's.\n    \"\"\"\n    if not suggestions:\n        return suggestions\n    counts = self._console_suggestion_usage_counts()\n    if not counts:\n        return suggestions\n    return rank_suggestions_by_usage(suggestions, counts)\n"
+    }
+  ]
+}

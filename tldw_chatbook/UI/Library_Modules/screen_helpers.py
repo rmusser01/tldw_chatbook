@@ -4,8 +4,10 @@ Moved verbatim out of ``tldw_chatbook/UI/Screens/library_screen.py`` by PR 0a
 of the Library screen decomposition
 (``.superpowers/sdd/2026-09-01-library-decomposition-foundation``; see
 ``Docs/superpowers/specs/2026-09-01-library-screen-decomposition-design.md``).
-``library_screen.py`` re-exports every name here so its import surface is
-unchanged; later decomposition tasks import directly from this module.
+``library_screen.py`` re-exports the original moved names so its import surface
+is unchanged; later decomposition tasks import directly from this module.
+Study handoff derivations also live here and receive the original defining
+globals mapping, keeping replaced types, constants and copy helpers live.
 
 NOT moved here despite being module-level `FunctionDef`s above
 ``class LibraryScreen``: ``_read_library_ingest_options_from_config`` and
@@ -36,7 +38,11 @@ from typing import Any
 from ...runtime_policy.server_event_scope import event_principal_id_from_active_context
 from ...STT.transcribe_cpp_config import is_gguf_file
 from ...Third_Party.textual_fspicker import Filters
-from ..Screens.study_scope_models import summarize_carried_titles
+from ..Screens.study_scope_models import (
+    StudyScopeContext,
+    StudySourceItem,
+    summarize_carried_titles,
+)
 from .screen_constants import (
     LIBRARY_NOTE_BLANK_SEED_TITLE,
 )
@@ -110,7 +116,7 @@ def _library_carries_forward_line(titles: Sequence[str]) -> str:
         titles: Sampled source titles (notes/media/conversations) that will
             carry forward into Study. Must be non-empty -- callers render no
             line at all when there is no source context (see
-            ``_study_handoff_copy``).
+            ``study_handoff_copy``).
 
     Returns:
         ``"Carries forward: a, b, c"`` when there are at most
@@ -294,3 +300,102 @@ def _canonical_shortcut_key(key: str) -> str:
     """
     lowered = key.strip().casefold()
     return "esc" if lowered == "escape" else lowered
+
+
+def study_source_items(
+    self: Any, *, source: Mapping[str, Any]
+) -> tuple[StudySourceItem, ...]:
+    source_items: list[StudySourceItem] = []
+    source_type_map = {
+        "notes": "note",
+        "media": "media",
+    }
+    for source_type, study_source_type in source_type_map.items():
+        for record in self._local_source_records[source_type]:
+            source_id = self._source_record_id(record)
+            if not source_id:
+                continue
+            source_items.append(
+                source["StudySourceItem"](
+                    source_type=study_source_type,
+                    source_id=source_id,
+                    label=self._source_title(source_type, record),
+                )
+            )
+    return tuple(source_items)
+
+
+def source_study_context(
+    self: Any, *, source: Mapping[str, Any]
+) -> StudyScopeContext | None:
+    if not self._has_local_sources():
+        return None
+    material_titles: list[str] = []
+    for source_type in ("notes", "media", "conversations"):
+        material_titles.extend(self._source_sample_titles(source_type))
+    return source["StudyScopeContext"](
+        material_source=source["MATERIAL_SOURCE_LIBRARY"],
+        material_title=source["MATERIAL_TITLE_LIBRARY_SOURCES"],
+        material_summary=self._source_snapshot_body(),
+        material_titles=tuple(material_titles),
+        source_items=study_source_items(self, source=source),
+        return_hint=source["MATERIAL_SOURCE_LIBRARY"],
+    )
+
+
+def source_study_handoff_titles(self: Any) -> tuple[str, ...]:
+    material_titles: list[str] = []
+    for source_type in ("notes", "media", "conversations"):
+        material_titles.extend(self._source_sample_titles(source_type))
+    return tuple(material_titles)
+
+
+def study_handoff_copy(
+    self: Any, kind: str, *, source: Mapping[str, Any]
+) -> dict[str, str]:
+    mode = source["LIBRARY_STUDY_HANDOFF_MODES"].get(
+        kind,
+        source["LIBRARY_STUDY_HANDOFF_MODES"]["study"],
+    )
+    titles = source_study_handoff_titles(self)
+    has_context = self._has_local_sources()
+    action_label = mode["action_label"]
+    if has_context and titles:
+        context_copy = source["_library_carries_forward_line"](titles)
+    elif has_context:
+        context_copy = "Carries forward: Library source snapshot (titles unavailable)"
+    else:
+        # No Library sources at all: the carries-forward line is omitted
+        # entirely rather than stating the negative (the blocked
+        # "recovery" line below already carries that signal).
+        context_copy = ""
+    return {
+        "header": mode["header"],
+        "action_label": action_label,
+        "button_label": mode["button_label"],
+        "purpose": mode["purpose"],
+        "context": context_copy,
+        "owner": source["LIBRARY_STUDY_HANDOFF_OWNERSHIP_COPY"],
+        "recovery": (
+            study_handoff_ready_copy(self, source=source)
+            if has_context
+            else (
+                "Import sources or create notes first, or open "
+                f"{action_label} globally without Library context."
+            )
+        ),
+    }
+
+
+def study_handoff_ready_copy(self: Any, *, source: Mapping[str, Any]) -> str:
+    """The readiness line for a hand-off that HAS a source snapshot.
+
+    TASK-34000.6 (S-05): "Source snapshot is ready." promised a
+    generation local mode cannot run (Study refuses with "Source
+    generation requires server mode."). In local mode the line says what
+    needs a server and what still works by hand; server mode keeps the
+    ready line.
+    """
+    if self._runtime_active_source() == "server":
+        return source["LIBRARY_STUDY_HANDOFF_READY_COPY"]
+    return source["LIBRARY_STUDY_HANDOFF_LOCAL_MODE_COPY"]

@@ -169,7 +169,11 @@ class PluginsScreen(BaseAppScreen):
             source="plugins",
             shortcuts=(("1-3", "view"), ("/", "search"), ("Esc", "back")),
         )
-        registry = getattr(self.app_instance, "workspace_registry_service", None)
+        app_owner = self.app_instance
+        try:
+            registry = app_owner.workspace_registry_service
+        except AttributeError:
+            registry = None
         self._scope_generation = getattr(registry, "mutation_generation", None)
         self._layout()
         self._reload()
@@ -201,14 +205,22 @@ class PluginsScreen(BaseAppScreen):
             self.call_after_refresh(self.query_one("#plugins-back").focus)
 
     def _check_scope_generation(self):
-        registry = getattr(self.app_instance, "workspace_registry_service", None)
+        app_owner = self.app_instance
+        try:
+            registry = app_owner.workspace_registry_service
+        except AttributeError:
+            registry = None
         generation = getattr(registry, "mutation_generation", None)
         if generation != self._scope_generation:
             self._scope_generation = generation
             self._reload()
 
     async def _workspace(self):
-        registry = getattr(self.app_instance, "workspace_registry_service", None)
+        app_owner = self.app_instance
+        try:
+            registry = app_owner.workspace_registry_service
+        except AttributeError:
+            registry = None
         if registry is None:
             return None
         active = await asyncio.to_thread(registry.get_active_workspace)

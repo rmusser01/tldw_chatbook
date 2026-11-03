@@ -58,7 +58,7 @@ def _normalize_read_artifact_type(value: Any) -> tuple[str, str | None]:
     """Classify untrusted record types without weakening strict write validation."""
     if value is None:
         return "prompt", None
-    if isinstance(value, str) and value in {"prompt", "recipe"}:
+    if isinstance(value, str) and value in {"prompt", "recipe", "mixin"}:
         return value, None
     raw_value = value if isinstance(value, str) else type(value).__name__
     return "unsupported", raw_value
@@ -192,6 +192,11 @@ def _classify_history_artifact(
         prompt_format = "legacy"
     normalized["prompt_format"] = prompt_format
     if prompt_format == "legacy":
+        if artifact_type == "mixin":
+            _set_history_compatibility(
+                normalized, state="unsupported_schema", definition_state="unsupported"
+            )
+            return
         if artifact_type == "recipe":
             _set_history_compatibility(
                 normalized, state="legacy_recipe", definition_state="legacy"
@@ -215,7 +220,8 @@ def _classify_history_artifact(
             normalized, state="foreign_v1", definition_state="foreign_v1"
         )
         return
-    if type(schema_version) is not int or schema_version != 2:
+    expected_version = 3 if artifact_type == "mixin" else 2
+    if type(schema_version) is not int or schema_version != expected_version:
         _set_history_compatibility(
             normalized, state="unsupported_schema", definition_state="unsupported"
         )
@@ -255,7 +261,7 @@ def _classify_history_artifact(
     normalized["compiled_system_prompt"] = decoded.compiled_system
     normalized["compiled_user_prompt"] = decoded.compiled_user
     normalized["compatibility_stale"] = decoded.compatibility_stale
-    if decoded.state != "supported_v2":
+    if decoded.state not in {"supported_v2", "supported_v3"}:
         _set_history_compatibility(
             normalized, state="malformed_definition", definition_state=decoded.state
         )
@@ -263,11 +269,11 @@ def _classify_history_artifact(
         _set_history_compatibility(
             normalized,
             state="compiled_text_mismatch",
-            definition_state="supported_v2",
+            definition_state=decoded.state,
         )
     else:
         _set_history_compatibility(
-            normalized, state="compatible", definition_state="supported_v2"
+            normalized, state="compatible", definition_state=decoded.state
         )
 
 
