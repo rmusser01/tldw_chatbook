@@ -70,7 +70,8 @@ def _migrate_from_v84_to_v85(self, conn) -> None:
 
 
 def _migrate_from_v86_to_v87(self, conn) -> None:
-    """Install durable consolidation batch evidence."""
+    """Install durable consolidation batch evidence and index the eight
+    voice-promotion message locators (TASK-36510)."""
     from tldw_chatbook.DB import ChaChaNotes_DB as host
 
     self._require_migration_entry_version(conn, 86, "V86→V87")
