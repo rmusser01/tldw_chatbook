@@ -133,6 +133,8 @@ async def _press_discover(host, pilot, screen) -> None:
         await pilot.press("enter")
         await _until(pilot, lambda: discover.region.height > 0)
     discover.focus()
+    # A Button ignores Enter while the 0.2 s effect of its last press runs.
+    await _until(pilot, lambda: not discover.has_class("-active"))
     await pilot.press("enter")
     await _until(pilot, lambda: bool(screen._model_discovery_models))
     assert screen._model_discovery_models, screen._model_discovery_status
@@ -696,6 +698,7 @@ async def test_a_custom_id_the_save_cannot_write_is_refused_as_it_is_typed(reque
             # leaves the same state, which no wait could tell from the last.
             field.value = longest
             await _until(pilot, holds_longest)
+            assert holds_longest(), model_id
             field.value = model_id
             await _until(pilot, refused)
             assert picker.value is None, model_id
@@ -1134,7 +1137,10 @@ async def test_koboldcpp_root_and_prefix_root_list_where_switch_model_probes(
         field.value = ambiguous
         await _settle(host, pilot)
         await _until(pilot, lambda: staged(ambiguous))
-        screen.query_one("#settings-discover-provider-models", Button).focus()
+        discover = screen.query_one("#settings-discover-provider-models", Button)
+        discover.focus()
+        # The second Discover's press effect may still run; Enter would be lost.
+        await _until(pilot, lambda: not discover.has_class("-active"))
         await pilot.press("enter")
         await _until(pilot, lambda: shown_status() == refused)
         await _settle(host, pilot)

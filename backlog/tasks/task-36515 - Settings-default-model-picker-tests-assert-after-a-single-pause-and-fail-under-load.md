@@ -5,7 +5,7 @@ status: Done
 assignee:
 - '@claude'
 created_date: 2026-10-24 00:26
-updated_date: 2026-11-03 08:10
+updated_date: 2026-11-03 10:09
 labels:
 - follow-up
 - tests
@@ -59,7 +59,7 @@ Evidence from TASK-36380's runs (`-n 4`, load average 30-38 on 18 CPUs): `test_a
 **Two waits needed a distinguishable step, or they could not fail.**
 - `a_custom_id_the_save_cannot_write`: the second unwritable id followed the first, and both leave the same state (no model, empty adapter, the same status), so a wait for it would end on the first id's state. Each id now starts from the longest writable id, held and staged, so each wait sees its own id's refusal.
 - `a_discovered_model_becomes_the_saved_default`: `press(*served, "enter", "escape", "s")` let `s` land before the pick was staged; the save then had nothing to save, and the "unsaved" poll ended at once on a clean category. The pick is staged first now, then Esc, then `s`. Under the control below the old form failed "save did not finish".
-- `koboldcpp_root_and_prefix_root`: after `field.value = prefix`, `_press_discover`'s wait for a listing ended at once on the root's listing if the endpoint's `Input.Changed` (which stages the endpoint and clears the listing) had not landed; a late one then reset the status to the idle copy. The test now waits for the endpoint to be staged and the listing cleared, and for the status widget's own text. This test failed 1 of 32 in the first base run of this task (`-n 4`, load 23): `'No models discovered yet. ...' == 'Endpoint path ...'`.
+- `koboldcpp_root_and_prefix_root`: after `field.value = prefix`, `_press_discover`'s wait for a listing ended at once on the root's listing if the endpoint's `Input.Changed` (which stages the endpoint and clears the listing) had not landed; a late one then reset the status to the idle copy. The test now waits for the endpoint to be staged and the listing cleared, and for the status widget's own text. This test failed 1 of 32 in the first base run of this task (`-n 4`, load 23): `'No models discovered yet. ...' == 'Endpoint path ...'`. That message has a second cause, found in the review round below.
 
 **Left on a fixed window, on purpose (absence checks a poll cannot wait for).**
 - `click_on_a_listed_model_picks_it[True]`: `pause(0.12)` is the modelled press duration; the list must stay open across it, past the field's 0.05 s blur timer. Focus moving to the list is polled first.
@@ -73,6 +73,13 @@ Evidence from TASK-36380's runs (`-n 4`, load average 30-38 on 18 CPUs): `test_a
 - Old form (a temporary copy of the file at base) and new form run together with `-n 4`: under A, old 17 failed of 32 and new 32 of 32 passed (load ~27); under A+B, old 19 failed and new 32 of 32 passed (load ~24). The old failures are on the waited states: `'gpt-4o' == 'o3-mini-new'`, `'my-private-mod' == 'my-private-model'`, `'new-chat default' == 'edited *'`, `'gpt-4.1' == ''`, `'o3-mini-new' is not in list`, the search landing's focus on the category button, the koboldcpp status and requests, "save did not finish". Old forms not failed by either control: the 8 synchronous `custom_id_and_the_combined_save` cases (no UI), the 4 `click_below_an_open_list` nodes, whose converted waits read Textual's own focus-on-press and layout, which no product handler of ours sets, and `a_discovered_model_becomes_the_saved_default` under A+B (it failed under A).
 
 **Runs.** Each of the 24 mounted nodes (every async test in the file; each has at least one converted wait) ran 20 times, one pytest process per run with that node alone and no xdist: 480 of 480 passed. Four such loops ran side by side, and other agents shared the 18 CPUs: 1-minute load 15-34, median 24.6. Two runs (the `held-*` nodes' 20th) never started because the scratchpad's `run.sh` had been deleted (it was restored with its earlier content) and were run again. The whole file with `-n 4` passed 32 of 32 three times (load 25-28). Before the change, the first whole-file `-n 4` run of this task failed `koboldcpp_root_and_prefix_root` 1 of 32 (load 23); see above. `ruff check` reports the same 4 RUF059 findings as base; the file is `ruff format`ted, as it was at base.
+
+**Review round (coordinator, at 000fd58dc5).**
+- The in-loop wait for the longest id in `a_custom_id_the_save_cannot_write` now asserts `holds_longest()` after it, so a timeout cannot let the next refusal be checked on stale state.
+- The koboldcpp test then failed once in a two-file `-n 4` run (load 9), with the same message as the base failure above.
+  - A probe at the third press showed the cause: the Discover button still carried Textual's 0.2 s `-active` press effect from the second Discover. `Button.action_press` ignores Enter while that class is set, so no discovery ran (no "running" reset after the press) and the status stayed idle. The waits this task added made the steps faster, so the press landed inside the window more often.
+  - `_press_discover` and the third press now wait for `-active` to clear before Enter. This trap is already in `lessons-live-verification.md` (TASK-32739, the same Discover button).
+  - Control: the button's `active_effect_duration` stretched to 1.0 s in temporary test copies failed the pre-fix form 4 of 4 and passed the fixed form 4 of 4 (load 13-17). Unstretched, the fixed form passed 24 of 24 runs, 4 at a time (load ~13).
 
 **Files.** `Tests/UI/test_settings_default_model_picker.py`. Census untouched (per-node rows already exist; no test was added, removed or re-parametrized; `Tests/CI/test_ui_pr_gate_census_checker.py` 83 passed).
 <!-- SECTION:NOTES:END -->

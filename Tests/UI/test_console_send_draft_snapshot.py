@@ -333,7 +333,10 @@ async def test_console_armed_unknown_mouse_send_snapshots_before_skill_await(
 ):
     """Skill parsing retains the captured send and preserves later typing.
 
-    Hook review's separate unchanged-draft gate is isolated in this case.
+    Two draft gates that run after the skill await are isolated in this case:
+    hook review's unchanged-draft gate (``console._hooks.dispatch``) and the
+    received path's live-vs-stash check
+    (``wiring.receive_console_visible_intent``).
     """
 
     app = _ready_openai_app(monkeypatch, "unused")
@@ -389,10 +392,13 @@ async def test_console_armed_unknown_mouse_send_snapshots_before_skill_await(
             return await dispatch()
 
         monkeypatch.setattr(console._hooks, "dispatch", dispatch_without_hook_review)
-        # The received path runs the same unchanged-draft gate first
-        # (wiring.receive_console_visible_intent's live-vs-stash check,
-        # 3e618d7119). Isolate only that check: the real function runs
-        # without the stash, so every other check it makes stays live.
+        # The received path runs its own draft gate first, and it is stricter
+        # than hook review's: wiring.receive_console_visible_intent's
+        # live-vs-stash check (3e618d7119) refuses ANY edit after the capture
+        # when there are no captured inputs, while hook review refuses an
+        # edited draft only after a review ran (TASK-340). Isolate only that
+        # check: the real function runs without the stash, so every other
+        # check it makes stays live.
         from tldw_chatbook.UI.Console_Modules import wiring
 
         receive = wiring.receive_console_visible_intent
