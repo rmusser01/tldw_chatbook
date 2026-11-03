@@ -33,7 +33,7 @@ Each entry: ``(anchor, cap, owner_module)``.
   them all, and the type prefix keeps generic ids (``#dialog``,
   ``.dialog-container``) from leaking to other widgets.
 * ``cap`` is the ``max-width`` (columns) at the wide tier; base tier
-  geometry is untouched. Ladder: base width >= 104 -> 170, 84-96 -> 150,
+  geometry is untouched. Ladder: base width >= 100 -> 170, 84-96 -> 150,
   <= 80 -> 120.
 * ``owner_module`` is the tldw_chatbook module whose Python (or owning
   sheet) defines the anchor, so the contract can fail loudly when an id
@@ -168,7 +168,7 @@ WIDE_TIER_WIDTH_PERCENT = 85
 #: then anchor, so the generated CSS block and the tables read top-down
 #: from biggest cap to smallest.
 MODAL_WIDE_TIER: tuple[tuple[str, int, str], ...] = (
-    # cap 170 -- base width >= 104
+    # cap 170 -- base width >= 100
     ("#console-hooks-review", 170, "Widgets/Console/console_hooks_review_modal.py"),
     (
         "#console-inspector-modal",

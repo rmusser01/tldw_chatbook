@@ -2179,7 +2179,7 @@ ConsoleAgentProgressModal { align: center middle; background: $background 60%; }
  * selector outspecifies every base rule). Below the threshold
  * nothing here applies and base geometry is untouched.
  *
- * Cap ladder by base width: >= 104 -> 170, 84-96 -> 150,
+ * Cap ladder by base width: >= 100 -> 170, 84-96 -> 150,
  * <= 80 -> 120; Chat settings (TASK-33006.1) and the Alt+M
  * model popover are fixed width tokens instead. Surfaces skipped as
  * tiny-by-design or imperative-geometry (e.g. the session
@@ -2205,7 +2205,7 @@ ConsoleAgentProgressModal { align: center middle; background: $background 60%; }
  * editor, MCP recovery review, File Notes history, workflow run).
  * ============================================================ */
 
-/* --- cap 170 -- base width >= 104 columns --- */
+/* --- cap 170 -- base width >= 100 columns --- */
 App.-wide-viewport #console-inspector-modal {
   width: $ds-percent-85;
   max-width: $ds-size-170;

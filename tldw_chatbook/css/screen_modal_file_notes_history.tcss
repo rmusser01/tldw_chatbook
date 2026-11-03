@@ -333,7 +333,10 @@ $ds-portrait-review-lines: 13;
    pattern). The workspace's `#file-notes-history` button is pinned to the
    boot bundle (see build_css.py), so a rule naming it stays. The screen is
    centered through its own id, because a bare type selector carries no
-   owner token and would stay on the boot bundle. */
+   owner token and would stay on the boot bundle. The dialog's
+   `App.-wide-viewport #file-notes-history-dialog` tier rule (TASK-36522)
+   rides the boot bundle with the rest of the tier block, in
+   components/_agentic_terminal.tcss. */
 #file-notes-history-dialog-screen {
     align: center middle;
 }

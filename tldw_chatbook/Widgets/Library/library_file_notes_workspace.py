@@ -745,10 +745,10 @@ class FileNotesHistoryDialog(
     transition guards as its other file actions, so a dialog opened against
     one root can never publish into a root that changed beneath it.
 
-    TASK-36386 / ADR-097: its styling is not on the boot path. The
-    ``file-notes-history*`` rules live in ``css/features/_notes.tcss``, and
-    ``build_css.py`` splits them into ``screen_modal_file_notes_history.tcss``,
-    which this modal's ``CSS_PATH`` loads the first time the dialog opens.
+    TASK-36386 / ADR-097: the ``file-notes-history*`` rules in ``features/_notes.tcss``
+    leave the boot path: ``build_css.py`` splits them into the sheet this ``CSS_PATH``
+    loads on first open. Its ``App.-wide-viewport`` tier rule still rides the boot
+    bundle, with the rest of the tier block (``components/_agentic_terminal.tcss``).
     """
 
     BINDINGS = [("escape", "request_safe_cancel", "Close")]
