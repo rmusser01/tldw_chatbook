@@ -207,3 +207,23 @@ def test_plan_return_rechecks_candidate_mutated_after_catalog(
         finally:
             # Restore this disposable fault-injection member for native retirement.
             candidate.write_bytes(original_bytes)
+
+
+def test_installed_schema_catalog_exports_keep_canonical_identity():
+    from typing import get_type_hints
+
+    from tldw_chatbook.Backup_Recovery import mobile_identity_plan, mobile_plan_manifest
+    from tldw_chatbook.DB import mobile_consolidation_receipts, mobile_import_authority
+
+    assert mobile_plan_manifest._TableSpec is mobile_import_authority._TableSpec
+    assert mobile_plan_manifest._TABLES is mobile_import_authority._TABLES
+    assert mobile_identity_plan._Domain is mobile_import_authority._Domain
+    assert mobile_identity_plan._DOMAINS is mobile_import_authority._DOMAINS
+    assert mobile_identity_plan._COMPOSITES is mobile_import_authority._COMPOSITES
+    assert mobile_consolidation_receipts._TABLES is mobile_import_authority._TABLES
+    assert mobile_consolidation_receipts._DOMAINS is mobile_import_authority._DOMAINS
+    assert (
+        mobile_consolidation_receipts._COMPOSITES is mobile_import_authority._COMPOSITES
+    )
+    assert get_type_hints(mobile_plan_manifest._TableSpec)["columns"] == tuple[str, ...]
+    assert get_type_hints(mobile_identity_plan._Domain)["scalar"] is type

@@ -377,8 +377,12 @@ def test_public_target_ordinary_imported_history_and_trace(tmp_path, monkeypatch
             }
             original = seeded["legacy"]
             mapped = mapping["run", original["run"]]
-            page = runs.read_imported_run_log_page(
-                mapped, operation, preview.source_fingerprint
+            from tldw_chatbook.Backup_Recovery.mobile_imported_run_log import (
+                read_imported_run_log_page,
+            )
+
+            page = read_imported_run_log_page(
+                runs, mapped, operation, preview.source_fingerprint
             )
             assert page.next_cursor is None
             assert [part.record.run_id for part in page.slices] == [original["run"]]

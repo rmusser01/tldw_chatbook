@@ -8,8 +8,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from tldw_chatbook.Canvas.limits import validate_opaque_identifier
 from tldw_chatbook.Chat.console_remote_models import ConsoleHostIdentity, ConsoleTarget
+from tldw_chatbook.Utils.text import validate_opaque_identifier
 from tldw_chatbook.Utils.timestamps import utc_now_iso
 
 if TYPE_CHECKING:

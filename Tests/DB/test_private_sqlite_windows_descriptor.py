@@ -58,9 +58,10 @@ def test_named_identity_accepts_held_file_and_rejects_replacement(
     try:
         native_os.write(descriptor, _database_bytes("original"))
         if identity_kind == "preview":
+            from tldw_chatbook.Backup_Recovery import profile_paths
             from tldw_chatbook.DB import mobile_preview_lineage
 
-            monkeypatch.setattr(mobile_preview_lineage, "os", facade)
+            monkeypatch.setattr(profile_paths, "os", facade)
             selected, identity = mobile_preview_lineage._existing_preview_target(path)
             assert selected == path
         else:

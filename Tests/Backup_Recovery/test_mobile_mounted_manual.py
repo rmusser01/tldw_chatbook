@@ -1,14 +1,16 @@
 """SOURCE-ONLY mounted manual Console qualification; controller review before run.
 
-The real-home parent launches a fresh public producer, then a separate actual
-TldwCli/run_test child. No child is launched merely by importing this module.
+The real-home parent reaps native fixture seeding, launches a fresh public
+producer, then a separate actual TldwCli/run_test child. No child is launched merely by importing this module.
 This is scripted provider composition, not real provider or hardware evidence.
 """
 
+import hashlib
 import json
 import os
 import pwd
 import signal
+import stat
 import subprocess
 import sys
 import tempfile
@@ -17,27 +19,114 @@ from pathlib import Path
 
 from Tests.Backup_Recovery.test_mobile_late_budget_recovery import _COMMON
 
-_PRODUCE = r"""
+_PROFILE_APPEND = (
+    "\n[first_run]\nsetup_completed=true\n[splash_screen]\nenabled=false\n"
+    '[tldw_api]\nbase_url=""\napi_url=""\nurl=""\n'
+    "[model_catalog]\nauto_refresh_enabled=false\n"
+    "[console]\nagent_runtime=true\n"
+    '[chat_defaults]\nprovider="llama_cpp"\nmodel="local-model"\n'
+    '[api_settings.llama_cpp]\napi_url="http://127.0.0.1:9099"\nmodel="local-model"\n'
+)
+
+
+def _closed_seed_file(path):
+    """Fingerprint one closed, private fixture leaf without opening a DB owner."""
+    info = path.lstat()
+    assert stat.S_ISREG(info.st_mode) and info.st_uid == os.getuid()
+    assert info.st_nlink == 1 and not info.st_mode & 0o077
+    facts = {
+        "device": info.st_dev,
+        "inode": info.st_ino,
+        "mode": info.st_mode,
+        "size": info.st_size,
+        "sha256": hashlib.sha256(path.read_bytes()).hexdigest(),
+    }
+    after = path.lstat()
+    assert (info.st_dev, info.st_ino, info.st_mode, info.st_size, info.st_mtime_ns) == (
+        after.st_dev,
+        after.st_ino,
+        after.st_mode,
+        after.st_size,
+        after.st_mtime_ns,
+    )
+    return facts
+
+
+def _closed_seed_files(fixture):
+    source = fixture / "profile/data/shared/mobile"
+    return {
+        "selector": _closed_seed_file(fixture / "profile/config.toml"),
+        "source": {
+            path.name: _closed_seed_file(path)
+            for path in sorted(source.iterdir())
+            if path.is_file()
+        },
+        "targets": {
+            str(fixture / "profile/new/nested" / name): _closed_seed_file(
+                fixture / "profile/new/nested" / name
+            )
+            for name in ("chat.db", "workspaces.db", "agent_runs.db")
+        },
+    }
+
+
+def _read_seed_record(fixture, expected_digest=None):
+    """Reject missing/changed seed evidence before the producer can overwrite config."""
+    path = fixture / "native-seed.json"
+    raw = path.read_bytes()
+    digest = hashlib.sha256(raw).hexdigest()
+    if expected_digest is not None:
+        assert digest == expected_digest, "seed_record_changed"
+    record = json.loads(raw)
+    assert record["complete"] is True and record["fixture"] == str(fixture)
+    assert record["seed_calls"] == [True, False]
+    assert set(record["seeded"]) == {"legacy", "canonical"}
+    assert all(isinstance(value, dict) and value for value in record["seeded"].values())
+    assert not (fixture / "control").exists()
+    assert record["files"] == _closed_seed_files(fixture), "seed_files_changed"
+    assert (fixture / "profile/config.toml").read_bytes() == bytes.fromhex(
+        record["selected_config"]
+    )
+    assert record["seeded"]["legacy"]["fingerprints"] == {
+        name: facts["sha256"] for name, facts in record["files"]["source"].items()
+    }
+    retired = json.loads(path.with_name("native-seed-exit.json").read_text())
+    assert retired["entry_home"] == retired["exit_home"]
+    assert not retired["profile_guard"] and not retired["network_guard"]
+    assert retired["target_files"] == record["files"]["targets"]
+    return record, digest
+
+
+_SEED = r"""
 import pytest
 from Tests.Backup_Recovery import mobile_consolidation_fixture
 from Tests.Backup_Recovery.test_mobile_consolidation_lifecycle import _capture_fixture
 from Tests.Backup_Recovery.test_mobile_owning_transactions import _small_native_seed
+from Tests.Backup_Recovery.test_mobile_mounted_manual import _PROFILE_APPEND, _closed_seed_files
 assert not SELECTOR.exists() and not SOURCE.exists() and not CONTROL.exists()
 seeded = {}
+seed_calls = []
+class SeedComplete(Exception):
+    pass
+
 def seed(paths, *, legacy, **options):
+    assert legacy is (not seed_calls) and seed_calls in ([], [True])
+    assert paths.paths == (tuple(SOURCE / name for name in ('chat.db', 'workspaces.db', 'runs.db')) if legacy else TARGETS)
+    assert options == ({'artifact_root': None} if legacy else {})
     if legacy:
-        # prepared() has created the selected config but has not bound or
-        # reviewed it. This is native test-fixture construction, not a config
-        # rewrite after source review or a fake runtime settings result.
+        # Match the original fixture config, before any binding or source review.
         with SELECTOR.open('a') as stream:
-            stream.write('\n[first_run]\nsetup_completed=true\n[splash_screen]\nenabled=false\n'
-                         '[tldw_api]\nbase_url=""\napi_url=""\nurl=""\n'
-                         '[model_catalog]\nauto_refresh_enabled=false\n'
-                         '[console]\nagent_runtime=true\n'
-                         '[chat_defaults]\nprovider="llama_cpp"\nmodel="local-model"\n'
-                         '[api_settings.llama_cpp]\napi_url="http://127.0.0.1:9099"\nmodel="local-model"\n')
+            stream.write(_PROFILE_APPEND)
     result = _small_native_seed(paths, legacy=legacy, source_case='consumers_privacy', **options)
     seeded['legacy' if legacy else 'canonical'] = result
+    seed_calls.append(legacy)
+    if not legacy:
+        # Both native constructors returned and closed their real DB owners.
+        # Stop before prepared() creates control/binds/reviews this profile.
+        report_path.write_text(json.dumps({'complete': True, 'fixture': str(FIXTURE),
+            'seed_calls': seed_calls, 'seeded': seeded, 'files': _closed_seed_files(FIXTURE),
+            'selected_config': SELECTOR.read_bytes().hex()}, indent=2))
+        raise SeedComplete
     return result
 patcher=pytest.MonkeyPatch()
 patcher.setattr(mobile_consolidation_fixture,'_seed',seed)
@@ -47,10 +136,49 @@ try:
     voice_parent.mkdir(mode=0o700,parents=True)
     assert voice_parent.stat().st_mode & 0o777 == 0o700
     assert all(not path.exists() for path in VOICE_PATHS.values())
-    with _capture_fixture(FIXTURE,patcher) as values:
+    try:
+        with _capture_fixture(FIXTURE,patcher):
+            raise AssertionError('seed unexpectedly reached prepared binding')
+    except SeedComplete:
+        assert seed_calls == [True, False] and not CONTROL.exists()
+finally:
+    os.umask(mask)
+"""
+
+_PRODUCE = r"""
+import pytest
+from Tests.Backup_Recovery import mobile_consolidation_fixture
+from Tests.Backup_Recovery.test_mobile_consolidation_lifecycle import _capture_fixture
+from Tests.Backup_Recovery.test_mobile_mounted_manual import _PROFILE_APPEND, _closed_seed_files, _read_seed_record
+# Validate BEFORE prepared() rewrites its base config, not after repairing it.
+seed_record, seed_digest = _read_seed_record(FIXTURE, sys.argv[3])
+seeded = seed_record['seeded']
+seed_calls = []
+def use_existing_seed(paths, *, legacy, **options):
+    assert legacy is (not seed_calls) and seed_calls in ([], [True])
+    assert paths.paths == (tuple(SOURCE / name for name in ('chat.db', 'workspaces.db', 'runs.db')) if legacy else TARGETS)
+    assert options == ({'artifact_root': None} if legacy else {})
+    if legacy:
+        # The original base write plus the same append must restore exact bytes.
+        with SELECTOR.open('a') as stream:
+            stream.write(_PROFILE_APPEND)
+    assert SELECTOR.read_bytes() == bytes.fromhex(seed_record['selected_config'])
+    assert _closed_seed_files(FIXTURE) == seed_record['files']
+    seed_calls.append(legacy)
+    return seeded['legacy' if legacy else 'canonical']
+patcher=pytest.MonkeyPatch()
+patcher.setattr(mobile_consolidation_fixture,'_seed',use_existing_seed)
+mask=os.umask(0o077)
+try:
+    voice_parent=FIXTURE/'.config/tldw_cli'
+    assert voice_parent.is_dir() and not voice_parent.is_symlink()
+    assert voice_parent.stat().st_mode & 0o777 == 0o700
+    assert all(not path.exists() for path in VOICE_PATHS.values())
+    with _capture_fixture(FIXTURE,patcher,reuse_seeded_profile=True) as values:
         _,journal,actual_selector,actual_stores,_,_,_=values
 finally:
     os.umask(mask)
+assert seed_calls == [True, False]
 assert actual_selector==SELECTOR and actual_stores==stores and journal.root.parent==CONTROL
 credentials._credential_store=lambda:fixture_credentials
 assert_fixture_locators()
@@ -410,8 +538,12 @@ def run_standalone(result_path):
         "children": [],
         "scope": "standalone actual mounted App/scripted provider",
     }
+    seed_digest = None
     try:
-        for name, body in (("producer", _PRODUCE), ("app", _APP)):
+        for name, body in (("seed", _SEED), ("producer", _PRODUCE), ("app", _APP)):
+            if name == "producer":
+                assert isinstance(seed_digest, str)
+                _read_seed_record(fixture, seed_digest)
             output = fixture / f"native-{name}.json"
             log = fixture / f"native-{name}.log"
             argv = [
@@ -423,6 +555,8 @@ def run_standalone(result_path):
                 str(fixture),
                 str(output),
             ]
+            if name == "producer":
+                argv.append(seed_digest)
             with log.open("w") as stream:
                 child = subprocess.Popen(
                     argv,
@@ -469,6 +603,8 @@ def run_standalone(result_path):
             )
             result_path.write_text(json.dumps(report, indent=2))
             assert code == 0, log.read_text()[-16000:]
+            if name == "seed":
+                seed_digest = _read_seed_record(fixture)[1]
         report["completed"] = True
     finally:
         report.update(

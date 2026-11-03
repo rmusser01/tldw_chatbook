@@ -150,7 +150,7 @@ def _load_page(
     *,
     metadata_only=False,
 ):
-    from tldw_chatbook.DB.mobile_imported_run_log import _PinnedHistory
+    from tldw_chatbook.Backup_Recovery.mobile_imported_run_log import _PinnedHistory
 
     pinned = type(log_dir) is _PinnedHistory
     if pinned:

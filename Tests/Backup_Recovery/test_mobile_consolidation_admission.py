@@ -1,5 +1,7 @@
 """Native in-place consolidation owns exact stores and durable interruption fences."""
 
+import os
+import stat
 from contextlib import contextmanager
 
 import pytest
@@ -32,6 +34,7 @@ def prepared(
     run_mode=None,
     destination_mode=None,
     wal=False,
+    reuse_seeded_profile=False,
 ):
     from Tests.Backup_Recovery.mobile_consolidation_fixture import (
         seed_canonical_console,
@@ -42,7 +45,15 @@ def prepared(
     )
 
     profile = tmp_path / "profile"
-    profile.mkdir(mode=448)
+    if reuse_seeded_profile:
+        assert not fresh and not canonical_runs_absent and legacy_artifact_root is None
+        assert enrolled and not ordinary_execution and not wal
+        assert run_mode is None and destination_mode is None
+        info = profile.lstat()
+        assert stat.S_ISDIR(info.st_mode) and profile.resolve(strict=True) == profile
+        assert info.st_uid == os.getuid() and not info.st_mode & 0o077
+    else:
+        profile.mkdir(mode=448)
     config = profile / "config.toml"
     config.write_text(
         f'''[general]\nusers_name="shared"\n[paths]\ndata_dir="{profile / "data"}"\n[database]\nchachanotes_db_path="{profile / "new" / "nested" / "chat.db"}"\nworkspaces_db_path="{profile / "new" / "nested" / "workspaces.db"}"\n'''
@@ -441,6 +452,7 @@ def test_live_capability_rejects_copied_scope_pid_foreign_operation_and_source_w
 
     from Tests.Backup_Recovery.mobile_consolidation_fixture import fingerprints
     from tldw_chatbook.Backup_Recovery import storage_admission as storage
+    from tldw_chatbook.Backup_Recovery.mobile_native_operation import _acquire_run_owner
     from tldw_chatbook.Chat.console_execution_owner import (
         ConsoleExecutionOwner,
         ConsoleExecutionUnavailable,
@@ -459,10 +471,10 @@ def test_live_capability_rejects_copied_scope_pid_foreign_operation_and_source_w
         before = fingerprints(preview.source_dir)
         prepare(session, journal, config, preview, inventory)
         with pytest.raises(ConsoleExecutionUnavailable, match="scope_required"):
-            ConsoleExecutionOwner._acquire_consolidation(object())
+            _acquire_run_owner(ConsoleExecutionOwner, object())
         with pytest.raises(bootstrap.RecoveryRequired):
-            ConsoleExecutionOwner._acquire_consolidation(
-                object.__new__(storage._MobileScope)
+            _acquire_run_owner(
+                ConsoleExecutionOwner, object.__new__(storage._MobileScope)
             )
         foreign = Journal(journal.root.parent, "foreign-operation")
         with (
@@ -474,6 +486,19 @@ def test_live_capability_rejects_copied_scope_pid_foreign_operation_and_source_w
             journal, "db.chachanotes.primary"
         ) as database:
             scope = database._mobile_consolidation_scope
+            for invalid_mode in (None, 0, 1, "false"):
+                with monkeypatch.context() as changed:
+                    changed.setattr(scope, "recovering_mode", invalid_mode)
+                    with pytest.raises(
+                        bootstrap.RecoveryRequired, match="mobile_scope_inactive"
+                    ):
+                        storage._MobileScope.check_for_lock(scope)
+            with monkeypatch.context() as changed:
+                changed.delattr(scope, "recovering_mode")
+                with pytest.raises(
+                    bootstrap.RecoveryRequired, match="mobile_scope_inactive"
+                ):
+                    storage._MobileScope.check_for_lock(scope)
             connection = database._get_thread_connection()
             cursor = connection.cursor()
             with (
@@ -498,7 +523,7 @@ def test_live_capability_rejects_copied_scope_pid_foreign_operation_and_source_w
             cursor.close()
         assert fingerprints(preview.source_dir) == before
         with pytest.raises(bootstrap.RecoveryRequired):
-            ConsoleExecutionOwner._acquire_consolidation(scope)
+            _acquire_run_owner(ConsoleExecutionOwner, scope)
 
 
 @pytest.mark.parametrize("failure", ["connection", "execution_user"])

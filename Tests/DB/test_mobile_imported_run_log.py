@@ -242,6 +242,10 @@ def _history(
 def test_enrolled_committed_reader_filters_original_ids_and_ignores_new_sibling(
     tmp_path, monkeypatch, root_frame
 ):
+    from tldw_chatbook.Backup_Recovery.mobile_imported_run_log import (
+        read_imported_run_log_page,
+    )
+
     with _history(tmp_path, monkeypatch, root_frame=root_frame) as (
         db,
         root,
@@ -256,21 +260,25 @@ def test_enrolled_committed_reader_filters_original_ids_and_ignores_new_sibling(
         sibling = namespace.parent / "later-independent-import"
         sibling.mkdir(mode=0o700)
         (sibling / "evidence").write_text("later history")
-        page = db.read_imported_run_log_page(child, operation, source)
+        page = read_imported_run_log_page(db, child, operation, source)
         assert [part.record.run_id for part in page.slices] == ["old-child"]
         assert (
             "".join(part.record.content for part in page.slices)
             == "Child private frame Ω"
         )
-        own = db.read_imported_run_log_page(root, operation, source)
+        own = read_imported_run_log_page(db, root, operation, source)
         assert [part.record.run_id for part in own.slices] == (
             ["old-root"] if root_frame else []
         )
         with pytest.raises(ValueError, match="membership"):
-            db.read_imported_run_log_page(historical, operation, source)
+            read_imported_run_log_page(db, historical, operation, source)
 
 
 def test_runtime_reader_requires_actual_enrollment(tmp_path, monkeypatch):
+    from tldw_chatbook.Backup_Recovery.mobile_imported_run_log import (
+        read_imported_run_log_page,
+    )
+
     with _history(tmp_path, monkeypatch, enrolled=False) as (  # noqa: SIM117 -- Keep the explicit native resource/fault lifetime boundary.
         db,
         _root,
@@ -282,10 +290,14 @@ def test_runtime_reader_requires_actual_enrollment(tmp_path, monkeypatch):
         _log_dir,
     ):
         with pytest.raises((ValueError, RuntimeError), match="admi|enroll"):
-            db.read_imported_run_log_page(child, operation, source)
+            read_imported_run_log_page(db, child, operation, source)
 
 
 def test_runtime_reader_rejects_byte_identical_replaced_member(tmp_path, monkeypatch):
+    from tldw_chatbook.Backup_Recovery.mobile_imported_run_log import (
+        read_imported_run_log_page,
+    )
+
     with _history(tmp_path, monkeypatch) as (
         db,
         _root,
@@ -302,10 +314,14 @@ def test_runtime_reader_rejects_byte_identical_replaced_member(tmp_path, monkeyp
         replacement.chmod(0o600)
         replacement.replace(path)
         with pytest.raises(ValueError, match="witness|changed"):
-            db.read_imported_run_log_page(child, operation, source)
+            read_imported_run_log_page(db, child, operation, source)
 
 
 def test_native_numeric_segment_alias_refuses_before_pager(tmp_path, monkeypatch):
+    from tldw_chatbook.Backup_Recovery.mobile_imported_run_log import (
+        read_imported_run_log_page,
+    )
+
     with _history(tmp_path, monkeypatch, numeric_alias=True) as (
         db,
         root,
@@ -323,4 +339,4 @@ def test_native_numeric_segment_alias_refuses_before_pager(tmp_path, monkeypatch
 
         monkeypatch.setattr(run_log_paging, "_load_page", no_page)
         with pytest.raises(ValueError, match="segment"):
-            db.read_imported_run_log_page(root, operation, source)
+            read_imported_run_log_page(db, root, operation, source)

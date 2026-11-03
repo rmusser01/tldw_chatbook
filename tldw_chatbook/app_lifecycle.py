@@ -35,7 +35,6 @@ from tldw_chatbook.app_keep_alive import (
     retire_dead_pump,
 )
 from tldw_chatbook.app_service_wiring import TldwCli  # class proxy (see its docstring)
-from tldw_chatbook.app_shutdown import _drain_app_unmount_services
 from tldw_chatbook.Chat.console_runtime import dispose_console_runtime
 from tldw_chatbook.config import (
     get_cli_config_path,
@@ -1185,6 +1184,8 @@ class LifecycleMixin:
             )
 
         # Stop all background services and threads
+        from tldw_chatbook.app_shutdown import _drain_app_unmount_services
+
         await _drain_app_unmount_services(self, speech_cleanup_cancellation)
 
         # Original cleanup code

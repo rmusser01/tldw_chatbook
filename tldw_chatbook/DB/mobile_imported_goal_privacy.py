@@ -1,6 +1,6 @@
 """Transaction-local historical accounting proof for explicit Goal body erasure."""
 
-from tldw_chatbook.Chat.console_trace_read_budget import _TraceReadBudget
+from tldw_chatbook.Backup_Recovery.models import _TraceReadBudget
 
 from .mobile_consolidation_receipts import _SPECS, _read_owner_receipt, _row_digest
 

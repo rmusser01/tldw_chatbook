@@ -31,7 +31,7 @@ from tldw_chatbook.Agents.agent_models import (
     validate_agent_definition,
 )
 from tldw_chatbook.Agents.run_log import DEFAULT_MAX_RECORD_BYTES
-from tldw_chatbook.Chat.console_execution_owner import (
+from tldw_chatbook.DB.console_execution_owner import (
     ConsoleExecutionOwner,
     ConsoleExecutionUnavailable,
 )
@@ -1016,19 +1016,6 @@ class AgentRunsDB(SQLiteStoreKernel, BaseDB):
             conn.execute("INSERT OR IGNORE INTO schema_version (version) VALUES (24)")
             conn.execute("INSERT OR IGNORE INTO schema_version (version) VALUES (25)")
             _upgrade_mobile_schema(conn)
-
-    def read_imported_run_log_page(
-        self,
-        mapped_run_id: str,
-        operation_id: str,
-        source_fingerprint: str,
-        *,
-        cursor=None,
-    ):
-        """Read receipt-bound original-ID history through actual enrolled pins."""
-        from .mobile_imported_run_log import _read_page
-
-        return _read_page(self, mapped_run_id, operation_id, source_fingerprint, cursor)
 
     def hold_imported_authority(
         self,
@@ -3184,7 +3171,7 @@ class AgentRunsDB(SQLiteStoreKernel, BaseDB):
         Raises:
             ValueError: Invalid identifiers or window coordinates.
         """
-        from tldw_chatbook.Canvas.limits import validate_opaque_identifier
+        from tldw_chatbook.Utils.text import validate_opaque_identifier
 
         validate_opaque_identifier(conversation_id)
         validate_opaque_identifier(run_id)

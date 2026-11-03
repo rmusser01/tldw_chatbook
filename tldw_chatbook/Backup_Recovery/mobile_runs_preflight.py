@@ -12,6 +12,7 @@ from .mobile_content_graph import (
 from .mobile_identity_plan import _Domain, _Reservation, _reserve, _rows
 from .mobile_integrated_plan import _PendingOwnerDuty
 from .mobile_plan_manifest import _TABLES
+from .models import _OperationalHistory
 
 _REFS = {
     "agent_definitions": (("id", "agent_definition"),),
@@ -80,14 +81,6 @@ _HOLDS = {
     "automatic_progress_wake_claims": ("progress", "message_id"),
     "goal_runs": ("goal", "id"),
 }
-
-
-@dataclass(frozen=True)
-class _OperationalHistory:
-    table: str
-    original: tuple
-    values: tuple = field(repr=False)
-    associations: tuple = ()
 
 
 @dataclass(frozen=True)

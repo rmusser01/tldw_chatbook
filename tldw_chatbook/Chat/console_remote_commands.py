@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+from collections.abc import Callable
 from dataclasses import replace
 from typing import TYPE_CHECKING
 
@@ -26,10 +27,15 @@ class ConsoleRemoteCommands:
     """Route commands without borrowing a view, composer or execution authority."""
 
     def __init__(
-        self, runtime: ConsoleRuntime, host_identity: ConsoleHostIdentity
+        self,
+        runtime: ConsoleRuntime,
+        host_identity: ConsoleHostIdentity,
+        *,
+        configuration_metadata_loader: Callable[[], object] | None = None,
     ) -> None:
         self.runtime = runtime
         self.host_identity = host_identity
+        self._configuration_metadata_loader = configuration_metadata_loader
 
     def _require_host(self, target: ConsoleHostIdentity) -> None:
         if type(target) is not ConsoleHostIdentity or target != self.host_identity:
@@ -133,11 +139,10 @@ class ConsoleRemoteCommands:
         if target.handle_id is not None or target.round_id is not None:
             raise ValueError("Send requires a chat target.")
         self._revisions(session, expected_revisions)
-        # The existing stock cold-source proof uses this module's original
-        # metadata capsule. A viewless owner has no widget import to load it.
-        # Its import checks Textual source bytes; retain that finite read through
-        # the same native physical teardown observers as turn preparation.
-        from importlib import import_module
+        # Presentation supplies the stock metadata read; the native owner keeps
+        # its physical lifetime and all received-configuration source checks.
+        if self._configuration_metadata_loader is None:
+            raise RuntimeError("Console configuration source is unavailable.")
 
         from .console_preparation_reads import run_preparation_read
 
@@ -152,7 +157,7 @@ class ConsoleRemoteCommands:
             self._revisions(session, expected_revisions)
 
         await run_preparation_read(
-            lambda: import_module("tldw_chatbook.Widgets.compact_model_bar"),
+            self._configuration_metadata_loader,
             creator=controller,
             session_id=session.id,
             reads=controller._preparation_reads,

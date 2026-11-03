@@ -832,7 +832,7 @@ async def test_ui_ready_before_nonessential_startup_services_finish(
             }
 
         children = fields.get("_speech_initialization_children", {})
-        return {
+        context = {
             "ui_ready": fields.get("_ui_ready") is True,
             "tts_initializer_entered": tts_started.is_set(),
             "stts_initializer_entered": stts_started.is_set(),
@@ -853,6 +853,247 @@ async def test_ui_ready_before_nonessential_startup_services_finish(
             },
             "admission_observation": "retained flags/tasks only; allowed result not retained",
         }
+        try:
+            import inspect
+            from functools import partial
+            from types import CoroutineType, FunctionType, MethodType, ModuleType
+            from weakref import WeakSet
+
+            def code_identity(function):
+                if type(function) is not FunctionType:
+                    return "unknown"
+                code = function.__code__
+                return [
+                    code.co_filename[-80:],
+                    code.co_qualname[:80],
+                    code.co_firstlineno,
+                ]
+
+            def callback_identity(callback):
+                for _ in range(2):
+                    if type(callback) is not partial:
+                        break
+                    function = callback.func
+                    if (
+                        type(function) is MethodType
+                        and function.__self__ is app
+                        and function.__func__ is call_next
+                        and callback.args
+                    ):
+                        callback = callback.args[0]
+                    else:
+                        callback = function
+                if type(callback) is MethodType:
+                    return callback.__func__, callback.__self__ is app
+                return callback, False
+
+            def native_task_state(task):
+                if type(task) is not asyncio.Task:
+                    return "unknown"
+                return {
+                    "state": task._state,
+                    "error": (
+                        None
+                        if task._exception is None
+                        else type(task._exception).__name__[:80]
+                    ),
+                }
+
+            manager = fields.get("db_status_manager")
+            actual_class = type(app)
+            constructor = inspect.getattr_static(actual_class, "__init__", None)
+            constructor_manager = (
+                constructor.__globals__.get("DBStatusManager")
+                if type(constructor) is FunctionType
+                else None
+            )
+            manager_method = inspect.getattr_static(manager, "update_db_sizes", None)
+            call_next = inspect.getattr_static(actual_class, "call_next", None)
+            callbacks = {
+                name: inspect.getattr_static(actual_class, name, None)
+                for name in (
+                    "_schedule_footer_status_updates",
+                    "update_db_sizes",
+                    "_start_deferred_audio_service_initialization",
+                )
+            }
+            timer_module = sys.modules.get("textual.timer")
+            timer_class = (
+                vars(timer_module).get("Timer")
+                if type(timer_module) is ModuleType
+                else None
+            )
+            event_module = sys.modules.get("textual.events")
+            event_class = (
+                vars(event_module).get("Callback")
+                if type(event_module) is ModuleType
+                else None
+            )
+            records, seen, omitted = [], 0, 0
+            periodic = inspect.getattr_static(manager, "_update_timer", None)
+            timers = fields.get("_timers")
+            retained = [periodic]
+            if type(timers) is WeakSet:
+                retained.extend(timer for timer in timers if timer is not periodic)
+            for timer in retained:
+                if timer_class is None or type(timer) is not timer_class:
+                    continue
+                callback, bound = callback_identity(
+                    inspect.getattr_static(timer, "_callback", None)
+                )
+                roles = [
+                    name for name, function in callbacks.items() if callback is function
+                ]
+                if timer is not periodic and not roles:
+                    continue
+                seen += 1
+                if len(records) >= 6:
+                    omitted += 1
+                    continue
+                active = inspect.getattr_static(timer, "_active", None)
+                records.append(
+                    {
+                        "kind": "periodic" if timer is periodic else "timer",
+                        "roles": roles,
+                        "app_bound": bound,
+                        "code": code_identity(callback),
+                        "interval": inspect.getattr_static(timer, "_interval", None),
+                        "repeat": inspect.getattr_static(timer, "_repeat", None),
+                        "active": inspect.getattr_static(active, "_value", "unknown"),
+                        "task": native_task_state(
+                            inspect.getattr_static(timer, "_task", None)
+                        ),
+                    }
+                )
+            pending = fields.get("_next_callbacks")
+            if type(pending) is list:
+                for message in pending:
+                    if event_class is None or type(message) is not event_class:
+                        continue
+                    callback, bound = callback_identity(
+                        inspect.getattr_static(message, "callback", None)
+                    )
+                    roles = [
+                        name
+                        for name, function in callbacks.items()
+                        if callback is function
+                    ]
+                    if not roles:
+                        continue
+                    seen += 1
+                    if len(records) >= 6:
+                        omitted += 1
+                        continue
+                    records.append(
+                        {
+                            "kind": "queued",
+                            "roles": roles,
+                            "app_bound": bound,
+                            "code": code_identity(callback),
+                        }
+                    )
+            pump = fields.get("_task")
+            coroutine = pump._coro if type(pump) is asyncio.Task else None
+            chain = []
+            for _ in range(6):
+                if type(coroutine) is not CoroutineType:
+                    break
+                code = coroutine.cr_code
+                chain.append(
+                    [
+                        code.co_filename[-80:],
+                        code.co_qualname[:80],
+                        None
+                        if coroutine.cr_frame is None
+                        else coroutine.cr_frame.f_lineno,
+                    ]
+                )
+                coroutine = coroutine.cr_await
+            database_module = sys.modules.get(DBStatusManager.__module__)
+            canonical_manager = (
+                vars(database_module).get("DBStatusManager")
+                if type(database_module) is ModuleType
+                else None
+            )
+            db_startup = {
+                "missing": "unknown; completed timers or callback batches may no longer be retained",
+                "app_class_matches": actual_class is TldwCli,
+                "factory_class_matches": _build_test_app.__globals__.get("TldwCli")
+                is actual_class,
+                "manager_class_matches": (
+                    "unknown" if manager is None else type(manager) is DBStatusManager
+                ),
+                "constructor_class_matches": (
+                    "unknown"
+                    if constructor_manager is None
+                    else constructor_manager is DBStatusManager
+                ),
+                "canonical_class_matches": (
+                    "unknown"
+                    if canonical_manager is None
+                    else canonical_manager is DBStatusManager
+                ),
+                "manager_points_to_app": inspect.getattr_static(manager, "app", None)
+                is app,
+                "manager_method_is_blocked": (
+                    "unknown"
+                    if manager_method is None
+                    else manager_method is blocked_db_size_update
+                ),
+                "manager_method_is_class_binding": (
+                    "unknown"
+                    if manager_method is None
+                    else manager_method
+                    is inspect.getattr_static(type(manager), "update_db_sizes", None)
+                ),
+                "manager_method": code_identity(manager_method),
+                "app_update_method": code_identity(
+                    inspect.getattr_static(app, "update_db_sizes", None)
+                ),
+                "manager_closed": inspect.getattr_static(
+                    manager, "_maintenance_closed", "unknown"
+                ),
+                "periodic_retained": timer_class is not None
+                and type(periodic) is timer_class,
+                "closing": [
+                    fields.get(name, "unknown")
+                    for name in ("_closed", "_closing", "_exit")
+                ],
+                "records": records,
+                "matching_records_seen": seen,
+                "records_omitted": omitted,
+                "timer_set_known": type(timers) is WeakSet,
+                "queue_known": type(pending) is list,
+                "pump_task": native_task_state(pump),
+                "pump_code": chain,
+                "pump_more_code": True
+                if type(coroutine) is CoroutineType
+                else "unknown",
+            }
+            while (
+                len(json.dumps(db_startup, sort_keys=True).encode("utf-8")) > 4096
+                and records
+            ):
+                records.pop()
+                db_startup["records_omitted"] += 1
+            while (
+                len(json.dumps(db_startup, sort_keys=True).encode("utf-8")) > 4096
+                and chain
+            ):
+                chain.pop()
+                db_startup["pump_more_code"] = True
+            if len(json.dumps(db_startup, sort_keys=True).encode("utf-8")) > 4096:
+                db_startup = {
+                    "missing": "unknown",
+                    "truncated": "4096-byte observation limit",
+                }
+        except Exception as observation_error:  # noqa: BLE001 -- Keep the original diagnostic fields.
+            db_startup = {
+                "missing": "unknown",
+                "observation_error": type(observation_error).__name__[:80],
+            }
+        context["db_startup"] = db_startup
+        return context
 
     async with app.run_test(size=(120, 36)) as pilot:
         try:

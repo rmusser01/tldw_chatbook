@@ -17,6 +17,7 @@ keyring.set_keyring(Keyring())
 from tldw_chatbook.app import TldwCli
 from tldw_chatbook.Backup_Recovery import storage_admission as storage
 from tldw_chatbook.Backup_Recovery.runtime_maintenance import RuntimeMaintenance
+from tldw_chatbook.Backup_Recovery.participants import _retire_current_thread_caches
 from tldw_chatbook.Backup_Recovery.bootstrap import RecoveryRequired
 
 async def main():

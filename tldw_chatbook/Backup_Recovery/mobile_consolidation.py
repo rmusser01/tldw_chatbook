@@ -700,8 +700,6 @@ def _preview(
                 )
                 issues.add(code)
         if not issues and len(identities) == len(LEGACY_STORES):
-            from tldw_chatbook.DB.recovery_operations import legacy_mobile_declarations
-
             from .models import (
                 DISCOVERY_CONTEXT_KEY,
                 DiscoveryContext,
@@ -836,8 +834,6 @@ def preview_mobile_consolidation(
 def mobile_inventory(config, *, _runs_scope=None, _run_names=None, _read_budget=None):
     """Add legacy files to normal coherent capture with existing native owners."""
     from dataclasses import replace
-
-    from tldw_chatbook.DB.recovery_operations import legacy_mobile_declarations
 
     from .models import StorageItem, discovery_context, storage_logical_id
     from .profile_paths import canonical_console_paths, legacy_mobile_dir
@@ -1164,3 +1160,41 @@ def _credential_review_evidence(preview):
     except (ValueError, TypeError):
         raise ValueError("mobile_credential_review_invalid") from None
     return result
+
+
+def legacy_mobile_declarations(config, *, source_dir: Path | None = None):
+    """Declare three fixed optional legacy files with native capture owners."""
+    from tldw_chatbook.Backup_Recovery.mobile_consolidation import (
+        LEGACY_STORES,
+        _resource_identity,
+    )
+    from tldw_chatbook.Backup_Recovery.profile_paths import legacy_mobile_dir
+    from tldw_chatbook.DB import recovery_operations as _recovery_operations
+
+    context = _recovery_operations.discovery_context(config)
+    source = legacy_mobile_dir(config) if source_dir is None else source_dir
+    absent = _resource_identity(source)[-1] == "absent"
+    config_id = _recovery_operations.storage_logical_id(context, "config")
+    keys = {
+        owner: _recovery_operations.storage_logical_id(context, owner, "legacy-mobile")
+        for _, owner in LEGACY_STORES
+    }
+    return tuple(
+        _recovery_operations.StorageItem(
+            owner,
+            keys[owner],
+            source / leaf,
+            "unused"
+            if absent
+            else _recovery_operations._sqlite_inventory_status(
+                config, source / leaf, owner=owner, optional_default=True
+            ),
+            (config_id,)
+            + ((keys["db.chachanotes.primary"],) if owner == "db.agent_runs" else ()),
+        )
+        for leaf, owner in LEGACY_STORES
+    )
+
+
+# Preserve the original eager annotation on this transferred declaration API.
+legacy_mobile_declarations.__annotations__["source_dir"] = Path | None
