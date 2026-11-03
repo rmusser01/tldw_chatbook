@@ -1,13 +1,13 @@
 ---
 id: TASK-38580
 title: Fix RAG shared-service search TypeError from query_embedding passthrough
-status: In Progress
+status: Done
 created_date: 2026-11-02 14:26
 labels:
 - bug
 - rag
 priority: high
-updated_date: 2026-11-02 14:49
+updated_date: 2026-11-03 02:53
 ---
 
 ## Description
@@ -18,15 +18,15 @@ Every search through the shared RAG service raises TypeError because EnhancedRAG
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 RAGService.search accepts and threads query_embedding or V2 stops forwarding it
-- [ ] #2 Contract test drives the real EnhancedRAGServiceV2 to RAGService chain
-- [ ] #3 Library RAG answer path returns results again
+- [x] #1 RAGService.search accepts and threads query_embedding or V2 stops forwarding it
+- [x] #2 Contract test drives the real EnhancedRAGServiceV2 to RAGService chain
+- [x] #3 Library RAG answer path returns results again
 <!-- AC:END -->
 
 ## Implementation Notes
 
 <!-- SECTION:IMPLEMENTATION_NOTES:BEGIN -->
-
+Added query_embedding to RAGService.search and threaded it to _semantic_search; new contract test drives the real V2-to-base chain so signature drift fails CI again. Commit 021251594f.
 <!-- SECTION:IMPLEMENTATION_NOTES:END -->
 
 ## Final Summary

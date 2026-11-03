@@ -1,13 +1,13 @@
 ---
 id: TASK-38605
 title: Purge dead code cluster found by the 2026-11-02 audit
-status: In Progress
+status: Done
 created_date: 2026-11-02 14:29
 labels:
 - cleanup
 - ui
 priority: low
-updated_date: 2026-11-02 14:52
+updated_date: 2026-11-03 02:56
 ---
 
 ## Description
@@ -18,17 +18,17 @@ Cluster of dead surfaces confirmed by repo-wide handler and importer greps: View
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 Dead custom messages are removed or handled
-- [ ] #2 tab_events module and model_download branch removed
-- [ ] #3 Outputs Sharing panels and Widgets Media either wired in or deleted
-- [ ] #4 Dead Utils helpers and encrypt_config removed
-- [ ] #5 state package shrunk to live members with the plaintext password field removed
+- [x] #1 Dead custom messages are removed or handled
+- [x] #2 tab_events module and model_download branch removed
+- [x] #3 Outputs Sharing panels and Widgets Media either wired in or deleted
+- [x] #4 Dead Utils helpers and encrypt_config removed
+- [x] #5 state package shrunk to live members with the plaintext password field removed
 <!-- AC:END -->
 
 ## Implementation Notes
 
 <!-- SECTION:IMPLEMENTATION_NOTES:BEGIN -->
-
+Dead cluster purged: ViewChangeMessage posts and class, Splash and Reminder messages, activity_log widget, tab_events module, model_download branch, Outputs and Sharing panels, Widgets Media, Utils dead helpers, encrypt_config; CSS orphans cleaned and bundle rebuilt. ContentsRebuilt and ChunkingTemplatesChanged skipped - audit claims stale, live handlers found. Commit 5b8f863255.
 <!-- SECTION:IMPLEMENTATION_NOTES:END -->
 
 ## Final Summary

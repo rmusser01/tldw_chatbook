@@ -1,13 +1,13 @@
 ---
 id: TASK-38590
 title: Map OpenAI embedding responses by index field
-status: In Progress
+status: Done
 created_date: 2026-11-02 14:27
 labels:
 - bug
 - rag
 priority: medium
-updated_date: 2026-11-02 14:50
+updated_date: 2026-11-03 02:54
 ---
 
 ## Description
@@ -18,15 +18,15 @@ Embeddings are zipped by list order rather than the index field, so out-of-order
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 Embeddings are assigned by the index field rather than list order
-- [ ] #2 An out-of-order provider response yields the correct text to vector mapping
-- [ ] #3 Cache stores correct vectors keyed by text hash
+- [x] #1 Embeddings are assigned by the index field rather than list order
+- [x] #2 An out-of-order provider response yields the correct text to vector mapping
+- [x] #3 Cache stores correct vectors keyed by text hash
 <!-- AC:END -->
 
 ## Implementation Notes
 
 <!-- SECTION:IMPLEMENTATION_NOTES:BEGIN -->
-
+Embeddings assigned by the index field with a lenient fallback when absent; shuffled-response regression tests prove text-to-vector mapping. Commit 9e7f9ee9d8.
 <!-- SECTION:IMPLEMENTATION_NOTES:END -->
 
 ## Final Summary

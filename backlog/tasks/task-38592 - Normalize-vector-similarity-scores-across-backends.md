@@ -1,13 +1,13 @@
 ---
 id: TASK-38592
 title: Normalize vector similarity scores across backends
-status: In Progress
+status: Done
 created_date: 2026-11-02 14:27
 labels:
 - bug
 - rag
 priority: medium
-updated_date: 2026-11-02 14:50
+updated_date: 2026-11-03 02:54
 ---
 
 ## Description
@@ -18,15 +18,15 @@ InMemoryVectorStore double-normalizes and inverts l2 scores so score_threshold f
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 InMemory l2 scores are not double normalized or inverted
-- [ ] #2 Cosine score scale matches between InMemory and Chroma backends
-- [ ] #3 score_threshold filters behave the same on both backends
+- [x] #1 InMemory l2 scores are not double normalized or inverted
+- [x] #2 Cosine score scale matches between InMemory and Chroma backends
+- [x] #3 score_threshold filters behave the same on both backends
 <!-- AC:END -->
 
 ## Implementation Notes
 
 <!-- SECTION:IMPLEMENTATION_NOTES:BEGIN -->
-
+Removed the double l2 normalization and unified both stores on raw cosine with elementwise parity and identical-threshold tests. Commit 08b08d4edb.
 <!-- SECTION:IMPLEMENTATION_NOTES:END -->
 
 ## Final Summary

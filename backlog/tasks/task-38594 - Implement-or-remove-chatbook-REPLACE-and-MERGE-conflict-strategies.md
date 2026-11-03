@@ -1,13 +1,13 @@
 ---
 id: TASK-38594
 title: Implement or remove chatbook REPLACE and MERGE conflict strategies
-status: In Progress
+status: Done
 created_date: 2026-11-02 14:28
 labels:
 - bug
 - chatbooks
 priority: medium
-updated_date: 2026-11-02 14:51
+updated_date: 2026-11-03 02:55
 ---
 
 ## Description
@@ -18,15 +18,15 @@ The import wizard offers Replace and Merge radio buttons but the importer only i
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 Replace updates in place instead of creating duplicates or failing
-- [ ] #2 Merge is implemented or removed from the wizard UI
-- [ ] #3 Dead merge_notes code removed or wired
+- [x] #1 Replace updates in place instead of creating duplicates or failing
+- [x] #2 Merge is implemented or removed from the wizard UI
+- [x] #3 Dead merge_notes code removed or wired
 <!-- AC:END -->
 
 ## Implementation Notes
 
 <!-- SECTION:IMPLEMENTATION_NOTES:BEGIN -->
-
+REPLACE is update-in-place via versioned DB APIs (conversations retire-then-recreate, one ACTIVE row); MERGE removed from the wizard and rejected before any write; dead merge_notes deleted. Commit a76d67e6be.
 <!-- SECTION:IMPLEMENTATION_NOTES:END -->
 
 ## Final Summary

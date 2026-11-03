@@ -1,13 +1,13 @@
 ---
 id: TASK-38606
 title: Close DB connections on vacuum and integrity check errors
-status: In Progress
+status: Done
 created_date: 2026-11-02 14:29
 labels:
 - bug
 - db
 priority: low
-updated_date: 2026-11-02 14:52
+updated_date: 2026-11-03 02:56
 ---
 
 ## Description
@@ -18,14 +18,14 @@ vacuum and check_integrity open short-lived connections and only close them on t
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 vacuum and check_integrity close their connection on error paths
-- [ ] #2 A test or review confirms no handle leak on failure
+- [x] #1 vacuum and check_integrity close their connection on error paths
+- [x] #2 A test or review confirms no handle leak on failure
 <!-- AC:END -->
 
 ## Implementation Notes
 
 <!-- SECTION:IMPLEMENTATION_NOTES:BEGIN -->
-
+vacuum and check_integrity close their connection in a finally on every path; spy tests count closes on success error and open-failure. Commit 630d19795b.
 <!-- SECTION:IMPLEMENTATION_NOTES:END -->
 
 ## Final Summary

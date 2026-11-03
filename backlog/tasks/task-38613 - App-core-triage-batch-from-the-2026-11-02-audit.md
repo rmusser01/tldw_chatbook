@@ -1,13 +1,13 @@
 ---
 id: TASK-38613
 title: App-core triage batch from the 2026-11-02 audit
-status: In Progress
+status: Done
 created_date: 2026-11-02 14:30
 labels:
 - cleanup
 - utils
 priority: low
-updated_date: 2026-11-02 14:52
+updated_date: 2026-11-03 02:56
 ---
 
 ## Description
@@ -18,15 +18,15 @@ Decision and cleanup items from the audit: scrypt N is 2^14 below current guidan
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 Decision recorded on scrypt cost or raised toward guidance
-- [ ] #2 Comment-preserving config write evaluated or non-preservation documented
-- [ ] #3 state package reduced to live members
+- [x] #1 Decision recorded on scrypt cost or raised toward guidance
+- [x] #2 Comment-preserving config write evaluated or non-preservation documented
+- [x] #3 state package reduced to live members
 <!-- AC:END -->
 
 ## Implementation Notes
 
 <!-- SECTION:IMPLEMENTATION_NOTES:BEGIN -->
-
+Safe arm: scrypt decision and comment-stripping tradeoff recorded in code with follow-up paths; state package reduced to UIState with the plaintext password field removed. Commit 14e57c46e2.
 <!-- SECTION:IMPLEMENTATION_NOTES:END -->
 
 ## Final Summary

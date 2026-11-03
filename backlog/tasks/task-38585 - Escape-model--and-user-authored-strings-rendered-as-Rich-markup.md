@@ -1,13 +1,13 @@
 ---
 id: TASK-38585
 title: Escape model- and user-authored strings rendered as Rich markup
-status: In Progress
+status: Done
 created_date: 2026-11-02 14:27
 labels:
 - bug
 - ui
 priority: high
-updated_date: 2026-11-02 14:50
+updated_date: 2026-11-03 02:55
 ---
 
 ## Description
@@ -18,15 +18,15 @@ Canvas card labels containing model-chosen titles crash the app with MarkupError
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 Canvas card label renders bracketed titles safely without MarkupError
-- [ ] #2 Conversation selection dialog title is escaped
-- [ ] #3 Regression tests cover both sites
+- [x] #1 Canvas card label renders bracketed titles safely without MarkupError
+- [x] #2 Conversation selection dialog title is escaped
+- [x] #3 Regression tests cover both sites
 <!-- AC:END -->
 
 ## Implementation Notes
 
 <!-- SECTION:IMPLEMENTATION_NOTES:BEGIN -->
-
+Both sites render raw strings with markup=False - verified strictly stronger than escaping on Textual 8.2.8 which would paint literal backslashes; tests assert bracketed content is preserved. Commit 774b17b7e8.
 <!-- SECTION:IMPLEMENTATION_NOTES:END -->
 
 ## Final Summary
