@@ -839,3 +839,80 @@ def test_a_held_settings_revision_spans_only_convergence(monkeypatch):
     ]
     assert settings_revision_held(None, store, chat, edited + 1)
     assert not settings_revision_held(None, store, chat, edited)
+
+
+def test_a_suspended_draft_follows_only_what_moved_under_its_own_pair():
+    """TASK-36534 review: a field the draft left alone follows the chat only
+    when the chat's own value moved since the capturing modal opened, and
+    only while the draft and the chat hold the same pair. A pick's rebased
+    values stay when nothing moved, or when the chat moved to another pair."""
+    from dataclasses import replace
+
+    from tldw_chatbook.Chat.console_context_policy import (
+        ConsoleContextPolicyOverrides,
+    )
+    from tldw_chatbook.Chat.console_session_settings import ConsoleSessionSettings
+    from tldw_chatbook.Widgets.Console.console_settings_modal import (
+        ConsoleSettingsDraftSnapshot,
+    )
+    from tldw_chatbook.Widgets.Console.console_settings_unsaved import (
+        chat_settings_values,
+        followed_suspended_draft,
+    )
+
+    old_url, new_url = "http://127.0.0.1:8000/v1", "http://127.0.0.1:8001/v1"
+    opened = ConsoleSessionSettings(
+        provider="vllm", model="old-model", base_url=old_url, temperature=0.7
+    )
+    picked = ConsoleSessionSettings(
+        provider="vllm", model="picked-model", base_url=old_url, temperature=0.4
+    )
+
+    def values(settings):
+        return chat_settings_values(settings, ConsoleContextPolicyOverrides(), None)
+
+    def snapshot(draft, edited, committed):
+        return ConsoleSettingsDraftSnapshot(
+            settings=draft,
+            context_policy_overrides=ConsoleContextPolicyOverrides(),
+            raw_values={
+                "console-settings-base-url": old_url,
+                "console-settings-temperature": "0.9",
+            },
+            provider_model_drafts={"vllm": draft.model},
+            provider_base_url_drafts={"vllm": old_url},
+            active_view="model",
+            scroll_anchor=0,
+            focus_control_id=None,
+            disclosure_state={
+                "advanced_generation": False,
+                "connection_details": False,
+            },
+            unsaved_baseline={
+                label: value
+                for label, value in values(opened).items()
+                if label in edited
+            },
+            unsaved_committed=committed,
+        )
+
+    # A pick's rebase in a chat that did not move: nothing follows it back.
+    kept = snapshot(picked, {"Model"}, values(opened))
+    assert followed_suspended_draft(kept, opened) is kept
+    # A draft that carries no committed values never follows.
+    legacy = snapshot(picked, {"Model"}, None)
+    assert followed_suspended_draft(legacy, replace(opened, base_url=new_url)) is legacy
+    # The chat moved to another pair: the pick keeps its own values.
+    other = ConsoleSessionSettings(
+        provider="ollama", model="other-model", base_url="http://127.0.0.1:11434/v1"
+    )
+    moved_away = snapshot(picked, {"Model"}, values(opened))
+    assert followed_suspended_draft(moved_away, other) is moved_away
+    # Same pair, the Endpoint moved: it follows; the Temperature edit stays.
+    left_alone = snapshot(opened, {"Temperature"}, values(opened))
+    followed = followed_suspended_draft(left_alone, replace(opened, base_url=new_url))
+    assert followed.settings.base_url == new_url
+    assert "console-settings-base-url" not in followed.raw_values
+    assert "vllm" not in followed.provider_base_url_drafts
+    assert followed.raw_values["console-settings-temperature"] == "0.9"
+    assert followed.settings.temperature == opened.temperature

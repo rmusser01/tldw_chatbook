@@ -3191,25 +3191,17 @@ class ChatScreen(BaseAppScreen):
             if session_id is None:
                 return False
             origin = store.capture_console_settings_origin(session_id)
-            if suspended_draft is not None:  # TASK-36534: untouched fields follow
-                from ...Widgets.Console.console_settings_unsaved import (
-                    followed_suspended_draft,
-                )
-
-                draft = followed_suspended_draft(
-                    suspended_draft, store.session_settings(session_id)
-                )
             settings = (
-                draft.settings
-                if draft is not None
+                suspended_draft.settings
+                if suspended_draft is not None
                 else store.session_settings(session_id)
             )
             if settings is None:
                 return False
             initial_draft = self._console_settings_initial_draft(
                 settings,
-                draft.context_policy_overrides
-                if draft is not None
+                suspended_draft.context_policy_overrides
+                if suspended_draft is not None
                 else store.session_context_policy_overrides(session_id),
                 exposed_fields=FULL_MODEL_DEFAULT_FIELDS,
             )
@@ -3228,8 +3220,8 @@ class ChatScreen(BaseAppScreen):
             return False
         active_provider = settings.provider
         active_model = settings.model
-        if draft is not None:
-            active_model = draft.provider_model_drafts.get(
+        if suspended_draft is not None:
+            active_model = suspended_draft.provider_model_drafts.get(
                 active_provider, active_model
             )
         prepared_context = await spend.prepare_console_settings_context(
@@ -3238,6 +3230,29 @@ class ChatScreen(BaseAppScreen):
         )
         if prepared_context is None:
             return False
+        # TASK-36534: one read of the chat, after preparation, is both what a
+        # suspended draft's untouched fields follow and the modal's committed.
+        committed = store.session_settings(session_id)
+        if transfer is None and suspended_draft is not None:
+            from ...Widgets.Console.console_settings_unsaved import (
+                followed_suspended_draft,
+            )
+
+            draft = followed_suspended_draft(suspended_draft, committed)
+            if draft is not suspended_draft:
+                settings = draft.settings
+                initial_draft = remember_session_pair(
+                    self._console_settings_initial_draft(
+                        settings,
+                        draft.context_policy_overrides,
+                        exposed_fields=FULL_MODEL_DEFAULT_FIELDS,
+                    ),
+                    committed,
+                )
+                active_provider = settings.provider
+                active_model = draft.provider_model_drafts.get(
+                    active_provider, settings.model
+                )
         effective_thinking_policy, context_owner_current = prepared_context
         context_estimate = self._context_spend._console_settings_context_estimate_for_session(
             session_id,
@@ -3268,8 +3283,7 @@ class ChatScreen(BaseAppScreen):
             chat_title=next(
                 (s.title for s in store.sessions() if s.id == session_id), ""
             ),
-            settings=store.session_settings(session_id)
-            or settings,  # committed: unsaved-edits baseline
+            settings=committed or settings,  # committed: unsaved-edits baseline
             origin=origin,
             initial_draft=initial_draft,
             transfer=transfer,

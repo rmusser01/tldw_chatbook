@@ -168,41 +168,54 @@ def rebased_unsaved_baseline(
 
 
 def followed_suspended_draft(snapshot: Any, committed: Any) -> Any:
-    """Move a suspended draft's untouched fields to the chat's current values.
+    """Move a suspended draft's untouched fields the chat itself moved.
 
     TASK-36534: a credential handoff's own Settings save can move an unused
-    chat to new defaults (D1), a new Endpoint or Model say. As with a pick's
-    rebase (TASK-33006.16), what moved is not the user's edit: each settings
-    field the draft left alone takes the chat's value, so the reopened modal
-    shows it and Apply cannot write the old one back. Edits stay as they are.
+    chat to new defaults (D1), a new Endpoint say. As with a pick's rebase
+    (TASK-33006.16), what moved is not the user's edit: a settings field the
+    draft left alone takes the chat's value when the chat's own value changed
+    since the capturing modal opened and the draft holds the chat's pair, so
+    the reopened modal shows it and Apply cannot write the old one back.
+    Edits stay as they are.
 
     Args:
         snapshot: A ``ConsoleSettingsDraftSnapshot``; its baseline names the
-            fields the user had edited.
+            fields the user had edited, ``unsaved_committed`` the chat's
+            committed values when the capturing modal opened.
         committed: The chat's current ``ConsoleSessionSettings``, or ``None``.
 
     Returns:
         The snapshot itself when nothing follows, else a followed copy.
     """
-    edited = snapshot.unsaved_baseline
-    if committed is None or edited is None:
+    edited, before = snapshot.unsaved_baseline, snapshot.unsaved_committed
+    if committed is None or edited is None or before is None:
         return snapshot
+    after = chat_settings_values(committed, None, None)
+
+    def moved(label: str) -> bool:
+        return label not in edited and before.get(label) != after.get(label)
+
     draft = snapshot.settings
     changes: dict[str, object] = {}
     raw = dict(snapshot.raw_values)
     models = dict(snapshot.provider_model_drafts)
     urls = dict(snapshot.provider_base_url_drafts)
-    pair = (committed.provider, committed.model)
-    if _PAIR_LABEL not in edited and pair != (draft.provider, draft.model):
+    if moved(_PAIR_LABEL):
         changes.update(provider=committed.provider, model=committed.model)
         models[committed.provider] = committed.model
+    provider = changes.get("provider", draft.provider)
+    if (provider, changes.get("model", draft.model)) != (
+        committed.provider,
+        committed.model,
+    ):
+        return snapshot  # another pair: the user's pick keeps its own values
     for name, label in _SETTINGS_FIELDS.items():
         value = getattr(committed, name)
-        if label not in edited and value != getattr(draft, name):
+        if moved(label) and value != getattr(draft, name):
             changes[name] = value
             raw.pop(f"console-settings-{name.replace('_', '-')}", None)
             if name == "base_url":
-                urls.pop(changes.get("provider", draft.provider), None)
+                urls.pop(provider, None)
     if not changes:
         return snapshot
     return replace(
@@ -238,12 +251,12 @@ def reopened_unsaved_baseline(
     Returns:
         The value each field counts as unedited at.
     """
-    moved = before is not None
+    has_committed = before is not None
     return {
         label: value
         if label not in edited
         else after.get(label)
-        if moved and before.get(label) != after.get(label)
+        if has_committed and before.get(label) != after.get(label)
         else edited[label]
         for label, value in mounted.items()
     }

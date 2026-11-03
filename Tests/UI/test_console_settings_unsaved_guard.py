@@ -807,6 +807,8 @@ async def test_credential_round_trip_keeps_the_restored_edit_unsaved(
         # model case names Model alone. It used to check a subset under Qodo
         # #2937's ruling that the Streaming re-base counted.
         assert labels == (("Temperature",) if edit == "temperature" else ("Model",))
+        sampling = ("temperature", "top_p", "min_p", "top_k", "max_tokens", "seed")
+        picked = {name: getattr(first._build_draft(), name) for name in sampling}
         await pilot.click("#console-settings-configure-credential")
 
         settings = None
@@ -838,6 +840,10 @@ async def test_credential_round_trip_keeps_the_restored_edit_unsaved(
             await pilot.pause(0.05)
         assert returned is not None
         await _settle(pilot, returned)
+        # TASK-36534 review: the chat did not move, so nothing in the draft
+        # follows it; the pick keeps its rebased sampling values.
+        draft = returned._build_draft()
+        assert {name: getattr(draft, name) for name in sampling} == picked
         assert returned._unsaved_field_labels() == labels
         assert _text(returned, "#console-settings-esc-hint") == esc_hint_copy(
             len(labels)
