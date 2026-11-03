@@ -14,7 +14,7 @@ from tldw_chatbook.Utils.character_display_text import (
     sanitize_character_display_label,
     sanitize_character_display_text,
 )
-from .ccp_messages import CharacterMessage, ViewChangeMessage
+from .ccp_messages import CharacterMessage
 
 if TYPE_CHECKING:
     from ..Screens.personas_screen import PersonasScreen
@@ -537,13 +537,6 @@ class CCPCharacterHandler:
 
         self.window.post_message(CharacterMessage.Loaded(character_id, card_data))
 
-        # Switch view to show character card
-        self.window.post_message(
-            ViewChangeMessage.Requested(
-                "character_card", {"character_id": character_id}
-            )
-        )
-
         self._display_character_card()
 
         logger.info(f"Character {character_id} loaded successfully")
@@ -697,13 +690,6 @@ class CCPCharacterHandler:
             return
 
         try:
-            # Switch view to editor
-            self.window.post_message(
-                ViewChangeMessage.Requested(
-                    "character_editor", {"character_id": self.current_character_id}
-                )
-            )
-
             # Populate editor fields
             self._populate_editor_fields()
 
@@ -1014,9 +1000,6 @@ class CCPCharacterHandler:
 
                 # Refresh the character list
                 await self.refresh_character_list()
-
-                # Switch view back to main
-                self.window.post_message(ViewChangeMessage.Requested("conversations"))
             else:
                 logger.error(f"Failed to delete character {self.current_character_id}")
 

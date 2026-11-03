@@ -1,12 +1,13 @@
 ---
 id: TASK-38597
 title: Survive broken-installed optional dependencies at boot
-status: To Do
+status: In Progress
 created_date: 2026-11-02 14:28
 labels:
 - bug
 - utils
 priority: medium
+updated_date: 2026-11-02 14:51
 ---
 
 ## Description

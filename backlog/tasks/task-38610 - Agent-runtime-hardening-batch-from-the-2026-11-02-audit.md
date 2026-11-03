@@ -1,12 +1,13 @@
 ---
 id: TASK-38610
 title: Agent runtime hardening batch from the 2026-11-02 audit
-status: To Do
+status: In Progress
 created_date: 2026-11-02 14:30
 labels:
 - hardening
 - agents
 priority: low
+updated_date: 2026-11-02 14:52
 ---
 
 ## Description

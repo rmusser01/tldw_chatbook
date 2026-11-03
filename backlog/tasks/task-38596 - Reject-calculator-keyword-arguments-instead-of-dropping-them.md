@@ -1,12 +1,13 @@
 ---
 id: TASK-38596
 title: Reject calculator keyword arguments instead of dropping them
-status: To Do
+status: In Progress
 created_date: 2026-11-02 14:28
 labels:
 - bug
 - tools
 priority: medium
+updated_date: 2026-11-02 14:51
 ---
 
 ## Description

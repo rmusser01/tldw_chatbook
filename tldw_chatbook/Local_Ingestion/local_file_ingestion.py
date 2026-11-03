@@ -651,7 +651,8 @@ def _decode_ingest_text(raw: bytes, encoding: Optional[str]) -> tuple[str, list[
         encoding: The selection. ``None``/empty/``"auto"`` mean automatic:
             strict utf-8 first, then chardet detection when available (the
             repo's incumbent detector, already used by
-            ``Utils/Utils.safe_read_file``), then utf-8-with-replace as the
+            ``Utils/Utils.FileProcessor.detect_encoding``), then
+            utf-8-with-replace as the
             last resort. Any other value is used directly, with
             ``errors="replace"`` so an explicit wrong choice degrades to
             visible replacement characters rather than failing the job.

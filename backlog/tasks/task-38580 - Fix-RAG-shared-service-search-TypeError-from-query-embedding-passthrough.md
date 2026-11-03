@@ -1,12 +1,13 @@
 ---
 id: TASK-38580
 title: Fix RAG shared-service search TypeError from query_embedding passthrough
-status: To Do
+status: In Progress
 created_date: 2026-11-02 14:26
 labels:
 - bug
 - rag
 priority: high
+updated_date: 2026-11-02 14:49
 ---
 
 ## Description

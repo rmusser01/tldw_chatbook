@@ -1,12 +1,13 @@
 ---
 id: TASK-38586
 title: Guard Watchlists sources pane against phantom row highlight
-status: To Do
+status: In Progress
 created_date: 2026-11-02 14:27
 labels:
 - bug
 - ui
 priority: high
+updated_date: 2026-11-02 14:50
 ---
 
 ## Description

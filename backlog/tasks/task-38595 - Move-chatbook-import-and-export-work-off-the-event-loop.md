@@ -1,12 +1,13 @@
 ---
 id: TASK-38595
 title: Move chatbook import and export work off the event loop
-status: To Do
+status: In Progress
 created_date: 2026-11-02 14:28
 labels:
 - bug
 - ui
 priority: medium
+updated_date: 2026-11-02 14:51
 ---
 
 ## Description

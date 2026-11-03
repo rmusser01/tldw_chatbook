@@ -1,12 +1,13 @@
 ---
 id: TASK-38599
 title: Fix UTF-8 detection for file references
-status: To Do
+status: In Progress
 created_date: 2026-11-02 14:28
 labels:
 - bug
 - chat
 priority: medium
+updated_date: 2026-11-02 14:51
 ---
 
 ## Description

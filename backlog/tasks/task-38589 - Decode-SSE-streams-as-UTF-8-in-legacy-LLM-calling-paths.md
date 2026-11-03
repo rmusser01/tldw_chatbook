@@ -1,12 +1,13 @@
 ---
 id: TASK-38589
 title: Decode SSE streams as UTF-8 in legacy LLM calling paths
-status: To Do
+status: In Progress
 created_date: 2026-11-02 14:27
 labels:
 - bug
 - llm
 priority: medium
+updated_date: 2026-11-02 14:50
 ---
 
 ## Description

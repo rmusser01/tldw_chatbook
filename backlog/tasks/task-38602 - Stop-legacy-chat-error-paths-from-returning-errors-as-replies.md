@@ -1,12 +1,13 @@
 ---
 id: TASK-38602
 title: Stop legacy chat error paths from returning errors as replies
-status: To Do
+status: In Progress
 created_date: 2026-11-02 14:29
 labels:
 - bug
 - chat
 priority: low
+updated_date: 2026-11-02 14:51
 ---
 
 ## Description

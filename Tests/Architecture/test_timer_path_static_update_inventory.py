@@ -1671,12 +1671,10 @@ EXPECTED_CLOCK_ROOTS: frozenset[tuple[str, str, str | None, str]] = frozenset(
             "BaseTamagotchi",
             "next_frame",
         ),
-        (
-            "set_interval",
-            "tldw_chatbook/Widgets/activity_log.py",
-            "ActivityLogWidget",
-            "_update_timestamps",
-        ),
+        # -- Widgets/activity_log.py: its EXPECTED_CLOCK_ROOTS pin was removed
+        #    when the module was deleted with its dedicated tests (TASK-38605
+        #    dead-code purge; no importer anywhere in the repo). The file no
+        #    longer exists, so it contributes no clock roots or update sites.
         (
             "set_interval",
             "tldw_chatbook/Widgets/audio_troubleshooting_dialog.py",

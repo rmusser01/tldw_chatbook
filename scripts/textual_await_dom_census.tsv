@@ -54,7 +54,6 @@ tldw_chatbook/UI/MCP_Modules/mcp_workbench.py::on_mcp_inspector_revoke_session_a
 tldw_chatbook/UI/MCP_Modules/mcp_workbench.py::on_mcp_permissions_mode_state_cycle_requested	1
 tldw_chatbook/UI/MCP_Modules/mcp_workbench.py::on_mcp_rail_scope_changed	1
 tldw_chatbook/UI/MCP_Modules/mcp_workbench.py::select_tool_policy_profile	1
-tldw_chatbook/UI/Outputs_Panel.py::_run_operation	1
 tldw_chatbook/UI/Persona_Modules/persona_save_completion.py::finish_profile_save	2
 tldw_chatbook/UI/Research_Workspace_Modules/add_source_modal.py::_search_catalog	4
 tldw_chatbook/UI/STTS_Window.py::_import_from_conversation_worker	1

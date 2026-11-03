@@ -13,7 +13,6 @@ from tldw_chatbook.UI.CCP_Modules import (
     CCPCharacterHandler,
     CCPPersonaHandler,
     PersonaMessage,
-    ViewChangeMessage,
 )
 from tldw_chatbook.UI.CCP_Modules.ccp_character_handler import fetch_all_characters
 from tldw_chatbook.tldw_api.character_persona_schemas import (
@@ -274,12 +273,6 @@ class TestCCPPersonaHandler:
         editor.load_persona.assert_called_once()
         payload = editor.load_persona.call_args[0][0]
         assert payload["mode"] == "session_scoped"
-        view_messages = [
-            args[0]
-            for args, _ in mock_window.post_message.call_args_list
-            if args and isinstance(args[0], ViewChangeMessage.Requested)
-        ]
-        assert view_messages[-1].view_name == "persona_editor"
 
     @pytest.mark.asyncio
     async def test_save_persona_creates_profile_via_scope_service(self, mock_window):

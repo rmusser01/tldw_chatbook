@@ -388,28 +388,3 @@ class SidebarMessage(CCPMessage):
         def __init__(self, search_type: str, sender: Any = None) -> None:
             super().__init__(sender)
             self.search_type = search_type
-
-
-class ViewChangeMessage(CCPMessage):
-    """Messages for view changes in the main content area."""
-
-    class Requested(CCPMessage):
-        """View change requested."""
-
-        def __init__(
-            self,
-            view_name: str,
-            context: Optional[Dict[str, Any]] = None,
-            sender: Any = None,
-        ) -> None:
-            super().__init__(sender)
-            self.view_name = view_name  # "conversations", "character_card", "character_editor", "prompt_editor", etc.
-            self.context = context or {}
-
-    class Changed(CCPMessage):
-        """View was changed."""
-
-        def __init__(self, old_view: str, new_view: str, sender: Any = None) -> None:
-            super().__init__(sender)
-            self.old_view = old_view
-            self.new_view = new_view

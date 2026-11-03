@@ -7,7 +7,6 @@ import pytest
 from textual.app import App
 from textual.widgets import Input, Select
 
-from tldw_chatbook.Scheduling.events import ReminderFormSubmitted
 from tldw_chatbook.Scheduling.models import ReminderTask, ScheduleKind
 from tldw_chatbook.UI.Screens.scheduling.forms.reminder_form import (
     ReminderForm,
@@ -183,14 +182,24 @@ async def test_editing_one_time_task_to_custom_cron_saves_the_typed_cron():
 
 
 class FormTestApp(App):
-    """Minimal app used to host the modal form under test."""
+    """Minimal app used to host the modal form under test.
+
+    Records the form's dismiss result the same way the workbench consumes
+    it (a ``push_screen`` callback), since the form reports its payload
+    through ``dismiss(form_data)``.
+    """
 
     def __init__(self) -> None:
         super().__init__()
         self.submitted: dict | None = None
 
-    def on_reminder_form_submitted(self, event: ReminderFormSubmitted) -> None:
-        self.submitted = event.form_data
+    def push_screen(self, screen, callback=None, wait_for_dismiss=False, **kwargs):
+        if callback is None:
+            callback = self._record_submitted
+        return super().push_screen(screen, callback, wait_for_dismiss, **kwargs)
+
+    def _record_submitted(self, result: dict | None) -> None:
+        self.submitted = result
 
 
 @pytest.mark.asyncio

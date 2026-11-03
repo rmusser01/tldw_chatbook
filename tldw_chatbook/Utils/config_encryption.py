@@ -205,32 +205,6 @@ class ConfigEncryption:
             return False
         return payload[:1] == bytes([self.LEGACY_VERSION])
 
-    def encrypt_config(self, config: Dict[str, Any], password: str) -> Dict[str, Any]:
-        """
-        Encrypt all string values in a configuration dictionary.
-
-        Args:
-            config: Dictionary of configuration values
-            password: Password to use for encryption
-
-        Returns:
-            Dictionary with encrypted values
-        """
-        encrypted_config = {}
-
-        for key, value in config.items():
-            if isinstance(value, str) and value and not self.is_encrypted(value):
-                # Encrypt non-empty strings that aren't already encrypted
-                encrypted_config[key] = self.encrypt_value(value, password)
-            elif isinstance(value, dict):
-                # Recursively encrypt nested dictionaries
-                encrypted_config[key] = self.encrypt_config(value, password)
-            else:
-                # Keep non-string values as-is
-                encrypted_config[key] = value
-
-        return encrypted_config
-
     def decrypt_config(self, config: Dict[str, Any], password: str) -> Dict[str, Any]:
         """
         Decrypt all encrypted values in a configuration dictionary.
