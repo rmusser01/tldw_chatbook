@@ -793,21 +793,21 @@ def test_a_held_settings_revision_spans_only_convergence(monkeypatch):
         _console_new_chat_default_generation=lambda: 0,
         _provider_readiness_app_config=dict,  # a new mapping per read
         _pristine_defaults_checked=None,
-        _default_convergence=None,
+        _default_convergences={},
         _notify_stale_default_provider_swap=lambda *_args: None,
     )
 
-    def converge(model: str) -> None:
+    def converge(model: str, target: str = chat) -> None:
         monkeypatch.setattr(
             session_module,
             "blank_console_session_settings",
             lambda _config: ConsoleSessionSettings(provider="openai", model=model),
         )
-        session = next(s for s in store.sessions() if s.id == chat)
+        session = next(s for s in store.sessions() if s.id == target)
         ConsoleSessionController._maybe_refresh_stale_default_console_settings(
             controller, store, session
         )
-        assert store.session_settings(chat).model == model
+        assert store.session_settings(target).model == model
 
     def held(revision: int) -> bool:
         return settings_revision_held(controller, store, chat, revision)
@@ -816,6 +816,10 @@ def test_a_held_settings_revision_spans_only_convergence(monkeypatch):
     assert held(start) and not held(start + 1)
     converge("gpt-4o")
     converge("gpt-4.1")
+    assert [held(start + step) for step in range(4)] == [True, True, True, False]
+    # Another unused chat converging meanwhile leaves this chat's run alone.
+    other = store.create_session(settings=unused, canonical_settings_baseline=unused)
+    converge("gpt-4.1", other.id)
     assert [held(start + step) for step in range(4)] == [True, True, True, False]
 
     store.set_session_context_policy_overrides(  # the same chat, edited elsewhere

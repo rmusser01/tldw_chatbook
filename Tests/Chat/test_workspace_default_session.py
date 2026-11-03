@@ -292,7 +292,7 @@ def test_provider_setup_recovery_keeps_created_persona_prompt(monkeypatch):
         _console_new_chat_default_generation=lambda: 0,
         _provider_readiness_app_config=dict,
         _pristine_defaults_checked=None,
-        _default_convergence=None,
+        _default_convergences={},
         _notify_stale_default_provider_swap=lambda *_args: None,
     )
     monkeypatch.setattr(
