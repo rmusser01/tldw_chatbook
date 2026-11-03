@@ -1,10 +1,10 @@
 ---
 id: TASK-36523
 title: css/main.tcss imports two deleted sheets and CSS-MODULAR.md describes a CSS build the app no longer has
-status: Done
+status: In Progress
 assignee:
 - '@claude'
-updated_date: 2026-11-03 07:18
+updated_date: 2026-11-03 07:24
 created_date: 2026-10-24 00:26
 labels:
 - follow-up
@@ -34,12 +34,15 @@ The app does not load `main.tcss`. Its stylesheets come from `build_css.py`'s ow
 `css/CSS-MODULAR.md` tells developers the opposite:
 - It shows `main.tcss` as the "Main entry point" (:24) and says "Updated app.py to use main.tcss" (:257).
 - Its "Automatic CSS Building" section (:402-415) says that `app.py` checks module timestamps at startup, rebuilds with `build_css.py`, and falls back to legacy CSS from Constants. `app.py` only reads paths from `build_css` (`screen_css_paths`, `widget_defaults_sources`). There is no startup rebuild.
+
+Correction (2026-11-03): there is a startup rebuild. It lives in `tldw_chatbook/app_entry.py`, moved from `app.py` by TASK-33011. On source checkouts, `main_cli_runner`, `_run_module_main` and `get_app` call `_generated_css_is_stale()` and run `build_css.py` when it reports stale sheets.
 <!-- SECTION:DESCRIPTION:END -->
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
 - [x] #1 No .tcss file in the tree imports a sheet that does not exist, and main.tcss is either removed together with its test reference or marked as not loaded by the app
 - [x] #2 CSS-MODULAR.md describes how the app's CSS is built and loaded today, including how the bundle is regenerated and checked (preflight)
+- [ ] #3 The CSS build's own messages and helper scripts describe the current build: no stale app.py instruction, no timestamp claim the bundle header no longer carries, and no helper that runs an interpreter below the project's Python floor
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -50,6 +53,9 @@ The app does not load `main.tcss`. Its stylesheets come from `build_css.py`'s ow
 3. Delete `main.tcss` (a hand-kept copy of `CSS_MODULES` that already lacks most modules) and its test reference; the guard goes green.
 4. Rewrite `CSS-MODULAR.md` to describe today's build and load path, the boot rebuild, and how the bundle is regenerated and checked (`check_bundle_sync.py`, preflight, CI).
 5. Run the covering tests and preflight.
+6. (Coordinator follow-up, AC #3.) Move the guard into `Tests/UI/test_css_staleness_manifest.py`, a whole-file UI census entry, so a PR lane runs it, and show it red there with a temporary bad `@import`.
+7. Replace `build_css.py` `main()`'s stale "Update app.py" instructions and the docstrings' stale claims: the timestamp claim in `check_bundle_sync.py`, and the build's list of generated files.
+8. `build_css.sh` is referenced by `Docs/Development` pages, so keep it. Make it run an interpreter at or above the 3.12 floor (`$PYTHON`, then the repo `.venv`), as `CSS-MODULAR.md` says, and mention it there.
 <!-- SECTION:PLAN:END -->
 
 ## Implementation Notes
