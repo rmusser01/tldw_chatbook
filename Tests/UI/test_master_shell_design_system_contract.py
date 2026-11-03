@@ -68,7 +68,6 @@ DESIGN_SYSTEM_SPEC = Path(
 DESIGN_SYSTEM_TCSS = Path("tldw_chatbook/css/components/_agentic_terminal.tcss")
 DS_PRIMITIVES_TCSS = Path("tldw_chatbook/css/components/_ds_primitives.tcss")
 CORE_VARIABLES_TCSS = Path("tldw_chatbook/css/core/_variables.tcss")
-MAIN_TCSS = Path("tldw_chatbook/css/main.tcss")
 LOADED_TCSS = Path("tldw_chatbook/css/tldw_cli_modular.tcss")
 BUILD_CSS_PY = Path("tldw_chatbook/css/build_css.py")
 APP_PY = Path("tldw_chatbook/app.py")
@@ -100,10 +99,8 @@ def test_agentic_terminal_design_system_spec_is_present():
 def test_agentic_terminal_tcss_module_is_implemented_and_imported():
     assert DESIGN_SYSTEM_TCSS.exists()
     class_text = DESIGN_SYSTEM_TCSS.read_text(encoding="utf-8")
-    main_text = MAIN_TCSS.read_text(encoding="utf-8")
     build_text = BUILD_CSS_PY.read_text(encoding="utf-8")
 
-    assert '@import "./components/_agentic_terminal.tcss";' in main_text
     assert '"components/_agentic_terminal.tcss"' in build_text
     # ADR-161 task 10: the design system's vocabulary was carved out of the
     # monolith into single-purpose sheets -- the ds-* primitives family

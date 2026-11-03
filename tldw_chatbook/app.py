@@ -899,16 +899,16 @@ class TldwCli(
             logger.warning("Could not stamp the Library lifecycle for a new profile.")
 
     def _get_default_css(self) -> list[tuple[tuple[str, str], str, int, str]]:
-        """Add the consolidated widget-defaults stylesheet as one CSS source.
+        """Add the two consolidated widget-defaults stylesheets as CSS sources.
 
         TASK-15450: Textual registers a separate stylesheet source per widget
         class that declares ``DEFAULT_CSS``, and its parse cache is an
         ``LRUCache(64)``. A full destination tour used to end at 94 sources, past
         which *every* ``Stylesheet.parse()`` ran fully cold (125-380 ms measured)
         on each first mount of a not-yet-seen widget class. The widget CSS now
-        lives in ``css/widget_defaults.tcss``, generated from the class-level
-        ``BUNDLED_CSS`` declarations by ``build_css.py``, and is registered here
-        as a single source.
+        lives in ``css/widget_defaults_{self,scoped}.tcss``, generated from the
+        class-level ``BUNDLED_CSS`` declarations by ``build_css.py``, and is
+        registered here as those two sources.
 
         The sheets are added here (rather than as a plain ``DEFAULT_CSS`` class
         attribute) for two reasons: they are read at app start, so a boot-time

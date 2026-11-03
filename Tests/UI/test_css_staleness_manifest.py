@@ -15,6 +15,7 @@ from __future__ import annotations
 import io
 import json
 import os
+import re
 import sys
 import time
 from pathlib import Path
@@ -391,3 +392,17 @@ class TestBuilderIntegration:
         stale, reason = _generated_css_is_stale(package)
         assert stale
         assert "_base.tcss" in reason
+
+
+def test_no_stylesheet_uses_import() -> None:
+    """TASK-36523: Textual CSS rejects ``@import`` with a ``TokenError``, so a
+    sheet that uses one can never be loaded. ``css/main.tcss`` was such a
+    sheet, and it went on importing two deleted sheets unnoticed. The app's
+    modules are listed in ``build_css.CSS_MODULES``."""
+    package = Path(build_css.__file__).parents[1]
+    offenders = [
+        str(path.relative_to(package))
+        for path in sorted(package.rglob("*.tcss"))
+        if re.search(r"^\s*@import\b", path.read_text(encoding="utf-8"), re.M)
+    ]
+    assert not offenders, offenders

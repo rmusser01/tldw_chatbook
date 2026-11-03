@@ -10,17 +10,18 @@ not yet seen this session first mounts.
 
 The fix is to stop those classes registering their own source: a widget declares
 ``BUNDLED_CSS`` (or a screen ``BUNDLED_SCREEN_CSS``) instead of
-``DEFAULT_CSS``/``CSS``, and this module lifts every such block into a single
-generated stylesheet at build time.  ``build_css.py`` writes:
+``DEFAULT_CSS``/``CSS``, and this module lifts every such block into generated
+stylesheets at build time.  ``build_css.py`` writes:
 
-* ``widget_defaults.tcss`` -- the ``BUNDLED_CSS`` blocks, loaded by the app as
-  *one* default-CSS source (``TldwCli.DEFAULT_CSS``), which keeps them in
-  Textual's low-priority "widget defaults" origin tier exactly as before.
-* ``components/_bundled_screen_css.tcss`` -- the ``BUNDLED_SCREEN_CSS`` blocks,
-  concatenated last into the app bundle, which keeps them in the high-priority
-  "app CSS" tier exactly as before (screen ``CSS`` is *not* default CSS) while
-  removing the full cold ``Stylesheet.reparse()`` Textual runs on a modal's
-  first open.
+* ``widget_defaults_{self,scoped}.tcss`` -- the ``BUNDLED_CSS`` blocks, which
+  ``TldwCli._get_default_css`` registers as two default-CSS sources
+  (``build_css.widget_defaults_sources``).  That keeps them in Textual's
+  low-priority "widget defaults" origin tier exactly as before.
+* ``screen_css_{scoped,self}.tcss`` -- the ``BUNDLED_SCREEN_CSS`` blocks, which
+  ``TldwCli.CSS_PATH`` loads either side of the app bundle.  That keeps them in
+  the high-priority "app CSS" tier exactly as before (screen ``CSS`` is *not*
+  default CSS) while removing the full cold ``Stylesheet.reparse()`` Textual
+  runs on a modal's first open.
 
 Scoping is preserved by rewriting the selectors the same way Textual would.
 ``Widget.SCOPED_CSS`` defaults to ``True``, so Textual prefixes every top-level
@@ -50,10 +51,10 @@ every tie it now finds itself in, which is arranged per tier:
 * widget defaults: the scoped sheet is registered with a tie-breaker below every
   other default-CSS source (Textual's own are ``-(MRO depth)``), so it loses
   ties on the tie-breaker.
-* app CSS (screens): the scoped sheet is concatenated near the *top* of the
-  bundle and the self sheet at the very *bottom*, so the scoped rules lose ties
-  on source order while the self rules keep winning them as they did when
-  Textual appended a screen's ``CSS`` at first open.
+* app CSS (screens): the scoped sheet loads *before* the app bundle and the
+  self sheet *after* it (``build_css.screen_css_paths``), so the scoped rules
+  lose ties on source order while the self rules keep winning them as they did
+  when Textual appended a screen's ``CSS`` at first open.
 
 **That compensation is one-directional, and the limit is worth stating.**  It
 handles LOSE -> TIE.  It cannot handle TIE -> WIN: a rule shifted from ``S`` to
