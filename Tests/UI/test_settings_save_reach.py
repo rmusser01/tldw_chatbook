@@ -663,7 +663,9 @@ async def test_a_blank_chats_settings_draft_survives_its_own_credential_save(
         )
         assert returned._current_model_value() == "gpt-4.1"
         assert returned.query_one("#console-settings-temperature", Input).value == "0.9"
-        assert set(returned._unsaved_field_labels()) >= {"Temperature"}
+        # Its markers compare with the converged chat: Model now equals the
+        # chat's own, so only the Temperature edit is still unsaved.
+        assert returned._unsaved_field_labels() == ("Temperature",)
 
 
 def test_a_held_settings_revision_spans_only_convergence(monkeypatch):

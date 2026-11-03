@@ -568,8 +568,8 @@ From Chat settings no **Return to Chat settings** shows until you save (Return
 without saving shows while you have unsaved edits, below); the button then
 reopens the dialog with your unsaved edits. It does so too when the save makes
 that pair the default for new chats (below) and the chat, still unused, moves
-to it. If
-the chat's own settings change some other way meanwhile, the dialog does not
+to it; an edit the chat now holds, such as that model, no longer counts as
+unsaved. If the chat's own settings change some other way meanwhile, the dialog does not
 reopen, and the Console says "Chat settings changed while credentials were
 open. The earlier draft was not restored.". From the
 Console the button reads **Return to Console** and is there as soon as you

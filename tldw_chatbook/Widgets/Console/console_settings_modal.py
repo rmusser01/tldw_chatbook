@@ -579,6 +579,8 @@ class ConsoleSettingsDraftSnapshot:
     # The first modal's unsaved-edits baseline (TASK-33003.5); optional
     # because a draft captured before the modal's initial sync has none.
     unsaved_baseline: Mapping[str, object] | None = None
+    # The chat's values then, so a reopen can tell what moved (TASK-36534).
+    unsaved_committed: Mapping[str, object] | None = None
 
     def __repr__(self) -> str:
         """Return diagnostic metadata without exposing Console-owned content."""
@@ -659,9 +661,10 @@ class ConsoleSettingsDraftSnapshot:
         object.__setattr__(self, "provider_model_drafts", model_drafts)
         object.__setattr__(self, "provider_base_url_drafts", base_url_drafts)
         object.__setattr__(self, "disclosure_state", disclosure_state)
-        object.__setattr__(
-            self, "unsaved_baseline", snapshot_unsaved_baseline(self.unsaved_baseline)
-        )
+        for name in ("unsaved_baseline", "unsaved_committed"):
+            object.__setattr__(
+                self, name, snapshot_unsaved_baseline(getattr(self, name))
+            )
 
     def to_mapping(self) -> dict[str, object]:
         """Return a structurally detached primitive mapping for screen state."""
@@ -680,6 +683,7 @@ class ConsoleSettingsDraftSnapshot:
             "focus_control_id": self.focus_control_id,
             "disclosure_state": dict(self.disclosure_state),
             "unsaved_baseline": snapshot_unsaved_baseline(self.unsaved_baseline),
+            "unsaved_committed": snapshot_unsaved_baseline(self.unsaved_committed),
         }
 
     @classmethod
@@ -700,7 +704,7 @@ class ConsoleSettingsDraftSnapshot:
             "disclosure_state",
         }
         if not isinstance(source, Mapping) or (
-            set(source) - {"unsaved_baseline"} != required_keys
+            set(source) - {"unsaved_baseline", "unsaved_committed"} != required_keys
         ):
             return None
         if (
@@ -741,6 +745,7 @@ class ConsoleSettingsDraftSnapshot:
                 focus_control_id=source["focus_control_id"],  # type: ignore[arg-type]
                 disclosure_state=dict(disclosure_state),
                 unsaved_baseline=source.get("unsaved_baseline"),
+                unsaved_committed=source.get("unsaved_committed"),
             )
         except (ContextPolicyError, TypeError, ValueError):
             return None
@@ -2498,6 +2503,7 @@ class ConsoleSettingsModal(
                 ),
             },
             unsaved_baseline=self._unsaved_baseline,
+            unsaved_committed=self._unsaved_committed_values(),
         )
 
     def _context_state_with_overrides(

@@ -620,7 +620,10 @@ _BUDGETS: dict[str, int] = {
     # TASK-35578: 6,159; the dead _snapshot_model went, the saved-list note came.
     # Its review: 6,162; a named custom endpoint's listing gets its own note.
     # 2026-10-31 PR3295 R1: user-waived cap; exact remembered-overhead tooltip measurement.
-    "tldw_chatbook/Widgets/Console/console_settings_modal.py": 6168,
+    # TASK-36534, 2026-11-03: size waiver (owner rule: a fix over a size ratchet
+    # raises the row with a dated comment); 6168 -> 6174, the suspended draft
+    # carries the chat's values (unsaved_committed). Exact measurement.
+    "tldw_chatbook/Widgets/Console/console_settings_modal.py": 6174,
     # PR3295, 2026-10-31: user size waiver; exact integrated measurement.
     "tldw_chatbook/UI/MCP_Modules/mcp_workbench.py": 7010,
     # Tier-2 review S03/S04: the two largest TTS modules had no row at all,

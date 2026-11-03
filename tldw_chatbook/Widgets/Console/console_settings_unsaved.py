@@ -166,6 +166,35 @@ def rebased_unsaved_baseline(
     return rebased
 
 
+def committed_unsaved_baseline(
+    baseline: Mapping[str, object],
+    before: Mapping[str, object] | None,
+    after: Mapping[str, object],
+) -> dict[str, object]:
+    """Return a suspended draft's baseline after the chat's own values moved.
+
+    TASK-36534: a credential handoff's own Settings save can move an unused
+    chat to new defaults (D1) while its draft is suspended. A field that move
+    changed counts as unedited at the chat's new value, so one the draft
+    already holds is not unsaved; every other field keeps its carried baseline.
+
+    Args:
+        baseline: The baseline the suspended draft carries.
+        before: The chat's values when the draft was suspended, or ``None``
+            for a draft that carries none.
+        after: The chat's values now.
+
+    Returns:
+        A new baseline.
+    """
+    if before is None:
+        return dict(baseline)
+    return {
+        label: value if before.get(label) == after.get(label) else after.get(label)
+        for label, value in baseline.items()
+    }
+
+
 def snapshot_unsaved_baseline(value: object) -> dict[str, object] | None:
     """Return a detached copy of a suspended draft's unsaved baseline.
 
@@ -333,20 +362,27 @@ class ConsoleSettingsUnsavedGuardMixin:
         values[_SETTINGS_FIELDS["streaming"]] = self._streaming_draft
         return values
 
+    def _unsaved_committed_values(self) -> dict[str, object]:
+        """The chat's committed values, as ``chat_settings_values`` keys them."""
+        settings, context_state, name = self._unsaved_committed
+        overrides = self._draft.context_policy_overrides
+        if context_state is not None:
+            overrides = context_state.overrides
+        return chat_settings_values(settings, overrides, name)
+
     def _capture_unsaved_baseline(self) -> None:
         """Record the unedited values once the initial control sync is done."""
         carried = getattr(self._suspended_draft, "unsaved_baseline", None)
         if carried is not None:
-            self._unsaved_baseline = dict(carried)
+            self._unsaved_baseline = committed_unsaved_baseline(
+                carried,
+                self._suspended_draft.unsaved_committed,
+                self._unsaved_committed_values(),
+            )
             self._sync_unsaved_hint()
             return
-        settings, context_state, name = self._unsaved_committed
         opened_overrides = self._draft.context_policy_overrides
-        committed = chat_settings_values(
-            settings,
-            opened_overrides if context_state is None else context_state.overrides,
-            name,
-        )
+        committed = self._unsaved_committed_values()
         opened = chat_settings_values(
             self._settings, opened_overrides, self._user_display_name_override
         )

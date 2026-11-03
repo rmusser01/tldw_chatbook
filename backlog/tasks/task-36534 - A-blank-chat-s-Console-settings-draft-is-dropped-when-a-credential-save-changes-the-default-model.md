@@ -4,7 +4,7 @@ title: A blank chat's Console settings draft is dropped when a credential save c
 status: Done
 assignee:
 - '@claude'
-updated_date: 2026-11-03 13:35
+updated_date: 2026-11-03 14:15
 created_date: 2026-10-24 01:37
 labels:
 - follow-up
@@ -57,9 +57,15 @@ Fix: the session controller records, per chat, the run of settings revisions tha
 
 Tests: `Tests/UI/test_settings_save_reach.py::test_a_blank_chats_settings_draft_survives_its_own_credential_save` (whole-file census entry; real router, real Settings writer, `@private_profile_test`) has three cases: own-save (draft back: model and the Temperature edit, chat converged), settings-elsewhere and context-elsewhere (refused with the message; the Context edit leaves the chat unused, so D1 still moves it). The chat already took one saved default before the handoff, as after first-run setup.
 
-Red before the fix: own-save failed on `assert not was_refused()` (refusal shown); a first exact-span version of the fix also failed it once the earlier convergence was added, which is why the run is a range. The two elsewhere cases pass at base and head. The 36534 workaround in `test_credential_round_trip_keeps_the_restored_edit_unsaved` is gone (blank chat, asserts nothing is applied after Return); its `[model]` case fails at base at `assert returned is not None` and passes with the fix.
+Red before the fix: own-save failed on `assert not was_refused()` (refusal shown); a first exact-span version of the fix also failed it once the earlier convergence was added, which is why the run is a range. The two elsewhere cases pass at base and head.
 
 Covering runs (load 12-26 on 18 CPUs, `-n 4`): the return/convergence slice of `test_console_session_settings.py`/`test_console_native_chat_flow.py` plus six whole files, 50 failures at head, all also red at base (37 `RecoveryRequired`, the rest pre-existing); base adds only the two expected reds. Four return-path tests in `test_console_native_chat_flow.py` (incl. `terminal_rejection_consumes_once[stale_revision]`) pass under a temporary `@private_profile_test` marker, since removed. `Tests/Architecture` serial: 41 failures, the same 41 node ids and messages at base. Preflight passes.
 
-Size: `chat_screen.py` 24590 -> 24598 and `session.py` 6973 -> 7009, rows re-pinned with dated waiver comments. Two hand-built controller hosts (`test_workspace_default_session.py`, `test_console_readiness_config_projection.py`) gain `_default_convergences`. User Guide: `Docs/User_Guide/settings.md` (Return to Chat settings).
+Size: `chat_screen.py` 24590 -> 24598, `session.py` 6973 -> 7009 and `console_settings_modal.py` 6168 -> 6174, rows re-pinned with dated waiver comments. Two hand-built controller hosts (`test_workspace_default_session.py`, `test_console_readiness_config_projection.py`) gain `_default_convergences`. User Guide: `Docs/User_Guide/settings.md` (Return to Chat settings).
+
+Review follow-ups (coordinator, same PR):
+- `test_a_held_settings_revision_spans_only_convergence` (same file) drives the controller's real convergence recording and `settings_revision_held`: held at the run's start, inside it and at its end, not ahead of the chat; an edit made elsewhere between two convergences ends the run for good. Red with the start-of-run check removed (`[True, True, True, True, True] == [False, ...]`) and with the run extension removed (`[False, True, True, False] == [True, ...]`), both temporary edits reverted.
+- Unsaved markers after convergence: the reopened modal used the first modal's baseline as-is, so Model read unsaved although the chat now held it. The suspended draft now also carries the chat's values when it was captured (`ConsoleSettingsDraftSnapshot.unsaved_committed`), and the reopened modal rebases the carried baseline with `committed_unsaved_baseline()` (`console_settings_unsaved.py`): a field whose committed value moved counts as unedited at the chat's new value; every other field keeps its carried baseline (which allows for display normalization, such as a blank endpoint shown as its default). The AC#1 test now asserts the reopened labels are exactly `("Temperature",)`; red before at `('Model', 'Temperature') == ('Temperature',)`. A field the user did not edit but convergence changed reads unsaved if the draft still holds the old value, since Apply would write it back; that does not occur in this flow (the pick already rebased the draft to the new model's values).
+- That change makes a blank chat's Model edit stop counting once the save converges the chat to it, so `test_credential_round_trip_keeps_the_restored_edit_unsaved` keeps its chat with settings of its own after all (its `[model]` case pins that a Model edit survives the round trip); only its comment changed. `test_snapshot_carries_the_unsaved_baseline_and_refuses_a_malformed_one` covers `unsaved_committed` the same way.
+- Re-run (load 11-15): the covering set, now including the snapshot/unsaved users, 59 failures at head, all red at base; base adds only the three expected reds. The Architecture files that scan the changed modules: 19 failures, all in the base-red set. Ratchets and preflight pass.
 

@@ -188,24 +188,26 @@ def test_snapshot_carries_the_unsaved_baseline_and_refuses_a_malformed_one() -> 
         disclosure_state={"advanced_generation": False, "connection_details": False},
     )
     mapping = snapshot.to_mapping()
-    # A draft captured before the modal's initial sync carries no baseline.
-    legacy = {key: value for key, value in mapping.items() if key != "unsaved_baseline"}
-    assert ConsoleSettingsDraftSnapshot.from_mapping(legacy).unsaved_baseline is None
-    for baseline in (
-        chat_settings_values(settings, ConsoleContextPolicyOverrides(), "Ada"),
-        chat_settings_values(settings, None, None),
-    ):
-        restored = ConsoleSettingsDraftSnapshot.from_mapping(
-            dict(mapping, unsaved_baseline=baseline)
-        )
-        assert restored is not None and restored.unsaved_baseline == baseline
-    for malformed in ({"Not a field": 1}, {"Model": object()}, ["Model"]):
-        assert (
-            ConsoleSettingsDraftSnapshot.from_mapping(
-                dict(mapping, unsaved_baseline=malformed)
+    # TASK-36534: the chat's values when it was captured travel the same way.
+    for key in ("unsaved_baseline", "unsaved_committed"):
+        # A draft captured before the modal's initial sync carries no baseline.
+        legacy = {name: value for name, value in mapping.items() if name != key}
+        assert getattr(ConsoleSettingsDraftSnapshot.from_mapping(legacy), key) is None
+        for baseline in (
+            chat_settings_values(settings, ConsoleContextPolicyOverrides(), "Ada"),
+            chat_settings_values(settings, None, None),
+        ):
+            restored = ConsoleSettingsDraftSnapshot.from_mapping(
+                dict(mapping, **{key: baseline})
             )
-            is None
-        )
+            assert restored is not None and getattr(restored, key) == baseline
+        for malformed in ({"Not a field": 1}, {"Model": object()}, ["Model"]):
+            assert (
+                ConsoleSettingsDraftSnapshot.from_mapping(
+                    dict(mapping, **{key: malformed})
+                )
+                is None
+            )
 
 
 @pytest.mark.asyncio
@@ -763,6 +765,9 @@ async def test_credential_round_trip_keeps_the_restored_edit_unsaved(
     app.chat_api_provider_value = "openai"
     app.chat_api_model_value = "gpt-5"
     app.providers_models = {"openai": ["gpt-5", "model-b"]}
+    committed = ConsoleSessionSettings(
+        provider="openai", model="gpt-5", temperature=0.7
+    )
 
     async with app.run_test(size=(211, 44)) as pilot:
         console = None
@@ -777,9 +782,13 @@ async def test_credential_round_trip_keeps_the_restored_edit_unsaved(
         )
         store = console._ensure_console_chat_store()
         session = store.ensure_session()
-        # A blank chat: the model save converges it to model-b (ADR-095 D1),
-        # which TASK-36534 no longer counts as a change made while away.
-        # Publish its revision before opening the owner-checked settings modal.
+        # The chat has its own settings, so a saved default never converges
+        # it and the Model edit still counts after the round trip. A blank
+        # chat takes the saved model (ADR-095 D1), which is then no longer an
+        # unsaved edit (TASK-36534; test_settings_save_reach.py pins that).
+        assert store.replace_session_settings(session.id, committed).has_user_work
+        # Directly replacing settings can leave a mount read on the old revision.
+        # Publish this revision before opening the owner-checked settings modal.
         await _sync_console_control_bar_now(console)
         assert await console._open_console_settings() is True
         for _ in range(80):
@@ -828,7 +837,6 @@ async def test_credential_round_trip_keeps_the_restored_edit_unsaved(
             await pilot.pause(0.05)
         assert returned is not None
         await _settle(pilot, returned)
-        held = store.session_settings(session.id)
         assert returned._unsaved_field_labels() == labels
         assert _text(returned, "#console-settings-esc-hint") == esc_hint_copy(
             len(labels)
@@ -839,7 +847,7 @@ async def test_credential_round_trip_keeps_the_restored_edit_unsaved(
         assert _text(returned, "#console-settings-close-message").startswith(
             unsaved_prompt_copy(labels).split("\n")[0]
         )
-        assert store.session_settings(session.id) == held
+        assert store.session_settings(session.id) == committed
 
 
 def _flip_streaming(modal: ConsoleSettingsModal) -> None:
