@@ -958,6 +958,29 @@ def test_git_diff_refuses_when_the_withheld_check_cannot_be_bounded(
         git_diff(repo, sensitive_exclusions=rules)
 
 
+def test_a_byte_exact_exclusion_re_encodes_names_as_they_were_decoded(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The scan decodes git's names as UTF-8 with surrogateescape, so the
+    brackets must re-encode them the same way. ``os.fsencode`` follows the
+    filesystem encoding: under a Latin-1 one, ``é`` became ``[\\xe9]``, the
+    stored ``\\xc3\\xa9`` stayed in the diff and every git_diff was refused."""
+    from types import SimpleNamespace
+
+    import tldw_chatbook.Tools.git_tool_impls as gti
+
+    latin1 = SimpleNamespace(
+        name="posix", fsencode=lambda value: value.encode("latin-1", "surrogateescape")
+    )
+    monkeypatch.setattr(gti, "os", latin1)
+    stored = "dir/caf\u00e9-\udcff.txt"  # an undecodable byte survives as \udcff
+
+    spec = gti._exact_exclude_pathspec(stored, subtree=False)
+
+    escaped = "".join(f"[{chr(0xDC00 + byte)}]" for byte in b"\xc3\xa9")
+    assert spec == f":(exclude,glob)dir/caf{escaped}-[{chr(0xDCFF)}].txt"
+
+
 def test_ascii_exclusion_pathspecs_stay_byte_identical(
     ordinary_repo: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

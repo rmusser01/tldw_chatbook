@@ -3877,12 +3877,15 @@ def _exact_exclude_pathspec(stored: str, *, subtree: bool) -> str:
     before it is matched and misses the stored entry (measured, git 2.39.5).
     Each non-ASCII byte therefore goes in its own bracket: wildmatch compares
     bytes, and an element that is not valid UTF-8 is left alone by the
-    precomposition. Windows git does not precompose and its argv is UTF-16,
-    so it gets the literal form, whose plain prefix already covers a subtree.
+    precomposition. The bytes are the stored ones: ``stored`` was decoded as
+    UTF-8 with surrogateescape (``_withheld_names``), so it is re-encoded the
+    same way, never by the filesystem encoding. Windows git does not
+    precompose and its argv is UTF-16, so it gets the literal form, whose
+    plain prefix already covers a subtree.
     """
     if os.name == 'nt':
         return f':(exclude,literal){stored}'
-    pattern = ''.join((_glob_escape(char) if char.isascii() else ''.join((f'[{chr(56320 + byte)}]' for byte in os.fsencode(char))) for char in stored))
+    pattern = ''.join((_glob_escape(char) if char.isascii() else ''.join((f'[{chr(56320 + byte)}]' for byte in char.encode('utf-8', 'surrogateescape'))) for char in stored))
     return f":(exclude,glob){pattern}{('/**' if subtree else '')}"
 
 def _withheld_names(mode_args: list[str], pathspecs: list[str], exclusions: tuple[SensitiveExclusion, ...], *, cwd: Path, executable: Path | None, own_process_group: bool) -> list[str]:
@@ -5792,4 +5795,4 @@ REMOTE_SENSITIVE_PATHS: tuple[str, ...] = (
 #: ``build_remote_worker_bundle.expected_bundle_stamp``. The remote
 #: worker's ``ping`` echoes it so callers can confirm which bundle the
 #: remote actually executed.
-BUNDLE_SHA256 = _enter_worker_exchange("2e0d5a3b41bc56a597bb75efc4f8af77ce05c2f518c9564337ed498ad72b9f5d")
+BUNDLE_SHA256 = _enter_worker_exchange("066ed019c9574f54407565929f1146581db9f7c79755dbbe356fcaa4ea0b3f3b")

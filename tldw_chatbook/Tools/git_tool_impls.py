@@ -553,15 +553,21 @@ def _exact_exclude_pathspec(stored: str, *, subtree: bool) -> str:
     before it is matched and misses the stored entry (measured, git 2.39.5).
     Each non-ASCII byte therefore goes in its own bracket: wildmatch compares
     bytes, and an element that is not valid UTF-8 is left alone by the
-    precomposition. Windows git does not precompose and its argv is UTF-16,
-    so it gets the literal form, whose plain prefix already covers a subtree.
+    precomposition. The bytes are the stored ones: ``stored`` was decoded as
+    UTF-8 with surrogateescape (``_withheld_names``), so it is re-encoded the
+    same way, never by the filesystem encoding. Windows git does not
+    precompose and its argv is UTF-16, so it gets the literal form, whose
+    plain prefix already covers a subtree.
     """
     if os.name == "nt":
         return f":(exclude,literal){stored}"
     pattern = "".join(
         _glob_escape(char)
         if char.isascii()
-        else "".join(f"[{chr(0xDC00 + byte)}]" for byte in os.fsencode(char))
+        else "".join(
+            f"[{chr(0xDC00 + byte)}]"
+            for byte in char.encode("utf-8", "surrogateescape")
+        )
         for char in stored
     )
     return f":(exclude,glob){pattern}{'/**' if subtree else ''}"
