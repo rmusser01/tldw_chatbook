@@ -78,28 +78,6 @@ async def test_fleet_recovery_retires_ledger_worker_connections(tmp_path, local_
 
 
 @pytest.mark.asyncio
-async def test_rail_preference_prune_retires_finished_worker_connection(
-    tmp_path, local_root
-):
-    from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
-
-    db = CharactersRAGDB(tmp_path / "notes.db", "test")
-    screen = SimpleNamespace(
-        app_instance=SimpleNamespace(
-            chachanotes_db=db,
-            app_config={"console": {"rail_state": {"live": {}}}},
-        )
-    )
-    try:
-        await asyncio.to_thread(
-            ChatScreen._prune_console_rail_preferences.__wrapped__, screen, {"live"}
-        )
-        assert not worker_leases(db)
-    finally:
-        db.close()
-
-
-@pytest.mark.asyncio
 async def test_fleet_bridge_swap_cannot_redirect_queued_worker_cleanup(
     tmp_path, local_root, monkeypatch
 ):

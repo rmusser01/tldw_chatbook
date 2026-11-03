@@ -1,5 +1,9 @@
 # Lessons: what counts as evidence a change works
 
+## A boot-census row can look dead locally because its worker starts after the window (TASK-36518, 2026-11-03)
+
+To show the census red for a removed `("_prune_console_rail_preferences", "default")` row, the census was run on dev with the row deleted. It passed: on a loaded machine (load average 22) the prune worker started after the census's `_ui_ready` + 1 s window, though CI's census JSONs from 2026-11-01 recorded it. A scratch probe that imports the census module and lengthens that window in `_CENSUS_SCRIPT` to 9.5 s showed the worker starting on dev and absent after the fix. A green census without a row is not proof that the worker never starts at boot. Check with a longer window before calling a row dead or a removal untestable.
+
 ## An Automatic evidence double needs an authorized source (PR3339, 2026-11-02)
 
 The first private cold-import guard returned a fabricated note ID from a Library double with no notes database. Search and prewarm ran, but current canonical capture reauthorized the nonexistent source and the provider received no evidence. A real file-backed note and app-owned conversation services restored the actual authority path. Adding a real DB also enabled the agent dispatcher, which did not reach the provider within the existing bound in that harness; the established provider-direct configuration retained the original route and reached the provider. This qualifies provider-direct only, not agent-runtime behavior.

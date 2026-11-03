@@ -154,7 +154,7 @@ ALLOWED_BOOT_WORKERS: frozenset[tuple[str, str]] = frozenset(
         # record (a fresh profile's defaults are not written, TASK-36385);
         # allowlisted, not asserted present.
         ("_save_console_rail_preferences", "default"),
-        ("_prune_console_rail_preferences", "default"),
+        # TASK-36518: _prune_console_rail_preferences starts only for legacy keys.
         ("_persist_sidebar_state_off_loop", "sidebar-state-persist"),
     }
 )
