@@ -2763,6 +2763,10 @@ class LibraryFileNotesGitPanel(Vertical):
             ).disabled = recovery is None
         self._sync_disabled_action_presentation()
 
+    def _going_away(self) -> bool:
+        """Quit's `App._exit` fence, or a removal (it prunes the children first)."""
+        return not self.is_attached or self._pruning
+
     def _focus_commit_control(self, selector: str) -> None:
         self.call_after_refresh(
             partial(
@@ -2778,7 +2782,7 @@ class LibraryFileNotesGitPanel(Vertical):
         selector: str,
     ) -> None:
         """Ignore deferred focus after its workflow phase became stale."""
-        if self._commit_phase != phase:
+        if self._commit_phase != phase or self._going_away():
             return
         control = self.query_one(selector, Widget)
         if any(
@@ -2808,20 +2812,18 @@ class LibraryFileNotesGitPanel(Vertical):
         generation: int,
         notes: tuple[CommitReviewNoteProjection, ...],
     ) -> None:
-        # TASK-32800.5: this is a worker body, so the panel may already be
-        # detached by the time it runs; `exit_on_error` defaults to True, so an
-        # unguarded lookup here exits the whole app rather than abandoning a
-        # stale render. "Too late" is a no-op: a newer generation, a missing
-        # subtree, or quit's `App._exit` detaching everything (TASK-36527).
+        # Worker body, exit_on_error=True: a raise exits the app. "Too late" is a
+        # no-op: a missing subtree (TASK-32800.5), or a newer generation or
+        # `_going_away()` after an await (TASK-36527).
         found = self.query("#file-notes-git-commit-included-notes")
         if not found:
             return
         list_view = found.first(ListView)
         await list_view.clear()
-        if generation != self._commit_note_render_generation or not self.is_attached:
+        if generation != self._commit_note_render_generation or self._going_away():
             return
         await list_view.extend(_CommitIncludedNoteListItem(note) for note in notes)
-        if generation != self._commit_note_render_generation:
+        if generation != self._commit_note_render_generation or self._going_away():
             return
         list_view.index = 0 if notes else None
         self._update_commit_included_selection()
@@ -3185,17 +3187,15 @@ class LibraryFileNotesGitPanel(Vertical):
         group_id: int | None,
         rows: tuple[SessionGitRow, ...],
     ) -> None:
-        # Worker body + exit_on_error=True: a raise is an app exit, not a dropped
-        # render. TASK-32800.5 guards the lookup against a detached panel, and
-        # TASK-36527 the mount: quit sets `App._exit` before its drains, and
-        # from then on nothing reads as attached, so a late render is moot.
+        # Worker body, exit_on_error=True: a raise exits the app. TASK-32800.5
+        # guards the lookup; TASK-36527 each step after an await (`_going_away`).
         found = self.query("#file-notes-git-rows")
         if not found:
             return
         list_view = found.first(ListView)
         try:
             await list_view.clear()
-            if generation != self._row_render_generation or not self.is_attached:
+            if generation != self._row_render_generation or self._going_away():
                 return
             await list_view.extend(_SessionGitListItem(row) for row in rows)
             if generation != self._row_render_generation:
@@ -3208,7 +3208,7 @@ class LibraryFileNotesGitPanel(Vertical):
             )
             self._selected_group_id = group_id
         finally:
-            if generation == self._row_render_generation and self.is_attached:
+            if generation == self._row_render_generation and not self._going_away():
                 self._replacing_rows = False
                 self._sync_empty_state()
                 self._update_actions()

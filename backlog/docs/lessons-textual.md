@@ -28,6 +28,34 @@ test body had raised; it was not a separate product bug.
 When a test calls a method that reaches into a widget's children, wait for
 that widget's `is_mounted`, not for a query to find it or its container.
 
+## `is_attached` stays True while a removal prunes the widget, so it misses in-flight renders (TASK-36527, 2026-11-03)
+
+**Incident.** The File Notes git panel's worker renders were guarded with
+`is_attached`. That guard covers quit, because `App._exit` makes every widget
+read as detached. It misses removal, the path every Library recomposition takes.
+`App._prune` sets `_pruning` on the whole subtree at once. The children exit
+first (`Widget._message_loop_exit` gathers them). The panel's own workers are
+cancelled only at its own Unmount, and `_detach` runs after that. So a render
+that resumed from `await list_view.clear()` during the removal still read
+`is_attached` True. Its `extend` then became a silent no-op, and the next query
+raised `NoMatches` (`#file-notes-git-empty`, or
+`#file-notes-git-commit-included-selected`). That `WorkerFailed` exits the app.
+A deferred `call_after_refresh` focus raised `NoMatches` the same way. The
+implementation notes had claimed that "a detach cancels the worker on the
+await". Review disproved it with a probe that removed the host or the panel
+0 to 8 ticks into a render: 15 of 24 runs crashed with the `is_attached`-only
+guard, on dev as well as on the branch, and 0 of 24 with the pruning-aware guard.
+
+**What to do.** For "is this widget still live" after an await or in a deferred
+callback, use the repo idiom `not self.is_attached or self._pruning`
+(`prompt_history_region.py`, `right_rail.py`). It matters most in a `finally`
+and in any code that follows a mount, because the mount itself is skipped
+quietly while the widget is pruning. To pin it, hold the render, call
+`host.remove()` (this sets `_pruning` synchronously), release the render, and
+then await the removal. Remove the panel itself when you test a
+`call_after_refresh` callback; in this case the host's removal never reached
+the callback (`Tests/UI/test_library_file_notes_git.py`).
+
 ## Metadata mount echoes can cancel the worker that requested a recompose
 
 **TASK-32755.1, 2026-10-21.** Adding an off-thread transcription readiness
