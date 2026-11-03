@@ -926,6 +926,47 @@ async def test_a_failing_cold_refresh_backs_off_and_a_publish_resets_it(monkeypa
 
 
 @pytest.mark.asyncio
+async def test_outside_runs_share_one_backed_off_retry_timer(monkeypatch):
+    """TASK-38649 review 2: each failed read used to add its own retry chain.
+
+    Outside callers (the run poll, draft spend, context reads) start reads of
+    their own; their failures must replace the one pending retry, so no
+    chain outlives the burst that started it.
+    """
+    screen, _owner, _identity, tasks, _published = _screen(monkeypatch)
+    loop = asyncio.get_running_loop()
+    handles, fired, reads = [], [], []
+
+    def set_timer(delay, callback):
+        def fire():
+            fired.append(handle)
+            callback()
+
+        handle = loop.call_later(delay, fire)
+        handles.append(handle)
+        return SimpleNamespace(stop=handle.cancel)
+
+    def read():
+        reads.append(True)
+        raise RuntimeError("persistent refusal")
+
+    projection = spend.ConsoleReadinessConfigProjection(screen, read_current=read)
+    screen.set_timer = set_timer
+    screen._request_console_control_bar_sync = lambda **_: projection.run(lambda: None)
+    try:
+        for _ in range(10):  # an outside caller every 0.2 s for 2 s
+            projection.run(lambda: None)
+            await asyncio.sleep(0.2)
+        await asyncio.gather(*tasks, return_exceptions=True)
+        live = [h for h in handles if not h.cancelled() and h not in fired]
+        assert len(handles) > 1 and len(live) <= 1, (len(handles), len(live))
+    finally:
+        for handle in handles:
+            handle.cancel()
+        await asyncio.gather(*tasks, return_exceptions=True)
+
+
+@pytest.mark.asyncio
 async def test_disposed_readiness_runtime_starts_no_new_native_read(monkeypatch):
     from tldw_chatbook.Chat.console_runtime import ConsoleRuntime
 

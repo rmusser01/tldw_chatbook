@@ -231,6 +231,7 @@ class ConsoleReadinessConfigProjection:
         self._tokenizer_retry_at = 0.0
         self._retry_delay = 0.0
         self._failed_key = None
+        self._retry_timer = None
         self._settled = asyncio.Event()
         self._settled.set()
 
@@ -493,6 +494,7 @@ class ConsoleReadinessConfigProjection:
 
     def _retry(self) -> None:
         """Ask for the coalesced control-bar sync a failed cold read owes."""
+        self._retry_timer = None
         if not self._retired():
             self.screen._request_console_control_bar_sync()
 
@@ -651,7 +653,13 @@ class ConsoleReadinessConfigProjection:
                 self._retry_delay = min(
                     max(self._retry_delay * 2, RETRY_FIRST_DELAY), RETRY_MAX_DELAY
                 )
-                self.screen.set_timer(self._retry_delay, self._retry)
+                # One timer per projection: whoever started this read, a new
+                # failure replaces the pending retry instead of adding a chain.
+                if self._retry_timer is not None:
+                    self._retry_timer.stop()
+                self._retry_timer = self.screen.set_timer(
+                    self._retry_delay, self._retry
+                )
         if changed:
             publication = self.screen._sync_native_console_chat_ui()
             try:
