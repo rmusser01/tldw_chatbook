@@ -86,6 +86,10 @@ def ui_private_reaches(source: str) -> list[str]:
                 root = root.value
             if isinstance(root, ast.Name) and root.id in ui_names:
                 hits.append(f"attribute {root.id}...{node.attr}")
+            elif isinstance(root, ast.Name) and root.id == "tldw_chatbook":
+                dotted = ast.unparse(node.value)  # bare `import tldw_chatbook.UI.x` form
+                if dotted.startswith("tldw_chatbook.UI"):
+                    hits.append(f"attribute {dotted}.{node.attr}")
         elif (
             isinstance(node, ast.Call)
             and isinstance(node.func, ast.Name)
@@ -112,6 +116,7 @@ def test_console_configuration_preparation_reaches_no_ui_private_names():
         "from tldw_chatbook.UI.Console_Modules.session import _X\n",
         "from ..UI.Console_Modules import wiring\nz = wiring.a._X\n",
         "import tldw_chatbook.UI.Console_Modules.wiring as w\nz = getattr(w, '_X')\n",
+        "import tldw_chatbook.UI.Console_Modules.wiring\nz = tldw_chatbook.UI.Console_Modules.wiring._X\n",
     ],
 )
 def test_ui_private_reach_detector_catches_each_shape(line):
@@ -180,6 +185,26 @@ def test_stock_mounted_capture_refuses_source_code_replaced_in_place():
         assert not probe[1](_stock_adapter())  # also refused mid-capture
     finally:
         callback.__code__ = original
+
+
+def test_stock_mounted_capture_refuses_source_defaults_replaced(monkeypatch):
+    from tldw_chatbook.UI.Console_Modules import turn_admission
+
+    callback = turn_admission.console_live_runtime_enabled
+    probe = turn_admission.stock_mounted_capture(_stock_owner())
+    monkeypatch.setattr(callback, "__defaults__", (1,))
+    assert turn_admission.stock_mounted_capture(_stock_owner()) is None
+    assert not probe[1](_stock_adapter())
+
+
+def test_stock_mounted_capture_refuses_source_kwdefaults_replaced(monkeypatch):
+    from tldw_chatbook.UI.Console_Modules import turn_admission
+
+    callback = turn_admission.console_live_runtime_enabled
+    probe = turn_admission.stock_mounted_capture(_stock_owner())
+    monkeypatch.setattr(callback, "__kwdefaults__", {"x": 1})
+    assert turn_admission.stock_mounted_capture(_stock_owner()) is None
+    assert not probe[1](_stock_adapter())
 
 
 def test_stock_mounted_capture_refuses_rebound_sources_mid_capture(monkeypatch):
