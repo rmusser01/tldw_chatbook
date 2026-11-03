@@ -25036,3 +25036,15 @@ owned storage/source scopes, while keeping the native async worker guard outside
 allowed actual capture, isolated restore and rebackup. Do not infer global
 storage quiescence from a narrower lifecycle receipt; exercise the real consumer
 that requires all those original leases to return.
+
+
+**Task8E continuation recurrence, 2026-11-03.** New source/binding checks in the
+provider budget path opened a WorkspaceDB handle before the original service's
+owned-storage scope. After that was fixed, the real tool worker still refused
+Pause because its early automatic-work check ran before the captured task and
+owner scopes; it correctly retained unknown cleanup. The native prebind/bound
+controls passed only after those original scopes reached that exact receiver.
+Check schema probes separately too: they run after bind but before the run-ID
+ContextVar, so a full executing-run check is not a valid metadata probe. Preserve
+both failed receipts instead of treating a producer-missing test as continuation
+proof or weakening the shared phase check.

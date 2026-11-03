@@ -175,9 +175,12 @@ class WorkflowTaskAuthorization:
 
     def check_preparation(self) -> None:
         """Revalidate accepted custody and current binding without granting dispatch."""
+        self._check_sources()
+        self.phase.check()
+
+    def _check_sources(self) -> None:
         for preparation in self._bridge_preparation:
             preparation._check_task_source(self)
-        self.phase.check()
         if _runtime(self.phase) is not self._runtime:
             _refuse("runtime_changed")
         _check_hooks(self._runtime, self.claim.session_id)
@@ -190,11 +193,27 @@ class WorkflowTaskAuthorization:
         ):
             _refuse("binding_changed")
 
+    def _check_continuation(self):
+        proof = self.phase._task_dispatch(self)
+        from .activation import execution
+
+        if self.phase._retired:
+            _refuse("phase_retired")
+        with execution(self.phase._ledger), self.phase._ledger._db.connection() as conn:
+            self.phase._ledger._workflow_current(
+                conn,
+                self.phase.attempt.id,
+                self.claim.owner_id,
+                accepted=True,
+                _dispatch=proof,
+            )
+        return proof
+
     def bind_native(
         self, *, owner: ExecutionOwner, activity_claim: WorktreeActivityClaim
     ) -> None:
         """Bind only after the existing native row, capacity and launch commit."""
-        self.check_preparation()
+        proof = self._check_continuation()
         from .execution_capacity import ExecutionOwner, WorkOrigin
 
         if (
@@ -231,6 +250,7 @@ class WorkflowTaskAuthorization:
                 task_id=self.claim.task_id,
                 run_id=owner.run_id,
                 owner_id=self.claim.owner_id,
+                _dispatch=proof,
             )
             self._binding_state.append((owner, activity_claim))
         if self._bridge_preparation:
@@ -240,7 +260,7 @@ class WorkflowTaskAuthorization:
 
     def check(self) -> None:
         """Require the same live task, native run, owner and held activity claim."""
-        self.check_preparation()
+        self._check_continuation()
         with self._lock:
             bound = self._binding_state[0] if self._binding_state else None
         if bound is None:

@@ -8,7 +8,7 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
 from types import MethodType, SimpleNamespace
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Literal
 from uuid import uuid4
 
 from .agent_models import RUN_DONE
@@ -27,6 +27,7 @@ from .workflow_models import (
 )
 
 if TYPE_CHECKING:
+    from tldw_chatbook.Chat.console_workflow_runs import WorkflowPhaseAuthorization
     from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
 
     from .agent_service import WorkflowChildReceipt
@@ -387,6 +388,9 @@ class WorkflowRunService:
             WorkflowRunService.validate_task_inputs,
             WorkflowRunService.checkpoint_task,
             WorkflowRunService.prepare_decision,
+            WorkflowRunService.settle_execution_phase,
+            WorkflowRunService.prepare_remaining_decision,
+            WorkflowRunService.validate_remaining_decision,
             WorkflowRunService.prepare_quality_review,
             WorkflowRunService.validate_decision,
             WorkflowRunService.project_recovery,
@@ -747,6 +751,249 @@ class WorkflowRunService:
 
     def _checkpoint(self, workflow_id, attempt_id):
         return _checkpoint(self.db, workflow_id, attempt_id)
+
+    @goal_storage_operation
+    def settle_execution_phase(
+        self,
+        phase: WorkflowPhaseAuthorization,
+        *,
+        outcome: Literal["completed", "failed", "cancelled"] = "completed",
+    ) -> WorkflowSnapshot:
+        """Settle original returned native custody, never a caller drain assertion.
+
+        Args:
+            phase: The original accepted phase retained by its native coordinator.
+            outcome: Completed coverage or a drained unsuccessful partial attempt.
+
+        Returns:
+            The current workflow with original charges and results preserved.
+
+        Raises:
+            ValueError: Original retirement, required evidence or unused proof is absent.
+        """
+        from tldw_chatbook.Chat.console_workflow_runs import WorkflowPhaseAuthorization
+
+        from .workflow_task_scope import _runtime
+
+        if (
+            type(phase) is not WorkflowPhaseAuthorization
+            or phase._ledger._db is not self.db
+            or phase.attempt.purpose != "execution"
+            or outcome not in {"completed", "failed", "cancelled"}
+        ):
+            raise ValueError("original_execution_phase_required")
+        phase._check_owner()
+        runtime = _runtime(phase)
+        if (
+            any(w.phase is phase for w in runtime._workflow_waves)
+            or any(p.phase is phase for p in runtime._workflow_preparations)
+            or any(
+                getattr(r.source, "phase", None) is phase
+                for r in runtime._preparation_reads
+            )
+        ):
+            raise ValueError("workflow_original_source_pending")
+        markers = []
+        for auth in tuple(phase._task_scopes.values()):
+            markers.append(
+                (auth, tuple(auth._native_launch), tuple(auth._native_dispatch))
+            )
+            tracker = self._tasks.get(auth.claim.id)
+            if auth._native_launch or auth._native_dispatch:
+                if (
+                    tracker is None
+                    or tracker.authorization is not auth
+                    or tracker.receipt is None
+                    or tracker.drain is not True
+                    or tracker.pending
+                    or tracker.receipt.failure == "unknown"
+                    or tracker.receipt.owner.is_admitted
+                ):
+                    raise ValueError("native_retirement_unproven")
+                if tracker.receipt.failure != "no_run":
+                    self._checkpoint(auth.claim.workflow_id, auth.claim.id)
+            for prepared in auth._bridge_preparation:
+                wave = prepared._wave
+                if (
+                    not prepared._closed
+                    or prepared._source_scope is not None
+                    or prepared._launch_operation is not None
+                    or prepared._close_operation is not None
+                    or any(worker.is_alive() for worker in prepared._tool_workers)
+                    or wave is not None
+                    and (
+                        not wave.closed or wave.driver is None or not wave.driver.done()
+                    )
+                ):
+                    raise ValueError("workflow_original_source_pending")
+        snapshot = self.get(phase.attempt.workflow_id)
+        if outcome == "completed":
+            definition = next(
+                p
+                for p in snapshot.plans[phase.attempt.revision_id - 1].phases
+                if p.id == phase.attempt.phase_id
+            )
+            for task in definition.tasks:
+                self._fresh_task_result(snapshot, task)
+        with phase._control_lock:
+            phase._retired = True
+            phase._paused_tasks = {}
+        if any(
+            len(auth._native_launch) != len(launch)
+            or len(auth._native_dispatch) != len(dispatch)
+            or any(a is not b for a, b in zip(auth._native_launch, launch))
+            or any(a is not b for a, b in zip(auth._native_dispatch, dispatch))
+            for auth, launch, dispatch in markers
+        ):
+            raise ValueError("native_retirement_unproven")
+        ledger = self.db.automatic_work
+        with ledger.transaction() as conn:
+            ledger._check_runtime_owner(conn, phase.attempt.owner_id)
+            native = ledger._attempt(
+                conn, phase.attempt.id, phase.attempt.owner_id, "workflow_phase"
+            )
+            row = conn.execute(
+                "SELECT * FROM workflow_phase_attempts WHERE native_attempt_id=?",
+                (phase.attempt.id,),
+            ).fetchone()
+            if native["state"] == "completed":
+                if row["status"] != ("closed" if outcome == "cancelled" else outcome):
+                    raise ValueError("workflow_settlement_conflict")
+                return self.get(snapshot.id)
+            if native["state"] != "accepted":
+                raise ValueError("original_execution_phase_required")
+            current = self.db.workflow_runs._row(conn, snapshot.id)
+            if current["control_revision"] != snapshot.control_revision:
+                raise ValueError("revision_conflict")
+            for task in conn.execute(
+                "SELECT t.*,c.child_reservation_id FROM workflow_task_attempts t "
+                "JOIN workflow_task_claims c ON c.task_attempt_id=t.id WHERE c.phase_attempt_id=?",
+                (row["id"],),
+            ).fetchall():
+                if task["run_id"] is None:
+                    if (
+                        outcome == "completed"
+                        or not self.db.workflow_runs._never_run_task(
+                            conn, snapshot.id, task["id"]
+                        )
+                    ):
+                        raise ValueError("native_retirement_unproven")
+                    conn.execute(
+                        "UPDATE workflow_task_attempts SET status='closed',retirement='drained' WHERE id=?",
+                        (task["id"],),
+                    )
+                    if not self.db.workflow_runs._release_unused_result(
+                        conn, snapshot.id, task["id"]
+                    ):
+                        state = conn.execute(
+                            "SELECT state FROM workflow_payload_reservations WHERE attempt_id=?",
+                            (task["id"],),
+                        ).fetchone()
+                        if state is None or state[0] != "removed":
+                            raise ValueError("workflow_unused_result_unproven")
+                    conn.execute(
+                        "UPDATE automatic_work_reservations SET state='released',updated_at=? WHERE id=? AND state='reserved'",
+                        (ledger._wall_clock(), task["child_reservation_id"]),
+                    )
+                else:
+                    if task["retirement"] != "drained" or task["status"] not in {
+                        "completed",
+                        "failed",
+                    }:
+                        raise ValueError("native_retirement_unproven")
+                    self._checkpoint(snapshot.id, task["id"])
+            if ledger._workflow_unsettled(
+                conn, row, phase.attempt.chain_id, quiescing=True
+            ):
+                raise ValueError("workflow_not_settled")
+            ledger._close_workflow_interval(conn, snapshot.id)
+            conn.execute(
+                "UPDATE automatic_wake_attempts SET state='completed',completed_at=? WHERE id=?",
+                (ledger._wall_clock(), phase.attempt.id),
+            )
+            conn.execute(
+                "UPDATE workflow_phase_attempts SET status=?,retirement='drained',result_bytes=0 WHERE id=?",
+                ("closed" if outcome == "cancelled" else outcome, row["id"]),
+            )
+            if outcome != "completed" and current["status"] != "stopped":
+                self.db.workflow_runs._cas(
+                    conn, snapshot.id, snapshot.control_revision, "awaiting_resume"
+                )
+            return self.get(snapshot.id)
+
+    def _remaining_partition(self, snapshot, phase_id):
+        if snapshot.accounting.uncertain:
+            raise ValueError("remaining_requires_clean_checkpoint")
+        with self.db.connection() as conn:
+            retained, remaining = self.db.workflow_runs._remaining_partition(
+                conn,
+                snapshot.id,
+                len(snapshot.plans),
+                phase_id,
+            )
+        tasks = next(p.tasks for p in snapshot.plans[-1].phases if p.id == phase_id)
+        return (
+            tuple((task, retained[task.id]) for task in tasks if task.id in retained),
+            tuple(task for task in tasks if task.id in remaining),
+        )
+
+    @goal_storage_operation
+    def prepare_remaining_decision(
+        self, workflow_id: str, *, phase_id: str
+    ) -> WorkflowDecision:
+        """Review fresh successful siblings and their full never-run complement."""
+        snapshot = self.get(workflow_id)
+        if snapshot.status not in {"awaiting_resume", "awaiting_approval"}:
+            raise ValueError("remaining_requires_clean_checkpoint")
+        retained, remaining = self._remaining_partition(snapshot, phase_id)
+        base = self._prepare_review(workflow_id, phase_id=phase_id, quality=False)
+        if type(base.evidence) is not WorkflowQualityReview or not base.evidence.ready:
+            raise ValueError("remaining_requires_repair")
+        refs, evidence = list(base.result_refs), []
+        for task, attempt_id in retained:
+            result = self._fresh_task_result(snapshot, task)
+            if result.attempt_id != attempt_id:
+                raise ValueError("remaining_requires_repair")
+            refs.append(attempt_id)
+            evidence.append(
+                (
+                    result.canonical_json(),
+                    self._checkpoint(workflow_id, attempt_id).canonical_json(),
+                )
+            )
+        review = base.evidence.model_copy(
+            update={
+                "reason": "remaining_ready",
+                "predecessor_digest": digest(
+                    json.dumps(
+                        (
+                            base.evidence.predecessor_digest,
+                            evidence,
+                            [task.canonical_json() for task in remaining],
+                        )
+                    )
+                ),
+            }
+        )
+        return base.model_copy(
+            update={
+                "evidence": review,
+                "reason": "remaining_ready",
+                "result_refs": tuple(refs),
+            }
+        )
+
+    @goal_storage_operation
+    def validate_remaining_decision(
+        self, decision: WorkflowDecision
+    ) -> WorkflowDecision:
+        """Recompute the exact full remaining selection; return no execution grant."""
+        current = self.prepare_remaining_decision(
+            decision.workflow_id, phase_id=decision.phase_id
+        )
+        if current.model_copy(update={"id": decision.id}) != decision:
+            raise ValueError("stale_workflow_decision")
+        return current
 
     @goal_storage_operation
     def prepare_decision(self, workflow_id: str, *, phase_id: str) -> WorkflowDecision:

@@ -195,13 +195,20 @@ class AutomaticWorkLedger:
             raise AutomaticWorkRefused("settlement_unconfirmed")
 
     @contextmanager
-    def transaction(self) -> Iterator[sqlite3.Connection]:
+    def transaction(self, *, _native=None) -> Iterator[sqlite3.Connection]:
         """Commit an execution fence durably; restore policy on every exit.
 
         Nested transactions are rejected before changing the connection. Catch
         BaseException too: cancellation must never leave a fence half-open.
         """
-        with self._db.connection() as conn:
+        if _native is not None:
+            from tldw_chatbook.Chat.console_workflow_runs import _fence_connection
+
+        with (
+            self._db.connection()
+            if _native is None
+            else nullcontext(_fence_connection(_native, self))
+        ) as conn:
             if conn.in_transaction:
                 raise RuntimeError("automatic work transaction cannot be nested")
             previous = int(conn.execute("PRAGMA synchronous").fetchone()[0])
@@ -210,6 +217,8 @@ class AutomaticWorkLedger:
                 conn.execute("BEGIN IMMEDIATE")
                 try:
                     yield conn
+                    if _native is not None:
+                        _fence_connection(_native, self)
                     conn.commit()
                 except BaseException:
                     conn.rollback()
@@ -219,10 +228,12 @@ class AutomaticWorkLedger:
                 conn.execute(f"PRAGMA synchronous={previous}")
 
     @contextmanager
-    def _admission_transaction(self, chain_id: str) -> Iterator[sqlite3.Connection]:
+    def _admission_transaction(
+        self, chain_id: str, *, _native=None
+    ) -> Iterator[sqlite3.Connection]:
         """Roll back refused work, retaining clock observations and its pause."""
         refusal = None
-        with self.transaction() as conn:
+        with self.transaction(_native=_native) as conn:
             conn.execute("SAVEPOINT automatic_admission")
             try:
                 yield conn
@@ -279,6 +290,7 @@ class AutomaticWorkLedger:
                     "settlement_unconfirmed",
                     "review_boundary_already_claimed",
                     "review_boundary_unavailable",
+                    "workflow_authority_changed",
                 }:
                     conn.execute(
                         "UPDATE automatic_work_chains SET status=?, pause_reason=? "
@@ -314,6 +326,8 @@ class AutomaticWorkLedger:
         kind: str,
         amount: int = 0,
         limits: AutomaticWorkLimits | None = None,
+        _dispatch=None,
+        _native=None,
     ) -> None:
         self._check_unconfirmed_starts(conn, chain_id)
         snapshot = self._snapshot(conn, chain_id)
@@ -346,7 +360,7 @@ class AutomaticWorkLedger:
             "SELECT id FROM workflow_runs WHERE chain_id=?", (chain_id,)
         ).fetchone()
         if workflow is not None:
-            self._workflow_enabled()
+            self._workflow_enabled(_native=_native)
             for resource, ceiling in effective.resources().items():
                 if ceiling == 0:
                     raise AutomaticWorkRefused(f"{resource}_budget")
@@ -356,7 +370,15 @@ class AutomaticWorkLedger:
                 "SELECT 1 FROM workflow_phase_attempts p JOIN workflow_runs w ON w.id=p.workflow_id JOIN automatic_wake_attempts a ON a.id=p.native_attempt_id WHERE w.id=? AND a.state='accepted' AND (p.control_revision!=w.control_revision OR w.status IN ('paused','stopped','closed','removed','completed','recovery_required'))",
                 (workflow["id"],),
             ).fetchone():
-                raise AutomaticWorkRefused("workflow_authority_changed")
+                if _dispatch is None:
+                    raise AutomaticWorkRefused("workflow_authority_changed")
+                self._workflow_current(
+                    conn,
+                    _dispatch.phase.attempt.id,
+                    _dispatch.phase.attempt.owner_id,
+                    accepted=True,
+                    _dispatch=_dispatch,
+                )
             if (
                 self._workflow_active_seconds(conn, workflow["id"], observe=True)
                 >= effective.wall_seconds
@@ -628,6 +650,7 @@ class AutomaticWorkLedger:
         *,
         owner_id: str | None = None,
         limits: AutomaticWorkLimits | None = None,
+        _dispatch=None,
     ) -> AutomaticWorkSnapshot:
         """Observe elapsed/live bounds durably without consuming a resource."""
         with self._admission_transaction(chain_id) as conn:
@@ -639,7 +662,9 @@ class AutomaticWorkLedger:
                 and snapshot.pause_reason != "autowake_disabled"
             ):
                 raise AutomaticWorkRefused(snapshot.pause_reason or "automatic_paused")
-            self._check_admission(conn, chain_id, kind="model_call", limits=limits)
+            self._check_admission(
+                conn, chain_id, kind="model_call", limits=limits, _dispatch=_dispatch
+            )
             return self._snapshot(conn, chain_id)
 
     def pause(
@@ -672,6 +697,7 @@ class AutomaticWorkLedger:
         input_tokens: int,
         output_tokens: int,
         limits: AutomaticWorkLimits | None = None,
+        _dispatch=None,
     ) -> str | None:
         """Atomically charge one generation and its estimate before dispatch.
 
@@ -717,12 +743,24 @@ class AutomaticWorkLedger:
             if output_tokens > output_limit:
                 raise AutomaticWorkRefused("output_tokens_budget")
             self._check_admission(
-                conn, chain_id, kind="model_call", amount=1, limits=limits
+                conn,
+                chain_id,
+                kind="model_call",
+                amount=1,
+                limits=limits,
+                _dispatch=_dispatch,
             )
             self._check_admission(
-                conn, chain_id, kind="tokens", amount=amount, limits=limits
+                conn,
+                chain_id,
+                kind="tokens",
+                amount=amount,
+                limits=limits,
+                _dispatch=_dispatch,
             )
-            self._resume_workflow_dispatch(conn, chain_id, owner_id)
+            self._resume_workflow_dispatch(
+                conn, chain_id, owner_id, _dispatch=_dispatch
+            )
             now = self._wall_clock()
             conn.executemany(
                 "INSERT INTO automatic_work_reservations "
@@ -741,16 +779,26 @@ class AutomaticWorkLedger:
         *,
         owner_id: str,
         limits: AutomaticWorkLimits | None = None,
+        _native=None,
     ) -> bool:
         """Consume a reservation once; True alone authorizes its first dispatch."""
-        with self._db.connection() as conn:
+        if _native is not None:
+            from tldw_chatbook.Chat.console_workflow_runs import _fence_connection
+
+        with (
+            self._db.connection()
+            if _native is None
+            else nullcontext(_fence_connection(_native, self))
+        ) as conn:
             chain_id = self._reservation(conn, reservation_id, owner_id)["chain_id"]
-        with self._admission_transaction(chain_id) as conn:
+        with self._admission_transaction(chain_id, _native=_native) as conn:
             self._check_runtime_owner(conn, owner_id)
             row = self._reservation(conn, reservation_id, owner_id)
             if row["state"] != "reserved":
                 return False
-            self._check_admission(conn, chain_id, kind=row["kind"], limits=limits)
+            self._check_admission(
+                conn, chain_id, kind=row["kind"], limits=limits, _native=_native
+            )
             now = self._wall_clock()
             conn.execute(
                 "UPDATE automatic_work_reservations SET state='committed', updated_at=? WHERE id=?",
@@ -759,7 +807,9 @@ class AutomaticWorkLedger:
             if row["kind"] == "generation":
                 self._start_automatic(conn, chain_id)
             else:
-                self._resume_workflow_dispatch(conn, chain_id, owner_id)
+                self._resume_workflow_dispatch(
+                    conn, chain_id, owner_id, _native=_native
+                )
         return True
 
     def release(self, reservation_id: str, *, owner_id: str) -> bool:
@@ -1638,6 +1688,14 @@ class AutomaticWorkLedger:
                 (phase["phase_row"],),
             ).fetchall()
             if any(
+                task["run_id"] is None
+                and not self._db.workflow_runs._never_run_task(
+                    conn, phase["workflow_id"], task["id"]
+                )
+                for task in tasks
+            ):
+                continue
+            if any(
                 task["run_id"] is not None
                 and (
                     phase["state"] == "prepared"
@@ -2163,15 +2221,28 @@ class AutomaticWorkLedger:
                 }.get(phase["status"]),
             )
 
-    @staticmethod
-    def _workflow_enabled() -> None:
+    def _workflow_enabled(self, *, _native=None) -> None:
         from tldw_chatbook.Agents.run_log import _setting
         from tldw_chatbook.config import coerce_bool_setting
 
+        if _native is not None:
+            from tldw_chatbook.Chat.console_workflow_runs import _fence_connection
+
+            _fence_connection(_native, self)
+            return
         if not coerce_bool_setting(_setting("workflow_runs_enabled", False), False):
             raise AutomaticWorkRefused("workflow_runs_disabled")
 
-    def _workflow_current(self, conn, attempt_id, owner_id, *, accepted=False):
+    def _workflow_current(
+        self,
+        conn,
+        attempt_id,
+        owner_id,
+        *,
+        accepted=False,
+        _dispatch=None,
+        _native=None,
+    ):
         self._check_runtime_owner(conn, owner_id)
         if (
             conn.execute(
@@ -2198,11 +2269,61 @@ class AutomaticWorkLedger:
             "recovery_required",
             "paused",
         }:
-            raise AutomaticWorkRefused("workflow_authority_changed")
+            self._validate_workflow_dispatch(conn, _dispatch, native, phase)
+
         if accepted and native["state"] != "accepted":
             raise AutomaticWorkRefused("acceptance_required")
-        self._workflow_enabled()
+        self._workflow_enabled(_native=_native)
         return native, phase
+
+    def _validate_workflow_dispatch(self, conn, proof, native, phase):
+        from tldw_chatbook.Chat.console_workflow_runs import _dispatch_identity
+
+        proof = _dispatch_identity(proof, self)
+        task = proof.task.claim
+        row = conn.execute(
+            "SELECT t.status,t.run_id,c.launch_run_id,a.state,a.chain_id,a.owner_id "
+            "FROM workflow_task_attempts t JOIN workflow_task_claims c ON c.task_attempt_id=t.id "
+            "JOIN automatic_work_reservations a ON a.id=c.child_reservation_id "
+            "WHERE t.id=? AND c.phase_attempt_id=? AND c.child_reservation_id=?",
+            (task.id, phase["id"], task.reservation_id),
+        ).fetchone()
+        decision = conn.execute(
+            "SELECT payload_json FROM workflow_decisions WHERE id=? AND workflow_id=? AND control_revision=?",
+            (proof.decision_id, task.workflow_id, proof.revision - 1),
+        ).fetchone()
+        if (
+            phase["workflow_status"] != "paused"
+            or phase["current_revision"] != proof.revision
+            or phase["native_attempt_id"] != proof.phase.attempt.id
+            or phase["control_revision"] != proof.phase.attempt.control_revision
+            or native["state"] != "accepted"
+            or native["owner_id"] != task.owner_id
+            or native["chain_id"] != task.chain_id
+            or decision is None
+            or decision[0] != proof.payload
+            or row is None
+            or tuple(row)
+            not in (
+                (
+                    "accepted",
+                    task.launch_run_id,
+                    task.launch_run_id,
+                    "committed",
+                    task.chain_id,
+                    task.owner_id,
+                ),
+                (
+                    "accepted",
+                    None,
+                    task.launch_run_id,
+                    "committed",
+                    task.chain_id,
+                    task.owner_id,
+                ),
+            )
+        ):
+            raise AutomaticWorkRefused("workflow_authority_changed")
 
     def prepare_workflow_phase(
         self,
@@ -2262,6 +2383,7 @@ class AutomaticWorkLedger:
         owner_id,
         session_id,
         command_id,
+        _remaining=None,
     ):
         from tldw_chatbook.Agents.workflow_models import RECORD_BYTES
 
@@ -2298,6 +2420,11 @@ class AutomaticWorkLedger:
                     session_id,
                 ):
                     raise ValueError("workflow_command_conflict")
+                if (
+                    _remaining is not None
+                    and store._attempt_decision(conn, prior) != _remaining
+                ):
+                    raise ValueError("workflow_command_conflict")
                 attempt_id = prior["native_attempt_id"]
             else:
                 self._workflow_enabled()
@@ -2321,11 +2448,43 @@ class AutomaticWorkLedger:
                     ).fetchall()
                     if not tasks:
                         raise ValueError("unknown_workflow_phase")
-                    if conn.execute(
+                    previous = conn.execute(
                         "SELECT 1 FROM workflow_phase_attempts WHERE workflow_id=? AND plan_revision=? AND phase_id=? AND native_attempt_id IS NOT NULL",
                         (workflow_id, revision_id, phase_id),
-                    ).fetchone():
+                    ).fetchone()
+                    if _remaining is None and previous:
                         raise AutomaticWorkRefused("workflow_phase_already_attempted")
+                    if _remaining is not None:
+                        if (
+                            previous is None
+                            or _remaining.workflow_id != workflow_id
+                            or _remaining.plan_revision != revision_id
+                            or _remaining.phase_id != phase_id
+                            or _remaining.action != "approve"
+                            or _remaining.reason != "remaining_ready"
+                            or _remaining.control_revision != row["control_revision"]
+                            or conn.execute(
+                                "SELECT 1 FROM workflow_decisions WHERE id=?",
+                                (_remaining.id,),
+                            ).fetchone()
+                        ):
+                            raise ValueError("workflow_remaining_decision_conflict")
+                        retained, remaining = store._remaining_partition(
+                            conn, workflow_id, revision_id, phase_id
+                        )
+                        actual_same_phase = tuple(
+                            ref
+                            for ref in _remaining.result_refs
+                            if conn.execute(
+                                "SELECT 1 FROM workflow_task_attempts WHERE id=? AND workflow_id=? AND plan_revision=? AND phase_id=?",
+                                (ref, workflow_id, revision_id, phase_id),
+                            ).fetchone()
+                        )
+                        if set(actual_same_phase) != set(retained.values()) or len(
+                            actual_same_phase
+                        ) != len(retained):
+                            raise ValueError("workflow_remaining_decision_conflict")
+                        tasks = [task for task in tasks if task["task_id"] in remaining]
                 limits = AutomaticWorkLimits.from_settings("workflow_phase")
                 if limits.output_tokens == 0:
                     raise AutomaticWorkRefused("output_tokens_budget")
@@ -2335,6 +2494,9 @@ class AutomaticWorkLedger:
                 if self._target_active(conn, row["conversation_id"]):
                     raise AutomaticWorkRefused("conversation_wake_active")
                 store._capacity(conn, workflow_id, RECORD_BYTES * (len(tasks) or 1))
+                if _remaining is not None:
+                    store._save_decision(conn, _remaining, status="awaiting_approval")
+                    row = store._row(conn, workflow_id)
                 attempt_id, reservation_id, phase_key = (
                     uuid4().hex,
                     uuid4().hex,
@@ -2510,7 +2672,9 @@ class AutomaticWorkLedger:
         with self._db.connection() as conn:
             return self._workflow_active_seconds(conn, workflow_id)
 
-    def _resume_workflow_dispatch(self, conn, chain_id, owner_id) -> bool:
+    def _resume_workflow_dispatch(
+        self, conn, chain_id, owner_id, *, _dispatch=None, _native=None
+    ) -> bool:
         """Reopen workflow time inside the same transaction as native dispatch."""
         root = self._allowance_chain(conn, chain_id)["id"]
         workflow = conn.execute(
@@ -2525,7 +2689,14 @@ class AutomaticWorkLedger:
         ).fetchone()
         if native is None:
             raise AutomaticWorkRefused("acceptance_required")
-        self._workflow_current(conn, native["id"], owner_id, accepted=True)
+        self._workflow_current(
+            conn,
+            native["id"],
+            owner_id,
+            accepted=True,
+            _dispatch=_dispatch,
+            _native=_native,
+        )
         conn.execute(
             "UPDATE workflow_phase_attempts SET retirement='pending' WHERE native_attempt_id=?",
             (native["id"],),
@@ -2537,7 +2708,9 @@ class AutomaticWorkLedger:
         self._start_automatic(conn, root)
         return already_open is None
 
-    def resume_workflow_phase(self, attempt_id: str, *, owner_id: str) -> bool:
+    def resume_workflow_phase(
+        self, attempt_id: str, *, owner_id: str, _dispatch=None
+    ) -> bool:
         """Resume attributable tool work after a positively drained capacity wait.
 
         Native provider admission and child commit also reopen transactionally;
@@ -2545,14 +2718,19 @@ class AutomaticWorkLedger:
         """
         attempt = self.read_workflow_attempt(attempt_id, owner_id=owner_id)
         with self._admission_transaction(attempt.chain_id) as conn:
-            self._workflow_current(conn, attempt_id, owner_id, accepted=True)
+            self._workflow_current(
+                conn, attempt_id, owner_id, accepted=True, _dispatch=_dispatch
+            )
             self._check_admission(
                 conn,
                 attempt.chain_id,
                 kind="generation",
                 limits=AutomaticWorkLimits.from_settings("workflow_phase"),
+                _dispatch=_dispatch,
             )
-            return self._resume_workflow_dispatch(conn, attempt.chain_id, owner_id)
+            return self._resume_workflow_dispatch(
+                conn, attempt.chain_id, owner_id, _dispatch=_dispatch
+            )
 
     def _workflow_unsettled(self, conn, phase, chain_id, *, quiescing=False):
         # Unclaimed/reserved children have not dispatched. Keep their receipts
@@ -2697,7 +2875,13 @@ class AutomaticWorkLedger:
         return True
 
     def bind_workflow_task_run(
-        self, attempt_id: str, *, task_id: str, run_id: str, owner_id: str
+        self,
+        attempt_id: str,
+        *,
+        task_id: str,
+        run_id: str,
+        owner_id: str,
+        _dispatch=None,
     ) -> None:
         """Attach the native run to an already claimed launch, exactly once."""
         from tldw_chatbook.Agents.workflow_models import WorkflowTaskAttempt
@@ -2705,7 +2889,9 @@ class AutomaticWorkLedger:
         _identity(task_id)
         _identity(run_id)
         with self.transaction() as conn:
-            _, phase = self._workflow_current(conn, attempt_id, owner_id, accepted=True)
+            _, phase = self._workflow_current(
+                conn, attempt_id, owner_id, accepted=True, _dispatch=_dispatch
+            )
             row = conn.execute(
                 "SELECT t.*,c.launch_run_id FROM workflow_task_attempts t JOIN workflow_task_claims c ON c.task_attempt_id=t.id WHERE c.phase_attempt_id=? AND t.task_id=? AND c.child_reservation_id IS NOT NULL",
                 (phase["id"], task_id),

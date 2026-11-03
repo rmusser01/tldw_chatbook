@@ -429,6 +429,24 @@ class WorkflowRunsStore:
         )
 
     @staticmethod
+    def _never_run_task(conn, workflow_id, attempt_id):
+        """No requested native row, committed allowance, result or checkpoint exists."""
+        return (
+            conn.execute(
+                "SELECT 1 FROM workflow_task_attempts t "
+                "JOIN workflow_task_claims c ON c.task_attempt_id=t.id "
+                "LEFT JOIN automatic_work_reservations a ON a.id=c.child_reservation_id "
+                "WHERE t.id=? AND t.workflow_id=? AND t.run_id IS NULL "
+                "AND (c.child_reservation_id IS NULL OR a.state IN ('reserved','released')) "
+                "AND NOT EXISTS (SELECT 1 FROM agent_runs WHERE id=c.launch_run_id) "
+                "AND NOT EXISTS (SELECT 1 FROM workflow_results WHERE attempt_id=t.id) "
+                "AND NOT EXISTS (SELECT 1 FROM workflow_checkpoints WHERE attempt_id=t.id)",
+                (attempt_id, workflow_id),
+            ).fetchone()
+            is not None
+        )
+
+    @staticmethod
     def _closed_without_native_run(
         conn: sqlite3.Connection, workflow_id: str, attempt_id: str
     ) -> bool:
@@ -652,7 +670,7 @@ class WorkflowRunsStore:
 
         # bind_native runs before the model loop installs its run ContextVar.
         # Its committed original owner and actual joined rows are the anchor.
-        authorization.check_preparation()
+        authorization._check_continuation()
         if (
             not authorization._binding_state
             or authorization._binding_state[0][0] is not owner
@@ -875,34 +893,106 @@ class WorkflowRunsStore:
             )
             return self._snapshot(conn, self._row(conn, workflow_id))
 
+    def _remaining_partition(self, conn, workflow_id, revision, phase_id):
+        """Return exact retained result refs and conclusively unused task IDs."""
+        if (
+            self._active(conn, workflow_id)
+            or not conn.execute(
+                "SELECT 1 FROM workflow_phase_attempts WHERE workflow_id=? AND plan_revision=? AND phase_id=? AND native_attempt_id IS NOT NULL AND retirement='drained'",
+                (workflow_id, revision, phase_id),
+            ).fetchone()
+        ):
+            raise ValueError("remaining_requires_clean_checkpoint")
+        retained, remaining = {}, []
+        for task in conn.execute(
+            "SELECT task_id FROM workflow_tasks WHERE workflow_id=? AND plan_revision=? AND phase_id=? ORDER BY ordinal",
+            (workflow_id, revision, phase_id),
+        ):
+            attempts = conn.execute(
+                "SELECT * FROM workflow_task_attempts WHERE workflow_id=? AND plan_revision=? AND task_id=? ORDER BY ordinal",
+                (workflow_id, revision, task["task_id"]),
+            ).fetchall()
+            if not attempts:
+                raise ValueError("remaining_requires_repair")
+            completed = []
+            for attempt in attempts:
+                if attempt["run_id"] is None:
+                    if not self._closed_without_native_run(
+                        conn, workflow_id, attempt["id"]
+                    ) or not self._never_run_task(conn, workflow_id, attempt["id"]):
+                        raise ValueError("remaining_requires_repair")
+                elif (
+                    attempt["status"] == "completed"
+                    and attempt["retirement"] == "drained"
+                ):
+                    result = self._read_result(conn, workflow_id, attempt["id"])
+                    if result.status != "completed":
+                        raise ValueError("remaining_requires_repair")
+                    completed.append(attempt["id"])
+                else:
+                    raise ValueError("remaining_requires_repair")
+            if completed:
+                if len(completed) != 1 or attempts[-1]["id"] != completed[0]:
+                    raise ValueError("remaining_requires_repair")
+                retained[task["task_id"]] = completed[0]
+            else:
+                remaining.append(task["task_id"])
+        if not remaining:
+            raise ValueError("remaining_partition_required")
+        return retained, tuple(remaining)
+
+    @staticmethod
+    def _attempt_decision(conn, attempt):
+        rows = conn.execute(
+            "SELECT payload_json FROM workflow_decisions WHERE workflow_id=? AND plan_revision=? AND phase_id=? AND control_revision=?",
+            (
+                attempt["workflow_id"],
+                attempt["plan_revision"],
+                attempt["phase_id"],
+                attempt["control_revision"] - 1,
+            ),
+        ).fetchall()
+        if len(rows) != 1:
+            raise ValueError("workflow_decision_link_unproven")
+        decision = WorkflowDecision.model_validate_json(rows[0][0])
+        if decision.action != "approve" or decision.reason != "remaining_ready":
+            raise ValueError("workflow_decision_link_unproven")
+        return decision
+
     def save_decision(self, decision: WorkflowDecision) -> WorkflowSnapshot:
         """Append an inert decision record with CAS; it is not phase authorization."""
+        with self.db.automatic_work.transaction() as conn:
+            self._save_decision(conn, decision)
+            return self._snapshot(conn, self._row(conn, decision.workflow_id))
+
+    def _save_decision(self, conn, decision, *, status=None):
         decision = WorkflowDecision.model_validate_json(decision.canonical_json())
         payload = decision.canonical_json()
-        with self.db.automatic_work.transaction() as conn:
-            row = self._row(conn, decision.workflow_id)
-            prior = conn.execute(
-                "SELECT payload_json FROM workflow_decisions WHERE id=?", (decision.id,)
-            ).fetchone()
-            if prior:
-                if prior[0] != payload:
-                    raise ValueError("decision_identity_conflict")
-                return self._snapshot(conn, row)
-            for ref in decision.result_refs:
-                self._read_result(conn, decision.workflow_id, ref)
-            self._capacity(conn, decision.workflow_id, len(payload.encode()))
-            self._cas(
-                conn, decision.workflow_id, decision.control_revision, row["status"]
-            )
-            conn.execute(
-                "INSERT INTO workflow_decisions VALUES (?,?,?,?,?,?)",
-                (
-                    decision.id,
-                    decision.workflow_id,
-                    decision.plan_revision,
-                    decision.phase_id,
-                    decision.control_revision,
-                    payload,
-                ),
-            )
-            return self._snapshot(conn, self._row(conn, decision.workflow_id))
+        row = self._row(conn, decision.workflow_id)
+        prior = conn.execute(
+            "SELECT payload_json FROM workflow_decisions WHERE id=?", (decision.id,)
+        ).fetchone()
+        if prior:
+            if prior[0] != payload:
+                raise ValueError("decision_identity_conflict")
+            return
+        for ref in decision.result_refs:
+            self._read_result(conn, decision.workflow_id, ref)
+        self._capacity(conn, decision.workflow_id, len(payload.encode()))
+        self._cas(
+            conn,
+            decision.workflow_id,
+            decision.control_revision,
+            status or row["status"],
+        )
+        conn.execute(
+            "INSERT INTO workflow_decisions VALUES (?,?,?,?,?,?)",
+            (
+                decision.id,
+                decision.workflow_id,
+                decision.plan_revision,
+                decision.phase_id,
+                decision.control_revision,
+                payload,
+            ),
+        )

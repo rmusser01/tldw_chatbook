@@ -141,6 +141,18 @@ class AutomaticWorkContext:
             raise AutomaticWorkRefused("acceptance_required")
         self._accepted.set()
 
+    def _workflow_dispatch(self):
+        if self.workflow is None:
+            return None
+        from .workflow_task_scope import current_task_authorization
+
+        task = current_task_authorization()
+        if task is None:
+            return None
+        if task.phase is not self.workflow or task.phase.context is not self:
+            raise AutomaticWorkRefused("workflow_authority_changed")
+        return self.workflow._task_dispatch(task)
+
     @_owned_goal_call
     def check(self) -> AutomaticWorkSnapshot:
         """Enforce accepted authority, the root kill switch, and live limits."""
@@ -148,6 +160,7 @@ class AutomaticWorkContext:
 
         if not self._accepted.is_set():
             raise AutomaticWorkRefused("acceptance_required")
+        dispatch = None
         if self.attempt_kind == "workflow_phase":
             from tldw_chatbook.Chat.console_workflow_runs import (
                 WorkflowPhaseAuthorization,
@@ -158,7 +171,18 @@ class AutomaticWorkContext:
                 or self.workflow.context is not self
             ):
                 raise AutomaticWorkRefused("acceptance_required")
-            self.workflow.check()
+            dispatch = self._workflow_dispatch()
+            if dispatch is None:
+                self.workflow.check()
+            else:
+                with self.ledger._db.connection() as conn:
+                    self.ledger._workflow_current(
+                        conn,
+                        self.attempt_id,
+                        self.owner_id,
+                        accepted=True,
+                        _dispatch=dispatch,
+                    )
         attempt = self._read_attempt()
         if (
             attempt.chain_id != self.chain_id
@@ -194,7 +218,10 @@ class AutomaticWorkContext:
             self.ledger.pause(self.chain_id, "output_tokens_budget")
             raise AutomaticWorkRefused("output_tokens_budget")
         return self.ledger.check_active(
-            self.chain_id, owner_id=self.owner_id, limits=limits
+            self.chain_id,
+            owner_id=self.owner_id,
+            limits=limits,
+            _dispatch=dispatch if self.workflow is not None else None,
         )
 
     def should_cancel(self) -> bool:
@@ -231,6 +258,7 @@ class AutomaticWorkContext:
             input_tokens=input_tokens,
             output_tokens=output_tokens,
             limits=AutomaticWorkLimits.from_settings(self.policy_kind()),
+            _dispatch=self._workflow_dispatch(),
         )
         if reservation is None:
             raise AutomaticWorkRefused("call_already_dispatched")

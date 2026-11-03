@@ -495,10 +495,28 @@ Only prepared unused or explicit closed/drained quiescence is clean; accepted
 unmarked/open/unknown intervals stay recovery-required.
 
 `resume` validates saved clean state and returns awaiting approval without an
-execution capability. The later coordinator/bridge integration must freshly
-resolve actual provider/tools/permissions, then accept a new phase generation
-for remaining tasks. No scheduler, public workflow UI or restored-owner adoption
-is provided by this service slice.
+execution capability. Private `WorkflowPhaseAuthorization._control` serializes
+Pause/Stop with the original `_run_owned` child allowance COMMIT. Only the exact
+committed task, owner, activity claim and service can continue at that persisted
+Pause revision, including the prebind interval. New preparation and commits remain
+strict. Stop revokes this in-memory continuation and requests original cancellation
+outside the finite mutex. The fence preloads live policy and the activated SQLite
+handle; the original FULL SQL transaction and storage guards remain authoritative.
+
+`WorkflowRunService.settle_execution_phase` consumes original returned task, wave,
+frame and required checkpoint evidence. Only conclusively never-run claims may
+close without results; precreated rows and committed allowances are not unused.
+Fresh successful siblings keep their exact result/checkpoint references and spend.
+Failed, stale or unverified outcomes require repair. `_accept_remaining_workflow_phase`
+validates the complete remaining decision under an original current OPAQUE read
+claim and native nonchild operation. Its worker retains source/storage custody
+through host acceptance/discard and actual finish RETURN; new custody is delivered
+only after physical retirement. Repeated-phase ID acceptance cannot bypass that
+receiver. Caller command identity is stored verbatim; the unique decision at R and
+attempt at R+1 are committed together. Only the never-run complement gets new
+ordinals/charges, and final quality checks retained plus new results. Planning and
+public coordinator/UI integration remain separate work; no scheduler or restored
+owner adoption is introduced.
 
 
 ### Ordinary tree integration contract under implementation

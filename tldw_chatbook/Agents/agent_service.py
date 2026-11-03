@@ -2247,6 +2247,8 @@ def _call_with_timeout(
                 if workflow_prepared is not None
                 else contextlib.nullcontext(),
                 automatic_work.scope() if automatic_work else contextlib.nullcontext(),
+                workflow.scope() if workflow is not None else contextlib.nullcontext(),
+                owner.activate() if workflow is not None else contextlib.nullcontext(),
                 bind_tool_output_sink(output_sink),
             ):
                 if automatic_work is not None:
@@ -4885,17 +4887,25 @@ class AgentService:
                 or prepared[0].phase is not authorization.phase
             ):
                 raise PermissionError("native workflow child preparation required")
-            if authorization._native_launch:
-                result = authorization._native_launch[0]
-                if isinstance(result, WorkflowChildReceipt):
-                    if result.failure is not None:
-                        raise _WorkflowChildLaunchFailed(result)
-                    return result
-                raise PermissionError("workflow child launch already claimed")
             prepared = prepared[0]
-            # Original resource retirement uses this same claim lock.
             authorization.check_preparation()
-            authorization._native_launch.append(None)
+            # Publish the existing launch marker before retirement can call a task
+            # unused. This grants no continuation; only native allowance COMMIT does.
+            with authorization.phase._control_lock:
+                if authorization.phase._retired:
+                    raise PermissionError("workflow phase retired")
+                if authorization._native_launch:
+                    result = authorization._native_launch[0]
+                    duplicate = True
+                else:
+                    authorization._native_launch.append(None)
+                    duplicate = False
+        if duplicate:
+            if isinstance(result, WorkflowChildReceipt):
+                if result.failure is not None:
+                    raise _WorkflowChildLaunchFailed(result)
+                return result
+            raise PermissionError("workflow child launch already claimed")
         from tldw_chatbook.Backup_Recovery.participants import _core_operation
 
         from .activation import execution
@@ -6174,9 +6184,15 @@ class AgentService:
                     kwargs["workflow_activity_claim"] = workflow_activity_claim
                 if automatic_work is not None:
                     automatic_work.check()
-                    if (
-                        automatic_child_reservation is not None
-                        and not automatic_work.ledger.commit(
+                    if automatic_child_reservation is not None and not (
+                        workflow_task_authorization.phase._commit_task_launch(
+                            workflow_task_authorization,
+                            owner,
+                            workflow_activity_claim,
+                            self,
+                        )
+                        if workflow_task_authorization is not None
+                        else automatic_work.ledger.commit(
                             automatic_child_reservation,
                             owner_id=automatic_work.owner_id,
                             limits=AutomaticWorkLimits.from_settings(

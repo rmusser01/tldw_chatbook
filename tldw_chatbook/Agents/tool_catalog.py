@@ -2208,7 +2208,10 @@ class ToolCatalogRegistry:
 
         task = current_task_authorization()
         if task is not None:
-            task.check_preparation()
+            if task._binding_state:
+                task._check_continuation()
+            else:
+                task.check_preparation()
             entries = tuple(
                 e
                 for e in entries
@@ -2711,7 +2714,9 @@ class ToolCatalogRegistry:
                     return ToolResult.blocked("reviewed tool definition unavailable")
             if automatic is not None and automatic.workflow is not None:
                 automatic.ledger.resume_workflow_phase(
-                    automatic.attempt_id, owner_id=automatic.owner_id
+                    automatic.attempt_id,
+                    owner_id=automatic.owner_id,
+                    _dispatch=automatic._workflow_dispatch(),
                 )
             return provider.invoke(tool_id, args)
 
