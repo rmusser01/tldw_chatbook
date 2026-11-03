@@ -301,17 +301,17 @@ def test_raw_token_copy_foreign_thread_and_sibling_cannot_write(tmp_path, local_
     from tldw_chatbook.Backup_Recovery import raw_participants as raw
 
     service = LocalFeedbackService(store_path=tmp_path / "feedback.json")
-    with raw._scope(service, "service", writing=True) as operation:
+    with raw.scope(service, "service", writing=True) as operation:
         with pytest.raises(bootstrap.RecoveryRequired, match="provenance"):
-            raw._selected(copy.copy(operation))
+            raw.selected_target(copy.copy(operation))
         with pytest.raises(bootstrap.RecoveryRequired, match="outside_scope"):
-            with raw._file(operation, tmp_path / "sibling.json", "w"):
+            with raw.file(operation, tmp_path / "sibling.json", "w"):
                 pytest.fail("sibling admitted")
         errors = []
 
         def foreign():
             try:
-                raw._selected(operation)
+                raw.selected_target(operation)
             except BaseException as exc:
                 errors.append(exc)
 
@@ -320,7 +320,7 @@ def test_raw_token_copy_foreign_thread_and_sibling_cannot_write(tmp_path, local_
         thread.join(3)
         assert len(errors) == 1 and isinstance(errors[0], bootstrap.RecoveryRequired)
     with pytest.raises(bootstrap.RecoveryRequired, match="provenance"):
-        raw._selected(operation)
+        raw.selected_target(operation)
 
 
 @pytest.mark.asyncio
@@ -328,11 +328,11 @@ async def test_raw_child_task_does_not_inherit_authority(tmp_path, local_root):
     from tldw_chatbook.Backup_Recovery import raw_participants as raw
 
     service = LocalFeedbackService(store_path=tmp_path / "feedback.json")
-    with raw._scope(service, "service", writing=True) as operation:
+    with raw.scope(service, "service", writing=True) as operation:
 
         async def child():
             with pytest.raises(bootstrap.RecoveryRequired, match="provenance"):
-                raw._selected(operation)
+                raw.selected_target(operation)
 
         await asyncio.create_task(child())
 
@@ -495,10 +495,10 @@ def test_generic_decorated_callback_cannot_borrow_installed_source_authority(
 
     service = LocalFeedbackService(store_path=tmp_path / "feedback.json")
 
-    @raw._service_mutation
+    @raw.service_mutation
     def callback(source):
-        operation = raw._service_file(source, "w")
-        with raw._file(operation, source.store_path, "w") as stream:
+        operation = raw.service_file(source, "w")
+        with raw.file(operation, source.store_path, "w") as stream:
             stream.write("forged")
 
     with pytest.raises(bootstrap.RecoveryRequired, match="raw_source_not_supported"):
@@ -640,13 +640,13 @@ def test_parent_replaced_after_pin_refuses_file_and_preserves_both_directories(
     parent = tmp_path / "parent"
     parent.mkdir()
     service = LocalFeedbackService(store_path=parent / "store.json")
-    with raw._scope(service, "service", writing=True) as operation:
+    with raw.scope(service, "service", writing=True) as operation:
         parent.rename(tmp_path / "moved")
         parent.mkdir()
         with pytest.raises(
             bootstrap.RecoveryRequired, match="raw_parent_identity_changed"
         ):
-            with raw._file(operation, service.store_path, "w"):
+            with raw.file(operation, service.store_path, "w"):
                 pytest.fail("replacement received write")
     assert list(parent.iterdir()) == []
     assert list((tmp_path / "moved").iterdir()) == []
@@ -888,15 +888,15 @@ def test_spoofed_source_function_metadata_cannot_grant_callback_authority(
     service = LocalFeedbackService(store_path=tmp_path / "store.json")
 
     def forged(source):
-        operation = raw._service_file(source, "w")
-        with raw._file(operation, source.store_path, "w") as stream:
+        operation = raw.service_file(source, "w")
+        with raw.file(operation, source.store_path, "w") as stream:
             stream.write("forged")
 
     forged.__name__ = "_persist"
     forged.__qualname__ = "LocalFeedbackService._persist"
     forged.__module__ = LocalFeedbackService.__module__
     with pytest.raises(bootstrap.RecoveryRequired, match="raw_source_not_supported"):
-        raw._service_mutation(forged)(service)
+        raw.service_mutation(forged)(service)
     assert not service.store_path.exists()
 
 
@@ -1095,7 +1095,7 @@ def test_portable_raw_retains_real_normal_lease_without_pause_authority(
     service = LocalFeedbackService(store_path=tmp_path / "store.json")
     pause = None
     try:
-        with raw._scope(service, "service", writing=True) as operation:
+        with raw.scope(service, "service", writing=True) as operation:
             state = raw._states[operation]
             assert state.participant is None
             assert all(lease._key is not None for lease in state.leases)
@@ -1104,7 +1104,7 @@ def test_portable_raw_retains_real_normal_lease_without_pause_authority(
             with pytest.raises(
                 bootstrap.RecoveryRequired, match="storage_locally_paused"
             ):
-                with raw._file(operation, service.store_path, "w"):
+                with raw.file(operation, service.store_path, "w"):
                     pytest.fail("portable descendant entered during pause")
         assert pause.drain(time.monotonic() + 1)
         with pytest.raises(

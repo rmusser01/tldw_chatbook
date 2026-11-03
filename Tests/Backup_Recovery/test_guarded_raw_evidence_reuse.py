@@ -581,7 +581,7 @@ def test_warm_raw_operation_owns_and_retires_actual_parent_fd(mcp_sources, monke
     source = mcp_sources[1]
     monkeypatch.setattr(storage, "_EVIDENCE_SETTLE_NS", 0)
     _warm(source.load)
-    with raw._scope(source, mcp_source_participants.ROUTE, writing=True) as operation:
+    with raw.scope(source, mcp_source_participants.ROUTE, writing=True) as operation:
         state = raw._states[operation]
         fd = state.pins[source.path.parent]
         actual = os.fstat(fd)
@@ -758,13 +758,13 @@ if mode=='close':
   else: raise AssertionError('native close did not happen')
 else:
  foreign=base/'foreign.json';foreign.write_bytes(b'foreign bytes');foreign.chmod(0o600)
- replace=raw._replace
+ replace=raw.replace
  changed=[]
  def replaced(operation, temporary, destination):
   if destination==source.path and not changed:
    foreign.replace(destination);changed.append(True)
   return replace(operation,temporary,destination)
- raw._replace=replaced
+ raw.replace=replaced
  try: source.save_targets([])
  except bootstrap.RecoveryRequired: pass
  else: raise AssertionError('warm publication adopted foreign destination')

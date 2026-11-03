@@ -65,7 +65,7 @@ def installed_source_case(configured_source, monkeypatch, request):
 @contextmanager
 def _original_scope_acquisitions(source):
     """Count untouched acquisition bodies only under this source's exact scope."""
-    scope_code = inspect.unwrap(raw._scope).__code__
+    scope_code = inspect.unwrap(raw.scope).__code__
     acquire_function = storage.acquire_storage
     acquire_code = acquire_function.__code__
     check_function, participant_function = raw._check, raw._participant_state
@@ -79,7 +79,7 @@ def _original_scope_acquisitions(source):
     private_module = sys.modules["tldw_chatbook.Utils.private_paths"]
     parent_function = private_module._open_verified_parent
     parent_code = parent_function.__code__
-    runtime_function = raw._runtime_operation
+    runtime_function = raw.runtime_operation
     runtime_code = runtime_function.__code__
     requests, returned, entries, closes = [], [], [], []
     active_acquires, active_closes, active_reuses = {}, {}, {}
@@ -472,7 +472,7 @@ def _original_scope_acquisitions(source):
         assert private_module._open_verified_parent is parent_function
         assert parent_function.__code__ is parent_code
         assert parent_function.__globals__ is vars(private_module)
-        assert raw._runtime_operation is runtime_function
+        assert raw.runtime_operation is runtime_function
         assert runtime_function.__code__ is runtime_code
         assert runtime_function.__globals__ is vars(raw)
         assert observed.parent_walk_depth == 0
@@ -622,9 +622,9 @@ def test_nested_installed_permission_read_checks_each_scope_once(
         key = row["route"], *row["caller"][:2]
         counts[key] = counts.get(key, 0) + row["calls"]
     prefix = "tldw_chatbook/Backup_Recovery/"
-    scope = ("mcp_store", prefix + "raw_participants.py", "_scope")
+    scope = ("mcp_store", prefix + "raw_participants.py", "scope")
     source = ("mcp_store", prefix + "mcp_source_participants.py", "_operation")
-    file = ("mcp_store", prefix + "raw_participants.py", "_file")
+    file = ("mcp_store", prefix + "raw_participants.py", "file")
     assert counts[source] == 1, counts
     assert counts[file] == 1, counts
     request.node.user_properties.extend(

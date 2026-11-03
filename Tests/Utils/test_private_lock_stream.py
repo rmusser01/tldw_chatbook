@@ -64,7 +64,7 @@ def test_lock_stream_syncs_only_actual_creation_and_keeps_that_fd(
             if frame.f_locals["fd"] in synced:
                 closed_before_return.append(frame.f_locals["fd"])
 
-    with raw._scope(configured_source, "config", writing=True) as operation:
+    with raw.scope(configured_source, "config", writing=True) as operation:
         state = raw._states[operation]
         sys.setprofile(observe)
         try:
@@ -101,7 +101,7 @@ def test_original_append_api_does_not_gain_lock_fsync(
         lock_path.write_bytes(b"existing")
         lock_path.chmod(0o600)
     synced = _record_actual_target_syncs(monkeypatch, lock_path)
-    with raw._scope(configured_source, "config", writing=True) as operation:
+    with raw.scope(configured_source, "config", writing=True) as operation:
         stream = private_paths.open_private_text_append_stream(
             lock_path,
             application_owned_directory=configured_source.application_owned_config_directory(
@@ -153,7 +153,7 @@ def test_confirmed_existing_lock_that_disappears_is_not_recreated(
 ):
     lock_path.write_bytes(b"original")
     lock_path.chmod(0o600)
-    with raw._scope(configured_source, "config", writing=True):
+    with raw.scope(configured_source, "config", writing=True):
         with _after_actual_exclusive_rejection(lock_path, lock_path.unlink) as reached:
             with pytest.raises((OSError, private_paths.PrivatePathError)):
                 private_paths.open_private_lock_stream(lock_path)
@@ -178,7 +178,7 @@ def test_confirmed_existing_lock_replaced_with_unsafe_leaf_refuses(
         else:
             os.link(source, lock_path)
 
-    with raw._scope(configured_source, "config", writing=True):
+    with raw.scope(configured_source, "config", writing=True):
         with _after_actual_exclusive_rejection(lock_path, replace_leaf) as reached:
             with pytest.raises((OSError, private_paths.PrivatePathError)):
                 private_paths.open_private_lock_stream(lock_path)
@@ -217,7 +217,7 @@ def test_replacement_between_existing_lstat_and_actual_open_refuses(
             os.replace(successor, lock_path)
             changed.append(True)
 
-    with raw._scope(configured_source, "config", writing=True):
+    with raw.scope(configured_source, "config", writing=True):
         sys.setprofile(observe)
         try:
             with pytest.raises((OSError, private_paths.PrivatePathError)):
@@ -245,7 +245,7 @@ def test_ambiguous_allocator_creation_then_fileexists_does_not_retry(
         return original(path, flags, *args, **kwargs)
 
     try:
-        with raw._scope(configured_source, "config", writing=True):
+        with raw.scope(configured_source, "config", writing=True):
             with monkeypatch.context() as changed:
                 changed.setattr(private_paths.os, "open", allocate_then_raise)
                 # This provider really delegates every directory-relative call;

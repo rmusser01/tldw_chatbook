@@ -360,7 +360,7 @@ def test_actual_native_uncertainty_retains_source_and_independent_lease(
     target = []
     attempts = []
     real_close = os.close
-    real_replace = raw._replace
+    real_replace = raw.replace
     real_stream_close = private_paths._close_runtime_stream
     real_native_close = private_paths._native_close
 
@@ -420,7 +420,7 @@ def test_actual_native_uncertainty_retains_source_and_independent_lease(
             raise OSError("injected native close uncertainty")
         return real_close(fd)
 
-    monkeypatch.setattr(raw, "_replace", published)
+    monkeypatch.setattr(raw, "replace", published)
     monkeypatch.setattr(private_paths, "_close_runtime_stream", stream_close)
     monkeypatch.setattr(private_paths, "_native_close", native_close)
     monkeypatch.setattr(os, "close", uncertain_close)
@@ -633,14 +633,14 @@ def test_history_private_helpers_reject_other_paths_and_foreign_task(
 
     source = mcp_sources[4]
     outsider = tmp_path / "foreign"
-    with raw._scope(source, raw.mcp_sources.ROUTE, writing=True):
+    with raw.scope(source, raw.mcp_sources.ROUTE, writing=True):
         with pytest.raises(bootstrap.RecoveryRequired, match="outside_scope"):
             private_paths.atomic_private_write_bytes(outsider, b"x")
         with pytest.raises(RuntimeError, match="helper_not_supported"):
             private_paths.create_private_text(source.path, "x")
 
     async def check():
-        with raw._scope(source, raw.mcp_sources.ROUTE, writing=True):
+        with raw.scope(source, raw.mcp_sources.ROUTE, writing=True):
 
             async def foreign():
                 with pytest.raises(
@@ -828,7 +828,7 @@ def test_none_native_hold_does_not_grant_history_pause_authority(
     monkeypatch.setattr(
         storage, "qualified_for", lambda *args: (False, "test_native_unavailable")
     )
-    with raw._scope(source, raw.mcp_sources.ROUTE, writing=True) as operation:
+    with raw.scope(source, raw.mcp_sources.ROUTE, writing=True) as operation:
         assert all(hold is None for hold in raw._states[operation].holds)
         pause = storage._begin_local_pause()
         try:

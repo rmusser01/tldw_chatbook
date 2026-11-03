@@ -168,7 +168,7 @@ def test_original_config_parent_retirement_does_not_repeat_path_checks(
 
 @contextmanager
 def _owned_config_descriptor(source):
-    with raw._scope(source, "config", writing=True) as operation:
+    with raw.scope(source, "config", writing=True) as operation:
         state = raw._states[operation]
         fd = private_paths._native_open(state.selected, private_paths.os.O_RDONLY)
         assert fd in state.descriptors
@@ -233,7 +233,7 @@ def test_creator_retires_owned_descriptor_after_source_revocation(
                         state.selected, private_paths.os.O_RDONLY, _outcome=outcome
                     )
                 with pytest.raises(bootstrap.RecoveryRequired):
-                    with raw._file(operation, state.selected, "r") as stream:
+                    with raw.file(operation, state.selected, "r") as stream:
                         stream.read()
         finally:
             # A failed refusal assertion must still retire a positively issued fd.
@@ -259,7 +259,7 @@ def test_owned_cleanup_finishes_after_gate_closes_without_admitting_new_work(
         assert operation not in raw._states
         assert participant.drain(time.monotonic() + 1)
         with pytest.raises(bootstrap.RecoveryRequired):
-            with raw._scope(configured_source, "config", writing=True):
+            with raw.scope(configured_source, "config", writing=True):
                 pytest.fail("closed source admitted a new operation")
     finally:
         participant.resume()
@@ -313,7 +313,7 @@ def test_copied_operation_cannot_borrow_descriptor_retirement_ownership(
             assert raw._owned_descriptor_retirement_state(fd) is None
             # The ordinary unowned route remains separate; do not make a new
             # blanket-close refusal policy for copied or absent operations.
-            assert raw._runtime_operation() is None
+            assert raw.runtime_operation() is None
             assert fd in state.descriptors
             os.fstat(fd)
         finally:
@@ -323,7 +323,7 @@ def test_copied_operation_cannot_borrow_descriptor_retirement_ownership(
 
 
 def test_untracked_descriptor_preserves_original_checked_close(configured_source):
-    with raw._scope(configured_source, "config", writing=True) as operation:
+    with raw.scope(configured_source, "config", writing=True) as operation:
         state = raw._states[operation]
         fd = os.open(state.selected, os.O_RDONLY)
         closed = False
@@ -349,7 +349,7 @@ async def test_uncertain_owned_close_retains_native_resources_and_admission(
 ):
     # This existing private-profile wrapper owns interpreter termination. The
     # test must not turn uncertain native custody back into a successful close.
-    with raw._scope(configured_source, "config", writing=True) as operation:
+    with raw.scope(configured_source, "config", writing=True) as operation:
         state = raw._states[operation]
         fd = private_paths._native_open(state.selected, private_paths.os.O_RDONLY)
         assert fd in state.descriptors

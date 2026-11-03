@@ -618,9 +618,9 @@ async def handle_ingest_notes_import_now_button_pressed(
         # boundary" instead of "the rest of the batch".
         if import_as_templates:
             from ..Notes import template_store
-            from ..Backup_Recovery.async_file_participants import _FileJob
+            from ..Backup_Recovery.async_file_participants import FileJob
 
-            with _FileJob(template_store, "note_templates") as job:
+            with FileJob(template_store, "note_templates") as job:
                 outcome = await job.run((app, note_files_snapshot, cancel_event))
                 if outcome.cancelled:
                     raise asyncio.CancelledError

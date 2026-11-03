@@ -29,7 +29,7 @@ from typing import TypedDict
 from loguru import logger
 
 from ..Backup_Recovery import raw_participants as raw
-from ..Backup_Recovery.async_file_participants import _FileJob
+from ..Backup_Recovery.async_file_participants import FileJob
 from ..Backup_Recovery import profile_paths
 from ..Backup_Recovery.profile_paths import lexical_path
 
@@ -221,13 +221,13 @@ class PromptHistory:
 
     def _history_io(self, selected, payload):
         """Own the complete real thread scope; payload is a fixed write snapshot."""
-        with raw._scope(
+        with raw.scope(
             self, "prompt_history", writing=payload is not None, selected_read=selected
         ) as operation:
             if payload is None:
                 entries = []
                 try:
-                    with raw._file(operation, selected, "r") as history_file:
+                    with raw.file(operation, selected, "r") as history_file:
                         for line in history_file:
                             try:
                                 entry = json.loads(line)
@@ -249,13 +249,13 @@ class PromptHistory:
                     pass
                 return entries
             entries, rewrite = payload
-            raw._mkdirs(operation)
+            raw.mkdirs(operation)
             destination = (
                 selected.with_suffix(selected.suffix + ".tmp") if rewrite else selected
             )
             append_started = False
             try:
-                with raw._file(
+                with raw.file(
                     operation, destination, "w" if rewrite else "a"
                 ) as history_file:
                     for text, timestamp in entries:
@@ -263,7 +263,7 @@ class PromptHistory:
                         append_started = not rewrite
                         history_file.write(line)
                 if rewrite:
-                    raw._replace(operation, destination, selected)
+                    raw.replace(operation, destination, selected)
             except BaseException:
                 # An interrupted append may already have changed durable bytes.
                 # Keep the source/native evidence for recovery rather than claim drain.
@@ -272,12 +272,12 @@ class PromptHistory:
                 raise
             finally:
                 if rewrite:
-                    raw._remove_temporary(operation, destination)
+                    raw.remove_temporary(operation, destination)
 
     async def _load_locked(self) -> None:
         if self._loaded:
             return
-        with _FileJob(self, "prompt_history") as job:
+        with FileJob(self, "prompt_history") as job:
             outcome = await job.run(None)
             if outcome.error is None:
                 self._entries = outcome.value[-self.max_entries :]
@@ -322,7 +322,7 @@ class PromptHistory:
             return False
         try:
             await self._load_locked()
-            with _FileJob(self, "prompt_history") as job:
+            with FileJob(self, "prompt_history") as job:
                 if self._entries and self._entries[-1]["input"] == text:
                     return False
                 draft_revision = self._draft_revision

@@ -103,7 +103,7 @@ def test_original_parent_walk_checks_source_at_two_boundaries(
 ):
     selected = configured_source._get_effective_config_path()
     expected = selected.read_bytes()
-    with raw._scope(configured_source, "config", writing=True) as operation:
+    with raw.scope(configured_source, "config", writing=True) as operation:
         state = raw._states[operation]
         baseline_descriptors = set(state.descriptors)
         leases = tuple(state.leases)
@@ -175,7 +175,7 @@ def test_original_walk_refuses_drift_before_another_directory_or_return(
         alternate.write_bytes(original)
         alternate.chmod(0o600)
     changed, returned = [], []
-    with raw._scope(
+    with raw.scope(
         configured_source, route, writing=True, selected_read=target
     ) as operation:
         state = raw._states[operation]
@@ -245,7 +245,7 @@ def test_explicit_parent_callbacks_keep_original_walk_gates(
     kwargs = (
         {"_open": open_directory} if callback == "open" else {"_close": close_directory}
     )
-    with raw._scope(configured_source, "config", writing=True) as operation:
+    with raw.scope(configured_source, "config", writing=True) as operation:
         state = raw._states[operation]
         baseline = set(state.descriptors)
         with _original_parent_work(operation) as observed:
@@ -276,7 +276,7 @@ def test_finite_directory_opener_refuses_foreign_copy_and_expired_use(
 ):
     selected = configured_source._get_effective_config_path()
     failures, captured = [], []
-    with raw._scope(configured_source, "config", writing=True) as operation:
+    with raw.scope(configured_source, "config", writing=True) as operation:
         state = raw._states[operation]
         baseline = set(state.descriptors)
 
@@ -347,7 +347,7 @@ async def test_walk_uncertain_close_retains_actual_descriptors_and_leases(
     selected = configured_source._get_effective_config_path()
     original_close = raw.os.close
     targets, attempts = [], []
-    with raw._scope(configured_source, "config", writing=True) as operation:
+    with raw.scope(configured_source, "config", writing=True) as operation:
         state = raw._states[operation]
         pins, leases = dict(state.pins), tuple(state.leases)
 
@@ -397,7 +397,7 @@ def test_final_parent_source_check_refuses_and_closes_completed_walk(
     alternate.chmod(0o600)
     code = private._walk_verified_parent.__code__
     returned, delivered = [], []
-    with raw._scope(configured_source, "config", writing=True) as operation:
+    with raw.scope(configured_source, "config", writing=True) as operation:
         state = raw._states[operation]
         baseline = set(state.descriptors)
         with monkeypatch.context() as patch:
@@ -452,7 +452,7 @@ def test_changed_directory_open_default_preserves_original_callback(
         calls.append((args, dict(kwargs)))
         return private._native_open(*args, **kwargs)
 
-    with raw._scope(configured_source, "config", writing=True) as operation:
+    with raw.scope(configured_source, "config", writing=True) as operation:
         state = raw._states[operation]
         baseline = set(state.descriptors)
         with monkeypatch.context() as patch:
@@ -508,7 +508,7 @@ def test_transient_parent_substitution_refuses_and_retires_returned_descriptor(
     check_code = raw._check.__code__
     swapped = restored = False
     returned, final_checks, delivered, refusals = [], [], [], []
-    with raw._scope(configured_source, "config", writing=True) as operation:
+    with raw.scope(configured_source, "config", writing=True) as operation:
         state = raw._states[operation]
         baseline = set(state.descriptors)
         leases = tuple(state.leases)
@@ -630,7 +630,7 @@ def test_unpinned_private_parent_keeps_original_walk_checks(configured_source, r
     auxiliary = directory / "unopened-leaf"
     try:
         assert stat.S_IMODE(raw.os.stat(directory).st_mode) == 0o700
-        with raw._scope(configured_source, "config", writing=True) as operation:
+        with raw.scope(configured_source, "config", writing=True) as operation:
             state = raw._states[operation]
             baseline = set(state.descriptors)
             leases = tuple(state.leases)
@@ -686,7 +686,7 @@ def test_original_returned_parent_descriptor_substitution_refuses_and_retires(
             replacement, private._DIRECTORY_OPEN_FLAGS | private._NOFOLLOW
         )
         substitute_identity = raw.os.fstat(substitute)
-        with raw._scope(configured_source, "config", writing=True) as operation:
+        with raw.scope(configured_source, "config", writing=True) as operation:
             state = raw._states[operation]
             baseline = set(state.descriptors)
             leases = tuple(state.leases)
@@ -796,7 +796,7 @@ def test_final_parent_identity_read_refuses_late_real_lease_revocation(
     fstat = raw.os.fstat
     fstat_code = getattr(fstat, "__code__", None)
     identity_reads, returned, revoked, delivered, refusals = [], [], [], [], []
-    with raw._scope(configured_source, "config", writing=True) as operation:
+    with raw.scope(configured_source, "config", writing=True) as operation:
         state = raw._states[operation]
         baseline = set(state.descriptors)
         leases = tuple(state.leases)

@@ -333,7 +333,7 @@ def operation(source):
             tokens = []
             for item in members:
                 item_route = _source_kind(item)[1][0]
-                token = scopes.enter_context(raw._scope(item, item_route, writing=True))
+                token = scopes.enter_context(raw.scope(item, item_route, writing=True))
                 tokens.append((item, token))
             # Both native scopes exist before exposure. No pause-time acquisition.
             attempt.check()
@@ -430,7 +430,7 @@ def read_text(source):
 
     with operation(source) as token:
         path = selection(source, _source_kind(source)[1][0])[0]
-        with raw._file(token, path, "r") as stream:
+        with raw.file(token, path, "r") as stream:
             return stream.read()
 
 
@@ -440,9 +440,9 @@ def write_text(source, text):
     with operation(source) as token:
         selected = selection(source, _source_kind(source)[1][0])[0]
         temporary = selected.with_suffix(selected.suffix + ".tmp")
-        raw._mkdirs(token)
+        raw.mkdirs(token)
         try:
-            with raw._file(token, temporary, "w") as stream:
+            with raw.file(token, temporary, "w") as stream:
                 stream.write(text)
             state = raw._check(token, selected, writing=True)
             if _validate(source) is not None and (
@@ -450,13 +450,13 @@ def write_text(source, text):
                 != state.observed_files.get(selected)
             ):
                 raise bootstrap.RecoveryRequired("chat_sidecar_identity_changed")
-            raw._replace(token, temporary, selected)
+            raw.replace(token, temporary, selected)
             if _validate(source) is not None:
                 state.observed_files[selected] = _sidecar_identity(selected)
         finally:
             state = raw._states[token]
             if temporary in state.created_files and not state.uncertain:
-                raw._remove_temporary(token, temporary)
+                raw.remove_temporary(token, temporary)
 
 
 def _sidecar_identity(path, *, writing=False):

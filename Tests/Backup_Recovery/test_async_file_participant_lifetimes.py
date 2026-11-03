@@ -111,7 +111,7 @@ import os
 import select
 
 from tldw_chatbook.Backup_Recovery import raw_participants as raw
-from tldw_chatbook.Backup_Recovery.async_file_participants import _FileJob
+from tldw_chatbook.Backup_Recovery.async_file_participants import FileJob
 from Tests.Backup_Recovery.test_admission import launch, line, release
 from Tests.Backup_Recovery.test_bootstrap import local_scope
 
@@ -247,7 +247,7 @@ async def test_failed_enqueue_retires_pending(installed_history, monkeypatch, fa
 
 @pytest.mark.asyncio
 async def test_job_copy_task_thread_and_one_shot_provenance(installed_history):
-    with _FileJob(installed_history, "prompt_history") as job:
+    with FileJob(installed_history, "prompt_history") as job:
         copied = copy.copy(job)
         with pytest.raises(bootstrap.RecoveryRequired, match="provenance"):
             await copied.run(None)
@@ -301,7 +301,7 @@ async def test_history_fixed_selection_does_not_follow_retarget(
 ):
     history = installed_history
     selected = history.path
-    with _FileJob(history, "prompt_history") as job:
+    with FileJob(history, "prompt_history") as job:
         history.path = tmp_path / "other.jsonl"
         result = await job.run(((("wrong", 0.0),), False))
         assert isinstance(result.error, bootstrap.RecoveryRequired)
@@ -337,14 +337,14 @@ async def test_exact_file_binding_refuses_missing_sidecar(local_scope, monkeypat
 
 @pytest.mark.asyncio
 async def test_native_raw_scope_cannot_transfer_to_async_task(installed_history):
-    with raw._scope(installed_history, "prompt_history") as operation:
+    with raw.scope(installed_history, "prompt_history") as operation:
 
         async def copied_context():
             with pytest.raises(bootstrap.RecoveryRequired, match="provenance"):
                 raw._check(operation)
 
         await asyncio.create_task(copied_context())
-        assert raw._selected(operation) == installed_history.path
+        assert raw.selected_target(operation) == installed_history.path
 
 
 @pytest.mark.asyncio
@@ -360,7 +360,7 @@ async def test_startup_native_exclusion_and_pending_cover_event_loop_bookkeeping
     hold = storage._holds[startup._key]
     pause = None
     try:
-        with _FileJob(installed_history, "prompt_history") as job:
+        with FileJob(installed_history, "prompt_history") as job:
             result = await job.run(((("committed", 0.0),), False))
             assert result.error is None
             observer = launch(hold.authority.control_root, "maintenance", hold.names)
@@ -448,7 +448,7 @@ bootstrap.default_bootstrap_root = lambda: Path(root)
 from loguru import logger
 logger.remove()
 history = prompt_history.PromptHistory(prompt_history.default_prompt_history_path())
-original_file = raw._file
+original_file = raw.file
 original_close = os.close
 target = None
 @contextmanager
@@ -464,11 +464,11 @@ def failed_close(fd):
             original_close(fd)
         raise OSError('injected actual file close uncertainty')
     original_close(fd)
-raw._file = observed
+raw.file = observed
 os.close = failed_close
 assert asyncio.run(history.append('uncertain')) is False
 os.close = original_close
-raw._file = original_file
+raw.file = original_file
 gc.collect()
 assert history.persistence_error is not None
 assert asyncio.run(history.persistence_safe_point()) is False
@@ -664,12 +664,12 @@ async def test_read_scope_cannot_append_or_accept_unknown_native_mode(
     installed_history,
 ):
     installed_history.path.write_bytes(b"original durable bytes")
-    with raw._scope(installed_history, "prompt_history") as operation:
+    with raw.scope(installed_history, "prompt_history") as operation:
         with pytest.raises(bootstrap.RecoveryRequired, match="outside_scope"):
-            with raw._file(operation, installed_history.path, "a"):
+            with raw.file(operation, installed_history.path, "a"):
                 pytest.fail("read operation appended")
         with pytest.raises(ValueError, match="raw_file_mode_invalid"):
-            with raw._file(operation, installed_history.path, "r+"):
+            with raw.file(operation, installed_history.path, "r+"):
                 pytest.fail("unknown native mode opened")
     assert installed_history.path.read_bytes() == b"original durable bytes"
 
@@ -745,7 +745,7 @@ def test_bound_history_rechecks_actual_mapping_during_io(
 
     history = installed_history
     with (
-        raw._scope(history, "prompt_history") as operation,
+        raw.scope(history, "prompt_history") as operation,
         monkeypatch.context() as changed,
     ):
         if change == "path":

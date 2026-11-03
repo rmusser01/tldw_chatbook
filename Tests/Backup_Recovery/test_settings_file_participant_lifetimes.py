@@ -304,13 +304,13 @@ def test_installed_default_selector_changes_cannot_demote_to_custom(
         assert raw._source_participants[loader] is participant
         assert raw._participants[participant].closed
         with pytest.raises(bootstrap.RecoveryRequired, match="^raw_source_selection_changed$"):
-            with raw._scope(
+            with raw.scope(
                 loader, "eval_config", writing=True, selected_read=loader.config_path
             ):
                 reached.append("closed")
         participant.resume()
         with pytest.raises(bootstrap.RecoveryRequired, match="^raw_source_selection_changed$"):
-            with raw._scope(
+            with raw.scope(
                 loader, "eval_config", writing=True, selected_read=loader.config_path
             ):
                 reached.append("resumed")
@@ -763,7 +763,7 @@ def test_runtime_direct_private_helpers_refuse_sibling_and_finish_exact_read(
     )
     source = RuntimeSourceStateStore(selected)
     source.save(RuntimeSourceState())
-    with raw._scope(source, "runtime_state", writing=True):
+    with raw.scope(source, "runtime_state", writing=True):
         pause = storage._begin_local_pause()
         try:
             with open_private_binary(selected) as opened:

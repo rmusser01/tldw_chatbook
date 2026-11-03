@@ -787,7 +787,7 @@ class OriginalCompactModelReadGate(OriginalStorageUnitObserver):
         for owner, name in (
             (config, "load_settings"),
             (self.participants, "operation"),
-            (self.raw, "_scope"),
+            (self.raw, "scope"),
         ):
             function = _pinned(owner, name)
             self._pin(function)

@@ -124,7 +124,7 @@ async def test_native_parent_proof_cannot_return_revoked_custody(
         assert release.wait(10)
 
     def read():
-        with raw._scope(permission, "mcp_store", writing=True) as operation:
+        with raw.scope(permission, "mcp_store", writing=True) as operation:
             previous = sys.getprofile()
             sys.setprofile(observe)
             try:
@@ -174,7 +174,7 @@ def test_remaining_source_entry_proofs_do_not_hold_coordinator(permission, entry
     target = (
         raw._raw_participant.__code__
         if entry == "participant"
-        else raw._scope.__wrapped__.__code__
+        else raw.scope.__wrapped__.__code__
     )
     observed = []
 
@@ -193,7 +193,7 @@ def test_remaining_source_entry_proofs_do_not_hold_coordinator(permission, entry
         if entry == "participant":
             raw._raw_participant(permission)
         else:
-            with raw._scope(permission, "mcp_store", writing=True):
+            with raw.scope(permission, "mcp_store", writing=True):
                 assert permission.get_kill_switch() is False
     finally:
         sys.setprofile(previous)
@@ -228,7 +228,7 @@ async def test_maintenance_metadata_gates_do_not_reacquire_during_accepted_pause
     monkeypatch.setattr(recovery_activation, "acquire_storage", observed)
 
     def update():
-        with raw._scope(permission, "mcp_store", writing=True) as operation:
+        with raw.scope(permission, "mcp_store", writing=True) as operation:
             operations.append(operation)
             assert raw._states[operation].participant is participant
             entered.set()
@@ -263,7 +263,7 @@ async def test_maintenance_metadata_gates_do_not_reacquire_during_accepted_pause
 def test_retained_mcp_observation_rejects_real_lease_for_another_path(permission):
     from tldw_chatbook.Backup_Recovery.bootstrap import RecoveryRequired
 
-    with raw._scope(permission, "mcp_store", writing=True) as operation:
+    with raw.scope(permission, "mcp_store", writing=True) as operation:
         state = raw._states[operation]
         original = state.mcp_observation_lease
         sibling = state.mcp_canonical.with_name("different-canonical.json")
@@ -309,7 +309,7 @@ async def test_retained_observation_rechecks_source_after_actual_lease_validatio
         assert release.wait(10)
 
     def observe():
-        with raw._scope(permission, "mcp_store", writing=True) as operation:
+        with raw.scope(permission, "mcp_store", writing=True) as operation:
             previous = sys.getprofile()
             sys.setprofile(profile)
             try:

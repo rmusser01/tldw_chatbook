@@ -87,11 +87,11 @@ class FileNotesReplica:
         self._connection = None
         core_access(self)  # Bind the file selector before either constructor stage.
         if not self.is_memory_db:
-            from tldw_chatbook.Backup_Recovery.raw_participants import _scope, _mkdirs
+            from tldw_chatbook.Backup_Recovery.raw_participants import scope, mkdirs
 
             # Directory effects retire before independent SQLite admission.
-            with _scope(self, "file_notes_directory", writing=True) as operation:
-                _mkdirs(operation)
+            with scope(self, "file_notes_directory", writing=True) as operation:
+                mkdirs(operation)
         try:
             self._initialize_schema()
         except BaseException:

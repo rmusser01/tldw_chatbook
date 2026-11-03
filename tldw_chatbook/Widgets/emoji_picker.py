@@ -74,22 +74,22 @@ def _recent_emojis_path() -> Path:
 
 def load_recent_emojis() -> List[str]:
     """Load recently used emojis from file."""
-    from ..Backup_Recovery.raw_participants import _scope
+    from ..Backup_Recovery.raw_participants import scope
     import sys
 
     try:
-        with _scope(sys.modules[__name__], "emoji") as operation:
+        with scope(sys.modules[__name__], "emoji") as operation:
             return _load_recent_emojis_in_operation(operation)
     except Exception:
         return []
 
 
 def _load_recent_emojis_in_operation(operation) -> List[str]:
-    from ..Backup_Recovery.raw_participants import _file, _selected
+    from ..Backup_Recovery.raw_participants import file, selected_target
     import json
 
     try:
-        with _file(operation, _selected(operation), "r") as stream:
+        with file(operation, selected_target(operation), "r") as stream:
             return json.load(stream).get("recent", [])[:MAX_RECENT_EMOJIS]
     except (OSError, ValueError):
         return []
@@ -97,20 +97,20 @@ def _load_recent_emojis_in_operation(operation) -> List[str]:
 
 def save_recent_emoji(emoji_char: str) -> None:
     """Best-effort save; a silent refusal does not retire a running worker."""
-    from ..Backup_Recovery.raw_participants import _scope, _file, _selected, _mkdirs
+    from ..Backup_Recovery.raw_participants import scope, file, selected_target, mkdirs
     import json
     import sys
 
     try:
         # Admission belongs to this actual worker, never to submission/cancellation.
-        with _scope(sys.modules[__name__], "emoji", writing=True) as operation:
-            _mkdirs(operation)
+        with scope(sys.modules[__name__], "emoji", writing=True) as operation:
+            mkdirs(operation)
             recent = _load_recent_emojis_in_operation(operation)
             if emoji_char in recent:
                 recent.remove(emoji_char)
             recent.insert(0, emoji_char)
             recent = recent[:MAX_RECENT_EMOJIS]
-            with _file(operation, _selected(operation), "w") as stream:
+            with file(operation, selected_target(operation), "w") as stream:
                 json.dump({"recent": recent}, stream, ensure_ascii=False, indent=2)
     except Exception:
         pass  # Refusal before IO is harmless; native-close uncertainty stays held.

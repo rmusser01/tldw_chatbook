@@ -417,7 +417,7 @@ async def test_import_during_pause_writes_nothing(request, tmp_path, src, monkey
         def paused(*_a, **_k):
             raise RecoveryRequired("x")
 
-        monkeypatch.setattr(raw_participants, "_scope", paused)
+        monkeypatch.setattr(raw_participants, "scope", paused)
         assert await editor.import_theme(str(source)) is None
         await pilot.pause()
         assert app.notify.call_args.args[0] == THEMES_UNAVAILABLE_LABEL

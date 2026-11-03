@@ -252,7 +252,7 @@ from ...Chat.console_roleplay_identity import (
 )
 from ...Chat.prompt_history import PromptHistory
 from ...Backup_Recovery import raw_participants as raw
-from ...Backup_Recovery.async_file_participants import _FileJob
+from ...Backup_Recovery.async_file_participants import FileJob
 from ...Chat.console_cost_tracker import (
     build_cost_snapshot,
 )
@@ -24084,7 +24084,7 @@ class ChatScreen(BaseAppScreen):
             if not self._sidebar_state_dirty:
                 return self._sidebar_state_persistence_error is None
             try:
-                with _FileJob(self, "sidebar_state") as job:
+                with FileJob(self, "sidebar_state") as job:
                     revision = self._sidebar_state_revision
                     snapshot = self._sidebar_state_snapshot()
                     outcome = await job.run(snapshot)
@@ -24134,9 +24134,9 @@ class ChatScreen(BaseAppScreen):
     def _load_sidebar_state(self) -> None:
         """Read the selected UI-state owner under ordinary source admission."""
         try:
-            with raw._scope(self, "sidebar_state") as operation:
+            with raw.scope(self, "sidebar_state") as operation:
                 try:
-                    with raw._file(operation, raw._selected(operation), "r") as f:
+                    with raw.file(operation, raw.selected_target(operation), "r") as f:
                         data = toml.load(f)
                 except FileNotFoundError:
                     return
@@ -24195,33 +24195,33 @@ class ChatScreen(BaseAppScreen):
         self, snapshot: Dict[str, Any], *, _selected=None
     ) -> None:
         """Own the real fixed-target merge/publication scope on the calling thread."""
-        with raw._scope(
+        with raw.scope(
             self, "sidebar_state", writing=True, selected_read=_selected
         ) as operation:
-            selected = raw._selected(operation)
-            raw._mkdirs(operation)
+            selected = raw.selected_target(operation)
+            raw.mkdirs(operation)
             try:
-                with raw._file(operation, selected, "r") as f:
+                with raw.file(operation, selected, "r") as f:
                     data = toml.load(f)
             except FileNotFoundError:
                 data = {}
             data["sidebar"] = snapshot
             temporary = selected.with_suffix(selected.suffix + ".tmp")
             try:
-                with raw._file(operation, temporary, "w") as f:
+                with raw.file(operation, temporary, "w") as f:
                     toml.dump(data, f)
-                raw._replace(operation, temporary, selected)
+                raw.replace(operation, temporary, selected)
             finally:
-                raw._remove_temporary(operation, temporary)
+                raw.remove_temporary(operation, temporary)
 
     def _save_sidebar_state(self) -> bool:
         """Legacy synchronous source entry; errors remain visible for maintenance."""
         try:
             # Admission/path selection precedes even the snapshot copy.
-            with raw._scope(self, "sidebar_state", writing=True) as operation:
+            with raw.scope(self, "sidebar_state", writing=True) as operation:
                 snapshot = self._sidebar_state_snapshot()
                 ChatScreen._write_sidebar_state_snapshot(
-                    self, snapshot, _selected=raw._selected(operation)
+                    self, snapshot, _selected=raw.selected_target(operation)
                 )
                 self._sidebar_state_persistence_error = None
                 return True

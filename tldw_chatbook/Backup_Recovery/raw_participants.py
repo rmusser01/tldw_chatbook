@@ -765,7 +765,7 @@ def _raw_holds_pause_requested(holds):
 
 
 @contextmanager
-def _scope(
+def scope(
     source,
     route,
     *,
@@ -1161,11 +1161,11 @@ def _scope(
                 raise
 
 
-def _selected(operation):
+def selected_target(operation):
     return _check(operation).selected
 
 
-def _mkdirs(operation):
+def mkdirs(operation):
     state = _check(operation, writing=True)
     for directory in state.directories:
         if directory in state.pins:
@@ -1196,7 +1196,7 @@ def _mkdirs(operation):
 
 
 @contextmanager
-def _file(operation, path, mode):
+def file(operation, path, mode):
     if mode not in {"r", "w", "a"}:
         raise ValueError("raw_file_mode_invalid")
     state = _check(operation, path, writing=mode in {"w", "a"})
@@ -1293,7 +1293,7 @@ def _entry_identity(state, path):
     return (info.st_dev, info.st_ino)
 
 
-def _replace(operation, temporary, destination, *, expected=_UNCHECKED):
+def replace(operation, temporary, destination, *, expected=_UNCHECKED):
     """Publish ``temporary`` as ``destination``.
 
     Args:
@@ -1405,7 +1405,7 @@ def _replace(operation, temporary, destination, *, expected=_UNCHECKED):
         raise bootstrap.RecoveryRequired("raw_publication_uncertain") from None
 
 
-def _remove_temporary(operation, temporary):
+def remove_temporary(operation, temporary):
     state = _check(operation, temporary, writing=True)
     temporary = lexical_path(temporary)
     if temporary not in state.created_files:
@@ -1435,7 +1435,7 @@ def _check_temporary_identity(state, temporary):
         raise bootstrap.RecoveryRequired("raw_temporary_identity_changed")
 
 
-def _service_mutation(function):
+def service_mutation(function):
     """Wrap only these sources' complete synchronous-body service operations."""
     writing = function.__name__ != "_load"
 
@@ -1462,7 +1462,7 @@ def _service_mutation(function):
         )
         if not valid:
             raise bootstrap.RecoveryRequired("raw_source_not_supported")
-        with _scope(source, "service", writing=writing):
+        with scope(source, "service", writing=writing):
             before = (
                 copy.deepcopy((source._records, source._next_id)) if writing else None
             )
@@ -1492,7 +1492,7 @@ def _service_mutation(function):
     return wrapped
 
 
-def _service_file(source, mode):
+def service_file(source, mode):
     operation = getattr(_local, "operation", None)
     state = _check(operation, source.store_path, writing=mode == "w")
     if state.source is not source:
@@ -1528,7 +1528,7 @@ def _unlink(operation, path):
     state.observed_files.pop(path, None)
 
 
-def _runtime_operation(path=None):
+def runtime_operation(path=None):
     """Discover only the live runtime-state or exact config source operation."""
     operation = getattr(_local, "operation", None)
     if operation is None:
@@ -1561,7 +1561,7 @@ _PARENT_WALK_SOURCE = tuple(
         None if function.__closure__ is None else tuple(cell.cell_contents for cell in function.__closure__),
     )
     for name, function in (
-        ("_runtime_operation", _runtime_operation),
+        ("_runtime_operation", runtime_operation),
         ("_check", _check),
         ("_check_parent_pins", _check_parent_pins),
         ("_source_custody_check", _source_custody_check),
@@ -1733,7 +1733,19 @@ _CONSOLE_PERMISSION_LOAD_GUARDS = tuple(
         ),
     )
     for name, callback, functions in (
-        ("_scope", _scope, (_scope, _scope.__wrapped__)),
+        ("_scope", scope, (scope, scope.__wrapped__)),
         ("_check", _check, (_check,)),
     )
 )
+
+
+# Private aliases for importers not yet migrated (TASK-36948.2). Remove once none remain.
+_file = file
+_mkdirs = mkdirs
+_remove_temporary = remove_temporary
+_replace = replace
+_scope = scope
+_selected = selected_target
+_service_file = service_file
+_service_mutation = service_mutation
+_runtime_operation = runtime_operation

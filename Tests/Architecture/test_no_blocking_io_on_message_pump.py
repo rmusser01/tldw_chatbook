@@ -96,7 +96,7 @@ BASELINE: dict[tuple[str, str, str], str] = {
     # (b5251e9a6e, "feat(backup): complete Python backup and selectable
     # recovery", 2026-09-16): `_load_user_themes` no longer calls `.glob`
     # directly, it reads through the backup-recovery gate
-    # (`raw._scope(...)` / `raw._check(operation).observed_files`, from
+    # (`raw.scope(...)` / `raw._check(operation).observed_files`, from
     # `Backup_Recovery.raw_participants`). That call is opaque to this
     # guard's per-file call graph, so the finding disappeared. Inherited
     # stale from origin/dev, not introduced by this branch -- removed per

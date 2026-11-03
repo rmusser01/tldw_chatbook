@@ -34,7 +34,7 @@ from tldw_chatbook.Backup_Recovery import storage_admission as storage
 
 def _record_discoveries(monkeypatch):
     """Record each guarded-IO discovery as (operation, its owner task, the caller)."""
-    original = raw._runtime_operation
+    original = raw.runtime_operation
     seen = []
 
     def discover(path=None):
@@ -45,7 +45,7 @@ def _record_discoveries(monkeypatch):
             )
         return operation
 
-    monkeypatch.setattr(raw, "_runtime_operation", discover)
+    monkeypatch.setattr(raw, "runtime_operation", discover)
     return seen
 
 
@@ -85,7 +85,7 @@ async def test_guarded_config_read_ignores_a_scope_another_task_holds_across_an_
             )
             discoveries = list(seen)
             assert raw._local.operation is None
-            assert raw._runtime_operation() is None
+            assert raw.runtime_operation() is None
             # Not weakened: presenting the owner's operation is still refused.
             with pytest.raises(
                 bootstrap.RecoveryRequired, match="raw_operation_provenance_invalid"
@@ -256,15 +256,15 @@ async def test_second_task_is_refused_a_file_another_source_object_holds(
             pytest.raises(
                 bootstrap.RecoveryRequired, match="raw_operation_provenance_invalid"
             ),
-            raw._scope(second, "service", writing=True),
+            raw.scope(second, "service", writing=True),
         ):
             pytest.fail("a second task entered a file another task is writing")
 
-    with raw._scope(first, "service", writing=True) as operation:
+    with raw.scope(first, "service", writing=True) as operation:
         await asyncio.create_task(other())
         assert raw._check(operation).task is asyncio.current_task()
     # Control: it was the other task's hold that refused it, not the object.
-    with raw._scope(second, "service", writing=True) as operation:
+    with raw.scope(second, "service", writing=True) as operation:
         assert raw._check(operation).source is second
 
 
@@ -287,16 +287,16 @@ async def test_second_task_is_refused_another_file_under_one_settings_root(
             pytest.raises(
                 bootstrap.RecoveryRequired, match="raw_operation_provenance_invalid"
             ),
-            raw._scope(second, "eval_config", writing=True, selected_read=export),
+            raw.scope(second, "eval_config", writing=True, selected_read=export),
         ):
             pytest.fail("a second task entered a settings root another task is in")
 
-    with raw._scope(first, "eval_config", writing=True) as operation:
-        assert raw._selected(operation) != export
+    with raw.scope(first, "eval_config", writing=True) as operation:
+        assert raw.selected_target(operation) != export
         await asyncio.create_task(other())
         assert raw._check(operation).task is asyncio.current_task()
     # Control: it was the other task's hold that refused it, not the export.
-    with raw._scope(
+    with raw.scope(
         second, "eval_config", writing=True, selected_read=export
     ) as operation:
         assert raw._check(operation).source is second

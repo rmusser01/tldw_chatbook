@@ -400,7 +400,7 @@ def operation(source, *, route="config", target=None):
             if hasattr(source, name)
         }
         try:
-            with raw._scope(
+            with raw.scope(
                 source, "config", writing=True, selected_read=nested_target
             ) as active:
                 yield active
@@ -433,7 +433,7 @@ def operation(source, *, route="config", target=None):
             for name in _STATE_NAMES
             if hasattr(source, name)
         }
-        with raw._scope(source, route, writing=True, selected_read=target) as active:
+        with raw.scope(source, route, writing=True, selected_read=target) as active:
             state = raw._states[active]
             entered = True
             yield active

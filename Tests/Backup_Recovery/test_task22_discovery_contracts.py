@@ -151,7 +151,7 @@ def _attempt(source, route, selected, monkeypatch, *, ordinary, kind, change):
     module, slot = ((mcp_sources, "history_operation") if kind == "mcp"
                     else (config_sources, "binding"))
     callback = vars(module)[slot]
-    runtime_code = raw._runtime_operation.__code__
+    runtime_code = raw.runtime_operation.__code__
     phase = "setup"
 
     def delegated(value):
@@ -167,7 +167,7 @@ def _attempt(source, route, selected, monkeypatch, *, ordinary, kind, change):
 
     sys.setprofile(ledger.observe)
     try:
-        with raw._scope(source, route, writing=True) as operation:
+        with raw.scope(source, route, writing=True) as operation:
             ledger.attach(operation)
             state = ledger.state
             leases = tuple(state.leases)

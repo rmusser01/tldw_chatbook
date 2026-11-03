@@ -84,8 +84,8 @@ class EvalConfigLoader:
                     defaults = yaml.safe_load(stream)
                 if not isinstance(defaults, dict):
                     raise ValueError("eval_defaults_not_mapping")
-            with raw._scope(self, "eval_config") as operation:
-                selected = raw._selected(operation)
+            with raw.scope(self, "eval_config") as operation:
+                selected = raw.selected_target(operation)
                 if not selected.exists():
                     if not self._uses_profile_overrides:
                         logger.warning(f"Configuration file not found: {selected}")
@@ -94,7 +94,7 @@ class EvalConfigLoader:
                         return
                     loaded = {}
                 else:
-                    with raw._file(operation, selected, "r") as f:
+                    with raw.file(operation, selected, "r") as f:
                         loaded = yaml.safe_load(f)
                     if self._uses_profile_overrides and loaded is None:
                         loaded = {}
@@ -311,10 +311,10 @@ class EvalConfigLoader:
         save_path = Path(path) if path else self.config_path
         previous_persisted = self._persisted_config
         try:
-            with raw._scope(
+            with raw.scope(
                 self, "eval_config", writing=True, selected_read=save_path
             ) as operation:
-                selected = raw._selected(operation)
+                selected = raw.selected_target(operation)
                 primary = selected == raw.lexical_path(self.config_path)
                 sparse = self._uses_profile_overrides and primary
                 overrides = (
@@ -327,16 +327,16 @@ class EvalConfigLoader:
                     else None
                 )
                 snapshot = copy.deepcopy(overrides if sparse else self._config)
-                raw._mkdirs(operation)
+                raw.mkdirs(operation)
                 temporary = selected.with_suffix(selected.suffix + ".tmp")
                 try:
-                    with raw._file(operation, temporary, "w") as f:
+                    with raw.file(operation, temporary, "w") as f:
                         yaml.safe_dump(
                             snapshot, f, default_flow_style=False, sort_keys=False
                         )
-                    raw._replace(operation, temporary, selected)
+                    raw.replace(operation, temporary, selected)
                 finally:
-                    raw._remove_temporary(operation, temporary)
+                    raw.remove_temporary(operation, temporary)
             if primary:
                 if sparse:
                     self._overrides = overrides

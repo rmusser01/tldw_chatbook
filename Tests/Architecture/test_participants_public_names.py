@@ -1,4 +1,6 @@
-"""AC#3 of TASK-36948.2: outside Backup_Recovery, participants helpers are imported by public name."""
+"""AC#3 of TASK-36948.2: outside Backup_Recovery, participant helpers are imported by public name.
+
+Covers every Backup_Recovery module whose name contains "participant"."""
 
 import ast
 from pathlib import Path
@@ -14,7 +16,7 @@ def private_participants_imports(root: Path = PACKAGE) -> list[str]:
         for node in ast.walk(ast.parse(path.read_text(encoding="utf-8"))):
             if (
                 isinstance(node, ast.ImportFrom)
-                and (node.module or "").split(".")[-1] == "participants"
+                and "participant" in (node.module or "").split(".")[-1]
             ):
                 found += [
                     f"{path.relative_to(root)}:{node.lineno} {alias.name}"
@@ -31,5 +33,12 @@ def test_no_private_participants_import_outside_backup_recovery():
 def test_guard_detects_injected_private_import(tmp_path):
     (tmp_path / "store.py").write_text(
         "from tldw_chatbook.Backup_Recovery.participants import _core_access\n"
+        "from ..Backup_Recovery.raw_participants import _scope\n"
+        "from ..Backup_Recovery.rag_definition_participant import _x\n"
+        "from ..Backup_Recovery.participants import core_access\n"
     )
-    assert private_participants_imports(tmp_path) == ["store.py:1 _core_access"]
+    assert private_participants_imports(tmp_path) == [
+        "store.py:1 _core_access",
+        "store.py:2 _scope",
+        "store.py:3 _x",
+    ]

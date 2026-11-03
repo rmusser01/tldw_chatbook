@@ -13,7 +13,7 @@ from tldw_chatbook.Backup_Recovery import raw_participants as raw,storage_admiss
 from tldw_chatbook.Widgets import emoji_picker
 from tldw_chatbook.runtime_policy.source_state import RuntimeSourceStateStore,RuntimeSourceState,runtime_source_state_to_dict
 from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
-from tldw_chatbook.Backup_Recovery.async_file_participants import _FileJob
+from tldw_chatbook.Backup_Recovery.async_file_participants import FileJob
 mode=sys.argv[1]
 registry_before=bootstrap._registry(root)
 if mode=='emoji':
@@ -37,13 +37,13 @@ else:
  screen=object.__new__(ChatScreen)
  snapshot={'collapsible_states':{'notes':True},'search_query':'fixture','last_active_section':'notes'}
  async def save():
-  with _FileJob(screen,'sidebar_state') as job:
+  with FileJob(screen,'sidebar_state') as job:
    outcome=await job.run(snapshot)
    if outcome.error:raise outcome.error
  asyncio.run(save())
  import toml
- with raw._scope(screen,'sidebar_state') as operation:
-  with raw._file(operation,raw._selected(operation),'r') as stream:
+ with raw.scope(screen,'sidebar_state') as operation:
+  with raw.file(operation,raw.selected_target(operation),'r') as stream:
    assert toml.load(stream)['sidebar']==snapshot
  assert not path.with_suffix(path.suffix+'.tmp').exists()
 assert bootstrap._registry(root)==registry_before
@@ -71,7 +71,7 @@ elif owner=='runtime':
 else:source,route,path=object.__new__(ChatScreen),'sidebar_state',parent/'ui_state.toml'
 path.unlink(missing_ok=True)
 if case=='arbitrary':
- with raw._scope(source,route,writing=True) as operation:
+ with raw.scope(source,route,writing=True) as operation:
   for forbidden in (parent/'unrelated',parent/'ui_state.toml.other.tmp',parent):
    try:raw._check(operation,forbidden,writing=True)
    except bootstrap.RecoveryRequired:pass
@@ -81,7 +81,7 @@ elif case=='unsafe_parent':
  from tldw_chatbook.Utils.platform_files import os as native_os
  def preserved_files():
   return {p.relative_to(parent):(native_os.stat(p).st_dev,native_os.stat(p).st_ino,p.read_bytes()) for p in parent.rglob('*') if p.is_file()}
- with raw._scope(source,route,writing=True) as operation:
+ with raw.scope(source,route,writing=True) as operation:
   parent_before=native_os.stat(parent)
   assert parent_before.st_mode & 0o077 == 0
   preserved=preserved_files()
@@ -108,19 +108,19 @@ elif case=='foreign':
  path.write_bytes(b'foreign');path.chmod(0o600)
  authority.register('foreign',(path,))
  try:
-  with raw._scope(source,route,writing=True):raise AssertionError('foreign admitted')
+  with raw.scope(source,route,writing=True):raise AssertionError('foreign admitted')
  except bootstrap.RecoveryRequired:pass
  assert path.read_bytes()==b'foreign'
 else:
  other=selected.with_name('other.toml');other.write_bytes(selected.read_bytes());other.chmod(0o600)
- with raw._scope(source,route,writing=True) as operation:
+ with raw.scope(source,route,writing=True) as operation:
   state=raw._states[operation]
   participant=state.participant
   if case=='no_participant':state.participant=None
   try:
    os.environ['TLDW_CONFIG_PATH']=str(other)
    try:
-    with raw._file(operation,path,'w') as stream:stream.write('must refuse')
+    with raw.file(operation,path,'w') as stream:stream.write('must refuse')
    except bootstrap.RecoveryRequired:pass
    else:raise AssertionError('changed config anchor admitted')
   finally:

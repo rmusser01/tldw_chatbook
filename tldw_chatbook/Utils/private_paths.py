@@ -617,7 +617,7 @@ def _open_leaf_for_create(parent_fd: int, leaf: str) -> int:
 
 def _runtime_operation(path=None):
     raw = sys.modules.get("tldw_chatbook.Backup_Recovery.raw_participants")
-    return raw._runtime_operation(path) if raw is not None else None
+    return raw.runtime_operation(path) if raw is not None else None
 
 
 def _active_visual_source():
@@ -1359,7 +1359,7 @@ def atomic_private_write_bytes(
                 if operation is not None:
                     raw._check(operation).files.remove(stream)
                     _native_close(fd)
-                    raw._replace(operation, temporary, selected)
+                    raw.replace(operation, temporary, selected)
                 else:
                     os.replace(temporary, selected)
             except BaseException:
@@ -1368,7 +1368,7 @@ def atomic_private_write_bytes(
                     if state.files or fd in state.descriptors:
                         state.uncertain = True
                     if not state.uncertain:
-                        raw._remove_temporary(operation, temporary)
+                        raw.remove_temporary(operation, temporary)
                 else:
                     try:
                         os.unlink(temporary)
@@ -1586,7 +1586,7 @@ def atomic_private_write_bytes(
             if temporary_exists:
                 try:
                     if operation is not None:
-                        raw._remove_temporary(
+                        raw.remove_temporary(
                             operation, selected.parent / temporary_leaf
                         )
                     else:

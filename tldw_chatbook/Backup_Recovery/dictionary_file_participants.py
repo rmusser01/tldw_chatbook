@@ -244,7 +244,7 @@ def _operation(
                     scopes.enter_context(core_operation(db))
                     plan.core = getattr(storage._operation_local, "operation", None)
                 token = scopes.enter_context(
-                    raw._scope(plan.module, ROUTE, writing=output is not None)
+                    raw.scope(plan.module, ROUTE, writing=output is not None)
                 )
                 plan.token = token
                 attempt.check()
@@ -297,7 +297,7 @@ def folder():
     with config_participants.operation(
         config, route="config_chat_dicts", target=selected
     ) as token:
-        raw._mkdirs(token)
+        raw.mkdirs(token)
     return selected
 
 
@@ -463,7 +463,7 @@ def opened(path, mode, *, encoding="utf-8"):
     if mode == "r":
         if path not in plan.inputs:
             raise bootstrap.RecoveryRequired("dictionary_input_outside_operation")
-        with raw._file(plan.token, path, "r") as stream:
+        with raw.file(plan.token, path, "r") as stream:
             before = _stamp(os.fstat(stream.fileno()))
             if before != plan.input_stats[path]:
                 raise bootstrap.RecoveryRequired("dictionary_input_changed")
@@ -478,17 +478,17 @@ def opened(path, mode, *, encoding="utf-8"):
         raise bootstrap.RecoveryRequired("dictionary_output_outside_operation")
     temporary = path.with_suffix(path.suffix + ".tmp")
     if plan.create_parent:
-        raw._mkdirs(plan.token)
+        raw.mkdirs(plan.token)
     try:
-        with raw._file(plan.token, temporary, "w") as stream:
+        with raw.file(plan.token, temporary, "w") as stream:
             yield stream
         check_destination(plan)
-        raw._replace(plan.token, temporary, path)
+        raw.replace(plan.token, temporary, path)
         plan.published = True
     finally:
         state = raw._states[plan.token]
         if temporary in state.created_files and not state.uncertain:
-            raw._remove_temporary(plan.token, temporary)
+            raw.remove_temporary(plan.token, temporary)
 
 
 def copy_file(source, destination):

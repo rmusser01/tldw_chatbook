@@ -271,12 +271,12 @@ def guarded(function):
                     raise bootstrap.RecoveryRequired("mcp_source_already_bound")
                 result = function(source, *args, **kwargs)
                 bind(source)
-                with raw._scope(source, ROUTE, writing=True):
+                with raw.scope(source, ROUTE, writing=True):
                     return result
         operation = None
         state = None
         try:
-            with raw._scope(source, ROUTE, writing=True) as operation:
+            with raw.scope(source, ROUTE, writing=True) as operation:
                 state = raw._states[operation]
                 result = function(source, *args, **kwargs)
             return result
@@ -308,7 +308,7 @@ def reader(source):
             yield handle
         return
     check_destination(state, state.selected)
-    with raw._file(operation, state.selected, "r") as handle:
+    with raw.file(operation, state.selected, "r") as handle:
         yield handle
 
 
@@ -326,16 +326,16 @@ def write_json(source, payload):
         temporary.replace(source.path)
         state.mcp_effects = True
         return
-    raw._mkdirs(operation)
+    raw.mkdirs(operation)
     temporary = state.selected.with_suffix(state.selected.suffix + ".tmp")
     try:
-        with raw._file(operation, temporary, "w") as handle:
+        with raw.file(operation, temporary, "w") as handle:
             json.dump(payload, handle, indent=2, sort_keys=True)
         check_destination(state, state.selected)
-        raw._replace(operation, temporary, state.selected)
+        raw.replace(operation, temporary, state.selected)
     finally:
         if not state.uncertain:
-            raw._remove_temporary(operation, temporary)
+            raw.remove_temporary(operation, temporary)
 
 
 def stamp_payload(source, payload, stamp):

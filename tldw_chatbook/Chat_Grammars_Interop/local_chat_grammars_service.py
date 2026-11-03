@@ -8,12 +8,12 @@ from pathlib import Path
 from typing import Any
 
 from ..Backup_Recovery.raw_participants import (
-    _service_mutation,
-    _service_file,
-    _file,
-    _mkdirs,
-    _replace,
-    _remove_temporary,
+    service_mutation,
+    service_file,
+    file,
+    mkdirs,
+    replace,
+    remove_temporary,
 )
 
 
@@ -40,12 +40,12 @@ class LocalChatGrammarsService:
     def _now() -> str:
         return datetime.now(timezone.utc).isoformat()
 
-    @_service_mutation
+    @service_mutation
     def _load(self) -> None:
         if not self.store_path.exists():
             return
         try:
-            with _file(_service_file(self, "r"), self.store_path, "r") as stream:
+            with file(service_file(self, "r"), self.store_path, "r") as stream:
                 payload = json.load(stream)
         except (OSError, json.JSONDecodeError):
             self._records = []
@@ -67,17 +67,17 @@ class LocalChatGrammarsService:
                     continue
         self._next_id = max_id + 1
 
-    @_service_mutation
+    @service_mutation
     def _persist(self) -> None:
-        operation = _service_file(self, "w")
-        _mkdirs(operation)
+        operation = service_file(self, "w")
+        mkdirs(operation)
         temp_path = self.store_path.with_suffix(self.store_path.suffix + ".tmp")
         try:
-            with _file(operation, temp_path, "w") as stream:
+            with file(operation, temp_path, "w") as stream:
                 json.dump({"items": self._records}, stream, indent=2, sort_keys=True)
-            _replace(operation, temp_path, self.store_path)
+            replace(operation, temp_path, self.store_path)
         finally:
-            _remove_temporary(operation, temp_path)
+            remove_temporary(operation, temp_path)
 
     @staticmethod
     def _view(record: dict[str, Any]) -> dict[str, Any]:
@@ -106,7 +106,7 @@ class LocalChatGrammarsService:
             return record
         raise ValueError(f"local_chat_grammar_not_found:{grammar_id}")
 
-    @_service_mutation
+    @service_mutation
     async def create_grammar(
         self,
         *,
@@ -164,7 +164,7 @@ class LocalChatGrammarsService:
         self._enforce("chat.grammars.detail.local")
         return self._view(self._find(grammar_id, include_archived=include_archived))
 
-    @_service_mutation
+    @service_mutation
     async def update_grammar(
         self,
         grammar_id: str,
@@ -204,7 +204,7 @@ class LocalChatGrammarsService:
         self._persist()
         return self._view(record)
 
-    @_service_mutation
+    @service_mutation
     async def delete_grammar(
         self, grammar_id: str, *, hard_delete: bool = False
     ) -> bool:

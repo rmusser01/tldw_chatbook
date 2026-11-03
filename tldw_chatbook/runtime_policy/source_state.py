@@ -180,7 +180,7 @@ class RuntimeSourceStateStore:
         )
 
     def load(self) -> RuntimeSourceState:
-        with raw._scope(self, "runtime_read", writing=True):
+        with raw.scope(self, "runtime_read", writing=True):
             try:
                 with open_private_binary(self.path) as opened:
                     _report_runtime_policy_posture(
@@ -199,9 +199,9 @@ class RuntimeSourceStateStore:
             return RuntimeSourceState.from_dict(data)
 
     def save(self, state: RuntimeSourceState) -> None:
-        with raw._scope(self, "runtime_state", writing=True) as operation:
+        with raw.scope(self, "runtime_state", writing=True) as operation:
             if self.application_owned_directory is not None:
-                raw._mkdirs(operation)
+                raw.mkdirs(operation)
             payload = json.dumps(
                 runtime_source_state_to_dict(state),
                 indent=2,

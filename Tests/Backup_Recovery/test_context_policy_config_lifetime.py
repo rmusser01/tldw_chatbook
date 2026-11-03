@@ -18,7 +18,7 @@ owners=[];keys=[];pauses=[]
 failure=ValueError('synthetic parser failure')
 def observed(section,key,default=None):
  value=getter(section,key,default)
- owners.append(raw._runtime_operation());keys.append(key)
+ owners.append(raw.runtime_operation());keys.append(key)
  if len(owners)==1:
   if case=='pause_inside':
    pauses.append(storage._begin_local_pause())
@@ -26,7 +26,7 @@ def observed(section,key,default=None):
   elif case=='selector':os.environ['TLDW_CONFIG_PATH']=str(home/'other.toml')
  return value
 def parsed(values):
- assert raw._runtime_operation() is None,'parser retained config admission'
+ assert raw.runtime_operation() is None,'parser retained config admission'
  if case=='parser_error':raise failure
  return parser(values)
 controller.get_cli_setting=observed
@@ -55,7 +55,7 @@ finally:
  for pause in reversed(pauses):pause.resume()
  os.environ['TLDW_CONFIG_PATH']=str(selected)
  controller.context_policy_overrides_from_console_config=parser
-assert not storage._raw_operations and raw._runtime_operation() is None
+assert not storage._raw_operations and raw.runtime_operation() is None
 assert all(owner not in raw._states for owner in owners if owner is not None)
 if case!='selector':
  previous=owners[0] if owners else None
@@ -63,7 +63,7 @@ if case!='selector':
  assert config.save_setting_to_cli_config('console','conversation_budget_tokens',4321)
  assert read(None).custom_budget_tokens==4321
  assert owners[0] is not previous
- assert not storage._raw_operations and raw._runtime_operation() is None
+ assert not storage._raw_operations and raw.runtime_operation() is None
 print('retired and reopened')
 '''
 
@@ -91,7 +91,7 @@ error=ValueError('synthetic parser failure')
 def fail_write():
  original=private_paths.os.write
  def reject(fd,payload):
-  if raw._runtime_operation() is not None:raise OSError('synthetic native write failure')
+  if raw.runtime_operation() is not None:raise OSError('synthetic native write failure')
   return original(fd,payload)
  private_paths.os.write=reject
  try:assert not config.save_setting_to_cli_config('console','conversation_budget_tokens',9999)
@@ -102,13 +102,13 @@ if case=='preexisting_failure':fail_write()
 initial_error=config._CONFIG_PERSISTENCE_ERROR
 def observed(section,key,default=None):
  value=getter(section,key,default)
- owner=raw._runtime_operation();assert owner is not None
+ owner=raw.runtime_operation();assert owner is not None
  owners.append(owner)
  assert storage._operation_local.operation is None
  if case=='nested_failure' and len(owners)==1:fail_write()
  return value
 def parsed_policy(values):
- assert raw._runtime_operation() is outside_raw
+ assert raw.runtime_operation() is outside_raw
  assert getattr(storage._operation_local,'operation',None) is outside_core
  parsed.append(True)
  if case.endswith('_parser'):raise error
@@ -124,20 +124,20 @@ elif case.startswith('raw_'):scope=config_participants.operation(config)
 else:scope=nullcontext()
 try:
  with scope:
-  outside_raw=raw._runtime_operation()
+  outside_raw=raw.runtime_operation()
   outside_core=getattr(storage._operation_local,'operation',None)
   try:result=read(None)
   except ValueError as caught:assert case.endswith('_parser') and caught is error
   else:assert not case.endswith('_parser') and result.custom_budget_tokens==1234
   assert len(owners)==9 and all(owner is owners[0] for owner in owners)
   assert parsed==[True]
-  assert raw._runtime_operation() is outside_raw
+  assert raw.runtime_operation() is outside_raw
   assert getattr(storage._operation_local,'operation',None) is outside_core
   if outside_core is not None:
    storage._check_operation(outside_core,outside_core.path)
    assert db.get_note_by_title('Preserved core')['content']=='Native readback'
   if outside_raw is not None:assert owners[0] is outside_raw
- assert raw._runtime_operation() is None
+ assert raw.runtime_operation() is None
  assert getattr(storage._operation_local,'operation',None) is None
  assert not storage._raw_operations and not storage._pending_acquisitions
  assert all(owner not in raw._states for owner in owners)
@@ -168,7 +168,7 @@ read=controller.ConsoleChatController._global_context_policy_overrides
 getter=controller.get_cli_setting
 owners=[]
 def observed(section,key,default=None):
- owners.append(raw._runtime_operation())
+ owners.append(raw.runtime_operation())
  return getter(section,key,default)
 controller.get_cli_setting=observed
 first=read(None)
@@ -184,7 +184,7 @@ finally:pause.resume()
 assert config.save_setting_to_cli_config('console','conversation_budget_tokens',4321)
 assert read(None).custom_budget_tokens==4321
 assert len(owners)==18 and owners[9] is not None and owners[9] is not owners[0]
-assert not storage._raw_operations and raw._runtime_operation() is None
+assert not storage._raw_operations and raw.runtime_operation() is None
 print('retired and reopened')
 '''
 

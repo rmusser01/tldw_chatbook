@@ -54,7 +54,7 @@ class _PermissionProbe(controls._MaximumProbe):
                 and type(arg) is storage.StorageLease
             ):
                 self.acquisitions.append(arg)
-                if frame.f_back.f_code is raw_participants._scope.__wrapped__.__code__:
+                if frame.f_back.f_code is raw_participants.scope.__wrapped__.__code__:
                     self.paths.append(arg)
             if (
                 event == "return"

@@ -1147,7 +1147,7 @@ async def test_settings_theme_editor_survives_backup_recovery_pause(
         raise RecoveryRequired("process_pause_still_active")
         yield  # pragma: no cover
 
-    monkeypatch.setattr(raw_participants, "_scope", paused_scope)
+    monkeypatch.setattr(raw_participants, "scope", paused_scope)
     editor = SettingsThemeEditor()
     editor.custom_themes_path = tmp_path
     app = _isolated_editor_app(editor)

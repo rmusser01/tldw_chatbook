@@ -361,7 +361,7 @@ def test_file_notes_retarget_between_constructor_stages_refuses(tmp_path, monkey
     from contextlib import contextmanager
     from tldw_chatbook.Backup_Recovery import raw_participants as raw
 
-    original = raw._scope
+    original = raw.scope
     target = tmp_path / "first" / "replica.sqlite"
     other = tmp_path / "other.sqlite"
 
@@ -371,7 +371,7 @@ def test_file_notes_retarget_between_constructor_stages_refuses(tmp_path, monkey
             yield operation
         owner.db_path = other
 
-    monkeypatch.setattr(raw, "_scope", retarget)
+    monkeypatch.setattr(raw, "scope", retarget)
     with pytest.raises((bootstrap.RecoveryRequired, ValueError)):
         FileNotesReplica(target)
     assert not target.exists() and not other.exists()
@@ -751,7 +751,7 @@ from tldw_chatbook.Backup_Recovery import raw_participants as raw
 from tldw_chatbook.Notes.file_notes_replica import FileNotesReplica
 root = Path(sys.argv[1])
 bootstrap.default_bootstrap_root = lambda: root / "bootstrap"
-original_mkdirs, original_close = raw._mkdirs, os.close
+original_mkdirs, original_close = raw.mkdirs, os.close
 armed = False
 def mkdirs(operation):
  global armed
@@ -761,7 +761,7 @@ def close(fd):
  if armed and any(fd in state.descriptors for state in raw._states.values()):
   raise OSError("injected before descriptor close")
  return original_close(fd)
-raw._mkdirs, os.close = mkdirs, close
+raw.mkdirs, os.close = mkdirs, close
 try:
  FileNotesReplica(root / "created" / "replica.sqlite")
  raise AssertionError("uncertain constructor returned")

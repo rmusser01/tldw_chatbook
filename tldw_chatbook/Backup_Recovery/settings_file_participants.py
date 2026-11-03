@@ -169,7 +169,7 @@ def preflight(state, route, attempt):
                 if route != "theme_directory":
                     raise bootstrap.RecoveryRequired("raw_not_regular")
                 # A symlinked/hard-linked theme is still never observed,
-                # leased or opened (raw._file refuses it too); it is recorded
+                # leased or opened (raw.file refuses it too); it is recorded
                 # so the listing shows it as one unreadable entry instead of
                 # the whole folder reading as unavailable.
                 state.rejected_files[path] = NOT_REGULAR
@@ -257,7 +257,7 @@ def pet_operation(function):
         ):
             raise bootstrap.RecoveryRequired("raw_source_not_supported")
         writing = function.__name__ not in {"_read_data", "load", "list_pets"}
-        with raw._scope(source, "pet", writing=writing):
+        with raw.scope(source, "pet", writing=writing):
             return function(source, *args, **kwargs)
 
     return wrapped
