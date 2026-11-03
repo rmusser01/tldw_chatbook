@@ -544,6 +544,7 @@ async def _census(
     from tldw_chatbook.UI.Screens import chat_screen as screen_module
 
     counts: dict[str, int] = {
+        "full_syncs": 0,
         "messages_for_session": 0,
         "snapshots": 0,
         "settings_readiness_builds": 0,
@@ -654,6 +655,23 @@ async def _census(
         "default_console_session_settings",
         "template_default_builds",
     )
+    # TASK-36529: count full Console sync passes where they run. Their
+    # transcript snapshots are incidental: the avatar takes one only while
+    # expression reactions are on, the transcript only when its display token
+    # moved. A full sync forced mid-burst read 2 snapshots with reactions on,
+    # 1 (archive recovery's) with them off, and 0 once that read was quiet.
+    from tldw_chatbook.UI.Console_Modules import config_sync
+
+    real_core_state = config_sync.sync_console_core_state
+    full_syncs_seen = [0]  # Any phase: the anti-vacuity check before typing.
+
+    def counted_core_state(screen: Any) -> None:
+        full_syncs_seen[0] += 1
+        if counting["on"]:
+            counts["full_syncs"] += 1
+        real_core_state(screen)
+
+    monkeypatch.setattr(config_sync, "sync_console_core_state", counted_core_state)
 
     trace_maintenance: list[tuple[Any, Any]] = []
     media_cleanup: list[Any] = []
@@ -757,6 +775,7 @@ async def _census(
         screen._console_draft_spend_refresh.delay_seconds = 3600.0
 
         await _settle_publications(pilot, screen)
+        assert full_syncs_seen[0] > 0, "no full sync seen: the counted seam moved"
         _TYPING_BURST_CALLERS.clear()
         counting["burst"] = True
         counting["on"] = True
@@ -1143,6 +1162,11 @@ async def test_typing_never_snapshots_the_transcript(
     """
     counts = await _census(monkeypatch, tmp_path, seeded_messages=SEEDED_MESSAGES)
 
+    assert counts["full_syncs"] == 0, (
+        f"{counts['full_syncs']} full Console syncs ran inside the typing "
+        "burst. A full sync rebuilds every rail and can snapshot the "
+        "transcript; typing must publish only what the key changed."
+    )
     assert counts["messages_for_session"] == 0, (
         f"{counts['messages_for_session']} messages_for_session calls across "
         f"{KEYSTROKES} keystrokes ({counts['snapshots']} message snapshots; "
@@ -1164,6 +1188,7 @@ async def test_settled_400_message_typing_traverses_no_history(
     """Count actual mounted projection rows during unchanged long-chat typing."""
     counts = await _census(monkeypatch, tmp_path, seeded_messages=400)
     for key in (
+        "full_syncs",
         "messages_for_session",
         "snapshot_rows",
         "spend_history_rows",

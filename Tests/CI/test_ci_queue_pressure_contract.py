@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import ast
 import copy
+import re
 import shlex
 from pathlib import Path
 
@@ -1398,6 +1400,91 @@ def test_focused_guards_keep_dev_pr_and_dev_main_push_coverage() -> None:
         assert triggers["pull_request"]["branches"] == ["dev"]
         assert triggers["pull_request"]["types"] == PULL_REQUEST_TYPES
         assert triggers["push"]["branches"] == ["dev", "main"]
+
+
+def _files_loaded_by_pytest_steps(workflow_name: str) -> set[str]:
+    """Repo files a workflow's pytest steps load, as repo-relative paths.
+
+    Each target, the ``conftest.py`` files and package ``__init__.py`` files
+    pytest loads for it, and every repo module they import, followed
+    transitively by AST (function-level imports included). Imports from
+    ``tldw_chatbook/`` are listed but not followed: perf-guard's own glob
+    covers that package wholesale.
+    """
+
+    def package_inits(path: Path) -> list[Path]:
+        inits = []
+        for parent in path.parents:
+            if not (parent / "__init__.py").is_file():
+                break
+            inits.append(parent / "__init__.py")
+        return inits
+
+    def module_files(dotted: str) -> list[Path]:
+        base = PROJECT_ROOT.joinpath(*dotted.split("."))
+        found = [p for p in (base.with_suffix(".py"), base / "__init__.py") if p.is_file()]
+        return found + package_inits(found[0]) if found else []
+
+    pending: list[Path] = []
+    for job in _workflow(workflow_name)["jobs"].values():
+        for step in job["steps"]:
+            for target in _pytest_targets(step.get("run", "")):
+                path = PROJECT_ROOT / target.split("::")[0]
+                assert path.is_file(), f"{workflow_name} runs a non-file target {target}"
+                pending += [path, *package_inits(path)]
+                pending += [p / "conftest.py" for p in path.parents if p.is_relative_to(PROJECT_ROOT)]
+    loaded: set[Path] = set()
+    while pending:
+        path = pending.pop()
+        if path in loaded or not path.is_file():
+            continue
+        loaded.add(path)
+        relative = path.relative_to(PROJECT_ROOT)
+        if relative.parts[0] == "tldw_chatbook":
+            continue
+        package = list(relative.parent.parts)
+        for node in ast.walk(ast.parse(path.read_text(encoding="utf-8"))):
+            if isinstance(node, ast.Import):
+                for alias in node.names:
+                    pending += module_files(alias.name)
+            elif isinstance(node, ast.ImportFrom):
+                parts = package[: len(package) - node.level + 1] if node.level else []
+                module = ".".join(parts + [node.module] if node.module else parts)
+                pending += module_files(module)
+                for alias in node.names:
+                    pending += module_files(f"{module}.{alias.name}")
+    return {path.relative_to(PROJECT_ROOT).as_posix() for path in loaded}
+
+
+def _github_paths_match(pattern: str, path: str) -> bool:
+    """GitHub's ``paths`` filter glob: ``**`` crosses ``/``; ``*`` and ``?`` do not."""
+    regex = "".join(
+        {"**": ".*", "*": "[^/]*", "?": "[^/]"}.get(token, re.escape(token))
+        for token in re.split(r"(\*\*|\*|\?)", pattern)
+    )
+    return re.fullmatch(regex, path) is not None
+
+
+def test_perf_guard_runs_when_a_file_its_steps_load_changes() -> None:
+    """TASK-36529: a PR that changed only a helper a Perf Guard step imports
+    (``Tests/private_profile.py``, ``Tests/conftest.py``...) merged without a
+    Perf Guard run. Every file the steps load must match both triggers' paths.
+    """
+    assert _github_paths_match("tldw_chatbook/**.py", "tldw_chatbook/UI/a.py")
+    assert not _github_paths_match("Tests/*.py", "Tests/UI/app_factory.py")
+    loaded = _files_loaded_by_pytest_steps("perf-guard.yml")
+    assert {"Tests/conftest.py", "Tests/private_profile.py"} <= loaded, loaded
+    triggers = _triggers(_workflow("perf-guard.yml"))
+    for event in ("pull_request", "push"):
+        missing = sorted(
+            path
+            for path in loaded
+            if not any(_github_paths_match(p, path) for p in triggers[event]["paths"])
+        )
+        assert not missing, (
+            f"perf-guard.yml's {event} paths miss files its steps load; add "
+            f"each to both trigger lists: {missing}"
+        )
 
 
 def test_pull_request_workflows_are_never_cancelled_in_progress() -> None:
