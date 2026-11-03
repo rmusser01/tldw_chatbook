@@ -742,6 +742,8 @@ def test_an_exclusion_hides_the_other_normalization_from_git(
 # ---------------------------------------------------------------------------
 
 SECRET_38463 = "SECRET-38463"
+#: git_diff's one refusal when the withheld-name check cannot be completed.
+UNVERIFIED_EXCLUSIONS = "git diff output withheld: could not verify path exclusions"
 #: Neither NFC nor NFD: a composed ``é`` beside a decomposed ``è``.
 MIXED_NAME = (
     unicodedata.normalize("NFC", "é") + unicodedata.normalize("NFD", "è") + ".txt"
@@ -923,6 +925,7 @@ def test_git_diff_refuses_when_a_withheld_name_is_left_in_the_diff(
     with pytest.raises(LocalToolError) as refused:
         git_diff(repo, sensitive_exclusions=rules)
 
+    assert str(refused.value) == UNVERIFIED_EXCLUSIONS
     assert SECRET_38463 not in str(refused.value)
     assert fold_path_part("naïve") not in fold_path_part(str(refused.value))
 
@@ -946,7 +949,12 @@ def test_a_git_timeout_does_not_echo_the_exclusion_pathspecs() -> None:
 def test_git_diff_refuses_when_the_withheld_check_cannot_be_bounded(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, bound: str
 ) -> None:
-    """Fail closed past either bound instead of running with a partial list."""
+    """Fail closed past either bound instead of running with a partial list.
+
+    The refusal is the same neutral sentence for every cause: naming excluded
+    paths would announce that an exclusion took effect, which git_diff never
+    does, and "retry" invited a loop on a refusal that can be deterministic.
+    """
     import tldw_chatbook.Tools.git_tool_impls as gti
     from tldw_chatbook.Utils.sensitive_paths import SensitiveExclusion
 
@@ -954,8 +962,10 @@ def test_git_diff_refuses_when_the_withheld_check_cannot_be_bounded(
     rules = (SensitiveExclusion("file", _nfc("naïve.txt")),)
     monkeypatch.setattr(gti, bound, 4)
 
-    with pytest.raises(LocalToolError, match="refusing"):
+    with pytest.raises(LocalToolError) as refused:
         git_diff(repo, sensitive_exclusions=rules)
+
+    assert str(refused.value) == UNVERIFIED_EXCLUSIONS
 
 
 def test_a_byte_exact_exclusion_re_encodes_names_as_they_were_decoded(

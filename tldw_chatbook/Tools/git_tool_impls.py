@@ -543,6 +543,11 @@ _NON_ASCII_PATHSPECS = (":(glob)**/*[!\x01-\x7f]*", ":(glob)**/*[!\x01-\x7f]*/**
 #: partial list.
 _WITHHELD_SCAN_MAX_BYTES = 8_000_000
 _WITHHELD_PATHSPEC_BUDGET = 16_000
+#: ``git_diff``'s one refusal when that check cannot complete. Neutral on
+#: purpose: naming excluded paths would announce that an exclusion took
+#: effect (see ``git_diff``), and the post-run check can fail every time, so
+#: it must not invite a retry.
+_UNVERIFIED_EXCLUSIONS = "git diff output withheld: could not verify path exclusions"
 
 
 def _exact_exclude_pathspec(stored: str, *, subtree: bool) -> str:
@@ -609,9 +614,7 @@ def _withheld_names(
         max_output_bytes=_WITHHELD_SCAN_MAX_BYTES,
     )
     if result.truncated:
-        raise LocalToolError(
-            "git diff touches too many non-ASCII paths to check exclusions; refusing"
-        )
+        raise LocalToolError(_UNVERIFIED_EXCLUSIONS)
     if result.returncode != 0:
         gist = result.stderr.decode("utf-8", errors="replace").strip().splitlines()
         raise LocalToolError(
@@ -657,9 +660,7 @@ def _withheld_name_pathspecs(
         else:
             specs[_exact_exclude_pathspec(name, subtree=False)] = None
     if sum(len(spec) for spec in specs) > _WITHHELD_PATHSPEC_BUDGET:
-        raise LocalToolError(
-            "git diff touches too many excluded paths to exclude them; refusing"
-        )
+        raise LocalToolError(_UNVERIFIED_EXCLUSIONS)
     return list(specs)
 
 
@@ -1493,9 +1494,7 @@ def git_diff(
         own_process_group=own_process_group,
     )
     if _scan():
-        raise LocalToolError(
-            "git diff output withheld: an excluded path changed while it ran; retry"
-        )
+        raise LocalToolError(_UNVERIFIED_EXCLUSIONS)
     return result.stdout if result.stdout.strip() else "(no changes)"
 
 

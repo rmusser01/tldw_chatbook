@@ -872,9 +872,9 @@ _BUDGETS: dict[str, int] = {
     # stored non-ASCII names, byte-exact pathspecs, status filter) adds 73:
     # 5,795, the exact measurement of a fresh build.
     # 2026-11-03, TASK-38463 PR review round (same owner rule): the bundled
-    # git exclusion fixes (stored-byte brackets) measure 5,798, the exact
-    # measurement of a fresh build.
-    "tldw_chatbook/Tools/remote_worker_bundle.py": 5798,
+    # git exclusion fixes (stored-byte brackets, one neutral refusal) measure
+    # 5,799, the exact measurement of a fresh build.
+    "tldw_chatbook/Tools/remote_worker_bundle.py": 5799,
     "tldw_chatbook/UI/Screens/scheduling/schedules_workbench.py": 5532,
     "tldw_chatbook/LLM_Calls/LLM_API_Calls.py": 5167,
     "tldw_chatbook/Notes/notes_sync_runtime.py": 5167,

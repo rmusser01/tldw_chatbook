@@ -3868,6 +3868,7 @@ def _repo_exclusions(repo_root: Path, context: SensitivePathContext | None, *, w
 _NON_ASCII_PATHSPECS = (':(glob)**/*[!\x01-\x7f]*', ':(glob)**/*[!\x01-\x7f]*/**')
 _WITHHELD_SCAN_MAX_BYTES = 8000000
 _WITHHELD_PATHSPEC_BUDGET = 16000
+_UNVERIFIED_EXCLUSIONS = 'git diff output withheld: could not verify path exclusions'
 
 def _exact_exclude_pathspec(stored: str, *, subtree: bool) -> str:
     """Exclude exactly the stored bytes of ``stored`` (``subtree``: and below).
@@ -3897,7 +3898,7 @@ def _withheld_names(mode_args: list[str], pathspecs: list[str], exclusions: tupl
     """
     result = _run_git_bytes(['git', '--no-pager', 'diff', '--no-ext-diff', '--no-textconv', '--no-renames', '--name-only', '-z', *mode_args, '--', *pathspecs, *_NON_ASCII_PATHSPECS], cwd=cwd, executable=executable, own_process_group=own_process_group, max_output_bytes=_WITHHELD_SCAN_MAX_BYTES)
     if result.truncated:
-        raise LocalToolError('git diff touches too many non-ASCII paths to check exclusions; refusing')
+        raise LocalToolError(_UNVERIFIED_EXCLUSIONS)
     if result.returncode != 0:
         gist = result.stderr.decode('utf-8', errors='replace').strip().splitlines()
         raise LocalToolError(f'git diff failed: {(gist[0][:200] if gist else result.returncode)}')
@@ -3919,7 +3920,7 @@ def _withheld_name_pathspecs(names: list[str], exclusions: tuple[SensitiveExclus
         else:
             specs[_exact_exclude_pathspec(name, subtree=False)] = None
     if sum((len(spec) for spec in specs)) > _WITHHELD_PATHSPEC_BUDGET:
-        raise LocalToolError('git diff touches too many excluded paths to exclude them; refusing')
+        raise LocalToolError(_UNVERIFIED_EXCLUSIONS)
     return list(specs)
 
 def _repo_relative_exclusions(workspace_root: Path, repo_root: Path, exclusions: tuple[SensitiveExclusion, ...]) -> tuple[SensitiveExclusion, ...]:
@@ -4377,7 +4378,7 @@ def git_diff(workspace_root: Path, *, staged: bool=False, commit_range: str | No
     argv.extend(['--', *pathspecs])
     result = _run_git_checked(argv, subcommand='diff', cwd=cwd, executable=executable, own_process_group=own_process_group)
     if _scan():
-        raise LocalToolError('git diff output withheld: an excluded path changed while it ran; retry')
+        raise LocalToolError(_UNVERIFIED_EXCLUSIONS)
     return result.stdout if result.stdout.strip() else '(no changes)'
 
 def git_blame(workspace_root: Path, path: str, *, start_line: int | None=None, end_line: int | None=None, sensitive_exclusions: tuple[SensitiveExclusion, ...] | None=None, executable: Path | None=None, own_process_group: bool=True) -> str:
@@ -5795,4 +5796,4 @@ REMOTE_SENSITIVE_PATHS: tuple[str, ...] = (
 #: ``build_remote_worker_bundle.expected_bundle_stamp``. The remote
 #: worker's ``ping`` echoes it so callers can confirm which bundle the
 #: remote actually executed.
-BUNDLE_SHA256 = _enter_worker_exchange("066ed019c9574f54407565929f1146581db9f7c79755dbbe356fcaa4ea0b3f3b")
+BUNDLE_SHA256 = _enter_worker_exchange("f0b1c448ce09e276d2b4f2ae548c7dc87f80398b6f793a6d78bec5f0c7e70f5b")
