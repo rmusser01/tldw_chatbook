@@ -32,11 +32,11 @@ def _existing_preview_target(path: str | Path):
         return None
     selected = lexical_path(path)
     try:
-        identity = os.lstat(selected)
+        identity = os.stat(selected, follow_symlinks=False)
     except FileNotFoundError:
         for suffix in ("-wal", "-shm", "-journal"):
             try:
-                os.lstat(Path(str(selected) + suffix))
+                os.stat(Path(str(selected) + suffix), follow_symlinks=False)
             except FileNotFoundError:
                 continue
             raise ValueError("preview_preflight_orphaned_sidecar")
