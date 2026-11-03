@@ -197,22 +197,15 @@ def sync_console_core_state(screen) -> None:
     """
     from tldw_chatbook import config
 
-    from .console_spend_projection import _screen_readiness_config
+    from .console_spend_projection import live_config_read_is_cold
 
-    live = screen._console_config_snapshot_is_disk_loaded(
-        _screen_readiness_config(screen)
-    )
     with ExitStack() as held:
         for lock in (config._settings_rebuild_lock(), config._config_file_lock()):
             if not lock.acquire(blocking=False):
                 break
             held.callback(lock.release)
         else:
-            if not live or (
-                config._warm_config_cache_hit() is not None
-                and config._settings_cache_hit(config._get_effective_config_path())
-                is not None
-            ):
+            if not live_config_read_is_cold(screen):
                 screen._sync_console_chat_core_state()
                 return
     replay_whole_console_sync(screen)

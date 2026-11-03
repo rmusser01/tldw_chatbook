@@ -1077,6 +1077,21 @@ def _native_config_locks_held() -> bool:
     )
 
 
+def live_config_read_is_cold(screen: Any) -> bool:
+    """Whether this screen's live config read would rebuild config (TASK-36511).
+
+    Only a disk-loaded snapshot reads live (``provider_readiness_app_config``).
+    Callers hold both config locks, so no other thread rebuilds meanwhile.
+    """
+    loaded = getattr(screen, "_console_config_snapshot_is_disk_loaded", None)
+    if loaded is None or not loaded(_screen_readiness_config(screen)):
+        return False
+    return _tldw_config._warm_config_cache_hit() is None or (
+        _tldw_config._settings_cache_hit(_tldw_config._get_effective_config_path())
+        is None
+    )
+
+
 def retry_after_config_rebuild(function: Callable) -> Callable:
     """Retry a screen refresh shortly while a config rebuild holds a cold cache.
 
@@ -1084,6 +1099,9 @@ def retry_after_config_rebuild(function: Callable) -> Callable:
     roleplay refresh syncs, the width rail rules) read config live on the UI
     loop. While ``config_read_would_wait()`` the call runs 0.2 s later instead,
     once per refresh; the latest call's arguments win.
+
+    TASK-36511: a cold cache defers too, and the readiness projection warms it
+    off the loop; the identity refresh rebuilt config on the UI loop (80 ms).
     """
 
     @wraps(function)
@@ -1101,9 +1119,13 @@ def retry_after_config_rebuild(function: Callable) -> Callable:
                         break
                     acquired.callback(lock.release)
                 else:
-                    if pending is not None:
-                        pending.pop(function.__name__, None)
-                    return function(screen, *args, **kwargs)
+                    if not live_config_read_is_cold(screen):
+                        if pending is not None:
+                            pending.pop(function.__name__, None)
+                        return function(screen, *args, **kwargs)
+                    ConsoleReadinessConfigProjection.for_screen(screen).run(
+                        lambda: None
+                    )
         if pending is None:
             pending = screen._console_config_retries = {}
         first = function.__name__ not in pending

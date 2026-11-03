@@ -419,3 +419,49 @@ def test_the_core_state_push_never_waits_for_or_rebuilds_config(monkeypatch):
     config_sync.sync_console_core_state(screen)
     assert screen.pushes == 1, "the push would rebuild config on the UI loop"
     assert screen.replays == [True, True]
+
+
+def test_a_mount_refresh_defers_a_cold_live_read_and_warms_it_off_the_loop(monkeypatch):
+    """TASK-36511: ``retry_after_config_rebuild`` defers while a live read is cold.
+
+    The identity refresh's core-state push rebuilt config on the UI loop
+    (79.5 ms CPU, 139.6 ms wall in the compact gate). It now has the readiness
+    projection read config off the loop and renders on a later retry.
+    """
+    from types import SimpleNamespace
+
+    from tldw_chatbook import config
+
+    warm = {"settings": None, "cli": {}}
+    monkeypatch.setattr(config, "_settings_cache_hit", lambda _path: warm["settings"])
+    monkeypatch.setattr(config, "_warm_config_cache_hit", lambda: warm["cli"])
+    monkeypatch.setattr(config, "config_read_would_wait", lambda: False)
+    kicked, timers, calls = [], [], []
+    monkeypatch.setattr(
+        spend.ConsoleReadinessConfigProjection,
+        "for_screen",
+        classmethod(
+            lambda cls, screen: SimpleNamespace(run=lambda body: kicked.append(screen))
+        ),
+    )
+
+    class Screen:
+        app_instance = app = SimpleNamespace(app_config={"disk-loaded": True})
+
+        def _console_config_snapshot_is_disk_loaded(self, value):
+            return bool(value)
+
+        def set_timer(self, delay, callback):
+            timers.append(callback)
+
+    @spend.retry_after_config_rebuild
+    def refresh(screen):
+        calls.append(True)
+
+    screen = Screen()
+    refresh(screen)
+    assert calls == [], "the refresh rebuilt cold config on the UI loop"
+    assert kicked == [screen] and len(timers) == 1
+    warm["settings"] = {}  # The projection's off-loop read warmed it.
+    timers.pop()()
+    assert calls == [True] and not timers
