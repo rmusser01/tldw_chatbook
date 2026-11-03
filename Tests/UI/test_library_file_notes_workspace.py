@@ -656,6 +656,12 @@ async def test_folder_files_shared_shell_retains_state_across_breakpoints(
             "Folder Files did not mount",
         )
         assert await workspace.open_path("folder/draft.md")
+        # Opening holds a path transition, which moves the session owner's
+        # revision. The next refresh then rehydrates Git state and resets
+        # the push phase this test sets below. Left to the 10 s poll tick,
+        # that refresh can land inside the resize loop under load, so run
+        # it now, before any state is set (TASK-38648).
+        assert await workspace.refresh_files()
 
         shell = workspace.query_one(
             "#library-file-notes-reader-shell", LibraryAdaptiveReaderShell
@@ -5968,7 +5974,13 @@ async def test_conflict_resolution_discard_keeps_cancel_first_confirmation(
             "discard did not open the destructive confirmation",
         )
         cancel = workspace.query_one("#file-notes-reload-cancel", Button)
-        assert cancel.has_focus
+        # The confirmation focuses Cancel through `call_later`, after
+        # `reload_confirmation_active` is already true.
+        await _wait_until(
+            pilot,
+            lambda: cancel.has_focus,
+            "destructive confirmation did not focus Cancel",
+        )
         assert editor.text == "retained draft"
         assert workspace.save_state == "conflict"
 
@@ -6071,7 +6083,13 @@ async def test_conflict_reload_requires_keyboard_confirmation_in_library_shell(
             "Discard the draft in the editor and load the current disk version? "
             "This cannot be undone."
         )
-        assert cancel.has_focus
+        # The confirmation focuses Cancel through `call_later`, after
+        # `reload_confirmation_active` is already true.
+        await _wait_until(
+            pilot,
+            lambda: cancel.has_focus,
+            "destructive reload confirmation did not focus Cancel",
+        )
         assert str(cancel.label) == "Cancel"
         assert str(confirm.label) == "Discard draft and load disk"
         assert copy.region.right <= screen.size.width
@@ -6088,7 +6106,12 @@ async def test_conflict_reload_requires_keyboard_confirmation_in_library_shell(
         )
         assert editor.text == "draft to preserve"
         assert workspace.save_state == "conflict"
-        assert reload_button.has_focus
+        # Closing refocuses the opener through `call_after_refresh`.
+        await _wait_until(
+            pilot,
+            lambda: reload_button.has_focus,
+            "Cancel did not return focus to Reload from disk",
+        )
 
         await pilot.press("enter")
         await _wait_until(
@@ -6104,13 +6127,22 @@ async def test_conflict_reload_requires_keyboard_confirmation_in_library_shell(
         )
         assert editor.text == "draft to preserve"
         assert workspace.save_state == "conflict"
-        assert reload_button.has_focus
+        await _wait_until(
+            pilot,
+            lambda: reload_button.has_focus,
+            "Escape did not return focus to Reload from disk",
+        )
 
         await pilot.press("enter")
         await _wait_until(
             pilot,
             lambda: workspace.reload_confirmation_active,
             "third destructive reload confirmation did not open",
+        )
+        await _wait_until(
+            pilot,
+            lambda: cancel.has_focus,
+            "third destructive reload confirmation did not focus Cancel",
         )
         await pilot.press("tab")
         assert confirm.has_focus

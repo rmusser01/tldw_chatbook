@@ -24407,3 +24407,17 @@ child readiness nor continued availability. The original recovery source-remount
 test also queried a removed card inside its wait predicate; presence must precede
 the unchanged display/request conditions, without filtering expected content or
 extending the deadline. Evidence is retained in the hosted-97a QA phase.
+
+## A 10 s `poll_interval` does not keep the poll out of a loaded UI test (TASK-38648, 2026-11-03)
+
+**Incident.** `test_folder_files_shared_shell_retains_state_across_breakpoints` writes `workspace._push_phase = "needs_attention"` directly, then checks it at eight terminal widths. It builds the workspace with `poll_interval=10`, the value 97 call sites under `Tests/` pass as if it meant "no poll". About 1 run in 29 under load, the check failed with `'idle' == 'needs_attention'`. A probe logged each `_push_phase` write with its caller, relative to the workspace mount:
+- `open_path` held a path transition, which moved the session owner's revision from (1, 1) to (1, 2), and nothing re-read it;
+- the first poll tick, at mount + 10 s, ran `refresh_files`, whose `_refresh_session_changes` saw the new revision and rehydrated Git state;
+- with no retained push and no push recovery in the owner, the rehydrate set the phase to `"idle"`.
+
+Run on its own at load average 34, the resize loop ended 9.3 s after mount. In a run at load 37, the real tick landed between two widths, at 10.0 s. Holding the test past the tick (`asyncio.sleep(10)` after the write) failed 2 of 2 runs.
+
+**What to do.**
+- A test whose body runs for seconds should treat `poll_interval=10` as a tick that can land in the middle of it.
+- If the poll re-derives the state only when something changed, run the refresh the poll would run (`await workspace.refresh_files()`) before setting it. Here the gate is the owner-revision compare in `_refresh_session_changes`, so one refresh consumes the owed change and later ticks skip the rehydrate.
+- That does not protect state the poll re-derives on every tick. For example, `_apply_reconcile` overwrites `_root_offline` and `_runtime_warning` on each reconcile. Seed such state through the owner the poll reads, or stop the poll timer for the test.
