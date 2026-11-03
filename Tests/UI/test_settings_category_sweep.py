@@ -15,8 +15,9 @@ retired stub ids as contract keys and legacy deep-link targets).
 TASK-36525: the test builds app config in its body (``_build_test_app()``
 runs ``load_settings()``), so it runs under ``@private_profile_test``; under
 the per-test config redirect it raises ``RecoveryRequired`` (TASK-36381).
-Each size's sweep is split across nodes over contiguous groups of the rail,
-and a pure test checks that the groups together are the whole rail.
+Each size's sweep is split across nodes over contiguous thirds of
+``ALL_CATEGORY_IDS`` (the summary order the unsplit sweep used), and a pure
+test checks that the thirds together are all of it.
 """
 
 import pytest
@@ -42,16 +43,17 @@ ALL_CATEGORY_IDS = tuple(
 #: test_rail_click_and_open_theme_focus_the_theme_list).
 _FOCUS_AFTER_SELECT = {SettingsCategoryId.THEME.value: "settings-theme-list"}
 
-#: One sweep node per (size, group), each over a contiguous share of the rail,
-#: so a census node stays well under the UI lane's 30 s per-entry budget: the
-#: whole rail took 28-53 s per size under local load (TASK-36525). Contiguous,
-#: so every rail-to-rail switch but the group boundaries is one the unsplit
-#: sweep made.
+#: One sweep node per (size, group), each over a contiguous third of
+#: ``ALL_CATEGORY_IDS`` (the summary order the unsplit sweep used), so a
+#: census node stays well under the UI lane's 30 s per-entry budget: the
+#: unsplit sweep took 28-53 s per size under local load (TASK-36525).
+#: Contiguous, so every category-to-category switch but the group boundaries
+#: is one the unsplit sweep made.
 _GROUPS = (0, 1, 2)
 
 
 def _category_group(group: int) -> tuple[str, ...]:
-    """The categories sweep node ``group`` visits, in rail order."""
+    """The categories sweep node ``group`` visits, in ``ALL_CATEGORY_IDS`` order."""
     share = -(-len(ALL_CATEGORY_IDS) // len(_GROUPS))
     return ALL_CATEGORY_IDS[group * share : (group + 1) * share]
 
@@ -102,8 +104,9 @@ async def _click_settings_category(pilot, category_value: str) -> None:
 
 
 def test_the_sweep_groups_cover_every_category_once():
-    """Splitting the sweep loses no category: the groups, in order, are the
-    whole rail, and none is empty."""
+    """Splitting the sweep loses no category: the groups, in order, are
+    exactly ``ALL_CATEGORY_IDS`` (the summary order the unsplit sweep used),
+    and none is empty."""
     # Upstream keeps the per-domain rail slots (our task-1343 collapse was
     # superseded by the collapsible Domain Defaults rail), so pin a floor,
     # not an exact count.
