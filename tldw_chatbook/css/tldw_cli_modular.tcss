@@ -4294,6 +4294,15 @@ App.-wide-viewport ChatbookTemplatesWindow > Container {
   max-width: $ds-size-170;
 }
 
+App.-wide-viewport .portrait-pairs-dialog {
+  width: $ds-percent-85;
+  max-width: $ds-size-170;
+}
+App.-wide-viewport .portrait-regions-dialog {
+  width: $ds-percent-85;
+  max-width: $ds-size-170;
+}
+
 
 App.-wide-viewport #personal-context-review-modal {
   width: $ds-percent-85;
