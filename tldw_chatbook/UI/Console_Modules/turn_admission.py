@@ -384,3 +384,60 @@ _CONSOLE_SELECTION_SOURCES = tuple(
         ("policy_producers_current", policy_producers_current),
     )
 )
+
+
+def stock_mounted_capture(owner):
+    """Return ``(selector, still_stock)`` when ``owner`` carries the stock capture seam.
+
+    Chat asks this instead of comparing code objects against UI-private
+    snapshots. ``still_stock(adapter)`` re-checks the same callbacks later.
+    Returns ``None`` for a substituted selector or selection source.
+    """
+    from types import MethodType
+
+    from .session import _CONSOLE_TURN_CAPTURE_SELECTOR
+    from .wiring import _STOCK_CONSOLE_SCRATCH_SNAPSHOT
+
+    selector = owner._build_console_turn_capture_selection
+    function, code = _CONSOLE_TURN_CAPTURE_SELECTOR
+    if not (
+        type(selector) is MethodType
+        and selector.__self__ is owner
+        and selector.__func__ is function
+        and function.__code__ is code
+    ):
+        return None
+    scratch_function, scratch_code = _STOCK_CONSOLE_SCRATCH_SNAPSHOT
+
+    def sources_current():
+        return all(
+            globals().get(name) is callback
+            and callback.__code__ is original_code
+            and callback.__defaults__ is defaults
+            and callback.__kwdefaults__ is kwdefaults
+            for name, callback, original_code, defaults, kwdefaults
+            in _CONSOLE_SELECTION_SOURCES
+        )
+
+    if not sources_current():
+        return None
+
+    def still_stock(adapter):
+        return (
+            function.__code__ is code
+            and adapter.func is scratch_function
+            and scratch_function.__code__ is scratch_code
+            and sources_current()
+        )
+
+    return selector, still_stock
+
+
+def is_stock_session_provider(provider) -> bool:
+    """True when ``provider`` is the stock bound execution-context builder."""
+    from .session import _CONSOLE_TURN_CONTEXT_BUILDER, ConsoleSessionController
+
+    return (
+        type(getattr(provider, "__self__", None)) is ConsoleSessionController
+        and getattr(provider, "__func__", None) is _CONSOLE_TURN_CONTEXT_BUILDER
+    )

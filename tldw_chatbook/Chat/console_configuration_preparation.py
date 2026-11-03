@@ -1181,39 +1181,21 @@ async def capture_mounted_configuration_owned(
 ):
     """Prepare a qualified mounted selection; custom producers retain fallback."""
     from tldw_chatbook.UI.Console_Modules import turn_admission
-    from tldw_chatbook.UI.Console_Modules.session import _CONSOLE_TURN_CAPTURE_SELECTOR
-    from tldw_chatbook.UI.Console_Modules.wiring import _STOCK_CONSOLE_SCRATCH_SNAPSHOT
 
     app, store = controller.app, controller.store
     if not standard_console_configuration_sources(app, store, controller, session_id=session_id):
         return None
-    selector = owner._build_console_turn_capture_selection
-    function, code = _CONSOLE_TURN_CAPTURE_SELECTOR
-    if not (
-        type(selector) is MethodType
-        and selector.__self__ is owner
-        and selector.__func__ is function
-        and function.__code__ is code
-    ):
+    # The UI owns the answer to "is this the stock capture seam"; Chat only asks.
+    stock = turn_admission.stock_mounted_capture(owner)
+    if stock is None:
         return None
-    sources = turn_admission._CONSOLE_SELECTION_SOURCES
-    def sources_current():
-        return all(
-            getattr(turn_admission, name, None) is callback
-            and callback.__code__ is original_code
-            and callback.__defaults__ is defaults
-            and callback.__kwdefaults__ is kwdefaults
-            for name, callback, original_code, defaults, kwdefaults in sources
-        )
-    if not sources_current():
-        return None
+    selector, stock_still_current = stock
     selection = selector(session_id, scratch_owner=controller._scratch_spaces)
     if selection is None:
         return None
     adapter = owner._scratch_snapshot_provider
     screen = adapter.args[0]
     runtime_accessor = screen._console_runtime
-    scratch_function, scratch_code = _STOCK_CONSOLE_SCRATCH_SNAPSHOT
 
     def same(left, right):
         return left is right or (
@@ -1226,17 +1208,14 @@ async def capture_mounted_configuration_owned(
         if (
             not same(owner._build_console_turn_execution_context, provider)
             or not same(owner._build_console_turn_capture_selection, selector)
-            or function.__code__ is not code
             or owner._scratch_snapshot_provider is not adapter
-            or adapter.func is not scratch_function
-            or scratch_function.__code__ is not scratch_code
+            or not stock_still_current(adapter)
             or adapter.args != (screen,)
             or adapter.keywords
             or getattr(screen, "_session", None) is not owner
             or screen.app_instance is not app
             or not same(screen._console_runtime, runtime_accessor)
             or not turn_admission.policy_producers_current()
-            or not sources_current()
         ):
             raise RecoveryRequired("console_snapshot_owner_changed")
 
@@ -1352,14 +1331,10 @@ async def _controller_capture_turn_configuration_snapshot(
     if isinstance(provider, MethodType):
         # UI compatibility is needed only for an explicitly supplied bound
         # provider. Default app-owned capture has no Console UI dependency.
-        from tldw_chatbook.UI.Console_Modules.session import (
-            _CONSOLE_TURN_CONTEXT_BUILDER,
-            ConsoleSessionController,
+        from tldw_chatbook.UI.Console_Modules.turn_admission import (
+            is_stock_session_provider,
         )
-        standard_screen = (
-            type(screen_owner) is ConsoleSessionController
-            and provider.__func__ is _CONSOLE_TURN_CONTEXT_BUILDER
-        )
+        standard_screen = is_stock_session_provider(provider)
     if provider is not None and not standard_screen:
         return synchronous_capture()
     app = self.app
