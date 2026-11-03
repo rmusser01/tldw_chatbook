@@ -1,11 +1,11 @@
 ---
 id: TASK-36385
 title: Console's mount saves its rail state into config.toml on an ordinary launch and strips the file's comments
-status: In Progress
+status: Done
 assignee:
   - '@claude'
 created_date: 2026-10-22 23:58
-updated_date: 2026-10-30 04:13
+updated_date: 2026-11-03 11:29
 labels:
 - follow-up
 - console
@@ -173,9 +173,11 @@ No User Guide change: no page says that a launch rewrites config.toml.
   - Apart from that row, the diff is identical to before.
   - Runs at the new head (`-n 8`), across the 9 test files this PR touches: 193 passed, 3 failed, 31 errors. These are the same compact_access failures and Wizards setup errors as at the previous re-sync, and dev shows them too.
   - Preflight passed.
+
+2026-11-03 (bookkeeping): set Done. PR #3225 merged into dev on 2026-10-31T22:24Z (merge commit de2fac839f, an ancestor of dev 9bbd5c2515). All four criteria were already ticked.
 <!-- SECTION:NOTES:END -->
 
-## 2026-10-31 backlog repair evidence (in progress)
+## 2026-10-31 backlog repair evidence
 
 Rebased original ccbd3e8 onto dev198eca8b93. Mechanical conflicts preserved both size-ratchet histories; user subsequently waived size limits. Independent review reproduced two issues.
 

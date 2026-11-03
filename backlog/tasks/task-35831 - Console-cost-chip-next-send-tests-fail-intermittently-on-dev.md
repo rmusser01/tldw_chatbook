@@ -25,3 +25,21 @@ Found while checking PR #3169's rebase onto dev 0fef489ece (2026-10-20). Four Co
 - [ ] #2 The four cases pass 20 consecutive serial runs on dev
 - [ ] #3 The file runs in a PR lane, or the task records why it does not
 <!-- AC:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+2026-11-03 evidence (dev 9bbd5c2515, round-5 filing of the 2026-10-23 burn-down): three whole-file runs (`-n 4`, load 21-29) had 3, 5 and 7 failures.
+- Three of those fail on every run alone, and two of them also failed all three whole-file runs. They are filed as TASK-38690.
+- The "On next send —" label (this task's symptom) failed these, each in 1 of the 3 runs:
+  - `test_followup_draft_does_not_change_completed_current_spend`;
+  - `test_staged_evidence_changes_next_send_but_not_current_spend`;
+  - `test_idle_draft_edit_burst_coalesces_one_cost_refresh`;
+  - `test_context_cost_refresh_does_not_materialize_attachment_payloads`;
+  - `test_system_prompt_revert_after_genuine_ttl_lapse_still_reports_expired` and `test_reverting_system_prompt_edit_with_ttl_remaining_returns_to_warm`, which assert an expired or warm state while the label reads "On next send —".
+- Once each, with other symptoms:
+  - `test_cost_tooltip_ends_its_info_with_the_providers_rate_limit`: the tooltip still read "Type a message to estimate the next-send input spend.";
+  - `test_projected_delta_estimator_skipped_when_warm_without_break_reason`: estimator `call_count` 0, expected 1.
+- The round-5 report put the burst test's unpriced label at 1 of 20 runs.
+- `test_excluded_historical_media_keeps_next_send_priced` did not fail in these three runs.
+<!-- SECTION:NOTES:END -->

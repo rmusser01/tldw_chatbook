@@ -28,3 +28,9 @@ Found under TASK-35660 while running the callers of the shared provider-selectio
 - [ ] #1 The test passes on dev under the plain command, and still fails if the mode bar stops deferring a cold config read
 - [ ] #2 Whether other tests drive the mode bar on a stub screen without the rate reading is checked, and any found are fixed the same way
 <!-- AC:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+2026-11-03 evidence (dev 9bbd5c2515): the test still fails, 2 of 2 runs alone, but on a different missing attribute. It now raises `AttributeError: 'types.SimpleNamespace' object has no attribute 'content'` at chat_screen.py:17516 (`if mode_bar.content != mode_copy:`). The test's fake mode bar has no `.content`.
+<!-- SECTION:NOTES:END -->
