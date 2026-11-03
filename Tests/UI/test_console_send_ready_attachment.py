@@ -414,6 +414,9 @@ async def test_a_cold_refresh_that_returns_early_still_converges_the_controls(
 
     def runtime(screen):
         if state["disposed"]:
+            caller = sys._getframe(1).f_code.co_name
+            if caller in ("_refresh", "_retired"):
+                fired.append(f"disposed:{caller}")
             return SimpleNamespace(_disposed=True)
         if fire("runtime_rebound"):
             return SimpleNamespace(_disposed=False)
@@ -532,6 +535,8 @@ async def test_a_cold_refresh_that_returns_early_still_converges_the_controls(
                 state["disposed"] = True
                 # A retry would be scheduled in the step that clears pending.
                 await settled()
+                # The refresh reached both its disposed return and its retry guard.
+                assert {"disposed:_refresh", "disposed:_retired"} <= set(fired), fired
                 assert requests == [], "a disposed runtime scheduled more work"
                 state["disposed"] = False
             else:
