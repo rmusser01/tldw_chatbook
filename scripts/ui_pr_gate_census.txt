@@ -2023,8 +2023,14 @@ Tests/UI/test_console_send_draft_snapshot.py::test_spoken_send_of_a_capture_anot
 Tests/UI/test_evals_skill_eval_panel.py
 # TASK-36525 (2026-11-03): the Settings category sweep -- every rail category
 # renders and restores focus at 120x35 and 80x24, Theme in its list
-# (TASK-33072). Each size is a private-profile child taking 28-46 s here at
-# load average 22-31, so the whole file is over the 30 s per-file budget and
-# each size is its own node; appended at the tail, so no slot moves.
-Tests/UI/test_settings_category_sweep.py::test_every_settings_category_renders_and_restores_focus[size0]
-Tests/UI/test_settings_category_sweep.py::test_every_settings_category_renders_and_restores_focus[size1]
+# (TASK-33072). A whole size took 28-53 s here, so each size is split into
+# thirds of the rail, one private-profile node each: 11-23 s (call) at load
+# average 16-35 on 18 CPUs. The pure check that the thirds cover the whole
+# rail is listed too. Appended at the tail, so no slot moves.
+Tests/UI/test_settings_category_sweep.py::test_the_sweep_groups_cover_every_category_once
+Tests/UI/test_settings_category_sweep.py::test_every_settings_category_renders_and_restores_focus[0-120x35]
+Tests/UI/test_settings_category_sweep.py::test_every_settings_category_renders_and_restores_focus[0-80x24]
+Tests/UI/test_settings_category_sweep.py::test_every_settings_category_renders_and_restores_focus[1-120x35]
+Tests/UI/test_settings_category_sweep.py::test_every_settings_category_renders_and_restores_focus[1-80x24]
+Tests/UI/test_settings_category_sweep.py::test_every_settings_category_renders_and_restores_focus[2-120x35]
+Tests/UI/test_settings_category_sweep.py::test_every_settings_category_renders_and_restores_focus[2-80x24]

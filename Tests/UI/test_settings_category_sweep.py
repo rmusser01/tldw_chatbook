@@ -15,6 +15,8 @@ retired stub ids as contract keys and legacy deep-link targets).
 TASK-36525: the test builds app config in its body (``_build_test_app()``
 runs ``load_settings()``), so it runs under ``@private_profile_test``; under
 the per-test config redirect it raises ``RecoveryRequired`` (TASK-36381).
+Each size's sweep is split across nodes over contiguous groups of the rail,
+and a pure test checks that the groups together are the whole rail.
 """
 
 import pytest
@@ -39,6 +41,19 @@ ALL_CATEGORY_IDS = tuple(
 #: (TASK-33072, pinned by test_settings_theme_picker_screen.py's
 #: test_rail_click_and_open_theme_focus_the_theme_list).
 _FOCUS_AFTER_SELECT = {SettingsCategoryId.THEME.value: "settings-theme-list"}
+
+#: One sweep node per (size, group), each over a contiguous share of the rail,
+#: so a census node stays well under the UI lane's 30 s per-entry budget: the
+#: whole rail took 28-53 s per size under local load (TASK-36525). Contiguous,
+#: so every rail-to-rail switch but the group boundaries is one the unsplit
+#: sweep made.
+_GROUPS = (0, 1, 2)
+
+
+def _category_group(group: int) -> tuple[str, ...]:
+    """The categories sweep node ``group`` visits, in rail order."""
+    share = -(-len(ALL_CATEGORY_IDS) // len(_GROUPS))
+    return ALL_CATEGORY_IDS[group * share : (group + 1) * share]
 
 
 async def _settle_settings(pilot) -> None:
@@ -86,14 +101,23 @@ async def _click_settings_category(pilot, category_value: str) -> None:
     await _settle_settings(pilot)
 
 
-@pytest.mark.asyncio
-@pytest.mark.parametrize("size", [(120, 35), (80, 24)])
-@private_profile_test
-async def test_every_settings_category_renders_and_restores_focus(size, request):
+def test_the_sweep_groups_cover_every_category_once():
+    """Splitting the sweep loses no category: the groups, in order, are the
+    whole rail, and none is empty."""
     # Upstream keeps the per-domain rail slots (our task-1343 collapse was
     # superseded by the collapsible Domain Defaults rail), so pin a floor,
     # not an exact count.
     assert len(ALL_CATEGORY_IDS) >= 12
+    assert all(_category_group(group) for group in _GROUPS)
+    swept = [value for group in _GROUPS for value in _category_group(group)]
+    assert swept == list(ALL_CATEGORY_IDS)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("size", [(120, 35), (80, 24)], ids=["120x35", "80x24"])
+@pytest.mark.parametrize("group", _GROUPS)
+@private_profile_test
+async def test_every_settings_category_renders_and_restores_focus(size, group, request):
     app = _build_test_app()
     host = DestinationHarness(app, "settings")
 
@@ -101,7 +125,7 @@ async def test_every_settings_category_renders_and_restores_focus(size, request)
         await _settle_settings(pilot)
         screen = _active_destination_screen(host)
 
-        for category_value in ALL_CATEGORY_IDS:
+        for category_value in _category_group(group):
             await _click_settings_category(pilot, category_value)
             screen = _active_destination_screen(host)
             expected = _FOCUS_AFTER_SELECT.get(
