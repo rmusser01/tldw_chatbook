@@ -7677,7 +7677,14 @@ async def test_focus_moved_inside_the_panel_while_rows_mount_is_not_stolen() -> 
         assert back.has_focus, repr(panel.screen.focused)
 
 
-class _FencedQuitHarness(_PanelHarness):
+class _HostedPanelHarness(_PanelHarness):
+    """The panel inside ``#fenced-host``, removable like a Library recomposition."""
+
+    def compose(self) -> ComposeResult:
+        yield Vertical(self.panel, id="fenced-host")
+
+
+class _FencedQuitHarness(_HostedPanelHarness):
     """Hold one worker render of a hosted panel, and quit like ``TldwCli``.
 
     ``TldwCli._shutdown`` sets ``App._exit`` -- Textual's mount fence, under
@@ -7686,8 +7693,7 @@ class _FencedQuitHarness(_PanelHarness):
     cannot show the quit bug: Textual closes the widgets first, and a closing
     ListView ignores the mount. Once ``hold`` is set, the panel's
     ``render_name`` render waits for ``release``; the stand-in drain releases
-    it and waits for it to land. The panel sits in ``#fenced-host`` so a test
-    can remove it the way a Library recomposition does.
+    it and waits for it to land.
     """
 
     def __init__(self, panel: LibraryFileNotesGitPanel, render_name: str) -> None:
@@ -7713,9 +7719,6 @@ class _FencedQuitHarness(_PanelHarness):
                 self._landed.set()
 
         setattr(panel, render_name, held_render)
-
-    def compose(self) -> ComposeResult:
-        yield Vertical(self.panel, id="fenced-host")
 
     async def _shutdown(self) -> None:
         self._exit = True
@@ -7883,6 +7886,108 @@ async def test_a_push_focus_landing_during_removal_ends_quietly(callback: str) -
         await panel.remove()
         await pilot.pause()
     assert not panel.is_attached
+
+
+def _push_review(panel: LibraryFileNotesGitPanel) -> None:
+    from Tests.UI.test_library_file_notes_git_push import _push_panel_review_projection
+
+    panel.render_push_review(_push_panel_review_projection(), operation_id=1)
+
+
+def _push_offer(panel: LibraryFileNotesGitPanel) -> None:
+    from Tests.UI.test_library_file_notes_git_push import _push_availability_projection
+
+    panel.render_push_availability(_push_availability_projection())
+
+
+#: Every panel entry point a workspace task can reach, called mid-removal.
+_ENTRY_POINTS: dict[str, Callable[[LibraryFileNotesGitPanel], object]] = {
+    "render_status": lambda p: p.render_status(_status(_row("unstaged"))),
+    "render_untrusted": lambda p: p.render_untrusted("/canonical/repository"),
+    "render_checking": lambda p: p.render_checking("/canonical/repository"),
+    "render_unavailable": lambda p: p.render_unavailable("Git is unavailable."),
+    "mark_stale": lambda p: p.mark_stale(),
+    "set_mutating": lambda p: p.set_mutating(True, "Staging…"),
+    "set_current_status": lambda p: p.set_current_status("Status: CHECKING"),
+    "set_last_action": lambda p: p.set_last_action("Staged 1 note."),
+    "set_action_status": lambda p: p.set_action_status("Staged 1 note."),
+    "clear_last_action": lambda p: p.clear_last_action(),
+    "render_commit_availability": (
+        lambda p: p.render_commit_availability(_commit_draft_projection())
+    ),
+    "clear_commit_availability": lambda p: p.clear_commit_availability(),
+    "invalidate_commit_binding": lambda p: p.invalidate_commit_binding(),
+    "render_commit_form": lambda p: p.render_commit_form(_commit_draft_projection()),
+    "render_commit_checking": lambda p: p.render_commit_checking(),
+    "render_commit_review": lambda p: p.render_commit_review(
+        _commit_review_projection()
+    ),
+    "render_commit_confirming": lambda p: p.render_commit_confirming(),
+    "render_commit_executing": lambda p: p.render_commit_executing(
+        git_panel_module.CommitExecutionProjection(1)
+    ),
+    "render_commit_recovery_checking": lambda p: p.render_commit_recovery_checking(),
+    "render_commit_result": lambda p: p.render_commit_result(
+        _commit_result_projection(CommitOutcome("cancelled", "Cancelled."))
+    ),
+    "return_to_commit_list": lambda p: p.return_to_commit_list(),
+    "render_push_availability": _push_offer,
+    "clear_push_availability": lambda p: p.clear_push_availability(),
+    "render_push_review": _push_review,
+    "render_push_progress": (
+        lambda p: p.render_push_progress("checking_remote", operation_id=1)
+    ),
+    "render_push_result": lambda p: p.render_push_result(
+        git_panel_module.PushPanelResultProjection(
+            "Pushed", "Done.", "back_to_session"
+        ),
+        operation_id=1,
+    ),
+    "return_to_push_list": lambda p: p.return_to_push_list(),
+}
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("entry", sorted(_ENTRY_POINTS))
+async def test_a_panel_entry_called_during_removal_does_nothing(entry: str) -> None:
+    """TASK-36527 review round 3: a workspace task outlives a removal.
+
+    The push observer is a plain task, and workspace workers are cancelled
+    only at the workspace's own Unmount, so either can call into the panel
+    after its children are gone but while it is still attached. RED without
+    the guard: ``NoMatches`` for whichever child the entry point queries.
+    """
+    panel = LibraryFileNotesGitPanel()
+    panel.styles.display = "block"
+    app = _HostedPanelHarness(panel)
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        removal = app.query_one("#fenced-host").remove()
+        await asyncio.gather(*(child._task for child in panel.children))
+        assert panel.is_attached and panel._pruning and not panel.children
+        _ENTRY_POINTS[entry](panel)
+        await removal
+        await pilot.app.workers.wait_for_complete()
+        await pilot.pause()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("target", ["_finish_mount", "_fit_fixed_regions"])
+async def test_a_deferred_panel_refresh_landing_during_removal_does_nothing(
+    target: str,
+) -> None:
+    """TASK-36527 review round 3: ``on_mount``/``on_resize`` queue these with
+    ``call_after_refresh``, and the panel is removed before they land. RED
+    without the guard: ``NoMatches`` out of the callback.
+    """
+    panel = LibraryFileNotesGitPanel()
+    panel.styles.display = "block"
+    app = _HostedPanelHarness(panel)
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        panel.call_after_refresh(getattr(panel, target))
+        await panel.remove()
+        await pilot.pause()
 
 
 async def _drain_git_row_render(pilot, panel) -> None:

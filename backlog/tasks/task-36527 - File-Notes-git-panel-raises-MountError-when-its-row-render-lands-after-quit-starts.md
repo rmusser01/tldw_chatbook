@@ -5,7 +5,7 @@ status: Done
 assignee:
 - '@claude'
 created_date: 2026-10-24 00:26
-updated_date: '2026-11-03 08:36'
+updated_date: '2026-11-03 09:22'
 labels:
 - follow-up
 - library
@@ -52,8 +52,21 @@ The git panel's worker renders (`_render_rows`, `_render_commit_review_notes`) a
   - Mutation checks, each failing only its own pin: the rows `finally` back to `is_attached`; the notes post-clear and post-extend checks back to `is_attached`; the focus guard removed; the rows post-clear check reduced to the generation test.
   - The commit-notes post-`extend` check (a removal that starts during the mount) has its own pin, `test_a_commit_notes_render_removed_during_its_mount_ends_quietly`. A patched `extend` mounts the notes, starts the host's removal, and awaits the `#file-notes-git-commit-included-selected` Static's task. That Static exits before the panel's Unmount cancels the worker. Red 5 of 5 runs with the check reduced to the generation test: `WorkerFailed: NoMatches('#file-notes-git-commit-included-selected')`.
   - Review round 2 (same root): `_focus_push_list_control` and `_focus_push_control_if_current` now use `_going_away()` too. Pin: `test_a_push_focus_landing_during_removal_ends_quietly[list|operation]`, which calls `return_to_push_list()` / `restore_push_focus()` and then removes the panel. Red on 879619ca23: `NoMatches('#file-notes-git-back')` from both callbacks. All eight pins green 10 of 10 runs (`-n 4`, load ~13).
-  - Census: five node ids at the tail.
+  - Census: five node ids at the tail at this point (seven after round 3).
   - Round 1's five pins green 10 of 10 runs (`-n 4`, load ~15). The reviewer's probe went from 15 of 24 crashing to 24 of 24 ok.
-  - A render cut off by a removal leaves `_replacing_rows` set. The next `render_status` or `render_checking` replaces the rows; on remount, `_rehydrate_git_presentation` does that.
-  - The quit tests are parametrized now. The module stays at its 4207 size pin: the new helper is paid for by shorter comments.
-- **Files:** tldw_chatbook/Widgets/Library/library_file_notes_git_panel.py, Tests/UI/test_library_file_notes_git.py, scripts/ui_pr_gate_census.txt, scripts/check_ui_pr_gate_census.py, backlog/docs/lessons-testing-evidence.md, backlog/docs/lessons-textual.md.
+  - A render cut off by a removal leaves `_replacing_rows` set. Only `render_status`, or a `render_checking` that does not retain rows, starts a new row render that clears it; `render_checking(retain_rows=True)` leaves it set. On remount, `_rehydrate_git_presentation` re-renders the status in git mode.
+  - The quit tests are parametrized now. Through round 2 the module stayed at its 4207 size pin, because the new helper is paid for by shorter comments.
+- **Round 3 (review: 2 Important, 2 Minor).** Rule: every `call_after_refresh` target, and every panel entry point a workspace task can reach, opens with `if self._going_away(): return`.
+  - Why: the workspace's push observer is a plain `asyncio.create_task` that nothing cancels on unmount, and workspace workers are cancelled only at the workspace's own Unmount. Either can call the panel after its children are gone, while it is still attached.
+  - Guard added to 22 public entry points: `render_status`, `render_untrusted`, `render_checking`, `render_unavailable`, `mark_stale`, `set_mutating`, `set_last_action`, `clear_last_action`, `render_commit_form`, `render_commit_checking`, `render_commit_review`, `render_commit_confirming`, `render_commit_executing`, `render_commit_recovery_checking`, `render_commit_result`, `return_to_commit_list`, `render_push_review`, `render_push_progress`, `render_push_result`, `return_to_push_list`, `restore_push_focus`, `set_action_status` (through `set_last_action`).
+  - Guard added to the deferred targets `_finish_mount`, `_fit_fixed_regions`, `_settle_action_focus` and `_sync_commit_body_height`.
+  - State-only wrappers keep their state assignment, and the guard sits in the projection helper they call: `render_/clear_push_availability` use `_sync_push_availability` (Important #1, guard swapped); `render_/clear_commit_availability` and `invalidate_commit_binding` use `_sync_commit_availability`; `set_current_status` uses `_fit_fixed_regions`. A top-of-method return would drop state that `_finish_mount` re-projects on remount. The `set_current_status` mutation passes its own pin for exactly that reason.
+  - Pins:
+    - `test_a_panel_entry_called_during_removal_does_nothing[27 entry points]` starts `host.remove()`, awaits every child's task (the panel is then attached, pruning and childless), and calls the entry point.
+    - `test_a_deferred_panel_refresh_landing_during_removal_does_nothing[_finish_mount, _fit_fixed_regions]` queues the target with `call_after_refresh` and removes the panel.
+    - Red first: all 29 cases raised `NoMatches` on eb2cca31f3.
+  - Mutation checks (each guard removed alone): 24 of 25 fail their pin with `NoMatches`. The exception is `set_current_status`, whose own guard was then dropped, as above.
+  - Kept but not pinnable: `restore_push_focus` only schedules, and its target is pinned. `_settle_action_focus` holds widget references and runs no query. `_sync_commit_body_height` already catches `NoMatches`. Their probe-style cases stayed green on eb2cca31f3, so they are not in the test.
+  - Out of the panel class and left unchanged: the row items' `_fit_copy` (its `not self.children` check covers a prune, since children exit first) and `PushDestinationAuthorizationDialog._sync_action_layout` (a separate screen). The row items' probe-style cases were green on eb2cca31f3. I did not probe the dialog.
+  - Size: re-pinned 4207 -> 4253 in `Tests/Architecture/test_module_size_ratchet.py`, under the owner's 2026-10-31 size waiver (dated comment).
+- **Files:** tldw_chatbook/Widgets/Library/library_file_notes_git_panel.py, Tests/UI/test_library_file_notes_git.py, scripts/ui_pr_gate_census.txt, scripts/check_ui_pr_gate_census.py, Tests/Architecture/test_module_size_ratchet.py, backlog/docs/lessons-testing-evidence.md, backlog/docs/lessons-textual.md.
