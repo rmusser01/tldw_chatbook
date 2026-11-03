@@ -163,4 +163,3 @@ def test_failed_delete_starts_one_worker_per_launch_and_retries_next_launch(
     retry = _launch(monkeypatch, rail_state)
     assert retry.deleted == [("console.rail_state", list(_LEGACY_KEYS))]
     assert list(rail_state) == list(_CURRENT_KEYS)
-
