@@ -685,9 +685,6 @@ _HOME_EVAL_RUN_QUERY_LIMIT = 50
 # Functions:
 
 
-# --- Global variable for config ---
-APP_CONFIG = load_settings()
-
 # Early logging configuration removed - handled by configure_application_logging() during app initialization
 
 
@@ -3291,6 +3288,9 @@ class TldwCli(
 
     def on_mount(self) -> None:
         """Configure logging and schedule post-mount setup."""
+        from .Utils.optional_deps import apply_config_eager_dependency_check
+
+        apply_config_eager_dependency_check()
         self._start_persona_buddy_overlay()
         runtime = self.console_runtime
         if runtime is not None:

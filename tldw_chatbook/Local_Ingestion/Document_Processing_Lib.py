@@ -73,21 +73,27 @@ from loguru import logger  # noqa: E402
 # document. See process_document() below for the deferred import.
 #
 # Constants
-# Get media processing config from CLI settings
-media_config = {
-    "document": {
-        "chunk_method": get_cli_setting(
-            "media_processing.document", "chunk_method", "sentences"
-        ),
-        "chunk_size": get_cli_setting("media_processing.document", "chunk_size", 1500),
-        "chunk_overlap": get_cli_setting(
-            "media_processing.document", "chunk_overlap", 100
-        ),
-        "max_summary_length": get_cli_setting(
-            "media_processing.document", "max_summary_length", 1000
-        ),
+def _document_chunk_defaults() -> dict:
+    """Default chunk options from the CLI settings, read when used (hot-reload safe).
+
+    A failed settings read (e.g. RecoveryRequired under a re-selected profile)
+    falls back to the shipped defaults, as the frozen import-time read did.
+    """
+    section = "media_processing.document"
+    try:
+        method = get_cli_setting(section, "chunk_method", "sentences")
+        size = get_cli_setting(section, "chunk_size", 1500)
+        overlap = get_cli_setting(section, "chunk_overlap", 100)
+    except Exception:
+        method, size, overlap = "sentences", 1500, 100
+    return {
+        "method": method,
+        "max_size": size,
+        "overlap": overlap,
+        "adaptive": True,
+        "language": "en",
     }
-}
+
 
 # Supported document formats
 SUPPORTED_FORMATS = {
@@ -170,13 +176,7 @@ def process_document(
 
     # Default chunk options
     if chunk_options is None:
-        chunk_options = {
-            "method": media_config["document"]["chunk_method"],
-            "max_size": media_config["document"]["chunk_size"],
-            "overlap": media_config["document"]["chunk_overlap"],
-            "adaptive": True,
-            "language": "en",
-        }
+        chunk_options = _document_chunk_defaults()
 
     try:
         # Determine processing method

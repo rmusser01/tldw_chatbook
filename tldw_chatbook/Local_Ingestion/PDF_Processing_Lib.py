@@ -49,22 +49,6 @@ from loguru import logger
 
 
 #
-# Constants
-# Get configuration values or use defaults
-# Get media processing config from CLI settings
-media_config = {
-    "pdf": {
-        "chunk_method": get_cli_setting(
-            "media_processing.pdf", "chunk_method", "sentences"
-        ),
-        "chunk_size": get_cli_setting("media_processing.pdf", "chunk_size", 1500),
-        "chunk_overlap": get_cli_setting("media_processing.pdf", "chunk_overlap", 100),
-        "max_summary_length": get_cli_setting(
-            "media_processing.pdf", "max_summary_length", 1000
-        ),
-    }
-}
-#
 #######################################################################################################################
 # Function Definitions
 #

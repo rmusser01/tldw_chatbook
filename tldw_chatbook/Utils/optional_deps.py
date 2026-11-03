@@ -1524,26 +1524,37 @@ def force_recheck_embeddings():
 # Check configuration for eager dependency checking
 eager_check = False
 
-# First check environment variable (highest priority)
+# The environment variable is the only import-time signal (no config file I/O).
+# The config-file flag is read when the app starts: see
+# ``apply_config_eager_dependency_check``.
 if os.environ.get("TLDW_EAGER_DEPENDENCY_CHECK", "").lower() == "true":
     eager_check = True
     logger.info(
         "Eager dependency checking enabled via TLDW_EAGER_DEPENDENCY_CHECK environment variable"
     )
-else:
-    # Check config file if not in test environment
-    if "PYTEST_CURRENT_TEST" not in os.environ:
-        try:
-            # Import config lazily to avoid circular dependencies
-            from ..config import get_cli_setting
 
-            if get_cli_setting("rag", "performance", {}).get(
-                "eager_dependency_check", False
-            ):
-                eager_check = True
-                logger.info("Eager dependency checking enabled via config file")
-        except Exception as e:
-            logger.debug(f"Could not check config for eager_dependency_check: {e}")
+
+def apply_config_eager_dependency_check() -> None:
+    """Run the dependency checks now if ``[rag] performance.eager_dependency_check`` is set.
+
+    Called once from app start-up (not at import, so importing this module
+    performs no config I/O). Skipped under pytest, as the import-time path was.
+    """
+    global _initialized
+    if _initialized or "PYTEST_CURRENT_TEST" in os.environ:
+        return
+    try:
+        from ..config import get_cli_setting
+
+        if get_cli_setting("rag", "performance", {}).get(
+            "eager_dependency_check", False
+        ):
+            logger.info("Eager dependency checking enabled via config file")
+            initialize_dependency_checks()
+            _initialized = True
+    except Exception as e:
+        logger.debug(f"Could not check config for eager_dependency_check: {e}")
+
 
 if eager_check:
     initialize_dependency_checks()

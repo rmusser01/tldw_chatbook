@@ -110,7 +110,6 @@ PRE_EXISTING_DROPS: dict[str, str] = {
     "model_capabilities": "UI/Screens/settings_context_memory.py:305",
     "network": "UI/Screens/settings_network_defaults.py:50",
     "provider_setup": "Chat/provider_setup_persistence.py:1131",
-    "rag": "RAG_Search/simplified/rag_service.py:97",
     "tldw_api": "config.py:1532",
     "transcription": "UI/Wizards/first_run_speech_step.py:179",
     # Helper-parameter read reached by call-site propagation (fix round 1):

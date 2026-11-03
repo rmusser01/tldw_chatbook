@@ -633,7 +633,11 @@ def test_invalid_pool_multiplier_falls_back_to_its_own_default_not_search_result
         DEFAULT_HYBRID_POOL_MULTIPLIER,
     )
 
-    monkeypatch.setattr(rag_service_module, "SEARCH_RESULT_MULTIPLIER", 4)
+    monkeypatch.setitem(
+        rag_service_module._RAG_SERVICE_CONSTANTS,
+        "SEARCH_RESULT_MULTIPLIER",
+        ("search_result_multiplier", 4),
+    )
 
     assert (
         rag_service_module._resolve_hybrid_pool_multiplier("not-a-number")
