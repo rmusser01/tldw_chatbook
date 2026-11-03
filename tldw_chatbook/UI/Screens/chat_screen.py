@@ -3361,7 +3361,7 @@ class ChatScreen(BaseAppScreen):
 
         if (_pre_push_guard is not None and not _pre_push_guard()) or (
             suspended_draft is not None and current != committed
-        ):  # TASK-36534: the chat moved after the follow; the return retries
+        ):  # TASK-36534 backstop; the owner check after discovery refuses first
             return False
         try:
             await self.app.push_screen(modal, callback=apply_origin_result)
