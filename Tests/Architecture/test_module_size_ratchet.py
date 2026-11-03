@@ -768,7 +768,9 @@ _BUDGETS: dict[str, int] = {
     # while a pairing awaits it, and the folder row fits its state words whole.
     # TASK-36531, 2026-11-03 (same waiver): 9568 -> 9582 (+14). An owned
     # replica opens and closes on one owner thread, so quit really closes it.
-    "tldw_chatbook/Widgets/Library/library_file_notes_workspace.py": 9582,
+    # TASK-36513 review round, 2026-11-03 (same waiver): 9582 -> 9593 (+11).
+    # "Review…" drops Button's 16-cell floor; Offline alone fits 40 columns.
+    "tldw_chatbook/Widgets/Library/library_file_notes_workspace.py": 9593,
     "tldw_chatbook/DB/Client_Media_DB_v2.py": 9426,
     # TASK-37270: bounded template reads moved to local_reasoning_metadata.
     # 2026-10-29, TASK-33622.6 (owner decision: raise with a dated comment):

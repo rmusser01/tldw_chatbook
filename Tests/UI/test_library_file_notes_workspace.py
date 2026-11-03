@@ -3361,7 +3361,10 @@ async def test_file_notes_root_row_keeps_state_and_folder_at_60_columns(
     root = tmp_path / "deep" / "nested" / "Research Notes"
     root.mkdir(parents=True)
     replica = FileNotesReplica(":memory:")
-    workspace = LibraryFileNotesWorkspace(root=root, replica=replica, poll_interval=10)
+    # The reconciles below are seeded by hand; keep the poll from replacing them.
+    workspace = LibraryFileNotesWorkspace(
+        root=root, replica=replica, poll_interval=3600
+    )
 
     async with _WorkspaceHarness(workspace).run_test(size=(60, 20)) as pilot:
         await _wait_until(pilot, lambda: workspace.initialized, "scan did not finish")
@@ -3394,6 +3397,57 @@ async def test_file_notes_root_row_keeps_state_and_folder_at_60_columns(
                     selector,
                     button.region,
                 )
+
+    replica.close()
+
+
+@pytest.mark.parametrize(
+    ("state", "offline"), (("Warning", False), ("Offline", True))
+)
+@pytest.mark.asyncio
+async def test_file_notes_root_row_keeps_state_word_beside_pairing_review_at_40_columns(
+    tmp_path: Path,
+    state: str,
+    offline: bool,
+) -> None:
+    """TASK-36513: with a pairing pending, 40 columns still paint the state word.
+
+    Details, Change… and the pairing review leave the status 9 cells; the
+    folder name goes, and Offline outranks Warning when only one word fits.
+    """
+    root = tmp_path / "deep" / "nested" / "Research Notes"
+    root.mkdir(parents=True)
+    replica = FileNotesReplica(":memory:")
+    workspace = LibraryFileNotesWorkspace(
+        root=root, replica=replica, poll_interval=3600
+    )
+
+    async with _WorkspaceHarness(workspace).run_test(size=(40, 20)) as pilot:
+        await _wait_until(pilot, lambda: workspace.initialized, "scan did not finish")
+        workspace._apply_reconcile(
+            ReconcileResult(
+                status="offline" if offline else "ok",
+                offline=offline,
+                replica_warning=ACTIVATION_WARNING,
+            ),
+            (),
+        )
+        painted = await _settled_root_row(pilot, workspace)
+        assert painted == state or painted.startswith(f"{state} · "), painted
+        review = workspace.query_one("#file-notes-recovery-review", Button)
+        assert review.display
+        assert "pairing" in str(review.tooltip)
+        for selector in (
+            "#file-notes-root-details",
+            "#file-notes-choose-root",
+            "#file-notes-recovery-review",
+        ):
+            button = workspace.query_one(selector, Button)
+            assert button.display, selector
+            assert 0 <= button.region.x and button.region.right <= 40, (
+                selector,
+                button.region,
+            )
 
     replica.close()
 

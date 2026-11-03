@@ -1151,6 +1151,12 @@ class LibraryFileNotesWorkspace(Vertical):
         display: none;
     }
 
+    /* TASK-36513: "Review…" must not take Button's 16-cell floor. */
+    #file-notes-recovery-review {
+        width: auto;
+        min-width: 0;
+    }
+
     #file-notes-body {
         height: 1fr;
         min-height: 8;
@@ -2423,9 +2429,8 @@ class LibraryFileNotesWorkspace(Vertical):
             # TASK-36513: shown only while a restored pairing awaits review
             # (``_update_root_surface``); always shown, it left a linked
             # folder's status 11 cells at 60 columns.
-            review = Button(
-                "Review pairing…", id="file-notes-recovery-review", compact=True
-            )
+            review = Button("Review…", id="file-notes-recovery-review", compact=True)
+            review.tooltip = "Review the recovered folder pairing"
             review.display = False
             yield review
             # task-32055: the way out of a structural wait, next to the
@@ -2765,10 +2770,12 @@ class LibraryFileNotesWorkspace(Vertical):
             )
         owner_thread = self._replica_thread
         if self._owns_replica and owner_thread is not None:
-            await asyncio.get_running_loop().run_in_executor(
-                owner_thread, self._close_owned_replica
-            )
-            owner_thread.shutdown(wait=False)
+            try:
+                await asyncio.get_running_loop().run_in_executor(
+                    owner_thread, self._close_owned_replica
+                )
+            finally:
+                owner_thread.shutdown(wait=False)
 
     def _close_owned_replica(self) -> None:
         with self._runtime_lock:
@@ -3517,9 +3524,13 @@ class LibraryFileNotesWorkspace(Vertical):
             # first, then the folder name's middle, then the name itself.
             state, folder = self._root_status_parts
             room = width - cell_len(state) - 3
-            summary = (
-                f"{state} · {_middle_elide_cells(folder, room)}" if room >= 5 else state
-            )
+            if room >= 5:
+                summary = f"{state} · {_middle_elide_cells(folder, room)}"
+            elif cell_len(state) <= width:
+                summary = state
+            else:
+                # "Offline · Warning": Offline outranks Warning in one word.
+                summary = state.split(" · ")[0]
         status.update(_middle_elide_cells(summary, width))
 
     def _apply_responsive_layout(self, width: int) -> None:

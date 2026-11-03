@@ -76,9 +76,11 @@ goes.)
   \<folder\>" (or "Checking · Local folder: …" / "Offline · Local folder: …"
   when the folder can't be verified, or "Warning · Local folder: …" when its
   recovery copy needs attention) and the button relabels to
-  **Change…**. On a narrow terminal the state word always stays whole:
-  "Local folder:" is dropped first, then the middle of the folder name
-  (`Warning · Rese...otes`). **Details** opens the read-only "File Notes folder details"
+  **Change…**. On a narrow terminal, down to 40 columns, the state word
+  stays whole: "Local folder:" is dropped first, then the middle of the
+  folder name (`Linked · Res...tes`), then the name itself; where only one
+  state word fits, "Offline" stays and "· Warning" goes. **Details** opens
+  the read-only "File Notes folder details"
   dialog. A folder-change reason that is currently owning the row (see
   "While a folder change runs" below) replaces this summary until you try
   again; the linked-folder detail stays available in the row's tooltip and
@@ -159,7 +161,7 @@ button does that job instead.
 |---|---|
 | **Choose folder…** / **Change…** | Opens the "Choose File Notes Folder" picker; the choice is saved to `[file_notes] root` in config.toml. It opens on the linked folder when there is one, and otherwise on the folder you last picked through it (`[file_notes] browse`) — or your home directory the first time. The **Folder path** field holds focus from the moment the picker opens, with the folder it opened on selected, so the first thing you type replaces that path rather than going into the file listing (task-32606). Press **Enter** to browse into what you typed, or **Select folder** to use it right away without needing Enter first; an invalid path shows an inline reason and leaves the picker open. The listing opens with folders first in name order (**Sort** still offers discovery order and the rest), each folder saying how many notes sit directly inside it and marking an Obsidian vault as `· vault`; **Ctrl+R** offers the folders you last chose through this door and **Enter** on one uses it without browsing (task-32611, task-32643) |
 | **Details** | Opens "File Notes folder details" — a read-only status report; **Close** or **Esc** dismisses it |
-| **Review pairing…** | Appears only while a restored backup's pairing for this folder awaits your review — the folder line then reads "Warning · …". Opens the pairing review, which compares the folder on disk with its retained recovery copy before you approve it |
+| **Review…** | Appears only while a restored backup's pairing for this folder awaits your review — the folder line then reads "Warning · …", and the button's tooltip reads "Review the recovered folder pairing". Opens the pairing review, which compares the folder on disk with its retained recovery copy before you approve it |
 | **Cancel** (folder change) | Appears once a folder change has been running about three seconds — the same moment the line stops being a bare "Changing folder…". Press it to stop waiting: the status reads "Folder change cancelled · previous folder kept" and the folder you already had stays linked |
 | **Keep waiting** (folder change) | Appears beside **Cancel** once a folder change has been running about three seconds. Grants the change one more full 30-second budget; it can be used once per change, then the control goes away |
 | **Choose another** (folder change) | Appears with **Keep waiting**. Abandons the change, keeps the folder you already had, and reopens the folder picker in one step |
