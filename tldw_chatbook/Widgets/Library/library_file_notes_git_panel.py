@@ -2014,7 +2014,7 @@ class LibraryFileNotesGitPanel(Vertical):
 
     def _focus_push_list_control(self, selector: str) -> None:
         """Focus the requested list action or its first safe fallback."""
-        if not self.is_attached or self._push_phase != "list":
+        if self._going_away() or self._push_phase != "list":
             return
         candidates = dict.fromkeys(
             (
@@ -2308,7 +2308,7 @@ class LibraryFileNotesGitPanel(Vertical):
     ) -> None:
         """Reject stale focus repair across either phase or operation ID."""
         if (
-            not self.is_attached
+            self._going_away()
             or self._push_phase != phase
             or self._push_operation_id != operation_id
         ):

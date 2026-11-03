@@ -7821,6 +7821,70 @@ async def test_a_commit_focus_landing_during_removal_ends_quietly() -> None:
     assert not panel.is_attached
 
 
+@pytest.mark.asyncio
+async def test_a_commit_notes_render_removed_during_its_mount_ends_quietly() -> None:
+    """TASK-36527: a removal that starts while the notes mount is awaited.
+
+    The patched ``extend`` mounts the notes, then starts the host's removal
+    and waits for ``#file-notes-git-commit-included-selected`` to exit: the
+    children go first, and the panel's worker is cancelled only at its own
+    Unmount. RED without the post-``extend`` check: ``WorkerFailed:
+    NoMatches`` for that Static, an app exit.
+    """
+    panel = LibraryFileNotesGitPanel()
+    panel.styles.display = "block"
+    app = _FencedQuitHarness(panel, "_render_commit_review_notes")
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        _render_held_kind(panel, "_render_commit_review_notes", 1)
+        await pilot.app.workers.wait_for_complete()
+        await pilot.pause()
+        notes = panel.query_one("#file-notes-git-commit-included-notes", ListView)
+        selected = panel.query_one("#file-notes-git-commit-included-selected", Static)
+        real_extend = notes.extend
+        removals: list[object] = []
+        resumed_pruning: list[bool] = []
+
+        async def extend_then_remove(items) -> None:
+            await real_extend(items)
+            removals.append(app.query_one("#fenced-host").remove())
+            await selected._task
+            resumed_pruning.append(panel._pruning)
+
+        notes.extend = extend_then_remove
+        _render_held_kind(panel, "_render_commit_review_notes", 2)
+        await _wait_until(pilot, lambda: bool(removals), "the notes never mounted")
+        await removals[0]
+        await pilot.app.workers.wait_for_complete()
+        await pilot.pause()
+    assert resumed_pruning == [True], "the render never resumed mid-removal"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("callback", ["list", "operation"])
+async def test_a_push_focus_landing_during_removal_ends_quietly(callback: str) -> None:
+    """TASK-36527: the push list's and push operation's deferred focus.
+
+    ``return_to_push_list`` and ``restore_push_focus`` defer their focus with
+    ``call_after_refresh``; the panel is removed before it lands. RED with an
+    ``is_attached``-only guard: ``NoMatches`` out of the callback.
+    """
+    panel = LibraryFileNotesGitPanel()
+    panel.styles.display = "block"
+    app = _PanelHarness(panel)
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        if callback == "list":
+            panel.return_to_push_list()
+        else:
+            panel.restore_push_focus(
+                panel._push_phase, panel._push_operation_id, "#file-notes-git-back"
+            )
+        await panel.remove()
+        await pilot.pause()
+    assert not panel.is_attached
+
+
 async def _drain_git_row_render(pilot, panel) -> None:
     """Wait until the row-render worker has finished, `finally` included."""
     await pilot.app.workers.wait_for_complete()

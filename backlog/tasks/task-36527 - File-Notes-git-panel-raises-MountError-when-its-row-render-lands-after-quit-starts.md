@@ -5,7 +5,7 @@ status: Done
 assignee:
 - '@claude'
 created_date: 2026-10-24 00:26
-updated_date: '2026-11-03 08:23'
+updated_date: '2026-11-03 08:36'
 labels:
 - follow-up
 - library
@@ -41,7 +41,7 @@ Found by TASK-36383's implementation (PR #3232, 2026-10-23). That task fixed thr
 
 ## Implementation Notes
 
-The git panel's worker renders (`_render_rows`, `_render_commit_review_notes`) and its deferred commit focus now stop once the panel is going away. The test is `_going_away()`, the repo's liveness idiom `not self.is_attached or self._pruning`. Quit sets `App._exit` before its drains, so `is_attached` reads False from then on; a removal sets `_pruning` before the children go. Each render checks it after the `clear()` await (the last yield before the mount); the commit-notes render checks it again after `extend`; the rows `finally` skips its UI sync. A render that lands after quit, or during a removal, does nothing. The module stays at its size-ratchet pin (4207): the new comments replace the old ones.
+The git panel's worker renders (`_render_rows`, `_render_commit_review_notes`) and its deferred commit and push focus callbacks now stop once the panel is going away. The test is `_going_away()`, the repo's liveness idiom `not self.is_attached or self._pruning`. Quit sets `App._exit` before its drains, so `is_attached` reads False from then on; a removal sets `_pruning` before the children go. Each render checks it after the `clear()` await (the last yield before the mount); the commit-notes render checks it again after `extend`; the rows `finally` skips its UI sync. A render that lands after quit, or during a removal, does nothing. The module stays at its size-ratchet pin (4207): the new comments replace the old ones.
 
 - **Test:** `test_a_git_render_resuming_after_quit_does_nothing[_render_rows]` (first named `test_a_git_row_render_resuming_after_quit_does_nothing`) (Tests/UI/test_library_file_notes_git.py). `_FencedQuitHarness` quits the way `TldwCli._shutdown` does: it sets `_exit`, then runs a drain that releases the held rescan render and waits for it to land. The test asserts that the render resumed under `_exit` and left the replacement untouched. A bare `App.exit()` could not reproduce the bug (see the new lessons entry).
 - **Red before the fix:** `WorkerFailed: MountError("Can't mount widget(s) before ListView(id='file-notes-git-rows') is mounted")` from git_panel.py:3200 `extend`. Mutation controls: dropping the post-clear check brings back the same `WorkerFailed`; dropping the `finally` gate fails "the late render still synced the panel".
@@ -50,8 +50,10 @@ The git panel's worker renders (`_render_rows`, `_render_commit_review_notes`) a
 - **AC#3, removal (review round 1):** the earlier claim that "a detach cancels the worker on the await" was wrong. A removal sets `_pruning` on the whole subtree at once, the children exit first, and the panel's workers are cancelled only at its own Unmount. Until then `is_attached` stays True. A render resuming in that window passed the guard, its `extend` was a silent no-op, and the next query raised `NoMatches`. Every guard now uses `_going_away()` (`not self.is_attached or self._pruning`, the repo idiom). It sits at both renders' post-`clear()` checks, at the commit-notes post-`extend` check, at the rows `finally`, and at `_focus_commit_control_if_current`.
   - New pins: `test_a_git_render_resuming_during_removal_ends_quietly[rows|notes]` and `test_a_commit_focus_landing_during_removal_ends_quietly`. On f106a13c58 they were red 5 of 5 runs, with `WorkerFailed: NoMatches('#file-notes-git-empty')`, `...('#file-notes-git-commit-included-selected')` and `NoMatches('#file-notes-git-commit-edit')`.
   - Mutation checks, each failing only its own pin: the rows `finally` back to `is_attached`; the notes post-clear and post-extend checks back to `is_attached`; the focus guard removed; the rows post-clear check reduced to the generation test.
-  - Not pinned on its own: the commit-notes post-`extend` check, which covers a removal that starts during the mount.
-  - All five pins green 10 of 10 runs (`-n 4`, load ~15). The reviewer's probe went from 15 of 24 crashing to 24 of 24 ok.
+  - The commit-notes post-`extend` check (a removal that starts during the mount) has its own pin, `test_a_commit_notes_render_removed_during_its_mount_ends_quietly`. A patched `extend` mounts the notes, starts the host's removal, and awaits the `#file-notes-git-commit-included-selected` Static's task. That Static exits before the panel's Unmount cancels the worker. Red 5 of 5 runs with the check reduced to the generation test: `WorkerFailed: NoMatches('#file-notes-git-commit-included-selected')`.
+  - Review round 2 (same root): `_focus_push_list_control` and `_focus_push_control_if_current` now use `_going_away()` too. Pin: `test_a_push_focus_landing_during_removal_ends_quietly[list|operation]`, which calls `return_to_push_list()` / `restore_push_focus()` and then removes the panel. Red on 879619ca23: `NoMatches('#file-notes-git-back')` from both callbacks. All eight pins green 10 of 10 runs (`-n 4`, load ~13).
+  - Census: five node ids at the tail.
+  - Round 1's five pins green 10 of 10 runs (`-n 4`, load ~15). The reviewer's probe went from 15 of 24 crashing to 24 of 24 ok.
   - A render cut off by a removal leaves `_replacing_rows` set. The next `render_status` or `render_checking` replaces the rows; on remount, `_rehydrate_git_presentation` does that.
-  - The quit tests are parametrized now, and the five pins are appended at the census tail. The module stays at its 4207 size pin: the new helper is paid for by shorter comments.
+  - The quit tests are parametrized now. The module stays at its 4207 size pin: the new helper is paid for by shorter comments.
 - **Files:** tldw_chatbook/Widgets/Library/library_file_notes_git_panel.py, Tests/UI/test_library_file_notes_git.py, scripts/ui_pr_gate_census.txt, scripts/check_ui_pr_gate_census.py, backlog/docs/lessons-testing-evidence.md, backlog/docs/lessons-textual.md.
