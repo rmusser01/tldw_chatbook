@@ -129,7 +129,11 @@ def test_frozen_console_imports_have_no_stale_rows() -> None:
 
 
 def _literal_module(node: ast.AST) -> str | None:
-    """The ``tldw_chatbook.*`` literal of ``import_module(..)``/``sys.modules[..]``/``.get(..)``."""
+    """The ``tldw_chatbook.*`` literal of ``import_module(..)``/``sys.modules[..]``/``.get(..)``.
+
+    Only literal module names resolve statically; a name built at run time
+    (variable, f-string, concatenation) is invisible to this scan.
+    """
     if isinstance(node, ast.Subscript) and ast.unparse(node.value) == "sys.modules":
         arg = node.slice
     elif isinstance(node, ast.Call) and node.args and ast.unparse(node.func) in {
@@ -143,6 +147,10 @@ def _literal_module(node: ast.AST) -> str | None:
     if isinstance(arg, ast.Constant) and str(arg.value).startswith("tldw_chatbook."):
         return str(arg.value)
     return None
+
+
+def _crosses(literal: str | None, targets: set[str]) -> bool:
+    return bool(literal) and _area(literal) in targets
 
 
 def _private_crossings() -> list[str]:
@@ -190,7 +198,10 @@ def _private_crossings() -> list[str]:
                 and isinstance(node.func, ast.Name)
                 and node.func.id in {"getattr", "setattr", "hasattr"}
                 and len(node.args) > 1
-                and ast.unparse(node.args[0]) in bound
+                and (
+                    ast.unparse(node.args[0]) in bound
+                    or _crosses(_literal_module(node.args[0]), targets)
+                )
                 and isinstance(node.args[1], ast.Constant)
                 and str(node.args[1].value).startswith("_")
             ):
