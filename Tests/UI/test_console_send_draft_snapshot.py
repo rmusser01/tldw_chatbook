@@ -16,6 +16,7 @@ import pytest
 from textual.events import Key
 from textual.widgets import Button
 
+from Tests.UI.pump_probe import console_attach_ended
 from Tests.UI.test_console_native_chat_flow import (
     BlockedGateway,
     _configure_native_ready_console,
@@ -332,7 +333,10 @@ async def test_console_armed_unknown_mouse_send_snapshots_before_skill_await(
 ):
     """Skill parsing retains the captured send and preserves later typing.
 
-    Hook review's separate unchanged-draft gate is isolated in this case.
+    Two draft gates that run after the skill await are isolated in this case:
+    hook review's unchanged-draft gate (``console._hooks.dispatch``) and the
+    received path's live-vs-stash check
+    (``wiring.receive_console_visible_intent``).
     """
 
     app = _ready_openai_app(monkeypatch, "unused")
@@ -341,6 +345,9 @@ async def test_console_armed_unknown_mouse_send_snapshots_before_skill_await(
     async with host.run_test(size=(160, 48)) as pilot:
         console = host.screen_stack[-1]
         await _wait_for_selector(console, pilot, "#console-native-composer")
+        # Arm the send only once the attach has ended and the Console's
+        # queue has drained, so no attach work runs inside the measured send.
+        await console_attach_ended(console)
         monkeypatch.setattr(
             console._prompt_queue, "_blocked_reason_accessor", lambda: ""
         )
@@ -352,11 +359,6 @@ async def test_console_armed_unknown_mouse_send_snapshots_before_skill_await(
         composer.load_draft(armed)
         store.set_session_draft(session.id, armed)
         console._console_unknown_send_armed = armed
-        for _ in range(100):
-            if console._console_attach_reconciled:
-                break
-            await pilot.pause(0.05)
-        assert console._console_attach_reconciled
         assert console._console_runtime().view is console
 
         entered = asyncio.Event()
@@ -390,6 +392,28 @@ async def test_console_armed_unknown_mouse_send_snapshots_before_skill_await(
             return await dispatch()
 
         monkeypatch.setattr(console._hooks, "dispatch", dispatch_without_hook_review)
+        # The received path runs its own draft gate first, and it is stricter
+        # than hook review's: wiring.receive_console_visible_intent's
+        # live-vs-stash check (3e618d7119) refuses ANY edit after the capture
+        # when there are no captured inputs, while hook review refuses an
+        # edited draft only after a review ran (TASK-340). Isolate only that
+        # check: the real function runs without the stash, so every other
+        # check it makes stays live.
+        from tldw_chatbook.UI.Console_Modules import wiring
+
+        receive = wiring.receive_console_visible_intent
+
+        def receive_without_unchanged_draft_gate(
+            screen, draft, session_id, stash, **kwargs
+        ):
+            assert draft == armed and stash.text == armed
+            return receive(screen, draft, session_id, None, **kwargs)
+
+        monkeypatch.setattr(
+            wiring,
+            "receive_console_visible_intent",
+            receive_without_unchanged_draft_gate,
+        )
         requests: list[object] = []
         notices: list[str] = []
         monkeypatch.setattr(

@@ -23,6 +23,7 @@ from __future__ import annotations
 from Tests.UI.console_controller_stubs import context_spend_for_test
 
 import asyncio
+import inspect
 import re
 import time
 from dataclasses import replace
@@ -32,6 +33,7 @@ import pytest
 from textual.widgets import Button
 
 from Tests.UI.app_factory import attach_chachanotes_db
+from Tests.UI.pump_probe import console_attach_ended
 from Tests.UI.test_destination_shells import (
     _visible_text,
     _wait_for_selector,
@@ -1171,13 +1173,10 @@ async def test_idle_draft_edit_burst_coalesces_one_cost_refresh(monkeypatch, rec
     async with host.run_test(size=(200, 48)) as pilot:
         console = host.screen_stack[-1]
         await _wait_for_selector(console, pilot, "#console-native-composer")
-        # The attach reconcile's on_screen_resume refreshes the chip once; let
-        # it land first, or it races into the watched window (unattributed).
-        for _ in range(200):
-            if console._console_attach_reconciled:
-                break
-            await pilot.pause(0.01)
-        assert console._console_attach_reconciled
+        # The attach reconcile's on_screen_resume refreshes the chip once and
+        # queues more work; let the attach end and the Console's queue drain
+        # first, or it races into the watched window (unattributed).
+        await console_attach_ended(console)
         summary_refresh = Mock(wraps=console._sync_console_settings_summary)
         cost_refresh = Mock(wraps=console._sync_console_cost_chip)
         monkeypatch.setattr(console, "_sync_console_settings_summary", summary_refresh)
@@ -1189,8 +1188,10 @@ async def test_idle_draft_edit_burst_coalesces_one_cost_refresh(monkeypatch, rec
             type(console)._sync_console_settings_summary.__code__: "summary",
             type(console)._sync_console_cost_chip.__code__: "cost",
         }
+        # Unwrapped: a decorated owner's own __code__ is its decorator's
+        # wrapper (retry_after_config_rebuild's, shared and self-less).
         ordinary = {
-            getattr(type(console), name).__code__: name
+            inspect.unwrap(getattr(type(console), name)).__code__: name
             for name in (
                 "_poll_console_credential_readiness",
                 "_sync_console_control_bar_under_config",

@@ -27,6 +27,7 @@ from Tests.UI.test_product_maturity_gate1_core_loop_screen_adaptation import (
     ConsoleHarness,
 )
 from Tests.UI.app_factory import attach_chachanotes_db
+from Tests.UI.pump_probe import console_attach_ended, until
 from tldw_chatbook.Chat.console_command_grammar import default_console_registry
 from tldw_chatbook.Chat.console_chat_models import ConsoleMessageRole
 from tldw_chatbook.DB.Prompts_DB import PromptsDatabase
@@ -1883,10 +1884,15 @@ async def test_console_resume_triggered_prompt_insert_survives_stale_session_swi
 
         store = console._ensure_console_chat_store()
         first_session = store.ensure_session()
-        # Let the mount-time sync pass settle the visible-draft tracker onto
-        # the first session before simulating a session switch that races
-        # ahead of the not-yet-fired resume consumption below.
-        await pilot.pause(0.1)
+        # Let the attach's sync pass settle the visible-draft tracker onto the
+        # first session before simulating a session switch that races ahead
+        # of the not-yet-fired resume consumption below. The attach must have
+        # ended: a sync pass after the switch would move the tracker itself.
+        await console_attach_ended(console)
+        await until(
+            lambda: console._console_visible_draft_session_id == first_session.id,
+            5.0,
+        )
         assert console._console_visible_draft_session_id == first_session.id
 
         second_session = store.create_session(
@@ -1904,7 +1910,16 @@ async def test_console_resume_triggered_prompt_insert_survives_stale_session_swi
             _library_prompt_application(console, "resume-triggered insert"),
         )
         console.on_screen_resume()
-        await pilot.pause(0.25)  # past the 0.15s consumption timer
+        # The resume consumes the handoff on its 0.15 s settle timer.
+        await until(
+            lambda: (
+                not app.pending_handoffs.has_pending(
+                    HandoffChannel.CONSOLE_PROMPT_INSERT
+                )
+                and "resume-triggered insert" in composer.draft_text()
+            ),
+            5.0,
+        )
 
         assert not app.pending_handoffs.has_pending(
             HandoffChannel.CONSOLE_PROMPT_INSERT
