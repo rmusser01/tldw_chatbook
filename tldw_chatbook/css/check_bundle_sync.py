@@ -4,9 +4,11 @@
 TASK-395: ``778f75813`` hand-edited the generated ``tldw_cli_modular.tcss``
 instead of a source module; the desync shipped unnoticed for a day because every
 rebuild (including the app's boot-time rebuild) silently stripped the live
-styling. This checker rebuilds the bundle into a temp file (non-destructive) and
-compares it to the committed one, ignoring only the ``Generated:`` timestamp
-line, and names any drifted MODULE block so the fix is obvious.
+styling. This checker rebuilds every generated sheet into a temp directory
+(non-destructive), compares each with the committed copy, and names any drifted
+bundle MODULE block so the fix is obvious. The bundle header reads
+``Generated: deterministic``, so the comparison is exact; ``_strip_timestamp``
+is left over from when that line carried the build time.
 
 Run locally or in CI:  ``python tldw_chatbook/css/check_bundle_sync.py``
 Exits 0 when in sync, 1 (with ``::error::`` annotations) when drifted.
@@ -37,7 +39,7 @@ _MODULE_SPLIT_RE = re.compile(r"/\* ===== MODULE: (.+?) ===== \*/")
 
 
 def _strip_timestamp(text: str) -> str:
-    """Blank the non-deterministic ``Generated:`` header line."""
+    """Blank the ``Generated:`` header line (now constant; see the module docstring)."""
     return _TIMESTAMP_RE.sub(" * Generated: <timestamp>", text)
 
 
@@ -55,7 +57,7 @@ def drifted_modules(committed: str, rebuilt: str) -> list[str] | None:
         rebuilt: The freshly rebuilt bundle text.
 
     Returns:
-        ``None`` when the two match once the timestamp line is ignored; otherwise
+        ``None`` when the two match once the ``Generated:`` line is ignored; otherwise
         the sorted names of MODULE blocks that differ (``["<header>"]`` when only
         the non-module header region drifted).
     """
@@ -72,16 +74,17 @@ def drifted_modules(committed: str, rebuilt: str) -> list[str] | None:
 
 
 def main() -> int:
-    """Rebuild both generated stylesheets to a temp dir and compare them.
+    """Rebuild every generated stylesheet to a temp dir and compare them.
 
-    Covers ``tldw_cli_modular.tcss`` and ``widget_defaults.tcss`` -- the latter
-    is generated from the class-level ``BUNDLED_CSS`` declarations in the Python
-    sources (TASK-15450), so editing a widget's CSS without re-running the build
-    would otherwise ship a stale stylesheet.
+    Covers the bundle, the ``widget_defaults_*`` and ``screen_css_*`` sheets
+    generated from the class-level ``BUNDLED_CSS``/``BUNDLED_SCREEN_CSS``
+    declarations in the Python sources (TASK-15450), and the screen-owned split
+    sheets. Editing any of their sources without re-running the build would
+    otherwise ship a stale stylesheet.
 
     Returns:
-        ``0`` when both committed stylesheets reproduce from their sources; ``1``
-        when either has drifted or cannot be rebuilt (with ``::error::``
+        ``0`` when every committed stylesheet reproduces from its sources; ``1``
+        when any has drifted or cannot be rebuilt (with ``::error::``
         annotations naming the drifted modules or the missing source).
     """
     css_dir = Path(__file__).parent

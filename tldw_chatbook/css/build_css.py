@@ -3,7 +3,8 @@
 CSS Build Script for tldw_chatbook
 Concatenates modular CSS files into a single file for Textual
 
-Five files are generated (TASK-15450 -- see ``widget_css.py`` for the why):
+These files are generated (TASK-15450 -- see ``widget_css.py`` for the why;
+``css/CSS-MODULAR.md`` says what loads each one):
 
 * ``tldw_cli_modular.tcss`` -- the app bundle, concatenated from ``CSS_MODULES``.
 * ``widget_defaults_{self,scoped}.tcss`` -- the class-level ``BUNDLED_CSS``
@@ -12,6 +13,9 @@ Five files are generated (TASK-15450 -- see ``widget_css.py`` for the why):
 * ``screen_css_{self,scoped}.tcss`` -- the class-level ``BUNDLED_SCREEN_CSS``
   blocks, loaded as app CSS either side of the bundle, in place of the source
   Textual used to add (with a full cold reparse) on a modal's first open.
+* ``screen_agentic_*``, ``screen_feature_*`` and ``screen_modal_*.tcss`` --
+  single-owner rules split out of the ``SCREEN_OWNED_SPLITS`` modules, parsed
+  on the owning screen's first visit (TASK-25812/TASK-24459).
 """
 
 import dataclasses
@@ -1386,9 +1390,10 @@ def main():
             "the manifest was not published. Re-run build_css."
         )
 
-    print("\nTo use the modular CSS:")
-    print("1. Update app.py to use 'tldw_cli_modular.tcss'")
-    print("2. Run this script whenever you modify any module files")
+    print(
+        "\nCommit the regenerated sheets with your source change, then run "
+        "./scripts/preflight.sh (see css/CSS-MODULAR.md)."
+    )
 
 
 if __name__ == "__main__":
