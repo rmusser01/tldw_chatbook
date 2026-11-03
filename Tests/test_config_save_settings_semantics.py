@@ -1,11 +1,13 @@
 """Boolean contract of config_module.save_settings_to_cli_config."""
 
+import importlib
 import os
 import subprocess
 import sys
 from concurrent.futures import ThreadPoolExecutor
 
 from tldw_chatbook import config as config_module
+from tldw_chatbook.Chat import console_capture_policy as capture_policy_module
 from tldw_chatbook.Chat.console_exchange_capture import CaptureDetail
 from tldw_chatbook.Chat.console_trace_custom_pii import (
     custom_pii_ruleset_for_revision,
@@ -111,7 +113,7 @@ def test_full_capture_settings_publish_after_replacement_despite_cache_failure(
     generation = 4
 
     def snapshot():
-        policy = config_module._RUNTIME_CAPTURE_POLICY
+        policy = capture_policy_module._RUNTIME_CAPTURE_POLICY
         assert policy is not None
         return config_module.RuntimeConfigSnapshot(
             generation,
@@ -304,7 +306,7 @@ def test_runtime_capture_policy_concurrent_generation_refresh_is_equivalent(
 
 def test_legacy_full_capture_never_migrates_to_full_viewer(monkeypatch) -> None:
     monkeypatch.setattr(config_module, "_CONFIG_GENERATION", 61)
-    monkeypatch.setattr(config_module, "_RUNTIME_CAPTURE_POLICY", None)
+    monkeypatch.setattr(capture_policy_module, "_RUNTIME_CAPTURE_POLICY", None)
     monkeypatch.setattr(
         config_module,
         "_published_runtime_config_snapshot",
@@ -330,7 +332,7 @@ def test_runtime_capture_policy_projects_independent_trace_rollout_gates(
     monkeypatch,
 ) -> None:
     monkeypatch.setattr(config_module, "_CONFIG_GENERATION", 611)
-    monkeypatch.setattr(config_module, "_RUNTIME_CAPTURE_POLICY", None)
+    monkeypatch.setattr(capture_policy_module, "_RUNTIME_CAPTURE_POLICY", None)
     monkeypatch.setattr(
         config_module,
         "_published_runtime_config_snapshot",
@@ -358,7 +360,7 @@ def test_runtime_capture_policy_prefers_trace_rollout_environment_overrides(
     monkeypatch,
 ) -> None:
     monkeypatch.setattr(config_module, "_CONFIG_GENERATION", 614)
-    monkeypatch.setattr(config_module, "_RUNTIME_CAPTURE_POLICY", None)
+    monkeypatch.setattr(capture_policy_module, "_RUNTIME_CAPTURE_POLICY", None)
     monkeypatch.setattr(
         config_module,
         "_published_runtime_config_snapshot",
@@ -407,7 +409,7 @@ def test_runtime_capture_policy_coerces_string_true_capture_and_rollout_gates(
     monkeypatch,
 ) -> None:
     monkeypatch.setattr(config_module, "_CONFIG_GENERATION", 613)
-    monkeypatch.setattr(config_module, "_RUNTIME_CAPTURE_POLICY", None)
+    monkeypatch.setattr(capture_policy_module, "_RUNTIME_CAPTURE_POLICY", None)
     monkeypatch.setattr(
         config_module,
         "_published_runtime_config_snapshot",
@@ -436,7 +438,7 @@ def test_runtime_capture_policy_uses_shipping_trace_rollout_defaults(
     monkeypatch,
 ) -> None:
     monkeypatch.setattr(config_module, "_CONFIG_GENERATION", 612)
-    monkeypatch.setattr(config_module, "_RUNTIME_CAPTURE_POLICY", None)
+    monkeypatch.setattr(capture_policy_module, "_RUNTIME_CAPTURE_POLICY", None)
     monkeypatch.setattr(
         config_module,
         "_published_runtime_config_snapshot",
@@ -455,7 +457,7 @@ def test_runtime_capture_policy_uses_shipping_trace_rollout_defaults(
 
 def test_versioned_viewer_and_pii_choices_restore_independently(monkeypatch) -> None:
     monkeypatch.setattr(config_module, "_CONFIG_GENERATION", 62)
-    monkeypatch.setattr(config_module, "_RUNTIME_CAPTURE_POLICY", None)
+    monkeypatch.setattr(capture_policy_module, "_RUNTIME_CAPTURE_POLICY", None)
     monkeypatch.setattr(
         config_module,
         "_published_runtime_config_snapshot",
@@ -483,7 +485,7 @@ def test_versioned_viewer_and_pii_choices_restore_independently(monkeypatch) -> 
 def test_runtime_capture_policy_freezes_valid_custom_pii_rules(monkeypatch) -> None:
     secret_pattern = r"private-prefix-\d{8}"
     monkeypatch.setattr(config_module, "_CONFIG_GENERATION", 621)
-    monkeypatch.setattr(config_module, "_RUNTIME_CAPTURE_POLICY", None)
+    monkeypatch.setattr(capture_policy_module, "_RUNTIME_CAPTURE_POLICY", None)
     monkeypatch.setattr(
         config_module,
         "_published_runtime_config_snapshot",
@@ -530,7 +532,7 @@ def test_runtime_capture_policy_freezes_valid_custom_pii_rules(monkeypatch) -> N
 
 def test_malformed_privacy_config_falls_back_to_all_safe_defaults(monkeypatch) -> None:
     monkeypatch.setattr(config_module, "_CONFIG_GENERATION", 63)
-    monkeypatch.setattr(config_module, "_RUNTIME_CAPTURE_POLICY", None)
+    monkeypatch.setattr(capture_policy_module, "_RUNTIME_CAPTURE_POLICY", None)
     monkeypatch.setattr(
         config_module,
         "_published_runtime_config_snapshot",
@@ -585,3 +587,36 @@ def test_failed_more_revealing_privacy_change_is_not_published(monkeypatch) -> N
     assert policy.enabled is False
     assert policy.pii_redaction_enabled is True
     assert policy.viewer_profile == "safe"
+
+
+def test_config_import_does_not_load_console_capture_chat_modules(tmp_path):
+    """Moved capture policy keeps config from importing its Chat dependencies."""
+    env = dict(os.environ)
+    env["HOME"] = str(tmp_path)
+    env["XDG_CONFIG_HOME"] = str(tmp_path / "config")
+    code = (
+        "import sys, tldw_chatbook.config\n"
+        "names = ('console_exchange_capture', 'console_trace_maintenance',"
+        " 'console_trace_custom_pii')\n"
+        "loaded = [n for n in names if 'tldw_chatbook.Chat.' + n in sys.modules]\n"
+        "assert not loaded, loaded\n"
+    )
+    result = subprocess.run(
+        [sys.executable, "-c", code],
+        env=env,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert result.returncode == 0, result.stderr
+
+
+def test_moved_policy_names_resolve_to_new_module_objects():
+    """Old ``tldw_chatbook.config`` names are the very objects in the new homes."""
+    for module_name, names in config_module._MOVED_POLICY_MODULES.items():
+        new_module = importlib.import_module(module_name)
+        for name in names:
+            assert getattr(config_module, name) is getattr(new_module, name), name
+    assert config_module.runtime_capture_policy is (
+        capture_policy_module.runtime_capture_policy
+    )

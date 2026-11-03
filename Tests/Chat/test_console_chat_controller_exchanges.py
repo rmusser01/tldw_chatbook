@@ -45,6 +45,7 @@ from loguru import logger as loguru_logger
 
 from Tests.console_provider_doubles import provider_resolution
 from tldw_chatbook import config as config_module
+from tldw_chatbook.Chat import console_capture_policy as capture_policy_module
 from tldw_chatbook.Chat import console_capture_policy_repository as repository_module
 from tldw_chatbook.Chat import console_chat_controller as controller_module
 from tldw_chatbook.Chat.attachment_core import PendingAttachment
@@ -1753,7 +1754,7 @@ def test_kill_switch_string_true_enables_capture(monkeypatch):
     """A hand-typed ``"true"`` survives the real runtime-policy coercion path."""
     controller = _new_controller()
     monkeypatch.setattr(config_module, "_CONFIG_GENERATION", 614)
-    monkeypatch.setattr(config_module, "_RUNTIME_CAPTURE_POLICY", None)
+    monkeypatch.setattr(capture_policy_module, "_RUNTIME_CAPTURE_POLICY", None)
     monkeypatch.setattr(
         config_module,
         "_published_runtime_config_snapshot",

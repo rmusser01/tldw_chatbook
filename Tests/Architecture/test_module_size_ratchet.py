@@ -754,7 +754,7 @@ _BUDGETS: dict[str, int] = {
     #: The OS notification defaults add 12 lines; pin the exact measurement.
     # PR3304, 2026-11-01: user size waiver; exact integration measurement.
     # 2026-11-02: 12285 -> 9668; the default config template moved to Config_Files/default_config.toml (TASK-36945.1).
-    "tldw_chatbook/config.py": 9668,
+    "tldw_chatbook/config.py": 8979,
     # PR3295, 2026-10-31: user size waiver; exact integrated measurement.
     # PR3304, 2026-11-01: user size waiver; exact integration measurement.
     "tldw_chatbook/Chat/console_agent_bridge.py": 12092,

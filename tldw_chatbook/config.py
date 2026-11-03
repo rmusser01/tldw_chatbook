@@ -51,14 +51,6 @@ from typing import (
 #
 # Third-Party Imports
 from loguru import logger
-from pydantic import (
-    BaseModel,
-    ConfigDict,
-    TypeAdapter,
-    ValidationError,
-    ValidationInfo,
-    field_validator,
-)
 
 
 #
@@ -67,16 +59,10 @@ from tldw_chatbook.Backup_Recovery import profile_paths
 from tldw_chatbook.Backup_Recovery import config_participants as _config_participants
 from tldw_chatbook.Backup_Recovery.bootstrap import RecoveryRequired
 from tldw_chatbook.Constants import DEFAULT_SPLASH_DURATION_SECONDS
-from tldw_chatbook.Canvas.limits import CanvasLimits
 from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
 from tldw_chatbook.DB.Client_Media_DB_v2 import MediaDatabase
 from tldw_chatbook.DB.Prompts_DB import PromptsDatabase
 
-if TYPE_CHECKING:
-    from tldw_chatbook.Canvas.web_auth import WebAuthPolicy
-    from tldw_chatbook.Chat.console_exchange_capture import CaptureDetail
-    from tldw_chatbook.Chat.console_trace_maintenance import TraceCompactionPolicy
-    from tldw_chatbook.Chat.console_trace_custom_pii import CustomPIIRuleset
 from tldw_chatbook.provider_registry import (  # noqa: F401 - normalize_provider_config_key is re-exported
     ALL_RECORDS,
     CLOUD_PROVIDER_CONFIG_KEYS,
@@ -109,7 +95,6 @@ from tldw_chatbook.Utils.private_paths import (
 )
 from tldw_chatbook.Utils.sensitive_config_keys import (
     is_sensitive_config_key,
-    validate_trace_privacy_config,
 )
 
 if TYPE_CHECKING:
@@ -156,300 +141,6 @@ def dumps_cli_config(config_data: Mapping[str, Any]) -> str:
 logger.debug("CRITICAL DEBUG: config.py module is being imported/executed NOW.")
 # --- Constants ---
 # Client ID used by the Server API itself when writing to sync logs
-
-
-CanvasRemoteAccessStatus = Literal[
-    "loopback",
-    "authenticated_tls",
-    "refused",
-    "misconfigured",
-    "insecure_development",
-]
-
-
-@dataclass(frozen=True, slots=True)
-class CanvasConfigPolicy:
-    """Effective Canvas execution and delivery policy without credentials."""
-
-    enabled: bool
-    auto_open_on_create: bool
-    limits: CanvasLimits
-    remote_access_status: CanvasRemoteAccessStatus
-    remote_access_summary: str
-    diagnostics: tuple[str, ...] = ()
-
-
-_CANVAS_CONFIG_KEYS = frozenset({"enabled", "auto_open_on_create"})
-_CANVAS_ENABLED_ENV = "TLDW_CANVAS_ENABLED"
-_CANVAS_AUTO_OPEN_ENV = "TLDW_CANVAS_AUTO_OPEN_ON_CREATE"
-
-
-def _strict_canvas_bool(
-    section: Mapping[str, Any],
-    key: str,
-    *,
-    default: bool,
-    invalid_diagnostic: str,
-    diagnostics: list[str],
-) -> bool:
-    """Read one exact Canvas boolean, failing closed on malformed values."""
-
-    if key not in section:
-        return default
-    value = section.get(key)
-    if type(value) is bool:
-        return value
-    diagnostics.append(invalid_diagnostic)
-    return False
-
-
-def _resolve_canvas_bool(
-    section: Mapping[str, Any],
-    key: str,
-    *,
-    environment_name: str,
-    environ: Mapping[str, str],
-    default: bool,
-    invalid_config_diagnostic: str,
-    invalid_environment_diagnostic: str,
-    diagnostics: list[str],
-) -> bool:
-    """Resolve one strict environment-over-config Canvas preference."""
-
-    raw_environment = environ.get(environment_name)
-    if raw_environment is not None:
-        if type(raw_environment) is not str:
-            diagnostics.append(invalid_environment_diagnostic)
-            return False
-        normalized = raw_environment.strip().lower()
-        if normalized:
-            if normalized == "true":
-                return True
-            if normalized == "false":
-                return False
-            diagnostics.append(invalid_environment_diagnostic)
-            return False
-    return _strict_canvas_bool(
-        section,
-        key,
-        default=default,
-        invalid_diagnostic=invalid_config_diagnostic,
-        diagnostics=diagnostics,
-    )
-
-
-def _normalize_canvas_execution(
-    config: Mapping[str, Any] | None,
-    *,
-    environ: Mapping[str, str],
-    diagnostics: list[str],
-) -> tuple[Mapping[str, Any], bool, bool]:
-    """Return the Canvas section, strict execution gate, and table validity."""
-
-    values = config if isinstance(config, Mapping) else {}
-    raw_canvas = values.get("canvas")
-    if raw_canvas is None:
-        canvas: Mapping[str, Any] = {}
-        valid_table = True
-    elif isinstance(raw_canvas, Mapping):
-        canvas = raw_canvas
-        valid_table = True
-    else:
-        canvas = {}
-        valid_table = False
-        diagnostics.append("canvas must be a table; Canvas is disabled")
-
-    if not valid_table:
-        return canvas, False, False
-    enabled = _resolve_canvas_bool(
-        canvas,
-        "enabled",
-        environment_name=_CANVAS_ENABLED_ENV,
-        environ=environ,
-        default=True,
-        invalid_config_diagnostic=(
-            "canvas.enabled must be a boolean; Canvas is disabled"
-        ),
-        invalid_environment_diagnostic=(
-            "TLDW_CANVAS_ENABLED must be true or false; Canvas is disabled"
-        ),
-        diagnostics=diagnostics,
-    )
-    return canvas, enabled, True
-
-
-def _summarize_canvas_web_auth_policy(
-    policy: "WebAuthPolicy",
-) -> tuple[CanvasRemoteAccessStatus, str]:
-    """Return credential-free copy for one already-validated web policy."""
-
-    if policy.automatic_local_login:
-        return (
-            "loopback",
-            "Loopback only — browsers on this Chatbook host enter locally.",
-        )
-    if policy.insecure_remote_http:
-        return (
-            "insecure_development",
-            "Insecure development mode — authenticated remote HTTP can be observed on the network.",
-        )
-    return (
-        "authenticated_tls",
-        "Authenticated TLS/proxy — dedicated browser admission is configured.",
-    )
-
-
-def _canvas_remote_access_status(
-    web: Mapping[str, Any],
-    *,
-    environ: Mapping[str, str],
-    keyring_get: Callable[[str, str], str | None] | None,
-    web_auth_policy: "WebAuthPolicy | None",
-) -> tuple[CanvasRemoteAccessStatus, str]:
-    """Validate configured or effective served auth and return redacted copy."""
-
-    from tldw_chatbook.Canvas.web_auth import (
-        BindPolicyError,
-        ResolvedCredential,
-        build_web_auth_policy,
-        is_loopback_host,
-        resolve_web_access_token,
-    )
-
-    if web_auth_policy is not None:
-        return _summarize_canvas_web_auth_policy(web_auth_policy)
-
-    host = str(web.get("host") or "localhost").strip()
-    public_url = str(web.get("public_url") or "").strip() or None
-    port = web.get("port", 8000)
-    if type(port) is not int or not 0 <= port <= 65535:
-        return (
-            "misconfigured",
-            "Remote access misconfigured — review the configured served bind, origin, TLS, and proxy settings.",
-        )
-    certificate = web.get("tls_certificate")
-    private_key = web.get("tls_private_key")
-    if bool(certificate) != bool(private_key):
-        return (
-            "misconfigured",
-            "Remote access misconfigured — review the configured served bind, origin, TLS, and proxy settings.",
-        )
-
-    remote_candidate = not is_loopback_host(host) or public_url is not None
-    credential = (
-        resolve_web_access_token(
-            web.get("access_token"),
-            environ=environ,
-            keyring_get=keyring_get,
-        )
-        if remote_candidate
-        else ResolvedCredential(None, "not_required")
-    )
-    proxies = web.get("trusted_proxy_addresses", ())
-    if not isinstance(proxies, (list, tuple)):
-        proxies = ("invalid-proxy-configuration",)
-    try:
-        policy = build_web_auth_policy(
-            host=host,
-            port=port,
-            access_token=credential,
-            public_url=public_url,
-            allow_insecure_remote_http=(web.get("allow_insecure_remote_http") is True),
-            trusted_proxy_addresses=tuple(str(value) for value in proxies),
-            direct_tls=bool(certificate and private_key),
-        )
-    except BindPolicyError as exc:
-        if credential.reveal() is None and "token" in str(exc).lower():
-            return (
-                "refused",
-                "Remote access refused — configure the dedicated Chatbook web access token.",
-            )
-        return (
-            "misconfigured",
-            "Remote access misconfigured — review the configured served bind, origin, TLS, and proxy settings.",
-        )
-    return _summarize_canvas_web_auth_policy(policy)
-
-
-def build_canvas_config_policy(
-    config: Mapping[str, Any] | None,
-    *,
-    environ: Mapping[str, str] | None = None,
-    keyring_get: Callable[[str, str], str | None] | None = None,
-    web_auth_policy: "WebAuthPolicy | None" = None,
-) -> CanvasConfigPolicy:
-    """Build the sole normalized Canvas policy from untrusted configuration."""
-
-    values = config if isinstance(config, Mapping) else {}
-    diagnostics: list[str] = []
-    effective_environment = os.environ if environ is None else environ
-    canvas, enabled, valid_canvas_table = _normalize_canvas_execution(
-        values,
-        environ=effective_environment,
-        diagnostics=diagnostics,
-    )
-    auto_open = (
-        _resolve_canvas_bool(
-            canvas,
-            "auto_open_on_create",
-            environment_name=_CANVAS_AUTO_OPEN_ENV,
-            environ=effective_environment,
-            default=True,
-            invalid_config_diagnostic=(
-                "canvas.auto_open_on_create must be a boolean; auto-open is disabled"
-            ),
-            invalid_environment_diagnostic=(
-                "TLDW_CANVAS_AUTO_OPEN_ON_CREATE must be true or false; auto-open is disabled"
-            ),
-            diagnostics=diagnostics,
-        )
-        if valid_canvas_table
-        else False
-    )
-    if any(key not in _CANVAS_CONFIG_KEYS for key in canvas):
-        diagnostics.append(
-            "Canvas quota overrides are unsupported; hard limits remain fixed"
-        )
-
-    raw_web = values.get("web_server")
-    web = raw_web if isinstance(raw_web, Mapping) else {}
-    remote_status, remote_summary = _canvas_remote_access_status(
-        web,
-        environ=effective_environment,
-        keyring_get=keyring_get,
-        web_auth_policy=web_auth_policy,
-    )
-    return CanvasConfigPolicy(
-        enabled=enabled,
-        auto_open_on_create=auto_open,
-        limits=CanvasLimits(),
-        remote_access_status=remote_status,
-        remote_access_summary=remote_summary,
-        diagnostics=tuple(diagnostics),
-    )
-
-
-def get_canvas_config_policy(
-    *, web_auth_policy: "WebAuthPolicy | None" = None
-) -> CanvasConfigPolicy:
-    """Return the current effective Canvas policy from the shared config cache."""
-
-    return build_canvas_config_policy(
-        load_cli_config_and_ensure_existence(),
-        web_auth_policy=web_auth_policy,
-    )
-
-
-def get_canvas_execution_enabled() -> bool:
-    """Read only the global execution gate without resolving web credentials."""
-
-    config = load_cli_config_and_ensure_existence()
-    _canvas, enabled, _valid_table = _normalize_canvas_execution(
-        config,
-        environ=os.environ,
-        diagnostics=[],
-    )
-    return enabled
 
 
 # --- [console_ssh]: SSH ControlMaster lifecycle for remote bindings -------
@@ -6721,433 +6412,6 @@ def apply_settings_mutation_to_cli_config(
     )
 
 
-@dataclass(frozen=True, slots=True)
-class RuntimeCapturePolicy:
-    """Canonical process projection for future Console capture admission.
-
-    Attributes:
-        enabled: Whether future Console calls require durable trace capture.
-        detail: Admission-frozen trace capture detail.
-        generation: Monotonic policy publication generation.
-        pii_redaction_enabled: Whether configured PII masking is active.
-        viewer_profile: Default redacted viewer profile.
-        normalized_writes_enabled: Whether new normalized calls may be written.
-        normalized_reads_enabled: Whether normalized calls participate in reads.
-        legacy_writes_enabled: Whether compatibility snapshots are also written.
-    """
-
-    enabled: bool
-    detail: CaptureDetail
-    generation: int
-    pii_redaction_enabled: bool = False
-    viewer_profile: str = "safe"
-    normalized_writes_enabled: bool = True
-    normalized_reads_enabled: bool = True
-    legacy_writes_enabled: bool = False
-    custom_pii_ruleset: CustomPIIRuleset | None = field(default=None, repr=False)
-
-
-_TRACE_ROLLOUT_BOOLEAN_ADAPTER = TypeAdapter(bool)
-
-
-class TraceRolloutSettings(BaseModel):
-    """Validated effective gates for the semantic trace rollout.
-
-    Attributes:
-        normalized_writes_enabled: Whether normalized calls may be written.
-        normalized_reads_enabled: Whether normalized calls participate in reads.
-        legacy_writes_enabled: Whether compatibility snapshots are also written.
-    """
-
-    model_config = ConfigDict(extra="forbid", frozen=True)
-    normalized_writes_enabled: bool = True
-    normalized_reads_enabled: bool = True
-    legacy_writes_enabled: bool = False
-
-    @field_validator(
-        "normalized_writes_enabled",
-        "normalized_reads_enabled",
-        "legacy_writes_enabled",
-        mode="before",
-    )
-    @classmethod
-    def _coerce_boolean(cls, value: object, info: ValidationInfo) -> bool:
-        defaults = {
-            "normalized_writes_enabled": True,
-            "normalized_reads_enabled": True,
-            "legacy_writes_enabled": False,
-        }
-        try:
-            return _TRACE_ROLLOUT_BOOLEAN_ADAPTER.validate_python(value)
-        except ValidationError:
-            return defaults[info.field_name]
-
-
-_RUNTIME_CAPTURE_POLICY_LOCK = _threading.RLock()
-_RUNTIME_CAPTURE_POLICY: RuntimeCapturePolicy | None = None
-_TRACE_ROLLOUT_ENV_NAMES = (
-    "TLDW_CONSOLE_TRACE_NORMALIZED_WRITES",
-    "TLDW_CONSOLE_TRACE_NORMALIZED_READS",
-    "TLDW_CONSOLE_TRACE_LEGACY_WRITES",
-)
-_RUNTIME_CAPTURE_POLICY_ENV: tuple[str | None, ...] | None = None
-
-
-def _trace_rollout_environment() -> tuple[str | None, ...]:
-    """Return the three rollout overrides as one cache identity.
-
-    Returns:
-        Environment values aligned with ``_TRACE_ROLLOUT_ENV_NAMES``.
-    """
-
-    return tuple(os.environ.get(name) for name in _TRACE_ROLLOUT_ENV_NAMES)
-
-
-def _trace_rollout_environment_mapping(
-    values: tuple[str | None, ...],
-) -> dict[str, str]:
-    """Map one captured rollout environment identity back to present values."""
-
-    return {
-        name: value
-        for name, value in zip(_TRACE_ROLLOUT_ENV_NAMES, values, strict=True)
-        if value is not None
-    }
-
-
-def resolve_trace_rollout_settings(
-    console: object,
-    *,
-    environ: Mapping[str, str] | None = None,
-) -> TraceRolloutSettings:
-    """Validate rollout gates with environment-first precedence.
-
-    Args:
-        console: Raw Console configuration mapping.
-        environ: Optional environment mapping. Defaults to ``os.environ``.
-
-    Returns:
-        The validated effective rollout settings.
-    """
-
-    values = console if isinstance(console, Mapping) else {}
-    environment = os.environ if environ is None else environ
-
-    def selected(environment_name: str, config_name: str, default: bool) -> object:
-        override = environment.get(environment_name)
-        return values.get(config_name, default) if override in (None, "") else override
-
-    return TraceRolloutSettings.model_validate(
-        {
-            "normalized_writes_enabled": selected(
-                _TRACE_ROLLOUT_ENV_NAMES[0],
-                "trace_normalized_writes",
-                True,
-            ),
-            "normalized_reads_enabled": selected(
-                _TRACE_ROLLOUT_ENV_NAMES[1],
-                "trace_normalized_reads",
-                True,
-            ),
-            "legacy_writes_enabled": selected(
-                _TRACE_ROLLOUT_ENV_NAMES[2],
-                "trace_legacy_writes",
-                False,
-            ),
-        }
-    )
-
-
-def resolve_trace_compaction_policy(console: object) -> "TraceCompactionPolicy":
-    """Resolve bounded physical trace-maintenance thresholds from Console config."""
-
-    from tldw_chatbook.Chat.console_trace_maintenance import TraceCompactionPolicy
-
-    values = console if isinstance(console, Mapping) else {}
-    retry_initial = coerce_float_setting(
-        values.get("trace_compaction_retry_initial_seconds"),
-        300.0,
-        minimum=0.0,
-        maximum=3600.0,
-    )
-    retry_max = coerce_float_setting(
-        values.get("trace_compaction_retry_max_seconds"),
-        3600.0,
-        minimum=retry_initial,
-        maximum=86400.0,
-    )
-    return TraceCompactionPolicy(
-        min_database_bytes=coerce_int_setting(
-            values.get("trace_compaction_min_database_bytes"),
-            64 * 1024 * 1024,
-            minimum=0,
-        ),
-        min_freelist_bytes=coerce_int_setting(
-            values.get("trace_compaction_min_freelist_bytes"),
-            16 * 1024 * 1024,
-            minimum=0,
-        ),
-        min_freelist_ratio=coerce_float_setting(
-            values.get("trace_compaction_min_freelist_ratio"),
-            0.20,
-            minimum=0.0,
-            maximum=1.0,
-        ),
-        min_idle_seconds=coerce_float_setting(
-            values.get("trace_compaction_min_idle_seconds"),
-            30.0,
-            minimum=0.0,
-            maximum=86400.0,
-        ),
-        retry_initial_seconds=retry_initial,
-        retry_max_seconds=retry_max,
-        quiesce_timeout_seconds=coerce_float_setting(
-            values.get("trace_compaction_quiesce_timeout_seconds"),
-            5.0,
-            minimum=0.0,
-            maximum=60.0,
-        ),
-        disk_safety_margin_bytes=coerce_int_setting(
-            values.get("trace_compaction_disk_safety_margin_bytes"),
-            64 * 1024 * 1024,
-            minimum=0,
-        ),
-    )
-
-
-def _register_runtime_custom_pii_ruleset(
-    ruleset: CustomPIIRuleset | None,
-) -> CustomPIIRuleset | None:
-    """Register valid rules for future masks or disable a reused revision."""
-
-    if ruleset is None or not ruleset.runnable_rules:
-        return ruleset
-    from tldw_chatbook.Chat.console_trace_custom_pii import (
-        register_custom_pii_ruleset,
-    )
-
-    if register_custom_pii_ruleset(ruleset):
-        return ruleset
-    logger.warning("custom_pii_ruleset_revision_conflict")
-    return None
-
-
-def _publish_runtime_capture_policy(
-    enabled: bool,
-    detail: CaptureDetail,
-    generation: int,
-    pii_redaction_enabled: bool = False,
-    viewer_profile: str = "safe",
-    normalized_writes_enabled: bool = True,
-    normalized_reads_enabled: bool = True,
-    legacy_writes_enabled: bool = False,
-    custom_pii_ruleset: CustomPIIRuleset | None = None,
-) -> RuntimeCapturePolicy:
-    """Publish one validated capture policy without touching general caches."""
-    from tldw_chatbook.Chat.console_exchange_capture import CaptureDetail
-    from tldw_chatbook.Chat.console_trace_custom_pii import CustomPIIRuleset
-
-    if not isinstance(detail, CaptureDetail):
-        raise TypeError("detail must be CaptureDetail")
-    if viewer_profile not in {"safe", "full"}:
-        raise ValueError("viewer_profile")
-    if custom_pii_ruleset is not None and not isinstance(
-        custom_pii_ruleset, CustomPIIRuleset
-    ):
-        raise TypeError("custom_pii_ruleset")
-    custom_pii_ruleset = _register_runtime_custom_pii_ruleset(custom_pii_ruleset)
-    rollout_environment = _trace_rollout_environment()
-    rollout = resolve_trace_rollout_settings(
-        {
-            "trace_normalized_writes": normalized_writes_enabled,
-            "trace_normalized_reads": normalized_reads_enabled,
-            "trace_legacy_writes": legacy_writes_enabled,
-        },
-        environ=_trace_rollout_environment_mapping(rollout_environment),
-    )
-    policy = RuntimeCapturePolicy(
-        bool(enabled),
-        detail,
-        generation,
-        bool(pii_redaction_enabled),
-        viewer_profile,
-        rollout.normalized_writes_enabled,
-        rollout.normalized_reads_enabled,
-        rollout.legacy_writes_enabled,
-        custom_pii_ruleset,
-    )
-    global _RUNTIME_CAPTURE_POLICY, _RUNTIME_CAPTURE_POLICY_ENV
-    with _RUNTIME_CAPTURE_POLICY_LOCK:
-        _RUNTIME_CAPTURE_POLICY = policy
-        _RUNTIME_CAPTURE_POLICY_ENV = rollout_environment
-    return policy
-
-
-def runtime_capture_policy() -> RuntimeCapturePolicy:
-    """Return the shared runtime capture policy, resolving invalid detail Safe.
-
-    Returns:
-        The canonical enabled/detail projection and its config generation.
-    """
-    from tldw_chatbook.Chat.console_exchange_capture import CaptureDetail
-
-    rollout_environment = _trace_rollout_environment()
-    global _RUNTIME_CAPTURE_POLICY, _RUNTIME_CAPTURE_POLICY_ENV
-    with _RUNTIME_CAPTURE_POLICY_LOCK:
-        current = _RUNTIME_CAPTURE_POLICY
-        if (
-            current is not None
-            and current.generation == _CONFIG_GENERATION
-            and _RUNTIME_CAPTURE_POLICY_ENV == rollout_environment
-        ):
-            return current
-    snapshot = _published_runtime_config_snapshot()
-    with _RUNTIME_CAPTURE_POLICY_LOCK:
-        current = _RUNTIME_CAPTURE_POLICY
-        if (
-            current is not None
-            and current.generation == snapshot.generation
-            and _RUNTIME_CAPTURE_POLICY_ENV == rollout_environment
-        ):
-            return current
-        console = snapshot.values.get("console", {})
-        if not isinstance(console, Mapping):
-            console = {}
-        try:
-            detail = CaptureDetail(console.get("exchange_capture_detail", "safe"))
-        except (TypeError, ValueError):
-            detail = CaptureDetail.SAFE
-        privacy = validate_trace_privacy_config(console)
-        pii_redaction_enabled = privacy.exchange_capture_pii_redaction
-        viewer_profile = privacy.effective_viewer_profile
-        from tldw_chatbook.Chat.console_trace_custom_pii import (
-            validate_custom_pii_rules_config,
-        )
-
-        custom_pii_ruleset = validate_custom_pii_rules_config(
-            console.get("trace_custom_pii_rules")
-        ).ruleset
-        custom_pii_ruleset = _register_runtime_custom_pii_ruleset(custom_pii_ruleset)
-        rollout = resolve_trace_rollout_settings(
-            console,
-            environ=_trace_rollout_environment_mapping(rollout_environment),
-        )
-        current = RuntimeCapturePolicy(
-            coerce_bool_setting(console.get("exchange_capture", True), True),
-            detail,
-            snapshot.generation,
-            pii_redaction_enabled,
-            viewer_profile,
-            rollout.normalized_writes_enabled,
-            rollout.normalized_reads_enabled,
-            rollout.legacy_writes_enabled,
-            custom_pii_ruleset,
-        )
-        _RUNTIME_CAPTURE_POLICY = current
-        _RUNTIME_CAPTURE_POLICY_ENV = rollout_environment
-        return current
-
-
-def apply_console_capture_settings(
-    *,
-    enabled: bool,
-    detail: CaptureDetail,
-    expected_generation: int,
-    pii_redaction_enabled: bool | None = None,
-    viewer_profile: str | None = None,
-) -> ConfigMutationResult:
-    """Apply the kill switch/detail with privacy-safe publication ordering.
-
-    Args:
-        enabled: Future-capture kill-switch state.
-        detail: Safe or Full global capture detail.
-        expected_generation: Config generation observed by the caller.
-
-    Returns:
-        Structured replacement/cache-publication status, including conflicts
-        and partial post-replacement cache failures.
-    """
-    from tldw_chatbook.Chat.console_exchange_capture import CaptureDetail
-
-    if (
-        type(enabled) is not bool
-        or not isinstance(detail, CaptureDetail)
-        or (
-            pii_redaction_enabled is not None
-            and type(pii_redaction_enabled) is not bool
-        )
-        or (viewer_profile is not None and viewer_profile not in {"safe", "full"})
-    ):
-        return ConfigMutationResult(False, False, "before_replace")
-    current = runtime_capture_policy()
-    resolved_pii = (
-        current.pii_redaction_enabled
-        if pii_redaction_enabled is None
-        else pii_redaction_enabled
-    )
-    resolved_viewer = (
-        current.viewer_profile if viewer_profile is None else viewer_profile
-    )
-
-    def generation_is_current(snapshot: AtomicConfigSnapshot) -> bool:
-        return snapshot.generation == expected_generation
-
-    def publish_before_replace() -> None:
-        _publish_runtime_capture_policy(
-            enabled,
-            detail,
-            expected_generation,
-            resolved_pii,
-            resolved_viewer,
-            current.normalized_writes_enabled,
-            current.normalized_reads_enabled,
-            current.legacy_writes_enabled,
-            current.custom_pii_ruleset,
-        )
-
-    def publish_after_replace() -> None:
-        # The general config generation advances only after cache publication
-        # succeeds. Publishing the committed capture owner at the still-current
-        # generation keeps it authoritative if that later step fails; on
-        # success, the generation bump makes the next read rebuild from the new
-        # canonical snapshot. This callback runs while the config write lock is
-        # still held, so a newer writer cannot be overwritten afterward.
-        _publish_runtime_capture_policy(
-            enabled,
-            detail,
-            expected_generation,
-            resolved_pii,
-            resolved_viewer,
-            current.normalized_writes_enabled,
-            current.normalized_reads_enabled,
-            current.legacy_writes_enabled,
-            current.custom_pii_ruleset,
-        )
-
-    more_revealing = (
-        (enabled and not current.enabled)
-        or (detail is CaptureDetail.FULL and current.detail is CaptureDetail.SAFE)
-        or (not resolved_pii and current.pii_redaction_enabled)
-        or (resolved_viewer == "full" and current.viewer_profile == "safe")
-    )
-    privacy_safe = not more_revealing
-    result = apply_settings_mutation_to_cli_config(
-        {
-            "console": {
-                "exchange_capture": enabled,
-                "exchange_capture_detail": detail.value,
-                "exchange_capture_pii_redaction": resolved_pii,
-                "trace_viewer_profile": resolved_viewer,
-                "trace_viewer_profile_version": 1,
-            }
-        },
-        locked_snapshot_precondition=generation_is_current,
-        before_replace=publish_before_replace if privacy_safe else None,
-        after_replace=None if privacy_safe else publish_after_replace,
-    )
-    return result
-
-
 def save_settings_to_cli_config(
     section_values: Mapping[str, Mapping[Any, Any]],
     *,
@@ -9644,3 +8908,50 @@ _COLLECTIONS_SETUP_SOURCE = _record_collections_setup_source(
     )
 )
 del _record_collections_setup_source
+
+
+# --- Moved policy (TASK-36945.2): old import paths resolve lazily ----------
+# Canvas policy lives in Canvas/config_policy.py and Console capture/trace
+# policy in Chat/console_capture_policy.py. Both import this module, so the
+# re-export is lazy; it also keeps this module from loading Chat at import.
+_MOVED_POLICY_MODULES = {
+    "tldw_chatbook.Canvas.config_policy": (
+        "CanvasRemoteAccessStatus",
+        "CanvasConfigPolicy",
+        "_CANVAS_CONFIG_KEYS",
+        "_CANVAS_ENABLED_ENV",
+        "_CANVAS_AUTO_OPEN_ENV",
+        "_strict_canvas_bool",
+        "_resolve_canvas_bool",
+        "_normalize_canvas_execution",
+        "_summarize_canvas_web_auth_policy",
+        "_canvas_remote_access_status",
+        "build_canvas_config_policy",
+        "get_canvas_config_policy",
+        "get_canvas_execution_enabled",
+    ),
+    "tldw_chatbook.Chat.console_capture_policy": (
+        "RuntimeCapturePolicy",
+        "TraceRolloutSettings",
+        "resolve_trace_rollout_settings",
+        "resolve_trace_compaction_policy",
+        "runtime_capture_policy",
+        "apply_console_capture_settings",
+        "_publish_runtime_capture_policy",
+        "_register_runtime_custom_pii_ruleset",
+        "_trace_rollout_environment",
+        "_trace_rollout_environment_mapping",
+        "_TRACE_ROLLOUT_ENV_NAMES",
+        "_TRACE_ROLLOUT_BOOLEAN_ADAPTER",
+    ),
+}
+_MOVED_POLICY_NAMES = {
+    name: module for module, names in _MOVED_POLICY_MODULES.items() for name in names
+}
+
+
+def __getattr__(name: str) -> Any:
+    module_name = _MOVED_POLICY_NAMES.get(name)
+    if module_name is None:
+        raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+    return getattr(importlib.import_module(module_name), name)
