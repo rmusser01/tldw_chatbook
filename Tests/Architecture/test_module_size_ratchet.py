@@ -128,7 +128,11 @@ _BUDGETS: dict[str, int] = {
     # ``_notes_sync_runtime_lazy_start_task`` slot beside the start-task
     # slot, so the Library's bounded settle wait can tell the task it
     # scheduled from boot's own (M-1).
-    "tldw_chatbook/app.py": 5687,
+    # 2026-11-03, TASK-36511 (size waiver: a fix over a size ratchet raises
+    # the row): 5687 -> 5689 (+2) -- the subscriptions backfill starter checks
+    # activation against the wired DB's path instead of a checked config read
+    # on the UI loop.
+    "tldw_chatbook/app.py": 5689,
     # TASK-34406.5: unchanged startup/footer wiring, born governed.
     "tldw_chatbook/app_startup.py": 176,
     # TASK-34406.7: app-owned served control and relay bodies, born governed.
