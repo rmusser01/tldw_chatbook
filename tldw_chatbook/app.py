@@ -4694,9 +4694,11 @@ class TldwCli(
         def start_subscriptions_fts_backfill() -> Worker | None:
             from tldw_chatbook.Backup_Recovery.activation import execution_allowed
 
-            if not execution_allowed(
-                ("db.subscriptions",), get_subscriptions_db_path()
-            ):
+            # TASK-36511: the wired DB's path; resolving it here (a checked
+            # config read on the UI loop) waited out a worker's config read.
+            db = getattr(self, "subscriptions_db", None)
+            path = db.db_path if db is not None else get_subscriptions_db_path()
+            if not execution_allowed(("db.subscriptions",), path):
                 return None
             # task-688: index subscription_items rows scraped before the FTS5
             # index existed, so search covers a user's whole back catalogue

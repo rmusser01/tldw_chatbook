@@ -45,7 +45,9 @@ if case=='cleanup_error':
   finally:depth-=1
  config_participants.operation=cleanup_failure
 class Surface(SimpleNamespace):
- def __getattr__(self,name):return MethodType(getattr(ChatScreen,name),self)
+ def __getattr__(self,name):
+  attr=getattr(ChatScreen,name)  # A classmethod is already bound (TASK-36511).
+  return attr if isinstance(attr,MethodType) else MethodType(attr,self)
 screen=Surface()
 scheduled=[]
 screen.set_timer=lambda delay,callback:scheduled.append((delay,callback))

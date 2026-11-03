@@ -28,6 +28,7 @@ import threading
 
 import pytest
 
+from Tests.private_profile import private_profile_test
 from Tests.UI.test_console_config_sync_cadence import _install_clock
 from Tests.UI.test_console_send_acknowledgement import (
     build,
@@ -342,3 +343,263 @@ def test_a_stopping_poll_hands_a_request_it_was_left_to_the_running_sync():
     assert screen._console_sync_requested, (
         "the coalesced request was dropped when the poll stopped"
     )
+
+
+def test_the_core_state_push_never_waits_for_or_rebuilds_config(monkeypatch):
+    """TASK-36511: the full sync's core-state push only reads warm config it holds.
+
+    ``sync_console_core_state`` probed ``config_read_would_wait()`` and then
+    pushed; a worker that took the config locks in between made the push's
+    ``load_settings()`` wait out its whole read on the UI loop (the compact
+    gate's 238 ms probe stall, main thread in ``config_participants.operation``),
+    and a cold cache made the push rebuild config on the UI loop. The push now
+    holds both locks, so no read starts under it, and replays the whole sync
+    when another thread holds a lock or a live read would be cold.
+    """
+    from types import SimpleNamespace
+
+    from tldw_chatbook import config
+
+    locks = (config._settings_rebuild_lock(), config._config_file_lock())
+    warm = {"settings": {}, "cli": {}}
+    monkeypatch.setattr(config, "_settings_cache_hit", lambda _path: warm["settings"])
+    monkeypatch.setattr(config, "_warm_config_cache_hit", lambda: warm["cli"])
+    taken_mid_push = []
+
+    class Screen:
+        _console_control_bar_replay_whole_sync = False
+        app_instance = app = SimpleNamespace(app_config={"disk-loaded": True})
+
+        def __init__(self):
+            self.pushes, self.replays = 0, []
+
+        def _console_config_snapshot_is_disk_loaded(self, value):
+            return bool(value)
+
+        def _sync_console_chat_core_state(self):
+            self.pushes += 1
+
+            def worker_read():  # A worker's checked read starts mid-push.
+                got = [lock.acquire(blocking=False) for lock in locks]
+                for lock, ok in zip(locks, got):
+                    if ok:
+                        lock.release()
+                taken_mid_push.append(any(got))
+
+            reader = threading.Thread(target=worker_read)
+            reader.start()
+            reader.join(5)
+
+        def _request_console_control_bar_sync(self, *, delayed=False):
+            self.replays.append(delayed)
+
+    screen = Screen()
+    config_sync.sync_console_core_state(screen)
+    assert screen.pushes == 1
+    assert taken_mid_push == [False], "a worker's config read started under the push"
+
+    held, release = threading.Event(), threading.Event()
+
+    def hold_file_lock():  # The race: the read took a lock after the probe.
+        with locks[1]:
+            held.set()
+            release.wait(5)
+
+    holder = threading.Thread(target=hold_file_lock)
+    holder.start()
+    assert held.wait(5)
+    try:
+        config_sync.sync_console_core_state(screen)
+    finally:
+        release.set()
+        holder.join(5)
+    assert screen.pushes == 1, "the push ran while another thread held a config lock"
+    assert screen.replays == [True] and screen._console_control_bar_replay_whole_sync
+
+    warm["settings"] = None  # An external edit or a save left the cache cold.
+    config_sync.sync_console_core_state(screen)
+    assert screen.pushes == 1, "the push would rebuild config on the UI loop"
+    assert screen.replays == [True, True]
+
+    # An unparseable config.toml stays cold for good: one deferral per episode.
+    config_sync.sync_console_core_state(screen)  # The replay pushes live.
+    assert screen.pushes == 2, "a still-cold replay deferred again (replay loop)"
+    config_sync.sync_console_core_state(screen)  # Same episode: no new replay.
+    assert screen.pushes == 3 and screen.replays == [True, True]
+    warm["settings"] = {}
+    config_sync.sync_console_core_state(screen)  # A warm push ends the episode,
+    warm["settings"] = None
+    config_sync.sync_console_core_state(screen)  # so a later cold one defers once.
+    assert screen.pushes == 4 and screen.replays == [True, True, True]
+
+
+def test_a_mount_refresh_defers_a_cold_live_read_and_warms_it_off_the_loop(monkeypatch):
+    """TASK-36511: ``retry_after_config_rebuild`` defers while a live read is cold.
+
+    The identity refresh's core-state push rebuilt config on the UI loop
+    (79.5 ms CPU, 139.6 ms wall in the compact gate). It now has the readiness
+    projection read config off the loop and renders on a later retry.
+    """
+    from types import SimpleNamespace
+
+    from tldw_chatbook import config
+
+    warm = {"settings": None, "cli": {}}
+    monkeypatch.setattr(config, "_settings_cache_hit", lambda _path: warm["settings"])
+    monkeypatch.setattr(config, "_warm_config_cache_hit", lambda: warm["cli"])
+    monkeypatch.setattr(config, "config_read_would_wait", lambda: False)
+    kicked, timers, calls = [], [], []
+    monkeypatch.setattr(
+        spend.ConsoleReadinessConfigProjection,
+        "for_screen",
+        classmethod(
+            lambda cls, screen: SimpleNamespace(run=lambda body: kicked.append(screen))
+        ),
+    )
+
+    class Screen:
+        app_instance = app = SimpleNamespace(app_config={"disk-loaded": True})
+
+        def _console_config_snapshot_is_disk_loaded(self, value):
+            return bool(value)
+
+        def set_timer(self, delay, callback):
+            timers.append(callback)
+
+    @spend.retry_after_config_rebuild
+    def refresh(screen):
+        calls.append(True)
+
+    screen = Screen()
+    refresh(screen)
+    assert calls == [], "the refresh rebuilt cold config on the UI loop"
+    assert kicked == [screen] and len(timers) == 1
+    warm["settings"] = {}  # The projection's off-loop read warmed it.
+    timers.pop()()
+    assert calls == [True] and not timers
+
+    # An unparseable config.toml stays cold for good: one deferral per episode.
+    warm["settings"] = None
+    refresh(screen)
+    assert calls == [True] and len(timers) == 1 and kicked == [screen] * 2
+    timers.pop()()  # The retry runs although config is still cold,
+    assert calls == [True] * 2, "a still-cold retry deferred again (retry chain)"
+    refresh(screen)  # and so does any later call in the same cold episode.
+    assert calls == [True] * 3 and not timers and kicked == [screen] * 2
+    warm["settings"] = {}  # Any owner's warm read ends the episode for all.
+    assert not spend.defer_cold_live_read(screen, "another owner")
+    assert not screen._console_cold_read_deferrals, "a stale cold-episode entry"
+
+
+class _UiLoopStarts:
+    """Count starts of named code objects on the UI loop's thread (observed only).
+
+    A coroutine's frame reports "call" again at every resume, so a start is a
+    frame not seen before. Each name maps to ``(code, caller code or None)``.
+    """
+
+    def __init__(self, **codes):
+        self._codes = codes
+        self._frames: list = []
+        self.counts = dict.fromkeys(codes, 0)
+
+    def __enter__(self):
+        self._previous = sys.getprofile()
+
+        def observe(frame, event, _argument):
+            if event != "call":
+                return
+            for name, (code, caller) in self._codes.items():
+                if frame.f_code is not code:
+                    continue
+                if caller is not None and frame.f_back.f_code is not caller:
+                    continue
+                if not any(frame is seen for seen in self._frames):
+                    self._frames.append(frame)
+                    self.counts[name] += 1
+
+        sys.setprofile(observe)  # This thread only: the UI loop's.
+        return self
+
+    def __exit__(self, *_exc):
+        sys.setprofile(self._previous)
+        self._frames.clear()
+
+    def take(self) -> dict:
+        counts, self.counts = self.counts, dict.fromkeys(self.counts, 0)
+        return counts
+
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_an_unparseable_config_leaves_an_idle_console_idle(request):
+    """TASK-36511 review: a config that stays cold never replays the Console in a loop.
+
+    An unparseable config.toml installs neither config cache, so a live read
+    stays cold for good. Deferring every cold read replayed the idle Console
+    5 full syncs a second (26 cold core-state reads a second) and re-armed the
+    identity refresh every 0.2 s without running it. Each owner now defers
+    once per cold episode: the core-state push and the identity refresh run,
+    and the idle Console goes quiet again. Under load the first runs can take
+    seconds (a retry also waits out the off-loop read's locks), so the test
+    polls for them and then judges the steady state, which is what tells a
+    bounded deferral from a replay loop.
+    """
+    from tldw_chatbook import config
+    from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
+
+    host, gateway, _timeline = build()
+    async with host.run_test(size=(160, 45)) as pilot:
+        with eager_tasks():
+            console, _composer = await ready_console(host, pilot, gateway)
+            assert console._console_config_snapshot_is_disk_loaded(
+                console.app_instance.app_config
+            )
+            path = config._get_effective_config_path()  # This child's own profile.
+            original = path.read_bytes()
+            await pilot.pause(1.0)
+            starts = _UiLoopStarts(
+                full_sync=(ChatScreen._sync_native_console_chat_ui.__code__, None),
+                core_push=(
+                    ChatScreen._sync_console_chat_core_state.__code__,
+                    config_sync.sync_console_core_state.__code__,
+                ),
+                identity=(
+                    ChatScreen._sync_console_identity_surfaces.__wrapped__.__code__,
+                    None,
+                ),
+            )
+            with starts:
+                await pilot.pause(2.0)
+                idle = starts.take()
+                path.write_bytes(original + b"\n[unterminated\n")
+                try:
+                    await asyncio.to_thread(config.load_settings, True)
+                    assert config._settings_cache_hit(path) is None
+                    starts.take()
+                    console.run_worker(
+                        console._sync_native_console_chat_ui(),
+                        exclusive=True,
+                        group="console-sync",
+                    )
+                    console._sync_console_identity_surfaces()
+                    first = dict.fromkeys(idle, 0)
+                    deadline = asyncio.get_running_loop().time() + 10.0
+                    while not (first["core_push"] and first["identity"]):
+                        if asyncio.get_running_loop().time() > deadline:
+                            break  # The steady state below names the loop.
+                        await pilot.pause(0.1)
+                        for name, count in starts.take().items():
+                            first[name] += count
+                    await pilot.pause(0.5)  # The single replay's own pass.
+                    starts.take()
+                    await pilot.pause(2.0)
+                    later = starts.take()
+                finally:
+                    path.write_bytes(original)
+                    await asyncio.to_thread(config.load_settings, True)
+    assert later["full_sync"] <= idle["full_sync"] + 1, (
+        f"the idle Console kept replaying: idle {idle}, cold config {later}"
+    )
+    assert first["core_push"] >= 1, f"the full sync never pushed: {first}"
+    assert first["identity"] >= 1, f"the identity refresh never ran: {first}"
