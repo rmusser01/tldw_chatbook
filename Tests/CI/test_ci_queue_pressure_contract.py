@@ -333,6 +333,10 @@ FAST_LANE_TARGETS = (
     "Tests/Agents/test_builtin_tool_gate.py::test_tool_gate_breadcrumb_names_the_off_count",
     "Tests/Agents/test_builtin_tool_gate.py::test_count_off_tool_gates_constructs_no_tools",
     "Tests/Wizards/test_first_run_setup_state.py::TestSummaryThreeState::test_tools_row_off_detail_names_where_to_enable",
+    # TASK-38702: the Console fork-transition and semantic-mutation censuses
+    # (pure AST, whole files). They were red on dev for weeks in no PR lane.
+    "Tests/Chat/test_console_fork_transition_census.py",
+    "Tests/Chat/test_console_semantic_mutation_inventory.py",
 )
 
 # PR2921: source-bound additions leave the original fast/admission argv intact.
