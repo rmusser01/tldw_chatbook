@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import ast
 import importlib
 import inspect
 from pathlib import Path
@@ -14,7 +15,6 @@ from tldw_chatbook.Event_Handlers.LLM_Management_Events.llm_management_events_tr
 )
 from tldw_chatbook.UI.LLM_Management_Window import LLMManagementWindow
 from tldw_chatbook.UI.Screens.llm_screen import MODELS_RAIL_SECTIONS
-
 
 ROOT = Path(__file__).resolve().parents[2]
 PRODUCTION_ROOT = ROOT / "tldw_chatbook"
@@ -216,20 +216,148 @@ def test_remote_acquisition_and_hugging_face_inference_owners_remain() -> None:
     assert "huggingface" in summarization._SUMMARIZER_CHAT_SPECS
 
 
-def test_model_download_dir_is_only_config_and_installed_legacy_scan_wiring() -> None:
-    """Constrain model_download_dir to config and the Installed scan seam."""
-    # config.py's mention moved to Config_Files/default_config.toml (TASK-36945.1);
-    # the TOML default is pinned by the next test.
-    assert set(_production_python_with("model_download_dir")) == {
-        "tldw_chatbook/UI/LLM_Management_Window.py",
-        # TASK-38989 review: Backup & Recovery name the key only to classify
-        # it as an external user location (inventory "external.models",
-        # config-location keys, detached-layout skip); none reads or writes
-        # the directory (b5251e9a6e, e350634a8a).
-        "tldw_chatbook/Backup_Recovery/config_adapter.py",
-        "tldw_chatbook/Backup_Recovery/detached_layout.py",
-        "tldw_chatbook/Backup_Recovery/inventory.py",
+PASSIVE_MODEL_PATH_FILES = (
+    "tldw_chatbook/Backup_Recovery/config_adapter.py",
+    "tldw_chatbook/Backup_Recovery/detached_layout.py",
+    "tldw_chatbook/Backup_Recovery/inventory.py",
+)
+
+
+def _assert_model_download_dir_role(relative_path: str, source: str) -> ast.AST:
+    tree = ast.parse(source)
+    literals = [
+        node
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Constant) and node.value == "model_download_dir"
+    ]
+    assert len(literals) == 1
+    parents = {
+        child: node for node in ast.walk(tree) for child in ast.iter_child_nodes(node)
     }
+    ancestors = []
+    node = literals[0]
+    while node in parents:
+        node = parents[node]
+        ancestors.append(node)
+    owner = next(
+        (
+            node
+            for node in ancestors
+            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+        ),
+        None,
+    )
+    site = parents[literals[0]]
+    if relative_path == "tldw_chatbook/UI/LLM_Management_Window.py":
+        expected = ast.parse(
+            'app_config.get("llm_management", {}).get("model_download_dir")',
+            mode="eval",
+        ).body
+        assert ast.dump(site) == ast.dump(expected)
+        assert owner is not None and owner.name == "_mount_deferred_views"
+        return site
+    assert isinstance(site, ast.Tuple)
+    expected_row = ("llm_management", "model_download_dir")
+    if relative_path.endswith("/inventory.py"):
+        expected_row += ("external.models",)
+    assert ast.literal_eval(site) == expected_row
+    if relative_path.endswith("/config_adapter.py"):
+        declaration = next(
+            (node for node in ancestors if isinstance(node, ast.Assign)), None
+        )
+        assert declaration is not None and owner is None
+        assert len(declaration.targets) == 1 and isinstance(
+            declaration.targets[0], ast.Name
+        )
+        assert declaration.targets[0].id == "CONFIG_LOCATION_KEYS"
+        assert isinstance(declaration.value, ast.BinOp) and isinstance(
+            declaration.value.op, ast.Add
+        )
+        assert (
+            isinstance(declaration.value.right, ast.Tuple)
+            and site in declaration.value.right.elts
+        )
+    elif relative_path.endswith("/detached_layout.py"):
+        assert owner is not None and owner.name == "produce_detached_archive"
+        branch = next((node for node in ancestors if isinstance(node, ast.If)), None)
+        loop = next((node for node in ancestors if isinstance(node, ast.For)), None)
+        assert branch is not None and loop is not None
+        assert ast.dump(loop.target) == ast.dump(
+            ast.Name(id="location", ctx=ast.Store())
+        )
+        assert ast.dump(loop.iter) == ast.dump(
+            ast.Name(id="CONFIG_LOCATION_KEYS", ctx=ast.Load())
+        )
+        assert isinstance(branch.test, ast.Compare) and len(branch.test.ops) == 1
+        assert isinstance(branch.test.ops[0], ast.In) and isinstance(
+            branch.test.left, ast.Name
+        )
+        assert (
+            branch.test.left.id == "location"
+            and site in branch.test.comparators[0].elts
+        )
+        assert (
+            len(branch.body) == 1
+            and isinstance(branch.body[0], ast.Continue)
+            and not branch.orelse
+        )
+        prefix = ast.parse(
+            'value = config_location(config, location)\nif not value:\n    continue\nkey = ".".join(location)'
+        )
+        assert loop.body[3] is branch
+        assert ast.dump(ast.Module(body=loop.body[:3], type_ignores=[])) == ast.dump(
+            prefix
+        )
+    else:
+        assert relative_path == "tldw_chatbook/Backup_Recovery/inventory.py"
+        assert owner is not None and owner.name == "discover"
+        loop = next((node for node in ancestors if isinstance(node, ast.For)), None)
+        assert (
+            loop is not None
+            and isinstance(loop.iter, ast.Tuple)
+            and site in loop.iter.elts
+        )
+        assert ast.dump(loop.target) == ast.dump(
+            ast.parse("for section, key, owner in ():\n    pass").body[0].target
+        )
+        expected = ast.parse(
+            'raw = profile_paths.setting(config, section, key)\nif raw:\n    if not isinstance(raw, str):\n        raise ValueError("invalid_config_path")\n    declared.append(StorageItem(owner, storage_logical_id(context, owner), profile_paths.lexical_path(raw), "intentionally_excluded", ()))'
+        )
+        assert ast.dump(ast.Module(body=loop.body, type_ignores=[])) == ast.dump(
+            expected
+        )
+    return site
+
+
+def test_model_download_dir_is_only_config_and_installed_legacy_scan_wiring() -> None:
+    """Pin Installed runtime wiring and exact inert recovery path-data roles."""
+    # ADR-025 preserves external/legacy roots; ADR-126/244 inventories and remaps
+    # their inert selectors. The packaged TOML default remains pinned below.
+    installed = "tldw_chatbook/UI/LLM_Management_Window.py"
+    assert set(_production_python_with("model_download_dir")) == {
+        installed,
+        *PASSIVE_MODEL_PATH_FILES,
+    }
+    for relative_path in (installed, *PASSIVE_MODEL_PATH_FILES):
+        _assert_model_download_dir_role(
+            relative_path, (ROOT / relative_path).read_text(encoding="utf-8")
+        )
+
+
+@pytest.mark.parametrize("relative_path", PASSIVE_MODEL_PATH_FILES)
+def test_passive_model_path_cannot_become_a_runtime_accessor(
+    relative_path: str,
+) -> None:
+    """A runtime lookup in any passive slot must fail the same role contract."""
+    source = (ROOT / relative_path).read_text(encoding="utf-8")
+    site = _assert_model_download_dir_role(relative_path, source)
+    original = ast.get_source_segment(source, site)
+    assert original is not None and source.count(original) == 1
+    changed = source.replace(
+        original, 'get_cli_setting("llm_management", "model_download_dir")', 1
+    )
+    with pytest.raises(AssertionError):
+        _assert_model_download_dir_role(relative_path, changed)
 
 
 def test_default_llm_management_config_only_keeps_installed_legacy_scan_root() -> None:
@@ -237,9 +365,9 @@ def test_default_llm_management_config_only_keeps_installed_legacy_scan_root() -
     assert DEFAULT_CONFIG_FROM_TOML["llm_management"] == {
         "model_download_dir": "~/Downloads/tldw_models"
     }
-    config_source = (PRODUCTION_ROOT / "Config_Files" / "default_config.toml").read_text(
-        encoding="utf-8"
-    )
+    config_source = (
+        PRODUCTION_ROOT / "Config_Files" / "default_config.toml"
+    ).read_text(encoding="utf-8")
     assert (
         'model_download_dir = "~/Downloads/tldw_models"'
         "  # Legacy read-only scan root for Installed models"

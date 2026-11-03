@@ -9,6 +9,8 @@ import sys
 import unicodedata
 from pathlib import Path
 
+import pytest
+
 from scripts.check_profile_owned_path_inventory import (
     APPROVED_EXCEPTIONS,
     Disposition,
@@ -18,7 +20,6 @@ from scripts.check_profile_owned_path_inventory import (
     scan_source,
     scan_tree,
 )
-
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 
@@ -229,7 +230,9 @@ def test_shared_asset_exceptions_are_explicit() -> None:
     # in the packaged template and no shared-asset exception covers it. The full template
     # path pin is test_default_config_template_profile_paths_are_pinned.
     embedding_default = "~/.local/share/tldw_cli/models/embeddings"
-    template = (REPO_ROOT / "tldw_chatbook/Config_Files/default_config.toml").read_text(encoding="utf-8")
+    template = (REPO_ROOT / "tldw_chatbook/Config_Files/default_config.toml").read_text(
+        encoding="utf-8"
+    )
     assert template.count(embedding_default) == 1
     assert not any(embedding_default in rule.expression for rule in shared_rules)
 
@@ -335,6 +338,35 @@ data_dir / "export"
 #: (bffa2bffed added a QA excerpt that is not even parseable on its own).
 NON_RUNTIME_PYTHON_ROOTS = ("Docs/",)
 
+def _runtime_python_source_paths(root: Path) -> tuple[Path, ...]:
+    """Enumerate project code, including tracked tooling and new runtime files.
+
+    ADR-040 excludes test examples and documentation from production ownership.
+    Git excludes ignored local evidence, environments, and build copies; tracked
+    vendored production modules remain in the population.
+    """
+    completed = subprocess.run(
+        [
+            "git",
+            "ls-files",
+            "-z",
+            "--cached",
+            "--others",
+            "--exclude-standard",
+            "--",
+            "*.py",
+        ],
+        cwd=root,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    return tuple(
+        root / relative
+        for relative in sorted(set(completed.stdout.split("\0")) - {""})
+        if Path(relative).parts[0] not in {"Docs", "Tests"}
+    )
+
 
 def test_compatibility_and_runtime_policy_constants_have_no_new_runtime_owners() -> (
     None
@@ -342,7 +374,7 @@ def test_compatibility_and_runtime_policy_constants_have_no_new_runtime_owners()
     """Legacy constants remain isolated from normal profile resolution."""
     base_data_consumers: list[tuple[str, int]] = []
     runtime_constant_definitions: list[str] = []
-    for source_path in sorted(REPO_ROOT.rglob("*.py")):
+    for source_path in _runtime_python_source_paths(REPO_ROOT):
         relative_path = source_path.relative_to(REPO_ROOT).as_posix()
         if relative_path.startswith(NON_RUNTIME_PYTHON_ROOTS):
             continue
@@ -429,3 +461,107 @@ def test_cli_prints_the_real_source_census_and_enforces_it() -> None:
     assert completed.returncode == 0
     assert "tldw_chatbook/" in completed.stdout
     assert completed.stderr == ""
+
+
+@pytest.fixture
+def runtime_source_tree(tmp_path: Path) -> Path:
+    """Create a tiny repository with tracked code and historical evidence."""
+    subprocess.run(["git", "init", "--quiet", str(tmp_path)], check=True)
+    files = {
+        ".gitignore": ".superpowers/\nbuild/\n.venv/\n",
+        "tldw_chatbook/runtime_policy/bootstrap.py": "DEFAULT_RUNTIME_POLICY_PATH = None\n",
+        "Helper_Scripts/tracked.py": "pass\n",
+        "Docs/proposed.py": "    def historical_fragment(): pass\n",
+        "Tests/fixture.py": "    def historical_fragment(): pass\n",
+    }
+    for relative, source in files.items():
+        path = tmp_path / relative
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(source, encoding="utf-8")
+    subprocess.run(
+        [
+            "git",
+            "add",
+            "--",
+            "Helper_Scripts/tracked.py",
+            "Docs/proposed.py",
+            "Tests/fixture.py",
+        ],
+        cwd=tmp_path,
+        check=True,
+    )
+    return tmp_path
+
+
+def test_runtime_source_population_keeps_tooling_and_ignores_nonruntime_evidence(
+    runtime_source_tree: Path, monkeypatch
+) -> None:
+    root = runtime_source_tree
+    for relative in ("scripts/new.py", "entrypoint.py", ".github/probe.py"):
+        path = root / relative
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text("pass\n", encoding="utf-8")
+    for directory in (".superpowers", "build", ".venv"):
+        path = root / directory / "historical.py"
+        path.parent.mkdir(parents=True)
+        path.write_text("    def historical_fragment(): pass\n", encoding="utf-8")
+
+    paths = _runtime_python_source_paths(root)
+
+    assert [path.relative_to(root).as_posix() for path in paths] == [
+        ".github/probe.py",
+        "Helper_Scripts/tracked.py",
+        "entrypoint.py",
+        "scripts/new.py",
+        "tldw_chatbook/runtime_policy/bootstrap.py",
+    ]
+    for path in paths:
+        ast.parse(path.read_text(encoding="utf-8"), path.as_posix())
+    monkeypatch.setattr(sys.modules[__name__], "REPO_ROOT", root)
+    test_compatibility_and_runtime_policy_constants_have_no_new_runtime_owners()
+
+
+@pytest.mark.parametrize(
+    "relative, source",
+    (
+        (
+            "tldw_chatbook/new.py",
+            "from tldw_chatbook.config import BASE_DATA_DIR_CLI as old\nold / 'new'\n",
+        ),
+        (
+            "scripts/new.py",
+            "import tldw_chatbook.config as cfg\ncfg.BASE_DATA_DIR_CLI / 'new'\n",
+        ),
+        (
+            "Helper_Scripts/tracked.py",
+            "from tldw_chatbook import config\nconfig.BASE_DATA_DIR_CLI / 'new'\n",
+        ),
+        (
+            "entrypoint.py",
+            "import tldw_chatbook.config\ntldw_chatbook.config.BASE_DATA_DIR_CLI / 'new'\n",
+        ),
+        ("Helper_Scripts/tracked.py", "DEFAULT_RUNTIME_POLICY_PATH = None\n"),
+    ),
+)
+def test_runtime_constant_guard_rejects_new_runtime_owners(
+    runtime_source_tree: Path, monkeypatch, relative: str, source: str
+) -> None:
+    path = runtime_source_tree / relative
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(source, encoding="utf-8")
+    monkeypatch.setattr(sys.modules[__name__], "REPO_ROOT", runtime_source_tree)
+
+    with pytest.raises(AssertionError):
+        test_compatibility_and_runtime_policy_constants_have_no_new_runtime_owners()
+
+
+def test_runtime_constant_guard_does_not_swallow_runtime_parse_failure(
+    runtime_source_tree: Path, monkeypatch
+) -> None:
+    path = runtime_source_tree / "scripts" / "broken.py"
+    path.parent.mkdir(parents=True)
+    path.write_text("    def broken(): pass\n", encoding="utf-8")
+    monkeypatch.setattr(sys.modules[__name__], "REPO_ROOT", runtime_source_tree)
+
+    with pytest.raises(IndentationError):
+        test_compatibility_and_runtime_policy_constants_have_no_new_runtime_owners()
