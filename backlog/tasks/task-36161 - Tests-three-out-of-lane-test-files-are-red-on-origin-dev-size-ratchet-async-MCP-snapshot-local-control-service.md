@@ -6,7 +6,7 @@ title: >-
 status: To Do
 assignee: []
 created_date: '2026-10-22 18:16'
-updated_date: '2026-10-22 19:12'
+updated_date: '2026-11-03 06:05'
 labels:
   - tests
   - ci
@@ -24,7 +24,7 @@ Found while rebasing TASK-33620.15.5's branch onto origin/dev 7700c63a68 (2026-1
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
 - [ ] #1 Each named test id passes on origin/dev, or the test is retired with a recorded reason
-- [ ] #2 Size-ratchet rows are re-pinned at measured values with dated owner-decision comments, or the files shrink back under them
+- [x] #2 Size-ratchet rows are re-pinned at measured values with dated owner-decision comments, or the files shrink back under them
 - [ ] #3 Each of the three files is on a PR-required lane, or the reason it is not is recorded
 <!-- AC:END -->
 
@@ -32,4 +32,5 @@ Found while rebasing TASK-33620.15.5's branch onto origin/dev 7700c63a68 (2026-1
 
 <!-- SECTION:NOTES:BEGIN -->
 2026-10-22, on origin/dev e2cffbed60: a fourth file, same shape. Tests/MCP/test_local_server_tools.py::test_deny_state_handler_returns_tool_result fails on a detached origin/dev worktree and on TASK-33620.15.5's rebased branch with the same id (ToolResult.approval_decision 'denied' != None: the handler now records the denial the test's expected value omits). derived-artifacts.yml runs three other Tests/MCP files but not this one, so only nightly-deep sees it. The other three files' reds are unchanged on e2cffbed60 (size ratchet: the same 8 rows).
+2026-11-03: AC#2 is met by TASK-38640. #3351 re-pinned every over-budget module-size row at its measured size with a dated waiver comment, and the module- and screen-size ratchet files pass on dev 18482c1cf7 (205 passed). AC#1 and AC#3 still cover the other files.
 <!-- SECTION:NOTES:END -->

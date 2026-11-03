@@ -1,8 +1,9 @@
 ---
 id: TASK-38642
 title: First-run setup cannot save a keyless local provider whose config names an unset key variable
-status: To Do
+status: Done
 created_date: 2026-11-02 21:52
+updated_date: 2026-11-03 06:05
 labels:
 - follow-up
 - bug
@@ -43,7 +44,16 @@ Found while filing the round-3 follow-ups of the 2026-10-23 burn-down (dev 88af9
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 A first-run commit with credential source "none" saves when the provider's config names an unset key variable, and the saved draft carries no env-var selector; "environment" and "stored" keep their behaviour
-- [ ] #2 The six tests named above pass on dev, and the admission-sensitive 2 node passes in a PR run
-- [ ] #3 A regression test fails at 88af9f9379 and passes with the fix
+- [x] #1 A first-run commit with credential source "none" saves when the provider's config names an unset key variable, and the saved draft carries no env-var selector; "environment" and "stored" keep their behaviour
+- [x] #2 The six tests named above pass on dev, and the admission-sensitive 2 node passes in a PR run
+- [x] #3 A regression test fails at 88af9f9379 and passes with the fix
 <!-- AC:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+Closed 2026-11-03. PR #3346 (merged 2026-11-03, dev 18482c1cf7) carried the fix and the regression test. This task only records the checks on dev.
+- **AC#1:** `build_first_run_provider_commit` now sets `credential_env_var` to the resolved variable only for source "environment" (first_run_setup_state.py:512-518). `test_provider_commit_carries_environment_selector_only_for_environment_source` pins all three sources. "environment" keeps its selector; "none" and "stored" carry none.
+- **AC#2:** on dev 18482c1cf7, through the scratch-profile wrapper with `-n 4`, the six tests named in the description plus the three regression cases gave 9 passed. The admission-sensitive 2 node `test_a_listed_model_setup_saves_leaves_the_saved_model_list_alone` passed in #3346's PR run 41573532021, job 125717364994, in the step "Run admission-sensitive suites 2" (1437 passed).
+- **AC#3:** under a temporary edit that restored the 88af9f9379 selector (`resolved_env_var` for every source except "environment"), the regression case `[none]` and `test_a_listed_model_setup_saves_leaves_the_saved_model_list_alone` failed (2 failed, 2 passed). With the edit reverted, they pass.
+<!-- SECTION:NOTES:END -->

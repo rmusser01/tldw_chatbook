@@ -1,8 +1,9 @@
 ---
 id: TASK-38640
 title: Eighteen module-size ratchet rows are over budget on dev; nine of them fail every PR's required check
-status: To Do
+status: Done
 created_date: 2026-11-02 21:52
+updated_date: 2026-11-03 06:05
 labels:
 - follow-up
 - ci
@@ -58,7 +59,16 @@ PR #3344's run 41429394025 (its merge commit is dev 88af9f9379) failed exactly t
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 On dev, every row of test_module_size_ratchet.py passes both test_module_does_not_grow_past_its_budget and test_budget_is_not_left_slack
-- [ ] #2 Each of the 18 rows is either re-pinned at its measured size with a dated comment citing the owner's 2026-10-31 size waiver, or brought down by moving code out and lowering the row
-- [ ] #3 A PR on the fixed dev gets a PR Fast Lane run with no size-ratchet failure, and its run id is recorded here
+- [x] #1 On dev, every row of test_module_size_ratchet.py passes both test_module_does_not_grow_past_its_budget and test_budget_is_not_left_slack
+- [x] #2 Each of the 18 rows is either re-pinned at its measured size with a dated comment citing the owner's 2026-10-31 size waiver, or brought down by moving code out and lowering the row
+- [x] #3 A PR on the fixed dev gets a PR Fast Lane run with no size-ratchet failure, and its run id is recorded here
 <!-- AC:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+Closed 2026-11-03.
+- **AC#2:** #3351 (merged 2026-11-03, 0e4fc24cff) re-pinned all 18 rows at their measured size on dev 88af9f9379. Each row carries a dated comment citing the owner's 2026-10-31 size waiver.
+- **AC#1:** on dev 18482c1cf7, `Tests/Architecture/test_module_size_ratchet.py` and `test_screen_size_ratchet.py`, run serially through the scratch-profile wrapper, gave 205 passed.
+- **AC#3:** PR #3354, a PR run whose base, dev 2dcf038cb8, contains the re-pin: run 41555396881, PR Fast Lane job 125657702374. All 90 module-size ratchet nodes passed. The job's 11 other failures were dev reds outside this task (agent-runtime import footprint, app string-lookup census, layer direction, Console arrival vocabulary, ADR-103 shard count, CSS fastpath). PR #3346 later fixed those: its run 41573532021 passed all 42 jobs, the PR Fast Lane included.
+<!-- SECTION:NOTES:END -->
