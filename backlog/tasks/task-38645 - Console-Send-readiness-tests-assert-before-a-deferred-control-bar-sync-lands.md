@@ -43,7 +43,7 @@ Found while filing the round-3 follow-ups of the 2026-10-23 burn-down (dev 88af9
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
 - [x] #1 Every test in the file passes 10 of 10 runs under -n 4 load, because it waits for the sync to land rather than for a longer fixed pause
-- [x] #2 Each test still fails against the Send disagreements that TASK-33620.15.22 fixed (shown under a temporary revert)
+- [x] #2 Each test still fails at its assertions under a temporary revert of the TASK-33620.15.22 code it pins: the three agreement tests under the 1facb4b8ef/c353b078f6 readiness-rule revert, and the positive press test (green on pre-fix code by design) under removal of 1facb4b8ef's sendable_attachment_provider wiring
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -59,7 +59,7 @@ Found while filing the round-3 follow-ups of the 2026-10-23 burn-down (dev 88af9
 ## Implementation Notes
 
 <!-- SECTION:NOTES:BEGIN -->
-Test-only change. The five bare `console._sync_console_control_bar()` calls in `Tests/UI/test_console_send_ready_attachment.py` now `await _sync_console_control_bar_now(console)`, the existing helper in `Tests/UI/test_console_native_chat_flow.py` (already used by ten Console test files): it warms the checked readiness display, renders under both config locks, retries until a sync renders, and fails after 15 s naming the last refusal and Send's state. It returns straight after the rendering call, so each test still reads Send with no await in between. Every assertion is unchanged; the plan's own retry helper was dropped for this reuse.
+Test-only change. The five bare `console._sync_console_control_bar()` calls in `Tests/UI/test_console_send_ready_attachment.py` now `await _sync_console_control_bar_now(console)`, the existing helper in `Tests/UI/test_console_native_chat_flow.py` (already used by ten Console test files): it warms the checked readiness display, renders under both config locks, retries until a sync renders, and fails after 15 s naming the last refusal and Send's state. It returns straight after the rendering call, so the either-sync-site, composer-resync and image-only press tests read Send with no await after it; the Workbench test keeps its existing `pilot.pause()`. Every assertion is unchanged; the plan's own retry helper was dropped for this reuse.
 
 Cause, corrected by probe: in this harness the sync goes through the checked readiness display (the config value is disk-loaded), not the native-lock probe at config_sync.py:70-73. Holding `_config_file_lock()` from another thread left the bare sync rendering (True). Making the display cold (`ConsoleReadinessConfigProjection.value = None`) made it return False and leave Send stale. Under load the likely trigger is the display's 1 s proof expiring, or its refresh not yet finished, before the test syncs; individual failures were not traced. The product converges on its own: an expired proof requests the 0.2 s replay, and a cold refresh publishes a whole sync. No product bug found.
 
@@ -68,6 +68,7 @@ Evidence (dev 2dcf038cb8; each loaded run had `Tests/UI/test_console_send_price.
 - AC#1: 10 of 10 `-n 4` runs, 4 passed each, under the same load.
 - Control for the wait: with the display made cold just before the sync, the bare call fails the composer-resync test (`(True, True) == (False, False)`) and the helper passes it.
 - AC#2: temporarily reverted, run with `-n 4`, and restored (`git diff -- tldw_chatbook` empty afterwards).
+- AC#2 re-worded by the coordinator after review (2026-11-03). The original wording, "each test still fails against the Send disagreements that TASK-33620.15.22 fixed", cannot hold for the positive press test. That test passed on the pre-fix code by design, as TASK-33620.15.22's merge evidence records. The new wording names the control that does prove the wait does not blunt it: removing the provider wiring.
   - Revert of the product lines of 1facb4b8ef (composer resync counts any label; screen counts draft or pending image) and c353b078f6 (Workbench reads draft text only and ignores the vision block): 3 failed at their assertions, matching TASK-33620.15.22's notes. Document-with-bytes screen `(True, True)` against composer `(False, False)`; stale label `(False, False) == (True, True)`; Workbench image `(True, False) == (False, False)`.
   - The positive press test passes on that revert, as it did on pre-fix code: it pins "a ready Send sends", not a disagreement. It fails under the revert of 1facb4b8ef's `sendable_attachment_provider` wiring at `_send_state(send) == (False, False)`: Send reads disabled while a press would send the image. That revert turns all 4 red.
 - `./scripts/preflight.sh` passed.
