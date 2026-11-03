@@ -1636,9 +1636,14 @@ async def test_file_notes_field_labels_persist_across_path_context(
         await pilot.pause()
         assert str(search_label.renderable) == "Search"
         workspace.query_one("#file-notes-path-cancel", Button).press()
-        await pilot.pause()
-        assert workspace.path_task == "none"
-        assert str(path_label.renderable) == expected_label
+        await _wait_until(
+            pilot,
+            lambda: (
+                workspace.path_task == "none"
+                and str(path_label.renderable) == expected_label
+            ),
+            "Cancel of the new path task did not restore the field label",
+        )
 
         assert await workspace.open_path("open.md")
         assert str(path_label.renderable) == expected_label
@@ -1652,8 +1657,14 @@ async def test_file_notes_field_labels_persist_across_path_context(
         path.value = "moved.md"
         await pilot.pause()
         workspace.query_one("#file-notes-path-cancel", Button).press()
-        await pilot.pause()
-        assert str(path_label.renderable) == expected_label
+        await _wait_until(
+            pilot,
+            lambda: (
+                workspace.path_task == "none"
+                and str(path_label.renderable) == expected_label
+            ),
+            "Cancel of the move path task did not restore the field label",
+        )
 
         for save_state in ("dirty", "conflict", "error"):
             workspace._set_save_state(save_state)
