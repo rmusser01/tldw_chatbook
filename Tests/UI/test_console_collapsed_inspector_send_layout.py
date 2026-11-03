@@ -52,6 +52,7 @@ from Tests.UI.test_console_send_transition_layout_requests import (
     _assistant_turns,
     _console_host,
 )
+from tldw_chatbook.config import load_settings
 from tldw_chatbook.Widgets.Console.console_run_inspector import ConsoleRunInspector
 
 pytestmark = [pytest.mark.asyncio, pytest.mark.bootstrap_profile]
@@ -149,6 +150,35 @@ async def _open_inspector(console, pilot) -> None:
     await console.action_toggle_console_inspector_rail()
     await _wait_for(pilot, lambda: rail.display, "the Inspector never opened")
     await pilot.pause(0.5)
+
+
+async def _leave_collapsed(console, pilot) -> None:
+    """Collapse the Inspector and wait until the next app will load it collapsed.
+
+    The collapse is saved by a thread worker. This app's exit cancels that
+    worker without waiting for its thread, and the next app takes its config
+    from ``load_settings()`` at once, so a save still in flight left it the
+    open record (TASK-38644).
+    """
+    rail = console.query_one("#console-right-rail")
+    key = console._current_console_rail_state().persistence_key
+    await console.action_toggle_console_inspector_rail()
+    await _wait_for(pilot, lambda: not rail.display, "the Inspector never closed")
+
+    def collapse_saved() -> bool:
+        settings = load_settings()
+        # Until a config write republishes the cache, ``load_settings()`` IS
+        # this app's ``app_config``, whose in-memory collapse proves no write.
+        if settings is console.app_instance.app_config:
+            return False
+        records = settings.get("console", {}).get("rail_state", {})
+        return records.get(key, {}).get("right_open") is False
+
+    await _wait_for(
+        pilot,
+        collapse_saved,
+        "the collapse never reached the config the next app loads",
+    )
 
 
 def _painted(widget: Widget) -> str:
@@ -309,10 +339,7 @@ async def _rail_after_first_send(
         await pilot.pause(0.5)
         recording[0] = False
         witness = _witness(rail)
-        # Leave the stored rail preference collapsed for the next arm.
-        await console.action_toggle_console_inspector_rail()
-        await _wait_for(pilot, lambda: not rail.display, "the Inspector never closed")
-        await pilot.pause(0.3)
+        await _leave_collapsed(console, pilot)
         return witness, frames
 
 
@@ -444,12 +471,7 @@ async def _rail_across_chat_switches(
                 )
                 await pilot.pause(0.3)
         if open_throughout:
-            # Leave the stored rail preference collapsed for the next arm.
-            await console.action_toggle_console_inspector_rail()
-            await _wait_for(
-                pilot, lambda: not rail.display, "the Inspector never closed"
-            )
-            await pilot.pause(0.3)
+            await _leave_collapsed(console, pilot)
         return witnesses
 
 

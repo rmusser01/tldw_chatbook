@@ -118,6 +118,11 @@ seeds live in `sidebar.console_rail_seeds` in the existing profile-owned
 precedence. This is a fallback for first-use defaults, not a second writer of
 user edits. Missing older UI-state files remain compatible.
 
+Only a record under the seed's own key overrides it. A workspace, legacy or
+shared record that appears after the seed latched, at a later launch or after
+a config reload, is not copied into the seeded scope, because seeding happens
+once. That record keeps its authority in its own scope (TASK-38643).
+
 Console uses the existing UI-state owner, admission, background writer, dirty
 revision tracking and shutdown flush. Recovery and profile selection therefore
 follow that owner's existing rules. An ordinary default seed changes no bytes

@@ -30,6 +30,7 @@ pytestmark = pytest.mark.bootstrap_profile
 from textual.widgets import Button
 
 from Tests.UI.app_factory import _build_test_app
+from Tests.UI.test_console_native_chat_flow import _select_llamacpp_console
 from Tests.UI.test_destination_shells import _wait_for_selector
 from Tests.UI.test_product_maturity_gate1_core_loop_screen_adaptation import (
     ConsoleHarness,
@@ -40,6 +41,7 @@ from tldw_chatbook.Chat.console_rail_state import (
     serialize_console_rail_preferences,
 )
 import tldw_chatbook.UI.Screens.chat_screen as chat_screen_module
+from tldw_chatbook.Widgets.Console.console_setup_modal import ConsoleSetupModal
 from tldw_chatbook.Widgets.Console.console_status_chips import ConsoleStatusText
 
 
@@ -48,6 +50,36 @@ def _stored_rail_preferences(app) -> dict:
     rail_state_config = app.app_config.get("console", {}).get("rail_state", {})
     assert len(rail_state_config) == 1
     return next(iter(rail_state_config.values()))
+
+
+async def _ready_provider(console, pilot) -> None:
+    """Select a send-ready provider, so no setup modal covers the workbench.
+
+    Without one, the first-run setup modal blocks the Console: a pointer
+    click lands on it, and each setup sync moves focus to its action, so a
+    key press can land there too, as it would for a user with nothing
+    configured.
+    """
+    await _select_llamacpp_console(console)
+    for _ in range(300):
+        if not any(modal.is_blocking for modal in console.query(ConsoleSetupModal)):
+            return
+        await pilot.pause(0.05)
+    raise AssertionError("the setup modal still blocks the Console")
+
+
+def _stage_before_seed(console, console_config: dict) -> None:
+    """Stage rail records as a profile's first Console mount meets them.
+
+    The harness's own mount found no rail record, so it latched a retained
+    first-use seed for its layout key (TASK-36385). Under ADR-083 that seed
+    wins over a source record staged after it, because seeding happens once.
+    Clearing the latch puts these records ahead of the seed, which is what a
+    profile that already holds them sees at its first mount.
+    """
+    console._console_rail_first_use_seeds.clear()
+    console._console_rail_unsaved_seeds.clear()
+    console.app_instance.app_config["console"] = console_config
 
 
 @pytest.mark.asyncio
@@ -142,6 +174,7 @@ async def test_visible_attach_context_action_switches_rails_without_file_picker(
     async with host.run_test(size=(120, 40)) as pilot:
         console = host.screen_stack[-1]
         await _wait_for_selector(console, pilot, "#console-control-attach-context")
+        await _ready_provider(console, pilot)
         await pilot.pause(0.2)
         file_picker = AsyncMock()
         console._handle_console_attach_context = file_picker
@@ -174,6 +207,7 @@ async def test_inspector_handle_opens_and_collapses_rail_at_140_cols():
     async with host.run_test(size=(140, 42)) as pilot:
         console = host.screen_stack[-1]
         await _wait_for_selector(console, pilot, "#console-inspector-rail-handle")
+        await _ready_provider(console, pilot)
         await pilot.pause(0.2)
 
         right_rail = console.query_one("#console-right-rail")
@@ -232,6 +266,7 @@ async def test_sources_chip_opens_inspector_at_140_cols():
     async with host.run_test(size=(140, 42)) as pilot:
         console = host.screen_stack[-1]
         await _wait_for_selector(console, pilot, "#console-status-text")
+        await _ready_provider(console, pilot)
         await pilot.pause(0.2)
 
         right_rail = console.query_one("#console-right-rail")
@@ -266,6 +301,7 @@ async def test_tools_chip_opens_inspector_at_80x24_single_pane():
     async with host.run_test(size=(80, 24)) as pilot:
         console = host.screen_stack[-1]
         await _wait_for_selector(console, pilot, "#console-native-transcript")
+        await _ready_provider(console, pilot)
         await pilot.pause(0.2)
 
         # Single-pane defaults: both handles hidden, both rails closed.
@@ -302,6 +338,7 @@ async def test_tools_chip_opens_inspector_at_80x24_single_pane():
             )
         )
         await pilot.pause()
+        line = console.query_one("#console-status-text", ConsoleStatusText)
         line.post_message(ConsoleToolsChip.OpenRequested())
         await pilot.pause(0.3)
 
@@ -340,6 +377,7 @@ async def test_left_handle_opens_left_rail_at_90_cols():
     async with host.run_test(size=(90, 24)) as pilot:
         console = host.screen_stack[-1]
         await _wait_for_selector(console, pilot, "#console-context-rail-handle")
+        await _ready_provider(console, pilot)
         await pilot.pause(0.2)
 
         left_rail = console.query_one("#console-left-rail")
@@ -387,6 +425,7 @@ async def test_section_toggle_preserves_left_open_explicit_marker():
     async with host.run_test(size=(90, 24)) as pilot:
         console = host.screen_stack[-1]
         await _wait_for_selector(console, pilot, "#console-context-rail-handle")
+        await _ready_provider(console, pilot)
         await pilot.pause(0.2)
 
         context_button = console.query_one("#console-context-rail-open", Button)
@@ -509,7 +548,7 @@ async def test_console_rail_scope_seeding_is_lossless_one_time_and_responsive_sa
 
         for selected_key, workspace_key, records, expected in cases:
             writes.clear()
-            app.app_config["console"] = {"rail_state": records}
+            _stage_before_seed(console, {"rail_state": records})
             source_snapshot = deepcopy(records)
 
             seeded = console._ensure_console_rail_scope_seed(
@@ -561,6 +600,37 @@ async def test_console_rail_scope_seeding_is_lossless_one_time_and_responsive_sa
         assert after_compact == before_compact
         assert writes == []
 
+        # ADR-083 precedence. A retained first-use seed wins over a workspace
+        # or legacy source record that appears after it latched (the next
+        # launch, or a config reload): seeding happens once, and the later
+        # record stays its own scope's. An explicit record for the seed's own
+        # key wins over the seed.
+        _stage_before_seed(console, {"rail_layout_scope": "global", "rail_state": {}})
+        assert console._ensure_console_rail_scope_seed(shared_key, research_key) == (
+            seeded_defaults
+        )
+        assert writes == []
+        later = {
+            research_key.value: deepcopy(workspace_payload),
+            research_key.fallback_value: deepcopy(legacy_payload),
+        }
+        app.app_config["console"] = {"rail_layout_scope": "global", "rail_state": later}
+        assert console._ensure_console_rail_scope_seed(shared_key, research_key) == (
+            seeded_defaults
+        )
+        assert later[research_key.value] == workspace_payload
+        assert later[research_key.fallback_value] == legacy_payload
+        assert writes == []
+        explicit = {**defaults, "model_open": True}
+        app.app_config["console"] = {
+            "rail_layout_scope": "global",
+            "rail_state": {shared_key.value: deepcopy(explicit)},
+        }
+        assert console._ensure_console_rail_scope_seed(shared_key, research_key) == (
+            explicit
+        )
+        assert writes == []
+
         app.app_config["console"] = {"rail_layout_scope": "global", "rail_state": {}}
         writes.clear()
         console._set_console_rail_preference(left_open=False)
@@ -587,10 +657,13 @@ async def test_console_rail_writes_cannot_finish_with_stale_seed(monkeypatch):
         workspace_key = build_console_rail_preference_key(
             workspace_id=context.active_workspace_id, layout_scope="workspace"
         )
-        app.app_config["console"] = {
-            "rail_layout_scope": "global",
-            "rail_state": {workspace_key.value: {"left_open": True}},
-        }
+        _stage_before_seed(
+            console,
+            {
+                "rail_layout_scope": "global",
+                "rail_state": {workspace_key.value: {"left_open": True}},
+            },
+        )
         seed_started = threading.Event()
         release_seed = threading.Event()
         mutation_finished = threading.Event()
@@ -688,10 +761,10 @@ async def test_console_rail_scope_seed_preserves_explicit_left_open_intent(
         ):
             records = {source_key: deepcopy(source)}
             source_bytes = json.dumps(records[source_key], separators=(",", ":"))
-            app.app_config["console"] = {
-                "rail_layout_scope": selected_scope,
-                "rail_state": records,
-            }
+            _stage_before_seed(
+                console,
+                {"rail_layout_scope": selected_scope, "rail_state": records},
+            )
             writes.clear()
 
             state = console._current_console_rail_state(available_columns=90)
