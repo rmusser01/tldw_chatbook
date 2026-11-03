@@ -538,10 +538,12 @@ def test_file_notes_error_ink_and_disabled_opacity_are_app_tier(request) -> None
     for css in stylesheets:
         git_error = _declarations(css, ".file-notes-git-commit-error")
         save_error = _declarations(css, "#file-notes-save-status.-error")
-        assert git_error["color"] == "$ds-status-error-readable"
-        assert save_error["color"] == "$ds-status-error-readable"
-        assert git_error["background"] == "$error-darken-3"
-        assert save_error["background"] == "$error-darken-3"
+        # TASK-36528: plain ink on an error tint (Conflict's pair); the old
+        # $text-error on $error-darken-3 painted 3.89:1 in textual-dark.
+        assert git_error["color"] == "$text"
+        assert save_error["color"] == "$text"
+        assert git_error["background"] == "$error 14%"
+        assert save_error["background"] == "$error 14%"
         disabled = _declarations(css, "LibraryFileNotesWorkspace Button:disabled")
         assert disabled["opacity"] == "100%"
         assert disabled["text-opacity"] == "100%"
