@@ -198,6 +198,13 @@ def _readiness_runtime(screen: Any) -> Any:
 #: operation on the UI loop and whose deferrals each replayed a whole sync.
 #: With no run poll the display is re-read only once it has expired.
 REFRESH_AHEAD_SHARE = 0.5
+#: TASK-38649: a refresh that fails or is refused asks for the coalesced
+#: control-bar retry after this delay, doubled for each consecutive failure on
+#: the same owner key up to the cap. A lasting refusal (a storage pause, a
+#: replaced reader) then stops costing a native read every 0.2 s, yet the
+#: controls still converge once it clears.
+RETRY_FIRST_DELAY = 0.2
+RETRY_MAX_DELAY = 5.0
 
 
 class ConsoleReadinessConfigProjection:
@@ -222,6 +229,9 @@ class ConsoleReadinessConfigProjection:
         self._tokenizer_request = None
         self._tokenizer_prepared = None
         self._tokenizer_retry_at = 0.0
+        self._retry_delay = 0.0
+        self._failed_key = None
+        self._retry_timer = None
         self._settled = asyncio.Event()
         self._settled.set()
 
@@ -476,7 +486,22 @@ class ConsoleReadinessConfigProjection:
             and time.monotonic() - self.at < self.max_age
         )
 
+    def _retired(self) -> bool:
+        return bool(
+            getattr(self.screen, "_closing", False)
+            or getattr(_readiness_runtime(self.screen), "_disposed", False)
+        )
+
+    def _retry(self) -> None:
+        """Ask for the coalesced control-bar sync a failed cold read owes."""
+        # Keep the handle: Textual delivers this through call_next, after a
+        # newer failure may already have stored its own timer, and stopping
+        # a timer that has fired is a no-op.
+        if not self._retired():
+            self.screen._request_console_control_bar_sync()
+
     async def _refresh(self, key: tuple) -> None:
+        retry = True
         try:
             reader = self.read_current
             tokenizer_request = self._tokenizer_request
@@ -609,12 +634,34 @@ class ConsoleReadinessConfigProjection:
                 self.at = proof.at
                 _checked_display_proofs.add(published)
                 self._display_proof = published
+            self._retry_delay = 0.0
+            retry = False
         except Exception:  # noqa: BLE001 - remain cold and retryable.
             return
+        except BaseException:
+            retry = False  # Cancellation belongs to whoever cancelled.
+            raise
         finally:
             self._read_request = None
             self.pending = False
             self._settled.set()
+            if retry and not self._retired():
+                # TASK-38649: this read publishes nothing, so a cold caller
+                # that deferred to it converges only through the coalesced
+                # retry, backed off while the same owner keeps failing.
+                if not _same_readiness_key(key, self._failed_key):
+                    self._retry_delay = 0.0
+                self._failed_key = key
+                self._retry_delay = min(
+                    max(self._retry_delay * 2, RETRY_FIRST_DELAY), RETRY_MAX_DELAY
+                )
+                # One timer per projection: whoever started this read, a new
+                # failure replaces the pending retry instead of adding a chain.
+                if self._retry_timer is not None:
+                    self._retry_timer.stop()
+                self._retry_timer = self.screen.set_timer(
+                    self._retry_delay, self._retry
+                )
         if changed:
             publication = self.screen._sync_native_console_chat_ui()
             try:

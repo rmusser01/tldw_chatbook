@@ -20,8 +20,11 @@ Send is one whose press sends.
 from __future__ import annotations
 
 import asyncio
+import dataclasses
+import sys
 import threading
 import time
+from types import SimpleNamespace
 
 import pytest
 from textual.widgets import Button
@@ -339,3 +342,221 @@ async def test_attachment_readiness_waits_for_checked_config_projection(monkeypa
         assert (workbench_send.disabled, send.disabled) == (True, True)
         assert await console._send_console_message_from_visible_action() is False
         assert len(store.pending_attachments(session_id)) == 1
+
+
+#: TASK-38649: each return a cold readiness refresh can take without
+#: publishing, made once inside the real refresh of a mounted Console.
+_COLD_REFRESH_RETURNS = (
+    "setup_raises",  # the entry-time session lookup raises (a closed session)
+    "read_raises",  # the checked native read raises
+    "runtime_rebound",  # another runtime owns the Console when the read returns
+    "not_a_read",  # the reader returned no checked read
+    "source_moved",  # the config source moved during the read
+    "owner_moved",  # the session's settings moved during the read
+    "pricing_moved",  # the pricing display sources moved during the read
+    "handoff_raises",  # the pristine-default handoff after the read raises
+    "owner_moved_in_handoff",  # the config source moved during that handoff
+)
+_CONSOLE_SYNC_GROUPS = {
+    "console-sync",
+    "console-readiness-config",
+    "console-readiness-publication",
+}
+
+
+@pytest.mark.asyncio
+async def test_a_cold_refresh_that_returns_early_still_converges_the_controls(
+    monkeypatch,
+):
+    """TASK-38649: a lone control-bar sync on a cold display defers to the
+    refresh it starts. A refresh that publishes nothing must still leave the
+    controls converging on their own, and a disposed runtime schedules
+    nothing."""
+    from tldw_chatbook import config as config_module
+    from tldw_chatbook.Chat import console_preparation_reads as reads
+    from tldw_chatbook.UI.Console_Modules import console_spend_projection as spend
+
+    state = {"path": None, "after_read": False, "disposed": False}
+    fired, requests = [], []
+
+    def fire(path, *, after_read=True, depth=2):
+        """Take the armed fault once, only inside the readiness refresh."""
+        if (
+            state["path"] == path
+            and state["after_read"] == after_read
+            and sys._getframe(depth).f_code.co_name == "_refresh"
+        ):
+            state["path"] = None
+            fired.append(path)
+            return True
+        return False
+
+    real_read = reads.run_preparation_read
+
+    async def read(callback, **kwargs):
+        if getattr(callback, "__name__", "") != "read_current":
+            return await real_read(callback, **kwargs)
+        if fire("read_raises", after_read=False):
+            raise RuntimeError("TASK-38649 injected read failure")
+        result = await real_read(callback, **kwargs)
+        state["after_read"] = True
+        if fire("not_a_read"):
+            return None
+        if fire("source_moved"):
+            return dataclasses.replace(result, source_before=(-1, "moved"))
+        if fire("owner_moved"):
+            _change_settings(store, session_id)
+        if state["path"] == "pricing_moved" and result.pricing is None:
+            result = dataclasses.replace(result, pricing=object())
+        return result
+
+    real_runtime = spend._readiness_runtime
+
+    def runtime(screen):
+        if state["disposed"]:
+            caller = sys._getframe(1).f_code.co_name
+            if caller in ("_refresh", "_retired"):
+                fired.append(f"disposed:{caller}")
+            return SimpleNamespace(_disposed=True)
+        if fire("runtime_rebound"):
+            return SimpleNamespace(_disposed=False)
+        return real_runtime(screen)
+
+    real_pricing = spend._pricing_display_sources_current
+    real_identity = config_module.current_config_identity
+    identity_moved = []
+
+    def identity():
+        if identity_moved and sys._getframe(2).f_code.co_name == "_refresh":
+            identity_moved.clear()
+            return (-1, "moved")
+        return real_identity()
+
+    _app, host = _ready_host()
+    async with host.run_test(size=(140, 42)) as pilot:
+        console, composer, send, store, session_id = await _ready_console(
+            host, pilot, monkeypatch
+        )
+        real_settings = store.session_settings
+        real_handoff = console._session._maybe_refresh_stale_default_console_settings
+        real_set_timer = console.set_timer
+        real_publish = console._sync_native_console_chat_ui
+
+        def settings(target):
+            if fire("setup_raises", after_read=False):
+                raise KeyError(target)
+            return real_settings(target)
+
+        def handoff(*args, **kwargs):
+            if fire("handoff_raises"):
+                raise RuntimeError("TASK-38649 injected handoff failure")
+            if fire("owner_moved_in_handoff"):
+                identity_moved.append(True)
+            return real_handoff(*args, **kwargs)
+
+        def set_timer(*args, **kwargs):
+            if sys._getframe(1).f_code.co_name == "_refresh":
+                requests.append(("retry", state["disposed"]))
+            return real_set_timer(*args, **kwargs)
+
+        def publish(*args, **kwargs):
+            if sys._getframe(1).f_code.co_name == "_refresh":
+                requests.append(("publish", state["disposed"]))
+            return real_publish(*args, **kwargs)
+
+        monkeypatch.setattr(reads, "run_preparation_read", read)
+        monkeypatch.setattr(spend, "_readiness_runtime", runtime)
+        monkeypatch.setattr(
+            spend,
+            "_pricing_display_sources_current",
+            lambda: not fire("pricing_moved") and real_pricing(),
+        )
+        monkeypatch.setattr(config_module, "current_config_identity", identity)
+        monkeypatch.setattr(store, "session_settings", settings)
+        monkeypatch.setattr(
+            console._session, "_maybe_refresh_stale_default_console_settings", handoff
+        )
+        monkeypatch.setattr(console, "set_timer", set_timer)
+        monkeypatch.setattr(console, "_sync_native_console_chat_ui", publish)
+
+        composer.load_draft("describe this")
+        image = _attachment("photo.png", _STAGED_KINDS[0][1])
+        assert store.add_pending_attachment(session_id, image)
+        await _sync_controls(console, pilot)
+        workbench_send = console.query_one("#workbench-action-send", Button)
+        projection = spend.ConsoleReadinessConfigProjection.for_screen(console)
+        failures = {}
+
+        async def settled():
+            deadline = time.monotonic() + 4.0
+            while projection.pending:
+                assert time.monotonic() < deadline, (
+                    "the readiness refresh never settled"
+                )
+                await pilot.pause(0.01)
+
+        async def quiet():
+            """Let the last reset's own publication and replays finish first."""
+            deadline = time.monotonic() + 8.0
+            while (
+                projection.pending
+                or console._console_control_bar_sync_scheduled
+                or any(
+                    worker.group in _CONSOLE_SYNC_GROUPS and not worker.is_finished
+                    for worker in host.workers
+                )
+            ):
+                assert time.monotonic() < deadline, "the Console never went quiet"
+                await pilot.pause(0.02)
+
+        async def converged(blocked, timeout):
+            deadline = time.monotonic() + timeout
+            while (workbench_send.disabled, send.disabled) != (blocked, blocked):
+                if time.monotonic() >= deadline:
+                    return False
+                await pilot.pause(0.05)
+            return True
+
+        for index, path in enumerate((*_COLD_REFRESH_RETURNS, "disposed")):
+            blocked = index % 2 == 0
+            await quiet()
+            assert (workbench_send.disabled, send.disabled) == (not blocked,) * 2, path
+            reason = "Console send blocked: no image support" if blocked else None
+            monkeypatch.setattr(
+                attachment_core, "vision_block_reason", lambda *_a, _r=reason, **_k: _r
+            )
+            # A settings Apply moves the owner key, so the display is cold.
+            _change_settings(store, session_id)
+            requests.clear()
+            state.update(path=None if path == "disposed" else path, after_read=False)
+            assert console._sync_console_control_bar() is False, path
+            if path == "disposed":
+                # Disposed after the worker was scheduled, before it entered.
+                state["disposed"] = True
+                # A retry would be scheduled in the step that clears pending.
+                await settled()
+                # The refresh reached both its disposed return and its retry guard.
+                assert {"disposed:_refresh", "disposed:_retired"} <= set(fired), fired
+                assert requests == [], "a disposed runtime scheduled more work"
+                state["disposed"] = False
+            else:
+                await settled()
+                assert path in fired, path
+                # No further trigger: the refresh itself must ask for the retry.
+                if (
+                    not await converged(blocked, 3.0)
+                    or ("retry", False) not in requests
+                ):
+                    failures[path] = list(requests)
+            await _sync_controls(console, pilot)
+        assert failures == {}, f"stale after a cold early return: {failures}"
+
+
+def _change_settings(store, session_id) -> None:
+    settings = store.session_settings(session_id)
+    store.replace_session_settings(
+        session_id,
+        dataclasses.replace(
+            settings, temperature=round(settings.temperature + 0.01, 2)
+        ),
+    )

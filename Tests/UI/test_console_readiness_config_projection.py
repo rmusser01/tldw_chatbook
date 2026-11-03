@@ -44,6 +44,7 @@ def _screen(monkeypatch):
         run_worker=schedule,
         _sync_native_console_chat_ui=refresh,
         _request_console_control_bar_sync=lambda **_: None,
+        set_timer=lambda *_args, **_kwargs: None,
     )
 
     @contextmanager
@@ -838,7 +839,10 @@ async def test_readiness_repeated_cancel_retains_physical_read(monkeypatch, all_
 async def test_closed_readiness_owner_never_reads_or_publishes(monkeypatch, closing):
     screen, _owner, _identity, tasks, published = _screen(monkeypatch)
     entered, release = threading.Event(), threading.Event()
-    reads = []
+    reads, retries = [], []
+    # TASK-38649: a refresh that publishes nothing schedules a retry, but
+    # never for a closing screen.
+    screen.set_timer = lambda *args, **_kwargs: retries.append(args)
 
     def read():
         reads.append(True)
@@ -857,7 +861,7 @@ async def test_closed_readiness_owner_never_reads_or_publishes(monkeypatch, clos
             screen._closing = True
             release.set()
         await asyncio.gather(*tasks)
-        assert projection.value is None and not published
+        assert projection.value is None and not published and not retries
         if closing == "before":
             assert not reads and not tasks
         count = len(reads)
@@ -866,6 +870,158 @@ async def test_closed_readiness_owner_never_reads_or_publishes(monkeypatch, clos
         assert len(reads) == count
     finally:
         release.set()
+        await asyncio.gather(*tasks, return_exceptions=True)
+
+
+@pytest.mark.asyncio
+async def test_a_failing_cold_refresh_backs_off_and_a_publish_resets_it(monkeypatch):
+    """TASK-38649 review: a lasting refusal must not cost a read every 0.2 s.
+
+    The fake's retry re-enters ``run`` as the screen's coalesced control-bar
+    sync does, so each retry starts the next native read.
+    """
+    screen, _owner, _identity, tasks, _published = _screen(monkeypatch)
+    loop = asyncio.get_running_loop()
+    delays, timers, reads, failing = [], [], [], [True]
+
+    def set_timer(delay, callback):
+        delays.append(delay)
+        timers.append(loop.call_later(delay, callback))
+
+    def read():
+        reads.append(True)
+        if failing[0]:
+            raise RuntimeError("persistent refusal")
+        return _read_result({"read": len(reads)})
+
+    projection = spend.ConsoleReadinessConfigProjection(screen, read_current=read)
+    screen.set_timer = set_timer
+    screen._request_console_control_bar_sync = lambda **_: projection.run(lambda: None)
+
+    async def drain():
+        while not all(task.done() for task in tasks):
+            await asyncio.gather(*tasks, return_exceptions=True)
+        for timer in timers:
+            timer.cancel()
+
+    try:
+        assert projection.run(lambda: None) is False
+        await asyncio.sleep(2.5)
+        # A fixed 0.2 s retry reads about twelve times here; doubling, four.
+        assert 2 <= len(reads) <= 5, len(reads)
+        assert delays == [min(0.2 * 2**index, 5.0) for index in range(len(delays))]
+        await drain()
+        failing[0] = False
+        assert projection.run(lambda: None) is False
+        await drain()
+        assert projection.value == {"read": len(reads)}
+        # The same owner fails again: the publish reset its delay.
+        failing[0] = True
+        projection.at -= projection.max_age + 1
+        assert projection.run(lambda: None) is True
+        await drain()
+        assert delays[-1] == 0.2, delays
+    finally:
+        await drain()
+
+
+@pytest.mark.asyncio
+async def test_outside_runs_share_one_backed_off_retry_timer(monkeypatch):
+    """TASK-38649 review 2: each failed read used to add its own retry chain.
+
+    Outside callers (the run poll, draft spend, context reads) start reads of
+    their own; their failures must replace the one pending retry, so no
+    chain outlives the burst that started it.
+    """
+    screen, _owner, _identity, tasks, _published = _screen(monkeypatch)
+    loop = asyncio.get_running_loop()
+    handles, fired, reads = [], [], []
+
+    def set_timer(delay, callback):
+        def fire():
+            fired.append(handle)
+            callback()
+
+        handle = loop.call_later(delay, fire)
+        handles.append(handle)
+        return SimpleNamespace(stop=handle.cancel)
+
+    def read():
+        reads.append(True)
+        raise RuntimeError("persistent refusal")
+
+    projection = spend.ConsoleReadinessConfigProjection(screen, read_current=read)
+    screen.set_timer = set_timer
+    screen._request_console_control_bar_sync = lambda **_: projection.run(lambda: None)
+    try:
+        for _ in range(10):  # an outside caller every 0.2 s for 2 s
+            projection.run(lambda: None)
+            await asyncio.sleep(0.2)
+        await asyncio.gather(*tasks, return_exceptions=True)
+        live = [h for h in handles if not h.cancelled() and h not in fired]
+        assert len(handles) > 1 and len(live) <= 1, (len(handles), len(live))
+    finally:
+        for handle in handles:
+            handle.cancel()
+        await asyncio.gather(*tasks, return_exceptions=True)
+
+
+@pytest.mark.asyncio
+async def test_a_retry_delivered_after_its_tick_keeps_the_newer_timer(monkeypatch):
+    """TASK-38649 review 3: Textual's set_timer delivers its callback through
+    call_next, a step after the tick. A failure inside that gap stores a newer
+    timer, and the late delivery must not orphan it into a second chain.
+    """
+    screen, _owner, _identity, tasks, _published = _screen(monkeypatch)
+    loop = asyncio.get_running_loop()
+    live, delivered, handles = set(), [], []
+
+    def set_timer(delay, callback):
+        token = object()
+        live.add(token)
+
+        def deliver():
+            delivered.append(token)
+            callback()
+
+        def tick():
+            live.discard(token)
+            handles.append(loop.call_later(0.3, deliver))  # call_next, later
+
+        handle = loop.call_later(delay, tick)
+        handles.append(handle)
+
+        def stop():
+            handle.cancel()
+            live.discard(token)
+
+        return SimpleNamespace(stop=stop)
+
+    def read():
+        raise RuntimeError("persistent refusal")
+
+    projection = spend.ConsoleReadinessConfigProjection(screen, read_current=read)
+    screen.set_timer = set_timer
+    screen._request_console_control_bar_sync = lambda **_: projection.run(lambda: None)
+    try:
+        assert projection.run(lambda: None) is False
+        await asyncio.gather(*tasks)  # the first failure stores a 0.2 s timer
+        # Back the next wait off far past the checks below (white-box).
+        projection._retry_delay = 1.0
+        async with asyncio.timeout(3):
+            while live:  # the 0.2 s timer ticks; its delivery waits 0.3 s
+                await asyncio.sleep(0.005)
+        projection.run(lambda: None)  # an outside read fails inside the gap
+        await asyncio.gather(*tasks)
+        assert not delivered and len(live) == 1, "the failure missed the gap"
+        async with asyncio.timeout(3):
+            while not delivered:
+                await asyncio.sleep(0.005)
+        await asyncio.gather(*tasks)  # the late retry's own read fails too
+        assert len(live) <= 1, len(live)
+    finally:
+        for handle in handles:
+            handle.cancel()
         await asyncio.gather(*tasks, return_exceptions=True)
 
 
