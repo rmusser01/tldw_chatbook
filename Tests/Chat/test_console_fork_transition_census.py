@@ -54,6 +54,10 @@ DIRECT_TRANSITION_ROUTES = frozenset(
         "persist_message_if_needed",
         "persist_selected_generation",
         "persist_session_if_needed",
+        # TASK-38702 (from #3346's prompt mix-ins): the durable-anchor writes
+        # (persisted/parent ids) run inside the assistant message's
+        # _generation_owner_scope, which publishes its session's fork marker.
+        "publish_prompt_mixin_attempt",
         "prepare_dispatch_recovery_message",
         "prepare_message_retry",
         "prepare_session_roleplay_projection_refresh",
@@ -739,6 +743,7 @@ def _transitioned(
     node: ast.FunctionDef | ast.AsyncFunctionDef,
     *,
     methods: dict[str, ast.FunctionDef | ast.AsyncFunctionDef] | None = None,
+    mutating: set[str] | None = None,
 ) -> bool:
     if _decorated(node):
         return True
@@ -763,7 +768,8 @@ def _transitioned(
                 effects.append((child.lineno, closure_owner))
 
     if methods is not None:
-        mutating = _fork_mutating_routes(methods)
+        if mutating is None:
+            mutating = _fork_mutating_routes(methods)
         bindings = _owner_bindings(node)
         for call in _self_call_records(node):
             assert isinstance(call.func, ast.Attribute)
@@ -1330,13 +1336,17 @@ def test_public_fork_transition_inventory_is_bidirectional() -> None:
     }
 
     assert actual_direct == DIRECT_TRANSITION_ROUTES
+    # One whole-store scan, not one per route (TASK-38702: 50 s -> under 1 s).
+    mutating = _fork_mutating_routes(methods)
     for route in DIRECT_TRANSITION_ROUTES - {"fork_source_transition"}:
-        assert _transitioned(methods[route], methods=methods), route
+        assert _transitioned(methods[route], methods=methods, mutating=mutating), route
     for route, owner in DELEGATED_TRANSITION_ROUTES.items():
         assert owner in _called_attributes(methods[route])
         assert not _mutation_events(methods[route]), route
         if route == "set_session_user_display_name_override_for_commit":
-            assert _transitioned(methods[owner], methods=methods), owner
+            assert _transitioned(methods[owner], methods=methods, mutating=mutating), (
+                owner
+            )
         assert "_fork_source_transition" in _called_attributes(methods[owner])
 
     detached = methods["persist_roleplay_projection_plan"]
