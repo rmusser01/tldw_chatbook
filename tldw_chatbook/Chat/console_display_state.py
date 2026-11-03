@@ -5,6 +5,7 @@ from __future__ import annotations
 import inspect
 import json
 import re
+import sys
 from dataclasses import dataclass, field, replace
 from html import escape as html_escape
 from pathlib import PurePath
@@ -12,7 +13,10 @@ from typing import TYPE_CHECKING, Any, Literal, Mapping, Optional, Sequence
 
 from rich.cells import cell_len
 
-from tldw_chatbook.Chat.citation_evidence_models import reference_can_deliver, EvidenceBundle
+from tldw_chatbook.Chat.citation_evidence_models import (
+    reference_can_deliver,
+    EvidenceBundle,
+)
 from tldw_chatbook.Chat.console_ephemeral import blocked_reason
 from tldw_chatbook.Chat.console_live_work import ConsoleLiveWorkLaunch
 from tldw_chatbook.Chat.console_library_policy import (
@@ -22,10 +26,6 @@ from tldw_chatbook.Chat.console_library_policy import (
 )
 from tldw_chatbook.Chat.console_project_instructions import (
     ProjectInstructionControlState,
-)
-from tldw_chatbook.Chat.console_rail_state import (
-    CONSOLE_ROW_EVIDENCE,
-    CONSOLE_ROW_PROVIDER,
 )
 from tldw_chatbook.Chat.provider_catalog import provider_display_name
 from tldw_chatbook.Chat.rag_scope import EffectiveScope, RagScope
@@ -76,13 +76,21 @@ _SOURCE_STATUS_CLASS_MAP = {
 }
 
 
-from . import console_memory_banner as _memory_banner
-
-CONSOLE_SUMMARY_BANNER_COPY = _memory_banner.CONSOLE_SUMMARY_BANNER_COPY
-ConsoleMemoryBannerPresentation = _memory_banner.ConsoleMemoryBannerPresentation
-derive_console_memory_banner_presentation = (
-    _memory_banner.derive_console_memory_banner_presentation
-)
+def __getattr__(name: str) -> Any:
+    """Resolve canonical presentation exports on their first rendering use."""
+    if name in ("CONSOLE_ROW_EVIDENCE", "CONSOLE_ROW_PROVIDER"):
+        from . import console_rail_state as owner
+    elif name in (
+        "CONSOLE_SUMMARY_BANNER_COPY",
+        "ConsoleMemoryBannerPresentation",
+        "derive_console_memory_banner_presentation",
+    ):
+        from . import console_memory_banner as owner
+    else:
+        raise AttributeError(name)
+    value = getattr(owner, name)
+    globals()[name] = value
+    return value
 
 
 def normalize_console_source_status(status: Any) -> str:
@@ -198,26 +206,10 @@ def _is_blocked_rag_status(value: Any) -> bool:
 
 
 def _tools_ready_text(effective_tool_count: int) -> str:
-    """Return the shared Tools copy for both the chip and the Inspector row.
+    """Render the shared Tools readiness label through its rail owner."""
+    from . import console_rail_state
 
-    TASK-1843: these two surfaces sit in the same panel and previously derived
-    their number independently, so one said "0 ready" while the other said
-    "12 ready". One function, one wording, both callers -- fixing it per-site
-    is exactly how it recurred after the first fix.
-
-    Args:
-        effective_tool_count: Built-in count plus MCP catalog size.
-
-    Returns:
-        "—" at zero -- a neutral placeholder, since this app never
-        distinguishes "definitely zero" from "not counted yet" (and "0
-        ready" reads as "no tools available" when built-ins are always
-        registered). TASK-2154.12 (TX-04): "not loaded" exposed a
-        lazy-loading implementation detail, so the chip now HIDES at zero
-        and this row-level dash is all the Inspector shows. Otherwise
-        "<n> ready".
-    """
-    return "—" if effective_tool_count == 0 else f"{effective_tool_count} ready"
+    return console_rail_state._tools_ready_text(effective_tool_count)
 
 
 def _mcp_inspector_row(
@@ -1053,7 +1045,9 @@ class ConsoleControlState:
         # ("not loaded") no longer renders at all.
         if selected_tool_count is not None:
             effective_tool_count = selected_tool_count
-            tool_text = f"{effective_tool_count} offered" if effective_tool_count else "—"
+            tool_text = (
+                f"{effective_tool_count} offered" if effective_tool_count else "—"
+            )
         elif tools_estimate and effective_tool_count:
             tool_text = f"{effective_tool_count} available"
         else:
@@ -1950,7 +1944,8 @@ class ConsoleInspectorState:
                 # Approval has priority over questions and confirmations.
                 "Waiting for your approval"
                 if normalized_approval_count > 0
-                else _clean(pending_interrupt_copy, "") or (
+                else _clean(pending_interrupt_copy, "")
+                or (
                     "Generating…"
                     if run_active
                     else _clean(live_work_title, "No active work")
@@ -1961,7 +1956,7 @@ class ConsoleInspectorState:
                 provider_status,
                 status=provider_status,
                 recovery=_clean(provider_recovery, "") if not provider_ready else "",
-                code=CONSOLE_ROW_PROVIDER,
+                code=sys.modules[__name__].CONSOLE_ROW_PROVIDER,
             ),
             # TASK-24610: "Retrieval", not "Sources". This row reports whether
             # RETRIEVAL has anything to read; the tray heading, the pinned
@@ -2000,7 +1995,7 @@ class ConsoleInspectorState:
                     _clean(evidence_summary, ""),
                     status=_clean(evidence_status, "ready"),
                     recovery=_clean(evidence_recovery, ""),
-                    code=CONSOLE_ROW_EVIDENCE,
+                    code=sys.modules[__name__].CONSOLE_ROW_EVIDENCE,
                 )
             )
         if _clean(evidence_authority, ""):
