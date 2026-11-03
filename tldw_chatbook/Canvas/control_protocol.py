@@ -25,8 +25,10 @@ from uuid import uuid4
 from .limits import CanvasLimits, validate_opaque_identifier
 
 if TYPE_CHECKING:
-    from tldw_chatbook.Chat.console_remote_models import ConsoleHostIdentity
-    from tldw_chatbook.Web_Server.served_console_events import ConsoleEventBuffer
+    from tldw_chatbook.Chat.console_remote_models import (
+        ConsoleEventBuffer,
+        ConsoleHostIdentity,
+    )
 
 CONTROL_PROTOCOL_VERSION = 3
 # A generated download may carry 10 MiB of decoded bytes as a base64 data URL.
@@ -588,7 +590,7 @@ class CanvasControlBroker:
 
     def issue_child(self, child_id: str) -> ChildControlLaunch:
         """Mint a fresh launch secret, revoking any earlier incarnation."""
-        from tldw_chatbook.Web_Server.served_console_events import ConsoleEventBuffer
+        from tldw_chatbook.Chat.console_remote_models import ConsoleEventBuffer
 
         _identifier(child_id, "child_id")
         if self._server is None or self._port is None:

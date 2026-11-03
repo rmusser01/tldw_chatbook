@@ -20,7 +20,8 @@ Qualification keeps native identity and operation verdicts fresh on every call. 
 | Credentials & copies | `credentials.py`, `rollback_credentials.py`, `recovery_copies.py` | credential-aware staged copies, `--acknowledge-credential-issue`, retained rollback copies |
 | Post-restore gating | `activation.py`, `recovered_media*.py` | `execution_allowed` per-owner review gating (imported by app.py), recovered-media review (keep/delete) |
 | Profiles | `profile_catalog.py`, `profile_open.py`, `profile_paths.py` | restored-profile locators, open/acknowledge, effective path resolution |
-| Schema catalogs | `DB/recovery_core_schema.py`, `recovery_core.py`, `recovery_operations.py` | exact installed `sqlite_schema` SQL per core DB (validation compares actual schemas, not version labels); per-owner adapters; ~20 subsystem `recovery.py` modules feed inventory |
+| Schema catalogs | `DB/recovery_core_schema.py`, `DB/recovery_operations.py`, `DB/recovery_goal_schema.py` | exact installed catalogs and migration SQL remain DB-owned |
+| SQLite recovery adapters | `Backup_Recovery/core_adapters.py`, `sqlite_adapters.py`, `sqlite_validation.py` | installed discovery/capture/restore coordination and bounded semantic validation; old DB entry points retain compatibility without changing physical SQLite roles |
 | UI | `UI/Screens/backup_restore_screen.py` (+state), `app_lifecycle.py` | the in-app Backup & Restore screen; `action_backup_restore` entry (Settings Storage + Overview); `request_recovery_restart` guarded quit → CLI restart |
 | Legacy helpers | `Backup_Recovery/settings_backup_helpers.py` | the retired settings-backup UI's surviving contracts (named-DB manifest publication, character-card serialization) kept for tests/TTS-profile backup |
 
@@ -128,6 +129,12 @@ remain authoritative.
 
 ## Legacy mobile history preview (ADR-244)
 
+`profile_paths.preflight_selected_console_stores` owns full-cohort selection and
+read-only compatibility checks. The config entry point reads one atomic snapshot
+and passes its values plus explicit owner overrides. The selector retains the
+native chat/workspace/run pairing, including the string-only `:memory:` exception;
+it does not load configuration, create owners or migrate stores.
+
 `mobile_consolidation.py` observes the three exact legacy files under
 `profile_paths.user_data_dir(config) / "mobile"`, independently of canonical DB
 overrides. The service and `consolidate-mobile --preview` CLI return immutable
@@ -194,8 +201,10 @@ prewrite refusals; importing historical references does not renew live file,
 agent, trigger, binding, indexing or review authority. Native validators and the
 exact versioned table/ordered-column/default catalog remain authoritative.
 
-`DB/mobile_preview_lineage.py` rejects known incompatible unmerged preview
-markers before any of the three selected native owners initializes. Startup uses
+`profile_paths.py` owns the complete profile-preview metadata classifier and
+cohort coordinator; `DB/mobile_preview_lineage.py` retains direct canonical
+compatibility exports. The classifier rejects known incompatible unmerged
+preview markers before any of the three selected native owners initializes. Startup uses
 the same authoritative path snapshot as native initialization, including explicit
 path overrides; each direct constructor repeats the guard on its actual path.
 The fixed owner reads use admitted, must-exist, nonimmutable read-only SQLite
@@ -614,10 +623,14 @@ The same authenticated reader exposes a no-argument `schema_catalog()` that
 batches immutable purpose/family/table/column metadata, with complete scope and
 retained-object checks around the operation. Its native cancellation, step,
 deadline, catalog and custody limits remain unchanged.
-`mobile_plan_manifest.py` assigns every exact installed table and column a fixed
-handler/disposition; populated unsupported obligations and required pending
-handlers refuse completion. The 230 literal table specifications cover the union
-of the admitted versions, rather than an assumed count for every partition.
+`DB/mobile_import_authority.py` owns the 239 literal table specifications and
+fixed typed identity/composite declarations for the installed schemas.
+`mobile_plan_manifest.py` assigns every exact installed table and column its
+fixed handler/disposition from that catalog; populated unsupported obligations
+and required pending handlers refuse completion. The descriptors cover the union
+of admitted versions, rather than an assumed table count for every partition.
+The high planning modules retain direct canonical aliases to the same catalog;
+actual planning, native reads and custody remain in their existing owners.
 
 `identity_plan()` reserves immutable typed identities across the actual captured
 Chat, Workspace and AgentRuns members. Unused genuine IDs survive; collisions
@@ -888,8 +901,12 @@ Citation SQL no-fingerprint-history is only an inert-context disposition: it pro
 neither credential UNUSED nor backend coverage, key readability, namespace adoption
 or permissions. Populated unproved citation composites retain exact blockers.
 
-`console_trace_read_budget.py` supplies one private nonrenewable 16 MiB allowance
-across the captured source and canonical trace input/proof/materialization operation.
+`Backup_Recovery/models.py` owns the fixed materialization value state, paired
+counters and their single weak registry. `console_trace_read_budget.py` retains
+direct canonical compatibility exports and its fixed cutover/require wrappers.
+The private nonrenewable 16 MiB allowance spans the captured source and canonical
+trace input/proof/materialization operation; these value objects confer no
+session, path, admission or custody authority.
 The same object passes through the actual native read-used codecs, semantic projection,
 redaction, legacy and reconstruction paths. Reservations precede decoding, cloning,
 base64 and repeated-reference expansion; exhaustion is a distinct body-free exception
@@ -1018,6 +1035,11 @@ mapped Goal; arbitrary opaque launch/submission strings are not parsed as IDs.
 path representations, internal canonical/report serialization (including nested
 reports), and caller clones/encoding before native validation or serialization.
 Native models remain the acceptance and output authority.
+`Backup_Recovery/models.py` owns the passive `_OperationalHistory` value and pure
+JSON-width/reservation accounting. Their original high modules retain direct
+canonical exports and their existing caller/codec patch ports. Goal-specific
+shape/default/path/native validation and all actual serialization stay in their
+original owners; the DB history reader consumes the shared value definitions.
 
 Source runtime-owner and command-receipt rows are retained separately as original
 operational history. The canonical singleton is unchanged. Original command
@@ -1128,7 +1150,7 @@ advertising filters, imported checkpoint quarantine with explicit Discard only,
 Fleet/delivery exclusion, Goal and chain mutation holds, local Goal payload privacy,
 and ordinary RunLog access through receipt-bound native roots/members and original-ID
 filtering (see `Backup_Recovery/mobile_native_operation.py`,
-`DB/mobile_consolidation_receipts.py`, `DB/mobile_imported_run_log.py` and
+`DB/mobile_consolidation_receipts.py`, `Backup_Recovery/mobile_imported_run_log.py` and
 `DB/mobile_imported_goal_privacy.py`).
 
 A standalone Workspace fault check before R130 exited after its actual transaction
@@ -1220,7 +1242,7 @@ Task11 records connected served qualification separately; physical phone/VPN
 operation remains unverified.
 
 Native-owner FIX1 retains every actual runtime directory iterator on
-`mobile_imported_run_log._PinnedHistory` before enumeration. Iterator retirement
+`Backup_Recovery.mobile_imported_run_log._PinnedHistory` before enumeration. Iterator retirement
 precedes descriptor and lease retirement. An uncertain close strongly retains the
 iterator, pins and native file leases in quarantine, without retry or a GC-based
 release. Healthy and exhausted iterators retire normally.

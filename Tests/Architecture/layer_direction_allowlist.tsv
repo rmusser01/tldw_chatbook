@@ -75,6 +75,7 @@ tldw_chatbook.DB.character_conversation_search	tldw_chatbook.Character_Chat.char
 tldw_chatbook.DB.fleet_progress_repository	tldw_chatbook.Agents.fleet_messages	top
 tldw_chatbook.DB.fleet_progress_repository	tldw_chatbook.Backup_Recovery.participants	top
 tldw_chatbook.DB.goal_runs	tldw_chatbook.Agents.goal_iteration	lazy
+tldw_chatbook.DB.mobile_preview_lineage	tldw_chatbook.Backup_Recovery.profile_paths	top
 tldw_chatbook.DB.portrait_region_settings	tldw_chatbook.Character_Chat.portrait_compositing	top
 tldw_chatbook.DB.portrait_region_settings	tldw_chatbook.Character_Chat.portrait_performance	lazy
 tldw_chatbook.DB.portrait_region_settings	tldw_chatbook.Character_Chat.portrait_performance	top
@@ -89,17 +90,9 @@ tldw_chatbook.DB.private_sqlite	tldw_chatbook.TTS.profile_migration_journal	lazy
 tldw_chatbook.DB.private_sqlite	tldw_chatbook.TTS.profile_migration_namespace	lazy
 tldw_chatbook.DB.private_sqlite_helper	tldw_chatbook.TTS.profile_errors	lazy
 tldw_chatbook.DB.private_sqlite_helper	tldw_chatbook.TTS.profile_sqlite_proof	lazy
-tldw_chatbook.DB.recovery_core	tldw_chatbook.Backup_Recovery.admission	lazy
-tldw_chatbook.DB.recovery_core	tldw_chatbook.Backup_Recovery.profile_paths	top
-tldw_chatbook.DB.recovery_core	tldw_chatbook.Backup_Recovery.sqlite_validation	lazy
-tldw_chatbook.DB.recovery_core	tldw_chatbook.Notes.recovery	lazy
-tldw_chatbook.DB.recovery_core	tldw_chatbook.Video_Generation.video_metadata	lazy
-tldw_chatbook.DB.recovery_operations	tldw_chatbook.Backup_Recovery.file_inventory	lazy
-tldw_chatbook.DB.recovery_operations	tldw_chatbook.Backup_Recovery.profile_paths	lazy
-tldw_chatbook.DB.recovery_operations	tldw_chatbook.Backup_Recovery.profile_paths	top
-tldw_chatbook.DB.recovery_operations	tldw_chatbook.Backup_Recovery.recovery_files	lazy
-tldw_chatbook.DB.recovery_operations	tldw_chatbook.Backup_Recovery.sqlite_validation	lazy
-tldw_chatbook.DB.recovery_operations	tldw_chatbook.Backup_Recovery.storage_admission	lazy
+tldw_chatbook.DB.recovery_core	tldw_chatbook.Backup_Recovery.core_adapters	top
+tldw_chatbook.DB.recovery_goal_schema	tldw_chatbook.Backup_Recovery.sqlite_validation	lazy
+tldw_chatbook.DB.recovery_operations	tldw_chatbook.Backup_Recovery.sqlite_adapters	lazy
 tldw_chatbook.DB.recovery_response_rules	tldw_chatbook.Backup_Recovery.sqlite_validation	lazy
 tldw_chatbook.DB.recovery_sqlite	tldw_chatbook.Backup_Recovery.admission	lazy
 tldw_chatbook.DB.recovery_sqlite	tldw_chatbook.Backup_Recovery.sqlite_validation	lazy
@@ -125,7 +118,7 @@ tldw_chatbook.Third_Party.textual_fspicker.base_dialog	tldw_chatbook.Widgets.enh
 tldw_chatbook.Third_Party.textual_fspicker.base_dialog	tldw_chatbook.Widgets.modal_dismissal	top
 tldw_chatbook.Third_Party.textual_fspicker.parts.progressive_directory_navigation	tldw_chatbook.Notes.note_import_discovery	lazy
 tldw_chatbook.Utils.Splash_Screens	tldw_chatbook.UI.Splash_Screens	top
-tldw_chatbook.Utils.custom_tokenizers	tldw_chatbook.Backup_Recovery.storage_admission	top
+tldw_chatbook.Utils.custom_tokenizers	tldw_chatbook.Chat.custom_tokenizers	top
 tldw_chatbook.Utils.db_status_manager	tldw_chatbook.Backup_Recovery.bootstrap	lazy
 tldw_chatbook.Utils.db_upgrade_notice	tldw_chatbook.DB.ChaChaNotes_DB	lazy
 tldw_chatbook.Utils.db_upgrade_notice	tldw_chatbook.DB.private_sqlite	top

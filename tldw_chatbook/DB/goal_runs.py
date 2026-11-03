@@ -604,7 +604,7 @@ class GoalRunsStore:
 
     def remove_payloads(self, goal_id: str) -> GoalSnapshot:
         """Remove settled private bodies only; retain non-resumable accounting identity."""
-        from tldw_chatbook.Chat.console_trace_read_budget import _TraceReadBudget
+        from tldw_chatbook.Backup_Recovery.models import _TraceReadBudget
 
         from .mobile_imported_goal_privacy import (
             _goal_for_privacy,

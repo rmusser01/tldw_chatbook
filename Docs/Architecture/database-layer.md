@@ -196,6 +196,10 @@ mapping_json, committed_at)` with primary key `(operation_id, batch_key)`.
 AgentRuns and Workspace also own `mobile_import_authority_holds`, keyed by
 `(authority_kind, authority_id)` with an operation identity and nullable
 `reviewed_at`. These schemas provide native storage; they do not perform imports.
+`DB/mobile_import_authority.py` also owns the fixed installed table/column and
+typed identity/composite catalog consumed by historical receipt decoding. The
+higher recovery planners import those exact canonical values; planning, native
+read scopes and capture custody remain outside this DB catalog.
 
 `AgentRunsDB.hold_imported_authority(cursor, operation_id, authorities)` borrows
 its active owner transaction, so imported rows, holds and batch evidence can
@@ -306,9 +310,10 @@ remains native. Source workspace binding witnesses, including tombstones, retain
 their mapped revisions and import holds. Workspace8 uses the native revision1
 insertion witness with explicit provenance, never a fabricated source row.
 
-`DB/mobile_preview_lineage.py` coordinates metadata-only checks of the actual
-atomic-selected owner paths before the first constructor; each constructor repeats
-its actual-path guard. Known colliding unmerged mobile previews refuse with retained
+`Backup_Recovery/profile_paths.py` owns metadata-only classification and cohort
+checks of the actual atomic-selected owner paths. `DB/mobile_preview_lineage.py`
+is the canonical compatibility shim. Each native DB constructor repeats its
+actual-path guard and retains its own admitted connection and physical close. Known colliding unmerged mobile previews refuse with retained
 copy/matching-build guidance. These are refusal checks, never schema acceptance.
 Core and Runs reuse native read roles; Workspace owns `db.workspaces.preflight`.
 All opens are must-exist, nonimmutable, admitted read-only connections with finite

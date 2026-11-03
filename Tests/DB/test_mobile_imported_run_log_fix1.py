@@ -46,7 +46,7 @@ def test_runtime_iterator_custody(tmp_path, monkeypatch, mode):
             pass
         return
     from Tests import network_guard, real_profile_guard
-    from tldw_chatbook.DB import mobile_imported_run_log as runtime
+    from tldw_chatbook.Backup_Recovery import mobile_imported_run_log as runtime
 
     reached = {}
     census, scandir = runtime._PinnedHistory._census, runtime.os.scandir
@@ -92,11 +92,11 @@ def test_runtime_iterator_custody(tmp_path, monkeypatch, mode):
         with monkeypatch.context() as fault:
             fault.setattr(runtime._PinnedHistory, "_census", inspect_census)
             if mode == "exhausted":
-                page = db.read_imported_run_log_page(child, operation, source)
+                page = runtime.read_imported_run_log_page(db, child, operation, source)
                 assert [part.record.run_id for part in page.slices] == ["old-child"]
             else:
                 with pytest.raises((OSError, ValueError)):
-                    db.read_imported_run_log_page(child, operation, source)
+                    runtime.read_imported_run_log_page(db, child, operation, source)
         pins, iterator = reached["pins"], reached["iterator"]
         assert iterator.close_calls == 1
         if mode == "failed_close":

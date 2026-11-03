@@ -7,9 +7,9 @@ import json
 import sqlite3
 import struct
 
-from tldw_chatbook.Backup_Recovery.mobile_identity_plan import _COMPOSITES, _DOMAINS
-from tldw_chatbook.Backup_Recovery.mobile_plan_manifest import _TABLES
-from tldw_chatbook.Chat.console_trace_read_budget import _TraceReadBudget
+from tldw_chatbook.Backup_Recovery.models import _TraceReadBudget
+
+from .mobile_import_authority import _COMPOSITES, _DOMAINS, _TABLES
 
 _OWNERS = {
     "chat": "db.chachanotes.primary",
@@ -810,29 +810,6 @@ def _row_digest(table, values, budget):
     ):
         _invalid()
     return _digest_row_values(table, values, spec.columns, budget)
-
-
-def _source_row_digest(reads, table, values, budget):
-    """Fingerprint an original row only under its live authenticated catalog."""
-    from tldw_chatbook.Backup_Recovery.mobile_captured_sqlite import (
-        _native_columns_match,
-        _verify_candidate,
-    )
-
-    spec = _SPECS[table]
-    columns = tuple(values)
-    # Receipt construction retains its original per-row live-reader proof.
-    reads.check()
-    version = next(v for p, f, v in reads.versions if (p, f) == ("legacy", spec.family))
-    matches = _native_columns_match(
-        "legacy", spec.family, table, columns, spec.columns, version
-    )
-    _, restrictions, _, candidate, digest = reads._connections["legacy", spec.family]
-    _verify_candidate(reads, restrictions, candidate, digest)
-    reads.check()
-    if not matches:
-        _invalid()
-    return _digest_row_values(table, values, columns, budget)
 
 
 def _digest_row_values(table, values, columns, budget):

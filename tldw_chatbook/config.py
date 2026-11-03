@@ -8450,25 +8450,10 @@ def preflight_selected_console_stores(
     workspace_path: str | Path | None = None,
 ) -> None:
     """Check one authoritative selection, retaining explicit native owner paths."""
-    from tldw_chatbook.Backup_Recovery.profile_paths import canonical_console_paths
-    from tldw_chatbook.DB.mobile_preview_lineage import (
-        reject_incompatible_console_stores,
-    )
-
     snapshot = get_atomic_config_snapshot()
-    selected_chat, selected_workspace, selected_runs = canonical_console_paths(
-        snapshot.values
+    profile_paths.preflight_selected_console_stores(
+        snapshot.values, chat_path=chat_path, workspace_path=workspace_path
     )
-    if chat_path is not None:
-        selected_chat = chat_path
-        selected_runs = (
-            ":memory:"
-            if isinstance(chat_path, str) and chat_path == ":memory:"
-            else Path(chat_path).parent / "agent_runs.db"
-        )
-    if workspace_path is not None:
-        selected_workspace = workspace_path
-    reject_incompatible_console_stores(selected_chat, selected_workspace, selected_runs)
 
 
 # --- Database Initialization Function (remains largely the same) ---

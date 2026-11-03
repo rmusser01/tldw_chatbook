@@ -89,7 +89,7 @@ _SQLITE_OWNER_POLICIES = {
         "Fresh disposable credential reconstruction from installed schema and parameterized rows.",
     ),
     "recovery.validation": SQLiteOwnerPolicy(
-        "tldw_chatbook/DB/private_sqlite",
+        "tldw_chatbook/Backup_Recovery/sqlite_validation",
         _PRIVATE_AND_READ_ONLY,
         "Restricted disposable imported candidate, never a live repository open.",
     ),
@@ -212,19 +212,22 @@ _SQLITE_OWNER_POLICIES = {
         recovery_capture_allowed=True,
     ),
     "recovery.operations.workspaces": SQLiteOwnerPolicy(
-        "tldw_chatbook/DB/recovery_operations", _PRIVATE_AND_READ_ONLY,
+        "tldw_chatbook/Backup_Recovery/sqlite_adapters",
+        _PRIVATE_AND_READ_ONLY,
         "Installed operational history snapshot; imported claims remain inactive.",
         centralized_backup_allowed=True, preserve_read_only_source_mode=True,
         recovery_capture_allowed=True,
     ),
     "recovery.operations.agent_runs": SQLiteOwnerPolicy(
-        "tldw_chatbook/DB/recovery_operations", _PRIVATE_AND_READ_ONLY,
+        "tldw_chatbook/Backup_Recovery/sqlite_adapters",
+        _PRIVATE_AND_READ_ONLY,
         "Installed operational history snapshot; imported claims remain inactive.",
         centralized_backup_allowed=True, preserve_read_only_source_mode=True,
         recovery_capture_allowed=True,
     ),
     "recovery.operations.subscriptions": SQLiteOwnerPolicy(
-        "tldw_chatbook/DB/recovery_operations", _PRIVATE_AND_READ_ONLY,
+        "tldw_chatbook/Backup_Recovery/sqlite_adapters",
+        _PRIVATE_AND_READ_ONLY,
         "Installed operational history snapshot; imported claims remain inactive.",
         centralized_backup_allowed=True, preserve_read_only_source_mode=True,
         recovery_capture_allowed=True,
@@ -305,31 +308,36 @@ _SQLITE_OWNER_POLICIES = {
         recovery_capture_allowed=True,
     ),
     "recovery.core.chachanotes": SQLiteOwnerPolicy(
-        "tldw_chatbook/DB/recovery_core", _PRIVATE_AND_READ_ONLY,
+        "tldw_chatbook/Backup_Recovery/core_adapters",
+        _PRIVATE_AND_READ_ONLY,
         "Native-held complete recovery snapshot; selective export policy unchanged.",
         centralized_backup_allowed=True, preserve_read_only_source_mode=True,
         recovery_capture_allowed=True,
     ),
     "recovery.core.media": SQLiteOwnerPolicy(
-        "tldw_chatbook/DB/recovery_core", _PRIVATE_AND_READ_ONLY,
+        "tldw_chatbook/Backup_Recovery/core_adapters",
+        _PRIVATE_AND_READ_ONLY,
         "Native-held complete recovery snapshot; selective export policy unchanged.",
         centralized_backup_allowed=True, preserve_read_only_source_mode=True,
         recovery_capture_allowed=True,
     ),
     "recovery.core.prompts": SQLiteOwnerPolicy(
-        "tldw_chatbook/DB/recovery_core", _PRIVATE_AND_READ_ONLY,
+        "tldw_chatbook/Backup_Recovery/core_adapters",
+        _PRIVATE_AND_READ_ONLY,
         "Native-held complete recovery snapshot; selective export policy unchanged.",
         centralized_backup_allowed=True, preserve_read_only_source_mode=True,
         recovery_capture_allowed=True,
     ),
     "recovery.core.library_collections": SQLiteOwnerPolicy(
-        "tldw_chatbook/DB/recovery_core", _PRIVATE_AND_READ_ONLY,
+        "tldw_chatbook/Backup_Recovery/core_adapters",
+        _PRIVATE_AND_READ_ONLY,
         "Native-held complete recovery snapshot; selective export policy unchanged.",
         centralized_backup_allowed=True, preserve_read_only_source_mode=True,
         recovery_capture_allowed=True,
     ),
     "recovery.core.library_ingest_jobs": SQLiteOwnerPolicy(
-        "tldw_chatbook/DB/recovery_core", _PRIVATE_AND_READ_ONLY,
+        "tldw_chatbook/Backup_Recovery/core_adapters",
+        _PRIVATE_AND_READ_ONLY,
         "Native-held complete recovery snapshot; selective export policy unchanged.",
         centralized_backup_allowed=True, preserve_read_only_source_mode=True,
         recovery_capture_allowed=True,
@@ -1927,52 +1935,18 @@ def open_recovery_validation(
     the connection so catalog inspection and later checks share one deadline.
     """
     from tldw_chatbook.Backup_Recovery.sqlite_validation import (
-        _installed_owner,
-        _recovery_restriction_scope,
-        _restrict_connection,
+        _open_recovery_validation,
     )
 
-    _installed_owner(owner_id)
-    with contextlib.ExitStack() as resources:
-        if _custody is None:
-            connection = resources.enter_context(
-                contextlib.closing(
-                    _connect_registered_sqlite(
-                        "recovery.validation",
-                        candidate,
-                        read_only=not writable,
-                        must_exist=True,
-                        immutable=not writable,
-                        isolation_level=None,
-                        cached_statements=0,
-                        timeout=0,
-                    )
-                )
-            )
-        else:
-            if writable:
-                raise ValueError("captured_validation_is_read_only")
-            from tldw_chatbook.Backup_Recovery.archive_reader import _regular
-            from tldw_chatbook.Backup_Recovery.storage_admission import _CaptureLease
-
-            stream = resources.enter_context(_regular(candidate, _custody=_custody))
-            lease = _CaptureLease(_custody.scope)
-            lease.descriptor_outcome = _SQLiteDescriptorOutcome()
-            resources.callback(lease.retire)
-            connection = connect_private_sqlite_descriptor(
-                "recovery.validation",
-                stream.fileno(),
-                _native_outcome=lease.descriptor_outcome,
-                isolation_level=None,
-                cached_statements=0,
-                timeout=0,
-            )
-            lease.attach(connection)
-        restrictions = _restrict_connection(connection, cancel)
-        restrictions.capture_scope = None if _custody is None else _custody.scope
-        restrictions.capture_stream = None if _custody is None else stream
-        with _recovery_restriction_scope(connection, restrictions):
-            yield (connection, restrictions) if with_restrictions else connection
+    with _open_recovery_validation(
+        owner_id,
+        candidate,
+        writable=writable,
+        with_restrictions=with_restrictions,
+        cancel=cancel,
+        _custody=_custody,
+    ) as opened:
+        yield opened
 
 
 _ORIGINAL_DESCRIPTOR_CONNECTOR = _connect_registered_sqlite

@@ -20,53 +20,11 @@ def _validate_sqlite(
     *,
     version_query: str = "PRAGMA user_version",
 ) -> tuple[str, ...]:
-    from tldw_chatbook.Backup_Recovery.mobile_preview_budget import (
-        current,
-        integrity_cost,
-        matching_schemas,
-        scalar_cost,
-    )
     from tldw_chatbook.Backup_Recovery.sqlite_validation import (
-        _canvas_payload_issues,
-        _canvas_schema_access,
-        _catalog,
-        _current_restrictions,
-        _restrict_connection,
+        _validate_sqlite as validate,
     )
 
-    restrictions = _current_restrictions(connection)
-    if any(
-        "canvas_revision_payload_valid" in sql
-        for _, schema in schemas
-        for sql in schema
-    ):
-        if restrictions is None:
-            restrictions = _restrict_connection(connection)
-    else:
-        connection.execute("PRAGMA trusted_schema=OFF")
-    if current() is not None:
-        matches = matching_schemas(connection, schemas)
-        matched = tuple(row[0] for row in matches)
-        actual = matches[0][1] if matches else ()
-    else:
-        actual = tuple(row[3] for row in _catalog(connection) if row[3] is not None)
-        matched = tuple(known for known, schema in schemas if actual == schema)
-    if not matched:
-        return ("unsupported_schema",)
-    scalar_cost(connection)
-    version = connection.execute(version_query).fetchone()[0]
-    if version not in versions or version not in matched:
-        return ("unsupported_schema_version",)
-    with _canvas_schema_access(connection, actual, restrictions):
-        integrity_cost(connection)
-        if connection.execute("PRAGMA foreign_key_check").fetchone() is not None:
-            return ("invalid_domain_reference",)
-        payload_issues = _canvas_payload_issues(connection, restrictions)
-        if payload_issues:
-            return payload_issues
-        if connection.execute("PRAGMA quick_check").fetchall() != [("ok",)]:
-            return ("invalid_sqlite_integrity",)
-        return ()
+    return validate(connection, versions, schemas, version_query=version_query)
 
 
 @contextmanager

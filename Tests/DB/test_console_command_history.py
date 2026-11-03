@@ -573,3 +573,77 @@ def test_passive_history_source_count_has_no_live_4096_quota(database):
             break
     assert seen == count
     assert database.command_receipts.list_unresolved().items == ()
+
+
+def test_passive_history_and_json_helpers_keep_canonical_model_identity():
+    from dataclasses import FrozenInstanceError
+    from typing import get_type_hints
+
+    from tldw_chatbook.Backup_Recovery import (
+        mobile_runs_goal_budget,
+        mobile_runs_preflight,
+        models,
+    )
+
+    assert mobile_runs_preflight._OperationalHistory is models._OperationalHistory
+    assert mobile_runs_goal_budget._json_width is models._json_width
+    assert mobile_runs_goal_budget._serialization is models._serialization
+    assert models._serialization.__globals__ is vars(models)
+    assert mobile_runs_goal_budget._goal_json.__globals__ is vars(
+        mobile_runs_goal_budget
+    )
+    assert get_type_hints(models._OperationalHistory) == {
+        "table": str,
+        "original": tuple,
+        "values": tuple,
+        "associations": tuple,
+    }
+    assert not models._OperationalHistory.__dataclass_fields__["values"].repr
+    value = models._OperationalHistory("history", ("original",), (("body", "PRIVATE"),))
+    assert "PRIVATE" not in repr(value) and value.associations == ()
+    with pytest.raises(FrozenInstanceError):
+        value.table = "changed"
+
+
+def test_passive_history_model_rejects_identical_foreign_record_type(database):
+    from types import SimpleNamespace
+
+    from tldw_chatbook.Backup_Recovery import models
+    from tldw_chatbook.DB.console_command_history import _prepare_command_history
+
+    native = historical(database)
+    prepared = _prepare_command_history(
+        OPERATION, SOURCE, (native,), models._TraceReadBudget()
+    )
+    assert len(prepared) == 2
+    lookalike = SimpleNamespace(
+        table=native.table,
+        original=native.original,
+        values=native.values,
+        associations=native.associations,
+    )
+    with pytest.raises(ValueError, match="^command_history_native_input_required$"):
+        _prepare_command_history(
+            OPERATION, SOURCE, (lookalike,), models._TraceReadBudget()
+        )
+
+
+def test_command_history_admits_model_serialization_before_native_json(monkeypatch):
+    from tldw_chatbook.Backup_Recovery import models
+    from tldw_chatbook.DB import console_command_history
+
+    value = {"body": 'native\\"\x00\x7f😀'}
+    budget = models._TraceReadBudget()
+    before = budget._remaining
+    observations = []
+    codec = console_command_history.json.dumps
+
+    def encode(value, **kwargs):
+        raw = codec(value, **kwargs)
+        observations.append((before - budget._remaining, len(raw)))
+        return raw
+
+    monkeypatch.setattr(console_command_history.json, "dumps", encode)
+    raw = console_command_history._encoded(value, budget)
+    assert observations == [(before - budget._remaining, len(raw))]
+    assert observations[0][0] >= 64 + 4 * len(raw)

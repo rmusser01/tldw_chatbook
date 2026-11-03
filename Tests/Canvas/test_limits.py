@@ -514,3 +514,119 @@ def test_generated_download_enforces_decoded_bytes_not_base64_text_size() -> Non
             },
             limits=CanvasLimits(download_payload_bytes=3),
         )
+
+
+def test_shared_text_validation_keeps_canvas_aliases_and_annotation_modes():
+    from typing import get_type_hints
+
+    from tldw_chatbook import Canvas
+    from tldw_chatbook.Canvas import limits
+    from tldw_chatbook.Utils import text
+
+    assert Canvas.CanvasLimitError is limits.CanvasLimitError is text.CanvasLimitError
+    assert limits.MAX_WIRE_INTEGER is text.MAX_WIRE_INTEGER
+    for name in (
+        "_validate_non_negative_integer",
+        "utf8_byte_length",
+        "validate_utf8_text",
+        "validate_opaque_identifier",
+    ):
+        assert getattr(limits, name) is getattr(text, name)
+    assert text.slugify.__annotations__ == {"text": str, "return": str}
+    assert text.validate_opaque_identifier.__annotations__ == {
+        "identifier": "str",
+        "field_name": "str",
+        "return": "str",
+    }
+    assert get_type_hints(text.validate_opaque_identifier) == {
+        "identifier": str,
+        "field_name": str,
+        "return": str,
+    }
+    assert issubclass(limits.UnsupportedCanvasRuntimeProfile, text.CanvasLimitError)
+
+
+@pytest.mark.parametrize("identifier", [" ", "\x00", "é" * 128])
+def test_shared_opaque_identifier_preserves_exact_nonempty_text(identifier):
+    from tldw_chatbook.Canvas import limits
+    from tldw_chatbook.Utils import text
+
+    assert text.validate_opaque_identifier(identifier) is identifier
+    assert limits.validate_opaque_identifier(identifier) is identifier
+    assert text.utf8_byte_length(identifier) <= 256
+
+
+def test_shared_opaque_identifier_preserves_str_subclass_encoding_and_identity():
+    from tldw_chatbook.Utils import text
+
+    calls = []
+
+    class IssuedIdentifier(str):
+        def encode(self, encoding="utf-8", errors="strict"):
+            calls.append((encoding, errors))
+            return super().encode(encoding, errors)
+
+    identifier = IssuedIdentifier("issued-identity")
+    assert text.validate_opaque_identifier(identifier) is identifier
+    assert calls == [("utf-8", "strict")]
+
+
+@pytest.mark.parametrize("identifier", [None, b"id", 1, True, [], ""])
+def test_shared_opaque_identifier_rejects_without_coercion(identifier):
+    from tldw_chatbook.Canvas import limits
+    from tldw_chatbook.Utils import text
+
+    with pytest.raises(limits.CanvasLimitError) as failure:
+        text.validate_opaque_identifier(identifier, field_name="run")
+    assert str(failure.value) == "run must be a non-empty string"
+    assert failure.value.__cause__ is None
+
+
+def test_shared_opaque_identifier_preserves_byte_limit_unicode_cause_and_order():
+    from tldw_chatbook.Canvas import limits
+    from tldw_chatbook.Utils import text
+
+    with pytest.raises(limits.CanvasLimitError) as oversized:
+        text.validate_opaque_identifier("é" * 128 + "a", field_name="run")
+    assert str(oversized.value) == "run exceeds 256 UTF-8 bytes"
+    assert oversized.value.__cause__ is None
+    for operation in (
+        lambda: text.validate_opaque_identifier("\ud800"),
+        lambda: text.validate_utf8_text("\ud800", limit=True, field_name="run"),
+    ):
+        with pytest.raises(limits.CanvasLimitError) as malformed:
+            operation()
+        assert str(malformed.value) == "value must contain valid Unicode"
+        assert isinstance(malformed.value.__cause__, UnicodeEncodeError)
+
+
+def test_remaining_canvas_functions_keep_their_existing_global_patch_port(monkeypatch):
+    from tldw_chatbook.Canvas import limits
+
+    calls = []
+
+    def measured(value):
+        calls.append(value)
+        return 7
+
+    monkeypatch.setattr(limits, "utf8_byte_length", measured)
+    assert (
+        limits.validate_utf8_text_parts(("native",), limit=7, field_name="parts") == 7
+    )
+    assert calls == ["native"]
+
+
+def test_shared_text_validation_import_does_not_load_canvas_or_config(tmp_path):
+    from Tests.Performance.test_app_import_weight import _run_isolated_python
+
+    result = _run_isolated_python(
+        tmp_path,
+        "import sys\n"
+        "from tldw_chatbook.Utils.text import validate_opaque_identifier\n"
+        "assert validate_opaque_identifier('cold-id') == 'cold-id'\n"
+        "for prefix in ('tldw_chatbook.Canvas', 'tldw_chatbook.DB', "
+        "'tldw_chatbook.config', 'tldw_chatbook.Utils.input_validation'):\n"
+        "    assert not any(m == prefix or m.startswith(prefix + '.') "
+        "for m in sys.modules), prefix\n",
+    )
+    assert result.returncode == 0, result.stdout + result.stderr

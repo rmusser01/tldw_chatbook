@@ -3,6 +3,13 @@
 from .. import app_served as host
 
 
+def _load_console_configuration_metadata():
+    """Load the stock cold-source capsule inside the native preparation read."""
+    from importlib import import_module
+
+    return import_module("tldw_chatbook.Widgets.compact_model_bar")
+
+
 def _start_served_canvas_control(
     self: host.Any, *, app_globals: dict[str, host.Any]
 ) -> None:
@@ -139,7 +146,10 @@ async def _handle_served_control_request(self: host.Any, request: host.Any) -> h
             }:
                 await asyncio.to_thread(runtime.ensure_activity_receipt_service)
                 if runtime._agent_runs_db is not None:
-                    receipts = runtime.ensure_remote_receipts(client.host_identity)
+                    receipts = runtime.ensure_remote_receipts(
+                        client.host_identity,
+                        configuration_metadata_loader=_load_console_configuration_metadata,
+                    )
                 elif request.message_type != "console.snapshot.request":
                     raise ControlProtocolError("authority_unavailable")
             if request.message_type == "console.ticket.request":

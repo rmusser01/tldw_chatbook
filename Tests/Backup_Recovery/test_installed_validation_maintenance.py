@@ -74,10 +74,25 @@ def test_actual_validation_keeps_native_writer_blocked_until_callback_retires(
     if kind == "sqlite":
         original = private_sqlite.open_recovery_validation
 
-        def checked(owner, path, *, writable):
+        def checked(
+            owner,
+            path,
+            *,
+            writable,
+            with_restrictions=False,
+            cancel=None,
+            _custody=None,
+        ):
             barrier(path)
             assert not writable
-            return original(owner, path, writable=writable)
+            return original(
+                owner,
+                path,
+                writable=writable,
+                with_restrictions=with_restrictions,
+                cancel=cancel,
+                _custody=_custody,
+            )
 
         monkeypatch.setattr(private_sqlite, "open_recovery_validation", checked)
     else:
@@ -174,7 +189,7 @@ def _shared_case(root, *, held):
         restored = dict(plan.restore)
         assert len({restored[item.logical_id] for item in entries}) == 1
         bootstrap = root / "bootstrap"
-        selectors = tuple(path for _, path in plan.selectors)
+        selectors = (restored["profile:fixture:config"],)
         register_pending(
             bootstrap,
             journal.operation_id,

@@ -4,12 +4,12 @@ import json
 import re
 from dataclasses import dataclass, field
 
-from tldw_chatbook.Canvas.limits import validate_opaque_identifier
-from tldw_chatbook.Chat.console_remote_models import ConsoleTarget
-from tldw_chatbook.Chat.console_trace_read_budget import (
+from tldw_chatbook.Backup_Recovery.models import (
     _TraceReadBudget,
     _TraceReadLimit,
 )
+from tldw_chatbook.Chat.console_remote_models import ConsoleTarget
+from tldw_chatbook.Utils.text import validate_opaque_identifier
 
 from .console_command_receipts import (
     ConsoleCommandReceipt,
@@ -164,7 +164,7 @@ def _decode_child(payload, command_id, budget):
 
 
 def _encoded(value, budget):
-    from tldw_chatbook.Backup_Recovery.mobile_runs_goal_budget import _serialization
+    from tldw_chatbook.Backup_Recovery.models import _serialization
 
     _serialization(value, budget)
     raw = json.dumps(value, ensure_ascii=True, separators=(",", ":"), allow_nan=False)
@@ -175,7 +175,7 @@ def _encoded(value, budget):
 
 def _prepare_command_history(operation_id, source_fingerprint, rows, budget):
     """Pre-admit all passive record encodings before the operation's first effect."""
-    from tldw_chatbook.Backup_Recovery.mobile_runs_preflight import _OperationalHistory
+    from tldw_chatbook.Backup_Recovery.models import _OperationalHistory
 
     _identity(operation_id, source_fingerprint)
     if type(budget) is not _TraceReadBudget or type(rows) is not tuple:

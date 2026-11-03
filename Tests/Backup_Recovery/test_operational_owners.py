@@ -145,6 +145,10 @@ def operational_store(request, tmp_path):
     module, symbol, *_ = STORES[name]
     source = tmp_path / (name + ".db")
     constructor = getattr(importlib.import_module("tldw_chatbook." + module), symbol)
+    if name == "agent_runs":
+        from Tests.agent_runs_owner import owned_agent_runs_db
+
+        constructor = owned_agent_runs_db
     store = constructor(db_path=source) if name == "kanban" else constructor(source)
     if name in {"kanban", "notifications", "events", "sync"}:
         # These installed owners now defer their actual schema until first use.
@@ -305,6 +309,9 @@ from Tests.Backup_Recovery.test_operational_owners import STORES, seed_operation
 name, source = sys.argv[1], Path(sys.argv[2])
 module, symbol, *_ = STORES[name]
 constructor = getattr(importlib.import_module('tldw_chatbook.' + module), symbol)
+if name == 'agent_runs':
+    from Tests.agent_runs_owner import owned_agent_runs_db
+    constructor = owned_agent_runs_db
 store = constructor(db_path=source) if name == 'kanban' else constructor(source)
 try:
     seed_operational(name, source, store)
@@ -771,25 +778,197 @@ def test_optional_pet_default_and_exact_backups_block_unknown_children(
     assert "unsupported" in {i.status for i in adapter.discover(config)}
 
 
+def _is_registered_footer_pet_constructor(relative, tree, call):
+    """Allow only the installed footer's unmodified default storage binding."""
+    import ast
+
+    if relative != "Widgets/AppFooterStatus.py" or not (
+        isinstance(call.func, ast.Name)
+        and call.func.id == "ConfigFileStorage"
+        and not call.args
+        and not call.keywords
+    ):
+        return False
+    classes = [
+        node
+        for node in tree.body
+        if isinstance(node, ast.ClassDef) and node.name == "AppFooterStatus"
+    ]
+    if len(classes) != 1:
+        return False
+    methods = [
+        node
+        for node in classes[0].body
+        if isinstance(node, ast.FunctionDef) and node.name == "_build_tamagotchi"
+    ]
+    if len(methods) != 1:
+        return False
+    method = methods[0]
+    parents = {
+        child: node for node in ast.walk(tree) for child in ast.iter_child_nodes(node)
+    }
+    assignment = parents.get(call)
+    block = parents.get(assignment)
+    if not (
+        isinstance(assignment, ast.Assign)
+        and len(assignment.targets) == 1
+        and isinstance(assignment.targets[0], ast.Name)
+        and assignment.targets[0].id == "storage"
+        and isinstance(block, ast.Try)
+        and parents.get(block) is method
+        and assignment in block.body
+    ):
+        return False
+    index = block.body.index(assignment)
+    imported = block.body[index - 1] if index else None
+    if not (
+        isinstance(imported, ast.ImportFrom)
+        and imported.level == 1
+        and imported.module == "Tamagotchi.tamagotchi_storage"
+        and [(alias.name, alias.asname) for alias in imported.names]
+        == [("ConfigFileStorage", None)]
+    ):
+        return False
+    for node in ast.walk(method):
+        if isinstance(node, (ast.Import, ast.ImportFrom)):
+            if node is not imported and any(
+                (alias.asname or alias.name.split(".")[0]) == "ConfigFileStorage"
+                for alias in node.names
+            ):
+                return False
+        elif (
+            (
+                isinstance(node, ast.Name)
+                and node.id == "ConfigFileStorage"
+                and isinstance(node.ctx, (ast.Store, ast.Del))
+            )
+            or (
+                isinstance(
+                    node,
+                    (
+                        ast.FunctionDef,
+                        ast.AsyncFunctionDef,
+                        ast.ClassDef,
+                        ast.ExceptHandler,
+                    ),
+                )
+                and node.name == "ConfigFileStorage"
+            )
+            or (isinstance(node, ast.arg) and node.arg == "ConfigFileStorage")
+            or (
+                isinstance(node, (ast.Global, ast.Nonlocal))
+                and "ConfigFileStorage" in node.names
+            )
+        ):
+            return False
+    return True
+
+
 def test_dormant_tamagotchi_path_constructors_have_no_installed_call_sites():
     import ast
 
     root = Path(__file__).resolve().parents[2] / "tldw_chatbook"
     calls = []
+    installed = []
     for path in root.rglob("*.py"):
         import warnings
 
         with warnings.catch_warnings():
             warnings.simplefilter("ignore", SyntaxWarning)
             tree = ast.parse(path.read_text())
+        relative = path.relative_to(root).as_posix()
         for node in ast.walk(tree):
             if isinstance(node, ast.Call) and (
                 getattr(node.func, "id", None) or getattr(node.func, "attr", None)
             ) in ("SQLiteStorage", "JSONStorage", "ConfigFileStorage", "NotesMirror"):
-                calls.append((path.relative_to(root).as_posix(), node.lineno))
+                if _is_registered_footer_pet_constructor(relative, tree, node):
+                    installed.append(relative)
+                else:
+                    calls.append((relative, node.lineno))
     assert calls == [], (
         "New durable pet wiring requires a locator and recovery qualification"
     )
+    assert installed == ["Widgets/AppFooterStatus.py"]
+
+
+@pytest.mark.parametrize(
+    "mode",
+    [
+        "file",
+        "class",
+        "method",
+        "positional",
+        "keyword",
+        "star_args",
+        "star_keywords",
+        "qualified",
+        "foreign_import",
+        "aliased_import",
+        "rebound",
+        "nested",
+        "extra",
+        "sqlite",
+        "json",
+        "notes",
+    ],
+)
+def test_footer_pet_constructor_exception_rejects_unqualified_wiring(mode):
+    import ast
+
+    root = Path(__file__).resolve().parents[2] / "tldw_chatbook"
+    relative = "Widgets/AppFooterStatus.py"
+    source = (root / relative).read_text()
+    changes = {
+        "class": ("class AppFooterStatus(Widget):", "class OtherFooter(Widget):"),
+        "method": ("def _build_tamagotchi(self)", "def _other_pet(self)"),
+        "positional": ("ConfigFileStorage()", 'ConfigFileStorage("other")'),
+        "keyword": ("ConfigFileStorage()", 'ConfigFileStorage(app_name="other")'),
+        "star_args": ("ConfigFileStorage()", "ConfigFileStorage(*args)"),
+        "star_keywords": ("ConfigFileStorage()", "ConfigFileStorage(**kwargs)"),
+        "qualified": (
+            "storage = ConfigFileStorage()",
+            "storage = module.ConfigFileStorage()",
+        ),
+        "foreign_import": (
+            "from .Tamagotchi.tamagotchi_storage import ConfigFileStorage",
+            "from .other_storage import ConfigFileStorage",
+        ),
+        "aliased_import": (
+            "import ConfigFileStorage",
+            "import ConfigFileStorage as OtherStorage",
+        ),
+        "rebound": (
+            "storage = ConfigFileStorage()",
+            "ConfigFileStorage = JSONStorage\n            storage = ConfigFileStorage()",
+        ),
+        "nested": (
+            "storage = ConfigFileStorage()",
+            "def nested():\n                storage = ConfigFileStorage()",
+        ),
+        "extra": (
+            "storage = ConfigFileStorage()",
+            "storage = ConfigFileStorage()\n            other = ConfigFileStorage()",
+        ),
+        "sqlite": ("storage = ConfigFileStorage()", "storage = SQLiteStorage()"),
+        "json": ("storage = ConfigFileStorage()", "storage = JSONStorage()"),
+        "notes": ("storage = ConfigFileStorage()", "storage = NotesMirror()"),
+    }
+    if mode == "file":
+        relative = "Widgets/OtherFooter.py"
+    else:
+        before, after = changes[mode]
+        assert source.count(before) == 1
+        source = source.replace(before, after, 1)
+    tree = ast.parse(source)
+    blocked = [
+        node
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Call)
+        and (getattr(node.func, "id", None) or getattr(node.func, "attr", None))
+        in ("SQLiteStorage", "JSONStorage", "ConfigFileStorage", "NotesMirror")
+        and not _is_registered_footer_pet_constructor(relative, tree, node)
+    ]
+    assert blocked
 
 
 def test_subscriptions_complete_audio_requires_exact_profile_payload(tmp_path):
@@ -1170,6 +1349,7 @@ def test_genuine_v9_workspace_backup_migrates_archive_chronology(tmp_path, monke
     path = tmp_path / "workspaces-v9.sqlite"
     with monkeypatch.context() as historical:
         historical.setattr(WorkspaceDB, "_migrate_v9_to_v10", lambda self: None)
+        historical.setattr(WorkspaceDB, "_migrate_v10_to_v11", lambda self: None)
         db = WorkspaceDB(path)
         try:
             assert db.get_schema_version() == 9
@@ -1194,7 +1374,7 @@ def test_genuine_v9_workspace_backup_migrates_archive_chronology(tmp_path, monke
     with sqlite3.connect(path) as connection:
         assert connection.execute(
             "SELECT MAX(version) FROM schema_version"
-        ).fetchone() == (10,)
+        ).fetchone() == (11,)
         assert connection.execute(
             "SELECT archived,archived_at,archive_revision,assistant_defaults_explicit_none "
             "FROM workspace_records WHERE workspace_id='retained'"
@@ -1214,6 +1394,7 @@ def test_frozen_v8_workspace_backup_keeps_existing_recovery_boundary(
     with monkeypatch.context() as historical:
         historical.setattr(WorkspaceDB, "_migrate_v8_to_v9", lambda self: None)
         historical.setattr(WorkspaceDB, "_migrate_v9_to_v10", lambda self: None)
+        historical.setattr(WorkspaceDB, "_migrate_v10_to_v11", lambda self: None)
         db = WorkspaceDB(path)
         assert db.get_schema_version() == 8
         db.close()
@@ -1227,6 +1408,6 @@ def test_frozen_v8_workspace_backup_keeps_existing_recovery_boundary(
     )
     assert path.read_bytes() == before
     upgraded = WorkspaceDB(path)
-    assert upgraded.get_schema_version() == 10
+    assert upgraded.get_schema_version() == 11
     upgraded.close()
     assert adapter.validate(path) == ()

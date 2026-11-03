@@ -4,6 +4,11 @@ import json
 
 from tldw_chatbook.Agents import goal_models as native
 
+from .models import (
+    _json_width as _json_width,  # noqa: PLC0414 - canonical compatibility export
+)
+from .models import _serialization
+
 # Only the persisted Goal shapes consumed by this planner. Native validators and
 # serializers remain authoritative; this table supplies no validation or defaults.
 _CHILDREN = {
@@ -64,50 +69,6 @@ def _native_shape(model, data, budget):
             else:
                 result[name] = _native_shape(kind, value, budget)
     return result
-
-
-def _json_width(value, budget):
-    """Upper encoded width, including escaping, without constructing JSON text."""
-    if isinstance(value, str):
-        width = 2
-        for char in value:
-            code = ord(char)
-            width += (
-                12
-                if code > 0xFFFF
-                else 6
-                if code < 32 or code >= 127
-                else 2
-                if char in ('"', "\\")
-                else 1
-            )
-        return width
-    if isinstance(value, dict):
-        # Native canonical_json sorts items and the encoder tracks containers.
-        budget.container(len(value))
-        budget.container(len(value))
-        width = 2
-        for key, item in value.items():
-            budget.container(2)
-            width += _json_width(key, budget) + _json_width(item, budget) + 4
-        return width
-    if isinstance(value, (list, tuple)):
-        budget.container(len(value))
-        return 2 + sum(_json_width(item, budget) + 2 for item in value)
-    if isinstance(value, bool) or value is None:
-        return 5
-    if isinstance(value, int):
-        return 2 + value.bit_length() * 30103 // 100000
-    if isinstance(value, float):
-        return 32
-    raise ValueError("native_goal_json_shape_unproved")
-
-
-def _serialization(data, budget, *, encoded=False):
-    width = _json_width(data, budget)
-    budget.reserve(64 + 4 * width)  # Serialized Unicode, including escaped text.
-    if encoded:
-        budget.reserve(64 + 4 * width)  # Native subsequent UTF-8 encoding.
 
 
 def _path(value, budget):
