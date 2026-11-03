@@ -344,11 +344,13 @@ async def test_console_armed_unknown_mouse_send_snapshots_before_skill_await(
 ):
     """Skill parsing retains the captured send and preserves later typing.
 
-    The received path's live-vs-stash check
-    (``wiring.receive_console_visible_intent``) runs live: typing during the
-    skill await no longer refuses the send with "Draft changed; Send again."
-    (TASK-38689, owner decision 2026-11-03: TASK-340 wins). Only hook
-    review's dispatch is isolated (``console._hooks.dispatch``).
+    The edit lands as the held skill read returns: one handled while the read
+    is pending would disarm the command (the composer's Changed handler)
+    before the send resumes. The received path's live-vs-stash check
+    (``wiring.receive_console_visible_intent``) no longer refuses it with
+    "Draft changed; Send again." (TASK-38689, owner decision 2026-11-03:
+    TASK-340 wins). Nothing is isolated: hook review runs live, and with no
+    hooks configured nothing is reviewed, so it does not re-check the draft.
     """
 
     app = _ready_openai_app(monkeypatch, "unused")
@@ -379,6 +381,7 @@ async def test_console_armed_unknown_mouse_send_snapshots_before_skill_await(
         async def delayed_skill_context():
             entered.set()
             await release.wait()
+            composer.insert_text(" suffix")  # Typed as the skill read returns.
             return object()
 
         async def no_blocked_match(_name, _summaries):
@@ -395,15 +398,6 @@ async def test_console_armed_unknown_mouse_send_snapshots_before_skill_await(
             "_console_skill_blocked_match_response",
             no_blocked_match,
         )
-
-        # Isolate the pre-skill snapshot boundary from hook review's later
-        # unchanged-draft gate (covered by test_console_hook_admission).
-        # The real button handler and queue/runtime custody route stay live.
-        async def dispatch_without_hook_review(draft, *, session_id, stash, dispatch):
-            assert draft == armed and stash.text == armed
-            return await dispatch()
-
-        monkeypatch.setattr(console._hooks, "dispatch", dispatch_without_hook_review)
         requests: list[object] = []
         notices: list[str] = []
         monkeypatch.setattr(
@@ -421,7 +415,6 @@ async def test_console_armed_unknown_mouse_send_snapshots_before_skill_await(
         )
 
         await entered.wait()
-        composer.insert_text(" suffix")
         release.set()
 
         assert await send_task, notices
