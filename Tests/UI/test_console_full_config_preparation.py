@@ -41,6 +41,8 @@ def _full_screen(screen, controller, monkeypatch):
     )
     screen._console_sync_in_progress = False
     screen._console_sync_requested = False
+    screen._console_terminal_return_reading = None
+    screen.app_instance._ui_ready = False
     screen._console_attach_sync_complete = False
     screen._console_attach_reconciled = False
     screen._console_attach_reconcile_running = False
@@ -70,6 +72,7 @@ def _full_screen(screen, controller, monkeypatch):
         "_record_ui_worker_started",
         "_record_ui_worker_finished",
         "_sync_console_chat_core_state",
+        "_sync_console_temporary_chip",
         "_current_console_rail_state",
         "_sync_console_settings_summary",
         "_sync_console_settings_recovery_surfaces",
