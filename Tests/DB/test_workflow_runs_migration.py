@@ -45,7 +45,7 @@ def test_v24_upgrade_reopen_and_repeat_preserves_history(tmp_path, standalone):
             ("legacy", "preserved result")
         ]
         assert conn.execute("SELECT MAX(version) FROM schema_version").fetchone() == (
-            28,
+            29,
         )
         assert conn.execute("PRAGMA foreign_key_check").fetchall() == []
         actual = tuple(
@@ -55,7 +55,7 @@ def test_v24_upgrade_reopen_and_repeat_preserves_history(tmp_path, standalone):
             )
         )
         assert actual in [
-            schema for version, schema in _AGENT_RUNS_SCHEMA if version == 28
+            schema for version, schema in _AGENT_RUNS_SCHEMA if version == 29
         ]
 
 
@@ -86,6 +86,12 @@ def test_standalone_and_constructor_workflow_catalogs_match_exactly(tmp_path):
         conn.executescript(
             Path(
                 "tldw_chatbook/DB/migrations/agent_runs_v27_to_v28_workflow_change_windows.sql"
+            ).read_text()
+        )
+    with closing(sqlite3.connect(paths[1])) as conn:
+        conn.executescript(
+            Path(
+                "tldw_chatbook/DB/migrations/agent_runs_v28_to_v29_workflow_repair_input.sql"
             ).read_text()
         )
     AgentRunsDB(paths[0]).close()
@@ -158,4 +164,44 @@ def test_real_v24_goal_and_fleet_rows_survive_workflow_upgrade(tmp_path, standal
             table: conn.execute(f"SELECT * FROM {table} ORDER BY rowid").fetchall()
             for table in before
         } == before
+        assert conn.execute("PRAGMA foreign_key_check").fetchall() == []
+
+
+@pytest.mark.parametrize("standalone", [False, True])
+def test_v28_repair_metadata_upgrade_preserves_existing_history(tmp_path, standalone):
+    from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
+    from tldw_chatbook.DB.recovery_operations import _AGENT_RUNS_SCHEMA
+
+    path = tmp_path / "v28.db"
+    catalog = next(catalog for version, catalog in _AGENT_RUNS_SCHEMA if version == 28)
+    with closing(sqlite3.connect(path)) as conn:
+        for sql in sorted(catalog, key=lambda sql: not sql.startswith("CREATE TABLE")):
+            if not sql.startswith("CREATE TABLE sqlite_sequence"):
+                conn.execute(sql)
+        conn.executemany(
+            "INSERT INTO schema_version(version) VALUES (?)",
+            [(version,) for version in range(4, 29)],
+        )
+        conn.execute(
+            "INSERT INTO agent_runs(id,conversation_id,agent_kind,status,result,created_at,updated_at) VALUES ('old','saved','primary','completed','unchanged','then','then')"
+        )
+        conn.commit()
+        if standalone:
+            conn.executescript(
+                Path(
+                    "tldw_chatbook/DB/migrations/agent_runs_v28_to_v29_workflow_repair_input.sql"
+                ).read_text()
+            )
+    AgentRunsDB(path).close()
+    AgentRunsDB(path).close()
+    with closing(sqlite3.connect(path)) as conn:
+        assert conn.execute(
+            "SELECT result FROM agent_runs WHERE id='old'"
+        ).fetchone() == ("unchanged",)
+        assert conn.execute("SELECT MAX(version) FROM schema_version").fetchone() == (
+            29,
+        )
+        assert "repair_instruction_sha256" in {
+            row[1] for row in conn.execute("PRAGMA table_info(workflow_phase_attempts)")
+        }
         assert conn.execute("PRAGMA foreign_key_check").fetchall() == []

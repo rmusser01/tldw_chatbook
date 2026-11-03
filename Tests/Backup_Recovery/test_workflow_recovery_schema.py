@@ -75,7 +75,7 @@ def test_workflow_archive_rejects_hybrid_or_cross_owned_rows(tmp_path, damage):
         elif damage == "extra_column":
             conn.execute("ALTER TABLE workflow_runs ADD COLUMN extra TEXT")
         elif damage == "wrong_stamp":
-            conn.execute("DELETE FROM schema_version WHERE version=28")
+            conn.execute("DELETE FROM schema_version WHERE version=29")
         elif damage == "bad_request":
             conn.execute("DROP TRIGGER workflow_launch_immutable")
             conn.execute("UPDATE workflow_runs SET request_json='{}'")
@@ -130,7 +130,7 @@ def test_staging_v24_migration_uses_installed_allowlist(tmp_path):
     assert validate_candidate(owner(), path, Event(), migrate=True) == ()
     with closing(sqlite3.connect(path)) as conn:
         assert conn.execute("SELECT MAX(version) FROM schema_version").fetchone() == (
-            28,
+            29,
         )
         assert conn.execute(
             "SELECT result FROM agent_runs WHERE id='legacy'"
@@ -333,3 +333,25 @@ def test_archive_refuses_disagreeing_attempt_and_result_outcomes(tmp_path):
         "invalid_workflow_result_ownership",
     )
     assert path.read_bytes() == before
+
+
+def test_repair_migration_authorizer_keeps_unrelated_actions_denied():
+    from tldw_chatbook.Backup_Recovery.sqlite_validation import _Restrictions
+
+    with closing(sqlite3.connect(":memory:")) as conn:
+        conn.execute("CREATE TABLE workflow_phase_attempts(id TEXT)")
+        conn.execute("CREATE TABLE unrelated(id TEXT)")
+        restrictions = _Restrictions(conn, Event())
+        restrictions.migrating = True
+        restrictions.migration_owner = "db.agent_runs"
+        with pytest.raises(sqlite3.DatabaseError):
+            conn.execute("PRAGMA quick_check(unrelated)")
+        with pytest.raises(sqlite3.DatabaseError):
+            conn.execute(
+                "CREATE TRIGGER workflow_repair_input_immutable BEFORE UPDATE ON unrelated BEGIN SELECT 1; END"
+            )
+        restrictions.migrating = False
+        with pytest.raises(sqlite3.DatabaseError):
+            conn.execute(
+                "CREATE TRIGGER workflow_repair_input_immutable BEFORE UPDATE ON workflow_phase_attempts BEGIN SELECT 1; END"
+            )

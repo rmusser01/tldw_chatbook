@@ -554,6 +554,7 @@ class WorkflowRunService:
                 else "unavailable",
                 "other_tool_metadata": "unavailable",
                 "previous_plans": [p.model_dump(mode="json") for p in snapshot.plans],
+                "repair_instruction": prepared._planning_repair_source[3],
                 "repair_evidence_untrusted": repair,
                 "unrun_tasks": unrun,
                 "schema": WorkflowPlan.model_json_schema(),

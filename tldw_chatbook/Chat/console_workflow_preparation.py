@@ -79,6 +79,9 @@ class _PreparedWorkflowReply:
         self.binding = binding
         self.resolution = resolution
         self._planning_resolution = None
+        self._planning_system_source = None
+        self._planning_composed_system = None
+        self._planning_repair_source = None
         self.controller = phase._controller if phase is not None else controller
         self.runtime = (
             _runtime(phase) if phase is not None else controller._hooks_v2_runtime
@@ -144,6 +147,7 @@ class _PreparedWorkflowReply:
         self._config_identity = config.current_config_identity()
         self.local_providers = {}
         self._planning_builtins = ()
+        self._planning_executors = {}
         self._planning_shell_source = self._planning_shell_schema = None
         self.local_native, self.local_source_values, self.local_function_values = (
             _capture_native_local_sources(self.controller, local_tool_provider)
@@ -188,6 +192,32 @@ class _PreparedWorkflowReply:
             is not self._planning_intake
         ):
             raise PermissionError("original planning custody changed")
+        if self._planning_system_source is not None:
+            settings, prompt = self._planning_system_source
+            if (
+                self.session.settings is not settings
+                or vars(settings).get("system_prompt") != prompt
+                or inspect.getattr_static(settings, "system_prompt") != prompt
+            ):
+                raise PermissionError("selected planning system context changed")
+        if self.phase is not None and self._planning_repair_source is not None:
+            from hashlib import sha256
+
+            command, workflow, revision, instruction = self._planning_repair_source
+            attempt = self.phase.attempt
+            if (
+                attempt.command_id != command
+                or workflow is not None
+                and attempt.workflow_id != workflow
+                or attempt.revision_id != revision
+                or attempt.repair_instruction_sha256
+                != (
+                    None
+                    if instruction is None
+                    else sha256(instruction.encode("utf-8")).hexdigest()
+                )
+            ):
+                raise PermissionError("original planning repair input changed")
         self._planning_native_sources()
         self._planning_read_sources()
         if self.source is not None:
@@ -349,6 +379,78 @@ class _PreparedWorkflowReply:
         ):
             raise PermissionError("workflow native source changed")
 
+    def check_planning_executor(self, executor=None):
+        """Prove the original factory, concrete receiver and bounded readers."""
+        from tldw_chatbook.Agents import local_tool_provider as local
+        from tldw_chatbook.Tools import local_tool_impls as readers
+        from tldw_chatbook.Tools import workspace_tool_executor as native
+
+        from .console_ordinary_tree import _function_unchanged
+
+        cls = native._NATIVE_ORDINARY_EXECUTOR_CLASS
+        if (
+            local._filesystem_specs is not local._ORDINARY_NATIVE_FUNCTIONS[1][0]
+            or not _function_unchanged(local._ORDINARY_NATIVE_FUNCTIONS[1])
+            or local.WorkspaceToolExecutor is not cls
+            or native.WorkspaceToolExecutor is not cls
+            or inspect.getattr_static(cls, "__getattribute__")
+            is not object.__getattribute__
+            or inspect.getattr_static(cls, "__new__") is not object.__new__
+            or inspect.getattr_static(cls, "__hash__") is not object.__hash__
+            or inspect.getattr_static(cls, "__eq__") is not object.__eq__
+            or inspect.getattr_static(cls, "__getattr__", None) is not None
+            or inspect.getattr_static(cls, "__bool__", None) is not None
+            or inspect.getattr_static(cls, "__len__", None) is not None
+            or any(
+                inspect.getattr_static(cls, name, None) is not value
+                for name, value in native._NATIVE_ORDINARY_EXECUTOR_METHODS
+            )
+            or any(
+                vars(native).get(name) is not value
+                for name, value in native._NATIVE_ORDINARY_EXECUTOR_HELPERS
+            )
+            or any(
+                not _function_unchanged(record)
+                for record in native._NATIVE_ORDINARY_EXECUTOR_FUNCTIONS
+            )
+            or any(
+                vars(readers).get(name) is not record[0]
+                or not _function_unchanged(record)
+                for name, record in readers._NATIVE_PLANNING_READERS
+            )
+        ):
+            raise PermissionError("original planning filesystem source changed")
+        if executor is None:
+            return
+        if type(executor) is not cls or any(
+            inspect.getattr_static(executor, name, None) is not value
+            for name, value in native._NATIVE_ORDINARY_EXECUTOR_METHODS
+        ):
+            raise PermissionError("original planning executor receiver changed")
+        namespace = object.__getattribute__(executor, "__dict__")
+        names = (
+            "_remote_root",
+            "_workspace_root",
+            "_authority_chain",
+            "_user_exclusion_paths",
+        )
+        values = tuple(namespace.get(name) for name in names)
+        if (
+            any(
+                inspect.getattr_static(executor, name, None) is not value
+                for name, value in zip(names, values, strict=True)
+            )
+            or values[0] is not None
+            or values[1] != self.binding.root
+            or type(values[2]) is not native.DirectoryChain
+            or values[2].canonical_root != self.binding.root
+            or values[3] is not self.binding.exclusions_provider
+        ):
+            raise PermissionError("original planning executor binding changed")
+        retained = self._planning_executors.setdefault(executor, values)
+        if any(a is not b for a, b in zip(retained, values, strict=True)):
+            raise PermissionError("original planning executor fields changed")
+
     def check_local_sources(self):
         from .console_ordinary_tree import (
             _check_local_provider_sources,
@@ -364,8 +466,34 @@ class _PreparedWorkflowReply:
             for obj, name, value, code in self.local_source_values
         ):
             raise PermissionError("workflow native local source changed")
+        planning = self.phase is None or self.phase.attempt.purpose == "planning"
+        if planning:
+            self.check_planning_executor()
+            for executor in tuple(self._planning_executors):
+                self.check_planning_executor(executor)
         for provider, retained in self.local_providers.items():
             _check_local_provider_sources(provider, retained)
+            if planning:
+                for _alias, entries in retained[2]:
+                    for name, spec in entries:
+                        if name not in {"fs_list", "fs_read"}:
+                            continue
+                        cells = dict(
+                            zip(
+                                spec.handler.__code__.co_freevars,
+                                spec.handler.__closure__ or (),
+                                strict=True,
+                            )
+                        )
+                        cell = cells.get("workspace_executor")
+                        if (
+                            cell is None
+                            or cell.cell_contents not in self._planning_executors
+                        ):
+                            raise PermissionError(
+                                "original planning handler receiver changed"
+                            )
+                        self.check_planning_executor(cell.cell_contents)
         if self._planning_builtins:
             from tldw_chatbook.Agents import tool_catalog
 
@@ -997,6 +1125,8 @@ class _PreparedWorkflowReply:
                     maximum_definition_hashes=configuration.mcp_definition_maximum,
                 )
             )
+            if self.phase.attempt.purpose == "planning":
+                self.check_local_sources()
             local, review = self.controller._compose_local_provider(
                 self.session.id,
                 turn_context=configuration,
@@ -1115,7 +1245,11 @@ class _PreparedWorkflowReply:
             assistant_message_id=self.assistant_message_id or "",
             generation_token=self.generation_token,
             model=self.resolution.model,
-            session_system_prompt="",
+            session_system_prompt=(
+                self._planning_system_source[1] or ""
+                if task is None and self._planning_system_source is not None
+                else ""
+            ),
             agent_messages=[],
             should_cancel=self.should_cancel,
             work_origin=WorkOrigin.AUTOMATIC,
@@ -1156,6 +1290,10 @@ class _PreparedWorkflowReply:
         if not plan.schemas.request_fits:
             raise PermissionError("workflow required task seed does not fit")
         if self.phase.attempt.purpose == "planning":
+            selected = self._planning_system_source[1]
+            if selected and selected not in plan.config.system_prompt:
+                raise PermissionError("required planning system context was removed")
+            self._planning_composed_system = plan.config.system_prompt
             self.service.validate_planning_inputs(self, plan.messages)
         else:
             self.service.validate_task_inputs(self.authorization, plan.messages)
@@ -1443,6 +1581,16 @@ class _PreparedWorkflowReply:
         original = json.loads(self.planning_seed)
         if not all(any(row == required for row in messages) for required in original):
             raise PermissionError("required planning input was changed or removed")
+        expected = self._planning_composed_system
+        if expected is None or not any(
+            row.get("role") == "system"
+            and type(row.get("content")) is str
+            and row["content"].startswith(expected)
+            for row in messages
+        ):
+            raise PermissionError(
+                "required planning system context was changed or removed"
+            )
 
     @contextmanager
     def _planning_storage_return(self):
@@ -1842,6 +1990,7 @@ async def prepare_workflow_planning(
     policy=None,
     workflow_id=None,
     revision_id=None,
+    repair_instruction=None,
 ):
     """Prepare an explicit native Chat, persisting initial identity before request.
 
@@ -1886,6 +2035,18 @@ async def prepare_workflow_planning(
         raise ValueError("initial planning requires an objective and policy")
     if workflow_id is not None and (objective is not None or policy is not None):
         raise ValueError("repair cannot replace the immutable request")
+    from tldw_chatbook.Agents.workflow_models import RECORD_BYTES
+
+    if workflow_id is None:
+        if repair_instruction is not None:
+            raise ValueError("initial planning cannot include repair instructions")
+    elif (
+        type(repair_instruction) is not str
+        or not repair_instruction
+        or len(repair_instruction.encode("utf-8")) > RECORD_BYTES
+        or revision_id is None
+    ):
+        raise ValueError("repair requires an explicit bounded instruction and revision")
     prepared = _PreparedWorkflowReply(
         runtime.agent_bridge,
         None,
@@ -1896,6 +2057,12 @@ async def prepare_workflow_planning(
         controller=controller,
         session=session,
         _key=_PLANNING_INPUT,
+    )
+    prepared._planning_repair_source = (
+        command_id,
+        workflow_id,
+        revision_id,
+        repair_instruction,
     )
     prepared._planning_token = object()
     try:
@@ -1925,6 +2092,19 @@ async def prepare_workflow_planning(
                 raise PermissionError("workflow provider selection changed")
             prepared.resolution = prepared._planning_resolution = resolved
             prepared.planning_selection = selection
+            from .console_session_settings import ConsoleSessionSettings
+
+            settings = session.settings
+            if type(settings) is not ConsoleSessionSettings:
+                raise PermissionError("original selected planning settings required")
+            prompt = vars(settings).get("system_prompt")
+            if prompt is not None and type(prompt) is not str:
+                raise PermissionError("invalid selected planning system context")
+            if inspect.getattr_static(settings, "system_prompt") != prompt:
+                raise PermissionError(
+                    "selected planning system context receiver changed"
+                )
+            prepared._planning_system_source = (settings, prompt)
 
         await prepared._read(select_native)
 
@@ -2004,16 +2184,17 @@ async def prepare_workflow_planning(
                 session_id=session_id,
                 command_id=command_id,
                 revision_id=revision_id,
+                repair_instruction=repair_instruction,
             )
             prepared.phase = _accept_workflow_phase(
                 controller, attempt.id, session_id=session_id
             )
-            return prepared.phase
+            return prepared.phase, attempt
 
-        phase = await prepared._read(commit_request)
+        phase, receipt = await prepared._read(commit_request)
         if phase is None:
             await prepared.close()
-            return None
+            return receipt
         return await _finish_native_preparation(prepared)
     except BaseException:
         await prepared.close()

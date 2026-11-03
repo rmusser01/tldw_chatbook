@@ -1954,3 +1954,26 @@ def _is_relative_sensitive_path(
         if kind == "name" and not is_directory and parts and parts[-1] == value:
             return True
     return False
+
+
+# Finite original local read receivers for native workflow planning.
+_NATIVE_PLANNING_READERS = tuple(
+    (
+        name,
+        (
+            function,
+            function.__code__,
+            function.__defaults__,
+            function.__kwdefaults__,
+            tuple((function.__kwdefaults__ or {}).items()),
+            function.__closure__,
+            tuple((cell, cell.cell_contents) for cell in function.__closure__ or ()),
+        ),
+    )
+    for name, function in (
+        ("resolve_workspace_path", resolve_workspace_path),
+        ("_read_bounded_bytes", _read_bounded_bytes),
+        ("_read_relative_file", _read_relative_file),
+        ("_list_relative_directory", _list_relative_directory),
+    )
+)

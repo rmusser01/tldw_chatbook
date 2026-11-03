@@ -52,6 +52,11 @@ async def exercise():
     runtime = app.console_runtime
     mode = sys.argv[1]
     calls = []
+    received_system = []
+    required_system = (
+        "Use the selected Chat system context exactly: répondre en français."
+    )
+    repair_instruction = "Keep the completed work; revise the remaining tests to cover Unicode paths.\nPreserve the original objective."
     entered, release = threading.Event(), threading.Event()
     prepared = None
     retained_failure = False
@@ -59,6 +64,88 @@ async def exercise():
     forbidden_cleanup_calls = []
     compaction_calls = []
     disposal = None
+    maintenance_entered, maintenance_release = threading.Event(), threading.Event()
+    maintenance_return = {}
+    if mode == "maintenance-tail":
+        import inspect
+        from concurrent.futures.thread import _WorkItem
+
+        from tldw_chatbook.Backup_Recovery import (
+            storage_admission as maintenance_storage,
+        )
+        from tldw_chatbook.Chat.console_trace_maintenance import LegacyTraceMaintenance
+        from tldw_chatbook.DB.base_db import run_owned_db_call
+
+        maintenance_code = LegacyTraceMaintenance.run_batch.__code__
+        invoke_code = next(
+            code
+            for code in run_owned_db_call.__code__.co_consts
+            if inspect.iscode(code) and code.co_name == "invoke"
+        )
+
+        def hold_original_maintenance(frame, event, argument):
+            if (
+                event != "return"
+                or frame.f_code is not maintenance_code
+                or maintenance_entered.is_set()
+            ):
+                return
+            instance = frame.f_locals["self"]
+            if instance.db is not app.chachanotes_db:
+                return
+            parent = frame.f_back
+            assert (
+                parent.f_code is invoke_code
+                and parent.f_locals["database"] is instance.db
+            )
+            callback = parent.f_locals["operation"]
+            assert (
+                callback.__self__ is instance
+                and callback.__func__ is LegacyTraceMaintenance.run_batch
+            )
+            while parent is not None and parent.f_code is not _WorkItem.run.__code__:
+                parent = parent.f_back
+            assert parent is not None
+            item = parent.f_locals["self"]
+            assert type(item) is _WorkItem and item.future.running()
+            operation = maintenance_storage._operation_local.operation
+            participant = instance.db._maintenance_participant
+            task = runtime._legacy_trace_maintenance_task
+            assert task is not None and task is maintenance_return["task"]
+            with maintenance_storage._lock:
+                assert operation in maintenance_storage._operations
+                assert operation.participant is participant
+                assert (
+                    operation.thread is threading.current_thread()
+                    and operation.task is None
+                )
+            maintenance_return.update(
+                future=item.future, operation=operation, participant=participant
+            )
+            print(
+                "F_FIX1_ORIGINAL_MAINTENANCE_HOLD",
+                json.dumps(
+                    {
+                        "task": id(task),
+                        "callback": id(callback.__func__),
+                        "instance": id(instance),
+                        "database": id(instance.db),
+                        "participant": id(participant),
+                        "operation": id(operation),
+                        "future": id(item.future),
+                        "worker": threading.current_thread().name,
+                        "wrapper_code": id(invoke_code),
+                        "created_before_planning": True,
+                    }
+                ),
+                flush=True,
+            )
+            maintenance_entered.set()
+            assert maintenance_release.wait(45), (
+                "original maintenance return was not released"
+            )
+
+        threading.setprofile_all_threads(hold_original_maintenance)
 
     def provider(**kwargs):
         owner = current_execution_owner()
@@ -73,6 +160,40 @@ async def exercise():
                 == "accepted"
             )
         calls.append(owner)
+        if (
+            mode in {"executor-replaced", "reader-replaced", "executor-hash-replaced"}
+            and len(calls) == 1
+        ):
+            import inspect
+
+            from tldw_chatbook.Tools import local_tool_impls
+
+            def changed_receiver(*_args, **_kwargs):
+                (root / "changed-receiver-wrote.txt").write_text(
+                    "forbidden planning effect"
+                )
+                raise AssertionError("changed receiver invoked")
+
+            if mode in {"executor-replaced", "executor-hash-replaced"}:
+                _, native_provider = (
+                    prepared.native.service.registry.resolve_owner_for_name("fs_list")
+                )
+                handler = native_provider._path_specs_by_alias[binding.alias][
+                    "fs_list"
+                ].handler
+                executor = inspect.getclosurevars(handler).nonlocals[
+                    "workspace_executor"
+                ]
+                if mode == "executor-hash-replaced":
+                    type(executor).__hash__ = changed_receiver
+                else:
+                    executor.execute = changed_receiver
+            else:
+                local_tool_impls._read_bounded_bytes = changed_receiver
+        if mode == "system-context":
+            received_system.append(
+                required_system in json.dumps(kwargs, ensure_ascii=False)
+            )
         if mode == "direct-guard":
             registry = prepared.native.service.registry
             denied = registry.invoke_by_name(
@@ -83,10 +204,18 @@ async def exercise():
         if mode == "instructions":
             assert "ORIGINAL_PROJECT_GUIDANCE" in json.dumps(kwargs)
             assert len(consent_calls) == 1
-        if mode == "repair" and len(calls) == 2:
+        if mode in {"repair", "repair-instruction"} and len(calls) == 2:
             seed = json.loads(prepared.planning_seed)[0]["content"]
             assert '"previous_plans": [{' in seed
             assert '"unrun_tasks": ["task-1"]' in seed
+            if mode == "repair-instruction":
+                assert json.dumps(repair_instruction, ensure_ascii=False) in seed
+                assert request.objective in seed
+                assert any(
+                    row.get("role") == "user" and row.get("content") == seed
+                    for row in kwargs["messages_payload"]
+                ), "exact repair input was not delivered to the native provider"
+                print("F_REPAIR_EXACT_BODY_PROVIDER_RECEIVED", flush=True)
         result = response()
         result["choices"][0]["message"]["content"] = json.dumps(data)
         if mode == "wrapper-changed":
@@ -95,7 +224,16 @@ async def exercise():
             result["choices"][0]["message"]["content"] = (
                 "```json\n" + json.dumps(data) + "\n```"
             )
-        if mode == "tools" and len(calls) == 1:
+        if (
+            mode
+            in {
+                "tools",
+                "executor-replaced",
+                "reader-replaced",
+                "executor-hash-replaced",
+            }
+            and len(calls) == 1
+        ):
             result["choices"][0]["message"] = {
                 "content": None,
                 "tool_calls": [
@@ -152,10 +290,22 @@ async def exercise():
         )
         registry.add_folder_binding("planning-native", root, allow_write=True)
         store = runtime.ensure_chat_store()
+        if mode == "maintenance-tail":
+            maintenance_return["task"] = runtime._legacy_trace_maintenance_task
+            assert maintenance_return["task"] is not None and prepared is None
         session = store.create_session(
             workspace_id="planning-native",
             settings=ConsoleSessionSettings(
-                provider="openai", model="test-model", source="user"
+                provider="openai",
+                model="test-model",
+                source="user",
+                system_prompt=(
+                    required_system
+                    if mode == "system-context"
+                    else "REQUIRED_SYSTEM_CONTEXT_abcdef0123456789\n" * 40000
+                    if mode == "system-oversize"
+                    else None
+                ),
             ),
             project_instruction_state=ProjectInstructionControlState.legacy_disabled(),
         )
@@ -323,12 +473,14 @@ async def exercise():
                     )
 
             threading.setprofile_all_threads(hold_original_worker_return)
-        if mode == "cancel-cleanup":
+        if mode in {"cancel-cleanup", "maintenance-tail"}:
             from tldw_chatbook.Chat.console_agent_bridge import _ModelCallLifeline
 
             cleanup_code = _ModelCallLifeline._cleanup.__code__
 
             def hold_original_cleanup(frame, event, argument):
+                if mode == "maintenance-tail":
+                    hold_original_maintenance(frame, event, argument)
                 if (
                     event == "call"
                     and frame.f_code is cleanup_code
@@ -337,7 +489,10 @@ async def exercise():
                     entered.set()
                     assert release.wait(15), "native cleanup was not released"
 
-            threading.setprofile(hold_original_cleanup)
+            if mode == "maintenance-tail":
+                threading.setprofile_all_threads(hold_original_cleanup)
+            else:
+                threading.setprofile(hold_original_cleanup)
         try:
             prepared = await prepare_workflow_planning(
                 controller,
@@ -352,6 +507,16 @@ async def exercise():
         except Exception as error:
             from tldw_chatbook.Agents.automatic_work_budget import AutomaticWorkRefused
 
+            if mode == "system-oversize":
+                assert isinstance(
+                    error, PermissionError
+                ) and "required task seed does not fit" in str(error)
+                assert not calls
+                assert (
+                    controller._fleet_wake._automatic_primary_claims.get(session.id)
+                    is None
+                )
+                return
             if mode == "cleanup-source":
                 assert isinstance(
                     error, PermissionError
@@ -510,7 +675,9 @@ async def exercise():
                 if not driver.done():
                     await driver
             result = driver.result()
-        elif mode == "cancel-cleanup":
+        elif mode in {"cancel-cleanup", "maintenance-tail"}:
+            if mode == "maintenance-tail":
+                assert await asyncio.to_thread(maintenance_entered.wait, 15)
             driver = asyncio.create_task(prepared.run_planning())
             assert await asyncio.to_thread(entered.wait, 15)
             assert prepared.primary_owner.is_admitted
@@ -526,7 +693,7 @@ async def exercise():
                 result = service.get(attempt.workflow_id)
         else:
             result = await prepared.run_planning()
-        if mode == "repair":
+        if mode in {"repair", "repair-instruction"}:
             first = result
             prepared = await prepare_workflow_planning(
                 controller,
@@ -535,28 +702,93 @@ async def exercise():
                 workflow_id=first.id,
                 revision_id=len(first.plans),
                 command_id="repair-native",
+                repair_instruction=repair_instruction,
             )
             attempt = prepared.phase.attempt
             result = await prepared.run_planning()
             assert len(result.plans) == 2
+            if mode == "repair-instruction":
+                from tldw_chatbook.Agents.workflow_models import WorkflowPhaseAttempt
+
+                repeated = await prepare_workflow_planning(
+                    controller,
+                    session_id=session.id,
+                    binding=binding,
+                    command_id="repair-native",
+                    workflow_id=attempt.workflow_id,
+                    revision_id=1,
+                    repair_instruction=repair_instruction,
+                )
+                assert (
+                    type(repeated) is WorkflowPhaseAttempt and repeated.id == attempt.id
+                )
+                assert repeated.state == "completed"
+                try:
+                    await prepare_workflow_planning(
+                        controller,
+                        session_id=session.id,
+                        binding=binding,
+                        command_id="repair-native",
+                        workflow_id=attempt.workflow_id,
+                        revision_id=1,
+                        repair_instruction=repair_instruction + " ",
+                    )
+                except ValueError as exc:
+                    assert "workflow_command_conflict" in str(exc)
+                else:
+                    raise AssertionError("changed repair command was adopted")
+                assert len(calls) == 2
+        if mode == "system-context":
+            assert received_system == [True], (
+                "selected native system context was omitted"
+            )
+        if mode == "system-oversize":
+            assert not calls, "oversized mandatory system context reached MODEL"
+        if mode in {"executor-replaced", "reader-replaced", "executor-hash-replaced"}:
+            assert len(calls) == 1
+            assert not (root / "changed-receiver-wrote.txt").exists(), (
+                "changed receiver performed an effect"
+            )
+            with owned_goal_storage(service):
+                receipt = service.db.automatic_work.read_workflow_attempt(
+                    attempt.id, owner_id=attempt.owner_id
+                )
+            assert receipt.state == "completed" and receipt.outcome == "failed"
+            assert (
+                prepared._planning_physical_returned
+                and prepared._planning_terminal_returned
+            )
+            assert prepared.primary_owner._root_finished
+            assert prepared.primary_claim.id not in runtime.worktree_activity._claims
+            print("F_CHANGED_RECEIVER_REFUSED_WITH_REQUIRED_RETURN", flush=True)
         assert not compaction_calls, "planning scheduled optional compaction"
         assert not factory_calls, "planning invoked an optional tool-service factory"
         assert len(calls) == (
-            0 if mode == "budget-zero" else 2 if mode in {"tools", "repair"} else 1
+            0
+            if mode == "budget-zero"
+            else 2
+            if mode in {"tools", "repair", "repair-instruction"}
+            else 1
         )
         if mode in {
             "invalid-json",
             "budget-zero",
             "cancel-cleanup",
+            "maintenance-tail",
             "shutdown-worker-tail",
             "wrapper-changed",
             "wrapper-unavailable",
+            "executor-replaced",
+            "reader-replaced",
+            "executor-hash-replaced",
         }:
             assert not result.plans, "invalid or cancelled planning published a plan"
         else:
             assert result.plans, "native verifier plan was refused"
             assert result.plans[-1].request == request
-        assert result.accounting.used["generation"] == (2 if mode == "repair" else 1)
+        assert result.accounting.used["generation"] == (
+            2 if mode in {"repair", "repair-instruction"} else 1
+        )
         assert result.accounting.used["child_launch"] == 0
         assert prepared._planning_settled
         assert controller._fleet_wake._automatic_primary_claims.get(session.id) is None
@@ -574,14 +806,46 @@ async def exercise():
             raise RuntimeError("F_REQUIRED_CUSTODY_RETAINED_" + mode)
         if prepared is not None:
             await prepared.close()
-        if disposal is None:
-            await runtime.dispose()
+        if mode == "maintenance-tail":
+            assert maintenance_entered.is_set()
+            original = maintenance_return["operation"]
+            disposal = asyncio.create_task(runtime.dispose())
+            try:
+                try:
+                    await asyncio.wait_for(asyncio.shield(disposal), timeout=0.2)
+                except TimeoutError:
+                    pass
+                else:
+                    with maintenance_storage._lock:
+                        assert original in maintenance_storage._operations
+                    print(
+                        "F_FIX1_RUNTIME_RETURNED_WITH_ORIGINAL_MAINTENANCE", flush=True
+                    )
+                    creators.retire()  # Original unchanged assertion at the actual early-return boundary.
+                    raise AssertionError(
+                        "runtime retired before original maintenance operation returned"
+                    )
+            finally:
+                maintenance_release.set()
+                maintenance_return["future"].result(timeout=15)
+                await disposal
+                with maintenance_storage._lock:
+                    assert original not in maintenance_storage._operations
+                threading.setprofile_all_threads(None)
+                capacity = runtime._execution_capacity
+                assert capacity is None or capacity.snapshot().executions == ()
+                creators.retire()
+                print("F_FIX1_ORIGINAL_MAINTENANCE_PHYSICAL_RETURN", flush=True)
+                print("retired and reopened", flush=True)
         else:
-            await disposal
-        capacity = runtime._execution_capacity
-        assert capacity is None or capacity.snapshot().executions == ()
-        creators.retire()
-        print("retired and reopened", flush=True)
+            if disposal is None:
+                await runtime.dispose()
+            else:
+                await disposal
+            capacity = runtime._execution_capacity
+            assert capacity is None or capacity.snapshot().executions == ()
+            creators.retire()
+            print("retired and reopened", flush=True)
 
 
 with user_fixture_default_owner():

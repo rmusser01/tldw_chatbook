@@ -586,3 +586,79 @@ def test_unsuccessful_planning_retains_uncertain_usage(workflow, tmp_path, outco
             (phase.id,),
         ).fetchone()
         assert tuple(row) == ("pending", 131072)
+
+
+def test_explicit_repair_body_is_immutable_command_equality_metadata(workflow):
+    import hashlib
+    import sqlite3
+
+    db, snap, _ = workflow
+    body = "Keep completed work.\nAdd Unicode-path coverage."
+    args = {
+        "owner_id": "owner",
+        "session_id": "session",
+        "command_id": "repair-body",
+        "revision_id": 1,
+    }
+    first = db.automatic_work.prepare_workflow_planning(
+        snap.id, repair_instruction=body, **args
+    )
+    assert first.repair_instruction_sha256 == hashlib.sha256(body.encode()).hexdigest()
+    before = db.automatic_work.snapshot(snap.chain_id)
+    assert (
+        db.automatic_work.prepare_workflow_planning(
+            snap.id, repair_instruction=body, **args
+        )
+        == first
+    )
+    with pytest.raises(ValueError, match="workflow_command_conflict"):
+        db.automatic_work.prepare_workflow_planning(
+            snap.id, repair_instruction=body + " ", **args
+        )
+    with pytest.raises(ValueError, match="workflow_command_conflict"):
+        db.automatic_work.prepare_workflow_planning(snap.id, **args)
+    assert db.automatic_work.snapshot(snap.chain_id) == before
+    with db.connection() as conn:
+        for column, value in [
+            ("repair_instruction_sha256", None),
+            ("command_id", "replaced"),
+        ]:
+            with pytest.raises(sqlite3.IntegrityError, match="immutable"):
+                conn.execute(
+                    f"UPDATE workflow_phase_attempts SET {column}=? WHERE native_attempt_id=?",
+                    (value, first.id),
+                )
+        assert (
+            conn.execute(
+                "SELECT COUNT(*) FROM workflow_phase_attempts WHERE native_attempt_id=?",
+                (first.id,),
+            ).fetchone()[0]
+            == 1
+        )
+
+
+def test_legacy_null_repair_digest_never_adopts_explicit_replay(workflow):
+    import sqlite3
+
+    db, snap, _ = workflow
+    args = {
+        "owner_id": "owner",
+        "session_id": "session",
+        "command_id": "legacy-repair",
+        "revision_id": 1,
+    }
+    first = db.automatic_work.prepare_workflow_planning(snap.id, **args)
+    assert first.repair_instruction_sha256 is None
+    assert db.automatic_work.prepare_workflow_planning(snap.id, **args) == first
+    with pytest.raises(ValueError, match="workflow_command_conflict"):
+        db.automatic_work.prepare_workflow_planning(
+            snap.id, repair_instruction="New intent", **args
+        )
+    with (
+        db.connection() as conn,
+        pytest.raises(sqlite3.IntegrityError, match="immutable"),
+    ):
+        conn.execute(
+            "UPDATE workflow_phase_attempts SET repair_instruction_sha256=? WHERE native_attempt_id=?",
+            ("a" * 64, first.id),
+        )

@@ -18,6 +18,31 @@ async def run_legacy_trace_maintenance(
         tasks = getattr(controller, "_active_stream_tasks", None)
         return bool(tasks)
 
+    class MaintenanceReturnUnknown(RuntimeError):
+        """Cancellation of a DB proxy does not prove its worker returned."""
+
+    async def call_maintenance(operation, *args, **kwargs):
+        # Retain this exact finite coroutine through its original worker and
+        # operation/connection exits. Cancellation must not cancel its proxy.
+        worker = _source.asyncio.create_task(
+            _source.run_owned_db_call(database, operation, *args, **kwargs)
+        )
+        cancelled = False
+        while not worker.done():
+            try:
+                await _source.asyncio.shield(worker)
+            except _source.asyncio.CancelledError:
+                cancelled = True
+            except Exception:  # noqa: BLE001 - inspect the original result below.
+                break
+        if worker.cancelled():
+            raise MaintenanceReturnUnknown("maintenance worker return is unknown")
+        result = worker.result()  # Callback AND native connection-close errors.
+        if cancelled:
+            raise _source.asyncio.CancelledError
+        return result
+
+
     from tldw_chatbook.Chat.console_trace_maintenance import (
         LegacyTraceMaintenance,
     )
@@ -64,8 +89,11 @@ async def run_legacy_trace_maintenance(
             maintenance.expect_work = True
         seen_work = current_work
         try:
-            result = await _source.run_owned_db_call(database, maintenance.run_batch)
+            result = await call_maintenance(maintenance.run_batch)
         except Exception as exc:  # noqa: BLE001 - retry remains restart-safe
+            if (self._disposed or _source.asyncio.current_task().cancelling()
+                    or isinstance(exc, MaintenanceReturnUnknown)):
+                raise
             _source.logger.warning(  # noqa: PLE1205 -- live Loguru owner uses brace formatting
                 "legacy trace maintenance paused after {}",
                 type(exc).__name__,
@@ -122,8 +150,7 @@ async def run_legacy_trace_maintenance(
                     None,
                 )
                 collector = TraceGarbageCollector(database)
-                current_epoch = await _source.run_owned_db_call(
-                    database, collector.current_graph_epoch
+                current_epoch = await call_maintenance(collector.current_graph_epoch
                 )
                 if (
                     pending_gc_result is not None
@@ -137,9 +164,7 @@ async def run_legacy_trace_maintenance(
                     if current_epoch == last_collected_epoch:
                         await _source.asyncio.sleep(1.0)
                         continue
-                    pending_gc_result = await _source.run_owned_db_call(
-                        database,
-                        collector.collect,
+                    pending_gc_result = await call_maintenance(collector.collect,
                         request_id=f"auto-{new_opaque_id()}",
                     )
                     last_collected_epoch = int(
@@ -164,9 +189,7 @@ async def run_legacy_trace_maintenance(
                     resume_dispatch=resume,
                     cancel_requested=lambda: self._disposed,
                 )
-                outcome = await _source.run_owned_db_call(
-                    database,
-                    compactor.run_after_gc,
+                outcome = await call_maintenance(compactor.run_after_gc,
                     pending_gc_result,
                 )
                 if outcome.reason_code == "logical_gc_unavailable":
@@ -178,9 +201,14 @@ async def run_legacy_trace_maintenance(
                 ):
                     pending_gc_result = None
             except ImportError:
+                if self._disposed or _source.asyncio.current_task().cancelling():
+                    raise
                 # Narrow test doubles may provide only the legacy worker.
                 pass
             except Exception as exc:  # noqa: BLE001 - durable retry state
+                if (self._disposed or _source.asyncio.current_task().cancelling()
+                        or isinstance(exc, MaintenanceReturnUnknown)):
+                    raise
                 _source.logger.warning(  # noqa: PLE1205 -- live Loguru owner uses brace formatting
                     "trace physical maintenance paused after {}",
                     type(exc).__name__,

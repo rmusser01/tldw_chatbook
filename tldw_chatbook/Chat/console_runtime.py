@@ -7005,12 +7005,19 @@ class ConsoleRuntime:
             await asyncio.shield(self._canvas_policy_read_task)
             self._canvas_policy_read_task = None
         maintenance_task = self._legacy_trace_maintenance_task
-        if maintenance_task is not None and not maintenance_task.done():
-            maintenance_task.cancel()
-            try:
-                await maintenance_task
-            except asyncio.CancelledError:
-                pass
+        maintenance_cancelled = False
+        if maintenance_task is not None:
+            if not maintenance_task.done():
+                maintenance_task.cancel()
+            while not maintenance_task.done():
+                try:
+                    await asyncio.shield(maintenance_task)
+                except asyncio.CancelledError:
+                    maintenance_cancelled |= bool(asyncio.current_task().cancelling())
+                except Exception:  # noqa: BLE001 - consume the exact result below.
+                    break
+            if not maintenance_task.cancelled():
+                maintenance_task.result()
         self._raw_cli_refusal_stash_bank.clear()
         with self._project_decision_lock:
             binding_decisions = tuple(self._project_binding_decisions.values())
@@ -7345,7 +7352,11 @@ class ConsoleRuntime:
         for task in cleanup_pending:
             task.cancel()
             task.add_done_callback(self._consume_task_outcome)
-        if cancel_requested or asyncio.current_task().cancelling():
+        if (
+            maintenance_cancelled
+            or cancel_requested
+            or asyncio.current_task().cancelling()
+        ):
             raise asyncio.CancelledError
 
 

@@ -2213,6 +2213,7 @@ class AutomaticWorkLedger:
                 purpose=phase["purpose"],
                 control_revision=phase["control_revision"],
                 command_id=phase["command_id"],
+                repair_instruction_sha256=phase["repair_instruction_sha256"],
                 chain_id=native["chain_id"],
                 conversation_id=native["conversation_id"],
                 session_id=native["session_id"],
@@ -2365,12 +2366,27 @@ class AutomaticWorkLedger:
         session_id: str,
         command_id: str,
         revision_id: int | None = None,
+        repair_instruction: str | None = None,
     ) -> WorkflowPhaseAttempt:
         """Reserve read-only planning against the current immutable request/base plan."""
         if revision_id is not None and (
             type(revision_id) is not int or not 0 < revision_id < 2**63
         ):
             raise ValueError("invalid workflow revision")
+        from hashlib import sha256
+
+        from tldw_chatbook.Agents.workflow_models import RECORD_BYTES
+
+        digest = None
+        if repair_instruction is not None:
+            if (
+                type(repair_instruction) is not str
+                or not repair_instruction
+                or len(repair_instruction.encode("utf-8")) > RECORD_BYTES
+                or revision_id is None
+            ):
+                raise ValueError("invalid workflow repair instruction")
+            digest = sha256(repair_instruction.encode("utf-8")).hexdigest()
         return self._prepare_workflow(
             workflow_id,
             revision_id=revision_id,
@@ -2379,6 +2395,7 @@ class AutomaticWorkLedger:
             owner_id=owner_id,
             session_id=session_id,
             command_id=command_id,
+            _repair_digest=digest,
         )
 
     def _prepare_workflow(
@@ -2392,6 +2409,7 @@ class AutomaticWorkLedger:
         session_id,
         command_id,
         _remaining=None,
+        _repair_digest=None,
     ):
         from tldw_chatbook.Agents.workflow_models import RECORD_BYTES
 
@@ -2427,6 +2445,8 @@ class AutomaticWorkLedger:
                     owner_id,
                     session_id,
                 ):
+                    raise ValueError("workflow_command_conflict")
+                if prior["repair_instruction_sha256"] != _repair_digest:
                     raise ValueError("workflow_command_conflict")
                 if (
                     _remaining is not None
@@ -2501,7 +2521,12 @@ class AutomaticWorkLedger:
                 )
                 if self._target_active(conn, row["conversation_id"]):
                     raise AutomaticWorkRefused("conversation_wake_active")
-                store._capacity(conn, workflow_id, RECORD_BYTES * (len(tasks) or 1))
+                store._capacity(
+                    conn,
+                    workflow_id,
+                    RECORD_BYTES * (len(tasks) or 1)
+                    + (64 if _repair_digest is not None else 0),
+                )
                 if _remaining is not None:
                     store._save_decision(conn, _remaining, status="awaiting_approval")
                     row = store._row(conn, workflow_id)
@@ -2532,7 +2557,7 @@ class AutomaticWorkLedger:
                     (workflow_id,),
                 ).fetchone()[0]
                 conn.execute(
-                    "INSERT INTO workflow_phase_attempts (id,workflow_id,plan_revision,phase_id,ordinal,native_attempt_id,status,purpose,command_id,control_revision,result_bytes) VALUES (?,?,?,?,?,?,'prepared',?,?,?,?)",
+                    "INSERT INTO workflow_phase_attempts (id,workflow_id,plan_revision,phase_id,ordinal,native_attempt_id,status,purpose,command_id,control_revision,result_bytes,repair_instruction_sha256) VALUES (?,?,?,?,?,?,'prepared',?,?,?,?,?)",
                     (
                         phase_key,
                         workflow_id,
@@ -2544,6 +2569,7 @@ class AutomaticWorkLedger:
                         command_id,
                         row["control_revision"],
                         RECORD_BYTES if purpose == "planning" else 0,
+                        _repair_digest,
                     ),
                 )
                 for task in tasks:

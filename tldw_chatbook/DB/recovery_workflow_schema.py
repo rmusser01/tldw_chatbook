@@ -110,6 +110,23 @@ def validate_workflow_rows(connection: sqlite3.Connection) -> tuple[str, ...]:
 
     if (
         connection.execute("SELECT MAX(version) FROM schema_version").fetchone()[0]
+        >= 29
+    ):
+        for digest, purpose, revision in connection.execute(
+            "SELECT repair_instruction_sha256,purpose,plan_revision FROM workflow_phase_attempts"
+        ):
+            if digest is not None and (
+                type(digest) is not str
+                or len(digest) != 64
+                or any(c not in "0123456789abcdef" for c in digest)
+                or purpose != "planning"
+                or type(revision) is not int
+                or revision <= 0
+            ):
+                return ("invalid_workflow_repair_input",)
+
+    if (
+        connection.execute("SELECT MAX(version) FROM schema_version").fetchone()[0]
         >= 28
     ):
         issues = _validate_workflow_windows(connection)
@@ -511,3 +528,26 @@ def _validate_workflow_windows(conn):
         return ()
     except (ValueError, TypeError, KeyError):
         return ("invalid_workflow_window",)
+
+
+WORKFLOW_REPAIR_INPUT_MIGRATION = (
+    "ALTER TABLE workflow_phase_attempts ADD COLUMN repair_instruction_sha256 TEXT CHECK(repair_instruction_sha256 IS NULL OR (typeof(repair_instruction_sha256)='text' AND length(CAST(repair_instruction_sha256 AS BLOB))=64 AND repair_instruction_sha256 NOT GLOB '*[^0-9a-f]*' AND purpose='planning' AND plan_revision IS NOT NULL))",
+    "CREATE TRIGGER workflow_repair_input_immutable\nBEFORE UPDATE OF id,workflow_id,plan_revision,phase_id,purpose,command_id,native_attempt_id,repair_instruction_sha256 ON workflow_phase_attempts\nWHEN OLD.repair_instruction_sha256 IS NOT NULL OR NEW.repair_instruction_sha256 IS NOT NULL\nBEGIN SELECT RAISE(ABORT, 'workflow repair input is immutable'); END",
+    "INSERT INTO schema_version(version) VALUES (29)",
+)
+
+
+def workflow_repair_input_catalog(catalog):
+    """Apply exact v29 command-equality metadata without reconstructing authority."""
+    with sqlite3.connect(":memory:") as conn:
+        for sql in sorted(catalog, key=lambda sql: not sql.startswith("CREATE TABLE")):
+            if not sql.startswith("CREATE TABLE sqlite_sequence"):
+                conn.execute(sql)
+        for sql in WORKFLOW_REPAIR_INPUT_MIGRATION:
+            conn.execute(sql)
+        return tuple(
+            row[0]
+            for row in conn.execute(
+                "SELECT sql FROM sqlite_master WHERE sql IS NOT NULL ORDER BY type,name"
+            )
+        )

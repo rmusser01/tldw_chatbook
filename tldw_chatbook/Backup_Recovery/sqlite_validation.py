@@ -366,8 +366,10 @@ class _Restrictions:
             permitted |= self.migrating and first == "user_version"
             # SQLite validates existing rows when ADD COLUMN adds a CHECK.
             permitted |= (
-                self.migrating and self.migration_owner == "db.agent_runs"
-                and first == "quick_check" and second == "automatic_wake_attempts"
+                self.migrating
+                and self.migration_owner == "db.agent_runs"
+                and first == "quick_check"
+                and second in {"automatic_wake_attempts", "workflow_phase_attempts"}
             )
             permitted |= (
                 self.migrating and self.migration_owner == "db.library_collections"
@@ -820,6 +822,10 @@ class _Restrictions:
                         and (first, second)
                         in {
                             ("workflow_checkpoint_immutable", "workflow_checkpoints"),
+                            (
+                                "workflow_repair_input_immutable",
+                                "workflow_phase_attempts",
+                            ),
                             (
                                 "workflow_change_window_identity",
                                 "workflow_change_windows",

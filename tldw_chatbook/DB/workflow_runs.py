@@ -103,6 +103,12 @@ class WorkflowRunsStore:
                     + (" WHERE workflow_id=?" if owner else ""),
                     (owner,) if owner else (),
                 ).fetchone()[0]
+            if conn.execute("SELECT 1 FROM schema_version WHERE version=29").fetchone():
+                total += conn.execute(
+                    "SELECT COALESCE(SUM(length(CAST(repair_instruction_sha256 AS BLOB))),0) FROM workflow_phase_attempts"
+                    + (" WHERE workflow_id=?" if owner else ""),
+                    (owner,) if owner else (),
+                ).fetchone()[0]
             return total
 
         if (

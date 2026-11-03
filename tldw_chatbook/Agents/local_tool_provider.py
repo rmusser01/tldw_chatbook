@@ -834,6 +834,13 @@ class LocalToolProvider:
         self._path_specs_by_alias: dict[str, dict[str, LocalToolSpec]] = {}
         self._native_ssh_specs: dict[str, dict[str, LocalToolSpec]] = {}
 
+        from tldw_chatbook.Chat.console_workflow_preparation import (
+            current_planning_preparation,
+        )
+
+        planning = current_planning_preparation()
+        if planning is not None:
+            planning.check_planning_executor(workspace_executor)
         selected_executor = workspace_executor or WorkspaceToolExecutor(workspace_root)
         if specs is not None:
             if self._admitted_roots is not None and any(
@@ -886,6 +893,8 @@ class LocalToolProvider:
                         "executor construction"
                     )
                 try:
+                    if planning is not None:
+                        planning.check_planning_executor(authority.workspace_executor)
                     executor = authority.workspace_executor or WorkspaceToolExecutor(
                         authority.root,
                         user_exclusion_paths=authority.exclusions_provider,
@@ -3206,6 +3215,13 @@ class LocalToolProvider:
         oversize, transport) -> nothing, a deliberately weaker blind
         write rather than a false stale refusal. Never raises.
         """
+        from tldw_chatbook.Chat.console_workflow_preparation import (
+            current_planning_preparation,
+        )
+
+        planning = current_planning_preparation()
+        if planning is not None:
+            planning.check_local_sources()
         if isinstance(root, RemoteRoot):
             self._record_remote_fs_read_observation(
                 args, root, worker_result=worker_result, worker_failure=worker_failure
@@ -4364,6 +4380,13 @@ def _filesystem_specs(
     workspace_executor: WorkspaceToolExecutor,
 ) -> list[LocalToolSpec]:
     """Build the shared native filesystem specs without optional tool factories."""
+    from tldw_chatbook.Chat.console_workflow_preparation import (
+        current_planning_preparation,
+    )
+
+    planning = current_planning_preparation()
+    if planning is not None:
+        planning.check_planning_executor(workspace_executor)
     return [
         LocalToolSpec(
             worktree_effect=_NATIVE_WORKTREE_EFFECTS["fs_list"],
@@ -4692,7 +4715,9 @@ def _default_specs(
         current_planning_preparation,
     )
 
-    if current_planning_preparation() is not None:
+    planning = current_planning_preparation()
+    if planning is not None:
+        planning.check_planning_executor(workspace_executor)
         return _filesystem_specs(workspace_executor)
 
     from tldw_chatbook.Tools.git_tool_impls import GIT_LOG_DEFAULT_COUNT

@@ -416,6 +416,9 @@ class WorkflowPhaseAttempt(WorkflowModel):
     purpose: Literal["planning", "execution"]
     control_revision: Positive
     command_id: Identity
+    repair_instruction_sha256: (
+        Annotated[str, StringConstraints(strict=True, pattern=r"^[0-9a-f]{64}$")] | None
+    ) = None
     chain_id: Identity
     conversation_id: Identity
     session_id: Identity

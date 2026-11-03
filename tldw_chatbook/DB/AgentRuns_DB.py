@@ -334,7 +334,7 @@ class AgentRunsDB(SQLiteStoreKernel, BaseDB):
     # to v21 and chains after v20. The guarded ALTERs below are idempotent
     # either way, and the from-now-on contract only requires the constant to
     # equal the HIGHEST recorded version.
-    _CURRENT_SCHEMA_VERSION = 28
+    _CURRENT_SCHEMA_VERSION = 29
     _swept_paths: set[str] = set()  # DB files already reconciled this process
 
     #: BaseDB-provenance (ADR-353): connections open through BaseDB's
@@ -933,6 +933,24 @@ class AgentRunsDB(SQLiteStoreKernel, BaseDB):
                 try:
                     conn.execute("BEGIN IMMEDIATE")
                     for statement in WORKFLOW_WINDOW_MIGRATION:
+                        conn.execute(statement)
+                    conn.commit()
+                except BaseException:
+                    conn.rollback()
+                    raise
+                finally:
+                    conn.execute(f"PRAGMA synchronous={previous_sync}")
+
+            if not conn.execute(
+                "SELECT 1 FROM schema_version WHERE version=29"
+            ).fetchone():
+                from .recovery_workflow_schema import WORKFLOW_REPAIR_INPUT_MIGRATION
+
+                previous_sync = int(conn.execute("PRAGMA synchronous").fetchone()[0])
+                conn.execute("PRAGMA synchronous=FULL")
+                try:
+                    conn.execute("BEGIN IMMEDIATE")
+                    for statement in WORKFLOW_REPAIR_INPUT_MIGRATION:
                         conn.execute(statement)
                     conn.commit()
                 except BaseException:
