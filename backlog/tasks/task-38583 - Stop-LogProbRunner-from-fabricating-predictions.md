@@ -1,12 +1,13 @@
 ---
 id: TASK-38583
 title: Stop LogProbRunner from fabricating predictions
-status: To Do
+status: In Progress
 created_date: 2026-11-02 14:26
 labels:
 - bug
 - evals
 priority: high
+updated_date: 2026-11-02 14:50
 ---
 
 ## Description

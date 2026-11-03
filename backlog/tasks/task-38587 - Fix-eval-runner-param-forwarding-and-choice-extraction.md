@@ -1,12 +1,13 @@
 ---
 id: TASK-38587
 title: Fix eval runner param forwarding and choice extraction
-status: To Do
+status: In Progress
 created_date: 2026-11-02 14:27
 labels:
 - bug
 - evals
 priority: medium
+updated_date: 2026-11-02 14:50
 ---
 
 ## Description

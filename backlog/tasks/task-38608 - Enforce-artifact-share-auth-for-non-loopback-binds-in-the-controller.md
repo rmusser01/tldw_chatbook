@@ -1,12 +1,13 @@
 ---
 id: TASK-38608
 title: Enforce artifact-share auth for non-loopback binds in the controller
-status: To Do
+status: In Progress
 created_date: 2026-11-02 14:29
 labels:
 - security
 - web
 priority: low
+updated_date: 2026-11-02 14:52
 ---
 
 ## Description

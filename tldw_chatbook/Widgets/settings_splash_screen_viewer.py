@@ -9,7 +9,6 @@ from textual import on, work
 from textual.app import ComposeResult
 from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.css.query import QueryError
-from textual.message import Message
 from textual.reactive import reactive
 from textual.widgets import Button, Checkbox, Input, OptionList, Select, Static
 from textual.widgets.option_list import Option
@@ -53,15 +52,6 @@ def switch_state_label(value: bool) -> str:
 
 class SettingsSplashScreenViewer(Vertical):
     """Splash screen gallery and defaults editor styled for Settings."""
-
-    class SplashConfigChanged(Message):
-        """Message sent when a splash config value is changed and saved."""
-
-        def __init__(self, section: str, key: str, value: Any) -> None:
-            self.section = section
-            self.key = key
-            self.value = value
-            super().__init__()
 
     selected_card: reactive[str] = reactive("default")
 
@@ -325,9 +315,6 @@ class SettingsSplashScreenViewer(Vertical):
         self._pending_values.pop(key, None)
         if result.file_replaced:
             self._config[key] = value
-            self.post_message(
-                self.SplashConfigChanged(_config_section(key), key, value)
-            )
         if self._closing or not self.is_attached:
             return
         try:

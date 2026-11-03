@@ -1,12 +1,13 @@
 ---
 id: TASK-38600
 title: Add ruff lint gate to CI and clear unused-import debt
-status: To Do
+status: In Progress
 created_date: 2026-11-02 14:28
 labels:
 - chore
 - ci
 priority: medium
+updated_date: 2026-11-02 14:51
 ---
 
 ## Description

@@ -1,12 +1,13 @@
 ---
 id: TASK-38592
 title: Normalize vector similarity scores across backends
-status: To Do
+status: In Progress
 created_date: 2026-11-02 14:27
 labels:
 - bug
 - rag
 priority: medium
+updated_date: 2026-11-02 14:50
 ---
 
 ## Description

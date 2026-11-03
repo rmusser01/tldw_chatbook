@@ -1,12 +1,13 @@
 ---
 id: TASK-38598
 title: Pin skill remote fetch connections to validated addresses
-status: To Do
+status: In Progress
 created_date: 2026-11-02 14:28
 labels:
 - security
 - skills
 priority: medium
+updated_date: 2026-11-02 14:51
 ---
 
 ## Description

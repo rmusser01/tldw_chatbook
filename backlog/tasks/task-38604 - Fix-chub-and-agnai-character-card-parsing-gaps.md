@@ -1,12 +1,13 @@
 ---
 id: TASK-38604
 title: Fix chub and agnai character card parsing gaps
-status: To Do
+status: In Progress
 created_date: 2026-11-02 14:29
 labels:
 - bug
 - characters
 priority: low
+updated_date: 2026-11-02 14:52
 ---
 
 ## Description

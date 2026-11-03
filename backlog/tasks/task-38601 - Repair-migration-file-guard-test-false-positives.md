@@ -1,12 +1,13 @@
 ---
 id: TASK-38601
 title: Repair migration-file guard test false positives
-status: To Do
+status: In Progress
 created_date: 2026-11-02 14:29
 labels:
 - test
 - db
 priority: medium
+updated_date: 2026-11-02 14:51
 ---
 
 ## Description

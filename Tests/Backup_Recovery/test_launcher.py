@@ -164,8 +164,11 @@ if condition.startswith('encrypted'):
     import toml
     from tldw_chatbook.Utils.config_encryption import ConfigEncryption
     encryption = ConfigEncryption()
-    document = encryption.encrypt_config({'general': {'users_name': 'selected'},
-        'api_settings': {'openai': {'api_key': 'sentinel-key'}}}, 'unlock-sentinel')
+    pw = 'unlock-sentinel'
+    def _enc(value):
+        return encryption.encrypt_value(value, pw)
+    document = {'general': {'users_name': _enc('selected')},
+        'api_settings': {'openai': {'api_key': _enc('sentinel-key')}}}
     document['encryption'] = {'enabled': True,
         'password_verifier': encryption.create_password_verifier('unlock-sentinel')}
     selector.write_text(toml.dumps(document))

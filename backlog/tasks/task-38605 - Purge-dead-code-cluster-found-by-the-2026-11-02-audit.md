@@ -1,12 +1,13 @@
 ---
 id: TASK-38605
 title: Purge dead code cluster found by the 2026-11-02 audit
-status: To Do
+status: In Progress
 created_date: 2026-11-02 14:29
 labels:
 - cleanup
 - ui
 priority: low
+updated_date: 2026-11-02 14:52
 ---
 
 ## Description

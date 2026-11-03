@@ -1,12 +1,13 @@
 ---
 id: TASK-38594
 title: Implement or remove chatbook REPLACE and MERGE conflict strategies
-status: To Do
+status: In Progress
 created_date: 2026-11-02 14:28
 labels:
 - bug
 - chatbooks
 priority: medium
+updated_date: 2026-11-02 14:51
 ---
 
 ## Description

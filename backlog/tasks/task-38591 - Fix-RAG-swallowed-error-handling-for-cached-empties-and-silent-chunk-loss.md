@@ -1,12 +1,13 @@
 ---
 id: TASK-38591
 title: Fix RAG swallowed-error handling for cached empties and silent chunk loss
-status: To Do
+status: In Progress
 created_date: 2026-11-02 14:27
 labels:
 - bug
 - rag
 priority: medium
+updated_date: 2026-11-02 14:50
 ---
 
 ## Description

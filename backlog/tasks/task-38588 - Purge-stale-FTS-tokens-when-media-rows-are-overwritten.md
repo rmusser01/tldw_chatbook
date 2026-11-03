@@ -1,12 +1,13 @@
 ---
 id: TASK-38588
 title: Purge stale FTS tokens when media rows are overwritten
-status: To Do
+status: In Progress
 created_date: 2026-11-02 14:27
 labels:
 - bug
 - db
 priority: medium
+updated_date: 2026-11-02 14:50
 ---
 
 ## Description

@@ -1,12 +1,13 @@
 ---
 id: TASK-38585
 title: Escape model- and user-authored strings rendered as Rich markup
-status: To Do
+status: In Progress
 created_date: 2026-11-02 14:27
 labels:
 - bug
 - ui
 priority: high
+updated_date: 2026-11-02 14:50
 ---
 
 ## Description
