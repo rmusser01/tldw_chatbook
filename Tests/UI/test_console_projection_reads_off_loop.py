@@ -344,27 +344,36 @@ def test_a_stopping_poll_hands_a_request_it_was_left_to_the_running_sync():
     )
 
 
-def test_the_core_state_push_holds_the_config_locks_it_probed(monkeypatch):
-    """TASK-36511: the full sync's core-state push never waits out a config read.
+def test_the_core_state_push_never_waits_for_or_rebuilds_config(monkeypatch):
+    """TASK-36511: the full sync's core-state push only reads warm config it holds.
 
     ``sync_console_core_state`` probed ``config_read_would_wait()`` and then
     pushed; a worker that took the config locks in between made the push's
     ``load_settings()`` wait out its whole read on the UI loop (the compact
-    gate's 238 ms probe stall, main thread in ``config_participants.operation``).
-    The push now holds both locks it probed, so no read starts under it, and a
-    lock another thread already holds replays the whole sync instead.
+    gate's 238 ms probe stall, main thread in ``config_participants.operation``),
+    and a cold cache made the push rebuild config on the UI loop. The push now
+    holds both locks, so no read starts under it, and replays the whole sync
+    when another thread holds a lock or a live read would be cold.
     """
+    from types import SimpleNamespace
+
     from tldw_chatbook import config
 
-    monkeypatch.setattr(config, "config_read_would_wait", lambda: False)
     locks = (config._settings_rebuild_lock(), config._config_file_lock())
+    warm = {"settings": {}, "cli": {}}
+    monkeypatch.setattr(config, "_settings_cache_hit", lambda _path: warm["settings"])
+    monkeypatch.setattr(config, "_warm_config_cache_hit", lambda: warm["cli"])
     taken_mid_push = []
 
     class Screen:
         _console_control_bar_replay_whole_sync = False
+        app_instance = app = SimpleNamespace(app_config={"disk-loaded": True})
 
         def __init__(self):
             self.pushes, self.replays = 0, []
+
+        def _console_config_snapshot_is_disk_loaded(self, value):
+            return bool(value)
 
         def _sync_console_chat_core_state(self):
             self.pushes += 1
@@ -405,3 +414,8 @@ def test_the_core_state_push_holds_the_config_locks_it_probed(monkeypatch):
         holder.join(5)
     assert screen.pushes == 1, "the push ran while another thread held a config lock"
     assert screen.replays == [True] and screen._console_control_bar_replay_whole_sync
+
+    warm["settings"] = None  # An external edit or a save left the cache cold.
+    config_sync.sync_console_core_state(screen)
+    assert screen.pushes == 1, "the push would rebuild config on the UI loop"
+    assert screen.replays == [True, True]
