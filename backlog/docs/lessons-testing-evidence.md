@@ -16,10 +16,6 @@ The first private cold-import guard returned a fabricated note ID from a Library
 
 **What to do.** In a code-identity census (`sys.monitoring`, frame walks, `__code__ is` checks), key decorated methods on `inspect.unwrap(...)`'s code, and assert the census once against a decorated owner. When a flake survives the fix it was blamed on, dump the frames at the failing lookup before naming a cause.
 
-## An Automatic evidence double needs an authorized source (PR3339, 2026-11-02)
-
-The first private cold-import guard returned a fabricated note ID from a Library double with no notes database. Search and prewarm ran, but current canonical capture reauthorized the nonexistent source and the provider received no evidence. A real file-backed note and app-owned conversation services restored the actual authority path. Adding a real DB also enabled the agent dispatcher, which did not reach the provider within the existing bound in that harness; the established provider-direct configuration retained the original route and reached the provider. This qualifies provider-direct only, not agent-runtime behavior.
-
 ## A test that boots a second app must wait for the first app's save, not pause for it (TASK-38644, 2026-11-03)
 
 **Incident.** Two Console parity tests in `Tests/UI/test_console_collapsed_inspector_send_layout.py` boot one app, collapse the Inspector, pause 0.3 s, and boot a second app that must start collapsed. The collapse is saved by a thread worker (`_save_console_rail_preferences`), and each config save took 0.3-0.8 s under `-n 4` at load 30-50. The first app's exit marks that worker CANCELLED but does not wait for its thread. The second app takes `load_settings()`'s cache, which a save replaces only once it has written the file, so the second app can load the open record. A scratch probe showed this: with the collapse save slowed by 3 s, it failed 4 of 4 runs at `assert not rail.display`, and the second app's loaded record had `right_open = True` while the save was still in flight. Without the slowdown, it failed 1 of 8 runs at dev (the chat-switch test) and twice in CI.
