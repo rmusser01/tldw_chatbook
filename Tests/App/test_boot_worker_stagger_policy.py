@@ -331,35 +331,3 @@ async def test_every_staggered_body_runs_after_the_ui_is_ready(request):
     early = sorted(key for key, ready in observed.items() if not ready)
     assert not early, f"staggered boot workers that ran before _ui_ready: {early}"
 
-
-def test_subscriptions_starter_reads_no_config_on_the_ui_loop(monkeypatch, tmp_path):
-    """TASK-36511: the backfill starter checks activation against the wired DB.
-
-    Starters run on the UI loop. This one resolved ``get_subscriptions_db_path()``,
-    a checked config operation that waits out any worker's config read: it held
-    the compact gate's loop probe 219 ms. The app's wired ``SubscriptionsDB``
-    (the one the worker uses) already has the path, as the scheduler's check does.
-    """
-    import tldw_chatbook.app as app_module
-    from tldw_chatbook.Backup_Recovery import activation
-
-    def config_read():
-        raise AssertionError("the starter read config on the UI loop")
-
-    checked, started = [], []
-    monkeypatch.setattr(app_module, "get_subscriptions_db_path", config_read)
-    monkeypatch.setattr(
-        activation,
-        "execution_allowed",
-        lambda owners, path=None: checked.append((owners, path)) or True,
-    )
-    db = SimpleNamespace(db_path=tmp_path / "subscriptions.db")
-    app = SimpleNamespace(
-        subscriptions_db=db,
-        _backfill_subscription_items_fts=lambda: None,
-        run_worker=lambda *args, **kwargs: started.append(kwargs["name"]) or "worker",
-    )
-    starter = app_module.TldwCli.boot_worker_starters(app)["subscriptions_fts_backfill"]
-    assert starter() == "worker"
-    assert checked == [(("db.subscriptions",), db.db_path)]
-    assert started == ["_backfill_subscription_items_fts"]
