@@ -155,6 +155,9 @@ class _Preparation:
         )
         self.sources = _guard.captured_sources(None)
         self.claim = self.owner = self.operation = None
+        from .console_ordinary_tree import current_ordinary_tree
+
+        self.ordinary_tree = current_ordinary_tree(source.controller)
         self.cancelled = False
         bound = _submission.get()
         parent = current_execution_owner()
@@ -268,6 +271,10 @@ class _Preparation:
             if issuer.activity is None:
                 issuer.activity = issuer.runtime.worktree_activity
             self.check(self.service)
+            if self.ordinary_tree is not None:
+                self.owner = self.ordinary_tree.borrow(issuer.runtime)
+                self.operation = self.owner.reserve_tool()
+                return
             with issuer.activity.prelaunch(
                 footprint=WorktreeFootprint(opaque=True)
             ) as claim:
@@ -310,5 +317,6 @@ class _Preparation:
     def finish(self):
         if self.operation is not None:
             self.operation.finish()
-            self.claim.settle(durable=True)
-            self.owner.finish_root()
+            if self.claim is not None:
+                self.claim.settle(durable=True)
+                self.owner.finish_root()

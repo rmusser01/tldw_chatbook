@@ -897,3 +897,17 @@ project consent record them. Custom/unknown readers retain their complete values
 Changed selection, disable and retarget still revoke; activation storage tuple
 matching remains strict. This is not a new consent grant or ordinary physical
 admission.
+
+
+### Ordinary turn borrowing and late delivery (Task8D2)
+
+The complete ordinary tree supplies original source/owner/claim to actual legacy,
+v2, nested MCP and plugin-preparation workers before enqueue. Borrowers retire
+only their actual operations after physical, required-write and original host
+return; they never finish or settle the parent. Genuine Stop/SubagentStop and
+post-tool/lifecycle obligations retain their original producer and finite holds
+before capacity closes. Required admission bundles are atomic; existing optional
+notification omissions, dependency and event-control policy remain unchanged.
+Exact source/permission equality and positively retired passive MCP context stay
+strict. This consumes existing ADR285 ownership, adding no hook journal, replay
+permission, executor or capacity exception.

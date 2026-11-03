@@ -7137,7 +7137,11 @@ class ConsoleChatStore(ConsoleReceivedTurnAdmissionMixin, ConsoleReceivedIntentI
 
     @_fork_session_transition
     def publish_durable_turn_identity(
-        self, session_id: str, commit: ConsoleDurableTurnCommit
+        self,
+        session_id: str,
+        commit: ConsoleDurableTurnCommit,
+        *,
+        _original_policy_result: list | None = None,
     ) -> None:
         """Publish committed identity, policy, and first-send settings bases."""
 
@@ -7157,6 +7161,8 @@ class ConsoleChatStore(ConsoleReceivedTurnAdmissionMixin, ConsoleReceivedIntentI
             raise RuntimeError("Committed Console Library policy is unavailable.")
         session.library_policy_holder.snapshot = result.snapshot
         session.library_policy_holder.explicitly_staged = False
+        if type(_original_policy_result) is list:
+            _original_policy_result.append((session, session.library_policy_holder, result))
         generation_base_installed = False
         context_base_installed = False
         if commit.first_persist:
@@ -7440,10 +7446,17 @@ class ConsoleChatStore(ConsoleReceivedTurnAdmissionMixin, ConsoleReceivedIntentI
             raise TypeError("identity must be ConsoleStagedConversationIdentity")
         session = self._session_or_raise(session_id)
         first_binding = session.persisted_conversation_id is None
+        from .console_ordinary_tree import current_ordinary_tree
+
+        tree = current_ordinary_tree()
+        if tree is not None:
+            tree.check()
         self.publish_first_persisted_conversation(
             session_id,
             identity.conversation_id,
         )
+        if tree is not None:
+            tree.persisted(self, session, identity)
         # Existing saved titles are owned by committed rename publication,
         # not the title snapshot captured by an older send or retry.
         if first_binding:
@@ -22498,3 +22511,17 @@ class ConsoleChatStore(ConsoleReceivedTurnAdmissionMixin, ConsoleReceivedIntentI
         if role is ConsoleMessageRole.ASSISTANT and not content:
             return "pending"
         return "complete"
+
+
+from .console_ordinary_tree import _function_record as _ordinary_function_record
+
+_NATIVE_FIRST_LIBRARY_STORE = (
+    ConsoleChatStore,
+    _ordinary_function_record(ConsoleChatStore.publish_durable_turn_identity),
+    _ordinary_function_record(
+        ConsoleChatStore.publish_durable_turn_identity.__wrapped__
+    ),
+    _ordinary_function_record(ConsoleChatStore.publish_committed_identity),
+    _ordinary_function_record(ConsoleChatStore.publish_committed_identity.__wrapped__),
+    _ordinary_function_record(ConsoleChatStore._session_or_raise),
+)

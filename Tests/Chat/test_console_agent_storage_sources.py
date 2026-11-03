@@ -447,3 +447,25 @@ async def test_original_console_mcp_context_reaches_child_model(
         replacement_database.close()
         if global_registry is not rig.registry:
             global_registry.db.close()
+
+
+async def test_original_mcp_capture_retains_structured_names_with_definition_hashes(
+    mcp_case,
+):
+    from tldw_chatbook.MCP.permission_store import definition_hash
+    from tldw_chatbook.MCP.tool_naming import llm_tool_name
+
+    case = mcp_case
+    configuration = await case.rig.controller.capture_turn_configuration_snapshot(
+        case.rig.session.id
+    )
+    expected = (
+        case.tool.tool_id,
+        case.tool.server_key,
+        case.tool.name,
+        llm_tool_name(case.tool.server_key, case.tool.name),
+    )
+    assert configuration.mcp_definition_maximum[case.tool.tool_id] == definition_hash(
+        case.tool.description, case.tool.input_schema
+    )
+    assert getattr(configuration, "mcp_definition_sources", ()) == (expected,)

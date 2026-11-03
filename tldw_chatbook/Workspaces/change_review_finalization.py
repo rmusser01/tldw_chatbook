@@ -295,6 +295,7 @@ class ChangeReviewFinalizationCoordinator:
         self._lock = threading.Lock()
         self._lanes: dict[str, deque[str]] = {}
         self._states: dict[str, _ReservationState] = {}
+        self._native_retirements: deque = deque()
         self._degraded_roots: dict[str, _DegradedRootState] = {}
         self._degraded_reservations: dict[str, _DegradedReservationState] = {}
         self._accepting = True
@@ -819,7 +820,7 @@ class ChangeReviewFinalizationCoordinator:
         for state, operation in pending:
             ticket, reason, error = None, "", ""
             try:
-                ticket, reason = state.native_source.admit()
+                ticket, reason = state.native_source.admit(operation.kind)
             except Exception:  # noqa: BLE001 - terminal native admission refusal
                 error = "native change-review admission unavailable"
             discard = False
@@ -855,7 +856,7 @@ class ChangeReviewFinalizationCoordinator:
                                 self._request_retry_locked("queue")
                             discard = True
             if discard and ticket:
-                ticket.returned(worker=True, handoff=True)
+                state.native_source.restore_unstarted(operation.kind, ticket)
             if failure is not None:
                 self._consume_operation_result(failure)
 
@@ -867,6 +868,8 @@ class ChangeReviewFinalizationCoordinator:
             state.public._completion.disposition = ChangeReviewCompletion.CANCELLED
         reservation_id = state.public.id
         self._states.pop(reservation_id, None)
+        if state.native_source is not None:
+            self._native_retirements.append(state.native_source)
         for root in state.roots:
             lane = self._lanes.get(root)
             if lane is None:
@@ -1023,6 +1026,7 @@ class ChangeReviewFinalizationCoordinator:
         try:
             while True:
                 if self._native is not None:
+                    self._retire_unused_native()
                     self._admit_pending()
                 if (
                     self._publisher_stop_requested.is_set()
@@ -1092,7 +1096,15 @@ class ChangeReviewFinalizationCoordinator:
                 assert isinstance(result, _OperationResult)
                 self._consume_operation_result(result)
         finally:
+            self._retire_unused_native()
             self._close_publisher_once()
+
+    def _retire_unused_native(self):
+        with self._lock:
+            sources = tuple(self._native_retirements)
+            self._native_retirements.clear()
+        for source in sources:
+            source.close_unused()
 
     def _consume_operation_result(self, result: _OperationResult) -> None:
         ticket = result.ticket
@@ -1128,7 +1140,12 @@ class ChangeReviewFinalizationCoordinator:
                     self._schedule_ready_locked()
         finally:
             if ticket:
-                ticket.returned(handoff=True)
+                ticket.returned(
+                    handoff=True,
+                    durable=public is None
+                    or public._completion.disposition
+                    is not ChangeReviewCompletion.UNRESOLVED,
+                )
             elif (
                 public is not None
                 and public._completion.disposition is ChangeReviewCompletion.UNADMITTED

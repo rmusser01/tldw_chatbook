@@ -74,13 +74,18 @@ async def ssh_console(mcp_case, hook_file, monkeypatch, tmp_path, request):
     workspace = tmp_path / "remote-workspace"
     workspace.mkdir()
     (workspace / "alpha.txt").write_text("original remote body\n")
-    binding = rig.registry.add_ssh_binding(
-        rig.session.workspace_id,
-        f"ssh://fake-host{workspace}",
-        python_interpreter=sys.executable,
-        ssh_bin=str(fake.bin),
-        allow_write=getattr(request, "param", {}).get("write", False),
-    )
+    host = getattr(request, "param", {}).get("host", "fake-host")
+    monkeypatch.setenv("FAKE_SSH_G_HOST", host)
+    if getattr(request, "param", {}).get("local", False):
+        binding = rig.registry.add_folder_binding(rig.session.workspace_id, workspace)
+    else:
+        binding = rig.registry.add_ssh_binding(
+            rig.session.workspace_id,
+            f"ssh://{host}{workspace}",
+            python_interpreter=sys.executable,
+            ssh_bin=str(fake.bin),
+            allow_write=getattr(request, "param", {}).get("write", False),
+        )
     case.service.approve_for_session("local:__local__", "fs_read")
     case.service.approve_for_session("local:__local__", "fs_edit")
     rig.store.persistence.db.close()
@@ -96,7 +101,10 @@ async def ssh_console(mcp_case, hook_file, monkeypatch, tmp_path, request):
         finishes=[],
         native_returns=[],
         edit=False,
+        virtual=getattr(request, "param", {}).get("virtual", False),
     )
+
+    case.service.approve_for_session("local:__virtual_cli__", "cat")
 
     from tldw_chatbook.Agents.activation import _guard
     from tldw_chatbook.Agents.execution_capacity import ExecutionOwner
@@ -134,12 +142,23 @@ async def ssh_console(mcp_case, hook_file, monkeypatch, tmp_path, request):
                     {
                         "ids": ["local:fs_read", "local:fs_edit"]
                         if state.edit
+                        else ["virtual_cli:virtual_cli"]
+                        if state.virtual
                         else ["local:fs_read"]
                     },
                 )
             elif len(self.payloads) <= state.reads + 1:
                 yield fence(
-                    "fs_read", {"path": "alpha.txt", "root_alias": binding.binding_id}
+                    "virtual_cli" if state.virtual else "fs_read",
+                    {
+                        "command": "cat",
+                        "argv": ["alpha.txt"],
+                        "root_alias": getattr(
+                            state, "virtual_alias", binding.binding_id
+                        ),
+                    }
+                    if state.virtual
+                    else {"path": "alpha.txt", "root_alias": binding.binding_id},
                 )
             elif state.edit and len(self.payloads) == state.reads + 2:
                 yield fence(
@@ -160,7 +179,9 @@ async def ssh_console(mcp_case, hook_file, monkeypatch, tmp_path, request):
         agent_runs_db=database,
         store=rig.store,
         provider_gateway=gateway,
-        skills_service=rig.skills,
+        skills_service=(
+            rig.skills if getattr(request, "param", {}).get("skills", True) else None
+        ),
         runtime_capacity=case.runtime.execution_capacity,
         get_hooks_v2=case.runtime.get_hooks_v2,
     )
@@ -173,10 +194,10 @@ async def ssh_console(mcp_case, hook_file, monkeypatch, tmp_path, request):
     state.config_file = hook_file
     state.root = tmp_path
 
-    def submit():
+    def submit(**kwargs):
         task = asyncio.create_task(
             rig.controller.submit_draft(
-                "read the remote file", session_id=rig.session.id
+                "read the remote file", session_id=rig.session.id, **kwargs
             )
         )
         case.tasks.append(task)
@@ -187,6 +208,301 @@ async def ssh_console(mcp_case, hook_file, monkeypatch, tmp_path, request):
         yield state
     finally:
         database.close()
+
+
+@pytest.mark.parametrize(
+    "ssh_console,opaque,custom_factory",
+    [
+        ({"skills": False}, False, False),
+        ({"skills": True}, True, False),
+        ({"skills": False}, True, True),
+    ],
+    indirect=["ssh_console"],
+)
+async def test_stock_local_declarations_keep_private_effects_bounded(
+    ssh_console,
+    opaque,
+    custom_factory,
+    monkeypatch,
+):
+    from dataclasses import replace
+
+    from tldw_chatbook.Chat.console_ordinary_tree import current_ordinary_tree
+
+    h = ssh_console
+    binding = h.rig.registry.list_runtime_bindings(h.rig.session.workspace_id)[0]
+    h.rig.registry.remove_runtime_binding(binding.binding_id)
+    h.case.service.set_tool_state("local:fixture", "fixture", "deny", tool=h.case.tool)
+    h.reads = 0
+    trees = []
+
+    async def observe(_count):
+        trees.append(current_ordinary_tree())
+
+    h.before_model = observe
+    if not opaque:
+        from tldw_chatbook import config
+
+        raw = toml.loads(h.config_file.read_text())
+        raw.setdefault("tools", {})["read_file_enabled"] = True
+        h.config_file.write_text(toml.dumps(raw))
+        config.refresh_runtime_config_from_cli_config()
+    constructions = []
+    if custom_factory:
+        from tldw_chatbook.Agents import local_tool_provider as local
+
+        original = local._default_specs
+
+        def custom(*args, **kwargs):
+            tree = current_ordinary_tree()
+            constructions.append(tree)
+            return [
+                replace(spec, worktree_effect="none")
+                for spec in original(*args, **kwargs)
+            ]
+
+        monkeypatch.setattr(local, "_default_specs", custom)
+    configuration = await h.rig.controller.capture_turn_configuration_snapshot(
+        h.rig.session.id
+    )
+    tools = dict(configuration.tool_configuration)
+    tools["agent_run_budget_maximum"] = replace(
+        tools["agent_run_budget_maximum"], max_subagents=0
+    )
+    configuration = replace(configuration, tool_configuration=tools)
+    assert (await h.submit(configuration=configuration)).accepted
+    assert trees and all(tree is trees[0] for tree in trees)
+    assert trees[0].footprint.opaque is opaque, (
+        "maximum missed the actual skills/runtime gate"
+    )
+    if not opaque:
+        assert trees[0].builtin_maximum["read_file"] == "read"
+        assert any(
+            "read_file" in tools for tools in trees[0].builtin_providers.values()
+        )
+    if custom_factory:
+        assert constructions and all(tree is trees[0] for tree in constructions)
+        assert all(tree.footprint.opaque for tree in constructions), (
+            "custom factory ran before opaque admission"
+        )
+
+
+@pytest.mark.parametrize(
+    "ssh_console", [{"skills": False, "virtual": True}], indirect=True
+)
+@pytest.mark.parametrize("custom_factory", [False, True])
+async def test_original_local_virtual_source_and_roots_are_in_initial_maximum(
+    ssh_console, monkeypatch, custom_factory
+):
+    from dataclasses import replace
+
+    from tldw_chatbook.Agents import virtual_cli_provider as virtual
+    from tldw_chatbook.Chat.console_ordinary_tree import current_ordinary_tree
+
+    h, seen, constructions = ssh_console, [], []
+    remote = h.rig.registry.list_runtime_bindings(h.rig.session.workspace_id)[0]
+    h.rig.registry.remove_runtime_binding(remote.binding_id)
+    local = h.root / "virtual-workspace"
+    local.mkdir()
+    (local / "alpha.txt").write_text("original local virtual body\n")
+    binding = h.rig.registry.add_folder_binding(h.rig.session.workspace_id, local)
+    h.virtual_alias = binding.binding_id
+    h.case.service.set_tool_state("local:fixture", "fixture", "deny", tool=h.case.tool)
+    original = virtual.VirtualCliProvider
+    if custom_factory:
+
+        def custom(**kwargs):
+            tree = current_ordinary_tree()
+            constructions.append((tree, tree.footprint.opaque))
+            return original(**kwargs)
+
+        monkeypatch.setattr(virtual, "VirtualCliProvider", custom)
+
+    async def observe(_count):
+        seen.append(current_ordinary_tree())
+
+    h.before_model = observe
+    configuration = await h.rig.controller.capture_turn_configuration_snapshot(
+        h.rig.session.id
+    )
+    tools = dict(configuration.tool_configuration)
+    tools["agent_run_budget_maximum"] = replace(
+        tools["agent_run_budget_maximum"], max_subagents=0
+    )
+    assert (
+        await h.submit(configuration=replace(configuration, tool_configuration=tools))
+    ).accepted
+    assert len(h.gateway.payloads) == 3 and "original local virtual body" in str(
+        h.gateway.payloads[-1]
+    )
+    assert all(tree.footprint.opaque is custom_factory for tree in seen)
+    assert seen[0].virtual_providers
+    if custom_factory:
+        assert constructions and all(
+            tree is seen[0] and opaque for tree, opaque in constructions
+        )
+
+
+@pytest.mark.parametrize("descriptor_replaced", [False, True])
+async def test_original_startup_ssh_has_operation_before_reader_enqueue(
+    ssh_console, monkeypatch, descriptor_replaced
+):
+    from tldw_chatbook.Chat.console_chat_controller import (
+        list_project_instruction_bindings,
+    )
+    from tldw_chatbook.Chat.console_project_instructions import (
+        ProjectInstructionControlState,
+    )
+
+    h = ssh_console
+    selected = list_project_instruction_bindings(h.rig.session, h.rig.registry)[0]
+    h.rig.store.set_session_project_instruction_state(
+        h.rig.session.id,
+        ProjectInstructionControlState(
+            project_instructions_enabled=True,
+            working_folder_binding_id=selected.binding.binding_id,
+            working_folder_locator_fingerprint=selected.locator_fingerprint,
+        ),
+    )
+    h.rig.controller._confirm_project_instruction_dispatch = lambda notice: "proceed"
+    (h.root / "remote-workspace" / "AGENTS.md").write_text(
+        "Original remote instructions.\n"
+    )
+    release, entered = h.root / "startup-release", h.root / "startup-io"
+    h.fake.bin.write_text(
+        h.fake.bin.read_text().replace(
+            'exec sh -c "$remote_cmd"',
+            'sh -c "$remote_cmd"\nrc=$?\n'
+            '(touch "$SSH_IO_ENTERED"; while [ ! -f "$SSH_IO_RELEASE" ]; do sleep .05; done) >&2 &\n'
+            'exit "$rc"',
+        )
+    )
+    monkeypatch.setenv("SSH_IO_ENTERED", str(entered))
+    monkeypatch.setenv("SSH_IO_RELEASE", str(release))
+    descriptor_reads = []
+    if descriptor_replaced:
+        from tldw_chatbook.Agents.project_instruction_resolver import (
+            RemoteInstructionIO,
+        )
+        from tldw_chatbook.Chat import console_chat_controller as host
+
+        original_reader = host._remote_instruction_io_for_selection
+
+        def replacement(*args, **kwargs):
+            io = original_reader(*args, **kwargs)
+
+            def forbidden_descriptor(value):
+                descriptor_reads.append(value)
+                return value._executor
+
+            monkeypatch.setattr(
+                RemoteInstructionIO, "executor", property(forbidden_descriptor)
+            )
+            return io
+
+        monkeypatch.setattr(host, "_remote_instruction_io_for_selection", replacement)
+        h.reads = 0
+    task = h.submit()
+    try:
+        await until(lambda: entered.exists() or task.done())
+        if descriptor_replaced:
+            assert (await task).accepted
+            assert not descriptor_reads, (
+                "source check invoked a replacement IO descriptor"
+            )
+            assert not entered.exists(), "changed IO source reached SSH"
+            return
+        assert entered.exists(), (
+            task.result() if task.done() else "original startup did not run"
+        )
+        assert not h.gateway.payloads, "probe was reached only by a model call"
+        assert h.case.runtime.execution_capacity.snapshot().tool_workers == 1, (
+            "original remote startup reader ran without its physical operation"
+        )
+    finally:
+        release.touch()
+        await task
+
+
+@pytest.mark.parametrize(
+    "ssh_console,dispose",
+    [
+        ({"host": "ordinary-probe-live"}, False),
+        ({"host": "ordinary-probe-dispose"}, True),
+    ],
+    indirect=["ssh_console"],
+)
+async def test_original_recovery_probe_retains_tree_after_turn_return(
+    ssh_console, monkeypatch, dispose
+):
+    from tldw_chatbook.Chat.console_chat_controller import (
+        _app_remote_binding_status_cache,
+    )
+    from tldw_chatbook.Tools.remote_workspace_transport import TransportFailureKind
+    from tldw_chatbook.Workspaces.worktree_activity import WorktreeFootprint
+
+    h = ssh_console
+    binding = h.rig.registry.list_runtime_bindings(h.rig.session.workspace_id)[0]
+    cache = _app_remote_binding_status_cache()
+    cache.record_transport_failure(
+        binding.binding_id, TransportFailureKind.UNREACHABLE, "controlled probe"
+    )
+    release, entered = h.root / "probe-release", h.root / "probe-io"
+    h.fake.bin.write_text(
+        h.fake.bin.read_text().replace(
+            'exec sh -c "$remote_cmd"',
+            'sh -c "$remote_cmd"\nrc=$?\n'
+            '(touch "$SSH_IO_ENTERED"; while [ ! -f "$SSH_IO_RELEASE" ]; do sleep .05; done) >&2 &\n'
+            'exit "$rc"',
+        )
+    )
+    monkeypatch.setenv("SSH_IO_ENTERED", str(entered))
+    monkeypatch.setenv("SSH_IO_RELEASE", str(release))
+    h.reads = 0
+    task = h.submit()
+    disposal = None
+    try:
+        await until(lambda: entered.exists() or task.done())
+        assert entered.exists(), "original degraded-binding probe did not dispatch"
+        result = await task
+        assert result.accepted
+        snapshot = h.case.runtime.execution_capacity.snapshot()
+        assert snapshot.tool_workers == 1
+        assert len(snapshot.executions) == 1 and snapshot.executions[0].root_finished
+        with h.case.runtime.worktree_activity.prelaunch(
+            footprint=WorktreeFootprint(opaque=True)
+        ) as claim:
+            assert claim is None, "probe return obligation lost original activity claim"
+        if dispose:
+            disposal = asyncio.create_task(h.case.runtime.dispose())
+            await until(lambda: h.case.runtime._disposed)
+            assert not disposal.done(), "disposal passed the original live probe"
+    finally:
+        release.touch()
+        await task
+        await until(lambda: not h.case.runtime.execution_capacity.snapshot().executions)
+        if disposal is not None:
+            await disposal
+    direct = [
+        call
+        for call in h.native_returns
+        if call is not None and call.source.authority is None
+    ]
+    assert len(direct) == 1
+    assert (
+        direct[0].finished
+        and direct[0].requests
+        and all(r.proven for r in direct[0].requests)
+    )
+    assert all(
+        live
+        for operation, admission, live in h.finishes
+        if operation is direct[0].operation
+    )
+    with h.case.runtime.worktree_activity.prelaunch(
+        footprint=WorktreeFootprint(opaque=True)
+    ) as claim:
+        assert claim is not None, "proven probe return did not retire original claim"
 
 
 async def test_original_model_operation_waits_for_real_ssh_stderr_return(
@@ -233,6 +549,191 @@ async def test_original_model_operation_waits_for_real_ssh_stderr_return(
     assert "original remote body" in str(h.gateway.payloads[2])
     assert h.case.runtime.execution_capacity.snapshot().tool_workers == 0
     assert h.finishes and all(live for _, _, live in h.finishes)
+
+
+@pytest.mark.parametrize("ssh_console", [{"virtual": True}], indirect=True)
+async def test_original_virtual_model_operation_waits_for_real_ssh_stderr_return(
+    ssh_console, monkeypatch
+):
+    await test_original_model_operation_waits_for_real_ssh_stderr_return(
+        ssh_console, monkeypatch
+    )
+    calls = [call for call in ssh_console.native_returns if call is not None]
+    assert calls and all(call.name == "virtual_cli" for call in calls)
+    assert all(request.proven for call in calls for request in call.requests)
+
+
+@pytest.mark.parametrize("ssh_console", [{"virtual": True}], indirect=True)
+@pytest.mark.parametrize(
+    "replacement", ["registry", "parser", "provider_descriptor", "callback"]
+)
+async def test_changed_original_virtual_source_refuses_after_enqueue(
+    ssh_console, monkeypatch, replacement
+):
+    from tldw_chatbook.Agents.virtual_cli_provider import VirtualCliProvider
+    from tldw_chatbook.Tools import virtual_cli_impls
+
+    h, invoked = ssh_console, []
+    start = threading.Thread.start
+
+    def altered(*args, **kwargs):
+        import traceback
+
+        invoked.append(
+            [(frame.name, frame.lineno) for frame in traceback.extract_stack(limit=12)]
+        )
+        raise AssertionError("replacement virtual source ran")
+
+    def replace_before_start(thread):
+        if thread.name == "tool-virtual_cli":
+            (service,) = h.rig.controller._agent_bridge._fleet_services.values()
+            provider = service.registry.resolve_owner_for_name("virtual_cli")[1]
+            if replacement == "provider_descriptor":
+                monkeypatch.setattr(VirtualCliProvider, "invoke", property(altered))
+            elif replacement == "parser":
+                monkeypatch.setattr(virtual_cli_impls, "parse_request", altered)
+            elif replacement == "callback":
+                monkeypatch.setattr(provider, "_resolve_state", altered)
+            else:
+                registry = next(
+                    value
+                    for alias, value in provider._registries_by_alias.items()
+                    if alias.startswith("ssh-")
+                )
+                monkeypatch.setattr(registry, "execute", altered)
+        return start(thread)
+
+    monkeypatch.setattr(threading.Thread, "start", replace_before_start)
+    assert (await h.submit()).accepted
+    assert len(h.gateway.payloads) == 3
+    assert not invoked and not h.fake.call_invocations()
+    assert h.case.runtime.execution_capacity.snapshot().tool_workers == 0
+    assert h.finishes and all(live for _, _, live in h.finishes)
+
+
+@pytest.mark.parametrize(
+    "ssh_console", [{"virtual": True, "local": True}], indirect=True
+)
+async def test_original_local_virtual_callback_refuses_before_review(
+    ssh_console, monkeypatch
+):
+    await test_changed_original_virtual_source_refuses_after_enqueue(
+        ssh_console, monkeypatch, "callback"
+    )
+
+
+@pytest.mark.parametrize(
+    "ssh_console", [{"virtual": True, "local": True}], indirect=True
+)
+async def test_original_local_tool_finish_return_retains_source_through_disposal(
+    ssh_console, monkeypatch
+):
+    from tldw_chatbook.Agents.activation import _guard
+    from tldw_chatbook.Agents.execution_capacity import CapacityRefused, ExecutionOwner
+    from tldw_chatbook.Chat.console_ordinary_tree import current_ordinary_tree
+    from tldw_chatbook.Workspaces.worktree_activity import WorktreeFootprint
+
+    h = ssh_console
+    entered, release = threading.Event(), threading.Event()
+    observations = []
+    reserve = ExecutionOwner.reserve_tool
+
+    def reserve_observed(owner):
+        operation = reserve(owner)
+        finish = operation.finish
+
+        def held_finish():
+            finish()
+            if threading.current_thread().name == "tool-virtual_cli":
+                observations.append((current_ordinary_tree(), _guard.context.get()))
+                entered.set()
+                assert release.wait(20)
+
+        operation.finish = held_finish
+        return operation
+
+    monkeypatch.setattr(ExecutionOwner, "reserve_tool", reserve_observed)
+    task = h.submit()
+    disposal = None
+    grace_returned = asyncio.Event()
+    bounded_wait = h.case.runtime._bounded_wait
+
+    async def observe_grace(tasks, *, timeout_seconds):
+        result = await bounded_wait(tasks, timeout_seconds=timeout_seconds)
+        if timeout_seconds == 0:
+            grace_returned.set()
+        return result
+
+    monkeypatch.setattr(h.case.runtime, "_bounded_wait", observe_grace)
+    try:
+        await until(lambda: entered.is_set() or task.done())
+        assert entered.is_set(), h.gateway.payloads
+        tree, source = observations[0]
+        assert tree is not None and source is not None and source.live
+        with h.case.runtime.worktree_activity.prelaunch(
+            footprint=WorktreeFootprint(opaque=True)
+        ) as claim:
+            assert claim is None
+        disposal = asyncio.create_task(h.case.runtime.dispose(timeout_seconds=0))
+        await until(lambda: h.case.runtime._disposed)
+        await until(lambda: task.done())
+        await asyncio.wait_for(grace_returned.wait(), 5)
+        done, _pending = await asyncio.wait({disposal}, timeout=3)
+        assert not done, "disposal passed original operation.finish RETURN"
+        assert source.live and tree.scratch_lease is not None
+        assert not tree.retired.done()
+        with pytest.raises(
+            (CapacityRefused, RuntimeError),
+            match="ordinary_turn_closed|original agent storage source changed",
+        ):
+            tree.borrow(h.case.runtime)
+        with pytest.raises(CapacityRefused):
+            tree.owner.reserve_tool()
+    finally:
+        release.set()
+        await asyncio.gather(task, return_exceptions=True)
+        if disposal is not None:
+            await disposal
+    from tldw_chatbook.Chat.console_ordinary_tree import _json
+
+    details = []
+    for member in tree.members.values():
+        row = h.database.get_run(member.run_id) if member.run_id else None
+        stored = {step["index"]: _json(step) for step in row["steps"]} if row else {}
+        details.append(
+            {
+                "expected_terminal": member.terminal,
+                "actual_terminal": (
+                    row["status"],
+                    row.get("result"),
+                    row.get("budget_tokens"),
+                )
+                if row
+                else None,
+                "expected_steps": list(member.steps),
+                "actual_steps": list(stored),
+                "different_steps": [
+                    index
+                    for index, value in member.steps.items()
+                    if stored.get(index) != value
+                ],
+                "durable": member.durable,
+            }
+        )
+    assert all(row["durable"] and not row["different_steps"] for row in details), (
+        details
+    )
+    assert tree.retired.done() and tree not in h.case.runtime._ordinary_turns
+    assert not source.live
+    with h.case.runtime.worktree_activity.prelaunch(
+        footprint=WorktreeFootprint(opaque=True)
+    ) as claim:
+        assert claim is not None, {
+            "scopes": tree.source_scopes,
+            "sealed": tree.sealed,
+            "settled": tree.settled,
+            "members": [vars(member) for member in tree.members.values()],
+        }
 
 
 async def test_two_model_requests_return_while_original_shared_connection_stays_healthy(
@@ -576,6 +1077,7 @@ async def test_destination_helper_waits_for_its_original_process_group(
     "mode",
     [
         "cleanup_false",
+        "virtual_cleanup_false",
         "no_terminal",
         "ambiguous_master",
         "admission_one_shot",
@@ -619,6 +1121,7 @@ async def test_unknown_peer_proof_keeps_original_model_worker_and_storage(
         }
         return
 
+    h.virtual = mode == "virtual_cleanup_false"
     if mode == "ambiguous_master":
         install_control_peer(h, monkeypatch, checks=False)
     elif mode == "admission_session":
@@ -716,7 +1219,7 @@ for line in sys.stdin.buffer:
     assert ("db.agent_runs", h.database.db_path) in storage.sources
     assert h.case.runtime.execution_capacity.snapshot().tool_workers == 1
     assert native.requests and all(r.local_returned for r in native.requests)
-    if mode == "cleanup_false":
+    if mode in {"cleanup_false", "virtual_cleanup_false"}:
         assert all(
             r.terminal is not None and r.terminal.cleanup_proven is False
             for r in native.requests
@@ -950,3 +1453,38 @@ async def test_original_edit_operation_covers_actual_cas_read_before_write(ssh_c
         edit.finished and h.case.runtime.execution_capacity.snapshot().tool_workers == 0
     )
     assert all(live for _, _, live in h.finishes)
+
+
+@pytest.mark.parametrize("ssh_console", [{"skills": False}], indirect=True)
+@pytest.mark.parametrize("complete", [False, True])
+async def test_caller_snapshot_cannot_prove_mcp_footprint_is_bounded(
+    ssh_console, complete
+):
+    from dataclasses import replace
+
+    from tldw_chatbook.Chat.console_ordinary_tree import current_ordinary_tree
+
+    h = ssh_console
+    binding = h.rig.registry.list_runtime_bindings(h.rig.session.workspace_id)[0]
+    h.rig.registry.remove_runtime_binding(binding.binding_id)
+    h.case.service.set_tool_state("local:fixture", "fixture", "deny", tool=h.case.tool)
+    h.reads = 0
+    trees = []
+
+    async def observe(_count):
+        trees.append(current_ordinary_tree())
+
+    h.before_model = observe
+    configuration = await h.rig.controller.capture_turn_configuration_snapshot(
+        h.rig.session.id
+    )
+    tools = dict(configuration.tool_configuration)
+    tools["agent_run_budget_maximum"] = replace(
+        tools["agent_run_budget_maximum"], max_subagents=0
+    )
+    configuration = replace(
+        configuration, tool_configuration=tools, mcp_definition_complete=complete
+    )
+    assert not configuration.mcp_definition_maximum
+    assert (await h.submit(configuration=configuration)).accepted
+    assert trees and all(tree.footprint.opaque for tree in trees)

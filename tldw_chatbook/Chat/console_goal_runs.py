@@ -180,6 +180,7 @@ class GoalIterationAuthorization:
             candidates = capture_run_admitted_workspace_roots(
                 session=SimpleNamespace(workspace_id=reference.workspace_id),
                 registry=registry,
+                binding_ids=frozenset({reference.binding_id}),
             )
             root = next(
                 (

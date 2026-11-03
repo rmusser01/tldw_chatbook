@@ -142,6 +142,9 @@ class HookEventExecution:
         self._state.closed = True
         if self._state.native is not None:
             self._state.native.close()
+            native = self._state.native
+            if getattr(native, "future", False) and native.ordinary_tree is not None:
+                native.ordinary_tree.consume_event(self)
 
     def retain_host(self) -> None:
         if self._state.native is not None:
@@ -308,7 +311,7 @@ class HookEngine:
             _teardown_continuation.reset(token)
 
     def begin_event(
-        self, event: HookEvent, *, teardown: bool = False
+        self, event: HookEvent, *, teardown: bool = False, _future: bool = False
     ) -> HookEventExecution:
         value = _envelope(event)
         parse_event(value)  # Bound input before serialization or admission.
@@ -329,7 +332,9 @@ class HookEngine:
         if self._native_commands_required:
             if self._native_commands is None:
                 raise ValueError("native event source unavailable")
-            native = self._native_commands.capture(event, teardown=teardown)
+            native = self._native_commands.capture(
+                event, teardown=teardown, future=_future
+            )
         return HookEventExecution._issue(
             _ExecutionState(
                 self._scope_issuer,
@@ -340,6 +345,41 @@ class HookEngine:
                 native=native,
             )
         )
+
+    def prehold_event(self, event: HookEvent) -> HookEventExecution | None:
+        """Admit this producer's finite later event under original ordinary custody."""
+        from tldw_chatbook.Chat.console_ordinary_tree import current_ordinary_tree
+
+        if current_ordinary_tree() is None or not self._native_commands_required:
+            return None
+        if self._native_commands.preheld_nested(event):
+            # The original MCP producer already reserved its complete nested
+            # event tree. Its receiving path validates and consumes those holds.
+            return None
+        scope = self.begin_event(event, _future=True)
+        try:
+            failure = self._configuration_failure(event)
+            if failure is not None and not failure.allowed:
+                raise ValueError("future event configuration refused")
+            scope._state.native.admit()
+            current_ordinary_tree().retain_event(scope)
+            return scope
+        except BaseException:
+            scope.close()
+            raise
+
+    def consume_preheld(self, scope: HookEventExecution, event: HookEvent) -> None:
+        """Consume only this engine's original identity and captured match union."""
+        state = self._execution_state(scope)
+        if (
+            state is None
+            or state.closed
+            or state.native is None
+            or not state.native.future
+        ):
+            raise ValueError("original future event unavailable")
+        self.plan_handlers(scope, event)
+        state.native.ordinary_tree.consume_event(scope)
 
     def _execution_state(self, execution: HookEventExecution) -> _ExecutionState | None:
         if type(execution) is not HookEventExecution:

@@ -929,3 +929,9 @@ __all__ = [
     "raw_cli_activity_presentation",
     "raw_cli_terminal_lifecycle",
 ]
+
+_NATIVE_RAW_CLI_RUNTIME_TYPE = RawCliRuntime
+_NATIVE_RAW_CLI_POLICY_DESCRIPTORS = tuple(
+    (name, vars(RawCliRuntime)[name])
+    for name in ("permitted", "armed", "_latest_permitted_locked")
+)

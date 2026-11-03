@@ -77,3 +77,21 @@ def bootstrap_personal_context_service(
             profile_present=_profile_presence_hint(destination),
         )
     return PersonalContextService(repository)
+
+
+_NATIVE_ORDINARY_BOOTSTRAP = (
+    bootstrap_personal_context_service,
+    bootstrap_personal_context_service.__code__,
+    bootstrap_personal_context_service.__defaults__,
+    tuple((bootstrap_personal_context_service.__kwdefaults__ or {}).items()),
+)
+
+_NATIVE_ORDINARY_BOOTSTRAP_SOURCES = tuple(
+    (name, globals()[name])
+    for name in (
+        "PersonalContextService",
+        "PersonalContextRepository",
+        "get_personal_context_db_path",
+        "_profile_presence_hint",
+    )
+)

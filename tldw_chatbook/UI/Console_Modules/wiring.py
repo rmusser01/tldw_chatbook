@@ -731,10 +731,86 @@ def _admit_console_turn_to_runtime(
 async def _precapture_turn_authority(screen: Any, session_id: str) -> Any:
     """TASK-33620.15: read a send's service-owned authority off the UI pump."""
     from functools import partial
+    from inspect import getattr_static
 
-    from .turn_admission import applied, precapture
+    from tldw_chatbook.Chat.console_runtime import ConsoleRuntime
 
-    return partial(applied, await precapture(screen._session, session_id))
+    from .turn_admission import _OwnedTurnPreparation, applied, precapture
+
+    runtime = getattr_static(screen.app_instance, "console_runtime", None)
+    if runtime is None:
+        if (
+            getattr_static(screen, "_console_received_live_adapters", ())
+            or getattr_static(screen, "_console_runtime", None) is not None
+        ):
+            raise RuntimeError("Console preparation source unavailable; Send again.")
+        return partial(applied, await precapture(screen._session, session_id))
+    if type(runtime) is not ConsoleRuntime:
+        raise RuntimeError("Console preparation source unavailable; Send again.")
+    controller, store, owner = (
+        runtime._chat_controller,
+        runtime._chat_store,
+        screen._session,
+    )
+    if controller is None or store is None:
+        raise RuntimeError("Console preparation source unavailable; Send again.")
+    from tldw_chatbook import config
+    from tldw_chatbook.Chat.console_configuration_preparation import (
+        _configuration_session_identity,
+        capture_mounted_configuration_owned,
+        original_mcp_capture_matches,
+    )
+
+    session = next((item for item in store.sessions() if item.id == session_id), None)
+    if session is None:
+        raise RuntimeError("Console session is closed.")
+    identity, config_identity = (
+        _configuration_session_identity(session),
+        config.current_config_identity(),
+    )
+
+    def current():
+        if (
+            getattr_static(screen.app_instance, "console_runtime", None) is not runtime
+            or runtime._disposed
+            or runtime._chat_controller is not controller
+            or runtime._chat_store is not store
+            or screen._session is not owner
+            or controller.app is not screen.app_instance
+            or controller.store is not store
+            or getattr_static(controller, "_hooks_v2_runtime", None) is not runtime
+            or next((item for item in store.sessions() if item.id == session_id), None)
+            is not session
+            or _configuration_session_identity(session) != identity
+            or config.current_config_identity() != config_identity
+        ):
+            raise RuntimeError("Console preparation source changed; Send again.")
+
+    current()
+    captured = await capture_mounted_configuration_owned(
+        controller,
+        session_id,
+        owner,
+        owner._build_console_turn_execution_context,
+        require_current=current,
+        _with_current=True,
+    )
+    if captured is None:
+        raise RuntimeError("Console preparation source unavailable; Send again.")
+    configuration, source_check = captured
+
+    def consume_check():
+        source_check()
+        if not original_mcp_capture_matches(
+            controller,
+            session,
+            configuration,
+            pending=configuration.mcp_capture_pending,
+            require_complete=False,
+        ):
+            raise RuntimeError("Console preparation source changed; Send again.")
+
+    return partial(applied, _OwnedTurnPreparation(owner, session_id, configuration, consume_check))
 
 
 async def _resend_refused_console_echo(screen: Any, echo: Any) -> str | None:

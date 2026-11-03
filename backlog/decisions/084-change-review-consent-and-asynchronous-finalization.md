@@ -291,3 +291,17 @@ Historical checkout/filter and snapshot semantics use the existing native Git pr
 The original host accepts results or conclusively discards stale presentation before operation.finish RETURN; original worker activation, DB handles, shadow storage and any actual scratch-generation lease survive that return. Existing scratch lookup is metadata-only and cannot allocate: tombstoned/lost previously recognized generations refuse instead of becoming unmanaged. Admission/start fences seal unstarted work during disposal; already-started original obligations may finish on their original retained source, without new confirmation, replacement-source permission or liveness inferred from a cancelled waiter. Costs are coarse contention, exact source/readback checks and potentially indefinite disposal retention after unprovable cleanup or settlement. This qualifies only the existing confirmed Undo feature; ordinary tree, wave and public workflows remain pending.
 
 A started thread whose original activation cannot enter may retire as unused only after all partial scopes close normally and the same thread observes operation.finish return. The effect callback has not entered; no required mutation exists. The same distinction covers sealed unstarted tickets. Callback-body failures, uncertain scope unwind and unknown finish return retain custody. No replacement-source retry is permitted. The existing preparation-read hop performs only source/DB/capacity admission before original effect-worker enqueue; its extra pool handoff is an explicit cost.
+
+
+### Ordinary covering-tree integration (Task8D2)
+
+Original consent/status and eligible-binding metadata precede actual initialization
+admission; pending enabled initialization contributes to the complete maximum.
+Each ordinary initializer reserves original borrowed custody before its existing
+queue accepts work. Discover/B/E and survivor jobs use the same original covering
+owner/claim; genuine future E/survivor holds precede parent/capacity closure.
+Original callback, publication and operation.finish return precede ticket.retired
+and parent release. First-unsaved-turn borrowers consume the original launch key
+with the original store's committed durable identity mapping; saved rows keep real
+conversation IDs. Required bundles cannot wait behind their own held slots;
+original advisory omissions remain visible. No new consent, queue or journal.

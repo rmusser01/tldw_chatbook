@@ -120,6 +120,7 @@ class _InitializationWork:
     origin: WorkOrigin
     token: object = field(default_factory=object)
     source: object = None
+    ticket: object = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -243,7 +244,13 @@ class ChangeReviewConsentService:
         """Return current ready roots, scheduling missing roots without waiting."""
         return self._admit(workspace_id, origin=WorkOrigin.AUTOMATIC)
 
-    def _admit(self, workspace_id, *, origin, retry=False):
+    def capture_turn(self, workspace_id: str) -> ChangeReviewAdmission:
+        """Read the same consent-bound roots without scheduling initialization."""
+        return self._admit(
+            workspace_id, origin=WorkOrigin.AUTOMATIC, schedule_missing=False
+        )
+
+    def _admit(self, workspace_id, *, origin, retry=False, schedule_missing=True):
         observed = self._observe(workspace_id)
         if observed is None:
             return 0 if retry else ChangeReviewAdmission()
@@ -260,9 +267,10 @@ class ChangeReviewConsentService:
                 key = (workspace_id, binding.locator)
                 entry = self._readiness.get(key)
                 missing = entry is None or entry.revision != consent.revision
-                if (
-                    retry and not missing and entry.state is RootReadinessState.FAILED
-                ) or (not retry and missing):
+                if schedule_missing and (
+                    (retry and not missing and entry.state is RootReadinessState.FAILED)
+                    or (not retry and missing)
+                ):
                     work = _InitializationWork(
                         workspace_id,
                         binding.locator,
@@ -362,6 +370,7 @@ class ChangeReviewConsentService:
 
     def begin_close(self) -> None:
         """Seal ingress and conclusively discard queued, never-started work."""
+        discarded = []
         with self._lock:
             if not self._disposed:
                 self._disposed = True
@@ -370,11 +379,15 @@ class ChangeReviewConsentService:
                 self._readiness.clear()
             while True:
                 try:
-                    self._queue.get_nowait()
+                    discarded.append(self._queue.get_nowait())
                 except Empty:
                     break
                 else:
                     self._queue.task_done()
+        for work in discarded:
+            if work.ticket is not None:
+                with work.ticket.activate():
+                    work.ticket.returned(worker=True, handoff=True)
 
     def shutdown(self, *, timeout: float = 1.0) -> None:
         """Seal ingress and bounded-join; returning does not prove physical drain."""
@@ -412,11 +425,16 @@ class ChangeReviewConsentService:
         )
 
     def _schedule(self, work):
+        ticket = None
+        queued = False
         try:
             if self._native_expected:
                 if self._native is None:
                     raise ValueError("native initialization source unavailable")
                 work = replace(work, source=self._native.capture(work))
+                if work.source.ordinary_tree is not None:
+                    ticket = work.source.admit()
+                    work = replace(work, ticket=ticket)
             with self._lock:
                 if not self._pending(work):
                     return False
@@ -425,10 +443,15 @@ class ChangeReviewConsentService:
                         worker.start()
                     self._workers_started = True
                 self._queue.put_nowait(work)
+                queued = True
             return True
         except Exception as error:  # noqa: BLE001 -- scheduling failure becomes failed readiness
             self._fail(work, busy=isinstance(error, (Full, CapacityRefused)))
             return False
+        finally:
+            if ticket is not None and not queued:
+                with ticket.activate():
+                    ticket.returned(worker=True, handoff=True)
 
     def _work_current(self, work):
         with self._lock:
@@ -460,9 +483,12 @@ class ChangeReviewConsentService:
             ticket = None
             try:
                 if work.source is not None:
-                    ticket = work.source.admit()
+                    ticket = work.ticket or work.source.admit()
                     with ticket.activate():
-                        self._run_work(work)
+                        try:
+                            self._run_work(work)
+                        finally:
+                            ticket.returned(worker=True, handoff=True)
                 elif self._native_expected:
                     raise ValueError("native initialization source unavailable")
                 else:
@@ -473,8 +499,6 @@ class ChangeReviewConsentService:
             except Exception as error:  # noqa: BLE001 -- one failed job must not kill the bounded worker
                 self._fail(work, busy=isinstance(error, CapacityRefused))
             finally:
-                if ticket is not None:
-                    ticket.returned(worker=True, handoff=True)
                 self._queue.task_done()
 
     def _run_work(self, work):
@@ -534,3 +558,53 @@ class ChangeReviewConsentService:
             if key[0] == workspace_id:
                 self._readiness.pop(key, None)
                 self._admission_revision += 1
+
+
+_NATIVE_ORDINARY_METADATA_CLASS = ChangeReviewConsentService
+_NATIVE_ORDINARY_METADATA_METHODS = tuple(
+    (
+        name,
+        getattr(ChangeReviewConsentService, name),
+        getattr(ChangeReviewConsentService, name).__code__,
+    )
+    for name in (
+        "status",
+        "capture_turn",
+        "_admit",
+        "_observe",
+        "_observation_current",
+        "_current_bindings",
+    )
+)
+_NATIVE_ORDINARY_CAPABILITY_READER = (
+    _default_capability_reader,
+    _default_capability_reader.__code__,
+)
+
+
+def _ordinary_metadata_sources(service):
+    """Return only static original-source checks; never invoke a supplied reader."""
+    from inspect import getattr_static
+
+    from . import change_bounds, registry_service
+
+    if type(service) is not _NATIVE_ORDINARY_METADATA_CLASS:
+        return (), False
+    registry = getattr_static(service, "_registry", None)
+    if type(registry) is not registry_service.LocalWorkspaceRegistryService:
+        return (), False
+    reader, code = _NATIVE_ORDINARY_CAPABILITY_READER
+    records = [(service, "_capability_reader", reader, code)]
+    records.extend((service, *entry) for entry in _NATIVE_ORDINARY_METADATA_METHODS)
+    records.extend(
+        (registry, *entry) for entry in registry_service._NATIVE_ORDINARY_REVIEW_READS
+    )
+    records.extend(
+        (change_bounds, *entry)
+        for entry in change_bounds._NATIVE_ORDINARY_CAPABILITY_READS
+    )
+    return tuple(records), all(
+        getattr_static(obj, name, None) is original
+        and original.__code__ is implementation
+        for obj, name, original, implementation in records
+    )

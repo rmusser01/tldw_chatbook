@@ -82,7 +82,15 @@ def capture_execution_roots(
     remote_session_key,
 ):
     """Capture workspace authority, then apply the goal's frozen narrowing."""
+    from tldw_chatbook.Agents.automatic_work_runtime import current_automatic_work
+
     from .console_chat_controller import capture_run_admitted_workspace_roots
+
+    automatic = current_automatic_work()
+    if automatic is not None and automatic.goal is not None:
+        return automatic.goal.execution_roots(
+            project_selection, project_authority_guard
+        )
 
     run_admitted_roots = capture_run_admitted_workspace_roots(
         session=next(
@@ -94,13 +102,6 @@ def capture_execution_roots(
         project_authority_guard=project_authority_guard,
         remote_session_key=remote_session_key,
     )
-    from tldw_chatbook.Agents.automatic_work_runtime import current_automatic_work
-
-    automatic = current_automatic_work()
-    if automatic is not None and automatic.goal is not None:
-        run_admitted_roots, project_selection, project_authority_guard = (
-            automatic.goal.execution_roots(project_selection, project_authority_guard)
-        )
     return run_admitted_roots, project_selection, project_authority_guard
 
 

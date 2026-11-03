@@ -2136,22 +2136,84 @@ def _call_with_timeout(
             else None,
         )
     box: dict = {"dispatch_state": "not_started"}
+    ordinary = getattr(execution_owner, "_ordinary_tree", None)
+    retained_source = None
+    if ordinary is not None:
+        if owner not in ordinary.members or owner.capacity is not ordinary.capacity:
+            if operation is not None:
+                operation.finish()
+            return ToolResult.blocked("ordinary tool owner is not an original member")
+        retained_source = ordinary.retain_source_scope()
+        retained_source.__enter__()
+
+    def retain_unknown_return():
+        if operation is not None:
+            operation.mark_stopping()
+            operation.owner.mark_cleanup_unproven()
+        threading.Event().wait()
 
     @worker_guard(execution_owner)
     def _admitted_call() -> None:
-        box["dispatch_state"] = "settled"
+        from ..Chat.console_ordinary_tree import bind_ordinary_tree
+
         with (
-            ssh_call.activate(operation) if ssh_call else contextlib.nullcontext(),
-            raw_cli_call.activate(operation)
-            if raw_cli_call
-            else contextlib.nullcontext(),
+            bind_ordinary_tree(ordinary),
+            owner.activate() if ordinary is not None else contextlib.nullcontext(),
         ):
-            result = fn()
-            box["result"] = (
-                dataclasses.replace(result, dispatch_state="settled")
-                if isinstance(result, ToolResult) and result.dispatch_state is None
-                else result
-            )
+            if ordinary is not None:
+                try:
+                    ordinary.check_local_sources()
+                except RuntimeError as error:
+                    # No original provider/source scope was attempted. Retire
+                    # this unused operation under its captured worker storage.
+                    box["result"] = ToolResult.blocked(str(error))
+                    operation.finish()
+                    return
+            try:
+                with (  # noqa: SIM117 - source and owner scopes have distinct custody
+                    ordinary.source.activate()
+                    if ordinary is not None
+                    else contextlib.nullcontext()
+                ):
+                    with (
+                        owner.activate()
+                        if ordinary is not None
+                        else contextlib.nullcontext()
+                    ):
+                        try:
+                            box["dispatch_state"] = "settled"
+                            with (
+                                ssh_call.activate(operation)
+                                if ssh_call
+                                else contextlib.nullcontext(),
+                                raw_cli_call.activate(operation)
+                                if raw_cli_call
+                                else contextlib.nullcontext(),
+                            ):
+                                result = fn()
+                                box["result"] = (
+                                    dataclasses.replace(
+                                        result, dispatch_state="settled"
+                                    )
+                                    if isinstance(result, ToolResult)
+                                    and result.dispatch_state is None
+                                    else result
+                                )
+                        except BaseException as error:
+                            box["call_error"] = error
+                            raise
+            except BaseException as error:
+                if ordinary is not None and error is not box.get("call_error"):
+                    # An attempted source entry/unwind did not return. The
+                    # original hold is not proof of that cleanup completing.
+                    retain_unknown_return()
+                raise
+            finally:
+                if ordinary is not None and (ssh_call is None or not ssh_call.finished):
+                    try:
+                        operation.finish()
+                    except BaseException:  # noqa: BLE001 - preserve unknown finish return
+                        retain_unknown_return()
 
     def _runner() -> None:
         try:
@@ -2164,9 +2226,13 @@ def _call_with_timeout(
                 _admitted_call()
         except BaseException as exc:  # noqa: BLE001 — surfaced as a failed ToolResult, never propagated to the worker's exit
             box["error"] = exc
+            if ordinary is not None and exc is not box.get("call_error"):
+                retain_unknown_return()
         finally:
-            if operation is not None and (ssh_call is None or not ssh_call.finished):
+            if ordinary is None and operation is not None and (ssh_call is None or not ssh_call.finished):
                 operation.finish()
+            if retained_source is not None:
+                retained_source.__exit__(None, None, None)
 
     try:
         worker = threading.Thread(target=_runner, name=f"tool-{tool_name}", daemon=True)
@@ -2174,6 +2240,8 @@ def _call_with_timeout(
     except BaseException as exc:  # noqa: BLE001 -- failed tool starts return a ToolResult
         if operation is not None:
             operation.finish()
+        if retained_source is not None:
+            retained_source.__exit__(None, None, None)
         return ToolResult(
             ok=False,
             error=f"tool worker could not start: {exc}",
@@ -3944,9 +4012,11 @@ class AgentService:
             sensitivity="diagnostic",
         )
         try:
-            self.db.insert_steps_at_indices(
-                run_id, [(index, _safe_agent_step_record(run_id, step))]
-            )
+            record = _safe_agent_step_record(run_id, step)
+            tree = getattr(self, "_ordinary_tree", None)
+            if tree is not None:
+                tree.required_steps(run_id, [(index, record)])
+            self.db.insert_steps_at_indices(run_id, [(index, record)])
         except Exception as exc:  # noqa: BLE001 — capture is best effort
             logger.warning(
                 "could not persist agent run lifecycle run_id={} kind={} error_type={}",
@@ -4086,6 +4156,10 @@ class AgentService:
                     _safe_exception_type(status_exc),
                 )
                 return False
+        tree = getattr(self, "_ordinary_tree", None)
+        if tree is not None:
+            tree.required_steps(run_id, [(index, record)])
+            tree.required_terminal(run_id, status, result, budget_tokens)
         for attempt in range(2):
             try:
                 persisted = self.db.set_terminal_with_step(
@@ -4284,6 +4358,26 @@ class AgentService:
                     )
 
             execution_owner.on_drained(persist_actual_drain)
+            # Retain only the callback actually registered by this original
+            # producer.  It is metadata, not permission to run the callback;
+            # the original event's retirement fence must still prove custody.
+            tree = getattr(self, "_ordinary_tree", None)
+            if tree is not None:
+                from tldw_chatbook.Chat.console_ordinary_tree import _function_record
+
+                execution_owner._console_native_drain_journal = (
+                    persist_actual_drain,
+                    _function_record(persist_actual_drain),
+                    callback_connection,
+                    _function_record(callback_connection),
+                    _function_record(callback_connection.__wrapped__),
+                    self,
+                    repository,
+                    self.db,
+                    child_run_id,
+                    execution_owner,
+                    tree,
+                )
 
             def cleanup_unproven() -> None:
                 execution_owner.mark_cleanup_unproven()
@@ -4422,6 +4516,9 @@ class AgentService:
                     )
                 )
         except Exception as exc:  # noqa: BLE001 — trace capture is best-effort
+            tree = getattr(self, "_ordinary_tree", None)
+            if tree is not None:
+                tree.required_steps(run_id, None)
             step_dicts = []
             logger.warning(
                 "could not persist terminal agent steps run_id={} error_type={}",
@@ -4429,6 +4526,9 @@ class AgentService:
                 _safe_exception_type(exc),
             )
         else:
+            tree = getattr(self, "_ordinary_tree", None)
+            if tree is not None:
+                tree.required_steps(run_id, step_dicts)
             try:
                 self.db.insert_steps_at_indices(run_id, step_dicts)
             except Exception as exc:  # noqa: BLE001 — best-effort capture
@@ -5329,6 +5429,9 @@ class AgentService:
                 ),
             )
             child_run_id = child_kwargs.get("requested_run_id") or uuid.uuid4().hex
+            tree = getattr(self, "_ordinary_tree", None)
+            if tree is not None:
+                tree.row_started(child_owner, child_run_id)
             try:
                 self.db.create_run(
                     run_id=child_run_id,
@@ -5625,16 +5728,7 @@ class AgentService:
                     settled_id = child_owner.run_id
                     if hook_run is not None and settled_id:
                         self._set_terminal_status(settled_id, status)
-                        self._hooks_v2_lifecycle.install(
-                            self._hooks_v2_lifecycle.event(
-                                "SubagentStop",
-                                run_id=run_id,
-                                data={"child_run_id": settled_id, "status": status},
-                                initiator="child",
-                            ),
-                            run_id,
-                            current=lambda: not should_cancel(),
-                        )
+                        self._install_child_stop(settled_id, status, run_id, should_cancel)
                     fleet.finish(
                         handle.handle_id,
                         status,
@@ -5734,7 +5828,7 @@ class AgentService:
                 finally:
                     try:
                         if not admission_refused:
-                            child_owner.finish_root()
+                            self._finish_execution(child_owner)
                     finally:
                         admission_decided.set()
 
@@ -5814,7 +5908,7 @@ class AgentService:
                 try:
                     run_child(admission_refused=True)
                 finally:
-                    child_owner.finish_root()
+                    self._finish_execution(child_owner)
             launched = True
             fleet_threads[handle.handle_id] = thread
             return handle, None
@@ -5852,7 +5946,55 @@ class AgentService:
                             owner_id=self._automatic_work.owner_id,
                         )
                 finally:
-                    child_owner.finish_root()
+                    self._finish_execution(child_owner)
+
+    def _install_child_stop(self, child_id, status, parent_id, should_cancel):
+        held = self.__dict__.get("_ordinary_child_stops", {}).pop(child_id, None)
+        if held is None:
+            if getattr(self, "_ordinary_tree", None) is not None:
+                raise RuntimeError("original child completion event unavailable")
+            event = self._hooks_v2_lifecycle.event(
+                "SubagentStop",
+                run_id=parent_id,
+                data={"child_run_id": child_id, "status": status},
+                initiator="child",
+            )
+            scope = None
+        else:
+            original, scope = held
+            event = original.model_copy(
+                update={"data": {"child_run_id": child_id, "status": status}}
+            )
+        self._hooks_v2_lifecycle.install(
+            event,
+            parent_id,
+            current=lambda: not should_cancel(),
+            _execution=scope,
+        )
+
+    def _finish_execution(self, owner):
+        tree = getattr(self, "_ordinary_tree", None)
+        if tree is not None:
+            if owner is tree.owner:
+                return  # Original submit owns primary cleanup and late producers.
+            with tree.source.activate():
+                child_id = self.__dict__.get("_ordinary_child_keys", {}).pop(
+                    owner, None
+                )
+                legacy = self.__dict__.get("_ordinary_child_notifications", {}).pop(
+                    child_id, None
+                )
+                if (
+                    legacy is not None
+                    and legacy[1] is not None
+                    and not legacy[1].notification_claimed
+                ):
+                    legacy[1].abandon_unstarted()
+                tree.close_unused_events(owner)
+                tree.host_returned(owner)
+                owner.finish_root()
+            return
+        owner.finish_root()
 
     def _run_owned(
         self,
@@ -5989,7 +6131,7 @@ class AgentService:
                         )
                 finally:
                     if finish_root:
-                        owner.finish_root()
+                        self._finish_execution(owner)
 
     @guarded
     def _run_one(
@@ -6116,6 +6258,10 @@ class AgentService:
             "subagent" if agent_kind == AGENT_KIND_SUBAGENT else "primary"
         )
         if precreated_run_id is None:
+            requested_run_id = requested_run_id or uuid.uuid4().hex
+            tree = getattr(self, "_ordinary_tree", None)
+            if tree is not None:
+                tree.row_started(current_execution_owner(), requested_run_id)
             run_id = self.db.create_run(
                 conversation_id=conversation_id,
                 agent_kind=agent_kind,
@@ -6765,12 +6911,13 @@ class AgentService:
             fleet.durable_handle_map() if fleet is not None else {}
         )
 
-        def _reserve_child_execution() -> tuple[
+        def _reserve_child_execution(child_kwargs) -> tuple[
             ExecutionOwner | None, str | None, ToolResult | None
         ]:
             nonlocal sub_agent_spawns
             automatic_work = self._automatic_work
             reservation_id = None
+            child_owner = None
             try:
                 if automatic_work is not None:
                     automatic_work.check()
@@ -6784,15 +6931,41 @@ class AgentService:
                             automatic_work.policy_kind()
                         ),
                     ).id
-                return (
-                    self.runtime_capacity.begin_execution(
-                        origin=self.work_origin,
-                        conversation_id=conversation_id,
-                        child=True,
-                    ),
-                    reservation_id,
-                    None,
+                child_owner = self.runtime_capacity.begin_execution(
+                    origin=self.work_origin,
+                    conversation_id=conversation_id,
+                    child=True,
                 )
+                tree = getattr(self, "_ordinary_tree", None)
+                if tree is not None:
+                    try:
+                        tree.attach(child_owner)
+                        child_id = child_kwargs.setdefault(
+                            "requested_run_id", uuid.uuid4().hex
+                        )
+                        keys = self.__dict__.setdefault("_ordinary_child_keys", {})
+                        keys[child_owner] = child_id
+                        with child_owner.activate():
+                            prepare_legacy = getattr(
+                                self, "_prepare_child_notification", None
+                            )
+                            if prepare_legacy is not None and fleet is not None:
+                                prepare_legacy(child_id)
+                            if hook_run is not None:
+                                event = self._hooks_v2_lifecycle.event(
+                                    "SubagentStop",
+                                    run_id=run_id,
+                                    data={"child_run_id": child_id},
+                                    initiator="child",
+                                )
+                                scope = self._hooks_v2_engine.prehold_event(event)
+                                self.__dict__.setdefault("_ordinary_child_stops", {})[
+                                    child_id
+                                ] = (event, scope)
+                    except BaseException:
+                        self._finish_execution(child_owner)
+                        raise
+                return child_owner, reservation_id, None
             except Exception as exc:
                 if reservation_id is not None:
                     automatic_work.ledger.release(
@@ -6837,7 +7010,7 @@ class AgentService:
             managed_resume_ceiling=None,
         ):
             nonlocal sub_agent_spawns
-            child_owner, child_reservation, failure = _reserve_child_execution()
+            child_owner, child_reservation, failure = _reserve_child_execution(child_kwargs)
             if failure is not None:
                 return None, failure
             launched = False
@@ -7269,7 +7442,7 @@ class AgentService:
                 # a child while the parent keeps running and stamping, so
                 # Task 6 dropped it there. Writing it down because the two
                 # branches now differ deliberately, not accidentally.
-                child_owner, child_reservation, failure = _reserve_child_execution()
+                child_owner, child_reservation, failure = _reserve_child_execution(child_kwargs)
                 if failure is not None:
                     return failure
                 try:
@@ -7283,9 +7456,12 @@ class AgentService:
                         _child_id, child_outcome = self._run_owned(
                             execution_owner=child_owner,
                             automatic_child_reservation=child_reservation,
+                            finish_root=False,
                             should_cancel=should_cancel,
                             **child_kwargs,
                         )
+                    if hook_run is not None:
+                        self._install_child_stop(_child_id, child_outcome.status, run_id, should_cancel)
                 except Exception as exc:
                     from .code_review_models import ReviewRefused
 
@@ -7320,21 +7496,7 @@ class AgentService:
                                 owner_id=self._automatic_work.owner_id,
                             )
                     finally:
-                        child_owner.finish_root()
-                if hook_run is not None:
-                    self._hooks_v2_lifecycle.install(
-                        self._hooks_v2_lifecycle.event(
-                            "SubagentStop",
-                            run_id=run_id,
-                            data={
-                                "child_run_id": _child_id,
-                                "status": child_outcome.status,
-                            },
-                            initiator="child",
-                        ),
-                        run_id,
-                        current=lambda: not should_cancel(),
-                    )
+                        self._finish_execution(child_owner)
                 text = child_outcome.final_text
                 cap = config.budget.max_subagent_result_chars
                 if len(text) > cap:
@@ -10447,3 +10609,12 @@ class AgentService:
             return False
         self._cancel_fleet_handles([handle_id])
         return True
+
+
+_NATIVE_CONSOLE_WORKTREE_ADMISSION = (
+    AgentService._admit_agent_worktree,
+    AgentService._admit_agent_worktree.__code__,
+    AgentService._admit_agent_worktree.__defaults__,
+    AgentService._admit_agent_worktree.__kwdefaults__,
+    AgentService._admit_agent_worktree.__closure__,
+)

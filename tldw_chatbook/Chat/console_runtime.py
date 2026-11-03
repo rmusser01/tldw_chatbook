@@ -388,6 +388,7 @@ class _ConsoleTurnCustodyInputs:
     """Sensitive turn-only values kept out of the public request repr."""
 
     attachments: tuple[Any, ...] = field(default=(), repr=False)
+    attachments_transferred: bool = False
     staged_evidence_revision: int | None = None
     durable_accepted: bool = False
 
@@ -1110,6 +1111,7 @@ class ConsoleRuntime:
         self._execution_capacity = None
         self._worktree_activity: WorktreeActivity | None = None
         self._execution_capacity_lock = threading.RLock()
+        self._ordinary_turns: set[Any] = set()
         self._app = app
         self._canvas_profile_snapshot = getattr(app, "_canvas_profile_snapshot", None)
         # -- setters, for the screen handles that now READ THROUGH here ----
@@ -2210,6 +2212,7 @@ class ConsoleRuntime:
             if reads is not None:
                 observe_preparation_reads(reads, self._preparation_reads)
             value._hooks_v2_runtime = self
+            value._original_mcp_capture_runtime = self
         if value is not None and self._app is not None:
             value.app = self._app
         if value is not None:
@@ -3006,7 +3009,7 @@ class ConsoleRuntime:
         terminal_callback: Callable[[bool], None] | None = None,
         recover_before_acceptance: bool = True,
     ) -> str:
-        """Synchronously place an accepted turn under runtime task custody."""
+        """Synchronously retain input metadata for asynchronous physical admission."""
         self._raise_if_disposed_or_session_fenced(request.session_id)
         if request.configuration.session_id != request.session_id:
             raise ValueError("Turn configuration belongs to another session.")
@@ -3039,11 +3042,6 @@ class ConsoleRuntime:
                 and self._response_rules is not None
             ):
                 self._response_rules.invalidate(request.session_id, "user_input")
-            attachments = store.transfer_pending_attachments_to_turn(
-                request.session_id,
-                request.turn_id,
-                request.attachment_ids,
-            )
             record = self._register_custody(
                 request,
                 attachments,
@@ -3162,14 +3160,20 @@ class ConsoleRuntime:
         request = prompt.custody_request
         if request is None or request.session_id != session_id:
             raise RuntimeError("Queued prompt has no matching custody request.")
-        turn_id = self.accept_turn(
-            request,
-            origin=ConsoleSubmissionOrigin.QUEUED,
-            queue_entry_id=entry_id,
-            queue_authorization=authorization,
-            recover_before_acceptance=False,
-        )
+        from .console_configuration_preparation import use_pending_mcp_witness
+
+        with use_pending_mcp_witness(
+            prompt.mcp_capture_witness, prompt=prompt, authorization=authorization
+        ):
+            turn_id = self.accept_turn(
+                request,
+                origin=ConsoleSubmissionOrigin.QUEUED,
+                queue_entry_id=entry_id,
+                queue_authorization=authorization,
+                recover_before_acceptance=False,
+            )
         return await self.wait_for_turn(turn_id)
+
 
     def _submit_fleet_wake(
         self,
@@ -3276,6 +3280,8 @@ class ConsoleRuntime:
             issuing_store, issuing_claim = record.store, record.received_claim
             try:
                 with bind_received_turn_claim(issuing_store, issuing_claim):
+                    from .console_received_dispatch import received_attachment_metadata
+
                     return await controller.submit_draft(
                         request.draft,
                         session_id=request.session_id,
@@ -3291,9 +3297,13 @@ class ConsoleRuntime:
                                 "plugin_turn_id": request.turn_id,
                             },
                         ),
-                        accepted_attachments=record.inputs.attachments,
+                        accepted_attachments=received_attachment_metadata(
+                            controller, request.session_id
+                        ),
                         captured_one_shot_prefill=request.one_shot_prefill,
-                        captured_one_shot_prefill_revision=(request.one_shot_prefill_revision),
+                        captured_one_shot_prefill_revision=(
+                            request.one_shot_prefill_revision
+                        ),
                         staged_evidence_launch=request.staged_evidence_launch,
                         staged_evidence_capture=self._capture_frozen_console_staged_rag,
                         staged_evidence_release=functools.partial(
@@ -3353,10 +3363,10 @@ class ConsoleRuntime:
             and bool(getattr(result, "accepted", False))
             and getattr(run_state, "status", None) is ConsoleRunStatus.COMPLETED
         ):
-            await self._record_successful_first_send()
+            await self._record_successful_first_send(record)
         return result
 
-    async def _record_successful_first_send(self) -> None:
+    async def _record_successful_first_send(self, record=None) -> None:
         """Record terminal first-send success without retaining a view."""
         app_config = getattr(self._app, "app_config", None)
         if not isinstance(app_config, dict):
@@ -3373,16 +3383,80 @@ class ConsoleRuntime:
             onboarding.get("first_send_completed")
         ):
             return
+        source = None
+        if record is not None and self._turn_custody.get(record.turn_id) is record:
+            with self._execution_capacity_lock:
+                candidates = tuple(self._ordinary_turns)
+            matches = [
+                tree
+                for tree in candidates
+                if tree.first_send_record is record
+                and tree.first_send_request is record.request
+                and tree.source is not None
+                and tree.source.received_claim is record.received_claim
+                and tree.source.store is record.store
+                and tree.source is not None
+                and tree.source.first_send_source is not None
+            ]
+            if len(matches) == 1 and _first_send_runtime_current():
+                candidate = matches[0].source
+                try:
+                    candidate.check_memory()
+                except RuntimeError:
+                    pass
+                else:
+                    source = candidate
         onboarding["first_send_completed"] = True
         try:
             from tldw_chatbook.config import save_setting_to_cli_config
 
-            await asyncio.to_thread(
-                save_setting_to_cli_config,
-                "console.onboarding",
-                "first_send_completed",
-                True,
-            )
+            if source is None:
+                await asyncio.to_thread(
+                    save_setting_to_cli_config,
+                    "console.onboarding",
+                    "first_send_completed",
+                    True,
+                )
+            else:
+                from . import console_first_send_retirement as retirement
+
+                fence, code, defaults, kwdefaults, closure = (
+                    retirement._NATIVE_STOP_PRODUCER_FENCE
+                )
+                if (
+                    retirement._stop_producers_current is fence
+                    and fence.__code__ is code
+                    and fence.__defaults__ is defaults
+                    and fence.__kwdefaults__ is kwdefaults
+                    and fence.__closure__ is closure
+                    and fence()
+                ):
+                    receipt = await asyncio.to_thread(
+                        retirement.publish_first_send, source
+                    )
+                else:
+                    await asyncio.to_thread(
+                        save_setting_to_cli_config,
+                        "console.onboarding",
+                        "first_send_completed",
+                        True,
+                    )
+                    receipt = None
+                if (
+                    receipt is not None
+                    and fence()
+                    and _first_send_runtime_current()
+                    and self._turn_custody.get(record.turn_id) is record
+                ):
+                    source.first_send_receipt = receipt
+                    engine = self._hooks_v2_engines.get(record.session_id)
+                    native = getattr(engine, "_native_commands", None)
+                    if native is not None:
+                        with native._condition:
+                            events = tuple(native._events)
+                        for event in events:
+                            if getattr(event.source, "agent_sources", None) is source:
+                                event.reconcile()
         except Exception as exc:  # noqa: BLE001 -- the completed turn stays valid
             logger.warning(
                 "Failed to persist Console first-send completion "
@@ -6375,6 +6449,23 @@ class ConsoleRuntime:
                             ) from None
                 completion.result()
 
+    async def _drain_ordinary_turns(self) -> bool:
+        """Observe original whole-tree completion beyond the shutdown grace."""
+        cancelled = False
+        while True:
+            with self._execution_capacity_lock:
+                turns = tuple(self._ordinary_turns)
+            if not turns:
+                return cancelled
+            for turn in turns:
+                completion = asyncio.wrap_future(turn.retired)
+                while not completion.done():
+                    try:
+                        await asyncio.shield(completion)
+                    except asyncio.CancelledError:
+                        cancelled = True
+                completion.result()
+
     async def _close_session_after_voice_drain(
         self,
         session_id: str,
@@ -6682,6 +6773,7 @@ class ConsoleRuntime:
             from .console_preparation_reads import drain_preparation_reads
 
             cancelled |= await drain_preparation_reads(self._preparation_reads)
+            cancelled |= await self._drain_ordinary_turns()
             cancelled |= await self._drain_hook_review_operations()
             cancelled |= await self._drain_activity_hydration()
             if cancelled:
@@ -6981,6 +7073,7 @@ class ConsoleRuntime:
         from .console_preparation_reads import drain_preparation_reads
 
         cancel_requested |= await drain_preparation_reads(self._preparation_reads)
+        cancel_requested |= await self._drain_ordinary_turns()
         cancel_requested |= await self._drain_hook_review_operations()
         cancel_requested |= await self._drain_activity_hydration()
         if self._raw_cli_source is not None:
@@ -7283,3 +7376,46 @@ _CONSOLE_PENDING_RUNTIME_PROPERTIES = (
 # Direct callers and injected recompute callbacks retain their synchronous API.
 _ATTENTION_RECOMPUTE = ConsoleRuntime.recompute_console_attention
 _ATTENTION_RECOMPUTE_CODE = _ATTENTION_RECOMPUTE.__code__
+_NATIVE_ORDINARY_LIBRARY_FACTORY = (
+    _library_provider_for_app,
+    _library_provider_for_app.__code__,
+    _library_provider_for_app.__defaults__,
+    _library_provider_for_app.__kwdefaults__,
+    tuple((_library_provider_for_app.__kwdefaults__ or {}).items()),
+    _library_provider_for_app.__closure__,
+    (),
+)
+
+_NATIVE_ORDINARY_CANVAS_ENABLED = ConsoleRuntime._canvas_enabled
+
+_NATIVE_FIRST_SEND_RUNTIME = tuple(
+    (
+        name,
+        function,
+        function.__code__,
+        function.__defaults__,
+        function.__kwdefaults__,
+        tuple((function.__kwdefaults__ or {}).items()),
+        function.__closure__,
+        tuple((cell, cell.cell_contents) for cell in function.__closure__ or ()),
+    )
+    for name in ("_run_custodied_turn", "_record_successful_first_send")
+    for function in (getattr(ConsoleRuntime, name),)
+)
+
+
+def _first_send_runtime_current():
+    return all(
+        inspect.getattr_static(ConsoleRuntime, name, None) is function
+        and function.__code__ is code
+        and function.__defaults__ is defaults
+        and function.__kwdefaults__ is kwdefaults
+        and function.__closure__ is closure
+        and (
+            kwdefaults is None
+            or len(kwdefaults) == len(entries)
+            and all(kwdefaults.get(key) is value for key, value in entries)
+        )
+        and all(cell.cell_contents is value for cell, value in cells)
+        for name, function, code, defaults, kwdefaults, entries, closure, cells in _NATIVE_FIRST_SEND_RUNTIME
+    )

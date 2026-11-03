@@ -3825,6 +3825,7 @@ _CONFIG_STAT_CHECKED_MONOTONIC: float = 0.0
 #: render statts at most once.
 _CONFIG_STAT_THROTTLE_SECONDS: float = 1.0
 _FIRST_PROFILE_CREATED_THIS_SESSION = False
+_FIRST_BOOTSTRAP_CREATION = None
 
 
 def first_profile_created_this_session() -> bool:
@@ -4172,6 +4173,7 @@ def _load_cli_config_bootstrap_unlocked(
 ) -> _ConfigBootstrapResult:
     global _CONFIG_CACHE, _CONFIG_CACHE_SOURCE, _LAST_CONFIG_LOAD_FAILURE
     global _FIRST_PROFILE_CREATED_THIS_SESSION
+    global _FIRST_BOOTSTRAP_CREATION
     global _CONFIG_FILE_STAMP, _CONFIG_STAT_CHECKED_MONOTONIC
     global _CONFIG_SCHEMA_CONFLICT, _CONFIG_CACHE_INSTALLS
     config_path = _get_effective_config_path()
@@ -4199,6 +4201,7 @@ def _load_cli_config_bootstrap_unlocked(
     # Start with the programmatic defaults defined in CONFIG_TOML_CONTENT
     loaded_config = copy.deepcopy(DEFAULT_CONFIG_FROM_TOML)
     bootstrap_succeeded = False
+    created_profile = None
     application_directory = application_owned_config_directory(config_path)
     if application_directory is not None:
         directory_result = secure_private_directory(
@@ -4245,6 +4248,7 @@ def _load_cli_config_bootstrap_unlocked(
             application_owned_directory=application_directory,
         )
         _report_config_path_posture(created)
+        created_profile = created
         logger.info(f"Created default CLI config file at {config_path}")
         loaded_config["_first_run"] = True
         _FIRST_PROFILE_CREATED_THIS_SESSION = True
@@ -4260,6 +4264,7 @@ def _load_cli_config_bootstrap_unlocked(
                 application_owned_directory=application_directory,
             )
             _report_config_path_posture(created)
+            created_profile = created
             logger.info(f"Created default CLI config file at {config_path}")
             loaded_config["_first_run"] = True
             _FIRST_PROFILE_CREATED_THIS_SESSION = True
@@ -4305,6 +4310,8 @@ def _load_cli_config_bootstrap_unlocked(
         _CONFIG_CACHE = loaded_config
         _CONFIG_CACHE_SOURCE = config_path
         _CONFIG_CACHE_INSTALLS = next(_CONFIG_CACHE_INSTALL_NUMBERS)
+        if created_profile is not None:
+            _FIRST_BOOTSTRAP_CREATION = (config_path, loaded_config, created_profile)
         # TASK-26038: stamp the file we just loaded so a later external edit
         # is detected, and reset the throttle so the next read re-checks.
         _CONFIG_FILE_STAMP = _current_config_file_stamp(config_path)
@@ -8808,6 +8815,38 @@ _COLLECTIONS_SETUP_SOURCE = _record_collections_setup_source(
         (globals(), "_get_effective_config_path"),
     )
 )
+_FIRST_SEND_RETIREMENT_SOURCE = _record_collections_setup_source(
+    tuple(
+        (globals(), name)
+        for name in (
+            "current_config_identity",
+            "save_setting_to_cli_config",
+            "save_settings_to_cli_config",
+            "apply_settings_mutation_to_cli_config",
+            "_apply_literal_settings_transaction_locked",
+            "_config_write_lock",
+            "_read_raw_cli_config_unlocked",
+            "_atomic_config_values_from_raw",
+            "_apply_literal_mutation_unlocked",
+            "_config_data_for_persistence",
+            "_write_raw_cli_config_unlocked",
+            "_publish_runtime_config_unlocked",
+            "_install_bootstrap_cache_from_raw",
+            "load_settings",
+            "_current_settings_view",
+            "_load_cli_config_bootstrap_unlocked",
+            "create_private_text",
+            "_get_effective_config_path",
+            "_settings_rebuild_lock",
+            "_config_file_lock",
+        )
+    )
+)
+_FIRST_SEND_RETIREMENT_TYPES = (
+    PrivatePathResult,
+    PrivatePathStatus,
+    PrivatePathStatus.CREATED_PRIVATE,
+)
 del _record_collections_setup_source
 
 
@@ -8860,3 +8899,12 @@ def __getattr__(name: str) -> Any:
 
 def __dir__() -> list[str]:
     return sorted({*globals(), *_MOVED_POLICY_NAMES})
+_NATIVE_ORDINARY_CANVAS_READER = (
+    get_canvas_execution_enabled,
+    get_canvas_execution_enabled.__code__,
+    get_canvas_execution_enabled.__defaults__,
+    get_canvas_execution_enabled.__kwdefaults__,
+    tuple((get_canvas_execution_enabled.__kwdefaults__ or {}).items()),
+    get_canvas_execution_enabled.__closure__,
+    (),
+)

@@ -1256,3 +1256,47 @@ def test_existing_original_resource_replaced_before_first_admission(
             if reservation is not None:
                 h.coordinator.cancel(reservation)
                 assert h.coordinator.wait_idle(3)
+
+
+def test_coordinator_idle_does_not_precede_borrowed_ticket_return(
+    native_review, monkeypatch
+):
+    from tldw_chatbook.Workspaces.change_review_ownership import _SnapshotTicket
+
+    h = native_review
+    capacity, activity = h.runtime.execution_capacity, h.runtime.worktree_activity
+    owner = capacity.begin_execution(origin=WorkOrigin.MANUAL, conversation_id="tree")
+    claim = activity.try_acquire(owner=owner, footprint=WorktreeFootprint(opaque=True))
+    entered, release = threading.Event(), threading.Event()
+    original = _SnapshotTicket.returned
+    box = {}
+
+    def held(ticket, *, worker=False, handoff=False, durable=True):
+        reservation = box.get("reservation")
+        if (
+            handoff
+            and reservation is not None
+            and reservation._baseline_completion.ticket is ticket
+            and reservation.baseline_ready
+        ):
+            entered.set()
+            assert release.wait(5)
+        return original(ticket, worker=worker, handoff=handoff, durable=durable)
+
+    monkeypatch.setattr(_SnapshotTicket, "returned", held)
+    reservation = register(h, owner=owner, claim=claim)
+    box["reservation"] = reservation
+    try:
+        assert reservation.await_baseline(4)
+        assert entered.wait(4)
+        assert h.coordinator.cancel(reservation)
+        assert h.coordinator.wait_idle(3)
+        claim.settle(durable=True)
+        owner.finish_root()
+        with activity.prelaunch(footprint=WorktreeFootprint()) as contender:
+            assert contender is None, "coordinator idle released an unreturned ticket"
+    finally:
+        release.set()
+    assert reservation._baseline_completion.ticket.retired.wait(4)
+    with activity.prelaunch(footprint=WorktreeFootprint()) as contender:
+        assert contender is not None

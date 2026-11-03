@@ -651,6 +651,17 @@ def make_invoke_tool(
                 if task_authorization and owner
                 else runtime.contextlib.nullcontext(),
             ):
+                from ..Chat.console_ordinary_tree import current_ordinary_tree
+
+                ordinary = current_ordinary_tree()
+                if ordinary is not None and self.registry in ordinary.catalogs:
+                    selected = self.registry.resolve_owner_for_name(call.name)
+                    try:
+                        if selected is None:
+                            raise RuntimeError("ordinary tool owner unavailable")
+                        ordinary.check_catalog_call(self.registry, call.name, selected[1])
+                    except RuntimeError as error:
+                        return runtime.ToolResult.blocked(str(error))
                 automatic_work = current_automatic_work()
                 if automatic_work is not None:
                     from .automatic_work_budget import AutomaticWorkRefused

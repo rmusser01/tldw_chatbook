@@ -1398,7 +1398,14 @@ class ServiceWiringMixin(
     def local_skill_trust_service(self) -> Any:
         """Local skill trust service, built on first access (TASK-21111(b))."""
         if self._local_skill_trust_service is None:
-            self._local_skill_trust_service = self._build_local_skill_trust_service()
+            candidate = self._build_local_skill_trust_service()
+            self._local_skill_trust_service = candidate
+            if _skill_wiring._skill_trust_publisher.get() is not None:
+                from .Chat.console_configuration_preparation import (
+                    record_native_skill_trust_candidate,
+                )
+
+                record_native_skill_trust_candidate(self, candidate)
         return self._local_skill_trust_service
 
     @local_skill_trust_service.setter
@@ -3705,3 +3712,10 @@ import sys as _defining_sys
 
 _skill_wiring._install_skill_source(_defining_sys.modules[__name__])
 _collections_wiring._install_collections_source(_defining_sys.modules[__name__])
+
+_NATIVE_RAW_CLI_PERMISSION_READER = (
+    _read_app_raw_cli_permitted,
+    _read_app_raw_cli_permitted.__code__,
+    _read_app_raw_cli_permitted.__defaults__,
+    _read_app_raw_cli_permitted.__kwdefaults__,
+)

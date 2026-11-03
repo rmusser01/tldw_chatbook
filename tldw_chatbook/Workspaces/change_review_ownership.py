@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from contextlib import ExitStack, contextmanager
 from contextvars import ContextVar
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from threading import Event, Lock
 
@@ -109,7 +109,12 @@ class _NativeSnapshotIssuer(_NativeReviewResources):
             )
             if db is not None
         )
-        return _SnapshotSource(
+        from tldw_chatbook.Chat.console_ordinary_tree import current_ordinary_tree
+
+        tree = current_ordinary_tree()
+        if tree is not None:
+            owner, claim = tree.borrow(self.runtime), tree.claim
+        source = _SnapshotSource(
             self,
             bridge,
             self.runtime._chat_controller,
@@ -122,7 +127,12 @@ class _NativeSnapshotIssuer(_NativeReviewResources):
             databases,
             owner,
             claim,
+            tree,
         )
+        if tree is not None:
+            source.prepare_ordinary()
+            tree.snapshot_sources.append(source)
+        return source
 
 
 @dataclass(frozen=True)
@@ -139,8 +149,71 @@ class _SnapshotSource:
     databases: tuple
     owner: object = None
     claim: object = None
+    ordinary_tree: object = None
+    _holds: dict = field(default_factory=dict, compare=False, repr=False)
+    _holds_lock: object = field(default_factory=Lock, compare=False, repr=False)
+    _closed: object = field(default_factory=Event, compare=False, repr=False)
+
+    def prepare_ordinary(self):
+        """Reserve the actual discover/B/E bundle before capture publication."""
+        tickets = {}
+        try:
+            for kind in ("discover", "baseline", "finalize"):
+                tickets[kind] = _SnapshotTicket(
+                    self,
+                    self.owner,
+                    self.owner.reserve_tool(),
+                    None,
+                    publish=self.issuer.coordinator._publish,
+                )
+        except BaseException:
+            for ticket in tickets.values():
+                ticket.returned(worker=True, handoff=True)
+            raise
+        self._holds.update(tickets)
+
+    def prepare_survivor(self):
+        """A real child makes one originating survivor window possible."""
+        if self.ordinary_tree is None:
+            return
+        with self._holds_lock:
+            if self._closed.is_set() or "survivor_finalize" in self._holds:
+                return
+        ticket = _SnapshotTicket(
+            self,
+            self.owner,
+            self.owner.reserve_tool(),
+            None,
+            publish=self.issuer.coordinator._publish,
+        )
+        with self._holds_lock:
+            if not self._closed.is_set() and "survivor_finalize" not in self._holds:
+                self._holds["survivor_finalize"] = ticket
+                return
+        ticket.returned(worker=True, handoff=True)
+
+    def restore_unstarted(self, kind, ticket):
+        if self.ordinary_tree is None:
+            ticket.returned(worker=True, handoff=True)
+            return
+        key = "finalize" if kind == "failure" else kind
+        with self._holds_lock:
+            if not self._closed.is_set():
+                self._holds[key] = ticket
+                return
+        ticket.returned(worker=True, handoff=True)
+
+    def close_unused(self):
+        with self._holds_lock:
+            self._closed.set()
+            tickets = tuple(self._holds.values())
+            self._holds.clear()
+        for ticket in tickets:
+            ticket.returned(worker=True, handoff=True)
 
     def check_source(self):
+        if self.ordinary_tree is not None:
+            self.ordinary_tree.check()
         runtime = self.issuer.runtime
         if (
             runtime._agent_bridge is not self.bridge
@@ -170,6 +243,8 @@ class _SnapshotSource:
     @contextmanager
     def activate(self, owner):
         with ExitStack() as stack:
+            if self.ordinary_tree is not None and self.ordinary_tree.source is not None:
+                stack.enter_context(self.ordinary_tree.source.activate())
             stack.enter_context(owner.activate())
             stack.enter_context(execution(sources=self.sources))
             for db in dict.fromkeys(self.databases):
@@ -180,8 +255,15 @@ class _SnapshotSource:
             finally:
                 _current_snapshot.reset(token)
 
-    def admit(self):
+    def admit(self, kind=None):
         self.check_source()
+        if self.ordinary_tree is not None:
+            key = "finalize" if kind == "failure" else kind
+            with self._holds_lock:
+                ticket = self._holds.pop(key, None)
+            if ticket is None:
+                raise ValueError("original preheld snapshot unavailable")
+            return ticket, ""
         # Cold control-plane settings retain their original admission on this
         # existing publisher callback, never during inert bridge construction.
         with execution(sources=self.sources):
@@ -194,7 +276,12 @@ class _SnapshotSource:
             if (
                 self.owner.capacity is not capacity
                 or self.owner.origin is not self.origin
-                or self.owner.conversation_id != self.conversation_id
+                or self.owner.conversation_id
+                != (
+                    self.ordinary_tree.launch_key
+                    if self.ordinary_tree is not None
+                    else self.conversation_id
+                )
             ):
                 raise ValueError("native change-review owner changed")
             activity.validate_opaque_claim(self.claim, owner=self.owner)
@@ -249,6 +336,7 @@ class _SnapshotTicket:
         self._lock = Lock()
         self.retired = Event()
         self._worker_returned = self._handoff_returned = self._retired = False
+        self._failed_write = False
 
     @contextmanager
     def activate(self):
@@ -259,19 +347,25 @@ class _SnapshotTicket:
             finally:
                 _current_ticket.reset(token)
 
-    def returned(self, *, worker=False, handoff=False):
+    def returned(self, *, worker=False, handoff=False, durable=True):
         with self._lock:
             self._worker_returned |= worker
             self._handoff_returned |= handoff
-            if self._retired or not (self._worker_returned and self._handoff_returned):
+            self._failed_write |= not durable
+            if (
+                self._retired
+                or self._failed_write
+                or not (self._worker_returned and self._handoff_returned)
+            ):
                 return
             self._retired = True
-        self.operation.finish()
-        if self.claim is not None:
-            # Availability callbacks inside finish must return before root drain.
-            self.owner.finish_root()
-            self.claim.settle(durable=True)
-        self.retired.set()
+        with self.activate():
+            self.operation.finish()
+            if self.claim is not None:
+                # Availability callbacks inside finish must return before root drain.
+                self.owner.finish_root()
+                self.claim.settle(durable=True)
+            self.retired.set()
 
 
 class _NativeInitializationIssuer(_NativeReviewResources):
@@ -311,6 +405,7 @@ class _NativeInitializationIssuer(_NativeReviewResources):
     def capture(self, work):
         from tldw_chatbook.Backup_Recovery import bootstrap, profile_paths
         from tldw_chatbook.Backup_Recovery.activation import execution_scope
+        from tldw_chatbook.Chat.console_ordinary_tree import current_ordinary_tree
         from tldw_chatbook.config import load_settings
         from tldw_chatbook.Workspaces.change_tracking import ShadowRepoService
 
@@ -340,6 +435,7 @@ class _NativeInitializationIssuer(_NativeReviewResources):
             chain,
             self.initializer,
             shadow._git,
+            current_ordinary_tree(),
         )
 
 
@@ -353,6 +449,7 @@ class _InitializationSource:
     chain: object
     initializer: object
     git_executable: str | None
+    ordinary_tree: object = None
 
     def check(self):
         from tldw_chatbook.Backup_Recovery import bootstrap
@@ -402,6 +499,9 @@ class _InitializationSource:
             ):
                 raise ValueError("native initialization admission changed")
             capacity, activity = self.issuer.capacity, self.issuer.activity
+            if self.ordinary_tree is not None:
+                owner = self.ordinary_tree.borrow(self.issuer.runtime)
+                return _SnapshotTicket(self, owner, owner.reserve_tool(), None)
             with activity.prelaunch(footprint=WorktreeFootprint(opaque=True)) as claim:
                 if claim is None:
                     raise CapacityRefused("initialization_activity_busy")

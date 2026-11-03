@@ -80,6 +80,7 @@ def build_goal_rig(stores, monkeypatch, provider=None, *, resolved=None):
         agent_bridge=bridge,
         agent_runtime_enabled=True,
     )
+    runtime.set_agent_bridge(bridge)
     controller._confirm_project_instruction_dispatch = lambda notice: "proceed"
     coordinator = mod.ConsoleGoalCoordinator(controller, owner)
     controller._goal_coordinator = coordinator

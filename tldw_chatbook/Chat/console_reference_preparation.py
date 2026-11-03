@@ -250,6 +250,9 @@ class _ReferenceRead:
         self.text, self.authority = text, None
         self.candidates = candidates
         self.owner = self.operation = self.claim = None
+        from .console_ordinary_tree import current_ordinary_tree
+
+        self.ordinary_tree = current_ordinary_tree(controller)
         self.callbacks = refs.reference_callbacks()
         self.opaque = self.callbacks != refs._STOCK_REFERENCE_CALLBACKS or any(
             c.token.lower() in refs._SPECIAL_TOKENS for c in candidates
@@ -317,16 +320,28 @@ class _ReferenceRead:
                     stack.enter_context(operation_owned_connection(db))
             yield
 
-    def prepare(self):
+    def capture_authority(self):
         with self.activate():
             self.check()
             self.authority = ReferenceAuthority()
+            self.check()
+
+    def prepare(self):
+        with self.activate():
+            if self.authority is None:
+                self.capture_authority()
             self.check()
             if not self.native or not self.authority.roots:
                 return
             self.capacity = self.capacity or self.runtime.execution_capacity
             self.activity = self.activity or self.runtime.worktree_activity
             self.check()
+            if self.ordinary_tree is not None:
+                if self.ordinary_tree.reference is not self:
+                    raise RuntimeError("original reference selection changed")
+                self.owner = self.ordinary_tree.borrow(self.runtime, opaque=self.opaque)
+                self.operation = self.owner.reserve_tool()
+                return
             footprint = (
                 WorktreeFootprint(opaque=True)
                 if self.opaque
@@ -391,14 +406,22 @@ class _ReferenceRead:
             # Availability listeners inside finish must return before root/claim release.
             with self.activate():
                 self.operation.finish()
-                self.owner.finish_root()
-                self.claim.settle(durable=True)
+                if self.ordinary_tree is None:
+                    self.owner.finish_root()
+                    self.claim.settle(durable=True)
 
 
 @asynccontextmanager
 async def prepare_reference_expansion(controller, session, origin, text, candidates):
     """Retain the original worker and native operation through host assignment."""
-    request = _ReferenceRead(controller, session, origin, text, candidates)
+    from .console_ordinary_tree import current_ordinary_tree
+
+    tree = current_ordinary_tree(controller)
+    request = tree.reference if tree is not None else None
+    if request is None:
+        request = _ReferenceRead(controller, session, origin, text, candidates)
+    elif request.text != text or request.candidates != candidates:
+        raise RuntimeError("original reference input changed")
     read = ConsolePreparationRead(
         controller,
         request.expand,
@@ -414,6 +437,10 @@ async def prepare_reference_expansion(controller, session, origin, text, candida
     local_reads = set()
 
     async def run(callback, *, check=True):
+        from tldw_chatbook.Agents.activation import worker_guard
+
+        if request.ordinary_tree is not None:
+            callback = worker_guard(controller._agent_bridge)(callback)
         return await run_preparation_read(
             callback,
             creator=controller,

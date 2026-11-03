@@ -4302,3 +4302,13 @@ _DEFAULT_BINDING_DISPLAY_CHECK = (
     _default_binding_display_current.__defaults__,
     _default_binding_display_current.__kwdefaults__,
 )
+
+
+_NATIVE_ORDINARY_REVIEW_READS = tuple(
+    (
+        name,
+        getattr(LocalWorkspaceRegistryService, name),
+        getattr(LocalWorkspaceRegistryService, name).__code__,
+    )
+    for name in ("read_change_review_consent", "list_folder_bindings")
+)

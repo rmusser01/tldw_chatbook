@@ -486,3 +486,16 @@ execution capability. The later coordinator/bridge integration must freshly
 resolve actual provider/tools/permissions, then accept a new phase generation
 for remaining tasks. No scheduler, public workflow UI or restored-owner adoption
 is provided by this service slice.
+
+
+### Ordinary tree integration contract under implementation
+
+AgentService will consume one original early Console owner at the real primary
+row, attach actual ordinary children immediately after native reservation and
+before precreated rows/clients/models/threads, and report original canonical
+row/step write outcomes to private activity settlement. Existing retries and
+readback remain; False, RunOutcome, Fleet terminal state and optional logging
+do not prove durable settlement. Survivors retain the originating tree. Genuine
+late child/tool/lifecycle holds follow original required/optional policy before
+causing effects. The gated storage-source and SSH request contracts above remain
+unchanged; full ordinary-tree qualification and public workflows are pending.

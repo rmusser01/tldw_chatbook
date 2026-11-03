@@ -244,6 +244,7 @@ class ToolHookRun:
         self.context_owner = context_owner
         self.containing_hook = containing_hook
         self._prepared = {}
+        self._post_holds = {}
         self._event_definitions = {}
         self._post_installed = set()
         self._preaccepted = set()
@@ -462,6 +463,36 @@ class ToolHookRun:
         final_call = replace(
             call, args=json.loads(prepared.final_arguments), raw_arguments=""
         )
+        holds = {}
+        from tldw_chatbook.Chat.console_ordinary_tree import current_ordinary_tree
+
+        try:
+            for name in (
+                ("PostToolUse", "PostToolUseFailure")
+                if current_ordinary_tree() is not None
+                else ()
+            ):
+                data = {
+                    "tool_args": final_call.args,
+                    "status": "failed" if name == "PostToolUseFailure" else "success",
+                    "is_error": name == "PostToolUseFailure",
+                    "result": {"content": None, "error": None},
+                }
+                if name == "PostToolUseFailure":
+                    data["reason"] = "execution_failed"
+                event = self._event(name, prepared.definition, data)
+                scope = self.engine.prehold_event(event)
+                if scope is not None:
+                    holds[name] = (event, scope)
+            self._post_holds[prepared.event.event_id] = holds
+        except BaseException:
+            for _event, scope in holds.values():
+                scope.close()
+            if prepared.pending_scope is not None:
+                prepared.pending_scope.close()
+            if prepared.host_scope is not None:
+                prepared.host_scope.host_done()
+            raise
         self._prepared[id(final_call)] = (final_call, prepared)
         return final_call
 
@@ -565,6 +596,11 @@ class ToolHookRun:
             getattr(result, "dispatch_state", None) is None
             and result.outcome == "blocked"
         ):
+            prepared = self._lookup(call)
+            for _event, scope in self._post_holds.pop(
+                prepared.event.event_id, {}
+            ).values():
+                scope.close()
             return
         prepared = self._lookup(call)
         if prepared.event.event_id in self._post_installed:
@@ -601,9 +637,16 @@ class ToolHookRun:
                 event = self._event(name, prepared.definition, event_data)
             events.append(event)
         planned = []
+        held = self._post_holds.pop(prepared.event.event_id, {})
         # Install BOTH events before any work can complete or publish a result.
         for event in events:
-            scope = self.engine.begin_event(event)
+            original = held.pop(event.event, None)
+            if original is None:
+                scope = self.engine.begin_event(event)
+            else:
+                original_event, scope = original
+                event = original_event.model_copy(update={"data": event.data})
+                self.engine.consume_preheld(scope, event)
             plans = self.engine.plan_handlers(scope, event)
             required = tuple(
                 plan.handler_id for plan in plans if plan.explicit_required
@@ -637,6 +680,8 @@ class ToolHookRun:
                     raise
                 return
             planned.append((event, scope, plans, token))
+        for _event, scope in held.values():
+            scope.close()
         if input_failure:
             for _event, scope, _plans, token in planned:
                 self.checkpoints.fail(token, "hook input too large")
@@ -717,6 +762,10 @@ class ToolHookRun:
                     hosts.add(prepared.host_scope)
             for scope in hosts:
                 scope.host_done()
+            for holds in self._post_holds.values():
+                for _event, scope in holds.values():
+                    scope.close()
+            self._post_holds.clear()
             self._prepared.clear()
             if self.lifecycle is not None:
                 self.lifecycle.close_scope(self.run_id)

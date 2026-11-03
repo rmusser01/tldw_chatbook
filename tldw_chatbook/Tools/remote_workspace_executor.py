@@ -1522,11 +1522,30 @@ class RemoteWorkspaceToolExecutor:
                     f"recovery probe for {cfg.binding_id} failed: {error!r}"
                 )
 
-        threading.Thread(
-            target=_probe,
+        from contextvars import copy_context
+
+        from tldw_chatbook.Agents.execution_capacity import CapacityRefused
+        from tldw_chatbook.Chat.console_ssh_custody import capture_preparation_ssh
+
+        native = capture_preparation_ssh(self)
+        try:
+            callback = native.probe_worker(_probe) if native is not None else _probe
+        except CapacityRefused:
+            return  # Existing recovery work is best effort; no request was issued.
+        context = copy_context()
+        thread = threading.Thread(
+            target=lambda: context.run(callback),
             daemon=True,
             name=f"ssh-recovery-probe-{cfg.loc.host}",
-        ).start()
+        )
+        try:
+            thread.start()
+        except BaseException:
+            if thread.ident is not None:
+                thread.join()
+            elif native is not None:
+                native.unstarted()
+            raise
 
 
 def _require_ping_payload(payload: object) -> None:

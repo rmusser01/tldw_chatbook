@@ -1264,7 +1264,29 @@ class RunHooksEngine:
                 )
             return HookOutcome()
 
-    def notify(self, event: str, *, cwd: str | None = None, **kwargs: Any) -> None:
+    def prepare_notification(self, event: str, session_id: str, tool_name=None):
+        """Prehold this original ordinary producer's optional legacy notification."""
+        if not self._native_attached or self._native_source is None:
+            return None
+        try:
+            with self._native_source.capture(session_id) as source:
+                targets = self._notification_targets(event, tool_name)
+                if not targets:
+                    return None
+                source.handoff = None
+                custody = source.admit(targets)
+                custody.notification = (event, session_id, tool_name)
+                custody.notification_claimed = False
+                return custody
+        except Exception as exc:  # noqa: BLE001 - optional notification stays fail-open
+            logger.warning(
+                "run-hooks: future notification omitted ({})", type(exc).__name__
+            )
+            return None
+
+    def notify(
+        self, event: str, *, cwd: str | None = None, _prepared=None, **kwargs: Any
+    ) -> None:
         """Admit a bounded immutable notification or drop it whole with a diagnostic.
 
         Args:
@@ -1272,11 +1294,29 @@ class RunHooksEngine:
             cwd: Optional working-directory override.
             **kwargs: Arguments to fire, serialized within the notification budget.
         """
+        custody = _prepared
+        if custody is not None:
+            from .legacy_hook_ownership import _EventCustody
+
+            data = kwargs.get("data")
+            tool_name = data.get("tool_name") if isinstance(data, dict) else None
+            if (
+                type(custody) is not _EventCustody
+                or custody.source.issuer.engine is not self
+                or getattr(custody, "notification", None)
+                != (event, kwargs.get("session_id"), tool_name)
+            ):
+                raise ValueError("original notification custody required")
+            with custody._lock:
+                if custody.notification_claimed:
+                    raise ValueError("notification already consumed")
+                custody.notification_claimed = True
         if self._closed.is_set() or not self._notify_slots.acquire(blocking=False):
             logger.warning("run-hooks: notify dropped (closed or queue full)")
+            if custody is not None:
+                custody.abandon_unstarted()
             return
         submitted = False
-        custody = None
         try:
             # iterencode emits each scalar as one complete chunk. Reject
             # oversized structures before allocating those escaped strings.
@@ -1304,11 +1344,15 @@ class RunHooksEngine:
                 raise RuntimeError("native hook source unavailable")
             capture = (
                 self._native_source.capture(frozen["session_id"])
-                if self._native_attached
+                if self._native_attached and custody is None
                 else nullcontext(None)
             )
             with capture as source:
-                targets = self._notification_targets(event, tool_name)
+                targets = (
+                    custody.source.targets
+                    if custody is not None
+                    else self._notification_targets(event, tool_name)
+                )
                 if not targets:
                     return
                 if source is not None:

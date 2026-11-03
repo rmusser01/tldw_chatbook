@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import inspect
 import json
 import os
 import subprocess
@@ -21,6 +22,7 @@ def current_ssh_call():
 
 def capture_model_ssh(registry, name):
     from tldw_chatbook.Agents.local_tool_provider import LocalToolProvider
+    from tldw_chatbook.Agents.virtual_cli_provider import _NATIVE_VIRTUAL_CLASS
     from tldw_chatbook.Tools.remote_root_types import RemoteRoot
 
     from .console_workflow_runs import native_workflow_qualified
@@ -29,22 +31,106 @@ def capture_model_ssh(registry, name):
     if (
         not native_workflow_qualified()
         or selection is None
-        or not name.startswith("fs_")
+        or not (name.startswith("fs_") or name == "virtual_cli")
     ):
         return None
     provider = selection[1]
-    if type(provider) is not LocalToolProvider or not any(
-        isinstance(a.root, RemoteRoot)
-        for a in (provider._admitted_roots or {}).values()
+    virtual = name == "virtual_cli" and type(provider) is _NATIVE_VIRTUAL_CLASS
+    authorities = inspect.getattr_static(provider, "_admitted_roots", None)
+    if authorities is not None and type(authorities) is not dict:
+        raise RuntimeError("original SSH authority source changed")
+    if not (virtual or type(provider) is LocalToolProvider) or not any(
+        isinstance(a.root, RemoteRoot) for a in (authorities or {}).values()
     ):
         return None
-    return _ModelSshCall(registry, name, selection)
+    if virtual:
+        require_virtual_sources(provider)
+    return _ModelSshCall(registry, name, selection, virtual=virtual)
 
 
 def bind_model_ssh(provider, authority, spec):
     call = _current.get()
     if call is not None:
         call.bind(provider, authority, spec)
+
+
+def virtual_source_records(provider=None):
+    """Read only the original finite virtual provider/parser source records."""
+    from tldw_chatbook.Agents import virtual_cli_provider as virtual
+    from tldw_chatbook.Tools import virtual_cli_impls as commands
+    from tldw_chatbook.Tools import workspace_tool_executor as executor
+
+    from .console_ordinary_tree import _function_unchanged
+
+    values, functions = [], []
+    native = provider is None or type(provider) is virtual._NATIVE_VIRTUAL_CLASS
+    if not native:
+        return (), (), False
+    for module, target in ((virtual, provider), (commands, None)):
+        cls = module._NATIVE_VIRTUAL_CLASS
+        values.append(
+            (module, cls.__name__, inspect.getattr_static(module, cls.__name__), None)
+        )
+        native &= values[-1][2] is cls
+        for name, original in module._NATIVE_VIRTUAL_METHODS:
+            receiver = cls if target is None else target
+            actual = inspect.getattr_static(receiver, name, None)
+            values.append((receiver, name, actual, None))
+            native &= actual is original
+        functions.extend(module._NATIVE_VIRTUAL_FUNCTIONS)
+    for module, sources in (
+        (virtual, virtual._NATIVE_VIRTUAL_IMPORTS),
+        (commands, commands._NATIVE_VIRTUAL_HELPERS),
+    ):
+        for name, original in sources:
+            actual = inspect.getattr_static(module, name, None)
+            values.append((module, name, actual, None))
+            native &= actual is original
+    cls = executor._NATIVE_ORDINARY_EXECUTOR_CLASS
+    for obj, sources in (
+        (
+            executor,
+            (
+                ("WorkspaceToolExecutor", cls),
+                *executor._NATIVE_ORDINARY_EXECUTOR_HELPERS,
+            ),
+        ),
+        (cls, executor._NATIVE_ORDINARY_EXECUTOR_METHODS),
+    ):
+        for name, original in sources:
+            actual = inspect.getattr_static(obj, name, None)
+            values.append((obj, name, actual, None))
+            native &= actual is original
+    functions.extend(executor._NATIVE_ORDINARY_EXECUTOR_FUNCTIONS)
+    parsers, entries = commands._NATIVE_VIRTUAL_PARSERS
+    native &= commands._PARSERS is parsers and tuple(parsers.items()) == entries
+    for parser, actions in commands._NATIVE_VIRTUAL_ACTIONS:
+        actual = inspect.getattr_static(parser, "_actions", None)
+        native &= type(actual) is list and tuple(actual) == actions
+    for obj, name, original in commands._NATIVE_VIRTUAL_PARSER_SOURCES:
+        actual = inspect.getattr_static(obj, name, None)
+        values.append((obj, name, actual, None))
+        native &= actual is original
+    native &= all(_function_unchanged(record) for record in functions)
+    if provider is not None:
+        registries = inspect.getattr_static(provider, "_registries_by_alias", None)
+        authorities = inspect.getattr_static(provider, "_admitted_roots", None)
+        if (
+            type(registries) is not dict
+            or authorities is not None
+            and type(authorities) is not dict
+        ):
+            return tuple(values), tuple(functions), False
+        for registry in registries.values():
+            native &= type(registry) is commands._NATIVE_VIRTUAL_CLASS
+            for name, original in commands._NATIVE_VIRTUAL_METHODS:
+                native &= inspect.getattr_static(registry, name, None) is original
+    return tuple(values), tuple(functions), native
+
+
+def require_virtual_sources(provider):
+    if not virtual_source_records(provider)[2]:
+        raise RuntimeError("original virtual provider/parser source changed")
 
 
 def _original_methods(target, methods):
@@ -76,10 +162,13 @@ class _Request:
 class _RemoteSource:
     """The actual pre-enqueue authority, adapter, executor and transport inputs."""
 
-    def __init__(self, authority):
+    def __init__(self, authority, *, executor=None, local_specs=True):
         self.authority = authority
-        self.adapter = authority.workspace_executor
-        self.executor = getattr(self.adapter, "_inner", None)
+        self.local_specs = local_specs
+        self.adapter = authority.workspace_executor if authority is not None else None
+        self.executor = (
+            getattr(self.adapter, "_inner", None) if authority is not None else executor
+        )
         self.cfg = getattr(self.executor, "_ssh", None)
         self.cfg_values = dict(vars(self.cfg)) if self.cfg is not None else {}
         self.registry = None
@@ -129,11 +218,14 @@ class _RemoteSource:
                 self.control_dir = receipt.directory
 
         if (
-            type(self.adapter) is not host._RemoteExecutorDispatchAdapter
-            or self.authority.workspace_executor is not self.adapter
-            or self.adapter._inner is not self.executor
-            or self.adapter._alias != self.authority.alias
-            or not _original_methods(self.adapter, host._NATIVE_SSH_ADAPTER_METHODS)
+            self.authority is not None
+            and (
+                type(self.adapter) is not host._RemoteExecutorDispatchAdapter
+                or self.authority.workspace_executor is not self.adapter
+                or self.adapter._inner is not self.executor
+                or self.adapter._alias != self.authority.alias
+                or not _original_methods(self.adapter, host._NATIVE_SSH_ADAPTER_METHODS)
+            )
             or type(self.executor) is not executor.RemoteWorkspaceToolExecutor
             or self.executor._ssh is not self.cfg
             or self.cfg is None
@@ -168,7 +260,9 @@ class _RemoteSource:
             )
             or type(self.cfg.masters) is not transport.SshMasterManager
             or not _original_methods(self.cfg.masters, transport._NATIVE_MASTER_METHODS)
-            or local._default_specs is not local._NATIVE_DEFAULT_SPECS
+            or self.authority is not None
+            and self.local_specs
+            and local._default_specs is not local._NATIVE_DEFAULT_SPECS
         ):
             raise RuntimeError("original SSH executor source changed")
         from tldw_chatbook.Tools import remote_binding_locator as locator
@@ -198,22 +292,59 @@ class _RemoteSource:
 
 
 class _ModelSshCall:
-    def __init__(self, registry, name, selection):
+    def __init__(self, registry, name, selection, *, virtual=False):
         from tldw_chatbook.Tools.remote_root_types import RemoteRoot
 
         self.registry, self.name, self.selection = registry, name, selection
         self.provider = selection[1]
+        self.virtual = virtual
+        self.virtual_callbacks = ()
+        self.virtual_functions = ()
+        self.virtual_partials = ()
+        if virtual:
+            require_virtual_sources(self.provider)
+            from functools import partial
+            from types import FunctionType, MethodType
+
+            from tldw_chatbook.Agents.virtual_cli_provider import (
+                _NATIVE_VIRTUAL_CALLBACK_FIELDS,
+            )
+
+            from .console_ordinary_tree import _function_record
+
+            self.virtual_callbacks = tuple(
+                (name, inspect.getattr_static(self.provider, name, None))
+                for name in _NATIVE_VIRTUAL_CALLBACK_FIELDS
+            )
+            for _name, value in self.virtual_callbacks:
+                function = value
+                if type(value) is partial:
+                    self.virtual_partials += (
+                        (value, value.func, value.args, tuple(value.keywords.items())),
+                    )
+                    function = value.func
+                if type(function) is MethodType:
+                    function = function.__func__
+                if type(function) is FunctionType:
+                    self.virtual_functions += (_function_record(function),)
         self.generation, self.catalog = (
             registry._catalog_generation,
             registry._catalog_snapshot,
         )
         self.authorities = dict(self.provider._admitted_roots)
-        self.specs = {
-            alias: dict(items)
-            for alias, items in self.provider._native_ssh_specs.items()
-        }
+        self.specs = (
+            {}
+            if virtual
+            else {
+                alias: dict(items)
+                for alias, items in self.provider._native_ssh_specs.items()
+            }
+        )
+        self.virtual_registries = (
+            dict(self.provider._registries_by_alias) if virtual else {}
+        )
         self.sources = {
-            alias: _RemoteSource(a)
+            alias: _RemoteSource(a, local_specs=not virtual)
             for alias, a in self.authorities.items()
             if isinstance(a.root, RemoteRoot)
         }
@@ -231,8 +362,32 @@ class _ModelSshCall:
             ToolCatalogRegistry,
         )
 
+        if self.virtual:
+            require_virtual_sources(self.provider)
+            from .console_ordinary_tree import _function_unchanged
+
+            if (
+                any(
+                    inspect.getattr_static(self.provider, name, None) is not value
+                    for name, value in self.virtual_callbacks
+                )
+                or any(
+                    not _function_unchanged(record) for record in self.virtual_functions
+                )
+                or any(
+                    callback.func is not function
+                    or callback.args is not arguments
+                    or len(callback.keywords) != len(keywords)
+                    or any(
+                        callback.keywords.get(key) is not value
+                        for key, value in keywords
+                    )
+                    for callback, function, arguments, keywords in self.virtual_partials
+                )
+            ):
+                raise RuntimeError("original virtual callback source changed")
         if (
-            type(self.provider) is not local.LocalToolProvider
+            (not self.virtual and type(self.provider) is not local.LocalToolProvider)
             or type(self.registry) is not ToolCatalogRegistry
             or not _original_methods(self.registry, _NATIVE_SSH_CATALOG_METHODS)
             or self.registry._catalog_generation != self.generation
@@ -243,9 +398,25 @@ class _ModelSshCall:
                 self.provider._admitted_roots.get(alias) is not authority
                 for alias, authority in self.authorities.items()
             )
-            or not _original_methods(self.provider, local._NATIVE_SSH_PROVIDER_METHODS)
+            or not self.virtual
+            and not _original_methods(self.provider, local._NATIVE_SSH_PROVIDER_METHODS)
         ):
             raise RuntimeError("original SSH tool authority changed")
+        if self.virtual and (
+            self.provider._registries_by_alias != self.virtual_registries
+            or any(
+                self.provider._registries_by_alias.get(alias) is not original
+                for alias, original in self.virtual_registries.items()
+            )
+            or any(
+                inspect.getattr_static(
+                    self.virtual_registries[alias], "_workspace_executor", None
+                )
+                is not authority.workspace_executor
+                for alias, authority in self.authorities.items()
+            )
+        ):
+            raise RuntimeError("original virtual SSH registry changed")
         for source in self.sources.values():
             source.check()
 
@@ -265,9 +436,10 @@ class _ModelSshCall:
             raise RuntimeError("original SSH provider changed")
         if authority is None or authority.alias not in self.sources:
             return
-        if (
-            self.authorities.get(authority.alias) is not authority
-            or self.specs[authority.alias].get(self.name) is not spec
+        if self.authorities.get(authority.alias) is not authority or (
+            self.virtual_registries.get(authority.alias) is not spec
+            if self.virtual
+            else self.specs[authority.alias].get(self.name) is not spec
         ):
             raise RuntimeError("original SSH selected handler changed")
         self.source = self.sources[authority.alias]
@@ -418,6 +590,119 @@ class _ModelSshCall:
         self.check()
         with asyncio.Runner() as runner:
             return runner.run(run())
+
+
+class _PreparationSource(_RemoteSource):
+    """Exact executor issued by the originating native Console factory."""
+
+    def __init__(self, tree, executor, binding, factory):
+        super().__init__(None, executor=executor)
+        self.tree, self.factory = tree, factory
+        self.workspace_registry = tree.app.workspace_registry_service
+        self.binding_id = binding.binding_id
+        self.binding = self.workspace_registry.get_runtime_binding(self.binding_id)
+        self.io = None
+        self.check()
+
+    def check(self):
+        from tldw_chatbook.Tools.remote_binding_locator import locator_string
+
+        from . import console_chat_controller as host
+
+        self.tree.check()
+        if (
+            self.factory not in host._NATIVE_REMOTE_EXECUTOR_FACTORIES
+            or getattr(host, self.factory.__name__, None) is not self.factory
+            or self.tree.app.workspace_registry_service is not self.workspace_registry
+            or self.workspace_registry.get_runtime_binding(self.binding_id)
+            != self.binding
+            or self.binding is None
+            or self.binding.workspace_id != self.tree.workspace
+            or self.cfg is None
+            or self.cfg.binding_id != self.binding_id
+            or locator_string(self.cfg.loc) != self.binding.locator
+            or self.io is not None
+            and _original_instruction_executor(self.io) is not self.executor
+        ):
+            raise RuntimeError("original direct SSH producer changed")
+        super().check()
+
+
+def register_ordinary_ssh_executor(executor, binding, factory):
+    """Attach only the actual native factory result, before it can be scheduled."""
+    from .console_ordinary_tree import current_ordinary_tree
+
+    tree = current_ordinary_tree()
+    if tree is not None:
+        tree.borrow(tree.runtime)
+        tree.ssh_sources[executor] = _PreparationSource(
+            tree, executor, binding, factory
+        )
+    return executor
+
+
+def _original_instruction_executor(io):
+    from . import console_chat_controller as host
+
+    if type(io) is not host._NativeRemoteInstructionIO or any(
+        inspect.getattr_static(io, name, None) is not descriptor
+        for name, descriptor in host._NATIVE_REMOTE_INSTRUCTION_IO_DESCRIPTORS.items()
+    ):
+        raise RuntimeError("original SSH instruction IO source changed")
+    return object.__getattribute__(io, "_executor")
+
+
+def capture_preparation_ssh(executor=None, *, io=None):
+    from .console_ordinary_tree import current_ordinary_tree
+
+    tree = current_ordinary_tree()
+    if tree is None:
+        return None
+    if io is not None:
+        executor = _original_instruction_executor(io)
+    source = tree.ssh_sources.get(executor)
+    if source is None:
+        raise RuntimeError("original direct SSH issuer unavailable")
+    if io is not None:
+        if source.io is not None and source.io is not io:
+            raise RuntimeError("original SSH instruction IO replaced")
+        source.io = io
+    source.check()
+    return _PreparationSshCall(source)
+
+
+class _PreparationSshCall(_ModelSshCall):
+    """Use the existing request/helper/terminal proof for a direct producer."""
+
+    def __init__(self, source):
+        self.source = source
+        self.sources = {source.binding_id: source}
+        self.operation = self.request = None
+        self.requests, self.master_launches, self.session_starts = [], [], []
+        self.finished = self.uncertain = False
+
+    def check(self):
+        self.source.check()
+        if self.source.tree.ssh_sources.get(self.source.executor) is not self.source:
+            raise RuntimeError("original direct SSH source replaced")
+
+    def probe_worker(self, callback):
+        """Reserve before Thread.start; keep original source through cache return."""
+        tree = self.source.tree
+        operation = tree.borrow(tree.runtime).reserve_tool()
+        self.operation = operation
+
+        def owned():
+            with tree.source.activate(), self.activate(operation):
+                return callback()
+
+        from tldw_chatbook.Agents.activation import worker_guard
+
+        return worker_guard(tree.controller._agent_bridge)(owned)
+
+    def unstarted(self):
+        with self.source.tree.source.activate():
+            self.operation.finish()
 
 
 @dataclass(frozen=True)

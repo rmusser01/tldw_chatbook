@@ -20,6 +20,7 @@ from contextlib import contextmanager
 from dataclasses import asdict, dataclass, replace
 from enum import Enum, StrEnum
 from pathlib import Path, PurePosixPath
+from types import MappingProxyType
 from typing import (
     TYPE_CHECKING,
     Any,
@@ -524,11 +525,15 @@ class LocalToolSpec:
     #: disk, or network must leave this False.
     gate_exempt: bool = False
     operation: str | None = None
+    # Ordinary physical admission; approval effects remain a separate contract.
+    worktree_effect: str = "opaque"
 
     def __post_init__(self) -> None:
         """Fail closed when descriptor policy is missing or not code-owned."""
         if not isinstance(self.gate_exempt, bool):
             raise ValueError("LocalToolSpec gate_exempt must be a bool")
+        if self.worktree_effect not in {"none", "read", "write", "opaque"}:
+            raise ValueError("LocalToolSpec worktree_effect is invalid")
         if not isinstance(self.exposure, LocalToolExposure):
             raise ValueError("LocalToolSpec exposure must be a LocalToolExposure")
         if not isinstance(self.approval_effects, tuple) or not all(
@@ -977,6 +982,11 @@ class LocalToolProvider:
                 if LocalApprovalEffect.MUTATES_LOCAL not in spec.approval_effects
             ]
         self._specs = {s.name: s for s in selected_specs}
+        self._native_ordinary_specs = (
+            dict(self._specs)
+            if specs is None and _default_specs is _NATIVE_DEFAULT_SPECS
+            else {}
+        )
         self._resolve_state = resolve_state or (
             lambda hub: EffectiveToolState(state="ask", origin="global_default")
         )
@@ -4300,6 +4310,53 @@ def _make_ask_user_handler(ask_user: AskUserCallback) -> Callable[[dict], str]:
     return _handler
 
 
+# Inert native declarations shared by actual spec construction and early admission.
+# Custom specs keep their opaque default; this table alone grants no source authority.
+_NATIVE_WORKTREE_EFFECTS = MappingProxyType(
+    {
+        "fs_list": "read",
+        "fs_read": "read",
+        "fs_write": "write",
+        "fs_mkdir": "write",
+        "fs_edit": "write",
+        "fs_patch": "write",
+        "fs_glob": "read",
+        "fs_grep": "read",
+        "git_status": "read",
+        "git_diff": "read",
+        "git_log": "read",
+        "git_blame": "read",
+        "git_branches": "read",
+        "web_fetch": "none",
+        "web_search": "none",
+        "web_crawl": "none",
+        "watchlists_list_sources": "none",
+        "watchlists_list_collections": "none",
+        "watchlists_search_items": "none",
+        "watchlists_get_item": "none",
+        "watchlists_list_briefings": "none",
+        "watchlists_get_briefing": "none",
+        "watchlists_get_operations_status": "none",
+        "watchlists_get_operation_status": "none",
+        "watchlists_create_sources": "none",
+        "watchlists_create_collection": "none",
+        "watchlists_update_collection_sources": "none",
+        "watchlists_check_sources": "none",
+        "watchlists_set_briefing_schedule": "none",
+        "watchlists_generate_briefing": "none",
+        "web_deep_search": "none",
+        "ask_user": "none",
+        "todo_create": "none",
+        "todo_update": "none",
+        "todo_get": "none",
+        "todo_list": "none",
+        "character_search": "none",
+        "character_get": "none",
+        "character_save": "none",
+    }
+)
+
+
 def _default_specs(
     workspace_root: Path,
     *,
@@ -4371,6 +4428,7 @@ def _default_specs(
 
     specs = [
         LocalToolSpec(
+            worktree_effect=_NATIVE_WORKTREE_EFFECTS['fs_list'],
             name="fs_list",
             operation="directory.list",
             description="List a directory's entries (dirs first, then files), relative to the workspace root.",
@@ -4392,6 +4450,7 @@ def _default_specs(
             tags=(),
         ),
         LocalToolSpec(
+            worktree_effect=_NATIVE_WORKTREE_EFFECTS['fs_read'],
             name="fs_read",
             operation="file.read",
             description="Read a text file with 1-based line numbers; pages via offset/limit. Refuses binary files.",
@@ -4422,6 +4481,7 @@ def _default_specs(
             tags=(),
         ),
         LocalToolSpec(
+            worktree_effect=_NATIVE_WORKTREE_EFFECTS['fs_write'],
             name="fs_write",
             operation="file.write",
             description=(
@@ -4516,6 +4576,7 @@ def _default_specs(
             tags=("mutates",),
         ),
         LocalToolSpec(
+            worktree_effect=_NATIVE_WORKTREE_EFFECTS['fs_mkdir'],
             name="fs_mkdir",
             description=(
                 "Create a directory, including any missing parent "
@@ -4544,6 +4605,7 @@ def _default_specs(
             tags=("mutates",),
         ),
         LocalToolSpec(
+            worktree_effect=_NATIVE_WORKTREE_EFFECTS['fs_edit'],
             name="fs_edit",
             operation="file.edit",
             description="Replace an exact string in a file. Fails unless the match is unique, unless replace_all is true.",
@@ -4578,6 +4640,7 @@ def _default_specs(
             tags=("mutates",),
         ),
         LocalToolSpec(
+            worktree_effect=_NATIVE_WORKTREE_EFFECTS['fs_patch'],
             name="fs_patch",
             operation="file.edit",
             description=(
@@ -4615,6 +4678,7 @@ def _default_specs(
             tags=("mutates",),
         ),
         LocalToolSpec(
+            worktree_effect=_NATIVE_WORKTREE_EFFECTS['fs_glob'],
             name="fs_glob",
             operation="file.search",
             description="Match files under the workspace with a glob pattern, newest-mtime first, workspace-relative paths.",
@@ -4641,6 +4705,7 @@ def _default_specs(
             tags=(),
         ),
         LocalToolSpec(
+            worktree_effect=_NATIVE_WORKTREE_EFFECTS['fs_grep'],
             name="fs_grep",
             operation="file.search",
             description="Regex search under the workspace: matching lines (default), file names, or per-file match counts.",
@@ -4677,6 +4742,7 @@ def _default_specs(
         # tag) to this set -- the tripwire test lives in
         # Tests/Agents/test_local_tool_provider.py::test_git_specs_carry_no_risk_tags.
         LocalToolSpec(
+            worktree_effect=_NATIVE_WORKTREE_EFFECTS['git_status'],
             name="git_status",
             description=(
                 "Show the workspace repository's status: current branch plus "
@@ -4700,6 +4766,7 @@ def _default_specs(
             tags=(),
         ),
         LocalToolSpec(
+            worktree_effect=_NATIVE_WORKTREE_EFFECTS['git_diff'],
             name="git_diff",
             description=(
                 "Show changes in the workspace repository as a unified diff. "
@@ -4741,6 +4808,7 @@ def _default_specs(
             tags=(),
         ),
         LocalToolSpec(
+            worktree_effect=_NATIVE_WORKTREE_EFFECTS['git_log'],
             name="git_log",
             description=(
                 "Show the workspace repository's commit history, newest "
@@ -4769,6 +4837,7 @@ def _default_specs(
             tags=(),
         ),
         LocalToolSpec(
+            worktree_effect=_NATIVE_WORKTREE_EFFECTS['git_blame'],
             name="git_blame",
             description=(
                 "Show per-line authorship (blame) for a file in the "
@@ -4802,6 +4871,7 @@ def _default_specs(
             tags=(),
         ),
         LocalToolSpec(
+            worktree_effect=_NATIVE_WORKTREE_EFFECTS['git_branches'],
             name="git_branches",
             description=(
                 "List the workspace repository's branches (current branch "
@@ -4820,6 +4890,7 @@ def _default_specs(
             tags=(),
         ),
         LocalToolSpec(
+            worktree_effect=_NATIVE_WORKTREE_EFFECTS['web_fetch'],
             name="web_fetch",
             description=(
                 "Fetch a web page and return its extracted text; PDFs are "
@@ -4855,6 +4926,7 @@ def _default_specs(
             tags=(),
         ),
         LocalToolSpec(
+            worktree_effect=_NATIVE_WORKTREE_EFFECTS['web_search'],
             name="web_search",
             description="Search the web and return formatted results (title, URL, snippet), size-bounded per result and in total. Identical queries are cached for 15 minutes.",
             parameters={
@@ -4890,6 +4962,7 @@ def _default_specs(
             tags=(),  # network-classed, read-only: no risk tags
         ),
         LocalToolSpec(
+            worktree_effect=_NATIVE_WORKTREE_EFFECTS['web_crawl'],
             name="web_crawl",
             description=(
                 "Crawl a website breadth-first from a start URL and return a "
@@ -4941,6 +5014,7 @@ def _default_specs(
             tags=(),
         ),
         LocalToolSpec(
+            worktree_effect=_NATIVE_WORKTREE_EFFECTS['watchlists_list_sources'],
             name="watchlists_list_sources",
             description=(
                 "List bounded private local Watchlists source metadata with "
@@ -4971,6 +5045,7 @@ def _default_specs(
             tags=(),
         ),
         LocalToolSpec(
+            worktree_effect=_NATIVE_WORKTREE_EFFECTS['watchlists_list_collections'],
             name="watchlists_list_collections",
             description=(
                 "List bounded private local Watchlists collection metadata with "
@@ -4994,6 +5069,7 @@ def _default_specs(
             tags=(),
         ),
         LocalToolSpec(
+            worktree_effect=_NATIVE_WORKTREE_EFFECTS['watchlists_search_items'],
             name="watchlists_search_items",
             description=(
                 "Search or browse bounded local Watchlists items with literal "
@@ -5072,6 +5148,7 @@ def _default_specs(
             tags=(),
         ),
         LocalToolSpec(
+            worktree_effect=_NATIVE_WORKTREE_EFFECTS['watchlists_get_item'],
             name="watchlists_get_item",
             description=(
                 "Get bounded detail for one canonical local Watchlists item. "
@@ -5096,6 +5173,7 @@ def _default_specs(
             tags=(),
         ),
         LocalToolSpec(
+            worktree_effect=_NATIVE_WORKTREE_EFFECTS['watchlists_list_briefings'],
             name="watchlists_list_briefings",
             description=(
                 "List bounded private local briefing receipts without Markdown "
@@ -5128,6 +5206,7 @@ def _default_specs(
             tags=(),
         ),
         LocalToolSpec(
+            worktree_effect=_NATIVE_WORKTREE_EFFECTS['watchlists_get_briefing'],
             name="watchlists_get_briefing",
             description=(
                 "Read one private generated local briefing with bounded Markdown "
@@ -5154,6 +5233,7 @@ def _default_specs(
             tags=(),
         ),
         LocalToolSpec(
+            worktree_effect=_NATIVE_WORKTREE_EFFECTS['watchlists_get_operations_status'],
             name="watchlists_get_operations_status",
             description=(
                 "List bounded private local Watchlists source-check and briefing "
@@ -5176,6 +5256,7 @@ def _default_specs(
             tags=(),
         ),
         LocalToolSpec(
+            worktree_effect=_NATIVE_WORKTREE_EFFECTS['watchlists_get_operation_status'],
             name="watchlists_get_operation_status",
             description=(
                 "Read one exact private local Watchlists source-check or briefing "
@@ -5199,6 +5280,7 @@ def _default_specs(
             tags=(),
         ),
         LocalToolSpec(
+            worktree_effect=_NATIVE_WORKTREE_EFFECTS['watchlists_create_sources'],
             name="watchlists_create_sources",
             description=(
                 "Create 1-50 local Watchlists sources as one exact-identity batch. "
@@ -5260,6 +5342,7 @@ def _default_specs(
             approval_arguments=watchlists_command_service.approval_source_destinations,
         ),
         LocalToolSpec(
+            worktree_effect=_NATIVE_WORKTREE_EFFECTS['watchlists_create_collection'],
             name="watchlists_create_collection",
             description=(
                 "Create one local Watchlists collection with up to 100 source "
@@ -5301,6 +5384,7 @@ def _default_specs(
             tags=("mutates",),
         ),
         LocalToolSpec(
+            worktree_effect=_NATIVE_WORKTREE_EFFECTS['watchlists_update_collection_sources'],
             name="watchlists_update_collection_sources",
             description=(
                 "Atomically add or remove up to 100 canonical source memberships "
@@ -5351,6 +5435,7 @@ def _default_specs(
             tags=("mutates",),
         ),
         LocalToolSpec(
+            worktree_effect=_NATIVE_WORKTREE_EFFECTS['watchlists_check_sources'],
             name="watchlists_check_sources",
             description=(
                 "Accept durable checks for 1-50 local Watchlists sources or one "
@@ -5393,6 +5478,7 @@ def _default_specs(
             tags=("mutates",),
         ),
         LocalToolSpec(
+            worktree_effect=_NATIVE_WORKTREE_EFFECTS['watchlists_set_briefing_schedule'],
             name="watchlists_set_briefing_schedule",
             description=(
                 "Set one local Watchlists collection's briefing interval, then "
@@ -5446,6 +5532,7 @@ def _default_specs(
             tags=("mutates",),
         ),
         LocalToolSpec(
+            worktree_effect=_NATIVE_WORKTREE_EFFECTS['watchlists_generate_briefing'],
             name="watchlists_generate_briefing",
             description=(
                 "Accept one durable briefing generation for a local Watchlists "
@@ -5497,6 +5584,7 @@ def _default_specs(
         specs.extend(
             [
                 LocalToolSpec(
+                    worktree_effect=_NATIVE_WORKTREE_EFFECTS['todo_create'],
                     name="todo_create",
                     description=(
                         "Create one pending session task with a stable ID. "
@@ -5517,6 +5605,7 @@ def _default_specs(
                     tags=("mutates",),
                 ),
                 LocalToolSpec(
+                    worktree_effect=_NATIVE_WORKTREE_EFFECTS['todo_update'],
                     name="todo_update",
                     description=(
                         "Update or delete one session task using its stable ID "
@@ -5552,6 +5641,7 @@ def _default_specs(
                     tags=("mutates",),
                 ),
                 LocalToolSpec(
+                    worktree_effect=_NATIVE_WORKTREE_EFFECTS['todo_get'],
                     name="todo_get",
                     description="Get one complete session task record by stable ID.",
                     parameters={
@@ -5566,6 +5656,7 @@ def _default_specs(
                     tags=(),
                 ),
                 LocalToolSpec(
+                    worktree_effect=_NATIVE_WORKTREE_EFFECTS['todo_list'],
                     name="todo_list",
                     description=(
                         "List session task records in creation order with an "
@@ -5640,6 +5731,7 @@ def _web_deep_search_spec() -> LocalToolSpec:
     # already on this whole spec (the provider builds its list once).
     _deep_search_deadline_s = _deep_search_settings()["deep_search_timeout_s"]
     return LocalToolSpec(
+               worktree_effect=_NATIVE_WORKTREE_EFFECTS['web_deep_search'],
         name="web_deep_search",
         description=(
             "Multi-query web research: expands the question into "
@@ -5734,6 +5826,7 @@ def _ask_user_spec(ask_user: AskUserCallback) -> LocalToolSpec:
         ASK_USER_DESCRIPTION,
     )
     return LocalToolSpec(
+               worktree_effect=_NATIVE_WORKTREE_EFFECTS['ask_user'],
         name="ask_user",
         description=description,
         parameters=ASK_USER_PARAMETERS,
@@ -5851,6 +5944,7 @@ def _character_specs(character_service: CharacterToolService) -> list[LocalToolS
     }
     return [
         LocalToolSpec(
+            worktree_effect=_NATIVE_WORKTREE_EFFECTS['character_search'],
             name="character_search",
             description=(
                 "Search or list the user's local character cards. "
@@ -5881,6 +5975,7 @@ def _character_specs(character_service: CharacterToolService) -> list[LocalToolS
             tags=(),
         ),
         LocalToolSpec(
+            worktree_effect=_NATIVE_WORKTREE_EFFECTS['character_get'],
             name="character_get",
             description=(
                 "Read one local character card's editable fields. Long "
@@ -5902,6 +5997,7 @@ def _character_specs(character_service: CharacterToolService) -> list[LocalToolS
             tags=(),
         ),
         LocalToolSpec(
+            worktree_effect=_NATIVE_WORKTREE_EFFECTS['character_save'],
             name="character_save",
             description=(
                 "Create a local character card (no id), or update one "
@@ -5960,3 +6056,39 @@ _NATIVE_SSH_PROVIDER_METHODS = {
         "_fs_write_guard_injection",
     )
 }
+
+# Definition-time originals: ordinary admission never invokes a source to qualify it.
+_ORDINARY_NATIVE_FACTORY_CODE = _default_specs.__code__
+_ORDINARY_NATIVE_EFFECTS = _NATIVE_WORKTREE_EFFECTS
+_ORDINARY_NATIVE_PROVIDER = LocalToolProvider
+_ORDINARY_NATIVE_PROVIDER_METHODS = tuple(
+    (name, descriptor)
+    for name, descriptor in vars(LocalToolProvider).items()
+    if callable(descriptor)
+    or isinstance(descriptor, (staticmethod, classmethod, property))
+)
+
+_ORDINARY_NATIVE_FUNCTIONS = tuple(
+    (
+        function,
+        function.__code__,
+        function.__defaults__,
+        function.__kwdefaults__,
+        tuple((function.__kwdefaults__ or {}).items()),
+        function.__closure__,
+        tuple((cell, cell.cell_contents) for cell in function.__closure__ or ()),
+    )
+    for function in (
+        _default_specs,
+        _character_specs,
+        *(
+            descriptor.__func__
+            if isinstance(descriptor, (staticmethod, classmethod))
+            else descriptor.fget
+            if isinstance(descriptor, property)
+            else descriptor
+            for _name, descriptor in _ORDINARY_NATIVE_PROVIDER_METHODS
+        ),
+    )
+    if hasattr(function, "__code__")
+)

@@ -2009,3 +2009,62 @@ _RUN_LOG_PROBE_SOURCE = (
         )
     ),
 )
+
+# Definition-time closed builtin implementations; no tool is constructed here.
+_NATIVE_ORDINARY_TOOL_CLASSES = (
+    ReadFileTool,
+    WriteFileTool,
+    ListDirectoryTool,
+    GlobFiles,
+    GrepFiles,
+)
+_NATIVE_ORDINARY_TOOL_DESCRIPTORS = tuple(
+    (cls, name, descriptor)
+    for cls in _NATIVE_ORDINARY_TOOL_CLASSES
+    for name, descriptor in vars(cls).items()
+    if callable(descriptor)
+    or isinstance(descriptor, (staticmethod, classmethod, property))
+)
+_NATIVE_ORDINARY_TOOL_FUNCTIONS = tuple(
+    (
+        name,
+        value,
+        value.__code__,
+        value.__defaults__,
+        value.__kwdefaults__,
+        tuple((value.__kwdefaults__ or {}).items()),
+    )
+    for name, value in tuple(globals().items())
+    if isinstance(value, type(lambda: None)) and value.__module__ == __name__
+)
+
+from inspect import getattr_static as _ordinary_getattr_static
+
+_NATIVE_ORDINARY_TOOL_DESCRIPTORS += tuple(
+    (cls, name, _ordinary_getattr_static(cls, name))
+    for cls in _NATIVE_ORDINARY_TOOL_CLASSES
+    for name in ("__init__", "__new__")
+)
+_NATIVE_ORDINARY_TOOL_IMPLEMENTATIONS = tuple(
+    (
+        function,
+        function.__code__,
+        function.__defaults__,
+        function.__kwdefaults__,
+        tuple((function.__kwdefaults__ or {}).items()),
+        function.__closure__,
+        tuple((cell, cell.cell_contents) for cell in function.__closure__ or ()),
+    )
+    for function in (
+        *(record[1] for record in _NATIVE_ORDINARY_TOOL_FUNCTIONS),
+        *(
+            descriptor.__func__
+            if isinstance(descriptor, (staticmethod, classmethod))
+            else descriptor.fget
+            if isinstance(descriptor, property)
+            else descriptor
+            for _cls, _name, descriptor in _NATIVE_ORDINARY_TOOL_DESCRIPTORS
+        ),
+    )
+    if isinstance(function, type(lambda: None))
+)

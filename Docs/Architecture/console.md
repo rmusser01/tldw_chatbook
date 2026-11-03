@@ -824,3 +824,17 @@ remain source-independent. Expected unavailable/stale mix-in Preview failures
 return bounded disable/remove/refresh guidance without unexpected-error traceback;
 unexpected failures retain their diagnostic path. Ordinary server Browse checks
 snapshot capability before entering Mix-ins and retains its server view on refusal.
+
+### Ordinary integration contract under implementation (Task8D2)
+
+The next internal integration moves complete metadata/source/physical admission
+ahead of reference expansion, initializer/plugin/guidance effects and actual
+attachment consumption. Existing received and accepted-turn records retain exact
+inputs and private live custody; accepted-turn registration itself remains
+synchronous. One original launch owner feeds the real bridge primary and all
+actual borrowers/children. First persistence maps only through the original
+store's committed publication. Required child writes, preheld late callbacks
+and original worker/host/finish return retain the tree through disposal.
+Existing optional omissions and manual/automatic busy/input restoration remain.
+This is the governing implementation contract, not completed qualification;
+ADR285 records costs and the still-pending public workflow successors.

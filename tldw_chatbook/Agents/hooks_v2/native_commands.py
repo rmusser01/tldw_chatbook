@@ -26,11 +26,29 @@ class NativeCommandEvents(_EventCustodyRegistry):
         self.capacity = runtime._execution_capacity
         self.activity = runtime._worktree_activity
 
-    def capture(self, event, *, teardown=False):
+    def capture(self, event, *, teardown=False, future=False):
         if self.capacity is None:
             self.capacity = self.runtime._execution_capacity
         if self.activity is None:
             self.activity = self.runtime._worktree_activity
+        nested = self._nested_producer(event)
+        if nested is not None:
+            root, job = nested
+            previous = job.native_plan.issued.get(event.event)
+            if previous is not None and previous.event is event:
+                return previous
+            return _NestedEvent(root, job, event)
+        return _CommandEvent(self, event, teardown=teardown, future=future)
+
+    def preheld_nested(self, event):
+        """Recognize only the original outer MCP producer's reserved plan."""
+        nested = self._nested_producer(event)
+        if nested is None:
+            return False
+        _NestedEvent.check_producer(nested[1], event)
+        return True
+
+    def _nested_producer(self, event):
         from .engine import _current_delivery
 
         delivery = _current_delivery.get()
@@ -57,11 +75,8 @@ class NativeCommandEvents(_EventCustodyRegistry):
                             "Original nested event source unavailable."
                         )
                     state.native.root._check_registration()
-                    previous = job.native_plan.issued.get(event.event)
-                    if previous is not None and previous.event is event:
-                        return previous
-                    return _NestedEvent(state.native.root, job, event)
-        return _CommandEvent(self, event, teardown=teardown)
+                    return state.native.root, job
+        return None
 
 
 class _CommandCustody(_EventCustody):
@@ -74,9 +89,19 @@ class _CommandCustody(_EventCustody):
         future.add_done_callback(lambda done: done.exception())
 
 
+_NATIVE_STOP_COMMAND_RECONCILE = (
+    _CommandCustody.reconcile,
+    _CommandCustody.reconcile.__code__,
+    _CommandCustody.reconcile.__defaults__,
+    _CommandCustody.reconcile.__kwdefaults__,
+    _CommandCustody.reconcile.__closure__,
+)
+
+
 class _CommandEvent:
-    def __init__(self, issuer, event, *, teardown):
+    def __init__(self, issuer, event, *, teardown, future=False):
         self.issuer, self.event, self.teardown = issuer, event, teardown
+        self.future = future
         runtime, engine = issuer.runtime, issuer.engine
         self.store, self.controller = runtime._chat_store, runtime._chat_controller
         self.session = (
@@ -105,6 +130,9 @@ class _CommandEvent:
         from tldw_chatbook.Chat.console_agent_sources import current_agent_sources
 
         self.agent_sources = current_agent_sources(self.controller)
+        from tldw_chatbook.Chat.console_ordinary_tree import current_ordinary_tree
+
+        self.ordinary_tree = current_ordinary_tree(self.controller)
         self.sources = _guard.captured_sources(None)
         self.maximum = tuple(h for h in self.definitions if h.event == event.event)
         # Match fields cannot be rewritten by input transformations. Retain every
@@ -116,7 +144,17 @@ class _CommandEvent:
         matched = []
         for handler in self.maximum:
             try:
-                if matches_handler(handler, event):
+                candidates = (
+                    tuple(
+                        event.model_copy(
+                            update={"data": {**event.data, "reason": reason}}
+                        )
+                        for reason in ("execution_failed", "timeout", "cancelled")
+                    )
+                    if future and event.event == "PostToolUseFailure"
+                    else (event,)
+                )
+                if any(matches_handler(handler, candidate) for candidate in candidates):
                     matched.append(handler)
             except UnsupportedEventField:
                 pass
@@ -199,6 +237,14 @@ class _CommandEvent:
             if plan.permission is not None:
                 plan.permission.check_memory()
 
+    def _matches_captured_values(self, event):
+        return all(
+            event.data.get(key) in ("execution_failed", "timeout", "cancelled")
+            if self.future and event.event == "PostToolUseFailure" and key == "reason"
+            else event.data.get(key) == value
+            for key, value in self.match_values
+        )
+
     def _check_sources(self, event=None):
         if self.agent_sources is not None:
             self.agent_sources.check_memory()
@@ -214,8 +260,7 @@ class _CommandEvent:
         )
         if (
             engine.definitions is not self.definitions
-            or tuple((key, event.data.get(key)) for key, _ in self.match_values)
-            != self.match_values
+            or not self._matches_captured_values(event)
         ):
             raise RuntimeError("Command event maximum changed.")
         if not self.covered:
@@ -273,8 +318,7 @@ class _CommandEvent:
                 runtime._disposed
                 or issuer.session_id in runtime._admission_fenced_sessions
             )
-            or tuple((key, event.data.get(key)) for key, _ in self.match_values)
-            != self.match_values
+            or not self._matches_captured_values(event)
         ):
             raise RuntimeError("Original command event source changed.")
         if self.review is not None:
@@ -294,11 +338,7 @@ class _CommandEvent:
             if plan.mcp is not None:
                 plan.mcp.check_memory()
         # Accepted context outlives its input registration, never its sources.
-        if not (
-            self.custody is not None
-            and self.custody.retired
-            and self.custody.owner._drain_outcome is True
-        ):
+        if not self._returned_context():
             self._check_registration()
         if self.custody is not None and not all(
             self._reachable(h) for h in self.selected if h.id in self.targets
@@ -310,13 +350,22 @@ class _CommandEvent:
             if plan.mcp is not None:
                 plan.mcp.check_registration()
 
+    def _returned_context(self):
+        custody = self.custody
+        return bool(
+            custody is not None
+            and custody.retired
+            and (
+                custody.owner._drain_outcome is True
+                or self.ordinary_tree is not None
+                and custody.claim is None
+                and custody.owner is self.ordinary_tree.owner
+            )
+        )
+
     def refresh_permissions(self):
         """Prepare passive context without reactivating the retired execution."""
-        if not (
-            self.custody is not None
-            and self.custody.retired
-            and self.custody.owner._drain_outcome is True
-        ):
+        if not self._returned_context():
             return
         self._check_sources()
         if _guard.captured_sources(None) != self.sources:
@@ -388,18 +437,31 @@ class _CommandEvent:
                 if issuer.activity is None:
                     issuer.activity = issuer.runtime.worktree_activity
                 self.check()
-                with issuer.activity.prelaunch(
-                    footprint=WorktreeFootprint(opaque=True)
-                ) as claim:
-                    if claim is None:
+                from contextlib import nullcontext
+
+                borrowing = self.ordinary_tree is not None
+                admission = (
+                    nullcontext(None)
+                    if borrowing
+                    else issuer.activity.prelaunch(
+                        footprint=WorktreeFootprint(opaque=True)
+                    )
+                )
+                with admission as claim:
+                    if claim is None and not borrowing:
                         raise CapacityRefused("hook_activity_busy")
-                    owner = issuer.capacity.begin_execution(
-                        origin=self.origin,
-                        conversation_id=(
-                            self.session.persisted_conversation_id or self.session.id
+                    owner = (
+                        self.ordinary_tree.borrow(issuer.runtime)
+                        if borrowing
+                        else issuer.capacity.begin_execution(
+                            origin=self.origin,
+                            conversation_id=(
+                                self.session.persisted_conversation_id
+                                or self.session.id
+                            )
+                            if self.session
+                            else "",
                         )
-                        if self.session
-                        else "",
                     )
                     operations = []
                     try:
@@ -412,10 +474,32 @@ class _CommandEvent:
                                 )
                             except PermissionError:
                                 pass
-                        for handler in targets:
-                            plan = self._select(
-                                handler, context, current_chain(), owner, operations
+
+                        def required(handler):
+                            failure = issuer.engine._failure(
+                                handler, self.event, "native_admission_refused"
                             )
+                            return failure.blocking or failure.dependency_required
+
+                        ordered = (
+                            sorted(targets, key=lambda h: not required(h))
+                            if self.future
+                            else targets
+                        )
+                        for handler in ordered:
+                            start = len(operations)
+                            try:
+                                plan = self._select(
+                                    handler, context, current_chain(), owner, operations
+                                )
+                            except CapacityRefused:
+                                if not self.future or required(handler):
+                                    raise
+                                unused, operations[start:] = operations[start:], []
+                                for operation in unused:
+                                    operation.finish()
+                                issuer.engine.notification_omissions += 1
+                                continue
                             if plan is not None:
                                 plans.append(plan)
                         self.plans = {p.handler.id: p for p in plans}
@@ -423,15 +507,17 @@ class _CommandEvent:
                         self.check()
                         if not all(self._reachable(h) for h in targets):
                             raise PermissionError("Command target revoked.")
-                        if operations:
+                        if operations and claim is not None:
                             claim.bind_owner(owner)
                     except BaseException:
                         for operation in operations:
                             operation.finish()
-                        owner.finish_root()
+                        if not borrowing:
+                            owner.finish_root()
                         raise
                     if not operations:
-                        owner.finish_root()
+                        if not borrowing:
+                            owner.finish_root()
                         return
                     custody = _CommandCustody(self, claim, owner, operations)
                     self.custody = custody
@@ -555,9 +641,8 @@ class _HeldHandler:
 class _NestedEvent:
     covered = True
 
-    def __init__(self, root, job, event):
-        self.root, self.job, self.event = root, job, event
-        self.issuer = root.issuer
+    @staticmethod
+    def check_producer(job, event):
         plan, hook_run = job.native_plan, job.hook_run
         if (
             hook_run is None
@@ -567,6 +652,12 @@ class _NestedEvent:
             or current_chain().visits != job.chain.visits
         ):
             raise PermissionError("Original nested event identity changed.")
+
+    def __init__(self, root, job, event):
+        self.root, self.job, self.event = root, job, event
+        self.issuer = root.issuer
+        self.check_producer(job, event)
+        plan = job.native_plan
         previous = plan.issued.get(event.event)
         if previous is not None and previous.event is not event:
             raise PermissionError("Nested event already issued.")

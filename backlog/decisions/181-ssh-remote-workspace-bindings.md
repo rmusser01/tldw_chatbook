@@ -302,3 +302,22 @@ coverage. Ordinary covering claims, separately scheduled recovery probes, remote
 guidance and complete child/late integration remain mandatory. Task7 currently
 accepts local roots only and is not SSH positive evidence. Native platform limits
 remain; uncertainty may retain worker/storage/capacity and disposal indefinitely.
+
+
+### Ordinary remote producers (Task8D2 integration contract)
+
+The complete ordinary maximum captures selected SSH descriptors before guidance,
+adapters or recovery dispatch. Goal binding filtering precedes unrelated remote
+enumeration. Recovery probes reserve their own original worker operation/source
+before Thread.start, following existing best-effort/debounce omission policy;
+disabled, debounced or rejected probes create no operation. Retain original
+ping/cache host return and finish return. Model requests consume the already
+qualified S operation/request/terminal/local-IO proof without another owner;
+healthy accepted shared infrastructure keeps its existing manager lifetime.
+
+Direct ordinary preparation reuses the same request/terminal/helper proof. The
+original instruction IO and selected binding/registry/cache, or the original
+scheduled probe executor/config/binding/cache, replace only the model-specific
+provider/adapter association. No fabricated model catalog or authority stands in
+for these direct producers. Admission precedes the original enqueue/start; the
+original source stays live through host return and operation.finish return.

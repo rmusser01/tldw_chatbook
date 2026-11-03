@@ -4396,6 +4396,15 @@ class ConsoleSessionController:
         ``turn_admission``: precaptured on a worker for the send being
         launched when its inputs still match, otherwise read here.
         """
+        from .turn_admission import prepared_configuration_for
+
+        prepared = prepared_configuration_for(self, session_id)
+        if prepared is not None:
+            if mcp_definition_maximum is not None and dict(
+                mcp_definition_maximum
+            ) != dict(prepared.mcp_definition_maximum):
+                raise RuntimeError("Console preparation selection changed; Send again.")
+            return prepared
         from ...Chat.console_configuration_capture import capture_console_turn_configuration
         from ...Chat.attachment_core import max_history_images  # noqa: F401 - preserve the existing first-use import boundary.
         from ...model_capabilities import is_vision_capable  # noqa: F401 - preserve the existing first-use import boundary.

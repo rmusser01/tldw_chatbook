@@ -261,9 +261,12 @@ class HookSessionLifecycle:
         current: Callable[[], bool] = lambda: True,
         publish: bool = True,
         context_owner: str | None = None,
+        _execution=None,
     ) -> str:
-        scope = self.engine.begin_event(event)
+        scope = _execution or self.engine.begin_event(event)
         try:
+            if _execution is not None:
+                self.engine.consume_preheld(scope, event)
             plans = self.engine.plan_handlers(scope, event)
             required = tuple(
                 p.handler_id
@@ -357,14 +360,27 @@ class HookSessionLifecycle:
         *,
         current: Callable[[], bool] = lambda: True,
         context_owner: str | None = None,
+        _execution=None,
     ) -> Future | None:
         """Install synchronously before publishing a durable completion."""
         if not self.checkpoints.is_current(owner):
             self.diagnostics["late_context"] += 1
             if event.event == "SubagentStop":
-                self.engine.notify(event)
+                if _execution is not None:
+                    self.engine.consume_preheld(_execution, event)
+                    self.engine._notify(event, teardown=False, execution=_execution)
+                else:
+                    self.engine.notify(event)
+            elif _execution is not None:
+                _execution.close()
             return None
-        token = self.begin(event, owner, current=current, context_owner=context_owner)
+        token = self.begin(
+            event,
+            owner,
+            current=current,
+            context_owner=context_owner,
+            _execution=_execution,
+        )
 
         async def complete():
             try:
@@ -499,6 +515,7 @@ class CompactionHooks:
         self.memory_current = memory_current
         self.post_future = None
         self.memory = None
+        self._post_hold = None
 
     async def before(
         self, candidate: tuple[Mapping[str, Any], ...], output_cap: int
@@ -530,35 +547,57 @@ class CompactionHooks:
                 )
             return messages
 
-        return await self.lifecycle.fire(
+        prepared = await self.lifecycle.fire(
             event,
             self.owner,
             current=self.current,
             publish=False,
             _consume=consume,
         )
+        from ..activation import worker_guard
+
+        event = self.lifecycle.event(
+            "PostCompact",
+            data={"reason": self.reason},
+        )
+        scope = await asyncio.to_thread(
+            worker_guard()(lambda: self.lifecycle.engine.prehold_event(event))
+        )
+        if scope is not None:
+            self._post_hold = (event, scope)
+        return prepared
 
     def committed(self, memory: Any) -> None:
         self.memory = memory
         current = lambda: self.memory_current(memory)
         owner = self.lifecycle.scope_id if self.reason == "manual" else self.owner
+        event = self.lifecycle.event(
+            "PostCompact",
+            data={
+                "reason": self.reason,
+                "memory_id": memory.memory_id,
+                "summarized_prefix_digest": memory.summarized_prefix_digest,
+            },
+        )
+        scope = None
+        if self._post_hold is not None:
+            original, scope = self._post_hold
+            self._post_hold = None
+            event = original.model_copy(update={"data": event.data})
         self.post_future = self.lifecycle.install(
-            self.lifecycle.event(
-                "PostCompact",
-                data={
-                    "reason": self.reason,
-                    "memory_id": memory.memory_id,
-                    "summarized_prefix_digest": memory.summarized_prefix_digest,
-                },
-            ),
+            event,
             owner,
             current=lambda: (
                 self.lifecycle.checkpoints.is_current(self.owner) and current()
             ),
             context_owner=self.owner,
+            _execution=scope,
         )
 
     async def finish(self) -> None:
+        if self._post_hold is not None:
+            self._post_hold[1].close()
+            self._post_hold = None
         if self.post_future is not None:
             result = await asyncio.wrap_future(self.post_future)
             if self.reason == "manual" and (

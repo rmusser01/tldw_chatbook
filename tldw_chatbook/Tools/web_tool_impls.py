@@ -2849,3 +2849,18 @@ def web_deep_search(
     )
 
     return f"{text}\n\n{sources_block}\n\n{footer}"
+
+
+# The local provider's closed web calls return content, never a caller output path.
+_NATIVE_LOCAL_WEB_FUNCTIONS = tuple(
+    (name, value, value.__code__)
+    for name, value in tuple(globals().items())
+    if name
+    in {
+        "web_fetch",
+        "web_search",
+        "web_crawl",
+        "web_deep_search",
+        "_deep_search_settings",
+    }
+)

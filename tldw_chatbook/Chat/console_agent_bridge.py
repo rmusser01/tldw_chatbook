@@ -4170,6 +4170,11 @@ def _compose_run_registry_and_allowed(
     """
     if (scratch_root is None) != (scratch_lease is None):
         raise ValueError("Console scratch root and lease must be supplied together")
+    from .console_ordinary_tree import current_ordinary_tree
+
+    ordinary = current_ordinary_tree()
+    if ordinary is not None:
+        ordinary.check_local_sources()
     registry = ToolCatalogRegistry(ephemeral=ephemeral)
     builtin_provider = BuiltinToolProvider(
         gate=builtin_gate,
@@ -4185,6 +4190,8 @@ def _compose_run_registry_and_allowed(
     )
     registry.register_provider(builtin_provider)
     builtin_names = tuple(entry.name for entry in builtin_provider.list_catalog())
+    if ordinary is not None:
+        ordinary.bind_builtin_provider(builtin_provider, builtin_names)
     canvas_names: tuple[str, ...] = ()
     if canvas_provider is not None and registry.register_canvas_provider(
         canvas_provider, canvas_authority
@@ -4205,6 +4212,11 @@ def _compose_run_registry_and_allowed(
     if local_provider is not None:
         registry.register_provider(local_provider)
         local_names = tuple(e.name for e in local_provider.list_catalog())
+        from .console_ordinary_tree import current_ordinary_tree
+
+        ordinary = current_ordinary_tree()
+        if ordinary is not None:
+            ordinary.bind_local_provider(local_provider, local_names)
     if virtual_cli_provider is not None:
         registry.register_provider(virtual_cli_provider)
         local_names += tuple(e.name for e in virtual_cli_provider.list_catalog())
@@ -4226,6 +4238,8 @@ def _compose_run_registry_and_allowed(
         library_provider, library_authority
     ):
         library_names = tuple(e.name for e in library_provider.list_catalog())
+        if ordinary is not None:
+            ordinary.bind_library_provider(library_provider, library_names)
     profile_names: tuple[str, ...] = ()
     if profile_provider is not None and not ephemeral:
         registry.register_provider(profile_provider)
@@ -4614,6 +4628,11 @@ def _compose_first_request_catalog(
         if skills_present and not ephemeral
         else frozenset()
     )
+    from .console_ordinary_tree import current_ordinary_tree
+
+    ordinary = current_ordinary_tree()
+    if ordinary is not None:
+        ordinary.bind_catalog(registry, allowed_tools)
     return registry, allowed_tools, builtin_names, local_names, skill_names
 
 
@@ -6946,7 +6965,31 @@ class ConsoleAgentBridge:
                 self._skills_service, "trust_service"
             ):
                 local_skills = self._skills_service
-            trust_service = getattr(local_skills, "trust_service", None)
+            from tldw_chatbook.Agents.execution_capacity import current_execution_owner
+
+            from .console_ordinary_tree import current_ordinary_tree
+
+            ordinary = current_ordinary_tree()
+            preparation = getattr(ordinary, "skill_preparation", None)
+            owner = current_execution_owner()
+            if (
+                preparation is not None
+                and ordinary is not None
+                and preparation.trust_source is not None
+                and preparation.trust_source.local is local_skills
+                and owner in ordinary.members
+                and owner.is_admitted
+            ):
+                from .console_configuration_preparation import (
+                    finish_native_skill_trust_publication,
+                    native_skill_trust_publication,
+                )
+
+                with native_skill_trust_publication(preparation) as publication:
+                    trust_service = getattr(local_skills, "trust_service", None)
+                    finish_native_skill_trust_publication(publication, trust_service)
+            else:
+                trust_service = getattr(local_skills, "trust_service", None)
 
             def current_skill_definition_digest(skill_name: str) -> str | None:
                 for entry in plugin_entries:
@@ -7883,6 +7926,8 @@ class ConsoleAgentBridge:
                         ),
                     ),
                 )
+                if change_reservation.admission_error:
+                    native_source.close_unused()
             except Exception:  # noqa: BLE001 - native mismatch cannot enter legacy
                 self._append_marker(
                     session_id,
@@ -8111,16 +8156,20 @@ class ConsoleAgentBridge:
 
         def on_child_settled(run_id: str | None, status: str) -> None:
             try:
-                engine = (
+                original = getattr(service, "_ordinary_child_notifications", {}).pop(
+                    run_id, None
+                )
+                engine = original[0] if original is not None else (
                     run_hooks_engine
                     if _workflow_preparation is not None
                     else self._ensure_run_hooks()
                     if self._ensure_run_hooks
                     else None
                 )
-                if engine is not None:
+                if engine is not None and (ordinary_tree is None or original is not None and original[1] is not None):
                     engine.notify(
                         "SubagentStop",
+                        _prepared=original[1] if original is not None else None,
                         session_id=session_id,
                         run_id=run_id,
                         data={"child_run_id": run_id, "status": status},
@@ -8530,6 +8579,22 @@ class ConsoleAgentBridge:
             with self._change_window_lock:
                 self._inflight_turn_message_ids.add(assistant_message_id)
 
+        from .console_ordinary_tree import current_ordinary_tree
+
+        ordinary_tree = current_ordinary_tree()
+        service._ordinary_tree = ordinary_tree
+        if ordinary_tree is not None:
+            service._ordinary_child_notifications = {}
+
+            def prepare_child_notification(child_id):
+                service._ordinary_child_notifications[child_id] = (
+                    run_hooks_engine,
+                    run_hooks_engine.prepare_notification("SubagentStop", session_id)
+                    if run_hooks_engine is not None
+                    else None,
+                )
+
+            service._prepare_child_notification = prepare_child_notification
         supersede_run_id = (
             self._previous_primary_run_id(conversation_id)
             if supersede_previous
@@ -8545,8 +8610,12 @@ class ConsoleAgentBridge:
             if _workflow_preparation is not None or primary_started:
                 raise PermissionError("primary dispatch unavailable")
             primary_started = True
-            execution_owner = self.runtime_capacity.begin_execution(
-                origin=work_origin, conversation_id=conversation_id
+            execution_owner = (
+                ordinary_tree.borrow(ordinary_tree.runtime, opaque=False)
+                if ordinary_tree is not None
+                else self.runtime_capacity.begin_execution(
+                    origin=work_origin, conversation_id=conversation_id
+                )
             )
             # FIRST statement in the block that owns this thread's
             # shutdown -- see its construction above. Not merely *before*
@@ -8702,7 +8771,7 @@ class ConsoleAgentBridge:
             try:
                 turn_lifeline.shutdown()
             finally:
-                if execution_owner is not None:
+                if execution_owner is not None and ordinary_tree is None:
                     execution_owner.finish_root()
             # TASK-1971: E snapshot on EVERY terminal path -- completed,
             # failed, cancelled, or crashed. A run that died halfway through
@@ -12521,4 +12590,13 @@ _CHANGE_REVIEW_MARKER_HELPER_SOURCE = (
     _read_change_review_markers.__defaults__,
     _read_change_review_markers.__kwdefaults__,
     tuple(_read_change_review_markers.__kwdefaults__.items()),
+)
+
+
+# Original collision view is part of ordinary catalog identity, not a new owner.
+_NATIVE_ORDINARY_COLLISION_PROVIDER = _CollisionFilteredMCPProvider
+_NATIVE_ORDINARY_COLLISION_METHODS = tuple(
+    (name, value)
+    for name, value in vars(_CollisionFilteredMCPProvider).items()
+    if callable(value)
 )
