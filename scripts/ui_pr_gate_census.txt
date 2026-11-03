@@ -1997,8 +1997,9 @@ Tests/UI/test_console_readiness_config_projection.py::test_a_retry_delivered_aft
 # commit-review notes) and its deferred commit and push focus stop quietly
 # when they land after quit's App._exit fence or during a removal (_pruning).
 # Round 3 adds every workspace-reachable panel entry point and the deferred
-# refresh targets. 37 cases, about 15 s locally; appended at the tail, so no
-# slot moves.
+# refresh targets; round 4 checks the state each entry point records (mid-
+# removal and detached) and a remount after a commit settles mid-removal.
+# 65 cases, about 35 s locally; appended at the tail, so no slot moves.
 Tests/UI/test_library_file_notes_git.py::test_a_git_render_resuming_after_quit_does_nothing
 Tests/UI/test_library_file_notes_git.py::test_a_git_render_resuming_during_removal_ends_quietly
 Tests/UI/test_library_file_notes_git.py::test_a_commit_focus_landing_during_removal_ends_quietly
@@ -2006,3 +2007,4 @@ Tests/UI/test_library_file_notes_git.py::test_a_commit_notes_render_removed_duri
 Tests/UI/test_library_file_notes_git.py::test_a_push_focus_landing_during_removal_ends_quietly
 Tests/UI/test_library_file_notes_git.py::test_a_panel_entry_called_during_removal_does_nothing
 Tests/UI/test_library_file_notes_git.py::test_a_deferred_panel_refresh_landing_during_removal_does_nothing
+Tests/UI/test_library_file_notes_git.py::test_a_commit_that_settles_mid_removal_remounts_on_the_list
