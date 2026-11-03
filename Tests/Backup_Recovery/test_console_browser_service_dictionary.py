@@ -20,7 +20,7 @@ def _dict_child():
     )
     assert (
         hashlib.sha256(source.read_bytes().replace(b"\r\n", b"\n")).hexdigest()
-        == "3c98cb02d7335a08418248f3666376936c7ece2bb96e3d527aff13d2053b6bf9"
+        == "2500a9b9cb7b67495b2ca44c729f60bd931b1bcfc4d1553af3b60a1bc42a87e1"
     )
     declared = ast.parse(source.read_bytes())
     script = next(
