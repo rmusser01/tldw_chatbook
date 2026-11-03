@@ -52,6 +52,7 @@ from tldw_chatbook.Notes.file_notes_session_owner import (  # noqa: E402
     SessionChange,
 )
 from tldw_chatbook.Notes.file_notes_service import (  # noqa: E402
+    ACTIVATION_WARNING,
     INTERACTIVE_FILE_CHARS,
     LARGE_FILE_EXCERPT_CHARS,
     FileNoteEntry,
@@ -3309,6 +3310,82 @@ async def test_file_notes_linked_root_leads_with_friendly_folder_identity(
     replica.close()
 
 
+async def _settled_root_row(pilot, workspace: LibraryFileNotesWorkspace) -> str:
+    """Return the folder row's painted status once its deferred fit has run."""
+    status = workspace.query_one("#file-notes-root-status", Static)
+    await pilot.pause()
+    await _wait_until(
+        pilot,
+        lambda: (
+            0
+            < cell_len(_static_text(workspace, "#file-notes-root-status"))
+            <= status.content_region.width
+        ),
+        "folder row status was not fitted to its width",
+    )
+    await pilot.pause()
+    return _painted_text_in_region(pilot.app, status.region)
+
+
+def _is_middle_elision_of(fitted: str, full: str) -> bool:
+    """Whether ``fitted`` is ``full`` whole or with only its middle cut."""
+    if fitted == full:
+        return True
+    head, separator, tail = fitted.partition("...")
+    return bool(
+        separator and head and tail and full.startswith(head) and full.endswith(tail)
+    )
+
+
+@pytest.mark.asyncio
+async def test_file_notes_root_row_keeps_state_and_folder_at_60_columns(
+    tmp_path: Path,
+) -> None:
+    """TASK-36513: every linked state paints whole beside Details and Change….
+
+    The pairing review takes room on the row only while a restored pairing
+    awaits review, which the service reports as its activation warning.
+    """
+    root = tmp_path / "deep" / "nested" / "Research Notes"
+    root.mkdir(parents=True)
+    replica = FileNotesReplica(":memory:")
+    workspace = LibraryFileNotesWorkspace(root=root, replica=replica, poll_interval=10)
+
+    async with _WorkspaceHarness(workspace).run_test(size=(60, 20)) as pilot:
+        await _wait_until(pilot, lambda: workspace.initialized, "scan did not finish")
+        review = workspace.query_one("#file-notes-recovery-review", Button)
+        locked = "Recovery unavailable: replica locked"
+        for state, result, pairing in (
+            ("Linked", ReconcileResult(status="ok"), False),
+            ("Offline", ReconcileResult(status="offline", offline=True), False),
+            ("Warning", ReconcileResult(status="ok", replica_warning=locked), False),
+            (
+                "Warning",
+                ReconcileResult(status="ok", replica_warning=ACTIVATION_WARNING),
+                True,
+            ),
+        ):
+            workspace._apply_reconcile(result, ())
+            painted = await _settled_root_row(pilot, workspace)
+            prefix = f"{state} · "
+            assert painted.startswith(prefix), (state, pairing, painted)
+            folder = painted.removeprefix(prefix).removeprefix("Local folder: ")
+            assert _is_middle_elision_of(folder, "Research Notes"), painted
+            assert review.display is pairing, (state, pairing)
+            on_row = ["#file-notes-root-details", "#file-notes-choose-root"]
+            if pairing:
+                on_row.append("#file-notes-recovery-review")
+            for selector in on_row:
+                button = workspace.query_one(selector, Button)
+                assert button.display, selector
+                assert 0 <= button.region.x and button.region.right <= 60, (
+                    selector,
+                    button.region,
+                )
+
+    replica.close()
+
+
 @pytest.mark.asyncio
 async def test_file_notes_root_details_preserve_exact_path_and_warning(
     tmp_path: Path,
@@ -3706,18 +3783,11 @@ async def test_initial_root_scan_projects_checking_authority_while_actions_are_g
                 scan_started.is_set,
                 "initial root scan did not start",
             )
-            # TASK-36383: a deferred refresh fits the painted row to 11 cells
-            # at 60x20 ("Chec...otes"). That width is a known defect: the
-            # always-shown "Review recovered pairing…" button takes 27 cells
-            # (QA N-37), and the 60x20 case of
-            # test_file_notes_linked_root_leads_with_friendly_folder_identity
-            # is red for it. TASK-34000.30 AC#10 covers the no-folder state
-            # only; this linked row is TASK-36513. Until that lands, check the
-            # row's copy and the tooltip set with it, neither of which the fit
-            # rewrites.
-            root_status = workspace.query_one("#file-notes-root-status", Static)
-            assert "Checking" in workspace._root_status_summary
-            assert "Checking" in str(root_status.tooltip)
+            # TASK-36513: the painted row, once its deferred fit has run --
+            # at 60x20 it used to be "Chec...otes" behind an always-shown
+            # pairing-review button.
+            painted = await _settled_root_row(pilot, workspace)
+            assert painted.startswith("Checking · "), painted
             authority = _static_text(workspace, "#file-notes-authority")
             assert "Checking folder" in authority
             assert "Folder: notes" in authority

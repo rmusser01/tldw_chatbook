@@ -96,6 +96,7 @@ from tldw_chatbook.Notes.file_notes_session_owner import (
     SessionTransitionKind,
 )
 from tldw_chatbook.Notes.file_notes_service import (
+    ACTIVATION_WARNING,
     LARGE_FILE_EXCERPT_CHARS,
     FileNoteEntry,
     FileNotesService,
@@ -1530,6 +1531,8 @@ class LibraryFileNotesWorkspace(Vertical):
         self._runtime_warning = ""
         self._root_status_detail = "Choose a notes folder."
         self._root_status_summary = "Choose a notes folder."
+        # (state words, folder name) while the summary is the linked line.
+        self._root_status_parts: tuple[str, str] | None = None
 
         self._poll_interval = max(0.02, poll_interval)
         self._poll_base_interval = self._poll_interval
@@ -2413,9 +2416,14 @@ class LibraryFileNotesWorkspace(Vertical):
                 id="file-notes-choose-root",
                 compact=True,
             )
-            yield Button(
-                "Review recovered pairing…", id="file-notes-recovery-review", compact=True,
+            # TASK-36513: shown only while a restored pairing awaits review
+            # (``_update_root_surface``); always shown, it left a linked
+            # folder's status 11 cells at 60 columns.
+            review = Button(
+                "Review pairing…", id="file-notes-recovery-review", compact=True
             )
+            review.display = False
+            yield review
             # task-32055: the way out of a structural wait, next to the
             # control that starts one. Display-toggled (never conditionally
             # yielded) so the in-place wait updates always find it.
@@ -3293,12 +3301,19 @@ class LibraryFileNotesWorkspace(Vertical):
             wait is None and sync_folder is not None,
             label=None if sync_folder is None else f"Use {_folder_label(sync_folder)}",
         )
+        self._show_root_row_button(
+            "#file-notes-recovery-review",
+            wait is None
+            and self._root is not None
+            and ACTIVATION_WARNING in self._runtime_warning,
+        )
         try:
             self.query_one("#file-notes-empty-purpose", Static).display = (
                 self._root is None
             )
         except NoMatches:
             pass
+        self._root_status_parts = None
         if wait is not None:
             # task-32055: the wait owns this slot while it runs -- the line
             # says what is happening, then that it is still working, and the
@@ -3370,11 +3385,13 @@ class LibraryFileNotesWorkspace(Vertical):
             else ("Warning" if self._runtime_warning else state)
         )
         self._root_status_summary = f"{display_state} · Local folder: {folder_name}"
+        self._root_status_parts = (display_state, folder_name)
         if self._root_action_reason:
             # task-32121: the reason a folder change ended owns the row the
             # user was watching until they try again; the folder it kept
             # stays in the tooltip and in Details.
             self._root_status_summary = self._root_action_reason
+            self._root_status_parts = None
         status.tooltip = Text(detail)
         status.update(self._root_status_summary)
         details.display = True
@@ -3478,8 +3495,18 @@ class LibraryFileNotesWorkspace(Vertical):
         except NoMatches:
             return
         width = status.content_region.width
-        if width > 0:
-            status.update(_middle_elide_cells(self._root_status_summary, width))
+        if width <= 0:
+            return
+        summary = self._root_status_summary
+        if self._root_status_parts is not None and cell_len(summary) > width:
+            # TASK-36513: the state words stay whole; "Local folder:" goes
+            # first, then the folder name's middle, then the name itself.
+            state, folder = self._root_status_parts
+            room = width - cell_len(state) - 3
+            summary = (
+                f"{state} · {_middle_elide_cells(folder, room)}" if room >= 5 else state
+            )
+        status.update(_middle_elide_cells(summary, width))
 
     def _apply_responsive_layout(self, width: int) -> None:
         if not self._active or not self.is_mounted:

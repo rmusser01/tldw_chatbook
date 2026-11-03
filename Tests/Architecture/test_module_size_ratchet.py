@@ -763,7 +763,10 @@ _BUDGETS: dict[str, int] = {
     "tldw_chatbook/Agents/agent_service.py": 9714,
     # 2026-10-31, PR #3259: explicit user size-limit waiver. Pin the
     # actual current-base N-32 file-body F6 integration at 9,541 lines.
-    "tldw_chatbook/Widgets/Library/library_file_notes_workspace.py": 9541,
+    # TASK-36513, 2026-11-03 (size waiver per the burn-down brief: re-pin at
+    # the measurement): 9541 -> 9568 (+27). The pairing review shows only
+    # while a pairing awaits it, and the folder row fits its state words whole.
+    "tldw_chatbook/Widgets/Library/library_file_notes_workspace.py": 9568,
     "tldw_chatbook/DB/Client_Media_DB_v2.py": 9426,
     # TASK-37270: bounded template reads moved to local_reasoning_metadata.
     # 2026-10-29, TASK-33622.6 (owner decision: raise with a dated comment):
