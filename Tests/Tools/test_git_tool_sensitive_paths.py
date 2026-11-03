@@ -344,9 +344,12 @@ def test_every_pathspec_this_family_builds_carries_explicit_magic() -> None:
     ``--`` ends OPTION parsing, not pathspec-magic parsing, so a bare
     value after it is a repository-supplied injection point: a file
     legitimately named ``:(exclude)notes.txt`` inverts the scope of
-    whatever command it lands in. Only two shapes are allowed through --
+    whatever command it lands in. Only these shapes are allowed through --
     ``_literal_pathspec(...)``, which disables magic for one value, and a
-    splat of ``_denylist_pathspecs(...)``, which renders its own.
+    splat of ``_denylist_pathspecs(...)`` or (TASK-38463)
+    ``_withheld_name_pathspecs(...)``, which render their own; the scan's
+    ``_NON_ASCII_PATHSPECS`` constant and the byte-exact renderer are pinned
+    to explicit magic directly below.
 
     Checked over EVERY list literal in the module that contains ``"--"``,
     and THROUGH a local list that is splatted into one. An earlier form of
@@ -401,7 +404,7 @@ def test_every_pathspec_this_family_builds_carries_explicit_magic() -> None:
             allowed = (
                 {"_literal_pathspec"}
                 if node.func.attr == "append"
-                else {"_denylist_pathspecs"}
+                else {"_denylist_pathspecs", "_withheld_name_pathspecs"}
             )
             if node.func.attr not in {"append", "extend"}:
                 bad.append(f"{name}.{node.func.attr}(...)")
@@ -447,6 +450,13 @@ def test_every_pathspec_this_family_builds_carries_explicit_magic() -> None:
         "repository file named ':(exclude)x' can invert the command's scope: "
         f"{offenders}"
     )
+    assert all(
+        spec.startswith(":(glob)") for spec in git_tool_impls._NON_ASCII_PATHSPECS
+    )
+    for subtree in (False, True):
+        assert git_tool_impls._exact_exclude_pathspec(
+            ":(top)x", subtree=subtree
+        ).startswith(":(exclude,")
 
 
 # ---------------------------------------------------------------------------
@@ -781,7 +791,11 @@ def _plumbed_repo(root: Path, *, precompose: str, stored: str) -> Path:
             oid = _plumbing(repo, "hash-object", "-w", "--stdin", stdin=blob).strip()
             records.append(f"100644 {oid}\t{name}\n")
         _plumbing(
-            repo, "update-index", "--add", "--index-info", stdin="".join(records).encode()
+            repo,
+            "update-index",
+            "--add",
+            "--index-info",
+            stdin="".join(records).encode(),
         )
 
     _stage(1)
@@ -911,6 +925,19 @@ def test_git_diff_refuses_when_a_withheld_name_is_left_in_the_diff(
 
     assert SECRET_38463 not in str(refused.value)
     assert fold_path_part("naïve") not in fold_path_part(str(refused.value))
+
+
+def test_a_git_timeout_does_not_echo_the_exclusion_pathspecs() -> None:
+    """The pathspecs after ``--`` name excluded paths (TASK-38463 adds their
+    stored spellings); a timeout's model-facing error must not repeat them."""
+    from tldw_chatbook.Tools.git_tool_impls import _run_git_bytes
+
+    with pytest.raises(LocalToolError, match="timed out") as refused:
+        _run_git_bytes(
+            ["git", "diff", "--", ":(exclude,glob)SECRET-38463.txt"], timeout=0.0
+        )
+
+    assert "SECRET-38463" not in str(refused.value)
 
 
 @pytest.mark.parametrize(
