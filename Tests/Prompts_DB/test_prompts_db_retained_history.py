@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import math
 import sqlite3
+from types import SimpleNamespace
 from typing import Any
 
 import pytest
@@ -433,7 +434,16 @@ def test_prompt_history_count_is_exact_and_decodes_no_payload(monkeypatch):
         def fail_json_decode(_raw: str) -> Any:
             raise AssertionError("history count must not decode payloads")
 
-        monkeypatch.setattr(prompts_db_module.json, "loads", fail_json_decode)
+        # Patch Prompts_DB's own ``json`` name, not the shared stdlib function.
+        monkeypatch.setattr(
+            prompts_db_module,
+            "json",
+            SimpleNamespace(
+                loads=fail_json_decode,
+                dumps=json.dumps,
+                JSONDecodeError=json.JSONDecodeError,
+            ),
+        )
 
         assert database.get_prompt_history_count(TARGET_UUID) == 4
         assert database.get_prompt_history_count(OTHER_UUID) == 1
@@ -452,7 +462,16 @@ def test_prompt_history_page_is_filtered_bounded_and_cursor_paged(monkeypatch):
             decoded_payloads.append(raw)
             return real_loads(raw)
 
-        monkeypatch.setattr(prompts_db_module.json, "loads", recording_loads)
+        # Patch Prompts_DB's own ``json`` name, not the shared stdlib function.
+        monkeypatch.setattr(
+            prompts_db_module,
+            "json",
+            SimpleNamespace(
+                loads=recording_loads,
+                dumps=json.dumps,
+                JSONDecodeError=json.JSONDecodeError,
+            ),
+        )
         statements: list[str] = []
         database.get_connection().set_trace_callback(statements.append)
 

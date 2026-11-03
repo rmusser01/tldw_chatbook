@@ -2,6 +2,7 @@ import json
 import os
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 from loguru import logger
@@ -159,7 +160,10 @@ def test_oversized_file_is_rejected_before_json_parsing(tmp_path, monkeypatch):
         called = True
         raise AssertionError("JSON parser must not receive an oversized file")
 
-    monkeypatch.setattr(disk_module.json, "loads", forbidden_loads)
+    # Patch the disk cache's own ``json`` name, not the shared stdlib function.
+    monkeypatch.setattr(
+        disk_module, "json", SimpleNamespace(loads=forbidden_loads, dumps=json.dumps)
+    )
     cache = ModelDiscoveryCache()
     _store(tmp_path).load_into(cache)
 
