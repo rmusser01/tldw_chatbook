@@ -590,6 +590,7 @@ def _close_actor_uniqueness(builder):
 
 def _field_ownership(specs):
     from .mobile_content_settings import _TABLES as settings
+    from .mobile_content_workflows import _CHECKPOINT_FIELDS
     from .mobile_content_workflows import _TABLES as workflows
 
     ownership = tuple(
@@ -598,7 +599,8 @@ def _field_ownership(specs):
     )
     if (
         len({table for table, _ in ownership}) != len(ownership)
-        or sum(len(columns) for _, columns in ownership) != 247
+        or sum(len(columns) for _, columns in ownership) != 248
+        or specs["console_dispatch_checkpoints"].columns != _CHECKPOINT_FIELDS
     ):
         raise ValueError("mobile_c2_ownership_mismatch")
     return ownership

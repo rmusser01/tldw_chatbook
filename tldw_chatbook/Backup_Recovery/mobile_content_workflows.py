@@ -25,6 +25,28 @@ _TABLES = (
     "transcript_annotations",
 )
 
+_CHECKPOINT_FIELDS = (
+    "assistant_message_id",
+    "user_message_id",
+    "conversation_id",
+    "schema_version",
+    "preparation_id",
+    "attempt_id",
+    "state",
+    "checkpoint_revision",
+    "user_message_version",
+    "assistant_message_version",
+    "origin",
+    "queue_entry_id",
+    "agent_chat_start_attempt_id",
+    "frozen_authority_json",
+    "resolved_destination_json",
+    "reconstructability_json",
+    "created_at",
+    "updated_at",
+    "mixin_snapshot_schema_version",
+)
+
 _RETRIEVAL_KINDS = frozenset(
     {
         "retrieval_started",
@@ -276,21 +298,26 @@ def _checkpoint_join(row, conversations, messages):
         messages[row["user_message_id"]],
         messages[row["assistant_message_id"]],
     )
-    return row | {
-        "conversation_deleted": conversation["deleted"],
-        "user_conversation_id": user["conversation_id"],
-        "user_role": user["role"],
-        "user_metadata_json": user["metadata_json"],
-        "current_user_version": user["version"],
-        "user_deleted": user["deleted"],
-        "assistant_conversation_id": assistant["conversation_id"],
-        "assistant_role": assistant["role"],
-        "current_assistant_version": assistant["version"],
-        "assistant_deleted": assistant["deleted"],
-        "assistant_state": assistant["assistant_generation_state"],
-        "provider_continuation_json": assistant["provider_continuation_json"],
-        "thinking_blocks_json": assistant["thinking_blocks_json"],
-    }
+    # Authenticated legacy 81–85 checkpoints predate operational mix-in snapshots.
+    return (
+        {"mixin_snapshot_schema_version": None}
+        | row
+        | {
+            "conversation_deleted": conversation["deleted"],
+            "user_conversation_id": user["conversation_id"],
+            "user_role": user["role"],
+            "user_metadata_json": user["metadata_json"],
+            "current_user_version": user["version"],
+            "user_deleted": user["deleted"],
+            "assistant_conversation_id": assistant["conversation_id"],
+            "assistant_role": assistant["role"],
+            "current_assistant_version": assistant["version"],
+            "assistant_deleted": assistant["deleted"],
+            "assistant_state": assistant["assistant_generation_state"],
+            "provider_continuation_json": assistant["provider_continuation_json"],
+            "thinking_blocks_json": assistant["thinking_blocks_json"],
+        }
+    )
 
 
 def _plan_content_workflows(reads):
@@ -416,6 +443,7 @@ def _plan_content_workflows(reads):
             ),
         )
         values = row | {
+            "mixin_snapshot_schema_version": native.mixin_snapshot_schema_version,
             "conversation_id": builder.ref("conversation", row["conversation_id"]),
             "assistant_message_id": message_ref(row, "assistant_message_id"),
             "user_message_id": message_ref(row, "user_message_id"),
