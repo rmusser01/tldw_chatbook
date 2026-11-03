@@ -3333,3 +3333,112 @@ An enabled agent-definition roster still requires a fresh committed imported-own
 ### Current-dev private component qualification scope (2026-11-03)
 
 The private derivation/no-effect component case uses real native source records from all three store families and one explicitly unproved physical snapshot. This focused graph witnesses the original 16 MiB allowance, reader/claim/custody retirement, refusal before writes, nonrenewal and cohort/reissue checks. It does not establish a universal private graph fit. Whole-operation fault/recovery qualification uses the genuine public workers and their existing coupled allowance under R145. The earlier malformed full-fixture conflicts and bounded resource refusals remain failed historical evidence; changing this atomic fixture does not relabel them as passes or relax a production limit.
+
+
+### CI ownership correction (2026-11-03, before source moves)
+
+Bounded event projections belong to the existing Chat value/projection owner,
+not the Web transport. Native receipt construction and mobile declarations
+belong to recovery consumers; DB retains literal decoding/catalog policy.
+The fixed materialization value budget and its single weak provenance registry
+belong to existing recovery value contracts; they confer no path, source,
+SQLite or execution authority. Installed literal table/identity catalogs belong
+to the existing DB import-policy owner. Exact generic UTF-8/opaque validation
+belongs to the existing pure text utility; Canvas retains canonical aliases.
+These moves preserve all native checks, live patch ports, accounting, quotas,
+annotations and caller behavior. They neither authorize new roles nor waive
+layer, size, startup, source inventory or final qualification gates.
+
+The instrumented component epoch 241 completed under the original limits with
+29.27–29.78 seconds remaining at plan entry and no expiry. Earlier deadline
+failures remain retained; instrumentation is removed before release runs, and
+this single passing diagnostic is not a claim to have fixed their timing.
+
+
+### Ordinary leases and installed recovery coordinators (2026-11-03)
+
+Ordinary execution leases have one DB-layer class and registry; Chat exports
+the same objects. Consolidation-specific acquisition remains in the existing
+native operation and retains exact scope checks, FD/stream custody before lock,
+post-lock hardening, retained use and final native revalidation.
+
+The existing profile-path owner performs complete selected-cohort preflight;
+config supplies one atomic snapshot and explicit native overrides. The whole
+custom-tokenizer service belongs to Chat, with its old Utils path aliasing the
+same module object so live manager/flag patches retain one namespace.
+
+Installed recovery core/SQLite coordinators and complete semantic validators
+belong to Backup_Recovery. DB keeps literal installed catalogs, transforms and
+physical checked capture. Compatibility entry points expose whole operations;
+source-role registrations and literal-path/persistence inventories follow the
+actual implementations one for one with unchanged IDs, target kinds, flags and
+native checks. Layer compatibility rows may only follow the existing whole-owner
+move rule with at least as many obsolete rows removed; no numerical limit rises.
+Every new canonical module counts under the unchanged startup/source gates.
+
+
+### Imported RunLog service ownership correction (2026-11-03)
+
+This supersedes the earlier unreleased DB-method interface.
+
+The domain service
+`Backup_Recovery.mobile_imported_run_log.read_imported_run_log_page(database,
+mapped_run_id, operation_id, source_fingerprint, *, cursor=None)` accepts only the
+actual admitted canonical AgentRuns owner. The unmerged feature's forwarding DB
+method and DB service module are removed; no DB-to-domain shim remains. This is a
+whole-service ownership correction: the one canonical `_PinnedHistory` class,
+`_ACTIVE` and `_QUARANTINED` sets live together with native enrolled leases,
+retained archive inventory, descriptor/iterator custody, verification and paging.
+`Agents.run_log_paging` imports that exact class object. Existing DB connection,
+owner, committed-receipt and private-SQL policies remain unchanged. No caller
+root/path/manifest or maintenance HistoryFiles object supplies runtime authority.
+Committed identity and actual per-root framed membership resolve original IDs.
+Root ownership, historical MANIFEST references and actual frames are distinct.
+A healthy root owner may locate its own filtered (empty if descendant-only)
+evidence; it never inherits descendant frames.
+
+
+
+### Cold remote configuration presentation dependency (2026-11-03)
+
+The existing served App boundary supplies the stock metadata loader to the
+native remote command owner. Send executes it through the original physical
+preparation-read observers and exact revision/currentness checks; the unchanged
+installed cold source capsule remains the acceptance proof. The callback is an
+internal presentation dependency, never client/archive data or a permission grant.
+Missing metadata dependency refuses Send before input custody; other controls
+do not require it. No widget, trust service or configuration owner is constructed
+by dependency composition, and no native source guard or resource bound changes.
+
+
+### Final profile/validation ownership and current native catalogs (2026-11-03)
+
+The complete preview-lineage classifier/cohort operation belongs to the existing
+profile-path owner. Its DB path exports the same canonical operations for native
+constructors; their physical openers, roles, expected identities and finite
+bounds remain unchanged. Original lexical accounting, scope validation, stat
+and SQL/error behavior remain exact. The one visible old-path shim row follows
+the existing whole-owner move clause: the integrated allowlist changes from
+4 added/12 removed to 5 added/12 removed, net seven fewer rows. This is not a
+numerical exception. The actual layer/stale-row guards must verify composition.
+
+The complete restricted candidate-validation coordinator moves into the existing
+SQLite validation owner, with its DB public contextmanager retaining the same
+signature and forwarding. Native DB connectors/outcome objects remain live
+bindings. The recovery.validation/C86 source location follows the actual operation
+one for one; target kinds, flags, capture custody, restriction identity, cancel,
+retirement order and twelve existing callers retain their contracts. Exact
+source/coordinator/wrapper and closed transport-census negatives qualify the move.
+
+ADR-223's installed RAG embedding cache adds a second exact schema-zero catalog
+with its native table/index. The original five-object zero remains valid; the
+new seven-object zero is accepted only in its exact installed form. No version,
+unknown-column, partial-schema, migration or resource rule is relaxed. Native
+cache values and unchanged validated bytes require fresh runtime evidence.
+
+The global persistence table remains conservative discovery, separate from
+source-role qualification and complete backup coverage. New or expanded uncertain
+source/count candidates are unsupported pending owner review; removed rows remain
+explicitly retired history. Recording these facts grants neither permission nor
+backup coverage/exclusion. The existing exact census and native unknown/unsupported
+refusals remain enforced.

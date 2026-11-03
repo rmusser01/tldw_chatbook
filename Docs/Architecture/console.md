@@ -1093,6 +1093,12 @@ binding to final publication; failed noncreator cleanup cannot remove that owner
 
 ## Fresh-profile tokenizer availability (Task11)
 
+The active custom-tokenizer service lives in `Chat/custom_tokenizers.py`: it owns
+installed tokenizer mappings, token counting and admitted artifact writes.
+`Utils.custom_tokenizers` aliases that same module object for existing callers;
+manager/availability rebinding and native function globals share one namespace.
+Reload through either path reloads the canonical service in that same object.
+
 The token counter asks `custom_tokenizers_available()` before entering the custom
 tokenizer tier. With no cached manager, the availability probe uses the native
 pinned directory seam and no-follow stat to prove that the default tokenizer
@@ -1103,3 +1109,12 @@ Explicit manager construction, installation and mapping writes retain their
 existing admission and pause behavior. A fresh unseeded served profile reached
 the provider and completed its phone continuation with the tokenizer directory
 still absent; see the [qualification packet](../superpowers/qa/2026-10-25-shared-console-mobile-supervision/README.md).
+
+
+The served presentation boundary supplies the stock compact-model metadata loader
+to the native remote-command owner. Explicit Send runs it through the existing
+controller/runtime preparation-read observers, rechecks the exact target and all
+five revisions, then uses the unchanged cold source-capsule checks. The loader
+imports the original widget module without mounting a widget or opening a trust
+service. A command owner without this presentation dependency refuses Send;
+projection, Stop and other non-Send controls do not need it.

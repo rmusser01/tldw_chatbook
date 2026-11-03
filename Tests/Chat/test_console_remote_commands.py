@@ -220,3 +220,100 @@ async def test_subagent_stop_checks_exact_run_and_uses_native_owner(
         "state"
     ] == "refused"
     bridge._fleet_services.clear()
+
+
+async def test_send_without_metadata_loader_refuses_before_input_custody(intent_case):
+    from tldw_chatbook.Chat.console_remote_commands import REVISION_FIELDS
+
+    commands, target = _commands(intent_case)
+    runtime, store, session, _request = intent_case
+    before = store.session_draft(session.id)
+    revisions = {key: getattr(session, key) for key in REVISION_FIELDS}
+    with pytest.raises(RuntimeError, match="configuration source is unavailable"):
+        await commands.send(
+            target, "phone", "missing-loader", expected_revisions=revisions
+        )
+    assert not runtime._preparation_reads
+    assert not runtime._chat_controller._preparation_reads
+    assert not runtime.has_received_intents(session.id)
+    assert store.session_draft(session.id) == before
+
+
+@pytest.mark.parametrize("outcome", ["revision", "cancel"])
+async def test_metadata_read_keeps_native_observers_and_revision_fence(
+    intent_case, outcome
+):
+    import asyncio
+    import sys
+    import threading
+
+    from tldw_chatbook.Chat.console_remote_commands import (
+        REVISION_FIELDS,
+        ConsoleRemoteCommands,
+    )
+    from tldw_chatbook.Chat.console_session_settings import ConsoleSessionSettings
+    from tldw_chatbook.Web_Server.served_console_app import (
+        _load_console_configuration_metadata,
+    )
+
+    original, target = _commands(intent_case)
+    runtime, store, session, _request = intent_case
+    controller = runtime._chat_controller
+    loop = asyncio.get_running_loop()
+    loop_thread = threading.get_ident()
+    entered, release = asyncio.Event(), threading.Event()
+    loaded = []
+
+    def load():
+        assert threading.get_ident() != loop_thread
+        loop.call_soon_threadsafe(entered.set)
+        assert release.wait(3)
+        loaded.append(_load_console_configuration_metadata())
+
+    commands = ConsoleRemoteCommands(
+        runtime, original.host_identity, configuration_metadata_loader=load
+    )
+    revisions = {key: getattr(session, key) for key in REVISION_FIELDS}
+    before = store.session_draft(session.id)
+    task = asyncio.create_task(
+        commands.send(
+            target, "phone", "changed-during-load", expected_revisions=revisions
+        )
+    )
+    try:
+        await asyncio.wait_for(entered.wait(), 3)
+        assert (
+            len(controller._preparation_reads) == len(runtime._preparation_reads) == 1
+        )
+        read = next(iter(controller._preparation_reads))
+        assert read in runtime._preparation_reads
+        assert read.creator is controller and read.task is task
+        assert read.session_id == session.id and not read.retired.done()
+        if outcome == "cancel":
+            task.cancel()
+            await asyncio.sleep(0)
+            assert not task.done() and not read.retired.done()
+            assert (
+                read in controller._preparation_reads
+                and read in runtime._preparation_reads
+            )
+        else:
+            store.replace_session_settings(
+                session.id,
+                ConsoleSessionSettings(provider="llama_cpp", temperature=0.1),
+            )
+        release.set()
+        if outcome == "cancel":
+            with pytest.raises(asyncio.CancelledError):
+                await asyncio.wait_for(task, 10)
+        else:
+            with pytest.raises(ValueError, match="configuration changed"):
+                await asyncio.wait_for(task, 10)
+        assert read.retired.done()
+        assert loaded == [sys.modules["tldw_chatbook.Widgets.compact_model_bar"]]
+        assert not runtime._preparation_reads and not controller._preparation_reads
+        assert not runtime.has_received_intents(session.id)
+        assert store.session_draft(session.id) == before
+    finally:
+        release.set()
+        await asyncio.gather(task, return_exceptions=True)

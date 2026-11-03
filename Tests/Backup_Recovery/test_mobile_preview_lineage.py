@@ -257,3 +257,55 @@ def test_coordinator_path_memory_name_keeps_native_sibling_selection(
     config.preflight_selected_console_stores(
         chat_path=":memory:", workspace_path=tmp_path / "absent.db"
     )
+
+
+def test_preview_lineage_compatibility_exports_have_one_complete_profile_owner():
+    from tldw_chatbook.Backup_Recovery import profile_paths
+    from tldw_chatbook.DB import mobile_preview_lineage
+
+    for name in (
+        "IncompatiblePreviewError",
+        "_GUIDANCE",
+        "_existing_preview_target",
+        "_reject_preview_connection",
+        "reject_incompatible_console_stores",
+    ):
+        assert getattr(mobile_preview_lineage, name) is getattr(profile_paths, name)
+    assert profile_paths._existing_preview_target.__globals__ is vars(profile_paths)
+    assert profile_paths._reject_preview_connection.__globals__ is vars(profile_paths)
+
+
+@pytest.mark.parametrize("raw_kind", ["ordinary", "nul"])
+def test_profile_preflight_preserves_budget_before_path_expansion_and_stat(
+    tmp_path, monkeypatch, raw_kind
+):
+    from tldw_chatbook.Backup_Recovery import profile_paths, storage_admission
+    from tldw_chatbook.Chat.console_trace_read_budget import (
+        _TraceReadBudget,
+        _TraceReadLimit,
+    )
+    from tldw_chatbook.DB.mobile_preview_lineage import _existing_preview_target
+
+    path = tmp_path / "never-inspected.db"
+    raw = str(path) + ("\x00" if raw_kind == "nul" else "")
+    budget = _TraceReadBudget()
+    stat_calls = []
+
+    def unexpected_stat(*args, **kwargs):
+        stat_calls.append(args)
+        pytest.fail("preflight inspected a path before accounting")
+
+    with storage_admission._preview_reads(_read_budget=budget):
+        budget.reserve(budget._remaining)
+        with monkeypatch.context() as patch:
+            patch.setattr(
+                profile_paths,
+                "os",
+                SimpleNamespace(path=profile_paths.os.path, stat=unexpected_stat),
+            )
+            # Keep the existing absolute-Path identity/no-charge fast path.
+            assert profile_paths.lexical_path(path) is path
+            assert budget._remaining == 0
+            with pytest.raises(_TraceReadLimit, match="mobile_trace_input_limit"):
+                _existing_preview_target(raw)
+        assert not stat_calls and budget._remaining == 0

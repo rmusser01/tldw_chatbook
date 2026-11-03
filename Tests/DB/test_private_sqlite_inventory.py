@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import ast
+import sys
 import warnings
 from collections import Counter
 from collections.abc import Iterable
@@ -354,35 +355,62 @@ _PUBLIC_PRIVATE_SQLITE_SEAMS = {
 
 def _qualified_private_sqlite_calls(
     source_path: Path,
+    *,
+    validation_transport: bool = False,
 ) -> list[tuple[str, str, ast.Call]]:
     tree = _parse_source(source_path)
+    seam_names = (
+        {
+            "_connect_registered_sqlite",
+            "_connect_recovery_candidate",
+            "connect_private_sqlite_descriptor",
+            "_open_recovery_validation",
+        }
+        if validation_transport
+        else _PUBLIC_PRIVATE_SQLITE_SEAMS
+    )
     module_aliases: set[str] = set()
     callable_aliases: dict[str, str] = {}
+    if validation_transport:
+        callable_aliases.update(
+            (node.name, node.name)
+            for node in ast.walk(tree)
+            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+            and node.name in seam_names
+        )
 
     for node in ast.walk(tree):
         if isinstance(node, ast.Import):
             for alias in node.names:
-                if alias.name == "tldw_chatbook.DB.private_sqlite":
+                if alias.name == "tldw_chatbook.DB.private_sqlite" or (
+                    validation_transport
+                    and alias.name == "tldw_chatbook.Backup_Recovery.sqlite_validation"
+                ):
                     module_aliases.add(alias.asname or alias.name)
         elif isinstance(node, ast.ImportFrom):
             imported_module = node.module or ""
-            if imported_module.endswith("private_sqlite"):
+            if imported_module.endswith("private_sqlite") or (
+                validation_transport and imported_module.endswith("sqlite_validation")
+            ):
                 for alias in node.names:
-                    if alias.name in _PUBLIC_PRIVATE_SQLITE_SEAMS:
+                    if alias.name in seam_names:
                         callable_aliases[alias.asname or alias.name] = alias.name
                     elif alias.name == "*":
                         callable_aliases.update(
-                            {
-                                seam_name: seam_name
-                                for seam_name in _PUBLIC_PRIVATE_SQLITE_SEAMS
-                            }
+                            {seam_name: seam_name for seam_name in seam_names}
                         )
-            elif imported_module.endswith("DB") or (
-                node.level > 0 and not imported_module
+            elif (
+                imported_module.endswith("DB")
+                or (
+                    validation_transport and imported_module.endswith("Backup_Recovery")
+                )
+                or (node.level > 0 and not imported_module)
             ):
                 for alias in node.names:
-                    if alias.name == "private_sqlite":
-                        module_aliases.add(alias.asname or "private_sqlite")
+                    if alias.name == "private_sqlite" or (
+                        validation_transport and alias.name == "sqlite_validation"
+                    ):
+                        module_aliases.add(alias.asname or alias.name)
 
     def seam_callable_name(expression: ast.expr) -> str | None:
         if isinstance(expression, ast.Name):
@@ -391,11 +419,7 @@ def _qualified_private_sqlite_calls(
         if dotted is None:
             return None
         module_name, separator, callable_name = dotted.rpartition(".")
-        if (
-            separator
-            and module_name in module_aliases
-            and callable_name in _PUBLIC_PRIVATE_SQLITE_SEAMS
-        ):
+        if separator and module_name in module_aliases and callable_name in seam_names:
             return callable_name
         return None
 
@@ -541,15 +565,27 @@ def _open_completion_read(path):
     return ast.dump(actual) == ast.dump(expected)
 
 
-def _assert_detached_normalization_source(source: str) -> None:
-    """Freeze R174's reviewed disposable-copy opener and its private caller chain."""
+def _assert_detached_normalization_source(source: str, module: str) -> None:
+    """Freeze the qualified detached copy, restricted checks and output transport."""
     import hashlib
 
     expected = {
-        "_normalize_sqlite": "f193786044066903e0279b1b8568bda302202eca999fb29715b369ec19391cca",
-        "_owner_items": "596498f745a036e8b9a2d7e2ccb995173d65b97930745f635ee52bad8826cf1e",
-        "produce_detached_archive": "6aaa5ba9c691944a740445aae8d2299e12ad09a4c0ecb55e7204adf2a29c2d7c",
-    }
+        "detached_layout": {
+            "_normalize_sqlite": "eff395f259323b2638e538ee166142c727c6256368c53e8d9230fe99c0496d61",
+            "_owner_items": "596498f745a036e8b9a2d7e2ccb995173d65b97930745f635ee52bad8826cf1e",
+            "produce_detached_archive": "6aaa5ba9c691944a740445aae8d2299e12ad09a4c0ecb55e7204adf2a29c2d7c",
+        },
+        "sqlite_validation": {
+            "normalize_detached_candidate": "0958fde34420ac25689ef1b9162c3dc1e3e3401ad71b2b3a4de924c8a0d3093b",
+            "_validate_candidate": "a2d5d789df77f826fecd18f33d472624233135a3a958ecfee1f4afa5f8aa9890",
+            "_write_normalized_candidate": "29ee683bec2883fa9d4bb1b962819308b9630efb6c0c5b880373bda3a6bd3ed6",
+        },
+        "private_sqlite": {
+            "_connect_recovery_candidate": "a6bf7a6a4471bf2911f5041f841222a200e72392e9e500b9fbcc66af9ea6cf0e",
+            "_backup_pages": "68aa7cf83555891c5c7025bb707e8bdef05bcdd204853de9efa5e568ef3f40a7",
+        },
+    }[module]
+    dump_options = {"show_empty": True} if sys.version_info >= (3, 13) else {}
     tree = ast.parse(source)
     for name, digest in expected.items():
         functions = [
@@ -558,10 +594,12 @@ def _assert_detached_normalization_source(source: str) -> None:
         assert len(functions) == 1
         assert (
             hashlib.sha256(
-                ast.dump(functions[0], include_attributes=False).encode()
+                ast.dump(functions[0], include_attributes=False, **dump_options).encode()
             ).hexdigest()
             == digest
         )
+    if module != "detached_layout":
+        return
     calls = _QualifiedCallNodeVisitor(
         lambda call: (
             isinstance(call.func, ast.Name) and call.func.id == "_normalize_sqlite"
@@ -575,16 +613,6 @@ def _assert_detached_normalization_source(source: str) -> None:
 
 def _qualified_fixed_validation_dispatch(source_path, production_module, symbol, call):
     """Admit the six reviewed restore sites only with their fixed declarations."""
-    if production_module == "tldw_chatbook/Backup_Recovery/detached_layout":
-        if symbol != "_normalize_sqlite" or ast.unparse(call) != (
-            "open_recovery_validation(installed.owner_id, main, writable=True, with_restrictions=True, cancel=cancel)"
-        ):
-            return False
-        try:
-            _assert_detached_normalization_source(source_path.read_text())
-        except AssertionError:
-            return False
-        return True
     if production_module == "tldw_chatbook/DB/recovery_response_rules":
         if symbol != "prepare_imported_candidate" or ast.unparse(call) != (
             "open_recovery_validation(owner.owner_id, candidate, writable=True, "
@@ -644,8 +672,14 @@ def _open_installed_candidate(owner_id, path, *, cancel=None, _custody=None):
             actual.body.pop(0)
         return ast.dump(actual) == ast.dump(expected)
     declarations = {
-        "tldw_chatbook/DB/recovery_operations": ("_SubscriptionsAdapter", "db.subscriptions"),
-        "tldw_chatbook/Backup_Recovery/recovered_media": ("_RecoveredAdapter", "recovered.media"),
+        "tldw_chatbook/Backup_Recovery/sqlite_adapters": (
+            "_SubscriptionsAdapter",
+            "db.subscriptions",
+        ),
+        "tldw_chatbook/Backup_Recovery/recovered_media": (
+            "_RecoveredAdapter",
+            "recovered.media",
+        ),
         "tldw_chatbook/Plugins/backup": ("_Plugins", "plugins"),  # TASK-40132
     }
     if production_module not in declarations or not call.args:
@@ -757,7 +791,10 @@ def _private_sqlite_seam_violations(
                 keyword_name,
             )
             if owner_id is None:
-                if production_module == "tldw_chatbook/DB/recovery_core" and _qualified_core_recovery_dispatch(source_path, symbol, call):
+                if (
+                    production_module == "tldw_chatbook/Backup_Recovery/core_adapters"
+                    and _qualified_core_recovery_dispatch(source_path, symbol, call)
+                ):
                     continue
                 if production_module == "tldw_chatbook/Notes/recovery" and _qualified_file_notes_core_read(source_path, symbol, call):
                     continue
@@ -846,7 +883,6 @@ def _assert_raw_connection_census(
             seam_site: 4,
             runtime_probe_site: 1,
             child_proof_site: 1,
-            ("tldw_chatbook/Backup_Recovery/detached_layout", "_normalize_sqlite"): 1,
         }
     )
 
@@ -961,9 +997,14 @@ def test_raw_connection_census_is_qualified_and_transition_aware() -> None:
 
     if not seam_exists:
         assert len({module for module, _symbol in current}) == 18
-    _assert_detached_normalization_source(
-        (PROJECT_ROOT / "tldw_chatbook/Backup_Recovery/detached_layout.py").read_text()
-    )
+    for module, path in (
+        ("detached_layout", "Backup_Recovery/detached_layout.py"),
+        ("sqlite_validation", "Backup_Recovery/sqlite_validation.py"),
+        ("private_sqlite", "DB/private_sqlite.py"),
+    ):
+        _assert_detached_normalization_source(
+            (PRODUCTION_ROOT / path).read_text(), module
+        )
     _assert_raw_connection_census(
         documented_legacy,
         current,
@@ -1000,10 +1041,6 @@ def test_transition_census_rejects_unapproved_or_duplicate_raw_calls() -> None:
                 seam_site: 4,
                 runtime_probe_site: 1,
                 child_proof_site: 1,
-                (
-                    "tldw_chatbook/Backup_Recovery/detached_layout",
-                    "_normalize_sqlite",
-                ): 1,
             }
         ),
         seam_exists=True,
@@ -1655,12 +1692,36 @@ def test_backup_inventory_matches_current_sqlite_and_settings_operations() -> No
 
     expected_calls = Counter(
         {
-            ("tldw_chatbook/Backup_Recovery/recovered_media", "_RecoveredAdapter.capture", "copy_private_sqlite"): 1,
-            ("tldw_chatbook/DB/recovery_core", "_CoreAdapter.capture", "copy_private_sqlite"): 1,
-            ("tldw_chatbook/TTS/recovery", "_Profiles.capture", "copy_private_sqlite"): 1,
-            ("tldw_chatbook/Research_Interop/recovery", "_Adapter.capture", "copy_private_sqlite"): 1,
-            ("tldw_chatbook/Writing_Interop/recovery", "_Adapter.capture", "copy_private_sqlite"): 1,
-            ("tldw_chatbook/Evals/recovery", "_Adapter.capture", "copy_private_sqlite"): 1,
+            (
+                "tldw_chatbook/Backup_Recovery/recovered_media",
+                "_RecoveredAdapter.capture",
+                "copy_private_sqlite",
+            ): 1,
+            (
+                "tldw_chatbook/Backup_Recovery/core_adapters",
+                "_CoreAdapter.capture",
+                "copy_private_sqlite",
+            ): 1,
+            (
+                "tldw_chatbook/TTS/recovery",
+                "_Profiles.capture",
+                "copy_private_sqlite",
+            ): 1,
+            (
+                "tldw_chatbook/Research_Interop/recovery",
+                "_Adapter.capture",
+                "copy_private_sqlite",
+            ): 1,
+            (
+                "tldw_chatbook/Writing_Interop/recovery",
+                "_Adapter.capture",
+                "copy_private_sqlite",
+            ): 1,
+            (
+                "tldw_chatbook/Evals/recovery",
+                "_Adapter.capture",
+                "copy_private_sqlite",
+            ): 1,
             (
                 "tldw_chatbook/DB/ChaChaNotes_DB",
                 "CharactersRAGDB.backup_database",
@@ -1698,6 +1759,7 @@ def test_backup_inventory_matches_current_sqlite_and_settings_operations() -> No
             ): 1,
         }
     )
+<<<<<<< HEAD
     expected_calls.update({
         ("tldw_chatbook/DB/recovery_dreams_guardian", "_GuardianAdapter.capture", "copy_private_sqlite"): 1,
         ("tldw_chatbook/DB/recovery_dreams_guardian", "_DreamsAdapter.capture", "copy_private_sqlite"): 1,
@@ -1713,6 +1775,72 @@ def test_backup_inventory_matches_current_sqlite_and_settings_operations() -> No
         ('tldw_chatbook/Notifications/recovery', '_EventsAdapter.capture', "copy_private_sqlite"): 1,
         ("tldw_chatbook/Plugins/backup", "_Plugins.capture", "copy_private_sqlite"): 1,
     })
+=======
+    expected_calls.update(
+        {
+            (
+                "tldw_chatbook/DB/recovery_dreams_guardian",
+                "_GuardianAdapter.capture",
+                "copy_private_sqlite",
+            ): 1,
+            (
+                "tldw_chatbook/DB/recovery_dreams_guardian",
+                "_DreamsAdapter.capture",
+                "copy_private_sqlite",
+            ): 1,
+            (
+                "tldw_chatbook/Scheduling/recovery",
+                "_ScheduledTasksAdapter.capture",
+                "copy_private_sqlite",
+            ): 1,
+            (
+                "tldw_chatbook/Sync_Interop/recovery",
+                "_SyncAdapter.capture",
+                "copy_private_sqlite",
+            ): 1,
+            (
+                "tldw_chatbook/Notes/recovery",
+                "_FileNotesAdapter.capture",
+                "copy_private_sqlite",
+            ): 1,
+            (
+                "tldw_chatbook/Backup_Recovery/rag_indexing",
+                "_Indexing.capture",
+                "copy_private_sqlite",
+            ): 1,
+            (
+                "tldw_chatbook/Kanban_Interop/recovery",
+                "_KanbanAdapter.capture",
+                "copy_private_sqlite",
+            ): 1,
+            (
+                "tldw_chatbook/Backup_Recovery/sqlite_adapters",
+                "_WorkspacesAdapter.capture",
+                "copy_private_sqlite",
+            ): 1,
+            (
+                "tldw_chatbook/Backup_Recovery/sqlite_adapters",
+                "_AgentRunsAdapter.capture",
+                "copy_private_sqlite",
+            ): 1,
+            (
+                "tldw_chatbook/Backup_Recovery/sqlite_adapters",
+                "_SubscriptionsAdapter.capture",
+                "copy_private_sqlite",
+            ): 1,
+            (
+                "tldw_chatbook/Notifications/recovery",
+                "_NotificationsAdapter.capture",
+                "copy_private_sqlite",
+            ): 1,
+            (
+                "tldw_chatbook/Notifications/recovery",
+                "_EventsAdapter.capture",
+                "copy_private_sqlite",
+            ): 1,
+        }
+    )
+>>>>>>> 41514b8c86 (fix(console): restore service ownership and retain native recovery guards)
     actual_calls: Counter[tuple[str, str, str]] = Counter()
     for source_path in PRODUCTION_ROOT.rglob("*.py"):
         module = source_path.relative_to(PROJECT_ROOT).with_suffix("").as_posix()
@@ -1924,7 +2052,9 @@ def test_explicit_exclusions_and_absence_of_async_owner_are_documented() -> None
 
 @pytest.mark.parametrize("damage", ["expression", "site", "factory"])
 def test_core_recovery_dispatch_exception_does_not_broaden(tmp_path, damage):
-    source = (PROJECT_ROOT / "tldw_chatbook/DB/recovery_core.py").read_text()
+    source = (
+        PROJECT_ROOT / "tldw_chatbook/Backup_Recovery/core_adapters.py"
+    ).read_text()
     if damage == "expression":
         source = source.replace("copy_private_sqlite(self.backup_owner_id,", "copy_private_sqlite(requested_owner,")
         # Formatting may split the argument onto its own line.
@@ -1936,7 +2066,9 @@ def test_core_recovery_dispatch_exception_does_not_broaden(tmp_path, damage):
         source = source.replace('"db.media.primary", "media_db_path"', '"db.unreviewed", "media_db_path"')
     candidate = tmp_path / "recovery_core.py"
     candidate.write_text(source)
-    _, violations = _private_sqlite_seam_violations(candidate, "tldw_chatbook/DB/recovery_core")
+    _, violations = _private_sqlite_seam_violations(
+        candidate, "tldw_chatbook/Backup_Recovery/core_adapters"
+    )
     assert any("non-literal owner_id" in violation for violation in violations)
 
 
@@ -1999,8 +2131,16 @@ def test_rag_candidate_authority_is_read_only_and_backup_excluded(tmp_path):
 @pytest.mark.parametrize(
     "module,class_name,owner_id",
     [
-        ("tldw_chatbook/DB/recovery_operations", "_SubscriptionsAdapter", "db.subscriptions"),
-        ("tldw_chatbook/Backup_Recovery/recovered_media", "_RecoveredAdapter", "recovered.media"),
+        (
+            "tldw_chatbook/Backup_Recovery/sqlite_adapters",
+            "_SubscriptionsAdapter",
+            "db.subscriptions",
+        ),
+        (
+            "tldw_chatbook/Backup_Recovery/recovered_media",
+            "_RecoveredAdapter",
+            "recovered.media",
+        ),
     ],
 )
 @pytest.mark.parametrize("damage", ["expression", "site", "declaration"])
@@ -2156,38 +2296,468 @@ def test_completion_read_qualification_rejects_changed_native_lifetime(
 
 
 @pytest.mark.parametrize(
-    "old,new",
+    "path,old,new",
     [
-        ("sqlite3.connect(destination)", "sqlite3.connect(source)"),
-        ("installed = _installed_owner(owner.owner_id)", "installed = owner"),
-        ("with_restrictions=True", "with_restrictions=False"),
-        ("cancel=cancel,", "cancel=None,"),
         (
-            "if issues:\n                raise ValueError(issues[0])",
-            "if False:\n                raise ValueError(issues[0])",
+            "Backup_Recovery/detached_layout.py",
+            "target_parent = normal /",
+            "target_parent = source /",
         ),
-        ("with create_private_file(destination):", "with _regular(destination):"),
-        ("connection.backup(output", "output.backup(output"),
-        ("pages=64", "pages=-1"),
-        ("progress=progress", "progress=None"),
-        ("output.enable_load_extension(False)", "output.enable_load_extension(True)"),
-        ("target_parent = normal /", "target_parent = source /"),
-        ("def _normalize_sqlite(", "def unchecked_normalize("),
         (
+            "Backup_Recovery/detached_layout.py",
+            "def _normalize_sqlite(",
+            "def unchecked_normalize(",
+        ),
+        (
+            "Backup_Recovery/detached_layout.py",
+            "normalize_detached_candidate(owner, main, destination, cancel)",
+            "normalize_detached_candidate(owner, source, destination, cancel)",
+        ),
+        (
+            "Backup_Recovery/sqlite_validation.py",
+            "_connect_recovery_candidate(destination, writable=True)",
+            "_connect_recovery_candidate(source, writable=True)",
+        ),
+        (
+            "Backup_Recovery/sqlite_validation.py",
+            "installed = _installed_owner(owner.owner_id)\n    issues, _",
+            "installed = owner\n    issues, _",
+        ),
+        (
+            "Backup_Recovery/sqlite_validation.py",
+            "writable=migrate or normalize_to is not None,\n            with_restrictions=True,",
+            "writable=migrate or normalize_to is not None,\n            with_restrictions=False,",
+        ),
+        (
+            "Backup_Recovery/sqlite_validation.py",
+            "installed, source, cancel, migrate=False, normalize_to=destination",
+            "installed, source, None, migrate=False, normalize_to=destination",
+        ),
+        (
+            "Backup_Recovery/sqlite_validation.py",
+            "if issues:\n        raise ValueError(issues[0])\n    return validated_schema_version",
+            "if False:\n        raise ValueError(issues[0])\n    return validated_schema_version",
+        ),
+        (
+            "Backup_Recovery/sqlite_validation.py",
+            "with create_private_file(destination):",
+            "with _regular(destination):",
+        ),
+        (
+            "Backup_Recovery/sqlite_validation.py",
+            "connection, output, restore=False",
+            "output, connection, restore=False",
+        ),
+        (
+            "Backup_Recovery/sqlite_validation.py",
+            "pages=64",
+            "pages=-1",
+        ),
+        (
+            "Backup_Recovery/sqlite_validation.py",
+            "progress_guard=progress_guard",
+            "progress_guard=None",
+        ),
+        (
+            "Backup_Recovery/sqlite_validation.py",
             "output.enable_load_extension(False)",
-            "sqlite3.connect(destination)\n                output.enable_load_extension(False)",
+            "output.enable_load_extension(True)",
         ),
         (
-            "connection.backup(output, pages=64, progress=progress, sleep=0)",
-            "connection.backup(output, pages=64, progress=progress, sleep=0)\n                connection.backup(output, pages=64, progress=progress, sleep=0)",
+            "Backup_Recovery/sqlite_validation.py",
+            "return validated_schema_version(installed, destination, cancel)",
+            "return _version(connection, installed.owner_id)",
+        ),
+        (
+            "Backup_Recovery/sqlite_validation.py",
+            "output.enable_load_extension(False)",
+            "sqlite3.connect(destination)\n        output.enable_load_extension(False)",
+        ),
+        (
+            "DB/private_sqlite.py",
+            "        pages=pages,\n        progress=abort_busy,",
+            "        pages=-1,\n        progress=abort_busy,",
+        ),
+        (
+            "DB/private_sqlite.py",
+            "        immutable=not writable,\n        isolation_level=None,",
+            "        immutable=False,\n        isolation_level=None,",
         ),
     ],
 )
-def test_detached_normalization_census_refuses_semantic_or_caller_drift(old, new):
-    source = (
-        PROJECT_ROOT / "tldw_chatbook/Backup_Recovery/detached_layout.py"
-    ).read_text()
-    _assert_detached_normalization_source(source)
+def test_detached_normalization_census_refuses_semantic_or_caller_drift(path, old, new):
+    source = (PRODUCTION_ROOT / path).read_text()
+    module = Path(path).stem
+    _assert_detached_normalization_source(source, module)
     assert old in source
     with pytest.raises(AssertionError):
-        _assert_detached_normalization_source(source.replace(old, new, 1))
+        _assert_detached_normalization_source(source.replace(old, new, 1), module)
+
+
+# Exact source qualification travels with the complete restricted operation.
+_RECOVERY_VALIDATION_COORDINATOR_SOURCE = '''
+@contextmanager
+def _open_recovery_validation(owner_id: 'str', candidate: 'Path', *, writable: 'bool', with_restrictions: 'bool'=False, cancel=None, _custody=None) -> 'Iterator[sqlite3.Connection | tuple[sqlite3.Connection, Any]]':
+    """Open a disposable candidate with restrictions before any imported query.
+
+    The caller owns staging and must never pass a live destination. This authority
+    deliberately does not enroll the candidate as an ordinary profile resource.
+    Internal validators may request the original restriction budget alongside
+    the connection so catalog inspection and later checks share one deadline.
+    """
+    from tldw_chatbook.Backup_Recovery.sqlite_validation import _installed_owner, _recovery_restriction_scope, _restrict_connection
+    from tldw_chatbook.DB import private_sqlite as _sqlite
+    _installed_owner(owner_id)
+    with _sqlite.contextlib.ExitStack() as resources:
+        if _custody is None:
+            connection = resources.enter_context(_sqlite.contextlib.closing(_sqlite._connect_registered_sqlite('recovery.validation', candidate, read_only=not writable, must_exist=True, immutable=not writable, isolation_level=None, cached_statements=0, timeout=0)))
+        else:
+            if writable:
+                raise ValueError('captured_validation_is_read_only')
+            from tldw_chatbook.Backup_Recovery.archive_reader import _regular
+            from tldw_chatbook.Backup_Recovery.storage_admission import _CaptureLease
+            stream = resources.enter_context(_regular(candidate, _custody=_custody))
+            lease = _CaptureLease(_custody.scope)
+            lease.descriptor_outcome = _sqlite._SQLiteDescriptorOutcome()
+            resources.callback(lease.retire)
+            connection = _sqlite.connect_private_sqlite_descriptor('recovery.validation', stream.fileno(), _native_outcome=lease.descriptor_outcome, isolation_level=None, cached_statements=0, timeout=0)
+            lease.attach(connection)
+        restrictions = _restrict_connection(connection, cancel)
+        restrictions.capture_scope = None if _custody is None else _custody.scope
+        restrictions.capture_stream = None if _custody is None else stream
+        with _recovery_restriction_scope(connection, restrictions):
+            yield ((connection, restrictions) if with_restrictions else connection)
+'''
+
+_RECOVERY_VALIDATION_WRAPPER_SOURCE = '''
+@contextlib.contextmanager
+def open_recovery_validation(owner_id: str, candidate: Path, *, writable: bool, with_restrictions: bool=False, cancel=None, _custody=None) -> Iterator[sqlite3.Connection | tuple[sqlite3.Connection, Any]]:
+    """Open a disposable candidate with restrictions before any imported query.
+
+    The caller owns staging and must never pass a live destination. This authority
+    deliberately does not enroll the candidate as an ordinary profile resource.
+    Internal validators may request the original restriction budget alongside
+    the connection so catalog inspection and later checks share one deadline.
+    """
+    from tldw_chatbook.Backup_Recovery.sqlite_validation import _open_recovery_validation
+    with _open_recovery_validation(owner_id, candidate, writable=writable, with_restrictions=with_restrictions, cancel=cancel, _custody=_custody) as opened:
+        yield opened
+'''
+
+_RECOVERY_VALIDATION_TRANSPORT_SITES = Counter(
+    {
+        (
+            "tldw_chatbook/Backup_Recovery/sqlite_validation",
+            "_open_recovery_validation",
+            "_connect_registered_sqlite",
+        ): 1,
+        (
+            "tldw_chatbook/Backup_Recovery/sqlite_validation",
+            "_open_recovery_validation",
+            "connect_private_sqlite_descriptor",
+        ): 1,
+        (
+            "tldw_chatbook/Backup_Recovery/sqlite_validation",
+            "_write_normalized_candidate",
+            "_connect_recovery_candidate",
+        ): 1,
+        (
+            "tldw_chatbook/DB/private_sqlite",
+            "_connect_recovery_candidate",
+            "_connect_registered_sqlite",
+        ): 1,
+        (
+            "tldw_chatbook/DB/private_sqlite",
+            "_snapshot_connection_to_memory",
+            "_connect_registered_sqlite",
+        ): 1,
+        (
+            "tldw_chatbook/DB/private_sqlite",
+            "_validate_closed_profile_migration_destination",
+            "_connect_registered_sqlite",
+        ): 1,
+        (
+            "tldw_chatbook/DB/private_sqlite",
+            "backup_connection_to_private",
+            "_connect_registered_sqlite",
+        ): 1,
+        (
+            "tldw_chatbook/DB/private_sqlite",
+            "connect_private_sqlite",
+            "_connect_registered_sqlite",
+        ): 1,
+        (
+            "tldw_chatbook/DB/private_sqlite",
+            "connect_private_sqlite_descriptor",
+            "_connect_registered_sqlite",
+        ): 1,
+        (
+            "tldw_chatbook/DB/private_sqlite",
+            "copy_private_sqlite",
+            "_connect_registered_sqlite",
+        ): 2,
+        (
+            "tldw_chatbook/DB/private_sqlite",
+            "migrate_profile_store_to_candidate",
+            "connect_private_sqlite_descriptor",
+        ): 1,
+        (
+            "tldw_chatbook/DB/private_sqlite",
+            "open_canonical_profile_migration_destination",
+            "_connect_registered_sqlite",
+        ): 1,
+        (
+            "tldw_chatbook/DB/private_sqlite",
+            "open_profile_migration_boundary_destination",
+            "_connect_registered_sqlite",
+        ): 1,
+        (
+            "tldw_chatbook/DB/private_sqlite",
+            "open_recovery_validation",
+            "_open_recovery_validation",
+        ): 1,
+        (
+            "tldw_chatbook/DB/private_sqlite",
+            "restore_private_sqlite",
+            "_connect_registered_sqlite",
+        ): 3,
+        (
+            "tldw_chatbook/TTS/profile_migration_publication",
+            "_immutable_validate",
+            "connect_private_sqlite_descriptor",
+        ): 1,
+        (
+            "tldw_chatbook/TTS/profile_migration_recovery",
+            "_validate_authoritative_targets",
+            "connect_private_sqlite_descriptor",
+        ): 1,
+        (
+            "tldw_chatbook/TTS/profile_schema",
+            "_open_helper_exact_current_profile_store",
+            "_connect_registered_sqlite",
+        ): 1,
+        (
+            "tldw_chatbook/TTS/profile_schema",
+            "_open_native_exact_current_profile_store",
+            "connect_private_sqlite_descriptor",
+        ): 1,
+    }
+)
+
+
+def _assert_validation_operation_source(source_path: Path, *, wrapper: bool) -> None:
+    expected = ast.parse(
+        _RECOVERY_VALIDATION_WRAPPER_SOURCE
+        if wrapper
+        else _RECOVERY_VALIDATION_COORDINATOR_SOURCE
+    ).body[0]
+    tree = _parse_source(source_path)
+    functions = [
+        node
+        for node in ast.walk(tree)
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+        and node.name == expected.name
+    ]
+    assert len(functions) == 1
+    assert functions[0] in tree.body
+    assert ast.dump(functions[0]) == ast.dump(expected)
+
+
+def _validation_transport_sites(source_path: Path, module: str) -> Counter:
+    return Counter(
+        (module, symbol, seam)
+        for symbol, seam, _call in _qualified_private_sqlite_calls(
+            source_path, validation_transport=True
+        )
+    )
+
+
+def _assert_validation_transport_census(current: Counter) -> None:
+    assert current == _RECOVERY_VALIDATION_TRANSPORT_SITES
+
+
+def test_recovery_validation_operation_and_compatibility_are_exact():
+    _assert_validation_operation_source(
+        PRODUCTION_ROOT / "Backup_Recovery/sqlite_validation.py", wrapper=False
+    )
+    _assert_validation_operation_source(
+        PRODUCTION_ROOT / "DB/private_sqlite.py", wrapper=True
+    )
+    current = Counter()
+    for source in PRODUCTION_ROOT.rglob("*.py"):
+        module = source.relative_to(PROJECT_ROOT).with_suffix("").as_posix()
+        current.update(_validation_transport_sites(source, module))
+    _assert_validation_transport_census(current)
+
+
+@pytest.mark.parametrize(
+    "before,after",
+    [
+        ("_installed_owner(owner_id)", "pass"),
+        ("'recovery.validation'", "'recovery.credentials'"),
+        ("read_only=not writable", "read_only=False"),
+        ("must_exist=True", "must_exist=False"),
+        ("immutable=not writable", "immutable=False"),
+        ("isolation_level=None", "isolation_level='DEFERRED'"),
+        ("cached_statements=0", "cached_statements=128"),
+        ("timeout=0", "timeout=5"),
+        ("if writable:", "if False:"),
+        ("_custody=_custody", "_custody=None"),
+        ("_CaptureLease(_custody.scope)", "_CaptureLease(None)"),
+        ("_sqlite._SQLiteDescriptorOutcome()", "None"),
+        ("resources.callback(lease.retire)", "pass"),
+        ("_native_outcome=lease.descriptor_outcome", "_native_outcome=None"),
+        ("lease.attach(connection)", "pass"),
+        (
+            "_restrict_connection(connection, cancel)",
+            "_restrict_connection(connection, None)",
+        ),
+        (
+            "restrictions.capture_scope = None if _custody is None else _custody.scope",
+            "restrictions.capture_scope = None",
+        ),
+        (
+            "restrictions.capture_stream = None if _custody is None else stream",
+            "restrictions.capture_stream = None",
+        ),
+        (
+            "_recovery_restriction_scope(connection, restrictions)",
+            "_recovery_restriction_scope(connection, _restrict_connection(connection, cancel))",
+        ),
+        ("_sqlite._connect_registered_sqlite(", "_sqlite.connect_private_sqlite("),
+        ("_sqlite.connect_private_sqlite_descriptor(", "unrestricted_descriptor("),
+        (
+            "with _sqlite.contextlib.ExitStack() as resources:",
+            "with replacement_stack() as resources:",
+        ),
+    ],
+)
+def test_recovery_validation_operation_rejects_changed_authority(
+    tmp_path, before, after
+):
+    assert before in _RECOVERY_VALIDATION_COORDINATOR_SOURCE
+    source = tmp_path / "sqlite_validation.py"
+    source.write_text(_RECOVERY_VALIDATION_COORDINATOR_SOURCE.replace(before, after))
+    with pytest.raises(AssertionError):
+        _assert_validation_operation_source(source, wrapper=False)
+
+
+@pytest.mark.parametrize(
+    "before,after",
+    [
+        ("owner_id, candidate", "candidate, owner_id"),
+        ("writable=writable", "writable=True"),
+        ("with_restrictions=with_restrictions", "with_restrictions=False"),
+        ("cancel=cancel", "cancel=None"),
+        ("_custody=_custody", "_custody=None"),
+        ("yield opened", "yield None"),
+    ],
+)
+def test_recovery_validation_wrapper_rejects_changed_forwarding(
+    tmp_path, before, after
+):
+    assert before in _RECOVERY_VALIDATION_WRAPPER_SOURCE
+    source = tmp_path / "private_sqlite.py"
+    source.write_text(_RECOVERY_VALIDATION_WRAPPER_SOURCE.replace(before, after))
+    with pytest.raises(AssertionError):
+        _assert_validation_operation_source(source, wrapper=True)
+
+
+@pytest.mark.parametrize("wrapper", [False, True])
+def test_recovery_validation_source_rejects_duplicate_operation(tmp_path, wrapper):
+    body = (
+        _RECOVERY_VALIDATION_WRAPPER_SOURCE
+        if wrapper
+        else _RECOVERY_VALIDATION_COORDINATOR_SOURCE
+    )
+    source = tmp_path / "duplicate.py"
+    source.write_text(body + "\n" + body)
+    with pytest.raises(AssertionError):
+        _assert_validation_operation_source(source, wrapper=wrapper)
+
+
+@pytest.mark.parametrize(
+    "statement,call,seam",
+    [
+        (
+            "from tldw_chatbook.DB.private_sqlite import _connect_registered_sqlite as original\nalias = original",
+            "alias",
+            "_connect_registered_sqlite",
+        ),
+        (
+            "from tldw_chatbook.DB import private_sqlite as original\nalias = original",
+            "alias.connect_private_sqlite_descriptor",
+            "connect_private_sqlite_descriptor",
+        ),
+        (
+            "import tldw_chatbook.Backup_Recovery.sqlite_validation as original\nalias = original._open_recovery_validation",
+            "alias",
+            "_open_recovery_validation",
+        ),
+        (
+            "from tldw_chatbook.Backup_Recovery.sqlite_validation import _open_recovery_validation as original\nalias = original",
+            "alias",
+            "_open_recovery_validation",
+        ),
+    ],
+)
+def test_recovery_validation_transport_counts_aliased_foreign_calls(
+    tmp_path, statement, call, seam
+):
+    source = tmp_path / "foreign.py"
+    source.write_text(
+        statement
+        + f"\ndef forged():\n    return {call}('recovery.validation', candidate)\n"
+    )
+    added = _validation_transport_sites(source, "tldw_chatbook/forged")
+    assert added == Counter({("tldw_chatbook/forged", "forged", seam): 1})
+    with pytest.raises(AssertionError):
+        _assert_validation_transport_census(
+            _RECOVERY_VALIDATION_TRANSPORT_SITES + added
+        )
+
+
+def test_recovery_validation_transport_counts_forged_duplicate_and_missing_site(
+    tmp_path,
+):
+    source = tmp_path / "duplicate.py"
+    source.write_text(_RECOVERY_VALIDATION_COORDINATOR_SOURCE)
+    foreign = _validation_transport_sites(source, "tldw_chatbook/forged")
+    assert foreign == Counter(
+        {
+            (
+                "tldw_chatbook/forged",
+                "_open_recovery_validation",
+                "_connect_registered_sqlite",
+            ): 1,
+            (
+                "tldw_chatbook/forged",
+                "_open_recovery_validation",
+                "connect_private_sqlite_descriptor",
+            ): 1,
+        }
+    )
+    with pytest.raises(AssertionError):
+        _assert_validation_transport_census(
+            _RECOVERY_VALIDATION_TRANSPORT_SITES + foreign
+        )
+    actual = _validation_transport_sites(
+        source, "tldw_chatbook/Backup_Recovery/sqlite_validation"
+    )
+    assert actual.total() == 2
+    missing = _RECOVERY_VALIDATION_TRANSPORT_SITES - actual
+    with pytest.raises(AssertionError):
+        _assert_validation_transport_census(missing)
+
+
+def test_recovery_validation_operation_rejects_late_retirement_registration(tmp_path):
+    source = _RECOVERY_VALIDATION_COORDINATOR_SOURCE
+    callback = "            resources.callback(lease.retire)\n"
+    attachment = "            lease.attach(connection)\n"
+    assert source.count(callback) == source.count(attachment) == 1
+    changed = source.replace(callback, "").replace(attachment, callback + attachment)
+    assert ast.dump(ast.parse(changed)) != ast.dump(ast.parse(source))
+    path = tmp_path / "sqlite_validation.py"
+    path.write_text(changed)
+    with pytest.raises(AssertionError):
+        _assert_validation_operation_source(path, wrapper=False)

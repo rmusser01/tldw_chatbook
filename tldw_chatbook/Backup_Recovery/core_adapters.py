@@ -1,0 +1,665 @@
+"""Installed core recovery declarations, independent of runtime constructors."""
+
+import sqlite3
+from contextlib import ExitStack, closing
+from dataclasses import dataclass
+from pathlib import Path
+from threading import Event
+from typing import Mapping
+
+from tldw_chatbook.Backup_Recovery.models import (
+    OwnerAdapter,
+    SchemaPolicy,
+    StorageItem,
+    discovery_context,
+    storage_logical_id,
+)
+from tldw_chatbook.Backup_Recovery.profile_paths import database_path
+
+
+@dataclass(frozen=True)
+class _CoreAdapter:
+    owner_id: str
+    setting_name: str
+    dependent_owners: tuple[str, ...] = ()
+    activation_required: bool = True
+
+    def discover(self, config: Mapping[str, object]) -> tuple[StorageItem, ...]:
+        from tldw_chatbook.Backup_Recovery.mobile_preview_budget import (
+            reserve,
+            scalar_cost,
+            table_cost,
+        )
+
+        reserve(4096)
+        context = discovery_context(config)
+        path = database_path(config, self.setting_name)
+        from ..DB.recovery_operations import _sqlite_inventory_status
+
+        status = _sqlite_inventory_status(
+            config,
+            path,
+            owner=self.owner_id,
+            setting_name=self.setting_name,
+            optional_default=self.owner_id == "db.library_ingest_jobs",
+        )
+        dependent_owners = self.dependent_owners
+        if self.owner_id == "db.chachanotes.primary" and status == "included":
+            from ..DB.private_sqlite import connect_private_sqlite
+
+            if self.validate(path):
+                status = "unavailable"
+                dependent_owners = ()
+            else:
+                with closing(
+                    connect_private_sqlite(
+                        "recovery.core.chachanotes", path, read_only=True
+                    )
+                ) as connection:
+                    scalar_cost(connection, 5)
+                    optional_groups = {
+                        "notes.file_notes": "SELECT 1 FROM notes WHERE file_path_on_disk IS NOT NULL OR sync_root_folder IS NOT NULL LIMIT 1",
+                        "persona.assets": "SELECT 1 FROM persona_visual_assets WHERE substr(storage_relpath,1,12) <> 'actor_packs/' LIMIT 1",
+                        "persona.actor_packs": "SELECT 1 FROM persona_visual_assets WHERE substr(storage_relpath,1,12) = 'actor_packs/' LIMIT 1",
+                        "persona.visual_identity": "SELECT 1 FROM visual_identity_assets a JOIN visual_identity_pack_versions v ON a.pack_version_id=v.id JOIN visual_identity_packs p ON v.pack_id=p.id WHERE p.source_kind != 'builtin' LIMIT 1",
+                        "persona.visual_identity_builtin": "SELECT 1 FROM visual_identity_assets a JOIN visual_identity_pack_versions v ON a.pack_version_id=v.id JOIN visual_identity_packs p ON v.pack_id=p.id WHERE p.source_kind = 'builtin' LIMIT 1",
+                        "chat.dictionaries": "SELECT 1 FROM chat_dictionaries WHERE file_path IS NOT NULL LIMIT 1",
+                    }
+                    absent = {
+                        owner
+                        for owner, query in optional_groups.items()
+                        if connection.execute(query).fetchone() is None
+                    }
+                    dependent_owners = tuple(
+                        owner for owner in dependent_owners if owner not in absent
+                    )
+        elif self.owner_id == "db.library_collections" and status == "included":
+            from ..DB.private_sqlite import connect_private_sqlite
+
+            if not self.validate(path):
+                with closing(
+                    connect_private_sqlite(self.backup_owner_id, path, read_only=True)
+                ) as connection:
+                    table_cost(
+                        connection,
+                        "library_collection_items",
+                        ("source_type",),
+                        copies=2,
+                    )
+                    kinds = {
+                        row[0].lower()
+                        for row in connection.execute(
+                            "SELECT DISTINCT source_type FROM library_collection_items"
+                        )
+                    }
+                    targets = {
+                        "media": "db.media.primary",
+                        "note": "db.chachanotes.primary",
+                        "conversation": "db.chachanotes.primary",
+                        "prompt": "db.prompts.primary",
+                        "skill": "skills",
+                    }
+                    required = {targets[kind] for kind in kinds if kind in targets}
+                    dependent_owners = tuple(
+                        owner for owner in dependent_owners if owner in required
+                    )
+        elif self.owner_id == "db.library_ingest_jobs" and status == "included":
+            from ..DB.private_sqlite import connect_private_sqlite
+
+            if not self.validate(path):
+                with closing(
+                    connect_private_sqlite(self.backup_owner_id, path, read_only=True)
+                ) as connection:
+                    scalar_cost(connection)
+                    if (
+                        connection.execute(
+                            "SELECT 1 FROM ingest_jobs WHERE origin='local' AND media_id IS NOT NULL LIMIT 1"
+                        ).fetchone()
+                        is None
+                    ):
+                        dependent_owners = ()
+        return (
+            StorageItem(
+                self.owner_id,
+                storage_logical_id(context, self.owner_id),
+                path,
+                status,
+                tuple(
+                    storage_logical_id(
+                        context,
+                        owner,
+                        ""
+                        if owner
+                        in (
+                            "config",
+                            "notes.file_notes",
+                            "notes.sync_bindings",
+                            "chat.attachments",
+                            "chat.dictionaries",
+                            "persona.assets",
+                            "persona.actor_packs",
+                            "persona.visual_identity",
+                            "persona.visual_identity_builtin",
+                            "skills",
+                        )
+                        or owner.startswith("db.")
+                        else "unresolved",
+                    )
+                    for owner in ("config",) + dependent_owners
+                ),
+                shared_group=(
+                    "shared:chachanotes:profile:" + context.profile_id
+                    if self.owner_id == "db.chachanotes.primary"
+                    and status == "included"
+                    else None
+                ),
+            ),
+        )
+
+    @property
+    def backup_owner_id(self) -> str:
+        return "recovery.core." + self.owner_id.removeprefix("db.").removesuffix(
+            ".primary"
+        )
+
+    def temporary_video_references(
+        self,
+        candidate: Path,
+        *,
+        cancel: Event,
+        max_records: int = 100_000,
+        max_metadata_bytes: int = 16 * 1024**2,
+    ) -> tuple[tuple[str, str, str], ...]:
+        """Read actual native transcript identities without opening a video store."""
+        import json
+
+        from tldw_chatbook.Video_Generation.video_metadata import (
+            VIDEO_METADATA_TOP_KEY,
+            VideoGenerationMetadata,
+            video_relative_path,
+        )
+
+        from ..DB.private_sqlite import connect_private_sqlite
+
+        if self.owner_id != "db.chachanotes.primary":
+            raise ValueError("temporary_reference_owner_invalid")
+        if (
+            type(max_records) is not int
+            or not 0 < max_records <= 100_000
+            or type(max_metadata_bytes) is not int
+            or not 0 < max_metadata_bytes <= 16 * 1024**2
+        ):
+            raise ValueError("temporary_reference_limit_invalid")
+        if cancel.is_set():
+            raise InterruptedError("cancelled")
+        issues = self.validate(candidate)
+        if issues:
+            raise ValueError(issues[0])
+        references, total = [], 0
+        with closing(
+            connect_private_sqlite(self.backup_owner_id, candidate, read_only=True)
+        ) as connection:
+            for index, (message, encoded) in enumerate(
+                connection.execute(
+                    "SELECT id,metadata_json FROM messages WHERE metadata_json IS NOT NULL ORDER BY id LIMIT ?",
+                    (max_records + 1,),
+                )
+            ):
+                if cancel.is_set():
+                    raise InterruptedError("cancelled")
+                if index >= max_records or type(encoded) is not str:
+                    raise ValueError("temporary_reference_limit")
+                total += len(encoded.encode("utf-8"))
+                if total > max_metadata_bytes:
+                    raise ValueError("temporary_reference_limit")
+                if not encoded:
+                    continue
+                try:
+                    document = json.loads(encoded)
+                except (ValueError, RecursionError):
+                    raise ValueError("temporary_reference_invalid") from None
+                if type(document) is not dict or VIDEO_METADATA_TOP_KEY not in document:
+                    continue
+                payload = document[VIDEO_METADATA_TOP_KEY]
+                if type(payload) is not dict or type(payload.get("name")) is not str:
+                    raise ValueError("temporary_reference_invalid")
+                metadata = VideoGenerationMetadata.from_json(encoded)
+                if metadata is None:
+                    raise ValueError("temporary_reference_invalid")
+                relative = video_relative_path(
+                    message, metadata.name, metadata.container
+                )
+                references.append(
+                    (message, metadata.name, "video/" + relative.suffix[1:])
+                )
+        return tuple(references)
+
+    def capture(self, item: StorageItem, destination: Path, cancel: Event) -> None:
+        from tldw_chatbook.Backup_Recovery.admission import _local
+
+        from ..DB.private_sqlite import copy_private_sqlite
+
+        if (
+            item.owner != self.owner_id
+            or item.path is None
+            or item.status != "included"
+        ):
+            raise ValueError("invalid_capture_item")
+        scope = getattr(_local, "capture_scope", None)
+        if scope is None:
+            raise ValueError("capture_requires_maintenance")
+        scope.check()
+        if destination.exists():
+            raise FileExistsError("capture_destination_exists")
+
+        def check_cancelled() -> None:
+            if cancel.is_set():
+                raise InterruptedError("cancelled")
+
+        check_cancelled()
+        copy_private_sqlite(
+            self.backup_owner_id, item.path, destination, progress_guard=check_cancelled
+        )
+        check_cancelled()
+        issues = self.validate(destination)
+        if issues:
+            raise ValueError(issues[0])
+
+    def validate(self, candidate: Path) -> tuple[str, ...]:
+        from tldw_chatbook.Backup_Recovery.mobile_preview_budget import (
+            current,
+            integrity_cost,
+            matching_schemas,
+            scalar_cost,
+        )
+        from tldw_chatbook.Backup_Recovery.sqlite_validation import (
+            _canvas_payload_issues,
+            _canvas_schema_access,
+            _restrict_connection,
+        )
+
+        from ..DB.private_sqlite import connect_private_sqlite
+
+        try:
+            with closing(
+                connect_private_sqlite(self.backup_owner_id, candidate, read_only=True)
+            ) as connection:
+                restrictions = _restrict_connection(connection)
+                policy = self.schema_policy()
+                if current() is not None:
+                    matches = matching_schemas(connection, policy.schema_sql)
+                    matched_versions = tuple(row[0] for row in matches)
+                    actual = matches[0][1] if matches else ()
+                else:
+                    actual = tuple(
+                        row[0]
+                        for row in connection.execute(
+                            "SELECT sql FROM sqlite_schema WHERE sql IS NOT NULL ORDER BY type,name"
+                        )
+                    )
+                    matched_versions = tuple(
+                        version for version, sql in policy.schema_sql if actual == sql
+                    )
+                if not matched_versions:
+                    return ("unsupported_schema",)
+                version_sql = (
+                    "SELECT version FROM db_schema_version WHERE schema_name='rag_char_chat_schema'"
+                    if self.owner_id == "db.chachanotes.primary"
+                    # Collections retains migration-history rows. Its installed
+                    # owner reads the latest stamp after validating the schema.
+                    else "SELECT MAX(version) FROM schema_version"
+                )
+                scalar_cost(connection, 2)
+                versions = tuple(
+                    row[0] for row in connection.execute(version_sql).fetchmany(2)
+                )
+                if (
+                    len(versions) != 1
+                    or versions[0] not in policy.versions
+                    or versions[0] not in matched_versions
+                ):
+                    return ("unsupported_schema_version",)
+                with _canvas_schema_access(connection, actual, restrictions):
+                    integrity_cost(connection)
+                    if (
+                        connection.execute("PRAGMA foreign_key_check").fetchone()
+                        is not None
+                    ):
+                        return ("invalid_domain_reference",)
+                    payload_issues = _canvas_payload_issues(connection, restrictions)
+                    if payload_issues:
+                        return payload_issues
+                    if connection.execute("PRAGMA quick_check").fetchall() != [("ok",)]:
+                        return ("invalid_sqlite_integrity",)
+                    return ()
+        except (OSError, ValueError, sqlite3.Error):
+            return ("core_validation_unavailable",)
+
+    def relocate(self, candidate: Path, mapping: Mapping[str, Path]) -> None:
+        # Core-owned attachments are BLOBs and managed visual asset locators are
+        # relative. Their identities remain stable when the owning DB/asset roots
+        # move. Absolute sync/dictionary/ingest locators belong to other owners or
+        # user external inputs: never rewrite them or activate their bindings here.
+        issues = self.validate(candidate)
+        if issues:
+            raise ValueError(issues[0])
+
+    def validate_dependencies(
+        self, item: StorageItem, candidate: Path, candidates: Mapping[str, Path]
+    ) -> tuple[str, ...]:
+        """Validate local links using only this item's declared final logical IDs.
+
+        The recovery executor supplies a locally validated staging map. Other
+        profiles' similarly named owners never satisfy a missing dependency.
+        Later asset owners remain responsible for validating their byte inventories.
+        """
+        from ..DB.private_sqlite import connect_private_sqlite
+        from ..DB.sql_validation import escape_identifier, validate_identifier
+
+        if item.owner != self.owner_id or not item.logical_id.startswith("profile:"):
+            return ("invalid_dependency_context",)
+        parts = item.logical_id.split(":")
+        legacy = len(parts) == 4 and parts[3] == "legacy-mobile"
+        if (
+            (len(parts) != 3 and not legacy)
+            or parts[2] != self.owner_id
+            or not parts[1]
+        ):
+            return ("invalid_dependency_context",)
+        prefix = "profile:" + parts[1] + ":"
+        suffix = ":legacy-mobile" if legacy else ""
+        issues = self.validate(candidate)
+        if issues:
+            return issues
+        adapters = {adapter.owner_id: adapter for adapter in core_adapters()}
+        try:
+            with (
+                closing(
+                    connect_private_sqlite(
+                        self.backup_owner_id, candidate, read_only=True
+                    )
+                ) as connection,
+                ExitStack() as peer_stack,
+            ):
+                connection.execute("PRAGMA trusted_schema=OFF")
+                # Lifetime is this stable candidate-validation invocation only.
+                # At most the installed core-owner count of connections is held.
+                peers = {self.owner_id: connection}
+                references = []
+                if self.owner_id == "db.library_ingest_jobs":
+                    references = [
+                        ("db.media.primary", "Media", "id", row[0])
+                        for row in connection.execute(
+                            "SELECT media_id FROM ingest_jobs WHERE origin='local' AND media_id IS NOT NULL"
+                        )
+                    ]
+                elif self.owner_id == "db.library_collections":
+                    targets = {
+                        "media": ("db.media.primary", "Media", "id"),
+                        "note": ("db.chachanotes.primary", "notes", "id"),
+                        "conversation": (
+                            "db.chachanotes.primary",
+                            "conversations",
+                            "id",
+                        ),
+                        "prompt": ("db.prompts.primary", "Prompts", "id"),
+                        "collection": (
+                            "db.library_collections",
+                            "library_collections",
+                            "collection_id",
+                        ),
+                    }
+                    for kind, identity in connection.execute(
+                        "SELECT source_type,source_id FROM library_collection_items"
+                    ):
+                        target = targets.get(kind.lower())
+                        if target is None:
+                            return ("unsupported_domain_reference",)
+                        references.append((*target, identity))
+                elif self.owner_id == "db.chachanotes.primary":
+                    # No normal constructor, filesystem probing from DB text, or
+                    # invented owner/tombstone authority is involved in this check.
+                    for query, owner in (
+                        (
+                            "SELECT 1 FROM notes WHERE file_path_on_disk IS NOT NULL OR sync_root_folder IS NOT NULL LIMIT 1",
+                            "notes.file_notes",
+                        ),
+                        (
+                            "SELECT 1 FROM chat_dictionaries WHERE file_path IS NOT NULL LIMIT 1",
+                            "chat.dictionaries",
+                        ),
+                        (
+                            "SELECT 1 FROM persona_visual_assets WHERE substr(storage_relpath,1,12) <> 'actor_packs/' LIMIT 1",
+                            "persona.assets",
+                        ),
+                        (
+                            "SELECT 1 FROM persona_visual_assets WHERE substr(storage_relpath,1,12) = 'actor_packs/' LIMIT 1",
+                            "persona.actor_packs",
+                        ),
+                        (
+                            "SELECT 1 FROM visual_identity_assets a JOIN visual_identity_pack_versions v ON a.pack_version_id=v.id JOIN visual_identity_packs p ON v.pack_id=p.id WHERE p.source_kind != 'builtin' LIMIT 1",
+                            "persona.visual_identity",
+                        ),
+                        (
+                            "SELECT 1 FROM visual_identity_assets a JOIN visual_identity_pack_versions v ON a.pack_version_id=v.id JOIN visual_identity_packs p ON v.pack_id=p.id WHERE p.source_kind = 'builtin' LIMIT 1",
+                            "persona.visual_identity_builtin",
+                        ),
+                    ):
+                        if connection.execute(query).fetchone() is not None:
+                            key = prefix + owner + suffix
+                            if (
+                                key not in item.dependencies
+                                or key not in candidates
+                                or not candidates[key].exists()
+                            ):
+                                return ("dependency_unavailable",)
+                            if owner == "notes.file_notes":
+                                from tldw_chatbook.Notes.recovery import (
+                                    recovery_adapters,
+                                )
+
+                                adapter = next(
+                                    a
+                                    for a in recovery_adapters()
+                                    if a.owner_id == owner
+                                )
+                                if adapter.validate(candidates[key]):
+                                    return ("dependency_unavailable",)
+                for owner, table, column, identity in references:
+                    key = prefix + owner + suffix
+                    if owner == self.owner_id:
+                        target = candidate
+                    else:
+                        if key not in item.dependencies or key not in candidates:
+                            return ("dependency_unavailable",)
+                        target = candidates[key]
+                    if owner not in peers:
+                        validation = adapters[owner].validate(target)
+                        if validation:
+                            return ("dependency_unavailable",)
+                        peer = peer_stack.enter_context(
+                            closing(
+                                connect_private_sqlite(
+                                    adapters[owner].backup_owner_id,
+                                    target,
+                                    read_only=True,
+                                )
+                            )
+                        )
+                        peer.execute("PRAGMA trusted_schema=OFF")
+                        peers[owner] = peer
+                    peer = peers[owner]
+                    # Identifiers above are installed literals, never DB text.
+                    if not validate_identifier(table) or not validate_identifier(
+                        column
+                    ):
+                        return ("unsupported_domain_reference",)
+                    query = f"SELECT 1 FROM {escape_identifier(table)} WHERE {escape_identifier(column)}=?"
+                    if peer.execute(query, (identity,)).fetchone() is None:
+                        return ("invalid_domain_reference",)
+                return ()
+        except (OSError, ValueError, sqlite3.Error):
+            return ("dependency_unavailable",)
+
+    def schema_policy(self) -> SchemaPolicy | None:
+        from ..DB.recovery_core_schema import (
+            CHACHANOTES_BROWSE_V79_TO_V80_SQL,
+            CHACHANOTES_CANVAS_V81_TO_V82_SQL,
+            CHACHANOTES_DICTIONARY_UPDATE_SCHEMA,
+            CHACHANOTES_FLEET_V77_TO_V78_SQL,
+            CHACHANOTES_NATIVE_V76_TO_V77_SQL,
+            CHACHANOTES_PORTRAIT_V82_TO_V83_SQL,
+            CHACHANOTES_REGIONS_V83_TO_V84_SQL,
+            CHACHANOTES_RULES_V80_TO_V81_SQL,
+            CHACHANOTES_SARGABLE_V78_TO_V79_SQL,
+            CHACHANOTES_V75_DICTIONARY_UPDATE_SCHEMA,
+            CHACHANOTES_V75_SCHEMA,
+            CHACHANOTES_V76_NATIVE_SCHEMAS,
+            CHACHANOTES_V76_SHIPPED_SCHEMAS,
+            CHACHANOTES_V77_SCHEMAS,
+            CHACHANOTES_V78_SCHEMAS,
+            CHACHANOTES_V79_SCHEMAS,
+            CHACHANOTES_V87_SCHEMAS,
+            CHACHANOTES_MOBILE_V86_TO_V87_SQL,
+            CHACHANOTES_V80_SCHEMAS,
+            CHACHANOTES_V81_SCHEMAS,
+            CHACHANOTES_V82_SCHEMAS,
+            CHACHANOTES_V83_SCHEMAS,
+            CHACHANOTES_V84_SCHEMAS,
+            CHACHANOTES_V85_SCHEMAS,
+            CHACHANOTES_V86_SCHEMAS,
+            CHACHANOTES_MIXINS_V85_TO_V86_SQL,
+            CHACHANOTES_ARCHIVE_V84_TO_V85_SQL,
+            COLLECTIONS_V4_SCHEMA,
+            COLLECTIONS_V4_TO_V5_SQL,
+            COLLECTIONS_V5_SCHEMAS,
+            CORE_SCHEMAS,
+            PROMPTS_V4_SCHEMA,
+            PROMPTS_V5_SCHEMA,
+            PROMPTS_V4_TO_V5_SQL,
+        )
+
+        _, version, sql = next(row for row in CORE_SCHEMAS if row[0] == self.owner_id)
+        schemas = ((version, sql),)
+        versions = (version,)
+        migrations = ()
+        if self.owner_id == "db.chachanotes.primary":
+            schemas += (
+                (version, CHACHANOTES_DICTIONARY_UPDATE_SCHEMA),
+                (75, CHACHANOTES_V75_SCHEMA),
+                (75, CHACHANOTES_V75_DICTIONARY_UPDATE_SCHEMA),
+            )
+            schemas += tuple(
+                (76, schema)
+                for schema in CHACHANOTES_V76_SHIPPED_SCHEMAS
+                + CHACHANOTES_V76_NATIVE_SCHEMAS
+            )
+            schemas += tuple((77, schema) for schema in CHACHANOTES_V77_SCHEMAS)
+            # ADR-224: the full v78 lineage stays acceptable at version 78
+            # (its [0]/[1] used to ride the pre-v79 head entries); the
+            # v78->v79 step migrates such candidates up to the v79 head,
+            # where every v78-lineage variant has its own v79 successor
+            # (head + dictionary cover V79[0]/[1]; these are V79[2:]).
+            # ADR-216: the v79 lineage rides the same pattern under the v80
+            # head (head + dictionary cover V80[0]/[1]; these are V79[2:]).
+            schemas += tuple((78, schema) for schema in CHACHANOTES_V78_SCHEMAS)
+            schemas += tuple((79, schema) for schema in CHACHANOTES_V79_SCHEMAS)
+            # ADR-216: every v79-lineage variant has its own v80 successor
+            # under the v80 head (head + dictionary cover V80[0]/[1]).
+            schemas += tuple((80, schema) for schema in CHACHANOTES_V80_SCHEMAS)
+            schemas += tuple((81, schema) for schema in CHACHANOTES_V81_SCHEMAS)
+            schemas += tuple((82, schema) for schema in CHACHANOTES_V82_SCHEMAS)
+            schemas += tuple((83, schema) for schema in CHACHANOTES_V83_SCHEMAS)
+            schemas += tuple((84, schema) for schema in CHACHANOTES_V84_SCHEMAS)
+            schemas += tuple((85, schema) for schema in CHACHANOTES_V85_SCHEMAS)
+            schemas += tuple((86, schema) for schema in CHACHANOTES_V86_SCHEMAS)
+            schemas += tuple((87, schema) for schema in CHACHANOTES_V87_SCHEMAS[2:])
+            versions += (86, 85, 84, 83, 82, 81, 80, 79, 78, 77, 76, 75)
+            migrations = (
+                (76, 77, CHACHANOTES_NATIVE_V76_TO_V77_SQL),
+                (77, 78, CHACHANOTES_FLEET_V77_TO_V78_SQL),
+                (78, 79, CHACHANOTES_SARGABLE_V78_TO_V79_SQL),
+                (79, 80, CHACHANOTES_BROWSE_V79_TO_V80_SQL),
+                (80, 81, CHACHANOTES_RULES_V80_TO_V81_SQL),
+                (81, 82, CHACHANOTES_CANVAS_V81_TO_V82_SQL),
+                (82, 83, CHACHANOTES_PORTRAIT_V82_TO_V83_SQL),
+                (83, 84, CHACHANOTES_REGIONS_V83_TO_V84_SQL),
+                (84, 85, CHACHANOTES_ARCHIVE_V84_TO_V85_SQL),
+                (85, 86, CHACHANOTES_MIXINS_V85_TO_V86_SQL),
+                (86, 87, CHACHANOTES_MOBILE_V86_TO_V87_SQL),
+            )
+        elif self.owner_id == "db.library_collections":
+            versions = (5, 4)
+            schemas = tuple((5, schema) for schema in COLLECTIONS_V5_SCHEMAS)
+            schemas += ((4, COLLECTIONS_V4_SCHEMA),)
+            migrations = ((4, 5, COLLECTIONS_V4_TO_V5_SQL),)
+        elif self.owner_id == "db.prompts.primary":
+            schemas += ((4, PROMPTS_V4_SCHEMA), (5, PROMPTS_V5_SCHEMA))
+            versions += (4, 5)
+            migration = (
+                Path(__file__).parents[1]
+                / "DB"
+                / "migrations"
+                / "prompts_literal_mixins.sql"
+            )
+            statements = []
+            pending = ""
+            for line in migration.read_text(encoding="utf-8").splitlines(keepends=True):
+                pending += line
+                if sqlite3.complete_statement(pending):
+                    statements.append(pending)
+                    pending = ""
+            if pending.strip():
+                raise ValueError("incomplete_installed_migration")
+            statements.extend(
+                item
+                for item in PROMPTS_V5_SCHEMA
+                if (
+                    item.split()[:2] == ["CREATE", "INDEX"]
+                    and item.split()[2].startswith("idx_prompts_")
+                )
+                or (
+                    item.split()[:3] == ["CREATE", "UNIQUE", "INDEX"]
+                    and item.split()[3].startswith("idx_prompts_")
+                )
+                or item.startswith("CREATE TRIGGER prompts_validate_sync_update")
+            )
+            migrations = ((4, 5, PROMPTS_V4_TO_V5_SQL), (5, 6, tuple(statements)))
+        return SchemaPolicy(self.owner_id, versions, schemas, migrations)
+
+
+def core_adapters() -> tuple[OwnerAdapter, ...]:
+    """Return installed declarations without opening stores or importing services."""
+    return (
+        _CoreAdapter(
+            "db.chachanotes.primary",
+            "chachanotes_db_path",
+            (
+                "notes.file_notes",
+                "notes.sync_bindings",
+                "chat.dictionaries",
+                "persona.assets",
+                "persona.actor_packs",
+                "persona.visual_identity",
+                "persona.visual_identity_builtin",
+                "chat.attachments",
+            ),
+        ),
+        _CoreAdapter("db.media.primary", "media_db_path"),
+        _CoreAdapter("db.prompts.primary", "prompts_db_path"),
+        _CoreAdapter(
+            "db.library_collections",
+            "library_collections_db_path",
+            (
+                "db.media.primary",
+                "db.chachanotes.primary",
+                "db.prompts.primary",
+                "skills",
+            ),
+        ),
+        _CoreAdapter(
+            "db.library_ingest_jobs",
+            "library_ingest_jobs_db_path",
+            ("db.media.primary",),
+        ),
+    )

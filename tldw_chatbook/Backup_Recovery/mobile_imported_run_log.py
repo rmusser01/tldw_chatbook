@@ -1,5 +1,7 @@
 """Committed imported history through actual enrolled leases and retained pins."""
 
+from __future__ import annotations
+
 import hashlib
 import io
 import json
@@ -8,7 +10,7 @@ from contextlib import contextmanager
 from pathlib import Path, PurePosixPath
 
 from tldw_chatbook.Backup_Recovery import native_files, storage_admission
-from tldw_chatbook.Chat.console_trace_read_budget import _TraceReadBudget
+from tldw_chatbook.Backup_Recovery.models import _TraceReadBudget
 from tldw_chatbook.Utils.platform_files import os
 
 _ACTIVE = set()
@@ -387,7 +389,15 @@ def _selected_config(database_lease, database_path, budget):
             lease.close()
 
 
-def _read_page(database, mapped_run_id, operation_id, source_fingerprint, cursor):
+def read_imported_run_log_page(
+    database,
+    mapped_run_id: str,
+    operation_id: str,
+    source_fingerprint: str,
+    *,
+    cursor=None,
+):
+    """Read receipt-bound original-ID history through actual enrolled pins."""
     from tldw_chatbook.Agents.run_log_paging import _SEGMENT, _load_page
     from tldw_chatbook.Backup_Recovery.mobile_consolidation import (
         CanonicalConsoleStores,
@@ -398,9 +408,8 @@ def _read_page(database, mapped_run_id, operation_id, source_fingerprint, cursor
         user_data_dir,
     )
     from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
+    from tldw_chatbook.DB.mobile_consolidation_receipts import _read_owner_receipt
     from tldw_chatbook.DB.private_sqlite import _ordinary_connections
-
-    from .mobile_consolidation_receipts import _read_owner_receipt
 
     if (
         type(database) is not AgentRunsDB

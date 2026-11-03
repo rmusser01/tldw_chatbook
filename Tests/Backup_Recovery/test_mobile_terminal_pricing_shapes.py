@@ -54,3 +54,29 @@ def test_terminal_actual_max_dimensions_and_overflow():
     bad["owners"][0]["entry_count"] += 1
     with pytest.raises(ValueError, match="mobile_terminal_dimension_invalid"):
         _check_terminal_dimensions(bad, _TraceReadBudget())
+
+
+@pytest.mark.parametrize("encoded", [False, True])
+def test_shared_model_json_accounting_covers_native_escaped_encoding(encoded):
+    from tldw_chatbook.Backup_Recovery import models
+
+    text = 'native\\"\x00\x7f😀'
+    copies = 2 if encoded else 1
+    budget = _TraceReadBudget()
+    before = budget._remaining
+    raw = json.dumps(text, ensure_ascii=True)
+    models._serialization(text, budget, encoded=encoded)
+    assert before - budget._remaining == copies * (64 + 4 * len(raw))
+
+    value = {"text": text, "values": [None, True, False, 2**4096, -(2**4096), 1.25]}
+    raw = json.dumps(value, ensure_ascii=True, allow_nan=False)
+    budget = _TraceReadBudget()
+    before = budget._remaining
+    models._serialization(value, budget, encoded=encoded)
+    assert before - budget._remaining >= copies * (64 + 4 * len(raw))
+
+    budget = _TraceReadBudget()
+    before = budget._remaining
+    with pytest.raises(ValueError, match="^native_goal_json_shape_unproved$"):
+        models._serialization(object(), budget, encoded=encoded)
+    assert budget._remaining == before

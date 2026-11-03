@@ -114,7 +114,7 @@ class FleetProgressRepository:
                 ).fetchone()
                 if conversation is None or conversation["deleted"]:
                     raise MessageError("unavailable")
-                from tldw_chatbook.Chat.console_trace_read_budget import (
+                from tldw_chatbook.Backup_Recovery.models import (
                     _TraceReadBudget,
                 )
 
@@ -153,7 +153,7 @@ class FleetProgressRepository:
 
     def filter_restored(self, conversation_id, messages):
         """Exclude retained imported IDs before in-memory restoration limits."""
-        from tldw_chatbook.Chat.console_trace_read_budget import _TraceReadBudget
+        from tldw_chatbook.Backup_Recovery.models import _TraceReadBudget
         from tldw_chatbook.DB.mobile_consolidation_receipts import (
             _imported_chat_records,
         )
@@ -174,7 +174,7 @@ class FleetProgressRepository:
             if self.db.get_connection().in_transaction:
                 raise MessageError("durable_unavailable")
             with self.db.transaction(immediate=True) as cursor:
-                from tldw_chatbook.Chat.console_trace_read_budget import (
+                from tldw_chatbook.Backup_Recovery.models import (
                     _TraceReadBudget,
                 )
 

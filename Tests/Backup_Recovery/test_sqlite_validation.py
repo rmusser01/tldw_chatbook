@@ -381,6 +381,10 @@ def test_actual_operational_owners(tmp_path, name):
     path = tmp_path / "operational.db"
     module, symbol, *_ = STORES[name]
     constructor = getattr(importlib.import_module("tldw_chatbook." + module), symbol)
+    if name == "agent_runs":
+        from Tests.agent_runs_owner import owned_agent_runs_db
+
+        constructor = owned_agent_runs_db
     # File Notes' unrelated filesystem admission needs the app config selector.
     # Its actual memory constructor gives the identical schema to stage here.
     store = (
@@ -902,6 +906,7 @@ def native_rag_indexing_candidate(tmp_path):
             metadata={"collection": "retained_notes"},
         )
         store.update_collection_state("retained_notes", 1, 1)
+        store.store_cached_embeddings("fixture-model", [("a" * 64, [0.25, 0.5])])
         expected = store.get_indexed_item_info("retained-note", "note")
     finally:
         store.close()
@@ -915,11 +920,35 @@ def test_native_rag_indexing_schema_zero_survives_restricted_validation(
     from tldw_chatbook.DB.RAG_Indexing_DB import RAGIndexingDB
 
     owner, path, expected = native_rag_indexing_candidate
+    before = path.read_bytes()
+    with closing(sqlite3.connect(path)) as db:
+        before_catalog = tuple(
+            db.execute(
+                "SELECT type,name,tbl_name,sql FROM sqlite_schema ORDER BY type,name"
+            )
+        )
     assert validate_candidate(owner, path, Event(), migrate=migrate) == ()
     assert validation.validated_schema_version(owner, path, Event()) == 0
+    assert path.read_bytes() == before
+    assert (
+        tuple(row[3] for row in before_catalog if row[3] is not None)
+        == (owner.schema_policy().schema_sql[1][1])
+    )
+    with closing(sqlite3.connect(path)) as db:
+        assert (
+            tuple(
+                db.execute(
+                    "SELECT type,name,tbl_name,sql FROM sqlite_schema ORDER BY type,name"
+                )
+            )
+            == before_catalog
+        )
     store = RAGIndexingDB(path)
     try:
         assert store.get_indexed_item_info("retained-note", "note") == expected
+        assert store.get_cached_embeddings("fixture-model", ["a" * 64]) == {
+            "a" * 64: [0.25, 0.5]
+        }
     finally:
         store.close()
 
@@ -1024,3 +1053,58 @@ def test_prompt_v6_recovery_migration_denial_rolls_back(tmp_path, monkeypatch):
             ).fetchall()
             == []
         )
+
+
+@pytest.mark.parametrize("migrate", [False, True])
+def test_legacy_rag_indexing_schema_zero_remains_exact_and_unchanged(tmp_path, migrate):
+    from tldw_chatbook.Backup_Recovery.rag_indexing import recovery_adapters
+
+    owner = recovery_adapters()[0]
+    path = tmp_path / "legacy-rag.db"
+    legacy = owner.schema_policy().schema_sql[0]
+    assert legacy[0] == 0
+    assert len(legacy[1]) == 5
+    with closing(sqlite3.connect(path)) as db:
+        for sql in sorted(
+            legacy[1], key=lambda sql: not sql.startswith("CREATE TABLE")
+        ):
+            db.execute(sql)
+        db.execute(
+            "INSERT INTO collection_state(collection_name, total_items, indexed_items) VALUES ('kept', 3, 2)"
+        )
+        db.commit()
+    before = path.read_bytes()
+    assert validate_candidate(owner, path, Event(), migrate=migrate) == ()
+    assert validation.validated_schema_version(owner, path, Event()) == 0
+    assert path.read_bytes() == before
+    with closing(sqlite3.connect(path)) as db:
+        assert db.execute(
+            "SELECT collection_name, total_items, indexed_items FROM collection_state"
+        ).fetchall() == [("kept", 3, 2)]
+        assert (
+            db.execute(
+                "SELECT name FROM sqlite_schema WHERE name='embedding_cache'"
+            ).fetchall()
+            == []
+        )
+
+
+@pytest.mark.parametrize(
+    "damage",
+    [
+        "DROP INDEX idx_embedding_cache_created",
+        "ALTER TABLE embedding_cache ADD COLUMN uninstalled TEXT",
+    ],
+)
+def test_native_rag_indexing_cache_variant_remains_closed_world(
+    native_rag_indexing_candidate, damage
+):
+    owner, path, _ = native_rag_indexing_candidate
+    with closing(sqlite3.connect(path)) as db:
+        db.execute(damage)
+        db.commit()
+    before = path.read_bytes()
+    assert validate_candidate(owner, path, Event(), migrate=True) == (
+        "unsupported_schema",
+    )
+    assert path.read_bytes() == before

@@ -2649,7 +2649,7 @@ class ConsoleRuntime:
 
     def ensure_remote_projection(self, host_identity):
         """Bind private served projection to the authenticated parent incarnation."""
-        from tldw_chatbook.Web_Server.served_console_events import ConsoleEventBuffer
+        from tldw_chatbook.Chat.console_remote_models import ConsoleEventBuffer
 
         from .console_remote_projection import ConsoleRemoteProjection
 
@@ -2663,7 +2663,9 @@ class ConsoleRuntime:
             raise ValueError("Console host identity changed.")
         return self._remote_projection
 
-    def ensure_remote_receipts(self, host_identity):
+    def ensure_remote_receipts(
+        self, host_identity, *, configuration_metadata_loader: Callable[[], object]
+    ):
         """Use the canonical native run store after its normal lazy admission."""
         from .console_remote_commands import ConsoleRemoteCommands
         from .console_remote_receipts import ConsoleRemoteReceipts
@@ -2673,7 +2675,11 @@ class ConsoleRuntime:
         self._agent_runs_db._require_execution_owner()
         if self._remote_receipts is None:
             self._remote_receipts = ConsoleRemoteReceipts(
-                ConsoleRemoteCommands(self, host_identity),
+                ConsoleRemoteCommands(
+                    self,
+                    host_identity,
+                    configuration_metadata_loader=configuration_metadata_loader,
+                ),
                 self._agent_runs_db.command_receipts,
                 host_identity,
             )
