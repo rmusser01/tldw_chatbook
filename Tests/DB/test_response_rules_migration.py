@@ -113,6 +113,56 @@ def test_historical_migrates_using_installed_sql_without_losing_history(
             "SELECT * FROM console_response_rule_drafts WHERE scope_kind=? AND scope_id=?",
             ("chat", "chat"),
         ),
+        # TASK-36510: the completed voice-pair promotion's exact locator probe.
+        *(
+            (
+                index,
+                f"SELECT 1 FROM {table} WHERE {column} IN (?, ?) LIMIT 1",
+                ("user", "answer"),
+            )
+            for index, table, column in (
+                (
+                    "idx_hook_continuation_receipts_assistant_message",
+                    "console_hook_continuation_receipts",
+                    "assistant_message_id",
+                ),
+                (
+                    "idx_hook_continuation_receipts_parent_message",
+                    "console_hook_continuation_receipts",
+                    "parent_assistant_message_id",
+                ),
+                (
+                    "idx_machine_followup_receipts_assistant_message",
+                    "console_machine_followup_receipts",
+                    "assistant_message_id",
+                ),
+                (
+                    "idx_machine_followup_receipts_parent_message",
+                    "console_machine_followup_receipts",
+                    "parent_assistant_message_id",
+                ),
+                (
+                    "idx_response_rule_assessments_message",
+                    "console_response_rule_assessments",
+                    "message_id",
+                ),
+                (
+                    "idx_response_rule_drafts_message",
+                    "console_response_rule_drafts",
+                    "message_id",
+                ),
+                (
+                    "idx_response_rule_fixtures_message",
+                    "console_response_rule_fixtures",
+                    "message_id",
+                ),
+                (
+                    "idx_response_rule_validations_message",
+                    "console_response_rule_validations",
+                    "message_id",
+                ),
+            )
+        ),
     ],
 )
 def test_rule_lookup_indexes_without_statistics(
@@ -130,8 +180,8 @@ def test_rule_lookup_indexes_without_statistics(
                 == []
             )
             plan = cursor.execute("EXPLAIN QUERY PLAN " + query, params).fetchall()
-            assert any(index in row[3] for row in plan), tuple(
-                tuple(row) for row in plan
-            )
+            assert any(
+                row[3].startswith("SEARCH") and index in row[3] for row in plan
+            ), tuple(tuple(row) for row in plan)
     finally:
         db.close()
