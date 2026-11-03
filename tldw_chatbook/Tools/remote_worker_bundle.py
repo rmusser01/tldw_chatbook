@@ -3772,7 +3772,7 @@ def _literal_pathspec(relative_posix: str) -> str:
     """
     return f':(literal){relative_posix}'
 
-def _denylist_pathspecs(repo_root: Path, context: SensitivePathContext | None=None, *, workspace_root: Path | None=None, sensitive_exclusions: tuple[SensitiveExclusion, ...] | None=None) -> tuple[str, ...]:
+def _denylist_pathspecs(repo_root: Path, context: SensitivePathContext | None=None, *, workspace_root: Path | None=None, sensitive_exclusions: tuple[SensitiveExclusion, ...] | None=None, exclusions: tuple[SensitiveExclusion, ...] | None=None) -> tuple[str, ...]:
     """Render the sensitive-path denylist as git exclude pathspecs.
 
     The TASK-19632 fix, in one place. ``git_status``/``git_diff`` hand a
@@ -3826,6 +3826,9 @@ def _denylist_pathspecs(repo_root: Path, context: SensitivePathContext | None=No
             process's working directory.
         context: Optional pre-resolved ``SensitivePathContext``, so one
             tool call resolves the denylist once.
+        exclusions: The rules already read by ``_repo_exclusions``; when
+            given, nothing is read again, so the folded matcher a caller runs
+            beside these pathspecs judges the same snapshot.
 
     Returns:
         Exclude pathspecs, possibly empty of location-based entries but
@@ -3838,7 +3841,8 @@ def _denylist_pathspecs(repo_root: Path, context: SensitivePathContext | None=No
             or the denylist produced an exclusion kind this renderer does
             not know how to express.
     """
-    exclusions = _repo_exclusions(repo_root, context, workspace_root=workspace_root, sensitive_exclusions=sensitive_exclusions)
+    if exclusions is None:
+        exclusions = _repo_exclusions(repo_root, context, workspace_root=workspace_root, sensitive_exclusions=sensitive_exclusions)
     specs: list[str] = []
     for kind, raw_value in exclusions:
         spellings = [unicodedata.normalize(form, raw_value) for form in ('NFC', 'NFD')]
@@ -4136,9 +4140,10 @@ def git_status(workspace_root: Path, path: str='.', *, sensitive_exclusions: tup
     pathspecs: list[str] = []
     if path not in (None, '.'):
         pathspecs.append(_literal_pathspec(_repo_relative_path(workspace_root, repo_root, path, context=context, sensitive_exclusions=sensitive_exclusions)))
-    pathspecs.extend(_denylist_pathspecs(repo_root, context=context, workspace_root=workspace_root, sensitive_exclusions=sensitive_exclusions))
+    exclusions = _repo_exclusions(repo_root, context, workspace_root=workspace_root, sensitive_exclusions=sensitive_exclusions)
+    pathspecs.extend(_denylist_pathspecs(repo_root, exclusions=exclusions))
     result = _run_git_checked(['git', '--no-pager', 'status', '--porcelain=v2', '-z', '--branch', '--untracked-files=all', '--', *pathspecs], subcommand='status', cwd=_git_cwd(workspace_root, repo_root, own_process_group=own_process_group), executable=executable, own_process_group=own_process_group)
-    branch, entries, truncated = _parse_status_porcelain_v2(result.stdout, limit=GIT_STATUS_MAX_ENTRIES, exclusions=_repo_exclusions(repo_root, context, workspace_root=workspace_root, sensitive_exclusions=sensitive_exclusions))
+    branch, entries, truncated = _parse_status_porcelain_v2(result.stdout, limit=GIT_STATUS_MAX_ENTRIES, exclusions=exclusions)
     lines = [_format_branch_header(branch)]
     lines.extend((_format_status_entry(entry) for entry in entries))
     if not entries:
@@ -4374,9 +4379,9 @@ def git_diff(workspace_root: Path, *, staged: bool=False, commit_range: str | No
     pathspecs: list[str] = []
     if path is not None:
         pathspecs.append(_literal_pathspec(_repo_relative_path(workspace_root, repo_root, path, context=context, sensitive_exclusions=sensitive_exclusions)))
-    pathspecs.extend(_denylist_pathspecs(repo_root, context=context, workspace_root=workspace_root, sensitive_exclusions=sensitive_exclusions))
-    cwd = _git_cwd(workspace_root, repo_root, own_process_group=own_process_group)
     exclusions = _repo_exclusions(repo_root, context, workspace_root=workspace_root, sensitive_exclusions=sensitive_exclusions)
+    pathspecs.extend(_denylist_pathspecs(repo_root, exclusions=exclusions))
+    cwd = _git_cwd(workspace_root, repo_root, own_process_group=own_process_group)
 
     def _scan() -> list[str]:
         return _withheld_names(mode_args, pathspecs, exclusions, scoped=path is not None, cwd=cwd, executable=executable, own_process_group=own_process_group)
@@ -5802,4 +5807,4 @@ REMOTE_SENSITIVE_PATHS: tuple[str, ...] = (
 #: ``build_remote_worker_bundle.expected_bundle_stamp``. The remote
 #: worker's ``ping`` echoes it so callers can confirm which bundle the
 #: remote actually executed.
-BUNDLE_SHA256 = _enter_worker_exchange("4ace11e1d146fa16391ecc62842e08b8d65443a771574fc5442bd2cf1dc68997")
+BUNDLE_SHA256 = _enter_worker_exchange("d89080f8267d02d2992ecea12e0274a9b93110d8f99c3cbaed5f07da316d8e85")

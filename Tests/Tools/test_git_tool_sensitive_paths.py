@@ -1308,6 +1308,36 @@ def test_git_status_and_git_diff_resolve_the_denylist_context_exactly_once(
     )
 
 
+@pytest.mark.parametrize("admitted", (False, True))
+def test_git_status_and_git_diff_read_the_exclusion_rules_once(
+    ordinary_repo: Path, monkeypatch: pytest.MonkeyPatch, admitted: bool
+) -> None:
+    """One rule snapshot per call: the pathspecs and the folded matcher that
+    backs them up must judge the same rules (TASK-38463 review round)."""
+    import tldw_chatbook.Tools.git_tool_impls as gti
+    from tldw_chatbook.Utils.sensitive_paths import SensitiveExclusion
+
+    kwargs = (
+        {"sensitive_exclusions": (SensitiveExclusion("file", "Secret.TXT"),)}
+        if admitted
+        else {}
+    )
+    real = gti._repo_exclusions
+    calls: list[int] = []
+
+    def _counting(*args: object, **inner: object) -> object:
+        calls.append(1)
+        return real(*args, **inner)
+
+    monkeypatch.setattr(gti, "_repo_exclusions", _counting)
+
+    git_status(ordinary_repo, ".", **kwargs)
+    assert len(calls) == 1, f"git_status read the rules {len(calls)} times"
+    calls.clear()
+    git_diff(ordinary_repo, **kwargs)
+    assert len(calls) == 1, f"git_diff read the rules {len(calls)} times"
+
+
 def test_review_tree_and_blob_share_sensitive_exclusions(tmp_path):
     import subprocess
 

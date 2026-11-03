@@ -412,6 +412,7 @@ def _denylist_pathspecs(
     *,
     workspace_root: Path | None = None,
     sensitive_exclusions: tuple[SensitiveExclusion, ...] | None = None,
+    exclusions: tuple[SensitiveExclusion, ...] | None = None,
 ) -> tuple[str, ...]:
     """Render the sensitive-path denylist as git exclude pathspecs.
 
@@ -466,6 +467,9 @@ def _denylist_pathspecs(
             process's working directory.
         context: Optional pre-resolved ``SensitivePathContext``, so one
             tool call resolves the denylist once.
+        exclusions: The rules already read by ``_repo_exclusions``; when
+            given, nothing is read again, so the folded matcher a caller runs
+            beside these pathspecs judges the same snapshot.
 
     Returns:
         Exclude pathspecs, possibly empty of location-based entries but
@@ -478,12 +482,13 @@ def _denylist_pathspecs(
             or the denylist produced an exclusion kind this renderer does
             not know how to express.
     """
-    exclusions = _repo_exclusions(
-        repo_root,
-        context,
-        workspace_root=workspace_root,
-        sensitive_exclusions=sensitive_exclusions,
-    )
+    if exclusions is None:
+        exclusions = _repo_exclusions(
+            repo_root,
+            context,
+            workspace_root=workspace_root,
+            sensitive_exclusions=sensitive_exclusions,
+        )
 
     specs: list[str] = []
     for kind, raw_value in exclusions:
@@ -1045,14 +1050,14 @@ def git_status(
                 )
             )
         )
-    pathspecs.extend(
-        _denylist_pathspecs(
-            repo_root,
-            context=context,
-            workspace_root=workspace_root,
-            sensitive_exclusions=sensitive_exclusions,
-        )
+    # TASK-38463: one rule snapshot backs the pathspecs and the folded filter.
+    exclusions = _repo_exclusions(
+        repo_root,
+        context,
+        workspace_root=workspace_root,
+        sensitive_exclusions=sensitive_exclusions,
     )
+    pathspecs.extend(_denylist_pathspecs(repo_root, exclusions=exclusions))
     result = _run_git_checked(
         [
             "git",
@@ -1076,12 +1081,7 @@ def git_status(
     branch, entries, truncated = _parse_status_porcelain_v2(
         result.stdout,
         limit=GIT_STATUS_MAX_ENTRIES,
-        exclusions=_repo_exclusions(
-            repo_root,
-            context,
-            workspace_root=workspace_root,
-            sensitive_exclusions=sensitive_exclusions,
-        ),
+        exclusions=exclusions,
     )
     lines = [_format_branch_header(branch)]
     lines.extend(_format_status_entry(entry) for entry in entries)
@@ -1457,14 +1457,14 @@ def git_diff(
     # Exclusions come LAST and are never empty (the name rule always
     # applies), so `--` is always present: an exclude-only pathspec list
     # is applied to the whole tree, which is exactly the no-`path` case.
-    pathspecs.extend(
-        _denylist_pathspecs(
-            repo_root,
-            context=context,
-            workspace_root=workspace_root,
-            sensitive_exclusions=sensitive_exclusions,
-        )
+    # One rule snapshot backs these pathspecs and the scan below.
+    exclusions = _repo_exclusions(
+        repo_root,
+        context,
+        workspace_root=workspace_root,
+        sensitive_exclusions=sensitive_exclusions,
     )
+    pathspecs.extend(_denylist_pathspecs(repo_root, exclusions=exclusions))
     # TASK-38463: git's `icase` folds ASCII only and git precomposes argv on
     # macOS, so the pathspecs above miss a stored name that differs from a
     # rule by non-ASCII case or is in a mixed normalization. The folded
@@ -1473,12 +1473,6 @@ def git_diff(
     # there means the file changed mid-call or git ignored the exclusion, so
     # the output is dropped (fail closed).
     cwd = _git_cwd(workspace_root, repo_root, own_process_group=own_process_group)
-    exclusions = _repo_exclusions(
-        repo_root,
-        context,
-        workspace_root=workspace_root,
-        sensitive_exclusions=sensitive_exclusions,
-    )
 
     def _scan() -> list[str]:
         return _withheld_names(
