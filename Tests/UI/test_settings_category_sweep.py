@@ -18,6 +18,7 @@ the per-test config redirect it raises ``RecoveryRequired`` (TASK-36381).
 """
 
 import pytest
+from textual.widgets import Button
 
 from Tests.private_profile import private_profile_test
 from Tests.UI.test_destination_shells import (
@@ -53,18 +54,35 @@ async def _settle_settings(pilot) -> None:
         await pilot.pause()
 
 
+async def _wait_for(pilot, predicate, timeout: float = 10.0) -> bool:
+    """Poll ``predicate`` until it holds or ``timeout`` seconds pass."""
+    for _ in range(int(timeout / 0.05)):
+        if predicate():
+            return True
+        await pilot.pause(0.05)
+    return bool(predicate())
+
+
 async def _click_settings_category(pilot, category_value: str) -> None:
-    selector = f"#settings-category-{category_value}"
+    """Press the category's real rail button, wait for the switch, settle.
+
+    The name is kept for its many importers; since TASK-36525 this presses
+    rather than clicks. ``Button.press()`` is the call a click and Enter both
+    end in, and the coordinate click it replaces depended on where the row
+    sat on screen. Textual drops a press on a hidden or disabled row
+    silently, so a press that switches nothing fails here, naming the
+    category.
+    """
     screen = pilot.app.screen
-    try:
-        button = screen.query_one(selector)
-        screen.query_one("#settings-category-list").scroll_to_widget(
-            button, animate=False
-        )
-        await pilot.pause()
-    except Exception:
-        pass
-    await pilot.click(selector)
+    screen.query_one(f"#settings-category-{category_value}", Button).press()
+    switched = await _wait_for(
+        pilot,
+        lambda: (
+            screen.active_category == category_value
+            and not screen._category_pane_swap_pending
+        ),
+    )
+    assert switched, f"Pressing the {category_value} rail row did not open it"
     await _settle_settings(pilot)
 
 
@@ -86,6 +104,15 @@ async def test_every_settings_category_renders_and_restores_focus(size, request)
         for category_value in ALL_CATEGORY_IDS:
             await _click_settings_category(pilot, category_value)
             screen = _active_destination_screen(host)
+            expected = _FOCUS_AFTER_SELECT.get(
+                category_value, f"settings-category-{category_value}"
+            )
+            await _wait_for(
+                pilot,
+                lambda expected=expected: (
+                    getattr(pilot.app.focused, "id", None) == expected
+                ),
+            )
 
             # No crash / no blank screen: the shell still renders content.
             assert screen.query("#settings-title"), (
@@ -100,9 +127,6 @@ async def test_every_settings_category_renders_and_restores_focus(size, request)
             focused = pilot.app.focused
             assert focused is not None, (
                 f"Focus lost after selecting {category_value} at {size}"
-            )
-            expected = _FOCUS_AFTER_SELECT.get(
-                category_value, f"settings-category-{category_value}"
             )
             assert focused.id == expected, (
                 f"Expected focus on {expected}, got {focused!r} at {size}"
