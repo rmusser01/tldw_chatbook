@@ -54,8 +54,8 @@ class _TaskLocal(threading.local):
     A plain thread-local showed an operation to every task on its thread: one
     started eagerly inside the owner's synchronous scope (Textual installs
     ``asyncio.eager_task_factory``), or one that runs while the owner awaits.
-    ``_check`` then refused that task's own guarded IO (TASK-33641.6).
-    Discovery is not authority: ``_check`` still verifies pid, thread and task.
+    ``check`` then refused that task's own guarded IO (TASK-33641.6).
+    Discovery is not authority: ``check`` still verifies pid, thread and task.
     """
 
     def __init__(self):
@@ -1255,7 +1255,7 @@ def file(operation, path, mode):
                     # while the blocks it points at were not -- the classic
                     # rename-without-fsync corruption, on the user's own MCP,
                     # chat-source and dictionary state. The descriptor is still
-                    # the verified one here; _close_descriptor retires it in the
+                    # the verified one here; close_descriptor retires it in the
                     # outer finally, after this.
                     flush_file(fd)
             except BaseException:

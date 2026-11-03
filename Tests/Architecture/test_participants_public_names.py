@@ -17,7 +17,7 @@ PARTICIPANT = re.compile(r"participants?$")
 
 # (module, attribute) -> why it is still read privately from outside Backup_Recovery.
 STATE_ALLOWLIST = {
-    ("raw_participants", "_states"): "module state table; tests rebind it and callers need an accessor API",
+    ("raw_participants", "_states"): "module state table; mutated in place by callers and tests, which need an accessor API",
     ("raw_participants", "_local"): "thread-local state; needs an accessor API",
     ("raw_participants", "_unlink"): "patched by tests via setattr",
     ("raw_participants", "_CONSOLE_PERMISSION_LOAD_GUARDS"): "provenance data tuple, not a helper",
