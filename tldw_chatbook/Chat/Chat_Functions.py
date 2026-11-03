@@ -15,13 +15,11 @@ Key Features:
 
 #
 # Imports
-import base64
 import inspect
 import json
 import logging
 import os
 import re
-from ..Utils.secure_temp_files import create_secure_temp_file, secure_delete_file
 import time
 from datetime import datetime
 from typing import (
@@ -60,9 +58,6 @@ from ..Provider_Contract import (  # noqa: E402
 )
 from tldw_chatbook.DB.ChaChaNotes_DB import (  # noqa: E402
     CharactersRAGDB,
-    InputError,
-    ConflictError,
-    CharactersRAGDBError,
 )
 from tldw_chatbook.LLM_Calls.LLM_API_Calls import (  # noqa: E402
     chat_with_openai,
@@ -95,7 +90,6 @@ from tldw_chatbook.provider_registry import (  # noqa: E402
     AUDITED_ENDPOINT_KEYS,
     ENGINE_RECORDS,
 )
-from tldw_chatbook.Utils.Utils import generate_unique_filename  # noqa: E402
 from tldw_chatbook.Utils.sensitive_llm_logging import (  # noqa: E402
     is_sensitive_llm_request,
     safe_llm_error_detail,

@@ -11,8 +11,6 @@ from dataclasses import dataclass, field
 from typing import Any
 from urllib.parse import urlsplit
 
-import keyring
-from loguru import logger
 
 from tldw_chatbook.Media_Generation.config_machinery import (
     ModalityConfigTables,

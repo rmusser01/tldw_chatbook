@@ -191,7 +191,10 @@ def docling_parse_pdf(
     parser_name = "docling"
     DOCLING_AVAILABLE = False
     try:
-        from docling.document_converter import DocumentConverter
+        # noqa: F401 - availability probe: docling must actually import (and
+        # pull its deps) for DOCLING_AVAILABLE to be trustworthy; find_spec
+        # would lie about import-time failures.
+        from docling.document_converter import DocumentConverter  # noqa: F401
         from docling.datamodel.pipeline_options import PdfPipelineOptions
 
         DOCLING_AVAILABLE = True

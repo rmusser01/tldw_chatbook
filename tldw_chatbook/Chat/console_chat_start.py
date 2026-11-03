@@ -366,7 +366,6 @@ class ConsoleChatStartCoordinator:
         from tldw_chatbook.Agents.automatic_work_runtime import AutomaticWorkContext
 
         request = item.request
-        owner = item.capacity_owner
         ledger = item.ledger
         preparation = asyncio.create_task(
             run_owned_db_call(

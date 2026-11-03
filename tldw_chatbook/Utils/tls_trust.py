@@ -19,7 +19,6 @@ Docs/superpowers/specs/2026-08-29-network-tls-trust-policy-design.md.
 from __future__ import annotations
 
 import hashlib
-import os
 import ssl
 from pathlib import Path
 from typing import Any

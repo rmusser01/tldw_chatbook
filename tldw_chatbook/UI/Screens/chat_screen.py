@@ -133,7 +133,6 @@ from ..Console_Modules.hands_free import (
     ConsoleSpeculativeHandsFreeSession,
 )
 from ..Console_Modules.agent import (
-    project_console_run_feedback,
     CONSOLE_AGENT_CANCEL_ALL_ID,
     CONSOLE_AGENT_FLEET_SECTION_ID,
     apply_console_agent_status_state,

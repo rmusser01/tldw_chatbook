@@ -6,7 +6,6 @@
 import asyncio
 from typing import Dict, Any, List, Optional
 import re
-from urllib.parse import urlparse
 
 #
 # Third-party imports

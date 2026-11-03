@@ -142,7 +142,6 @@ from tldw_chatbook.Utils.fts5_match_forms import (
     build_notes_filter_match,
     build_phrase_match_query,
     quote_fts5_prefix,
-    quote_fts5_token,
 )
 from tldw_chatbook.DB.store_errors import StoreConflictError, StoreInputError, StoreSchemaError
 #
@@ -19483,7 +19482,6 @@ DELETE FROM keywords
         # surfaces); the exact-keyword and folder selectors stay here.
         lexical_branches: List[str] = []
         lexical_params: List[Any] = []
-        fts_query: Optional[str] = None
         lexical_hit_fields: Dict[int, List[str]] = {}
         if normalized_query is not None:
             (

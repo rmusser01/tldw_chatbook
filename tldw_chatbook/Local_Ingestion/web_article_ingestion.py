@@ -81,7 +81,6 @@ def extract_article_for_ingest(
     """
     import httpx
 
-    from urllib.parse import urlparse as _urlparse
 
     from tldw_chatbook.Utils.egress import (  # noqa: E402
         EgressBlockedError,

@@ -466,12 +466,7 @@ from textual.css.query import NoMatches, QueryError
 from textual.widget import Widget
 from textual.widgets import Button, Input, OptionList, TextArea
 
-from ...Chat.Chat_Functions import chat_api_call, extract_response_content
 from ...Chat.chat_handoff_models import ChatHandoffPayload
-from ...Library.ingest_analysis import (
-    analysis_unavailable_reason,
-    resolve_ingest_analysis_provider,
-)
 from ...Library.library_export_scope import ExportScope
 from ...Library.library_media_reader_state import (
     MEDIA_FILTER_DEBOUNCE_SECONDS,
@@ -479,7 +474,6 @@ from ...Library.library_media_reader_state import (
     LibraryMediaReaderSessionState,
     begin_selection,
     enter_external_detail,
-    leave_external_detail,
     reader_action_target,
     set_mode,
     set_more_open,
@@ -500,7 +494,6 @@ from ...Library.library_media_state import (
 from ...Library.library_media_viewer_state import (
     MEDIA_EDIT_FORM_FIELDS,
     build_library_media_highlight_rows,
-    build_library_media_viewer_state,
     media_analysis_dirty,
     media_edit_form_dirty,
 )
@@ -548,7 +541,6 @@ from .screen_support_types import (
     _LibraryMediaReturnReceipt,
     _LibraryMediaReturnSettlement,
     _LibraryMediaSettlementOutcome,
-    _LibraryMediaSuccessfulFocusOwnership,
 )
 
 if TYPE_CHECKING:

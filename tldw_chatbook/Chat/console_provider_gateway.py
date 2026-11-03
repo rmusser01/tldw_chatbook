@@ -203,17 +203,11 @@ if TYPE_CHECKING:
         ContextWindowCache,
         ContextWindowResolution,
         ContextWindowTarget,
-        resolve_context_window,
     )
     # Imported lazily in resolve_finish_policy: keeping the engine off the
     # module scope keeps it out of the UI-ready census (ADR-097 ratchet).
-    from tldw_chatbook.LLM_Calls.hosted_provider_engine import (
+    from tldw_chatbook.LLM_Calls.hosted_provider_engine import (  # noqa: F401 - name is referenced by the _FinishPolicy string alias
         HostedPresetFinishPolicy,
-    )
-    from tldw_chatbook.Chat.console_context_window import (
-        ContextWindowCache,
-        ContextWindowResolution,
-        ContextWindowTarget,
     )
     from tldw_chatbook.Chat.console_voice_trace_gateway import (
         ProvisionalTraceAttempt,
@@ -4291,7 +4285,6 @@ class ConsoleProviderGateway:
         field that feeds the projection, and config-level edits go stale for
         at most the TTL below.
         """
-        from tldw_chatbook.Chat.console_context_window import ContextWindowTarget
 
         # Qodo round: registry edits can change the projected endpoint and
         # credential WITHOUT touching the selected settings, so fold the

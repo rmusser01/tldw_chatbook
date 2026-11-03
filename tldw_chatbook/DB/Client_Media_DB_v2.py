@@ -31,7 +31,6 @@
 import hashlib
 import json
 import logging
-import re
 import sqlite3
 import threading
 import time
@@ -73,7 +72,6 @@ from tldw_chatbook.Utils.fts5_match_forms import (
     fts5_query_is_searchable,
     fts5_query_tokens,
     quote_fts5_prefix,
-    quote_fts5_token,
 )
 from tldw_chatbook.DB.store_errors import StoreConflictError, StoreInputError, StoreSchemaError
 #

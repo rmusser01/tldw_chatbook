@@ -41,10 +41,10 @@ from urllib3.util.retry import Retry
 #
 # Import Local libraries
 from tldw_chatbook.LLM_Calls import recovery_review as _provider_recovery
-from tldw_chatbook.LLM_Calls.groq import chat_with_groq
-from tldw_chatbook.LLM_Calls.deepseek import chat_with_deepseek
-from tldw_chatbook.LLM_Calls.mistral import chat_with_mistral
-from tldw_chatbook.LLM_Calls.openrouter import chat_with_openrouter
+from tldw_chatbook.LLM_Calls.groq import chat_with_groq  # noqa: F401 - re-export: Chat.Chat_Functions dispatches via this module
+from tldw_chatbook.LLM_Calls.deepseek import chat_with_deepseek  # noqa: F401 - re-export: Chat.Chat_Functions dispatches via this module
+from tldw_chatbook.LLM_Calls.mistral import chat_with_mistral  # noqa: F401 - re-export: Chat.Chat_Functions dispatches via this module
+from tldw_chatbook.LLM_Calls.openrouter import chat_with_openrouter  # noqa: F401 - re-export: Chat.Chat_Functions dispatches via this module
 
 from tldw_chatbook.Provider_Contract import (
     ChatAPIError,
@@ -950,17 +950,7 @@ def chat_with_openai(
 
         else:  # Non-streaming
             logger.debug("OpenAI: Posting request (non-streaming)")
-            retry_count = int(openai_config.get("api_retries", 3))
-            retry_delay = float(
-                openai_config.get("api_retry_delay", 1.0)
-            )  # Ensure float
 
-            retry_strategy = Retry(
-                total=llm_retry_count(retry_count),
-                backoff_factor=retry_delay,
-                status_forcelist=[429, 500, 502, 503, 504],
-                allowed_methods=["POST"],  # Changed from method_whitelist
-            )
             # ADR-222 (TASK-34418): deliberately NOT registry-backed --
             # openai_post() owns and closes the session via the guarded
             # recovery _Operation; see ADR-222 §5.

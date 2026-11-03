@@ -4,7 +4,6 @@
 # Imports
 from abc import ABC, abstractmethod
 from typing import Optional, Dict, Any, AsyncGenerator, Protocol
-import httpx
 from loguru import logger
 
 # Local imports
