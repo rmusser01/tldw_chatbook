@@ -435,11 +435,17 @@ def run_standalone(result_path):
                 try:
                     code = child.wait(timeout=300)
                 except BaseException:
-                    os.killpg(child.pid, signal.SIGTERM)
+                    try:
+                        os.killpg(child.pid, signal.SIGTERM)
+                    except ProcessLookupError:
+                        pass
                     try:
                         child.wait(timeout=5)
                     except subprocess.TimeoutExpired:
-                        os.killpg(child.pid, signal.SIGKILL)
+                        try:
+                            os.killpg(child.pid, signal.SIGKILL)
+                        except ProcessLookupError:
+                            pass
                         child.wait()
                     report["children"].append(
                         {
