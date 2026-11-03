@@ -30,6 +30,7 @@ module sits at its ADR-097 size ceiling; the modal keeps only the wiring.
 from __future__ import annotations
 
 from collections.abc import Callable, Iterable, Mapping
+from dataclasses import replace
 from types import MappingProxyType
 from typing import Any
 
@@ -166,32 +167,85 @@ def rebased_unsaved_baseline(
     return rebased
 
 
-def committed_unsaved_baseline(
-    baseline: Mapping[str, object],
+def followed_suspended_draft(snapshot: Any, committed: Any) -> Any:
+    """Move a suspended draft's untouched fields to the chat's current values.
+
+    TASK-36534: a credential handoff's own Settings save can move an unused
+    chat to new defaults (D1), a new Endpoint or Model say. As with a pick's
+    rebase (TASK-33006.16), what moved is not the user's edit: each settings
+    field the draft left alone takes the chat's value, so the reopened modal
+    shows it and Apply cannot write the old one back. Edits stay as they are.
+
+    Args:
+        snapshot: A ``ConsoleSettingsDraftSnapshot``; its baseline names the
+            fields the user had edited.
+        committed: The chat's current ``ConsoleSessionSettings``, or ``None``.
+
+    Returns:
+        The snapshot itself when nothing follows, else a followed copy.
+    """
+    edited = snapshot.unsaved_baseline
+    if committed is None or edited is None:
+        return snapshot
+    draft = snapshot.settings
+    changes: dict[str, object] = {}
+    raw = dict(snapshot.raw_values)
+    models = dict(snapshot.provider_model_drafts)
+    urls = dict(snapshot.provider_base_url_drafts)
+    pair = (committed.provider, committed.model)
+    if _PAIR_LABEL not in edited and pair != (draft.provider, draft.model):
+        changes.update(provider=committed.provider, model=committed.model)
+        models[committed.provider] = committed.model
+    for name, label in _SETTINGS_FIELDS.items():
+        value = getattr(committed, name)
+        if label not in edited and value != getattr(draft, name):
+            changes[name] = value
+            raw.pop(f"console-settings-{name.replace('_', '-')}", None)
+            if name == "base_url":
+                urls.pop(changes.get("provider", draft.provider), None)
+    if not changes:
+        return snapshot
+    return replace(
+        snapshot,
+        settings=replace(draft, **changes),
+        raw_values=raw,
+        provider_model_drafts=models,
+        provider_base_url_drafts=urls,
+    )
+
+
+def reopened_unsaved_baseline(
+    edited: Mapping[str, object],
+    mounted: Mapping[str, object],
     before: Mapping[str, object] | None,
     after: Mapping[str, object],
 ) -> dict[str, object]:
-    """Return a suspended draft's baseline after the chat's own values moved.
+    """Return the baseline of a modal reopened on a suspended draft.
 
-    TASK-36534: a credential handoff's own Settings save can move an unused
-    chat to new defaults (D1) while its draft is suspended. A field that move
-    changed counts as unedited at the chat's new value, so one the draft
-    already holds is not unsaved; every other field keeps its carried baseline.
+    A field the draft left alone counts as unedited at what the reopened
+    modal shows (``followed_suspended_draft`` moved it to the chat's value).
+    An edit keeps the first modal's baseline, or takes the chat's value when
+    the chat's own value moved meanwhile (TASK-36534), so an edit the chat
+    now holds is not unsaved.
 
     Args:
-        baseline: The baseline the suspended draft carries.
-        before: The chat's values when the draft was suspended, or ``None``
-            for a draft that carries none.
+        edited: The first modal's baseline for the fields it had edited.
+        mounted: Values the reopened controls showed after the initial sync.
+        before: The chat's values when the capturing modal opened, or
+            ``None`` for a draft that carries none.
         after: The chat's values now.
 
     Returns:
-        A new baseline.
+        The value each field counts as unedited at.
     """
-    if before is None:
-        return dict(baseline)
+    moved = before is not None
     return {
-        label: value if before.get(label) == after.get(label) else after.get(label)
-        for label, value in baseline.items()
+        label: value
+        if label not in edited
+        else after.get(label)
+        if moved and before.get(label) != after.get(label)
+        else edited[label]
+        for label, value in mounted.items()
     }
 
 
@@ -370,27 +424,40 @@ class ConsoleSettingsUnsavedGuardMixin:
             overrides = context_state.overrides
         return chat_settings_values(settings, overrides, name)
 
+    def _edited_unsaved_baseline(self) -> dict[str, object] | None:
+        """The baseline of the fields edited so far, for a suspended draft."""
+        if self._unsaved_baseline is None:
+            return None
+        try:
+            current = self._current_chat_settings_values()
+        except (NoMatches, QueryError):
+            return dict(self._unsaved_baseline)  # every field counts as edited
+        edited = unsaved_labels(current, self._unsaved_baseline)
+        return {
+            label: value
+            for label, value in self._unsaved_baseline.items()
+            if label in edited
+        }
+
     def _capture_unsaved_baseline(self) -> None:
         """Record the unedited values once the initial control sync is done."""
         carried = getattr(self._suspended_draft, "unsaved_baseline", None)
-        if carried is not None:
-            self._unsaved_baseline = committed_unsaved_baseline(
-                carried,
-                self._suspended_draft.unsaved_committed,
-                self._unsaved_committed_values(),
-            )
-            self._sync_unsaved_hint()
-            return
-        opened_overrides = self._draft.context_policy_overrides
         committed = self._unsaved_committed_values()
-        opened = chat_settings_values(
-            self._settings, opened_overrides, self._user_display_name_override
-        )
         try:
             mounted = self._current_chat_settings_values()
         except (NoMatches, QueryError):
             return
-        self._unsaved_baseline = unsaved_baseline(mounted, opened, committed)
+        if carried is not None:
+            self._unsaved_baseline = reopened_unsaved_baseline(
+                carried, mounted, self._suspended_draft.unsaved_committed, committed
+            )
+        else:
+            opened = chat_settings_values(
+                self._settings,
+                self._draft.context_policy_overrides,
+                self._user_display_name_override,
+            )
+            self._unsaved_baseline = unsaved_baseline(mounted, opened, committed)
         self._sync_unsaved_hint()
 
     def _rebase_to_pick(self, provider: str, model: str) -> bool:

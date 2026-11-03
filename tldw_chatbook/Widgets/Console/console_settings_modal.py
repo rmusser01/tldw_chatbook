@@ -576,10 +576,12 @@ class ConsoleSettingsDraftSnapshot:
     scroll_anchor: int
     focus_control_id: str | None
     disclosure_state: Mapping[str, bool]
-    # The first modal's unsaved-edits baseline (TASK-33003.5); optional
-    # because a draft captured before the modal's initial sync has none.
+    # The capturing modal's unsaved-edits baseline of the fields it had edited
+    # (TASK-33003.5, TASK-36534); optional because a draft captured before the
+    # modal's initial sync has none.
     unsaved_baseline: Mapping[str, object] | None = None
-    # The chat's values then, so a reopen can tell what moved (TASK-36534).
+    # The chat's committed values when the capturing modal opened, so a
+    # reopen can tell what moved since (TASK-36534).
     unsaved_committed: Mapping[str, object] | None = None
 
     def __repr__(self) -> str:
@@ -2502,7 +2504,7 @@ class ConsoleSettingsModal(
                     getattr(self, "_connection_details_disclosed", False)
                 ),
             },
-            unsaved_baseline=self._unsaved_baseline,
+            unsaved_baseline=self._edited_unsaved_baseline(),
             unsaved_committed=self._unsaved_committed_values(),
         )
 

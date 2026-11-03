@@ -3185,22 +3185,31 @@ class ChatScreen(BaseAppScreen):
         """
         controller = self._ensure_console_chat_controller()
         store = self._ensure_console_chat_store()
+        draft = suspended_draft  # identity checks below keep the original
         if transfer is None:
             session_id = store.active_session_id
             if session_id is None:
                 return False
             origin = store.capture_console_settings_origin(session_id)
+            if suspended_draft is not None:  # TASK-36534: untouched fields follow
+                from ...Widgets.Console.console_settings_unsaved import (
+                    followed_suspended_draft,
+                )
+
+                draft = followed_suspended_draft(
+                    suspended_draft, store.session_settings(session_id)
+                )
             settings = (
-                suspended_draft.settings
-                if suspended_draft is not None
+                draft.settings
+                if draft is not None
                 else store.session_settings(session_id)
             )
             if settings is None:
                 return False
             initial_draft = self._console_settings_initial_draft(
                 settings,
-                suspended_draft.context_policy_overrides
-                if suspended_draft is not None
+                draft.context_policy_overrides
+                if draft is not None
                 else store.session_context_policy_overrides(session_id),
                 exposed_fields=FULL_MODEL_DEFAULT_FIELDS,
             )
@@ -3219,8 +3228,8 @@ class ChatScreen(BaseAppScreen):
             return False
         active_provider = settings.provider
         active_model = settings.model
-        if suspended_draft is not None:
-            active_model = suspended_draft.provider_model_drafts.get(
+        if draft is not None:
+            active_model = draft.provider_model_drafts.get(
                 active_provider, active_model
             )
         prepared_context = await spend.prepare_console_settings_context(
@@ -3292,7 +3301,7 @@ class ChatScreen(BaseAppScreen):
             default_readiness_resolver=self._console_default_readiness,
             default_durability_state=self._console_default_durability_state(),
             default_recovery_handler=self._handle_console_default_recovery,
-            suspended_draft=suspended_draft,
+            suspended_draft=draft,
             connection_tester=lambda identity: self._test_console_connection(
                 identity, app_config=self._provider_readiness_app_config()
             ),

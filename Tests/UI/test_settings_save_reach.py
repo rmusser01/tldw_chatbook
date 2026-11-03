@@ -668,6 +668,103 @@ async def test_a_blank_chats_settings_draft_survives_its_own_credential_save(
         assert returned._unsaved_field_labels() == ("Temperature",)
 
 
+@pytest.mark.asyncio
+@private_profile_test
+async def test_a_field_left_alone_follows_the_handoffs_own_save(request, monkeypatch):
+    """TASK-36534 review: Configure credential's Settings save also moves a
+    URL provider's Endpoint, which the unused chat takes (D1). The reopened
+    draft shows the new Endpoint, not as an unsaved edit and not the old URL
+    for Apply to write back; the Temperature edit stays edited and marked."""
+    from Tests.UI.test_console_session_settings import (
+        _build_live_config_test_app,
+        _wait_for_screen,
+    )
+    from Tests.UI.test_destination_shells import _wait_for_selector
+    from tldw_chatbook import config as config_module
+    from tldw_chatbook.UI.Navigation.main_navigation import NavigateToScreen
+    from tldw_chatbook.UI.Screens.settings_config_adapter import SettingsConfigAdapter
+    from tldw_chatbook.Widgets.Console.console_settings_modal import (
+        ConsoleSettingsModal,
+    )
+
+    old_url = "https://dashscope-intl.aliyuncs.com/compatible-mode/v1"
+    new_url = "https://dashscope.aliyuncs.com/compatible-mode/v1"
+    monkeypatch.delenv("DASHSCOPE_API_KEY", raising=False)
+    config_module.load_cli_config_and_ensure_existence(force_reload=True)
+    adapter = SettingsConfigAdapter()
+    for section, values in (
+        ("splash_screen", {"enabled": False}),
+        ("first_run", {"setup_completed": True}),
+        ("chat_defaults", {"provider": "qwencloud", "model": "qwen3.8-max"}),
+        ("api_settings.qwencloud", {"api_base_url": old_url}),
+    ):
+        assert adapter.save_values(section, values), section
+    config_module.load_settings(force_reload=True)
+    app = _build_live_config_test_app()
+
+    async with app.run_test(size=_SIZE) as pilot:
+        app.post_message(NavigateToScreen("chat"))
+        console = await _wait_for_screen(app, pilot, "ChatScreen")
+        await _wait_for_selector(
+            console, pilot, "#console-settings-summary", timeout=_MOUNT_TIMEOUT
+        )
+        store = console._ensure_console_chat_store()
+        chat_id = store.active_session_id
+        assert console._session._ensure_active_console_session_settings().base_url == (
+            old_url
+        )
+        assert await console._open_console_settings() is True
+        await _wait_until(
+            pilot, lambda: isinstance(app.screen, ConsoleSettingsModal), "Chat settings"
+        )
+        first = app.screen
+        await _wait_until(
+            pilot,
+            lambda: getattr(first, "_unsaved_baseline", None) is not None,
+            "Chat settings to settle",
+        )
+        temperature = first.query_one("#console-settings-temperature", Input)
+        temperature.focus()
+        temperature.value = "0.9"
+        await pilot.pause()
+        assert first._unsaved_field_labels() == ("Temperature",)
+        await pilot.click("#console-settings-configure-credential")
+
+        settings = await _wait_for_screen(app, pilot, "SettingsScreen")
+        await _wait_for_selector(
+            settings, pilot, "#settings-provider-api-key", timeout=_MOUNT_TIMEOUT
+        )
+        settings.query_one("#settings-provider-api-key", Input).value = _FAKE_KEY
+        settings.query_one("#settings-provider-endpoint-value", Input).value = new_url
+        await pilot.pause()
+        settings.action_settings_save_category(allow_text_entry_focus=True)
+        await _wait_until(
+            pilot,
+            lambda: settings.query_one("#settings-provider-return").has_focus,
+            "the save to offer Return",
+        )
+        settings.query_one("#settings-provider-return").press()
+        await _wait_until(
+            pilot,
+            lambda: (
+                isinstance(app.screen, ConsoleSettingsModal) and app.screen is not first
+            ),
+            "Chat settings to reopen",
+        )
+        returned = app.screen
+        await _wait_until(
+            pilot,
+            lambda: getattr(returned, "_unsaved_baseline", None) is not None,
+            "the reopened Chat settings to settle",
+        )
+        assert store.session_settings(chat_id).base_url == new_url  # D1
+        endpoint = returned.query_one("#console-settings-base-url", Input).value
+        assert endpoint == new_url
+        assert returned._build_draft().base_url != old_url
+        assert returned.query_one("#console-settings-temperature", Input).value == "0.9"
+        assert returned._unsaved_field_labels() == ("Temperature",)
+
+
 def test_a_held_settings_revision_spans_only_convergence(monkeypatch):
     """TASK-36534: ``settings_revision_held`` accepts a suspended draft's
     revision only while saved-default convergence alone moved the chat since:

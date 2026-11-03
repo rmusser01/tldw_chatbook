@@ -188,7 +188,8 @@ def test_snapshot_carries_the_unsaved_baseline_and_refuses_a_malformed_one() -> 
         disclosure_state={"advanced_generation": False, "connection_details": False},
     )
     mapping = snapshot.to_mapping()
-    # TASK-36534: the chat's values when it was captured travel the same way.
+    # TASK-36534: the chat's committed values when the capturing modal opened
+    # travel the same way.
     for key in ("unsaved_baseline", "unsaved_committed"):
         # A draft captured before the modal's initial sync carries no baseline.
         legacy = {name: value for name, value in mapping.items() if name != key}

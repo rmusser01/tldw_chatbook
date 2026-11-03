@@ -324,7 +324,9 @@ _BUDGETS: dict[str, tuple[str, int, int]] = {
     # TASK-36534, 2026-11-03: size waiver (owner rule: a fix over a size ratchet
     # raises the row with a dated comment); +8, the return's two revision checks
     # call Console_Modules/session.py's settings_revision_held. Exact measurement.
-    "tldw_chatbook/UI/Screens/chat_screen.py": ("ChatScreen", 24580, 741),
+    # call Console_Modules/session.py's settings_revision_held; review round,
+    # +9: Chat settings reopens on followed_suspended_draft. Exact measurement.
+    "tldw_chatbook/UI/Screens/chat_screen.py": ("ChatScreen", 24589, 741),
     #: Added 2026-09 by the Library decomposition plan (PR 0b): this row was
     #: missing for the entire month in which library_screen.py tripled from
     #: 15,819 to 46,109 lines while chat_screen.py shrank under its budget.
