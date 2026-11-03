@@ -967,6 +967,65 @@ async def test_outside_runs_share_one_backed_off_retry_timer(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_a_retry_delivered_after_its_tick_keeps_the_newer_timer(monkeypatch):
+    """TASK-38649 review 3: Textual's set_timer delivers its callback through
+    call_next, a step after the tick. A failure inside that gap stores a newer
+    timer, and the late delivery must not orphan it into a second chain.
+    """
+    screen, _owner, _identity, tasks, _published = _screen(monkeypatch)
+    loop = asyncio.get_running_loop()
+    live, delivered, handles = set(), [], []
+
+    def set_timer(delay, callback):
+        token = object()
+        live.add(token)
+
+        def deliver():
+            delivered.append(token)
+            callback()
+
+        def tick():
+            live.discard(token)
+            handles.append(loop.call_later(0.3, deliver))  # call_next, later
+
+        handle = loop.call_later(delay, tick)
+        handles.append(handle)
+
+        def stop():
+            handle.cancel()
+            live.discard(token)
+
+        return SimpleNamespace(stop=stop)
+
+    def read():
+        raise RuntimeError("persistent refusal")
+
+    projection = spend.ConsoleReadinessConfigProjection(screen, read_current=read)
+    screen.set_timer = set_timer
+    screen._request_console_control_bar_sync = lambda **_: projection.run(lambda: None)
+    try:
+        assert projection.run(lambda: None) is False
+        await asyncio.gather(*tasks)  # the first failure stores a 0.2 s timer
+        # Back the next wait off far past the checks below (white-box).
+        projection._retry_delay = 1.0
+        async with asyncio.timeout(3):
+            while live:  # the 0.2 s timer ticks; its delivery waits 0.3 s
+                await asyncio.sleep(0.005)
+        projection.run(lambda: None)  # an outside read fails inside the gap
+        await asyncio.gather(*tasks)
+        assert not delivered and len(live) == 1, "the failure missed the gap"
+        async with asyncio.timeout(3):
+            while not delivered:
+                await asyncio.sleep(0.005)
+        await asyncio.gather(*tasks)  # the late retry's own read fails too
+        assert len(live) <= 1, len(live)
+    finally:
+        for handle in handles:
+            handle.cancel()
+        await asyncio.gather(*tasks, return_exceptions=True)
+
+
+@pytest.mark.asyncio
 async def test_disposed_readiness_runtime_starts_no_new_native_read(monkeypatch):
     from tldw_chatbook.Chat.console_runtime import ConsoleRuntime
 

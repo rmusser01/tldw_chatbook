@@ -494,7 +494,9 @@ class ConsoleReadinessConfigProjection:
 
     def _retry(self) -> None:
         """Ask for the coalesced control-bar sync a failed cold read owes."""
-        self._retry_timer = None
+        # Keep the handle: Textual delivers this through call_next, after a
+        # newer failure may already have stored its own timer, and stopping
+        # a timer that has fired is a no-op.
         if not self._retired():
             self.screen._request_console_control_bar_sync()
 

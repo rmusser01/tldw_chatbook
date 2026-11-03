@@ -5,7 +5,7 @@ status: Done
 assignee:
   - '@claude'
 created_date: 2026-11-03 05:51
-updated_date: 2026-11-03 08:32
+updated_date: 2026-11-03 08:49
 labels:
 - follow-up
 - console
@@ -103,6 +103,20 @@ On dev 18482c1cf7 every case stayed stale, and `_refresh` requested nothing (`re
 | 0.2 s poll for 10 s, then idle | 270 reads; 10 to 12/s once idle | 54 reads; 5/s during the poll (the poll's own reads); one read per 5 s once idle |
 
 All of them read nothing after `_closing`.
+
+**Review round 3.**
+- **Minor: a late `_retry` cleared a newer timer.** Textual's `set_timer` delivers its callback through `call_next`, a step after the tick. `Timer.stop()` cancels only a timer that has not ticked.
+  - The race: T1 ticks and its `_retry` is queued. A failure lands in that gap: it stops T1 (a no-op) and stores T2. T1's `_retry` then reset the handle to None, so the next failure started T3 without stopping T2, and two chains ran.
+  - Fix: `_retry` no longer touches the handle. Stopping a fired timer is a no-op, so a stale handle is harmless, and nothing read the None.
+  - Pin: `test_a_retry_delivered_after_its_tick_keeps_the_newer_timer`. Its fake timer delivers the callback 0.3 s after ticking. One outside failure lands inside that gap, and the test asserts it did. The next wait is backed off far past the checks (by setting `_retry_delay`). Red at c73a1f687f (`assert 2 <= 1`, 2 of 2 runs); green now (3 of 3).
+- **The reviewer's `cs-rev3-callnext-probe.py`**, unchanged (idle reads over the last 20 s, and timers pending at the end):
+
+| Run | c73a1f687f | now |
+|---|---|---|
+| no injected failure | 4 reads, 1 timer | 4 reads, 1 timer |
+| failure injected in the delivery gap | 8 reads, 2 timers | 4 reads, 1 timer |
+
+- **Verification.** The three target files ran twice: 59 and 58 passed. Both runs failed `mode_bar` and `settings_open_waits…`, which also fail on dev, and one run also failed the known `composer_resync` flake. Size ratchets: 205 passed. `preflight.sh` passed. Load averages were 17 to 22.
 
 **AC#3** does not apply: paths were stale, so the product code changed.
 
