@@ -408,6 +408,7 @@ def stock_mounted_capture(owner):
     ):
         return None
     scratch_function, scratch_code = _STOCK_CONSOLE_SCRATCH_SNAPSHOT
+    sources = _CONSOLE_SELECTION_SOURCES
 
     def sources_current():
         return all(
@@ -415,8 +416,7 @@ def stock_mounted_capture(owner):
             and callback.__code__ is original_code
             and callback.__defaults__ is defaults
             and callback.__kwdefaults__ is kwdefaults
-            for name, callback, original_code, defaults, kwdefaults
-            in _CONSOLE_SELECTION_SOURCES
+            for name, callback, original_code, defaults, kwdefaults in sources
         )
 
     if not sources_current():
