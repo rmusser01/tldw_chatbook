@@ -486,6 +486,9 @@ def test_a_mount_refresh_defers_a_cold_live_read_and_warms_it_off_the_loop(monke
     assert calls == [True] * 2, "a still-cold retry deferred again (retry chain)"
     refresh(screen)  # and so does any later call in the same cold episode.
     assert calls == [True] * 3 and not timers and kicked == [screen] * 2
+    warm["settings"] = {}  # Any owner's warm read ends the episode for all.
+    assert not spend.defer_cold_live_read(screen, "another owner")
+    assert not screen._console_cold_read_deferrals, "a stale cold-episode entry"
 
 
 class _UiLoopStarts:

@@ -1098,13 +1098,14 @@ def defer_cold_live_read(screen: Any, owner: str) -> bool:
     An unparseable config.toml never installs either cache, so config can stay
     cold for good: deferring every cold read replayed an idle Console 5 times a
     second. Each owner defers once per cold episode; its next call reads live,
-    as before, and only a warm read ends the episode.
+    as before. Any warm read ends the episode for every owner, so a rarely
+    called owner keeps no stale entry.
     """
     deferred = getattr(screen, "_console_cold_read_deferrals", None)
     if deferred is None:
         deferred = screen._console_cold_read_deferrals = set()
     if not live_config_read_is_cold(screen):
-        deferred.discard(owner)
+        deferred.clear()
         return False
     if owner in deferred:
         return False
