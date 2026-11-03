@@ -36,7 +36,8 @@ boundary of ADR-062/063.
 ## Consequences
 
 Adding an OpenAI-compatible hosted provider becomes one registry record +
-one dispatch registration line + tests. Sensitive-request audit and
+tests; the dispatch handler and parameter-map entries are generated from the
+registry's engine records, so there is no `Chat_Functions` edit (TASK-36946.2). Sensitive-request audit and
 cloud/local classification become registry-coverage tests instead of
 hand-typed literals. Related: ADR-002, ADR-012, ADR-020, ADR-062, ADR-063,
 ADR-146.

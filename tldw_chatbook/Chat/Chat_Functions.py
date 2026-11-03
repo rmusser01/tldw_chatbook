@@ -93,39 +93,7 @@ from tldw_chatbook.LLM_Calls.LLM_API_Calls_Local import (  # noqa: E402
 from tldw_chatbook.LLM_Calls.qwencloud import chat_with_qwencloud  # noqa: E402
 from tldw_chatbook.provider_registry import (  # noqa: E402
     AUDITED_ENDPOINT_KEYS,
-    ARCEE,
-    AZURE,
-    BASETEN,
-    BYTEPLUS,
-    CEREBRAS,
-    CLOUDFLARE,
-    COMMANDCODE,
-    CUSTOM_HOSTED,
-    DATABRICKS,
-    DEEPINFRA,
-    FIREWORKS,
-    GMI,
-    KILO,
-    META,
-    MIMO,
-    MINIMAX,
-    NEBIUS,
-    NOUS,
-    NOVITA,
-    NVIDIA,
-    OLLAMA_CLOUD,
-    OPENCODE_ZEN,
-    QIANFAN,
-    SAMBANOVA,
-    SILICONFLOW,
-    STEPFUN,
-    TOGETHER,
-    TOKENHUB,
-    UPSTAGE,
-    VENICE,
-    VERCEL,
-    WANDB,
-    ZENMUX,
+    ENGINE_RECORDS,
 )
 from tldw_chatbook.Utils.Utils import generate_unique_filename  # noqa: E402
 from tldw_chatbook.Utils.sensitive_llm_logging import (  # noqa: E402
@@ -222,47 +190,6 @@ API_CALL_HANDLERS = {
     "moonshot": chat_with_moonshot,
     "zai": chat_with_zai,
     "qwencloud": chat_with_qwencloud,
-    "databricks": _LazyHostedChatHandler(DATABRICKS),
-    "together": _LazyHostedChatHandler(TOGETHER),
-    "fireworks": _LazyHostedChatHandler(FIREWORKS),
-    "cerebras": _LazyHostedChatHandler(CEREBRAS),
-    # Doc-derived inference-cloud presets (TASK-33201).
-    "sambanova": _LazyHostedChatHandler(SAMBANOVA),
-    "nvidia": _LazyHostedChatHandler(NVIDIA),
-    "deepinfra": _LazyHostedChatHandler(DEEPINFRA),
-    "nebius": _LazyHostedChatHandler(NEBIUS),
-    "novita": _LazyHostedChatHandler(NOVITA),
-    "minimax": _LazyHostedChatHandler(MINIMAX),
-    # Top-15 OpenRouter model makers (TASK-33350).
-    "mimo": _LazyHostedChatHandler(MIMO),
-    "tokenhub": _LazyHostedChatHandler(TOKENHUB),
-    "byteplus": _LazyHostedChatHandler(BYTEPLUS),
-    "stepfun": _LazyHostedChatHandler(STEPFUN),
-    # Gateway/host presets from the Hermes / oh-my-pi comparison (TASK-33351).
-    "vercel": _LazyHostedChatHandler(VERCEL),
-    "zenmux": _LazyHostedChatHandler(ZENMUX),
-    "kilo": _LazyHostedChatHandler(KILO),
-    "siliconflow": _LazyHostedChatHandler(SILICONFLOW),
-    "baseten": _LazyHostedChatHandler(BASETEN),
-    "gmi": _LazyHostedChatHandler(GMI),
-    "ollama_cloud": _LazyHostedChatHandler(OLLAMA_CLOUD),
-    "upstage": _LazyHostedChatHandler(UPSTAGE),
-    "arcee": _LazyHostedChatHandler(ARCEE),
-    "qianfan": _LazyHostedChatHandler(QIANFAN),
-    "nous": _LazyHostedChatHandler(NOUS),
-    "venice": _LazyHostedChatHandler(VENICE),
-    "meta": _LazyHostedChatHandler(META),
-    # TASK-33505..33509 follow-up presets.
-    "azure": _LazyHostedChatHandler(AZURE),
-    "wandb": _LazyHostedChatHandler(WANDB),
-    "cloudflare": _LazyHostedChatHandler(CLOUDFLARE),
-    "opencode_zen": _LazyHostedChatHandler(OPENCODE_ZEN),
-    "commandcode": _LazyHostedChatHandler(COMMANDCODE),
-    # Custom-endpoint engine execution key (ADR-179 Phase 2 Task 6): the
-    # gateway identity site swaps ``openai_compatible`` custom-ep entries to
-    # this key when ``[console] custom_endpoints_use_engine`` is on. The
-    # named legacy slots above stay untouched (kill-switch fallback).
-    "custom-hosted": _LazyHostedChatHandler(CUSTOM_HOSTED),
     "llama_cpp": chat_with_llama,
     "strata": chat_with_llama,
     "polystrata": chat_with_llama,
@@ -283,6 +210,12 @@ API_CALL_HANDLERS = {
     "local_vllm": chat_with_vllm,
     "local_mlx_lm": chat_with_mlx_lm,
 }
+# Engine-driven presets (every ``engine_driven`` registry record, including
+# ``custom-hosted``) get their handler from the registry: adding a preset is
+# one record, no edit here (TASK-36946.2).
+API_CALL_HANDLERS.update(
+    {record.key: _LazyHostedChatHandler(record) for record in ENGINE_RECORDS}
+)
 
 EPHEMERAL_GROUPING_ENDPOINTS = frozenset({"anthropic", "google"})
 PROVIDERS_WITH_PROVIDER_NAME = frozenset(
@@ -952,41 +885,19 @@ PROVIDER_PARAM_MAP = {
         "request_retries": "request_retries",
         "request_retry_delay": "request_retry_delay",
     },
-    "zai": ENGINE_PROVIDER_PARAM_MAP,
-    "databricks": ENGINE_PROVIDER_PARAM_MAP,
-    "together": ENGINE_PROVIDER_PARAM_MAP,
-    "fireworks": ENGINE_PROVIDER_PARAM_MAP,
-    "cerebras": ENGINE_PROVIDER_PARAM_MAP,
-    "sambanova": ENGINE_PROVIDER_PARAM_MAP,
-    "nvidia": ENGINE_PROVIDER_PARAM_MAP,
-    "deepinfra": ENGINE_PROVIDER_PARAM_MAP,
-    "nebius": ENGINE_PROVIDER_PARAM_MAP,
-    "novita": ENGINE_PROVIDER_PARAM_MAP,
-    "minimax": ENGINE_PROVIDER_PARAM_MAP,
-    "mimo": ENGINE_PROVIDER_PARAM_MAP,
-    "tokenhub": ENGINE_PROVIDER_PARAM_MAP,
-    "byteplus": ENGINE_PROVIDER_PARAM_MAP,
-    "stepfun": ENGINE_PROVIDER_PARAM_MAP,
-    "vercel": ENGINE_PROVIDER_PARAM_MAP,
-    "zenmux": ENGINE_PROVIDER_PARAM_MAP,
-    "kilo": ENGINE_PROVIDER_PARAM_MAP,
-    "siliconflow": ENGINE_PROVIDER_PARAM_MAP,
-    "baseten": ENGINE_PROVIDER_PARAM_MAP,
-    "gmi": ENGINE_PROVIDER_PARAM_MAP,
-    "ollama_cloud": ENGINE_PROVIDER_PARAM_MAP,
-    "upstage": ENGINE_PROVIDER_PARAM_MAP,
-    "arcee": ENGINE_PROVIDER_PARAM_MAP,
-    "qianfan": ENGINE_PROVIDER_PARAM_MAP,
-    "nous": ENGINE_PROVIDER_PARAM_MAP,
-    "venice": ENGINE_PROVIDER_PARAM_MAP,
-    "meta": ENGINE_PROVIDER_PARAM_MAP,
-    "azure": ENGINE_PROVIDER_PARAM_MAP,
-    "wandb": ENGINE_PROVIDER_PARAM_MAP,
-    "cloudflare": ENGINE_PROVIDER_PARAM_MAP,
-    "opencode_zen": ENGINE_PROVIDER_PARAM_MAP,
-    "commandcode": ENGINE_PROVIDER_PARAM_MAP,
-    # Add other providers here
 }
+
+# Engine presets share the engine map. ``custom-hosted`` (own map below) is the
+# only engine record that does not; ``zai`` is a hand-written adapter that
+# happens to take the same kwargs, so it stays an explicit one-off.
+PROVIDER_PARAM_MAP["zai"] = ENGINE_PROVIDER_PARAM_MAP
+PROVIDER_PARAM_MAP.update(
+    {
+        record.key: ENGINE_PROVIDER_PARAM_MAP
+        for record in ENGINE_RECORDS
+        if record.key != "custom-hosted"
+    }
+)
 
 # These independent providers share the local compatible adapter, not the
 # Console's direct llama.cpp execution path or its thinking wire format.
