@@ -7900,75 +7900,211 @@ def _push_offer(panel: LibraryFileNotesGitPanel) -> None:
     panel.render_push_availability(_push_availability_projection())
 
 
-#: Every panel entry point a workspace task can reach, called mid-removal.
-_ENTRY_POINTS: dict[str, Callable[[LibraryFileNotesGitPanel], object]] = {
-    "render_status": lambda p: p.render_status(_status(_row("unstaged"))),
-    "render_untrusted": lambda p: p.render_untrusted("/canonical/repository"),
-    "render_checking": lambda p: p.render_checking("/canonical/repository"),
-    "render_unavailable": lambda p: p.render_unavailable("Git is unavailable."),
-    "mark_stale": lambda p: p.mark_stale(),
-    "set_mutating": lambda p: p.set_mutating(True, "Staging…"),
-    "set_current_status": lambda p: p.set_current_status("Status: CHECKING"),
-    "set_last_action": lambda p: p.set_last_action("Staged 1 note."),
-    "set_action_status": lambda p: p.set_action_status("Staged 1 note."),
-    "clear_last_action": lambda p: p.clear_last_action(),
+#: Each panel entry point the workspace calls, called mid-removal, and the
+#: state it must still leave behind for the remount to re-project.
+_ENTRY_POINTS: dict[
+    str,
+    tuple[
+        Callable[[LibraryFileNotesGitPanel], object],
+        Callable[[LibraryFileNotesGitPanel], bool],
+    ],
+] = {
+    "render_status": (
+        lambda p: p.render_status(_status(_row("unstaged"))),
+        lambda p: p._status_ready and len(p.rows) == 1,
+    ),
+    "render_untrusted": (
+        lambda p: p.render_untrusted("/canonical/repository"),
+        lambda p: p._trust_available,
+    ),
+    "render_checking": (
+        lambda p: p.render_checking("/canonical/repository"),
+        lambda p: p._trusted,
+    ),
+    "render_unavailable": (
+        lambda p: p.render_unavailable("Git is unavailable."),
+        lambda p: p._repository_text == "Repository: unavailable",
+    ),
+    "mark_stale": (
+        lambda p: p.mark_stale(),
+        lambda p: p._current_status_text.startswith("Status: STALE"),
+    ),
+    "set_mutating": (lambda p: p.set_mutating(True, "Staging…"), lambda p: p._mutating),
+    "set_current_status": (
+        lambda p: p.set_current_status("Status: CHECKING"),
+        lambda p: p._current_status_text == "Status: CHECKING",
+    ),
+    "set_last_action": (
+        lambda p: p.set_last_action("Staged 1 note."),
+        lambda p: p._last_action_text == "Staged 1 note.",
+    ),
+    "clear_last_action": (
+        lambda p: p.clear_last_action(),
+        lambda p: p._last_action_text == "",
+    ),
     "render_commit_availability": (
-        lambda p: p.render_commit_availability(_commit_draft_projection())
+        lambda p: p.render_commit_availability(_commit_draft_projection()),
+        lambda p: p._commit_availability is not None,
     ),
-    "clear_commit_availability": lambda p: p.clear_commit_availability(),
-    "invalidate_commit_binding": lambda p: p.invalidate_commit_binding(),
-    "render_commit_form": lambda p: p.render_commit_form(_commit_draft_projection()),
-    "render_commit_checking": lambda p: p.render_commit_checking(),
-    "render_commit_review": lambda p: p.render_commit_review(
-        _commit_review_projection()
+    "clear_commit_availability": (
+        lambda p: p.clear_commit_availability(),
+        lambda p: p._commit_availability is None,
     ),
-    "render_commit_confirming": lambda p: p.render_commit_confirming(),
-    "render_commit_executing": lambda p: p.render_commit_executing(
-        git_panel_module.CommitExecutionProjection(1)
+    "invalidate_commit_binding": (
+        lambda p: p.invalidate_commit_binding(),
+        lambda p: p.commit_phase == "list",
     ),
-    "render_commit_recovery_checking": lambda p: p.render_commit_recovery_checking(),
-    "render_commit_result": lambda p: p.render_commit_result(
-        _commit_result_projection(CommitOutcome("cancelled", "Cancelled."))
+    "render_commit_form": (
+        lambda p: p.render_commit_form(_commit_draft_projection()),
+        lambda p: p.commit_phase == "form" and p._active_commit_draft is not None,
     ),
-    "return_to_commit_list": lambda p: p.return_to_commit_list(),
-    "render_push_availability": _push_offer,
-    "clear_push_availability": lambda p: p.clear_push_availability(),
-    "render_push_review": _push_review,
-    "render_push_progress": (
-        lambda p: p.render_push_progress("checking_remote", operation_id=1)
+    "render_commit_checking": (
+        lambda p: p.render_commit_checking(),
+        lambda p: p.commit_phase == "checking",
     ),
-    "render_push_result": lambda p: p.render_push_result(
-        git_panel_module.PushPanelResultProjection(
-            "Pushed", "Done.", "back_to_session"
+    "render_commit_review": (
+        lambda p: p.render_commit_review(_commit_review_projection()),
+        lambda p: p.commit_phase == "review" and len(p._commit_notes) == 2,
+    ),
+    "render_commit_confirming": (
+        lambda p: p.render_commit_confirming(),
+        lambda p: p.commit_phase == "confirming",
+    ),
+    "render_commit_executing": (
+        lambda p: p.render_commit_executing(
+            git_panel_module.CommitExecutionProjection(1)
         ),
-        operation_id=1,
+        lambda p: p.commit_phase == "executing",
     ),
-    "return_to_push_list": lambda p: p.return_to_push_list(),
+    "render_commit_recovery_checking": (
+        lambda p: p.render_commit_recovery_checking(),
+        lambda p: p.commit_phase == "executing",
+    ),
+    "render_commit_result": (
+        lambda p: p.render_commit_result(
+            _commit_result_projection(CommitOutcome("cancelled", "Cancelled."))
+        ),
+        lambda p: p.commit_phase == "result" and p._commit_result is not None,
+    ),
+    "return_to_commit_list": (
+        lambda p: p.return_to_commit_list(),
+        lambda p: p.commit_phase == "list" and p._commit_review is None,
+    ),
+    "render_push_availability": (
+        _push_offer,
+        lambda p: p._push_availability is not None,
+    ),
+    "clear_push_availability": (
+        lambda p: p.clear_push_availability(),
+        lambda p: p._push_availability is None,
+    ),
+    "render_push_review": (
+        _push_review,
+        lambda p: p.push_phase == "review" and p._push_operation_id == 1,
+    ),
+    "render_push_progress": (
+        lambda p: p.render_push_progress("checking_remote", operation_id=1),
+        lambda p: p.push_phase == "checking_remote",
+    ),
+    "render_push_result": (
+        lambda p: p.render_push_result(
+            git_panel_module.PushPanelResultProjection(
+                "Pushed", "Done.", "back_to_session"
+            ),
+            operation_id=1,
+        ),
+        lambda p: p.push_phase == "result" and p._push_result is not None,
+    ),
+    "return_to_push_list": (
+        lambda p: p.return_to_push_list(),
+        lambda p: p.push_phase == "list" and p._push_operation_id is None,
+    ),
+    "restore_push_focus": (
+        lambda p: p.restore_push_focus("list", None, "#file-notes-git-back"),
+        lambda p: True,
+    ),
+}
+#: Entry points that leave a state: they start from a commit that is executing
+#: behind a push review, with a last action on screen.
+_LEAVES_A_STATE = {
+    "return_to_commit_list",
+    "invalidate_commit_binding",
+    "return_to_push_list",
+    "clear_last_action",
 }
 
 
+def _show_workflows_and_last_action(panel: LibraryFileNotesGitPanel) -> None:
+    panel.render_commit_executing(git_panel_module.CommitExecutionProjection(1))
+    _push_review(panel)
+    panel.set_last_action("Staged earlier.")
+
+
 @pytest.mark.asyncio
+@pytest.mark.parametrize("removed", [False, True], ids=["mid-removal", "removed"])
 @pytest.mark.parametrize("entry", sorted(_ENTRY_POINTS))
-async def test_a_panel_entry_called_during_removal_does_nothing(entry: str) -> None:
-    """TASK-36527 review round 3: a workspace task outlives a removal.
+async def test_a_panel_entry_called_during_removal_does_nothing(
+    entry: str, removed: bool
+) -> None:
+    """TASK-36527 review rounds 3-4: a workspace task outlives a removal.
 
     The push observer is a plain task, and workspace workers are cancelled
     only at the workspace's own Unmount, so either can call into the panel
-    after its children are gone but while it is still attached. RED without
-    the guard: ``NoMatches`` for whichever child the entry point queries.
+    after its children are gone but while it is still attached, or after the
+    panel is detached. The call must not raise (RED: ``NoMatches``), and it
+    must still record the state
+    a remount re-projects -- the phase above all (RED at 3efa4df463: a
+    commit that succeeded mid-removal remounted on its "executing" screen).
+    """
+    call, recorded = _ENTRY_POINTS[entry]
+    panel = LibraryFileNotesGitPanel()
+    panel.styles.display = "block"
+    app = _HostedPanelHarness(panel)
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        if entry in _LEAVES_A_STATE:
+            _show_workflows_and_last_action(panel)
+            await pilot.app.workers.wait_for_complete()
+            await pilot.pause()
+            assert not recorded(panel), "the setup already shows the end state"
+        removal = app.query_one("#fenced-host").remove()
+        await asyncio.gather(*(child._task for child in panel.children))
+        assert panel.is_attached and panel._pruning and not panel.children
+        if removed:
+            await removal
+            assert not panel.is_attached
+        call(panel)
+        assert recorded(panel), f"{entry} dropped its state mid-removal"
+        await removal
+        await pilot.app.workers.wait_for_complete()
+        await pilot.pause()
+
+
+@pytest.mark.asyncio
+async def test_a_commit_that_settles_mid_removal_remounts_on_the_list() -> None:
+    """TASK-36527 review round 4: the workspace's commit observer, on success,
+    calls ``invalidate_commit_binding`` and ``return_to_commit_list``. Landing
+    during a Library recomposition, they must still leave the list phase:
+    ``_finish_mount`` re-projects ``commit_phase`` on remount, and nothing
+    else resets it. RED at 3efa4df463: the remounted panel shows "executing".
     """
     panel = LibraryFileNotesGitPanel()
     panel.styles.display = "block"
     app = _HostedPanelHarness(panel)
     async with app.run_test(size=(120, 40)) as pilot:
         await pilot.pause()
+        panel.render_commit_executing(git_panel_module.CommitExecutionProjection(1))
+        await pilot.pause()
         removal = app.query_one("#fenced-host").remove()
         await asyncio.gather(*(child._task for child in panel.children))
-        assert panel.is_attached and panel._pruning and not panel.children
-        _ENTRY_POINTS[entry](panel)
+        panel.invalidate_commit_binding()
+        panel.return_to_commit_list()
         await removal
-        await pilot.app.workers.wait_for_complete()
+        await app.screen.mount(Vertical(panel, id="remounted-host"))
         await pilot.pause()
+        await pilot.pause()
+        assert panel.query_one("#file-notes-git-list-surface").display
+        assert not panel.query_one("#file-notes-git-commit-workflow").display
 
 
 @pytest.mark.asyncio

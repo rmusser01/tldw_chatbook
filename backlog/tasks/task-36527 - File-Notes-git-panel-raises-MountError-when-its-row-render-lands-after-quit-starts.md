@@ -5,7 +5,7 @@ status: Done
 assignee:
 - '@claude'
 created_date: 2026-10-24 00:26
-updated_date: '2026-11-03 09:22'
+updated_date: '2026-11-03 10:02'
 labels:
 - follow-up
 - library
@@ -69,4 +69,22 @@ The git panel's worker renders (`_render_rows`, `_render_commit_review_notes`) a
   - Kept but not pinnable: `restore_push_focus` only schedules, and its target is pinned. `_settle_action_focus` holds widget references and runs no query. `_sync_commit_body_height` already catches `NoMatches`. Their probe-style cases stayed green on eb2cca31f3, so they are not in the test.
   - Out of the panel class and left unchanged: the row items' `_fit_copy` (its `not self.children` check covers a prune, since children exit first) and `PushDestinationAuthorizationDialog._sync_action_layout` (a separate screen). The row items' probe-style cases were green on eb2cca31f3. I did not probe the dialog.
   - Size: re-pinned 4207 -> 4253 in `Tests/Architecture/test_module_size_ratchet.py`, under the owner's 2026-10-31 size waiver (dated comment).
+- **Round 4 (review: 1 Important, 1 Minor).** A guard must skip only the DOM projection; persistent state is recorded first.
+  - The incident: the top guards in `return_to_commit_list` and `return_to_push_list` returned before `_show_*_phase` assigned the phase. `_finish_mount` re-projects `_commit_phase` on remount, and `_rehydrate_commit_presentation` does not reset it when there is no draft. So a commit that settled mid-removal (`_observe_commit_outcome` calls `invalidate_commit_binding` and then `return_to_commit_list`) remounted on its "executing" screen. Probe `gp-rev3/probe_phase_drop.py`: stale phase and surface at 3efa4df463, list/list at the fix.
+  - Verdict per guarded method:
+    - **Commit/push renders keep their top guard; the guard branch records the phase** (and the push operation id): `render_push_review` (review, op id), `render_push_progress` (phase, op id), `render_commit_checking` (checking), `render_commit_confirming` (confirming), `render_commit_executing` and `render_commit_recovery_checking` (executing).
+    - **Same, with projection state moved above the guard:** `render_push_result` (`_push_result`), `render_commit_form` (`_active_commit_draft`), `render_commit_review` (`_commit_review`, `_commit_notes`, `_commit_included_expanded`), `render_commit_result` (`_commit_result`).
+    - `return_to_push_list`: `_push_result = None` above the guard; the branch sets phase "list" and op id None.
+    - `return_to_commit_list`: review, result, notes and expanded state above the guard; the branch sets phase "list". Its focus requests (`_commit_list_focus_pending`/`_preferred_group_id`/`_focus_selector`, the entry-focus consumption) stay behind the guard on purpose. They are DOM focus work, and left pending they would make the first row render after a remount pull focus into the panel.
+    - `invalidate_commit_binding`: was already state-first; it is fixed by `return_to_commit_list`.
+    - **Status family, top guard removed** (each is only state plus helper calls): `render_status`, `render_untrusted`, `render_checking`, `render_unavailable`, `mark_stale`, `set_mutating`. The guard moved into the DOM helpers they use: `_replace_rows` (selection, generation and `_replacing_rows` first), `_sync_empty_state`, `_update_actions`, and `_focus_is_inside` (which returns False, so no entry focus is armed). So every flag, row and status-text assignment now persists.
+    - `set_last_action` / `clear_last_action`: the text is assigned before the guard.
+    - Unchanged: `set_current_status`, `render_/clear_push_availability`, `render_/clear_commit_availability` (already state-first) and `restore_push_focus` (no state).
+  - Pins:
+    - `test_a_panel_entry_called_during_removal_does_nothing` now checks the recorded state for each of 27 entry points, both mid-removal and after the panel is detached (54 cases). Leave-type entry points start from an executing commit behind a push review, with a last action shown.
+    - New: `test_a_commit_that_settles_mid_removal_remounts_on_the_list`.
+    - At 3efa4df463, 21 entry cases failed with "dropped its state mid-removal", and the remount test failed.
+  - Mutation checks: 18 of 18 fail their pin. They cover the 12 guard-branch phase assignments and six helper guards (`_replace_rows`, `_sync_empty_state` and `_update_actions` with `NoMatches`, set/clear_last_action, and `_focus_is_inside` with `NoScreen`, which only the detached case catches).
+  - Minor: `_ENTRY_POINTS` now lists `restore_push_focus` (workspace.py:7697) instead of `set_action_status`, which has no production caller, and its comment says "each panel entry point the workspace calls".
+  - Size: re-pinned 4253 -> 4259 under the same waiver.
 - **Files:** tldw_chatbook/Widgets/Library/library_file_notes_git_panel.py, Tests/UI/test_library_file_notes_git.py, scripts/ui_pr_gate_census.txt, scripts/check_ui_pr_gate_census.py, Tests/Architecture/test_module_size_ratchet.py, backlog/docs/lessons-testing-evidence.md, backlog/docs/lessons-textual.md.

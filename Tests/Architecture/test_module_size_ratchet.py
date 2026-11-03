@@ -867,7 +867,8 @@ _BUDGETS: dict[str, int] = {
     # 2026-11-03, TASK-36527 review round 3, under the owner's 2026-10-31 size
     # waiver: each workspace-reachable entry point and call_after_refresh
     # target opens with the two-line `_going_away()` guard: 4207 -> 4253.
-    "tldw_chatbook/Widgets/Library/library_file_notes_git_panel.py": 4253,
+    # Round 4, same waiver: each guard records its phase first: 4253 -> 4259.
+    "tldw_chatbook/Widgets/Library/library_file_notes_git_panel.py": 4259,
     "tldw_chatbook/UI/MCP_Modules/mcp_inspector.py": 4174,
     "tldw_chatbook/Dreams/track_service.py": 4061,
     "tldw_chatbook/DB/private_sqlite.py": 4030,

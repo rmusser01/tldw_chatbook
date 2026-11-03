@@ -2005,9 +2005,10 @@ class LibraryFileNotesGitPanel(Vertical):
 
     def return_to_push_list(self) -> None:
         """Clear workflow-only projections and restore the Session Git list."""
-        if self._going_away():
-            return
         self._push_result = None
+        if self._going_away():
+            self._push_phase, self._push_operation_id = "list", None
+            return
         self._show_push_phase("list", None)
         target = (
             "#file-notes-git-push-review"
@@ -2064,6 +2065,7 @@ class LibraryFileNotesGitPanel(Vertical):
     ) -> None:
         """Render one immutable projection without consulting live rows."""
         if self._going_away():
+            self._push_phase, self._push_operation_id = "review", operation_id
             return
         review = projection.review
         candidate = review.candidate
@@ -2180,6 +2182,7 @@ class LibraryFileNotesGitPanel(Vertical):
     ) -> None:
         """Render one typed guarded-push progress phase."""
         if self._going_away():
+            self._push_phase, self._push_operation_id = phase, operation_id
             return
         copy, detail, focus = _PUSH_PROGRESS[phase]
         self.query_one(
@@ -2200,9 +2203,10 @@ class LibraryFileNotesGitPanel(Vertical):
         operation_id: int,
     ) -> None:
         """Render complete selectable outcome copy and one typed next action."""
-        if self._going_away():
-            return
         self._push_result = projection
+        if self._going_away():
+            self._push_phase, self._push_operation_id = "result", operation_id
+            return
         self.query_one(
             "#file-notes-git-push-result-title",
             Static,
@@ -2335,9 +2339,10 @@ class LibraryFileNotesGitPanel(Vertical):
 
     def render_commit_form(self, projection: CommitDraftProjection) -> None:
         """Render the literal binding-scoped draft and its inline errors."""
-        if self._going_away():
-            return
         self._active_commit_draft = projection
+        if self._going_away():
+            self._commit_phase = "form"
+            return
         branch = _branch_for_display(projection.branch)
         self.query_one(
             "#file-notes-git-commit-form-meta",
@@ -2391,6 +2396,7 @@ class LibraryFileNotesGitPanel(Vertical):
     def render_commit_checking(self) -> None:
         """Render cancelable read-only preflight progress."""
         if self._going_away():
+            self._commit_phase = "checking"
             return
         self.query_one(
             "#file-notes-git-commit-checking-copy",
@@ -2404,9 +2410,12 @@ class LibraryFileNotesGitPanel(Vertical):
         projection: CommitPanelReviewProjection,
     ) -> None:
         """Render one immutable, literal review without owning its authority."""
-        if self._going_away():
-            return
         self._commit_review = projection
+        self._commit_notes = projection.included_notes
+        self._commit_included_expanded = False
+        if self._going_away():
+            self._commit_phase = "review"
+            return
         review = projection.review
         repository = projection.repository
         branch = _branch_for_display(review.branch)
@@ -2523,8 +2532,6 @@ class LibraryFileNotesGitPanel(Vertical):
             Collapsible,
         ).collapsed = True
 
-        self._commit_notes = projection.included_notes
-        self._commit_included_expanded = False
         disclosure = self.query_one(
             "#file-notes-git-commit-included-toggle",
             Button,
@@ -2537,6 +2544,7 @@ class LibraryFileNotesGitPanel(Vertical):
     def render_commit_confirming(self) -> None:
         """Render cancelable final checking before the commit child starts."""
         if self._going_away():
+            self._commit_phase = "confirming"
             return
         self.query_one(
             "#file-notes-git-commit-checking-copy",
@@ -2551,6 +2559,7 @@ class LibraryFileNotesGitPanel(Vertical):
     ) -> None:
         """Render non-cancelable branch mutation progress."""
         if self._going_away():
+            self._commit_phase = "executing"
             return
         self.query_one(
             "#file-notes-git-commit-execution-title",
@@ -2565,6 +2574,7 @@ class LibraryFileNotesGitPanel(Vertical):
     def render_commit_recovery_checking(self) -> None:
         """Render non-cancelable proof-only recovery without implying a commit."""
         if self._going_away():
+            self._commit_phase = "executing"
             return
         self.query_one(
             "#file-notes-git-commit-execution-title",
@@ -2581,9 +2591,10 @@ class LibraryFileNotesGitPanel(Vertical):
         projection: CommitResultProjection,
     ) -> None:
         """Render a complete typed outcome without fixed-region elision."""
-        if self._going_away():
-            return
         self._commit_result = projection
+        if self._going_away():
+            self._commit_phase = "result"
+            return
         outcome = projection.outcome
         state_labels = {
             "cancelled": "Cancelled",
@@ -2639,12 +2650,13 @@ class LibraryFileNotesGitPanel(Vertical):
         restore_entry_focus: bool = False,
     ) -> None:
         """Leave a retained result/workflow and focus a stable list target."""
-        if self._going_away():
-            return
         self._commit_review = None
         self._commit_result = None
         self._commit_notes = ()
         self._commit_included_expanded = False
+        if self._going_away():  # focus requests below are DOM work too
+            self._commit_phase = "list"
+            return
         self._commit_list_focus_pending = True
         self._commit_list_preferred_group_id = preferred_group_id
         self._commit_list_focus_selector = None
@@ -2890,8 +2902,6 @@ class LibraryFileNotesGitPanel(Vertical):
             retain_rows: Whether the caller has proved that stale or failed
                 status still belongs to the currently trusted authority.
         """
-        if self._going_away():
-            return
         prior_group_id = self._selected_group_id
         # task-32248 AC#1: the panel advertises "Up/Down select · Tab
         # actions · Enter run" and then, after Trust, left focus on
@@ -2975,8 +2985,6 @@ class LibraryFileNotesGitPanel(Vertical):
 
     def render_untrusted(self, repository_path: str) -> None:
         """Render the pre-trust state without implying status was executed."""
-        if self._going_away():
-            return
         self._trusted = False
         self._trust_available = True
         self._status_ready = False
@@ -3008,8 +3016,6 @@ class LibraryFileNotesGitPanel(Vertical):
             retain_rows: Whether the caller has proved previously rendered rows
                 still belong to the current trusted repository authority.
         """
-        if self._going_away():
-            return
         self._trusted = True
         self._trust_available = False
         self._status_ready = False
@@ -3026,8 +3032,6 @@ class LibraryFileNotesGitPanel(Vertical):
 
     def set_mutating(self, active: bool, detail: str = "") -> None:
         """Render transient mutation state without owning its lifecycle."""
-        if self._going_away():
-            return
         self._mutating = active
         if active:
             status = "Status: UPDATING INDEX"
@@ -3060,21 +3064,21 @@ class LibraryFileNotesGitPanel(Vertical):
             detail: Latest-action copy to render.
             complete: Preserve the complete copy instead of fitting two lines.
         """
+        self._last_action_text = detail
+        self._last_action_complete = complete
         if self._going_away():
             return
         widget = self.query_one("#file-notes-git-action-status", Static)
-        self._last_action_text = detail
-        self._last_action_complete = complete
         self._fit_fixed_regions()
         widget.display = bool(detail)
 
     def clear_last_action(self) -> None:
         """Clear an obsolete latest-action presentation."""
+        self._last_action_text = ""
+        self._last_action_complete = False
         if self._going_away():
             return
         widget = self.query_one("#file-notes-git-action-status", Static)
-        self._last_action_text = ""
-        self._last_action_complete = False
         self._fit_fixed_regions()
         widget.display = False
 
@@ -3084,8 +3088,6 @@ class LibraryFileNotesGitPanel(Vertical):
 
     def render_unavailable(self, detail: str) -> None:
         """Render a non-trustable discovery failure with Back as recovery."""
-        if self._going_away():
-            return
         self._trusted = False
         self._trust_available = False
         self._status_ready = False
@@ -3109,8 +3111,6 @@ class LibraryFileNotesGitPanel(Vertical):
         error: bool = False,
     ) -> None:
         """Disable mutations, retaining rows only under caller-proved authority."""
-        if self._going_away():
-            return
         self._status_ready = False
         self._mutating = False
         self.clear_commit_availability()
@@ -3131,6 +3131,8 @@ class LibraryFileNotesGitPanel(Vertical):
         self._replace_rows(None)
 
     def _sync_empty_state(self) -> None:
+        if self._going_away():
+            return
         ready_empty = not self._replacing_rows and self._status_ready and not self._rows
         self.query_one("#file-notes-git-empty", Static).display = ready_empty
         self.query_one("#file-notes-git-rows", ListView).display = (
@@ -3212,6 +3214,8 @@ class LibraryFileNotesGitPanel(Vertical):
         generation = self._row_render_generation
         group_id = self._selected_group_id
         self._replacing_rows = True
+        if self._going_away():
+            return
         self.query_one("#file-notes-git-rows", ListView).display = False
         self.run_worker(
             partial(
@@ -3288,7 +3292,7 @@ class LibraryFileNotesGitPanel(Vertical):
         )
 
     def _update_actions(self) -> None:
-        if not self.is_mounted:
+        if not self.is_mounted or self._going_away():
             return
         focused = self.screen.focused
         back = self.query_one("#file-notes-git-back", Button)
@@ -3412,6 +3416,8 @@ class LibraryFileNotesGitPanel(Vertical):
         not pull focus into Session Git. Consuming the arm is guarded by
         identity instead -- see `_entry_focus_anchor`.
         """
+        if self._going_away():
+            return False
         focused = self.screen.focused
         return focused is not None and (focused is self or self in focused.ancestors)
 
