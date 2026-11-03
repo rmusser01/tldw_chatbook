@@ -15,6 +15,7 @@ from __future__ import annotations
 import io
 import json
 import os
+import re
 import sys
 import time
 from pathlib import Path
@@ -391,3 +392,19 @@ class TestBuilderIntegration:
         stale, reason = _generated_css_is_stale(package)
         assert stale
         assert "_base.tcss" in reason
+
+
+def test_no_stylesheet_imports_a_missing_sheet() -> None:
+    """TASK-36523: Textual CSS has no ``@import``, so nothing loads a sheet
+    that uses one. ``css/main.tcss`` imported two deleted sheets unnoticed.
+    The app's modules are listed in ``build_css.CSS_MODULES``."""
+    package = Path(build_css.__file__).parents[1]
+    missing = [
+        f"{path.relative_to(package)}: {target}"
+        for path in sorted(package.rglob("*.tcss"))
+        for target in re.findall(
+            r"""@import\s+["']([^"']+)["']""", path.read_text(encoding="utf-8")
+        )
+        if not (path.parent / target).is_file()
+    ]
+    assert not missing, missing

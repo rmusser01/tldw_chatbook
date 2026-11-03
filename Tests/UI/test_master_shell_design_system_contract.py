@@ -341,18 +341,3 @@ def test_workbench_disabled_actions_do_not_stack_three_dimmers():
         "must neutralise the `.is-disabled { opacity: 0.55 }` layer, or a "
         "third multiplier stacks on and no colour can reach the floor"
     )
-
-
-def test_no_stylesheet_imports_a_missing_sheet():
-    """TASK-36523: Textual CSS has no ``@import``, so nothing loads a sheet
-    that uses one. ``css/main.tcss`` imported two deleted sheets unnoticed.
-    The app's modules are listed in ``build_css.CSS_MODULES``."""
-    missing = [
-        f"{path}: {target}"
-        for path in sorted(Path("tldw_chatbook").rglob("*.tcss"))
-        for target in re.findall(
-            r"""@import\s+["']([^"']+)["']""", path.read_text(encoding="utf-8")
-        )
-        if not (path.parent / target).is_file()
-    ]
-    assert not missing, missing
