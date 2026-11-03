@@ -27,11 +27,15 @@ and this project adheres to Some kind of Versioning
   to three times and fails as a general provider error (HTTP 502) without
   OpenAI's message or that advice.
 - Hosted provider presets (Together, Fireworks, Databricks and the other
-  engine presets) now use the saved API key when the provider's environment
-  variable is also set and the configuration records no key source (for
-  example, a key written into config.toml by hand). Previously the
-  environment variable won. To use the variable instead, clear the saved key
-  in Settings ▸ Providers & Models.
+  engine presets) now choose their API key the way the readiness check does.
+  When the configuration records no key source (for example, a key written
+  into config.toml by hand), the saved key now wins over the provider's
+  environment variable; previously the variable won. A recorded key source
+  is now honoured too: a provider whose key was cleared sends no key and
+  reports "API key is required" instead of quietly spending the variable, and
+  a provider set to its saved key no longer spends the variable instead. To
+  use the variable, remove the saved key in Settings ▸ Providers & Models and
+  name the variable in the Env var field.
 
 ## [0.2.3] - 2026-10-02
 

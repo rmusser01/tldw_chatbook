@@ -59,9 +59,10 @@ Engine presets follow [ADR-012](../../backlog/decisions/012-provider-credential-
 
 - A key the caller passes wins. Console passes the key readiness resolved.
 - Otherwise a recorded `credential_source` decides, as its 2026-10-17 amendment (TASK-33641.11) specifies: `"none"` sends no key, `"stored"` sends only the table's `api_key`, and `"environment"` sends only the variable the table's `api_key_env_var` names.
-- With no source recorded, the stored `api_key` outranks the environment variable (its 2026-09-19 amendment). The variable is the one the table names, or the preset's own variable when it names none.
-- The engine resolves through readiness's own resolver, so readiness reports the key a send spends.
-- A present-but-unusable stored key (a placeholder, or a key still encrypted) still fails closed when the source reads it.
+- With no source recorded, the stored `api_key` outranks the environment variable (its 2026-09-19 amendment). The variable is the one the table's `api_key_env_var` names, or the preset's own variable when the table names none.
+- Only that one variable is read. The engine no longer falls back to the preset's variable when a table-named variable is unset, and `"environment"` with no `api_key_env_var` sends no key.
+- The engine resolves through readiness's own resolver, so readiness reports the key a send spends, with one exception below.
+- A present-but-unusable stored key (a placeholder, an empty value, or a key still encrypted) fails closed when the source reads it: no source recorded, or `"stored"`. Readiness instead skips that key. So with no source recorded and the variable exported, readiness reports Ready via the variable and a Console send spends it, but an engine call with no caller key (a catalog refresh, or `chat_api_call` without a key) raises `api_settings.<provider>.api_key is invalid`. This is deliberate: a placeholder the user typed is surfaced, never silently shadowed.
 
 Custom endpoints keep ADR-146's order by the owner's 2026-10-26 decision. That variable is one the user named on the entry, not a provider default.
 

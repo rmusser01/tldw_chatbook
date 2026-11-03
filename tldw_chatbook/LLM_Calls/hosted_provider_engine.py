@@ -662,10 +662,11 @@ def _resolve_api_key(
         # bearer_optional: an explicit blank ("no key configured") defers to
         # the settings/env chain instead of winning with an unusable value.
     # ADR-012 (TASK-36941.3): readiness's resolver picks the key, so a call
-    # with no caller key spends the key readiness reports. A present-but-
-    # unusable stored key still fails closed wherever the recorded source
-    # reads it -- a placeholder the user typed is an error to surface, never
-    # a value to silently shadow. "none" and "environment" never read it.
+    # with no caller key spends the key readiness reports -- except that a
+    # present-but-unusable stored key fails closed wherever the recorded
+    # source reads it, where readiness skips it and reports the variable.
+    # A placeholder the user typed is an error to surface, never a value to
+    # silently shadow. "none" and "environment" never read it.
     if (
         "api_key" in settings
         and configured_provider_credential_source(settings) in (None, "stored")
