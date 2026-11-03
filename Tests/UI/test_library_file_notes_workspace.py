@@ -1883,7 +1883,14 @@ async def test_folder_files_capability_inventory_and_modes(
             "Delete did not reach the file service",
         )
         restore = workspace.query_one("#file-notes-restore", Button)
-        assert restore.display and not restore.disabled
+        # TASK-38646: Delete sets the deleted path before it rescans, inside
+        # its path transition, and Restore stays disabled until that ends.
+        # press() on a hidden or disabled Button is a silent no-op.
+        await _wait_until(
+            pilot,
+            lambda: restore.display and not restore.disabled,
+            "Restore was not offered after Delete",
+        )
         restore.press()
         await _wait_until(
             pilot,
