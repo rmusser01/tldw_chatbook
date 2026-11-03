@@ -4,7 +4,8 @@ Textual 8.2.8 runs every timer sleep on Windows as a blocking job on the loop's
 default executor, and every cancel as a second job (``textual/_win_sleep.py``),
 so 24 h timers pin the pool that ``thread=True`` workers need (TASK-38206).
 These tests simulate win32 on any platform by patching ``sys.platform`` around
-the install call only.
+the install call only. Intervals use ``time.perf_counter``: Windows
+``time.monotonic`` ticks every 15.625 ms, too coarse for a 30 ms wait.
 """
 
 from __future__ import annotations
@@ -69,22 +70,22 @@ async def test_long_timer_waits_hold_no_thread(windows_timer_sleep, monkeypatch)
     second = asyncio.create_task(textual.timer.sleep(guard._WINDOWS_COARSE_TIMER_WAIT))
     await asyncio.sleep(0.05)
     assert not day.done() and not second.done()
-    started = time.monotonic()
+    started = time.perf_counter()
     day.cancel()
     second.cancel()
     for task in (day, second):
         with pytest.raises(asyncio.CancelledError):
             await task
-    assert time.monotonic() - started < 0.5
+    assert time.perf_counter() - started < 0.5
     assert default.jobs == [] and windows_timer_sleep.jobs == []
 
 
 @pytest.mark.asyncio
 async def test_short_timer_waits_use_the_dedicated_pool(windows_timer_sleep):
     default = await _default_executor_spy()
-    started = time.monotonic()
+    started = time.perf_counter()
     await textual.timer.sleep(0.03)
-    assert time.monotonic() - started >= 0.025
+    assert time.perf_counter() - started >= 0.025
     await textual.timer.sleep(0.0004)  # under Textual's 0.5 ms floor: no wait
     assert windows_timer_sleep.jobs == [time.sleep]
     assert default.jobs == []
@@ -99,11 +100,11 @@ async def test_cancelled_short_wait_returns_at_once_and_frees_its_thread(
     default = await _default_executor_spy()
     wait = asyncio.create_task(textual.timer.sleep(0.2))
     await asyncio.sleep(0.02)  # the one pool thread is now inside time.sleep
-    started = time.monotonic()
+    started = time.perf_counter()
     wait.cancel()
     with pytest.raises(asyncio.CancelledError):
         await wait
-    assert time.monotonic() - started < 0.05, "a cancel must not wait for a thread"
+    assert time.perf_counter() - started < 0.05, "a cancel must not wait for a thread"
     # The thread finishes its bounded sleep and serves the next wait.
     await asyncio.wait_for(textual.timer.sleep(0.01), timeout=1.0)
     assert single.jobs == [time.sleep, time.sleep] and default.jobs == []
@@ -127,9 +128,17 @@ async def test_textual_timers_never_reach_the_default_executor(windows_timer_sle
     assert windows_timer_sleep.jobs and set(windows_timer_sleep.jobs) == {time.sleep}
 
 
+@pytest.mark.parametrize("earlier_boot", [False, True])
 @pytest.mark.parametrize("platform", ["darwin", "linux"])
-def test_other_platforms_keep_textuals_sleep(monkeypatch, platform):
-    monkeypatch.setattr(textual.timer, "sleep", textual.timer.sleep)
+def test_other_platforms_keep_textuals_sleep(monkeypatch, platform, earlier_boot):
+    if earlier_boot:
+        # On win32 a TldwCli booted earlier in the same process leaves the
+        # Windows sleep installed process-wide; start from Textual's own sleep
+        # rather than from whatever is installed.
+        monkeypatch.setattr(textual.timer, "sleep", textual.timer.sleep)
+        monkeypatch.setattr(guard, "_windows_timer_pool", None)
+        _install_as_windows(monkeypatch)
+    monkeypatch.setattr(textual.timer, "sleep", textual._time.sleep)
     monkeypatch.setattr(guard, "_windows_timer_pool", None)
     with monkeypatch.context() as patched:
         patched.setattr(sys, "platform", platform)
