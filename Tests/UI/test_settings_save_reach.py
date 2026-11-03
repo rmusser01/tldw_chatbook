@@ -916,3 +916,47 @@ def test_a_suspended_draft_follows_only_what_moved_under_its_own_pair():
     assert "vllm" not in followed.provider_base_url_drafts
     assert followed.raw_values["console-settings-temperature"] == "0.9"
     assert followed.settings.temperature == opened.temperature
+
+
+@pytest.mark.parametrize("after_return", ["kept-invalid", "fixed"])
+@pytest.mark.asyncio
+async def test_an_invalid_context_edit_still_counts_after_the_round_trip(
+    after_return,
+):
+    """TASK-36534 review: an invalid Context and memory value is an edit the
+    suspended draft carries. The reopened Chat settings still asks about it
+    (TASK-33003.5); fixed back to the chat's value, nothing is unsaved."""
+    from Tests.UI.test_console_settings_unsaved_guard import (
+        _gesture,
+        _GuardHarness,
+        _modal,
+        _open,
+    )
+
+    app = _GuardHarness()
+    first = _modal(focus_context=True)
+    async with app.run_test(size=_SIZE) as pilot:
+        await _open(app, pilot, first)
+        trigger = first.query_one("#console-context-trigger-percent", Input)
+        chat_value = trigger.value
+        trigger.value = "not a percent"
+        await pilot.pause()
+        await pilot.pause()
+        assert first._unsaved_field_labels() == ("Context and memory",)
+        snapshot = first.capture_suspended_draft()
+        app.pop_screen()
+        await pilot.pause()
+
+        returned = _modal(suspended_draft=snapshot)
+        await _open(app, pilot, returned)
+        if after_return == "fixed":
+            returned.query_one(
+                "#console-context-trigger-percent", Input
+            ).value = chat_value
+            await pilot.pause()
+            await pilot.pause()
+            assert returned._unsaved_field_labels() == ()
+            return
+        assert returned._unsaved_field_labels() == ("Context and memory",)
+        await _gesture(pilot, "escape")
+        assert app.screen is returned  # Esc asks instead of discarding

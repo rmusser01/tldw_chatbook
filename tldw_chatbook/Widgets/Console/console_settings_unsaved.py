@@ -236,7 +236,9 @@ def reopened_unsaved_baseline(
     """Return the baseline of a modal reopened on a suspended draft.
 
     A field the draft left alone counts as unedited at what the reopened
-    modal shows (``followed_suspended_draft`` moved it to the chat's value).
+    modal shows (``followed_suspended_draft`` moved it to the chat's value),
+    or at the chat's value when the modal shows none (the Context and memory
+    fields while that view holds an invalid value, so fixing it is no edit).
     An edit keeps the first modal's baseline, or takes the chat's value when
     the chat's own value moved meanwhile (TASK-36534), so an edit the chat
     now holds is not unsaved.
@@ -253,12 +255,12 @@ def reopened_unsaved_baseline(
     """
     has_committed = before is not None
     return {
-        label: value
+        label: mounted.get(label, after.get(label))
         if label not in edited
         else after.get(label)
         if has_committed and before.get(label) != after.get(label)
         else edited[label]
-        for label, value in mounted.items()
+        for label in {**after, **mounted, **edited}
     }
 
 
@@ -445,11 +447,11 @@ class ConsoleSettingsUnsavedGuardMixin:
             current = self._current_chat_settings_values()
         except (NoMatches, QueryError):
             return dict(self._unsaved_baseline)  # every field counts as edited
-        edited = unsaved_labels(current, self._unsaved_baseline)
+        # Over the edited labels, not the baseline's: an invalid Context and
+        # memory value is an edit whose label no baseline holds (None here).
         return {
-            label: value
-            for label, value in self._unsaved_baseline.items()
-            if label in edited
+            label: self._unsaved_baseline.get(label)
+            for label in unsaved_labels(current, self._unsaved_baseline)
         }
 
     def _capture_unsaved_baseline(self) -> None:
