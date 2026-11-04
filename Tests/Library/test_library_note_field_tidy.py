@@ -1,7 +1,7 @@
 """Leaving a note field tidies exactly what the save would refuse (TASK-34000.10).
 
 Review N-07: a title ending in a space, or keywords with a case-insensitive
-duplicate ("ok, x, X"), vetoes every autosave -- ADR-027 forbids the save
+duplicate ("ok, x, X"), vetoes every autosave -- ADR-293 forbids the save
 from stripping or deduplicating on the user's behalf. The tidy runs when the
 user LEAVES the field, as a visible draft edit, and it is the inverse of
 exactly those two vetoes and nothing more: no truncation, no markup change,
@@ -101,7 +101,7 @@ def test_tidy_note_keywords_is_idempotent() -> None:
 
 def test_tidy_note_keywords_does_not_touch_a_keyword_the_save_would_refuse_for_length() -> None:
     # Not the tidy's veto: a 101-character keyword stays as typed, so the
-    # save still refuses it with its own message (no truncation, ADR-027).
+    # save still refuses it with its own message (no truncation, ADR-293).
     long = "k" * 101
     assert tidy_note_keywords(long) == long
 

@@ -4,7 +4,7 @@ Status: Accepted
 Date: 2026-08-30
 Related Task: [TASK-19504](../tasks/task-19504%20-%20Bind-Console-local-path-tools-to-run-admitted-workspace-roots.md)
 Design: [Console run-admitted local path authority](../../Docs/superpowers/specs/2026-08-30-task-19504-run-admitted-workspace-roots-design.md)
-Supersedes: ADR-069's disabled-session local-provider fallback only
+Supersedes: ADR-317's disabled-session local-provider fallback only
 
 ## Decision
 
@@ -29,7 +29,7 @@ access. Reads accept `ro` or `rw`; mutations require `rw`. Removal, retargeting,
 identity replacement, or access downgrade refuses the call. Once admitted, the
 operation uses ADR-101's one-shot pinned executor as its pathname-race boundary.
 
-Project-instruction-enabled sessions retain ADR-069's single selected binding and
+Project-instruction-enabled sessions retain ADR-317's single selected binding and
 its stronger session-state guard. The selected binding is represented through the
 same run-root shape so local providers have one authority contract.
 
@@ -44,7 +44,7 @@ this decision.
 
 ## Context
 
-ADR-069 selected one workspace binding for project-instruction-enabled sessions
+ADR-317 selected one workspace binding for project-instruction-enabled sessions
 but explicitly left disabled sessions on the legacy provider-root behavior.
 Subsequent Console work gave each Chat private scratch and retired configured-root
 authority in the mounted Console, yet structured `fs_*`, `git_*`, and Virtual CLI
@@ -80,8 +80,8 @@ can therefore remove fallback authority without overstating pathname safety.
 ## Links
 
 - [ADR-028](028-settings-workspaces-category-and-folder-roots.md)
-- [ADR-032](032-local-agent-tool-permission-boundary.md)
-- [ADR-069](069-console-project-instruction-local-state-and-preflight.md)
+- [ADR-300](300-local-agent-tool-permission-boundary.md)
+- [ADR-317](317-console-project-instruction-local-state-and-preflight.md)
 - [ADR-101](101-one-shot-pinned-workspace-tool-execution.md)
 
 ## Renumbering provenance

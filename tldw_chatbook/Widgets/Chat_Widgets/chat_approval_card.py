@@ -327,7 +327,7 @@ def _collapse_pending_calls(calls: Sequence[Mapping[str, Any]]) -> list[dict[str
 
     Each entry carries ``count`` (for the "×N" suffix) and ``all_arguments``
     (every grouped call's arguments, so a count never conceals a target).
-    ADR-090 (task 5): each entry also carries the group's first non-empty
+    ADR-332 (task 5): each entry also carries the group's first non-empty
     ``rationale`` (the row's advisory context line) and ``description``
     (the tool definition's own text, for the external summarizer).
     """
@@ -347,7 +347,7 @@ def _collapse_pending_calls(calls: Sequence[Mapping[str, Any]]) -> list[dict[str
             # reads of three different files rendered as one, so the user
             # approved three things having seen one.
             entry["all_arguments"] = [call.get("arguments")]
-            # ADR-090 (task 5): seed the group's advisory-context slots so
+            # ADR-332 (task 5): seed the group's advisory-context slots so
             # every entry carries them; the fill-in below lets the first
             # NON-EMPTY value win even when it arrives on a later call.
             entry.setdefault("rationale", "")
@@ -357,7 +357,7 @@ def _collapse_pending_calls(calls: Sequence[Mapping[str, Any]]) -> list[dict[str
         else:
             grouped[name]["count"] += 1
             grouped[name].setdefault("all_arguments", []).append(call.get("arguments"))
-        # ADR-090 (task 5): first non-empty wins -- a blank rationale on an
+        # ADR-332 (task 5): first non-empty wins -- a blank rationale on an
         # earlier call must not mask a real reason stated on a later one.
         if call.get("rationale") and not grouped[name].get("rationale"):
             grouped[name]["rationale"] = str(call.get("rationale"))
@@ -535,7 +535,7 @@ class ChatApprovalCard(Container):
         self._batch_round_id: str | None = None
         self._batch_phase = "approval"
         self._batch_calls_snapshot: list[dict[str, Any]] = []
-        #: ADR-090 (task 5): the current batch's advisory summary (payload
+        #: ADR-332 (task 5): the current batch's advisory summary (payload
         #: carriage on ``set_batch``, patchable in place via ``set_summary``
         #: for a matching round), re-rendered by ``_render_summary_line``.
         self._batch_summary: str | None = None
@@ -573,7 +573,7 @@ class ChatApprovalCard(Container):
         deadline = Static("", id="approval-deadline", markup=False)
         deadline.display = False
         yield deadline
-        # ADR-090 (task 5): the batch-level advisory summary line, built
+        # ADR-332 (task 5): the batch-level advisory summary line, built
         # hidden like the deadline above (task-17500 pattern -- see
         # __init__). markup=True because the dim/italic styling requires
         # markup; the payload text goes through rich's ``escape()`` before
@@ -679,7 +679,7 @@ class ChatApprovalCard(Container):
                 resolve THIS exact round rather than guessing from
                 whichever session happens to be active when the decision
                 is delivered.
-            summary: ADR-090 advisory batch summary carried by the
+            summary: ADR-332 advisory batch summary carried by the
                 payload, re-rendered on every remount.
 
         Raises:
@@ -719,7 +719,7 @@ class ChatApprovalCard(Container):
         title.update(
             "Finishing — Stop will not cancel" if finishing else "Approval required"
         )
-        # ADR-090 (task 5): stash the payload-carried summary so any remount
+        # ADR-332 (task 5): stash the payload-carried summary so any remount
         # re-renders it (a live `set_summary` patch is for THIS mount only).
         self._batch_summary = format_context_line(summary) if summary else None
         # TASK-1844/32288: surface the deadline AND keep it ticking -- see
@@ -924,7 +924,7 @@ class ChatApprovalCard(Container):
                         classes="approval-row-effects",
                     )
                 )
-            # ADR-090 (task 5): the row's advisory context line, directly
+            # ADR-332 (task 5): the row's advisory context line, directly
             # below the details it annotates. markup=True because the
             # dim/italic styling requires markup; ``escape()`` neutralizes
             # bracket injection in the model-authored text. Rendered only
@@ -1226,7 +1226,7 @@ class ChatApprovalCard(Container):
         return True
 
     def _render_summary_line(self) -> None:
-        """Render the batch-level advisory summary line (ADR-090).
+        """Render the batch-level advisory summary line (ADR-332).
 
         Plain, dim/italic, visually subordinate to every machine-owned
         field; hidden entirely when there is nothing to show.
@@ -1244,7 +1244,7 @@ class ChatApprovalCard(Container):
             summary.display = False
 
     def set_summary(self, round_id: str | None, text: str) -> None:
-        """Patch ONLY the batch summary line for a matching round (ADR-090).
+        """Patch ONLY the batch summary line for a matching round (ADR-332).
 
         Guarded by the card's current round id -- a late result from a
         prior round must never land on the current card -- and never

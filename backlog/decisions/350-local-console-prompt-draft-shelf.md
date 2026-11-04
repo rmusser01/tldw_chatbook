@@ -38,7 +38,7 @@ creates a normal local Library Prompt through the existing Prompt save API and
 may then assign one existing local collection through the existing membership
 API. Promotion never removes or rewrites the shelf entry.
 
-The keyboard route uses the Console command palette. ADR-031's ban on
+The keyboard route uses the Console command palette. ADR-299's ban on
 terminal-convention bindings means this feature does not claim Ctrl+S.
 
 ## Context
@@ -84,7 +84,7 @@ and version-history paths.
 | Add a standalone JSON/JSONL file | Creates a second raw-file recovery participant and duplicates transactional behavior already available in the Prompts database. |
 | Evict the oldest draft at capacity | Deletes user work without an explicit choice and makes the cap surprising. |
 | Build a second stash browser modal | Duplicates Prompt Workbench navigation, focus, Library browsing, and truthful-state behavior. |
-| Bind Ctrl+S | Conflicts with ADR-031's terminal-convention key rules. |
+| Bind Ctrl+S | Conflicts with ADR-299's terminal-convention key rules. |
 
 ## Consequences
 
@@ -108,11 +108,11 @@ and version-history paths.
 
 ## Links
 
-- [ADR-029: Versioned Prompt Artifacts and Safe Improvement Transactions](029-versioned-prompt-artifacts-and-safe-improvement-transactions.md)
-- [ADR-031: TUI Keybinding and Footer Hint Conventions](031-tui-keybinding-and-footer-hint-conventions.md)
+- [ADR-297: Versioned Prompt Artifacts and Safe Improvement Transactions](297-versioned-prompt-artifacts-and-safe-improvement-transactions.md)
+- [ADR-299: TUI Keybinding and Footer Hint Conventions](299-tui-keybinding-and-footer-hint-conventions.md)
 - [ADR-057: Portable Chatbook Prompt Records](057-portable-chatbook-prompt-records.md)
 - [Console Prompt Draft Shelf Design](../../Docs/superpowers/specs/2026-09-25-console-prompt-draft-shelf-design.md)
 
 ## Renumbering provenance
 
-Renumbered from ADR-184 to ADR-350 on 2026-11-03 under TASK-36943.3 (owner decision 2026-10-25: the younger file of a shared number is renumbered). ADR-184 now refers to 184-agent-task-server-execution-message-refs-and-approval-escalation.md.
+Renumbered from ADR-350 to ADR-350 on 2026-11-03 under TASK-36943.3 (owner decision 2026-10-25: the younger file of a shared number is renumbered). ADR-184 now refers to 184-agent-task-server-execution-message-refs-and-approval-escalation.md.

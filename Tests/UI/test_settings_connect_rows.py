@@ -144,7 +144,7 @@ async def test_provider_is_one_row_one_tab_stop_and_filters_by_name_or_id(
         await pilot.press("down")
         assert picker.highlighted not in (None, highlighted)
 
-        # ADR-031 / task-1560: one Esc closes the list AND releases the field,
+        # ADR-299 / task-1560: one Esc closes the list AND releases the field,
         # so the footer's "Esc, s save category" chain holds with the list open.
         assert ("Esc, s", "save category") in screen._footer_shortcut_entries()
         await pilot.press("escape")

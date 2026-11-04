@@ -1,6 +1,6 @@
 """The dirty State line keeps its save-model badge and counts unsaved fields.
 
-TASK-33002.4: with unsaved edits the State line used to drop ADR-033's
+TASK-33002.4: with unsaved edits the State line used to drop ADR-303's
 persistence badge for "State: Unsaved changes | ...", and nothing said how
 much was unsaved. It now reads "State: {badge} · N unsaved | ..." where N is
 the number of fields that differ from their saved values.

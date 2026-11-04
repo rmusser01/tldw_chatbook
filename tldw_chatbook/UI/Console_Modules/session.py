@@ -6255,7 +6255,7 @@ class ConsoleSessionController:
         session_kwargs["project_instruction_state"] = decode_project_context_json(
             encoded_project_state
         )
-        # One-name invariant (ADR-149): a session shows exactly one identity
+        # One-name invariant (ADR-346): a session shows exactly one identity
         # label, keyed by kind. A contradictory payload keeps only the
         # kind-appropriate field. Legacy payloads predate `assistant_name`,
         # so the else-branch pop is a no-op for them.

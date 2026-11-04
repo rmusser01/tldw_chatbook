@@ -840,7 +840,7 @@ disagree).
 
 **What happened.** 2026-08-20, two independent sessions in the same window: the
 chunking-parity branch drafted its engine ADR as 072 and found at PR time that other
-branches had contended for the same number (it shipped as ADR-073); the hermes-parity
+branches had contended for the same number (it shipped as ADR-318); the hermes-parity
 branch (PR #1832) drafted its server-offload ADR as 072 on 2026-08-19 and discovered
 the collision only as a merge conflict in `backlog/decisions/README.md` — by merge
 time on 2026-08-21, dev had claimed 072 (checkpoint harness), 073, 074, AND 075 from

@@ -9,7 +9,7 @@ Related Task: `TASK-23088`
 
 Related Spec: [Console chat fork from a message](../../Docs/superpowers/specs/2026-08-26-console-chat-fork-design.md)
 
-Extends: ADR-033, ADR-044, ADR-052, ADR-069, ADR-079, and ADR-082
+Extends: ADR-033, ADR-044, ADR-052, ADR-317, ADR-079, and ADR-082
 
 ## Context
 
@@ -137,7 +137,7 @@ decisions, and resolved instruction bodies are never copied.
 
 The same Workspace association does not bypass current binding or read/write
 validation. Project instructions retain only declarative selection inputs and undergo
-fresh fingerprint validation, notice, and preflight under ADR-069 before use.
+fresh fingerprint validation, notice, and preflight under ADR-317 before use.
 `project_instruction_notice_key` is always cleared so source consent cannot suppress
 the fork's fresh destination/locator notice.
 
@@ -298,7 +298,7 @@ Double submission is fenced and the button shows `Forking…` while in flight.
 - [ADR-033: Application session state ownership](033-application-session-state-ownership.md)
 - [ADR-044: Ephemeral generated-video storage](044-ephemeral-generated-video-storage-playback-and-streaming.md)
 - [ADR-052: Conversation memory and compaction](052-console-conversation-memory-and-compaction-policy.md)
-- [ADR-069: Project-instruction local state and preflight](069-console-project-instruction-local-state-and-preflight.md)
+- [ADR-317: Project-instruction local state and preflight](317-console-project-instruction-local-state-and-preflight.md)
 - [ADR-079: Per-conversation Library authority](079-console-library-conversation-authority.md)
 - [ADR-082: Per-chat private scratch](082-console-per-chat-private-scratch-space.md)
 

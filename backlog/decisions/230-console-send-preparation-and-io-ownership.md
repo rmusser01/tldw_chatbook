@@ -4,7 +4,7 @@ Date: 2026-10-06
 Status: Accepted following written review and the requested issue audit.
 Task: [TASK-34563](../tasks/task-34563%20-%20Design-Console-Send-preparation-and-I-O-ownership.md)
 Spec: [Console Send preparation architecture](../../Docs/superpowers/specs/2026-10-06-console-send-preparation-architecture-design.md)
-Extends: ADR-094, ADR-098, ADR-126, ADR-148, ADR-163, ADR-197 and ADR-220.
+Extends: ADR-336, ADR-098, ADR-126, ADR-345, ADR-163, ADR-197 and ADR-220.
 
 ## Context
 
@@ -25,7 +25,7 @@ The Console already has app-owned custody, authoritative preparation/run/queue s
 
 ## Explicit refinements and preserved boundaries
 
-ADR-094's app-owned accepted-turn contract is extended earlier to received-intent custody. Complete request construction and durable acceptance remain separate. Navigation still detaches presentation; initial review can now remain app-owned.
+ADR-336's app-owned accepted-turn contract is extended earlier to received-intent custody. Complete request construction and durable acceptance remain separate. Navigation still detaches presentation; initial review can now remain app-owned.
 
 ADR-126 retains exact storage membership, recovery, physical ownership and retirement. This decision requires explicit ordinary native-work outcome retention; it creates no transferable lease, new file format or stronger cross-process transaction.
 

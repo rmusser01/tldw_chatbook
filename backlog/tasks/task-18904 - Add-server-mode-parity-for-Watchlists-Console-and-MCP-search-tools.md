@@ -14,7 +14,7 @@ references:
   - rmusser01/tldw_server TASK-13022
   - TASK-16222
   - Docs/superpowers/specs/2026-08-14-watchlists-agent-search-tools-design.md
-  - backlog/decisions/032-local-agent-tool-permission-boundary.md
+  - backlog/decisions/300-local-agent-tool-permission-boundary.md
 priority: high
 ---
 

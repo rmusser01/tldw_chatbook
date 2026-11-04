@@ -6,7 +6,7 @@ Status: Accepted — the user approved the written specification and review corr
 
 Review revision: 2026-09-19 — chronology and concurrency separated; event-date matching, runtime admission, continuation and replay contracts tightened.
 
-Amends: [ADR-030](030-local-library-agent-tool-boundary.md) and [ADR-079](079-console-library-conversation-authority.md) for a narrow Console archive-recovery capability available in both retrieval modes when Assistant Library access is Allowed. Preserves [ADR-147](147-conversation-archive-and-exact-resume.md)'s local archive and exact-resume boundaries. Uses [ADR-150's chat-creation runtime pattern](150-agent-chat-fork-and-spawn.md) without remembered confirmation.
+Amends: [ADR-298](298-local-library-agent-tool-boundary.md) and [ADR-079](079-console-library-conversation-authority.md) for a narrow Console archive-recovery capability available in both retrieval modes when Assistant Library access is Allowed. Preserves [ADR-147](147-conversation-archive-and-exact-resume.md)'s local archive and exact-resume boundaries. Uses [ADR-348's chat-creation runtime pattern](348-agent-chat-fork-and-spawn.md) without remembered confirmation.
 
 Task: [TASK-32772](../tasks/task-32772%20-%20Design-agent-assisted-archived-conversation-recovery.md)
 
@@ -49,7 +49,7 @@ General Library tools follow a Direct-versus-RAG selector and share descriptors 
 
 Implementation spans two schema migrations (including a workspace archive revision), a narrow Console tool capability, a shared recovery coordinator and structured result/confirmation UI. It must preserve existing local-only archive sync semantics and ADR-079's authenticated authority, including queued-turn and destination behavior. Search/filter query qualification, lifecycle race tests, mounted interaction tests and a disposable-data live recovery check are required; the full test suite is not authorized by this design.
 
-The approved written spec defines limits, tool arguments, lifecycle choices and error outcomes. The linked plan specifies delivery and verification. ADR-030/079 identify this narrow amendment in metadata; their original decision bodies remain unchanged.
+The approved written spec defines limits, tool arguments, lifecycle choices and error outcomes. The linked plan specifies delivery and verification. ADR-298/079 identify this narrow amendment in metadata; their original decision bodies remain unchanged.
 
 ## Clarification recorded 2026-10-18: fenced-tool reference handoff
 

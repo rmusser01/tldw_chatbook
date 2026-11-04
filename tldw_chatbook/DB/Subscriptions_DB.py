@@ -4972,7 +4972,7 @@ class SubscriptionsDB(BaseDB):
         roster before creating anything -- `add_subscription` is a plain
         INSERT with no uniqueness constraint on `source`, so without this
         lookup a re-import duplicates every feed and the additive-only
-        round-trip (ADR-043 rule 6) is impossible.
+        round-trip (ADR-307 rule 6) is impossible.
 
         Args:
             source: The exact source URL/identifier to match.
@@ -5644,7 +5644,7 @@ class SubscriptionsDB(BaseDB):
         """Recent briefings across ALL watchlists, newest first.
 
         The Artifacts screen's Reports slot reads through this -- one bounded
-        query instead of per-watchlist fan-out (ADR-079). Narrow projection on
+        query instead of per-watchlist fan-out (ADR-323). Narrow projection on
         purpose (task-15464 pattern): no ``body_markdown`` blobs; the body is
         read on open in the Watchlists artifacts pane.
 

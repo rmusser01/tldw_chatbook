@@ -3731,7 +3731,7 @@ def console_view_hooks(self) -> dict[str, Any]:
         # detected; native runs get this screen's callable back
         # untouched, identity included.
         "set_pending_approval": self._served_relay_routed_pending_approval(),
-        # ADR-090: UI-thread bridge to patch a mounted approval card's
+        # ADR-332: UI-thread bridge to patch a mounted approval card's
         # advisory summary line in place (never re-runs set_batch).
         "update_pending_approval_summary": self._update_console_approval_summary,
         # Task 9 (parked background approvals): UI-thread bridge target

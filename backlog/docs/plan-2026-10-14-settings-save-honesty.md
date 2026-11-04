@@ -29,7 +29,7 @@ On any Settings page, what is on screen tells the user four things:
 - that every control they see does something;
 - what an on/off setting is set to, shown by one control that looks and behaves the same on every page.
 
-ADR-033 rule 3 already requires the first: "Every instant-apply control MUST carry the shared `INSTANT_APPLY_BEHAVIOR_COPY` label inline or in the focused-field inspector". Console Behavior breaks that rule today. This stream does not change any commit model (ADR-033 rule 1). It makes the labels true and makes them come from one table.
+ADR-303 rule 3 already requires the first: "Every instant-apply control MUST carry the shared `INSTANT_APPLY_BEHAVIOR_COPY` label inline or in the focused-field inspector". Console Behavior breaks that rule today. This stream does not change any commit model (ADR-303 rule 1). It makes the labels true and makes them come from one table.
 
 ## Assumptions & sequencing
 
@@ -72,9 +72,9 @@ In scope:
 - Speech & TTS's three-row selects (TASK-35023).
 
 Out of scope, with the reason for each:
-- **Abolishing or merging the commit models.** ADR-033 rule 1 rejects it, and this plan does not recommend it.
+- **Abolishing or merging the commit models.** ADR-303 rule 1 rejects it, and this plan does not recommend it.
 - **Providers & Models' Saved model list "Save selected" (finding A2).** It writes at once and has no instant-apply hint. Finding A2 (BY-DESIGN P2) belongs to the review's saved-model-list stream, which renames it and adds the hint in the same group, and #3057 AC#9 keeps its behaviour. TASK-35013 names it as that stream's item and does not label it, so the two PRs do not both edit the group.
-- **Privacy & Security's encryption actions and the raw-CLI Arm button.** Each encryption action opens a password dialog that states what it will do. Arm only arms for this launch, saves nothing, and already says "Applies immediately." beside it. Neither is a preference that silently persists, which is what ADR-033 rule 3 governs.
+- **Privacy & Security's encryption actions and the raw-CLI Arm button.** Each encryption action opens a password dialog that states what it will do. Arm only arms for this launch, saves nothing, and already says "Applies immediately." beside it. Neither is a preference that silently persists, which is what ADR-303 rule 3 governs.
 - **One leave policy for every draft page, and an "Unsaved: …" header chip.**
   - Speech & TTS's leave modal is deliberate (task-2708, pinned by `test_speech_tts_dirty_banner_names_leave_resolution`).
   - #3057's `settings_quit_guard` covers quitting.
@@ -87,7 +87,7 @@ Out of scope, with the reason for each:
 
 ## Settled, not asked
 
-- **Status row placement and Chat images stay instant.** ADR-033 rule 3 allows instant-apply for low-risk, independently meaningful, trivially reversible preferences, if the control is labelled. Both handlers (`handle_console_status_row_position_toggle`, `handle_console_remote_images_toggle`) are documented as "immediate write, no category draft". TASK-32761 qualified their write queue across leaving the screen. M1's verified fix is the label, so staging them would undo deliberate, tested work for no verified gain.
+- **Status row placement and Chat images stay instant.** ADR-303 rule 3 allows instant-apply for low-risk, independently meaningful, trivially reversible preferences, if the control is labelled. Both handlers (`handle_console_status_row_position_toggle`, `handle_console_remote_images_toggle`) are documented as "immediate write, no category draft". TASK-32761 qualified their write queue across leaving the screen. M1's verified fix is the label, so staging them would undo deliberate, tested work for no verified gain.
 - **The one Settings boolean widget is a checkbox.** TASK-2827 (Done) chose Checkbox over Switch and Button toggles for Settings, and #3057 made it the state-glyph `StateCheckbox`. The Speech and Agents Switches and the Appearance Button toggles came back later and are regressions against that task's AC#1. OD-3 settled only how the checkbox is labelled.
 
 ## Decisions (ruled 2026-10-14)
@@ -161,7 +161,7 @@ Closes D1 (residual), D-shell-design-M1, D5 (storage line) and D-shell-design-M4
 
    The module imports the screen's constants at module top, as `providers_models_card.py` does. `settings_screen.py` imports the module only inside the functions that use it. ADR-097 pins the Settings route's pre-import payload (`Tests/Performance/boot_budget_snapshots/preimport_payload.json`).
 
-2. **Each Console control that saves without `s` declares itself the ADR-033 way (M1).** In `compose_console_behavior_card`, in `UI/Settings_Modules/console_behavior_card.py` (TASK-35017 moves `_render_console_behavior_card` there in its first commit, and this task lands after it):
+2. **Each Console control that saves without `s` declares itself the ADR-303 way (M1).** In `compose_console_behavior_card`, in `UI/Settings_Modules/console_behavior_card.py` (TASK-35017 moves `_render_console_behavior_card` there in its first commit, and this task lands after it):
    - Wrap Show model thinking, Status row placement and Chat images, each with its header, control and help, in a `Vertical(classes="settings-instant-apply-group")`, as the Permission summaries group already is.
    - Give each help `Static` the `settings-instant-apply-hint` class, and start it with `INSTANT_APPLY_BEHAVIOR_COPY` followed by the rest of today's sentence. This replaces #3057's ad-hoc "Applies immediately." prefix and adds no row.
    - Give Exchange capture's help a lead clause naming its Apply button and saying that `s` does not save it.
@@ -401,7 +401,7 @@ Add each new file, or each new node in a file the census lists only by node (for
 
 ## Docs
 
-- TASK-35013: Docs/User_Guide/settings.md: "How saving works", the layout table's Scope Inspector row, the keys table, and the Quirks bullet. DESIGN.md: the "Persistence badge" bullet. No ADR change: ADR-033 rule 3 already says what T1 does.
+- TASK-35013: Docs/User_Guide/settings.md: "How saving works", the layout table's Scope Inspector row, the keys table, and the Quirks bullet. DESIGN.md: the "Persistence badge" bullet. No ADR change: ADR-303 rule 3 already says what T1 does.
 - TASK-35014: Docs/User_Guide/settings.md: Appearance, Quirks, Splash, Guardian and Dreams. `Tests/UI/COMMAND_PALETTE_TESTING.md`.
 - TASK-35015: DESIGN.md: the dense-form convention's toggle bullet and a row-shape line. Docs/User_Guide/settings.md: every converted control's description.
 - TASK-35023: Docs/User_Guide/settings.md only if its Speech section describes the field layout.
@@ -485,7 +485,7 @@ Each item has one owner. Each entry says what this stream shares with it and the
 - **P9 Task 3 (TASK-33003.15/.16/.17, TASK-33641.1).** Contrast work in `_settings.tcss`, a shared file. Whichever lands second rebases.
 - **TASK-33005.13.** Already fixed by #3057 (P9 plan); nothing here.
 - **TASK-2827 (Done).** It settled the checkbox as Settings' on/off idiom. T3 restores it where later work regressed.
-- **TASK-1341 / TASK-1372 (ADR-033).** T1 applies rule 3 to the controls that skipped it, with no ADR change.
+- **TASK-1341 / TASK-1372 (ADR-303).** T1 applies rule 3 to the controls that skipped it, with no ADR change.
 - **TASK-1378 (split `settings_screen.py`).** T1's move of the badge and scope text is one more slice of it, with no conflict.
 - **TASK-34792 and TASK-33200 (Dreams / Guardian, In Progress).** T2 edits only their "How this page works" rows, and T3 leaves their gate buttons alone.
 - **TASK-34100.13 (wizard Appearance step).** Reduce motion and ASCII glyphs keep writing the same `[appearance]` keys.

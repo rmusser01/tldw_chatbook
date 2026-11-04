@@ -49,5 +49,5 @@ the agent to "research <question>" or invoke the skill explicitly.
 Watchlists-aware skill authors should use the exact
 `watchlists_search_items`/`watchlists_get_item` inventory and permission
 boundary recorded in [TASK-16222](../../../backlog/tasks/task-16222%20-%20Expose-local-Watchlists-search-tools-to-Console-and-MCP.md),
-[ADR-030](../../../backlog/decisions/030-local-library-agent-tool-boundary.md),
-and amended [ADR-032](../../../backlog/decisions/032-local-agent-tool-permission-boundary.md).
+[ADR-298](../../../backlog/decisions/298-local-library-agent-tool-boundary.md),
+and amended [ADR-300](../../../backlog/decisions/300-local-agent-tool-permission-boundary.md).

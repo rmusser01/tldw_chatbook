@@ -14900,7 +14900,7 @@ async def test_character_tts_unverified_status_never_promises_an_impossible_refr
 
     A legacy-provider profile is permanently "unverified" (no catalog to
     preflight), so telling the user to Refresh names a control that can
-    never change the state -- ADR-031. audio.cpp keeps its refresh copy.
+    never change the state -- ADR-299. audio.cpp keeps its refresh copy.
     """
 
     profile = _character_tts_profile(1)

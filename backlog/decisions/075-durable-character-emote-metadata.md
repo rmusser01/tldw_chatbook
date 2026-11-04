@@ -4,7 +4,7 @@ Status: Proposed
 Date: 2026-08-20
 Related Task: [TASK-19060](../tasks/task-19060%20-%20Match-server-streaming-emotes-and-persistence.md)
 Related Spec: [Actor Pack, Persona Buddy, and Streaming Emote Programme Design](../../Docs/superpowers/specs/2026-08-20-actor-pack-persona-buddy-and-emote-programme-design.md)
-Amends: [ADR-067](067-bundled-samira-visual-identity-pack.md)
+Amends: [ADR-312](312-bundled-samira-visual-identity-pack.md)
 Supersedes: N/A
 
 ## Decision
@@ -60,7 +60,7 @@ collection. History therefore restores the exact final immutable expression whil
 the referenced local data remains intact and reports a deterministic fallback when it
 is unavailable. It does not replay intra-message emote beats in V1.
 
-This decision amends ADR-067's session-only message boundary only for bounded durable
+This decision amends ADR-312's session-only message boundary only for bounded durable
 character-expression metadata and final-expression history restore. It does not make
 manual overrides durable, and it does not merge Persona Visual operational states or
 Persona Buddy control into Shared Visual Identity expressions. It authorizes no sync,
@@ -68,7 +68,7 @@ server transport, or server implementation.
 
 ## Context
 
-ADR-067 deliberately kept manual expression overrides session-local and deferred a
+ADR-312 deliberately kept manual expression overrides session-local and deferred a
 durable message replay contract. Chatbook now needs server-compatible streaming
 expression changes without leaking control syntax into the conversation, search, or
 exports, and it needs historical messages to recover their final immutable visual
@@ -85,7 +85,7 @@ non-streaming completion, persistence, and history reload.
 | --- | --- |
 | Parse only the final emote | It cannot drive live expression changes or retain the bounded event evidence and offsets required for server compatibility. |
 | Make tool calls the primary emote protocol | It couples expression control to provider tool support and diverges from the pinned assistant-visible-text contract. |
-| Reuse Persona Buddy states | Buddy states represent trusted application operations, not character reactions; reuse would merge the runtimes ADR-067 keeps separate. |
+| Reuse Persona Buddy states | Buddy states represent trusted application operations, not character reactions; reuse would merge the runtimes ADR-312 keeps separate. |
 | Run heuristic and explicit emotes together | Competing selectors make the final expression nondeterministic and violate the server's explicit-emote precedence. |
 | Persist raw directive lines | Control syntax would leak into conversation content, search, and export and would require reparsing untrusted historic text. |
 | Replay historical emote beats in V1 | Timed replay adds lifecycle and rendering semantics not needed to restore a message's final immutable appearance. |
@@ -106,7 +106,7 @@ non-streaming completion, persistence, and history reload.
 
 ## Links
 
-- [ADR-067: Bundle Samira through a local Visual Identity bridge](067-bundled-samira-visual-identity-pack.md)
+- [ADR-312: Bundle Samira through a local Visual Identity bridge](312-bundled-samira-visual-identity-pack.md)
 - [Approved programme design](../../Docs/superpowers/specs/2026-08-20-actor-pack-persona-buddy-and-emote-programme-design.md)
 - [TASK-19060: Match server streaming emotes and persistence](../tasks/task-19060%20-%20Match-server-streaming-emotes-and-persistence.md)
 - [`tldw_server` compatibility commit](https://github.com/rmusser01/tldw_server/commit/385afa951922c8a9dc2002c675bb6cad65e4ac23)

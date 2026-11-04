@@ -12,7 +12,7 @@ priority: medium
 ## Description
 
 <!-- SECTION:DESCRIPTION:BEGIN -->
-ADR-147's Chat/sampling_params.py already unified the sampling keys, bounds, and enums across 13 consumers — the right pattern, half applied. The rest of the settings vocabulary is still declared per surface and has measurably drifted: the endpoint-key tuple has 5 keys in the Settings hub (PROVIDER_ENDPOINT_KEYS) versus 8 in console_settings_defaults.py (missing api_endpoint, router_base_url, huggingface_router_base_url on the hub side), provider-capability maps exist three times (settings_screen, console_settings_defaults, model_capabilities predicates), and coercion helpers have 30+ private copies repo-wide despite canonical ones in config.py. Extend the sampling_params pattern to the remaining vocabulary so every surface reads one schema.
+ADR-344's Chat/sampling_params.py already unified the sampling keys, bounds, and enums across 13 consumers — the right pattern, half applied. The rest of the settings vocabulary is still declared per surface and has measurably drifted: the endpoint-key tuple has 5 keys in the Settings hub (PROVIDER_ENDPOINT_KEYS) versus 8 in console_settings_defaults.py (missing api_endpoint, router_base_url, huggingface_router_base_url on the hub side), provider-capability maps exist three times (settings_screen, console_settings_defaults, model_capabilities predicates), and coercion helpers have 30+ private copies repo-wide despite canonical ones in config.py. Extend the sampling_params pattern to the remaining vocabulary so every surface reads one schema.
 <!-- SECTION:DESCRIPTION:END -->
 
 ## Acceptance Criteria

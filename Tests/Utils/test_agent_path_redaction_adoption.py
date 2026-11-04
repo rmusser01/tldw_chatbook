@@ -7,7 +7,7 @@ misses were on the paths that are not the user's at all -- they are the
 model's:
 
 * `Tools/local_tool_impls._resolve_in_workspace`, the choke point for the
-  ADR-032 local tool family (`fs_read`/`fs_list`/`fs_glob`/`fs_grep`/
+  ADR-300 local tool family (`fs_read`/`fs_list`/`fs_glob`/`fs_grep`/
   `fs_write`/...).
 * `Utils/path_validation.validate_path_multi`, the choke point for the
   in-process builtin family (`ReadFileTool`/`WriteFileTool`/

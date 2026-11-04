@@ -158,7 +158,7 @@ def test_stdlib_elementtree_still_ignores_external_entities() -> None:
 
 
 def test_ordinary_opml_still_parses_and_keeps_folder_structure() -> None:
-    """The hardening did not change the parser's contract (ADR-043)."""
+    """The hardening did not change the parser's contract (ADR-307)."""
     items = WatchlistOpmlService().parse(BENIGN_OPML)
     assert items == [
         {

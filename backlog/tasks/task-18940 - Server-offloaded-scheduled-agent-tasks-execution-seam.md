@@ -20,7 +20,7 @@ dependencies:
 ## Description
 
 <!-- SECTION:DESCRIPTION:BEGIN -->
-The strategic follow-up from the TASK-18936 parity audit, carrying the owner's stated long-term direction: **tldw_server is to be treated the same as hermes's hosted gateway — scheduled work is offloaded to the server to execute, and results are passed back to the client if so desired.** This closes the one capability where hermes runs scheduled agent work today and chatbook cannot: `agent_task` automations are fully modeled locally (ADR-018: families, lifecycle, health, preview, approval policies) but execution is `execution_unavailable` because ADR-018 deferred execution to server integration that never landed.
+The strategic follow-up from the TASK-18936 parity audit, carrying the owner's stated long-term direction: **tldw_server is to be treated the same as hermes's hosted gateway — scheduled work is offloaded to the server to execute, and results are passed back to the client if so desired.** This closes the one capability where hermes runs scheduled agent work today and chatbook cannot: `agent_task` automations are fully modeled locally (ADR-291: families, lifecycle, health, preview, approval policies) but execution is `execution_unavailable` because ADR-291 deferred execution to server integration that never landed.
 
 Scope: define and implement the first server-execution seam for `agent_task` automations — the client must create/preview a definition, the server owns execution when the account is server-scoped (`owner_id="server:<user_id>"`), and completed results flow back through the existing sync/notification channels into the client's workbench (and optionally Console, reusing the existing handoff machinery). Local execution remains the offline fallback for local-owner definitions — this task adds the server path, it does not remove the local-first one. Hermes-precedent capabilities to fold into the contract: durable execution-audit history (the `AutomationAuditEvent` model exists), per-task model selection passed with the definition, and continuity/missed-fire reconciliation when the client reconnects (consumes TASK-18937's accounting).
 
@@ -36,7 +36,7 @@ This is architecture-first work: an ADR defining the client↔server execution c
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [x] #1 An ADR (amending/superseding the relevant ADR-018 clause) defines the server-execution contract: definition upload, execution ownership, result-delivery channel(s), approval policy for server-side tool use, failure/timeout semantics, and reconnect reconciliation — drafted and accepted before implementation begins
+- [x] #1 An ADR (amending/superseding the relevant ADR-291 clause) defines the server-execution contract: definition upload, execution ownership, result-delivery channel(s), approval policy for server-side tool use, failure/timeout semantics, and reconnect reconciliation — drafted and accepted before implementation begins
 - [ ] #2 A server-scoped `agent_task` definition can be created/previewed locally, submitted for server execution, and its `health`/lifecycle transitions honestly (no more permanent `execution_unavailable` for server owners)
 - [ ] #3 Completed server executions deliver results back to the client through at least one concrete channel (workbench result row, notification, or Console handoff — per the ADR), with the delivery visible in the UI and durable
 - [ ] #4 Execution-audit history is durable end-to-end (client-visible audit trail of server executions, reusing `AutomationAuditEvent`)
@@ -50,7 +50,7 @@ This is architecture-first work: an ADR defining the client↔server execution c
 
 <!-- SECTION:PLAN:BEGIN -->
 ADR required: yes.
-ADR path: backlog/decisions/077-server-offloaded-scheduled-agent-tasks.md (phase 1, accepted); phase 2 drafted as backlog/decisions/184-agent-task-server-execution-message-refs-and-approval-escalation.md (status: Proposed — awaiting owner rulings on message durability and the approval floor) (drafted as 072, renumbered twice at merge time as concurrent branches claimed 072–076; accepted 2026-08-21 with both judgment decisions approved by the owner; amends ADR-018's "execution remains execution_unavailable until server-side automation execution is integrated" clause).
+ADR path: backlog/decisions/077-server-offloaded-scheduled-agent-tasks.md (phase 1, accepted); phase 2 drafted as backlog/decisions/184-agent-task-server-execution-message-refs-and-approval-escalation.md (status: Proposed — awaiting owner rulings on message durability and the approval floor) (drafted as 072, renumbered twice at merge time as concurrent branches claimed 072–076; accepted 2026-08-21 with both judgment decisions approved by the owner; amends ADR-291's "execution remains execution_unavailable until server-side automation execution is integrated" clause).
 Reason: cross-system service contract (client↔server execution ownership, result delivery, approval policy for server-side tool use) — squarely in ADR-required territory, and the owner has stated the long-term direction this task exists to realize.
 
 1. Draft ADR-077: execution contract, result-delivery channels, approval policy, reconciliation semantics

@@ -3,7 +3,7 @@
 Status: Accepted (2026-09-15) — written specification reviewed; implementation pending.
 Date: 2026-09-15
 Related Task: [TASK-32645](../tasks/task-32645%20-%20Design-managed-plugins-and-expanded-hook-runtime.md)
-Supersedes: N/A; explicitly extends ADR-148's v1 scope while preserving legacy behavior.
+Supersedes: N/A; explicitly extends ADR-345's v1 scope while preserving legacy behavior.
 Companion: [ADR-162](162-managed-agent-plugins.md)
 
 ## Decision
@@ -15,7 +15,7 @@ authority, legacy hook behavior and explicit lifecycle ownership.
 
 ## Context
 
-[ADR-148](148-console-run-hooks.md) provides six user-configured argv-command
+[ADR-345](345-console-run-hooks.md) provides six user-configured argv-command
 events with deny-only permission effects and bounded execution. Plugin
 interoperability benefits from additional session, subagent, compaction,
 failure and interruption events. The user approved extending these hooks
@@ -123,7 +123,7 @@ Package discovery and shared execution need separate module boundaries.
   editor-only events and permission-bypass semantics remain unsupported.
 - Tests need real runtime entries, positive controls, causal-cycle cases and
   process-death evidence on each supported platform.
-- ADR-148 remains the authoritative legacy contract. This ADR
+- ADR-345 remains the authoritative legacy contract. This ADR
   extends its previously deferred scope; it does not rewrite its historical
   behavior or automatically enable new hooks.
 

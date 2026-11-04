@@ -951,7 +951,7 @@ def test_media_edit_form_dirty_is_true_for_a_one_character_change_in_any_key(key
 
 
 def test_media_edit_form_dirty_compares_raw_strings_without_stripping():
-    """ADR-027: persistence never strips; neither does the predicate, so a
+    """ADR-293: persistence never strips; neither does the predicate, so a
     trailing space the user typed is a change the exit must not drop."""
     from tldw_chatbook.Library.library_media_viewer_state import media_edit_form_dirty
 

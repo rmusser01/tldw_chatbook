@@ -1,4 +1,4 @@
-"""Shared synchronous core for the direct Library tools (task-1337, ADR-030).
+"""Shared synchronous core for the direct Library tools (task-1337, ADR-298).
 
 One ``LocalLibraryToolService`` owns the public operation contract and
 delegates storage work to the five current local backend services (media,

@@ -46,7 +46,7 @@ for durable keys; any row kind without one is excluded from annotation
 persistence.
 
 No new keybindings are introduced in phase 1 (keyboard selection is
-phase 5), so ADR-031 compliance is unchanged.
+phase 5), so ADR-299 compliance is unchanged.
 
 ## Context
 
@@ -122,7 +122,7 @@ across the stack.
 ## Links
 
 - [Console Text Selection, Selection Menu, Side Chat, and Annotations — Design](../../Docs/superpowers/specs/2026-08-14-console-selection-annotations-design.md)
-- [ADR-031: TUI Keybinding and Footer-Hint Conventions](031-tui-keybinding-and-footer-hint-conventions.md) — no new keybindings in phase 1
+- [ADR-299: TUI Keybinding and Footer-Hint Conventions](299-tui-keybinding-and-footer-hint-conventions.md) — no new keybindings in phase 1
 - [TASK-17166](../tasks/task-17166%20-%20Console-text-selection-phase-1.md)
 
 ## Amendments (2026-08-15, live-terminal spike)

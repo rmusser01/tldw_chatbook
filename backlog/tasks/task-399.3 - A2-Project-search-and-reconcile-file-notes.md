@@ -44,13 +44,13 @@ Own confirmed read-only root activation and provide a scalable, repairable read 
 ## Closeout 2026-10-04
 
 Closed superseded, not implemented as written. The read-model substance landed
-under ADR-029: scan, polling reconcile, filename/body FTS projection, and the
+under ADR-296: scan, polling reconcile, filename/body FTS projection, and the
 editing-session checkpoint/reservation machinery ship in
 `tldw_chatbook/Notes/file_notes_service.py` /
-`tldw_chatbook/Notes/file_notes_replica.py` (TASK-969, PR #992). ADR-029
+`tldw_chatbook/Notes/file_notes_replica.py` (TASK-969, PR #992). ADR-296
 explicitly rejected the watcher-fed event pipeline, coordinator/lease
 election, and the watchdog/perf-gate contract specified above — polling
 reconcile is the accepted shipped design, so the surviving intent is
 deliberately not worth separate tasks.
 
-Superseded by: ADR-029 (backlog/decisions/029-file-notes-disk-authority.md) via TASK-969 (PR #992).
+Superseded by: ADR-296 (backlog/decisions/296-file-notes-disk-authority.md) via TASK-969 (PR #992).

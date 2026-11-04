@@ -1,6 +1,6 @@
 # ADR-316: Treat repository instructions as ephemeral path-aware Console context
 
-Status: Superseded by ADR-069
+Status: Superseded by ADR-317
 Date: 2026-08-20
 Related Task: Implementation tasks will be created from the approved design during planning.
 Supersedes: N/A
@@ -9,7 +9,7 @@ Supersedes: N/A
 > conversation metadata could not own device-local binding state, mutable
 > binding IDs could not detect retargeting alone, and the existing
 > security-review callback should not absorb optional context preparation.
-> Accepted [ADR-069](069-console-project-instruction-local-state-and-preflight.md)
+> Accepted [ADR-317](317-console-project-instruction-local-state-and-preflight.md)
 > supersedes this decision.
 
 ## Decision
@@ -100,7 +100,7 @@ preflight boundary.
 - [Approved design spec](../../Docs/superpowers/specs/2026-08-20-agents-md-support-design.md)
 - [ADR-005: Console workspace/server readiness](005-console-workspace-server-readiness.md)
 - [ADR-028: Settings workspaces and folder roots](028-settings-workspaces-category-and-folder-roots.md)
-- [ADR-032: Local agent tool permission boundary](032-local-agent-tool-permission-boundary.md)
+- [ADR-300: Local agent tool permission boundary](300-local-agent-tool-permission-boundary.md)
 - [Codex AGENTS.md guide](https://learn.chatgpt.com/docs/agent-configuration/agents-md)
 - [Claude Code memory guide](https://code.claude.com/docs/en/memory)
 

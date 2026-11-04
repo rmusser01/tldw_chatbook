@@ -37,7 +37,7 @@ not as the expected post-implementation score.
 
 # Design Specificity Verdict
 
-The design is unmistakably Chatbook: local-first authority, Console orchestration, ADR-032 approvals, app-open scheduling, Watchlists receipts, Artifacts recovery, briefing provenance, and the explicit no-hunt boundary are product-specific and coherent.
+The design is unmistakably Chatbook: local-first authority, Console orchestration, ADR-300 approvals, app-open scheduling, Watchlists receipts, Artifacts recovery, briefing provenance, and the explicit no-hunt boundary are product-specific and coherent.
 
 Its interaction and persistence contracts are less specific than its architecture. Critical choices are still left to implementers: exact receipt polling, cancellation, partial mutation behavior, collection collisions, schedule anchoring, external briefing privacy, fresh-profile blocking, and what “read latest briefing” presents. Those gaps could yield several technically valid but incompatible implementations.
 

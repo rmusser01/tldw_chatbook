@@ -95,7 +95,7 @@ def _upstream_v15_database(path):
             conn.execute(f"DROP TABLE {table}")
         conn.execute("ALTER TABLE agent_runs DROP COLUMN work_chain_id")
         conn.execute("ALTER TABLE agent_runs DROP COLUMN budget_tokens")
-        # v21 (agent routing, ADR-147) columns -- dropped so the standalone
+        # v21 (agent routing, ADR-344) columns -- dropped so the standalone
         # route can genuinely apply agent_runs_v20_to_v21_agent_routing.sql
         # (task-19565; the file is only runnable against tables lacking
         # these columns, per its header note).

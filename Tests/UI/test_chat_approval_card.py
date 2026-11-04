@@ -239,7 +239,7 @@ def test_collapsed_rows_disclose_every_argument_set():
 
 @pytest.mark.unit
 def test_grouped_rows_take_the_first_non_empty_rationale():
-    """ADR-090 (task 5): a blank-earlier rationale must not mask a later one.
+    """ADR-332 (task 5): a blank-earlier rationale must not mask a later one.
 
     Fence-path calls collapse by `llm_name`; if the first call's `rationale`
     is blank but a later same-name call states one, the group's row must
@@ -408,7 +408,7 @@ def test_distinct_calls_get_their_own_row_and_verdict():
 
 
 def test_format_approval_deadline_hides_copy_when_no_deadline_armed():
-    """ADR-067: 0/None deadline (the new shipped default) renders NO
+    """ADR-314: 0/None deadline (the new shipped default) renders NO
     countdown copy. Pins the TASK-1844 behavior now that 0 is the norm."""
     from tldw_chatbook.Widgets.Chat_Widgets.chat_approval_card import (
         format_approval_deadline,

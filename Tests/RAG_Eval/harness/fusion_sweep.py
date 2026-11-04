@@ -334,7 +334,7 @@ class Strategy:
         )
 
 
-#: The control: ADR-005's server-parity constants, which were the SHIPPED
+#: The control: ADR-288's server-parity constants, which were the SHIPPED
 #: defaults when this sweep was run. Task 5 then shipped the winner, so
 #: `rrf_k=60` is now the pre-decision baseline rather than the live default
 #: (`config.DEFAULT_HYBRID_RRF_K` = 5). It stays 60 deliberately — a control

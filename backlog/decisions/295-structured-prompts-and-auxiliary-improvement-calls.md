@@ -1,6 +1,6 @@
 # ADR-295: Structured Prompt Artifacts and Auxiliary Improvement Calls
 
-Status: Superseded by ADR-029
+Status: Superseded by ADR-297
 Date: 2026-08-01
 Related Task: N/A
 Supersedes: N/A
@@ -132,7 +132,7 @@ streaming, history, and side effects deliberately.
 
 ## Links
 
-- [ADR-029: Versioned Prompt Artifacts and Safe Improvement Transactions](029-versioned-prompt-artifacts-and-safe-improvement-transactions.md)
+- [ADR-297: Versioned Prompt Artifacts and Safe Improvement Transactions](297-versioned-prompt-artifacts-and-safe-improvement-transactions.md)
 - [Console Prompt Workbench and Improvement Design](../../Docs/superpowers/specs/2026-08-01-console-prompt-improvement-design.md)
 - [ADR-005: Console Workspace Server Readiness](005-console-workspace-server-readiness.md)
 - [ADR-006: Provider-Aware Generation Settings](006-provider-aware-generation-settings.md)

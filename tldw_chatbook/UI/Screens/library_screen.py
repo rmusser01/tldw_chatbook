@@ -1087,7 +1087,7 @@ class LibraryScreen(BaseAppScreen):
         # Enter on the focused Preview REGION -- follow the one link, or
         # list several. Gated in ``check_action`` on that focus and on the
         # note carrying a link; the Preview footer tier advertises it only
-        # then (ADR-031).
+        # then (ADR-299).
         Binding(
             "enter", "library_note_preview_follow_link", "Follow link", show=False
         ),
@@ -8697,7 +8697,7 @@ class LibraryScreen(BaseAppScreen):
             )
             # TASK-34000.11 (sharper AC#3): "enter follow link" only when the
             # note carries a note link -- the key's own gate, so the chip is
-            # never a lie (ADR-031). Ahead of esc, as the Console tiers order
+            # never a lie (ADR-299). Ahead of esc, as the Console tiers order
             # their act-then-leave pairs.
             if self._notes_controller._library_note_preview_links():
                 follow = (
@@ -8999,7 +8999,7 @@ class LibraryScreen(BaseAppScreen):
         # a folder target only once the root slice is fresh and it is the
         # only group there is; a tree whose folders are still loading (or
         # were never requested) has no folder to go to, and the key's own
-        # gate -- the footer chip follows it (ADR-031) -- says so.
+        # gate -- the footer chip follows it (ADR-299) -- says so.
         root_folders = self._notes_state.tree_branches.get(
             NotesBranchKey(None, "folders")
         )
@@ -9143,7 +9143,7 @@ class LibraryScreen(BaseAppScreen):
         """
         # TASK-34000.11: an open follow-mode link picker over the focused
         # Preview claims Up/Down/Enter/Escape before any binding sees them
-        # (ADR-031: routed, not bound) -- the same overlay-first rule the
+        # (ADR-299: routed, not bound) -- the same overlay-first rule the
         # Console's command popup applies in ``ChatScreen.on_key``.
         if self._notes_controller.library_note_follow_picker_claims(event.key):
             event.stop()
@@ -21755,7 +21755,7 @@ class LibraryScreen(BaseAppScreen):
 
     # TASK-34000.10 (N-07): leaving Title or Keywords tidies the edge
     # whitespace or the case-insensitive duplicate the save would refuse, as a
-    # visible draft edit through the field's own Changed handler (ADR-027:
+    # visible draft edit through the field's own Changed handler (ADR-293:
     # nothing is rewritten at save). The policy and its guards live in
     # ``Library/library_note_field_tidy.py``; imported lazily, like the
     # autosave policy, to stay off the Library preimport census.

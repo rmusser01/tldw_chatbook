@@ -1,6 +1,6 @@
 # Console file authority and project instructions
 
-This document describes what files a Console agent run may touch: the private per-chat scratch space, Named Workspaces with explicit folder bindings, the admitted-roots contract, the AGENTS.md / AGENTS.override.md project-instruction system with its activation ledger, and workspace assistant defaults (personas + permission profiles). Governed by ADR-069 and ADR-079.
+This document describes what files a Console agent run may touch: the private per-chat scratch space, Named Workspaces with explicit folder bindings, the admitted-roots contract, the AGENTS.md / AGENTS.override.md project-instruction system with its activation ledger, and workspace assistant defaults (personas + permission profiles). Governed by ADR-317 and ADR-325.
 
 ## Authoritative files
 
@@ -18,7 +18,7 @@ This document describes what files a Console agent run may touch: the private pe
 | `Agents/persona_policy.py` | Persona policy parsing, `evaluate_tool_policy()`, `persona_floor_state()` |
 | `Agents/run_tool_policy.py` | `RunToolPolicy.check()` — run-id-keyed call caps |
 
-Governance: `backlog/decisions/069-console-project-instruction-local-state-and-preflight.md`, `079-workspace-assistant-defaults.md`; spec `Docs/superpowers/specs/2026-08-20-agents-md-support-design.md`.
+Governance: `backlog/decisions/317-console-project-instruction-local-state-and-preflight.md`, `325-workspace-assistant-defaults.md`; spec `Docs/superpowers/specs/2026-08-20-agents-md-support-design.md`.
 
 ## File authority model
 
@@ -101,7 +101,7 @@ Built-in `read_file`/`list_directory`/`write_file` participate via `BuiltinToolP
 
 A managed-skill promotion path lets the agent propose an instruction/lesson edit through the local tools: foreground-primary-only, tool-call-id-keyed `approve_once` stamp consumed exactly once, snapshot revalidation (binding/activation/target/chain change → stale refusal), CAS write via `fs_write`'s `expected_sha256`/`expected_absent`, max 8 proposals per run. Lesson text remains untrusted evidence and grants no filesystem, Notes, or managed-skill authority by itself.
 
-## Workspace assistant defaults (ADR-079)
+## Workspace assistant defaults (ADR-325)
 
 Explicit workspaces carry reference-backed `assistant_defaults` (persona + permission profile); Default/global stays unset. Resolution mirrors the server (`resolve_effective_assistant_default`, with degraded reasons like `persona_deleted`, `persona_feature_disabled`). Persona policy rules **narrow only**:
 
@@ -110,7 +110,7 @@ Explicit workspaces carry reference-backed `assistant_defaults` (persona + permi
 - `max_calls_per_turn` takes the minimum across matched rules, enforced per run id by `RunToolPolicy` so concurrent children keep independent budgets;
 - profiles inherit unset keys from `default`; every existing gate/floor applies first.
 
-The fixed narrowing order: config gates → ephemeral restrictions → ADR-069 binding access → kill switch → profile grant resolution → persona policy floor → call caps. Read-only bindings still strip mutating fs tools even when persona rules would allow them.
+The fixed narrowing order: config gates → ephemeral restrictions → ADR-317 binding access → kill switch → profile grant resolution → persona policy floor → call caps. Read-only bindings still strip mutating fs tools even when persona rules would allow them.
 
 ## Dataflow: discovery → ledger → review
 

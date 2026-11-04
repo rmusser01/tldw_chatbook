@@ -103,7 +103,7 @@ def session_assistant_display_name(session: object) -> str | None:
     """Return the session's kind-appropriate assistant display name.
 
     Character sessions read ``character_name``; persona sessions read
-    ``assistant_name`` (ADR-149); anything else has no bound identity.
+    ``assistant_name`` (ADR-346); anything else has no bound identity.
     Blank values are treated as absent.
     """
     kind = getattr(session, "assistant_kind", None)
@@ -130,7 +130,7 @@ def expand_character_template(
     """Expand trusted character template aliases in one non-recursive pass.
 
     This is the identity-template expander for both character and persona
-    sessions (ADR-149); ``character_name`` carries the persona name for
+    sessions (ADR-346); ``character_name`` carries the persona name for
     persona-kind content.
     """
     def replacement(match: re.Match[str]) -> str:
@@ -294,7 +294,7 @@ def resolve_console_message_presentation(
                 "console-transcript-message-roleplay-character"
                 if is_character_session
                 # Persona rows keep the standard assistant treatment:
-                # personas are not roleplay characters (ADR-149).
+                # personas are not roleplay characters (ADR-346).
                 else "console-transcript-message-role-assistant"
             )
         metadata: MessageMetadata | None = message.metadata

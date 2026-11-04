@@ -1,6 +1,6 @@
 """Durable proof for a rewritten trace surface tail.
 
-ADR-097 amendment 2026-10-27 (TASK-33621.29, TASK-33621.7). Compact now drops
+ADR-337 amendment 2026-10-27 (TASK-33621.29, TASK-33621.7). Compact now drops
 the compacted turns from the provider-visible history, and Edit & resend
 answers on a new sibling branch with capture off. Neither records its change
 in the trace surface. The next captured send therefore carries a rewrite of

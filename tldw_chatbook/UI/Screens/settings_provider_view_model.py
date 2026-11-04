@@ -226,7 +226,7 @@ def build_provider_picker_groups(
 
     TASK-33007.2: providers in ``configured`` lead in a "Configured" group,
     then Cloud, Local, and Custom & legacy aliases. A configured custom slot
-    leads too; a legacy alias always stays last (task-180, ADR-066).
+    leads too; a legacy alias always stays last (task-180, ADR-311).
 
     Args:
         catalog: Selectable provider catalog entries.
@@ -397,14 +397,14 @@ _CUSTOM_ENDPOINT_FAMILY_LABELS = {
     "ollama": "Ollama",
 }
 
-#: The built-in provider slots eligible for one-way conversion (ADR-146).
+#: The built-in provider slots eligible for one-way conversion (ADR-343).
 _CONVERTIBLE_SLOT_IDS = frozenset({"custom", "custom_2"})
 
 
 def custom_endpoint_rows(
     app_config: Mapping[str, object],
 ) -> tuple[SettingsOverviewRow, ...]:
-    """Build one overview row per registry entry (ADR-146 task-7).
+    """Build one overview row per registry entry (ADR-343 task-7).
 
     Each row carries the display name, family label,
     ``safe_endpoint_display(base_url)`` (credentials never render), and the
@@ -621,7 +621,7 @@ def convert_slot_to_named_endpoint(
 
     The entry (family ``openai_compatible``, ``created_from`` = the slot id)
     is persisted through ``save_settings_to_cli_config``; the slot's own
-    config is left untouched (ADR-146's one-way convert). Only the
+    config is left untouched (ADR-343's one-way convert). Only the
     credential *reference* (``api_key_env``, a variable name) is carried
     over -- stored secrets are never duplicated into the registry.
 

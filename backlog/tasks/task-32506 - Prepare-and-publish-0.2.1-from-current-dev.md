@@ -34,8 +34,8 @@ Publish the newer committed dev changes requested by the release owner while pre
 ## Implementation Plan
 
 <!-- SECTION:PLAN:BEGIN -->
-ADR required: yes (amend existing ADR-098)
-ADR path: backlog/decisions/098-low-latency-speculative-duplex-voice-pipeline.md
+ADR required: yes (amend existing ADR-338)
+ADR path: backlog/decisions/338-low-latency-speculative-duplex-voice-pipeline.md
 Packaging contract: backlog/decisions/032-immutable-installed-distribution-assets.md
 Reason: The approved app-only exception removes the unavailable native dependency while preserving all duplex qualification gates. Follow the updated release plan for explicit app-only validation, targeted tests and publication.
 1. Reconcile main and current dev 71313cccd8 in the isolated release worktree.
@@ -73,9 +73,9 @@ Later Voice AEC CI run 34705705442 built all five platform wheel families succes
 
 Voice version metadata is corrected locally to0.2.1 and the companion-pin test now derives the current app version rather than hard-coding0.2.0. Version-lock command and19 focused version/license tests pass; E9/F821 lint passes. Existing whole-file I001 and SIM117 findings are outside the changed function. TestPyPI run34706422953 is confirmed cancelled with no upload. Main remains d0aa66ea97. Owner scope decision is pending; no physical hardware or qualification run was attempted.
 
-Owner approved app-only0.2.1 on2026-09-13, keeping experimental duplex disabled and removing its unavailable dependency. Synced current committed dev392ce191fd before implementation. Existing ADR-098 will be amended for the app-only release exception; companion publishing remains subject to its unchanged qualification gates.
+Owner approved app-only0.2.1 on2026-09-13, keeping experimental duplex disabled and removing its unavailable dependency. Synced current committed dev392ce191fd before implementation. Existing ADR-338 will be amended for the app-only release exception; companion publishing remains subject to its unchanged qualification gates.
 
-Implemented the owner-approved app-only exception under the ADR-098 amendment. Removed the native companion from speech_recording while retaining ordinary recording dependencies; synchronized companion source version0.2.1. Explicit app-only validation rejects companion requirements across all groups (including direct URLs/case variants) and requires entirely unqualified packaged rollout. Default native release checks and runtime acoustic/qualification code remain unchanged. Fresh build/twine/manifest checks pass;193 focused tests pass. Independent review is complete. Local full distribution run aborted on ENOSPC, not a code assertion; removed only task-owned temporary installations and retained logs. The changed installed-runtime probe is running locally; complete installed-distribution regression remains a mandatory publishing-runner gate.
+Implemented the owner-approved app-only exception under the ADR-338 amendment. Removed the native companion from speech_recording while retaining ordinary recording dependencies; synchronized companion source version0.2.1. Explicit app-only validation rejects companion requirements across all groups (including direct URLs/case variants) and requires entirely unqualified packaged rollout. Default native release checks and runtime acoustic/qualification code remain unchanged. Fresh build/twine/manifest checks pass;193 focused tests pass. Independent review is complete. Local full distribution run aborted on ENOSPC, not a code assertion; removed only task-owned temporary installations and retained logs. The changed installed-runtime probe is running locally; complete installed-distribution regression remains a mandatory publishing-runner gate.
 
 Final local installed-runtime regression passed in44.31seconds: the app-only wheel omits every native companion requirement, retains pyaudio/sounddevice/webrtcvad under the normalized speech-recording extra, stays unqualified even with the development override, preserves immutable assets, and both CLI entry points work. Corrected the initial test oracle for PEP685 wheel extra-name normalization. App-only validation and193 focused tests pass; complete installed-distribution verification remains pending on the publishing runner.
 

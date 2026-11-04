@@ -15,7 +15,7 @@ Related keyword tasks: [TASK-36002](<../tasks/task-36002 - Store-folder-bound-ke
 [TASK-36006](<../tasks/task-36006 - Manage-optional-keyword-indexes-in-Settings-and-qualify-release.md>).
 Keyword indexing is in implementation; semantic indexing remains a separate planned deliverable.
 Related decisions: ADR-030 derived-index lifecycle, ADR-079 Console Library
-authority, ADR-082 private scratch, ADR-101 pinned workers, ADR-102 run-admitted
+authority, ADR-082 private scratch, ADR-101 pinned workers, ADR-340 run-admitted
 roots, ADR-126 recovery, ADR-174 binding exclusions
 
 ## Context

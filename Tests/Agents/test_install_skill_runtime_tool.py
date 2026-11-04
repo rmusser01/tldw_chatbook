@@ -50,7 +50,7 @@ def test_install_skill_name_in_runtime_tool_names():
     assert INSTALL_SKILL_TOOL_NAME == "install_skill"
     assert (
         RUNTIME_TOOL_NAMES
-        == {  # ADR-150 chat fork/spawn + dev-baseline completion (fleet message/
+        == {  # ADR-348 chat fork/spawn + dev-baseline completion (fleet message/
             # worktree constants were in RUNTIME_TOOL_NAMES but unlisted here).
             MERGE_AGENT_WORKTREE_TOOL_NAME,
             DISCARD_AGENT_WORKTREE_TOOL_NAME,

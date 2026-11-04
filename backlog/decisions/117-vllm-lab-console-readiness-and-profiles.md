@@ -396,6 +396,6 @@ untouched so rollback is non-destructive; an older build ignores it.
 This decision was originally added as ADR-115 by
 `ffc4f9d8f8343169097dcac40d3ba4ed0a2177c0`. During branch integration,
 current `origin/dev` already shipped the unrelated
-`115-personas-demand-mounted-center-views.md` at add commit
+`342-personas-demand-mounted-center-views.md` at add commit
 `2516735cfd27df249ab45e96c96f15b8aee35d15`. The unmerged vLLM decision moved
 to collision-free ADR-117, and every live vLLM reference moved with it.

@@ -182,7 +182,7 @@ async def test_card_draws_on_a_plain_dim_fill_with_no_backdrop_widget() -> None:
 
 def test_card_copy_names_the_settings_round_trip_and_only_footer_keys() -> None:
     """AC#4: cloud setup opens Settings and comes back here, and the only key
-    named is Enter, the one the blocked footer teaches (ADR-031 rule 5).
+    named is Enter, the one the blocked footer teaches (ADR-299 rule 5).
 
     TASK-33008.2 (R35): the line promises no return for a custom endpoint.
     Settings offers none there, on the card's own step or from a NEEDS SETUP
@@ -200,7 +200,7 @@ def test_card_copy_names_the_settings_round_trip_and_only_footer_keys() -> None:
 async def test_the_blocked_footer_names_only_keys_that_act_under_the_card(
     request,
 ) -> None:
-    """Capture finding 3 (ADR-031 rule 5): under the card the footer showed
+    """Capture finding 3 (ADR-299 rule 5): under the card the footer showed
     "Alt+M switch model" and "Ctrl+O chat settings", and both did nothing (R10
     keeps Alt+M off while the card blocks). Every workbench key the blocked
     footer leaves out is pressed here and changes nothing; each one it names

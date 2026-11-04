@@ -1,6 +1,6 @@
 """Chat settings asks before a close gesture discards unapplied edits.
 
-TASK-33003.5 (ADR-031 task-16211): Esc, a backdrop click and Cancel never
+TASK-33003.5 (ADR-299 task-16211): Esc, a backdrop click and Cancel never
 discard an edited Chat settings draft by themselves. They open an
 unsaved-edits prompt (Apply to this chat / Discard / Keep editing) that names
 the edited fields; an unedited draft still closes at once.
@@ -586,7 +586,7 @@ async def test_memory_reset_guard_comes_first_then_asks_about_edits(
 
 @pytest.mark.asyncio
 async def test_esc_hint_names_the_reset_and_compaction_guards_esc_opens() -> None:
-    """Final review I4 (ADR-031 task-16211): with no edits, a pending memory
+    """Final review I4 (ADR-299 task-16211): with no edits, a pending memory
     reset or a running compaction still makes Esc ask first, so the hint must
     say so, and must drop back to "Esc close" once undo or compaction ends."""
     app = _SettingsCloseHarness()

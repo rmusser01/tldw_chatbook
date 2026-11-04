@@ -1,6 +1,6 @@
 """Tiny choice between a reminder and a recurring-question automation.
 
-Smallest existing house pattern (task-5, ADR-099 idiom parity): a
+Smallest existing house pattern (task-5, ADR-339 idiom parity): a
 two-button confirm modal using `SafeModalDismissMixin`, same shape as
 `ManagedGGUFRuntimeChoiceModal` -- no dirty-state to guard, so the mixin's
 one-shot dismiss/backdrop handling is all this needs (unlike the create/

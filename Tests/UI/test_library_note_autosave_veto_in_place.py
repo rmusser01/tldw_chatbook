@@ -1,7 +1,7 @@
 """An autosave veto never moves the user; the field is marked; leaving tidies it.
 
 TASK-34000.10 (review N-07). A title ending in a space, or keywords with a
-case-insensitive duplicate, vetoes every autosave (ADR-027: the save never
+case-insensitive duplicate, vetoes every autosave (ADR-293: the save never
 strips or rewrites). The screen then handled the vetoed AUTOSAVE like a veto
 on an explicit Save: it routed to the field, switched the pane and focused
 it, so the next keys landed in the wrong field

@@ -5,14 +5,14 @@ B-phase; numbering follows the wave-5 brief's "209+" provenance note and sits
 above dev's shipped ceiling ADR-217)
 Date: 2026-10-04
 Related Task: [TASK-34382](../tasks/task-34382%20-%20File%20Notes%20replica%20retention%20policy.md)
-Amends: [ADR-029](029-file-notes-disk-authority.md) — not superseded. ADR-029
+Amends: [ADR-296](296-file-notes-disk-authority.md) — not superseded. ADR-296
 deferred "quotas and recovery tooling until demonstrated need"; the unbounded
 growth its Context did not anticipate is now demonstrated, and this ADR sets
-the replica-side retention bounds inside ADR-029's unchanged authority model.
+the replica-side retention bounds inside ADR-296's unchanged authority model.
 
 ## Context
 
-ADR-029's replica stores, outside the selected folder, the latest observed
+ADR-296's replica stores, outside the selected folder, the latest observed
 bytes of every supported file plus coalesced pre-edit checkpoints for
 protected paths and deletion snapshots for every delete. Nothing ever removes
 any of it:
@@ -24,7 +24,7 @@ any of it:
 
 Disk remains authoritative and the replica can always be rebuilt from it, so
 unbounded retention is not a correctness problem — it is a storage and
-hygiene problem inside the owner-secured `file_notes.sqlite` that ADR-029
+hygiene problem inside the owner-secured `file_notes.sqlite` that ADR-296
 fixed as the single replica.
 
 ## Decision
@@ -57,7 +57,7 @@ or any user action.
    and `deleted_at` independently (PR #3016 review round).
 4. **Protected paths are exempt from expiry, not from the cap.** Exact-match
    and component-bounded prefix protections (`protected_paths`) both count,
-   per ADR-029's protection semantics; the per-note checkpoint cap above
+   per ADR-296's protection semantics; the per-note checkpoint cap above
    still applies to protected paths.
 5. **Fail-safe timestamps.** Retention compares parsed UTC timestamps;
    a value that cannot be parsed is kept, never evicted. Stored timestamps
@@ -68,15 +68,15 @@ or any user action.
 ## Alternatives Considered
 
 - **No retention (status quo).** Rejected: the replica grows without bound
-  precisely for the users ADR-029's protections exist for.
+  precisely for the users ADR-296's protections exist for.
 - **Configurable bounds.** Rejected for now: one fixed, generous bound per
-  class is the first release's answer (mirrors ADR-029's own "sufficient for
+  class is the first release's answer (mirrors ADR-296's own "sufficient for
   the first release" stance); knobs arrive with demonstrated need.
 - **Whole-database vacuum / rebuild-from-disk on startup.** Rejected: heavier
   than the bounded sweeps, touches data the user may still want (recent
   tombstones), and rebuilds do not address checkpoint accumulation.
 - **Evicting protected paths' revisions by age.** Rejected: protection is
-  ADR-029's explicit pre-edit safety commitment; expiring it silently would
+  ADR-296's explicit pre-edit safety commitment; expiring it silently would
   hollow the guarantee. (The per-note *cap* still applies — see Decision 4
   and the PR #3016 review round, which aligned the rules with this ADR's
   own Consequences.)

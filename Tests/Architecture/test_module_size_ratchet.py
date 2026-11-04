@@ -844,7 +844,7 @@ _BUDGETS: dict[str, int] = {
     "tldw_chatbook/Chat/console_runtime.py": 7069,
     # 2026-10-27 (TASK-33621.29 / TASK-33621.7, owner decision 2026-10-19,
     # "expand limits, never contort code"): +56 for the rewritten-tail
-    # transition (ADR-097 amendment 2026-10-27). The proof itself lives in
+    # transition (ADR-337 amendment 2026-10-27). The proof itself lives in
     # console_trace_rewritten_tail.py; these lines thread its witness through
     # the planner, dispatch binding and child capability, as the tool-turn
     # witness already is.

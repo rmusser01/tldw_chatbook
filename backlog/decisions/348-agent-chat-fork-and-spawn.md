@@ -4,8 +4,8 @@ Status: Accepted
 Date: 2026-09-11
 Related Task: [TASK-32482](../tasks/task-32482%20-%20Agent-chat-fork-and-spawn-tools-fork_chat-new_chat.md)
 Related Spec: [Agent chat fork & spawn design](../../Docs/superpowers/specs/2026-09-11-agent-chat-fork-spawn-design.md)
-Coordinates with: [ADR-147](147-agent-provider-routing.md) (preset/provider args for created chats are a deferred follow-up PR); [ADR-069](069-console-project-instruction-local-state-and-preflight.md) (project-instruction bindings are never copied)
-Follow-ups: TASK-32480 (sub-agent access), preset/provider integration PR (after ADR-147 lands on dev)
+Coordinates with: [ADR-344](344-agent-provider-routing.md) (preset/provider args for created chats are a deferred follow-up PR); [ADR-317](317-console-project-instruction-local-state-and-preflight.md) (project-instruction bindings are never copied)
+Follow-ups: TASK-32480 (sub-agent access), preset/provider integration PR (after ADR-344 lands on dev)
 
 ## Context
 
@@ -45,10 +45,10 @@ afterthought.
   written; no schema migration in either database.
 - **Args are `title`, `opening_prompt`, `instructions` — and nothing else.**
   No provider/preset/model args in v1: those land in a dedicated integration
-  PR after ADR-147 merges to dev. `instructions` replace the source's system
+  PR after ADR-344 merges to dev. `instructions` replace the source's system
   prompt except on character-bound sources, which refuse them (a model-authored
   prompt must not silently override a persona). Project-instruction bindings
-  are never copied — selecting a binding is a deliberate user act (ADR-069).
+  are never copied — selecting a binding is a deliberate user act (ADR-317).
 - **The opening prompt is a draft, never sent.** It lands in the new chat's
   composer via `set_session_draft`; the user reviews, edits, and sends. To
   survive restarts, the draft is persisted in the conversation's local-only
@@ -106,7 +106,7 @@ afterthought.
 - `restore_persisted_session` gains an `activate=False` variant
   (`create_session` already supports the flag; no-screen hydration is proven
   by `console_launch_wake`). Draft rehydration hooks into session restore.
-- Shared files with the ADR-147 PR (`agent_service.py` — additive pins after
+- Shared files with the ADR-344 PR (`agent_service.py` — additive pins after
   the runtime-schema block, `agent_runtime.py`, `console_agent_bridge.py`):
   implement on top of it or rebase before opening; the routing PR rewrites
   adjacent regions.
@@ -117,4 +117,4 @@ afterthought.
 
 ## Renumbering provenance
 
-Renumbered from ADR-150 to ADR-348 on 2026-11-03 under TASK-36943.3 (owner decision 2026-10-25: the younger file of a shared number is renumbered). ADR-150 now refers to 150-design-token-system-and-design-language.md.
+Renumbered from ADR-348 to ADR-348 on 2026-11-03 under TASK-36943.3 (owner decision 2026-10-25: the younger file of a shared number is renumbered). ADR-150 now refers to 150-design-token-system-and-design-language.md.

@@ -216,7 +216,7 @@ class GuardianDB(SQLiteStoreKernel, BaseDB):
     # ------------------------------------------------------------------
 
     def _open_connection(self) -> sqlite3.Connection:
-        """Open through BaseDB's db.base path (ADR-228 provenance section)."""
+        """Open through BaseDB's db.base path (ADR-353 provenance section)."""
         return BaseDB._get_connection(self)
 
     def _configure_connection(self, conn: sqlite3.Connection) -> sqlite3.Connection:

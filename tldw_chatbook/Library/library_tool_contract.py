@@ -1,4 +1,4 @@
-"""Shared public contract for the direct Library tools (task-1337, ADR-030).
+"""Shared public contract for the direct Library tools (task-1337, ADR-298).
 
 Single source of truth for the current `library_*` tool surface: descriptor table
 (names, descriptions, input schemas, item type, operation, service route),

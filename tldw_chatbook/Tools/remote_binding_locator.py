@@ -35,7 +35,7 @@ Canonical resolution (``canonicalize_locator``): ``ssh -G`` prints the
 fully resolved *local* configuration for a destination and exits — no
 connection is made, nothing is resolved through DNS, and no command runs
 remotely. The config-expanded symbolic identity (``HostName`` exactly as
-written in the ssh config, ``port``, ``user``) is the ADR-069-style
+written in the ssh config, ``port``, ``user``) is the ADR-317-style
 fingerprint source (via ``canonical_fingerprint``): cosmetic alias edits
 do not trip re-consent, while a config change that genuinely moves the
 destination does. Resolution runs only at binding add/edit, manual

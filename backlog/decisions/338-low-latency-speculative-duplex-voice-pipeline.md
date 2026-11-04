@@ -16,9 +16,9 @@ Related Task: Implementation tasks will be created from the approved design duri
 
 Related Spec: [Low-Latency Speculative Duplex Voice Pipeline](../../Docs/superpowers/specs/2026-08-28-low-latency-speculative-duplex-voice-pipeline-design.md)
 
-Amends: [ADR-094](094-console-turn-lifetime-and-navigation-boundary.md) by defining
+Amends: [ADR-336](336-console-turn-lifetime-and-navigation-boundary.md) by defining
 speculative voice attempts as pre-acceptance, view-scoped work, and
-[ADR-097](097-console-reference-backed-semantic-trace-ledger.md) by allowing winning-only
+[ADR-337](337-console-reference-backed-semantic-trace-ledger.md) by allowing winning-only
 post-dispatch capture promotion for those attempts.
 
 ## Context
@@ -41,9 +41,9 @@ epochs, and isolation from durable history and external effects. This boundary m
 on macOS, Windows, and Linux and must degrade safely when a device route cannot sustain
 full duplex.
 
-Two existing decisions constrain persistence and lifetime. ADR-094 moves accepted
+Two existing decisions constrain persistence and lifetime. ADR-336 moves accepted
 Console turns above screen navigation but deliberately keeps microphone and realtime
-audio resources view-scoped. ADR-097 requires durable pre-dispatch reservation for
+audio resources view-scoped. ADR-337 requires durable pre-dispatch reservation for
 ordinary Capture On calls. Persisting every provisional prompt would violate the
 requirement that cancelled voice attempts leave no content-bearing artifacts, while
 silently forcing Capture Off would make the winning voice turn ignore an explicit user
@@ -218,7 +218,7 @@ file-descriptor protection with a small session-owned spawn worker.
    reaches two seconds, Chatbook discards the speculative request, commits the exact
    user transcript, and re-dispatches through the ordinary accepted agent pipeline.
    That pipeline owns tools, approvals, Capture On reservation, persistence, and
-   ADR-094 runtime custody. Speech after effect commitment is a new turn or explicit
+   ADR-336 runtime custody. Speech after effect commitment is a new turn or explicit
    interruption; an external effect is never rewritten into a prior turn.
 
 9. **Keep no-tool attempts pre-acceptance until an app-lifetime promotion claim.** They
@@ -245,7 +245,7 @@ file-descriptor protection with a small session-owned spawn worker.
    store mutation with no receipt, unseen mark, durable usage, or trace. Later ordinary
    Save may persist those messages but cannot invent historical capture. For a durable
    destination, one ChaChaNotes transaction separately compare-and-swaps the resolved
-   persisted active leaf, writes the already-complete pair, mints ADR-094's stable
+   persisted active leaf, writes the already-complete pair, mints ADR-336's stable
    terminal receipt and exact unseen mark, records usage, and advances the durable leaf.
    A typed turn, branch change, or unrelated rebind that wins before claim fails closed
    to recovery; after claim, competing store mutations are visibly refused or buffered.
@@ -273,7 +273,7 @@ file-descriptor protection with a small session-owned spawn worker.
    an ordinary dispatch checkpoint or invents a second provider task.
 
 10. **Use typed, winning-only post-dispatch exchange-capture promotion.** The ordinary
-    ADR-097 durable reservation is not written before a provisional provider request.
+    ADR-337 durable reservation is not written before a provisional provider request.
     Capture eligibility is frozen at provider dispatch. For an eligible saved session,
     only the provider gateway may issue a typed, one-use `ProvisionalTraceEnvelope`
     opaque handle for each call; its registry retains the sanitized payload. At attempt
@@ -285,7 +285,7 @@ file-descriptor protection with a small session-owned spawn worker.
     promotion, never the conversation pair. Only content-free usage, timing, backend
     mode, and attempt counts may remain.
 
-    ChaChaNotes schema version 69 adds `reservation_provenance`: ordinary ADR-097 calls
+    ChaChaNotes schema version 69 adds `reservation_provenance`: ordinary ADR-337 calls
     default to `crash_durable_reserved`, while this importer writes
     `post_dispatch_promoted`. It also adds nullable `import_reason_code`, constrained to
     null for ordinary calls and exactly `provisional_voice_promoted` for promoted calls;
@@ -301,7 +301,7 @@ file-descriptor protection with a small session-owned spawn worker.
     and one-use redemption reconcile uncertain commits. Any missing call rejects the
     whole import. Capture failure remains best-effort and never rolls back the
     conversation. A crash before pair promotion leaves no conversation or exchange
-    trace. Tool-barrier re-dispatch uses unchanged ADR-097 semantics.
+    trace. Tool-barrier re-dispatch uses unchanged ADR-337 semantics.
 
     Temporary chats remain unable to create durable capture lineage. Speculative voice
     may run with explicit capture-unavailable status, but no envelope is issued. Saving
@@ -433,12 +433,12 @@ with an honest durability label.
 - Aggressive pauses can generate billable discarded attempts; the restart governor and
   split usage accounting make the trade-off bounded and visible.
 - Provisional no-tool turns cancel on Console navigation because they are not accepted
-  ADR-094 runtime turns. Tool turns become navigation-surviving only after the effect
+  ADR-336 runtime turns. Tool turns become navigation-surviving only after the effect
   barrier commits and re-dispatches them normally.
-- ADR-097 gains one explicitly weaker, schema-visible crash-provenance class for a
+- ADR-337 gains one explicitly weaker, schema-visible crash-provenance class for a
   promoted winning voice call. The direct terminal trace remains semantically useful
   but cannot claim pre-dispatch reservation or fabricated lifecycle chronology.
-- A successful no-tool promotion still participates in ADR-094 terminal receipts and
+- A successful no-tool promotion still participates in ADR-336 terminal receipts and
   exact unseen-mark acknowledgement even though its provider work was pre-acceptance.
 - Promotion acceptance has a deterministic claim point. Once claimed, app-lifetime
   `ConsoleRuntime` custody outlives the view; before claim, view-scoped cancellation
@@ -449,7 +449,7 @@ with an honest durability label.
   fence belongs to `ConsoleChatStore`; the persisted leaf CAS belongs to the database
   transaction. Post-boundary speech waits behind promotion as a new turn and becomes a
   separate draft if promotion fails.
-- Promoted trace import must create/reconcile complete ADR-097 lineage for an ownerless
+- Promoted trace import must create/reconcile complete ADR-337 lineage for an ownerless
   first call and reject partial multi-call manifests. Its fixed memory/time budgets can
   reduce diagnostics without affecting accepted conversation durability.
 - Temporary chats run speculative voice without durable capture and never synthesize a
@@ -720,9 +720,9 @@ authority off the UI/app loop.
 - [Approved design spec](../../Docs/superpowers/specs/2026-08-28-low-latency-speculative-duplex-voice-pipeline-design.md)
 - [Live physical qualification and isolated-headset amendment](../../Docs/superpowers/specs/2026-09-02-live-physical-voice-qualification-and-isolated-headset-design.md)
 - [ADR-023: TTS adapter registry and audio.cpp boundary](023-tts-adapter-registry-and-audio-cpp-runtime-boundary.md)
-- [ADR-039: Speech and TTS settings ownership](039-global-and-studio-tts-settings-ownership.md)
-- [ADR-094: Console turn lifetime and navigation](094-console-turn-lifetime-and-navigation-boundary.md)
-- [ADR-097: reference-backed semantic trace ledger](097-console-reference-backed-semantic-trace-ledger.md)
+- [ADR-304: Speech and TTS settings ownership](304-global-and-studio-tts-settings-ownership.md)
+- [ADR-336: Console turn lifetime and navigation](336-console-turn-lifetime-and-navigation-boundary.md)
+- [ADR-337: reference-backed semantic trace ledger](337-console-reference-backed-semantic-trace-ledger.md)
 - [Hands-Free Conversation Loop design](../../Docs/superpowers/specs/2026-08-02-hands-free-loop-design.md)
 - [Realtime Voice Engine design](../../Docs/superpowers/specs/2026-08-04-realtime-voice-engine-design.md)
 
@@ -734,7 +734,7 @@ describe their historical verification checkpoints.
 
 ADR-147 archive admission includes runtime-owned sends and the existing retained
 Hands-free process sessions through cleanup, including idle listening. Cancelling
-a pre-durable send preserves its exact recovery under ADR-094. Direct voice
+a pre-durable send preserves its exact recovery under ADR-336. Direct voice
 preparation rechecks durable archive state; the pair transaction rejects new
 writes into archived conversations after reconciling already-committed identities.
 This composes existing owners and preserves ADR-125 private SQLite connections.
@@ -766,4 +766,4 @@ recording extra and any claim that software-only evidence qualifies duplex voice
 
 ## Renumbering provenance
 
-Renumbered from ADR-098 to ADR-338 on 2026-11-03 under TASK-36943.3 (owner decision 2026-10-25: the younger file of a shared number is renumbered). ADR-098 now refers to 098-visible-bounded-console-prompt-queue.md.
+Renumbered from ADR-338 to ADR-338 on 2026-11-03 under TASK-36943.3 (owner decision 2026-10-25: the younger file of a shared number is renumbered). ADR-098 now refers to 098-visible-bounded-console-prompt-queue.md.

@@ -3,7 +3,7 @@
 
 Ordering contract (ADR-204 contract 4): the checker runs at the very head of
 ``ConsolePromptQueueUIController.dispatch`` -- before the existing
-blocked-reason refusal gate, and therefore before ADR-148 ``UserPromptSubmit``
+blocked-reason refusal gate, and therefore before ADR-345 ``UserPromptSubmit``
 hooks, which fire far downstream inside
 ``Chat.console_chat_controller._submit_draft_body`` (reached only via
 ``_stage_normal_chain`` -> ``_launch_chain`` -> the controller submit chain).

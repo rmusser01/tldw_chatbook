@@ -93,7 +93,7 @@ def make_controller() -> Callable[[], ConsoleChatController]:
     ``timeout_seconds``/``request_id``) read that list instead of the
     payloads being silently discarded.
 
-    Teardown fails every controller's armed rounds closed: ADR-067 made
+    Teardown fails every controller's armed rounds closed: ADR-314 made
     the confirm timeout default to no-deadline, so a test that ends (or
     FAILS mid-assert) with a round armed would leave its non-daemon worker
     thread waiting forever and hang interpreter shutdown. Flipping
@@ -627,7 +627,7 @@ def test_confirm_payload_carries_timeout_and_request_id(make_controller):
     a card built from an under-described payload is a security defect,
     since that payload is exactly what the human approves on.
 
-    ADR-067: the timeout is exercised through a POSITIVE seam value -- the
+    ADR-314: the timeout is exercised through a POSITIVE seam value -- the
     shipped default is now 0 (= no deadline), and the payload must carry
     whatever was resolved, but this test's subject is the round trip of a
     real deadline onto the card."""
@@ -1217,7 +1217,7 @@ def test_a_late_allow_after_a_revoke_cannot_run_the_script(tmp_path, monkeypatch
 
 
 def test_confirm_zero_timeout_keeps_round_armed_for_late_decision(make_controller):
-    """ADR-067: timeout 0 = no deadline -- mirrors the install-confirm
+    """ADR-314: timeout 0 = no deadline -- mirrors the install-confirm
     sibling; the round survives the first 1s poll that the pre-ADR
     `deadline = now + 0` tripped, and resolves on the decision."""
     controller = make_controller()

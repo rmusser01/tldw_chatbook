@@ -41,11 +41,11 @@ Maintain an independent exact current replica only for selected files and folder
 ## Closeout 2026-10-04
 
 Closed superseded with reslice. The minimal protection rules landed under
-ADR-029: `FileNotesReplica.protect` / `FileNotesService.protect_path` with
+ADR-296: `FileNotesReplica.protect` / `FileNotesService.protect_path` with
 editing-session checkpoints and pre-edit exact bytes (TASK-969, PR #992). The
 per-file/folder-prefix coverage preview, verified-coverage claims, and the
 fixed 1 GiB capacity/floor contract specified above were not built as
 written.
 
 Resliced 2026-10-04 — the caps/coverage slices now live in TASK-34382.
-Superseded by ADR-029 (backlog/decisions/029-file-notes-disk-authority.md).
+Superseded by ADR-296 (backlog/decisions/296-file-notes-disk-authority.md).

@@ -1,4 +1,4 @@
-"""Textual-free approval display helpers (ADR-090, TASK-36944.3).
+"""Textual-free approval display helpers (ADR-332, TASK-36944.3).
 
 Argument summarising/redaction and advisory-line clipping, shared by the
 approval card widget and ``permission_summary_service``. Kept free of any

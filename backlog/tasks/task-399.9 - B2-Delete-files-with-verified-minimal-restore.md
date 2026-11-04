@@ -39,11 +39,11 @@ Let users delete an actual file only when Chatbook can guarantee its exact recov
 
 ## Closeout 2026-10-04
 
-Closed superseded with reslice. The minimal form landed under ADR-029:
+Closed superseded with reslice. The minimal form landed under ADR-296:
 `FileNotesService.delete_file` / `restore_file` with persistent tombstones and
 replica-retained exact bytes (`tldw_chatbook/Notes/file_notes_service.py`;
 TASK-969, PR #992). The verified-quarantine, 30-day guaranteed-recovery
 expiry, and delete-refusal contract specified above was not built as written.
 
 Resliced 2026-10-04 — delete-safety/refusal now lives in TASK-34383 and the
-retention guarantees in TASK-34382. Superseded by ADR-029 (backlog/decisions/029-file-notes-disk-authority.md).
+retention guarantees in TASK-34382. Superseded by ADR-296 (backlog/decisions/296-file-notes-disk-authority.md).

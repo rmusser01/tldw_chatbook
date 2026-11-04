@@ -165,4 +165,4 @@ that must survive that later move.
 
 ## Renumbering provenance
 
-Renumbered from ADR-027 to ADR-293 on 2026-11-03 under TASK-36943.3 (owner decision 2026-10-25: the younger file of a shared number is renumbered). ADR-027 now refers to 027-default-workspace-chats-in-chats-section.md.
+Renumbered from ADR-293 to ADR-293 on 2026-11-03 under TASK-36943.3 (owner decision 2026-10-25: the younger file of a shared number is renumbered). ADR-027 now refers to 027-default-workspace-chats-in-chats-section.md.

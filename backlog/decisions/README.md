@@ -25,7 +25,7 @@ ADRs explain why significant architectural decisions were made. Backlog tasks, S
 | [ADR-021](021-file-backed-notes-disk-authority-and-recovery.md) | Proposed | Keep linked note files disk-authoritative, project them locally, and store journaled safety plus opt-in recovery replicas in an independent recovery database. |
 | [ADR-292](292-brand-asset-source-and-export-boundary.md) | Accepted | Keep validated Chatbook brand masters authoritative, commit reviewed exports, isolate the optional export toolchain from runtime/default CI, and keep asset-bearing work off the public remote until release clearance. |
 | [ADR-293](293-portable-database-note-session-coordinator.md) | Accepted | Keep the active Database Note draft, revisioned save queue, editor-conflict gating, and flush outcomes in a portable coordinator outside Textual presentation and separate from File Notes authority. |
-| [ADR-295](295-structured-prompts-and-auxiliary-improvement-calls.md) | Superseded by ADR-029 | Original structured Prompt and auxiliary improvement decision; replaced after discovering the existing server schema-v1 collision and composer segment boundary. |
+| [ADR-295](295-structured-prompts-and-auxiliary-improvement-calls.md) | Superseded by ADR-297 | Original structured Prompt and auxiliary improvement decision; replaced after discovering the existing server schema-v1 collision and composer segment boundary. |
 | [ADR-029](029-local-private-data-boundary.md) | Accepted; amended 2026-10-03 (ADR-217, OS keychain opt-in) | Enforce owner-only POSIX storage for local private artifacts, make config persistence single-owner, keep persistent logs payload-free, and contain legacy Notes sync paths. |
 | [ADR-297](297-versioned-prompt-artifacts-and-safe-improvement-transactions.md) | Accepted | Use schema v2 plus a first-class Prompt/Recipe discriminator, segment-safe composer transactions, recipe-fill responses, and sensitive auxiliary provider calls. |
 | [ADR-030](030-derived-index-lifecycle-and-atomic-media-migrations.md) | Accepted | Keep media SQLite authoritative, reconcile derived semantic-index deletion asynchronously, and make versioned media migrations genuinely atomic. |
@@ -63,14 +63,14 @@ ADRs explain why significant architectural decisions were made. Backlog tasks, S
 | [ADR-064](064-deepseek-dual-api-provider-boundary.md) | Accepted | Treat DeepSeek Chat Completions and Responses as two strict modes of one provider with stateless explicit history and durable reasoning/tool continuation. |
 | [ADR-065](065-active-ingest-source-admission-and-override.md) | Accepted | Refuse same-backend active-source ingest duplicates by default, with lexical identity, atomic folder admission, and an inline one-shot override. |
 | [ADR-067](067-library-top-level-pagination-contracts.md) | Accepted | Keep top-level Library paging source-owned while standardizing exact bounded pages, stable-ID owning-page reads, complete facets/trust aggregates, and truthful recovery. |
-| [ADR-316](316-console-project-instruction-context-boundary.md) | Superseded | Original Console project-instruction context boundary, replaced by ADR-069 after local-state and preflight ownership review. |
+| [ADR-316](316-console-project-instruction-context-boundary.md) | Superseded | Original Console project-instruction context boundary, replaced by ADR-317 after local-state and preflight ownership review. |
 | [ADR-317](317-console-project-instruction-local-state-and-preflight.md) | Accepted | Keep project-instruction control state local-only, detect binding retargets, and prepare ephemeral tool context before unchanged security review. |
 | [ADR-069](069-project-skills-folder-convention.md) | Accepted | Discover project-local `.SKILLS/` folders at startup and workspace creation, offering prompt-driven, fingerprint-gated import that copies content into the ADR-009 trust boundary quarantined rather than live-loading it. |
 | [ADR-072](072-checkpoint-harness-process-ownership.md) | Accepted | Bound the suite-health checkpoint harness to retained cooperative process signals with PID-version-safe Darwin cleanup. |
 | [ADR-074](074-portable-actor-packs-and-local-persona-visual-runtime.md) | Proposed | Keep Shared Visual Identity and Persona Visual as separate local runtimes inside one self-contained portable Actor Pack envelope. |
 | [ADR-075](075-durable-character-emote-metadata.md) | Proposed | Match the pinned server emote grammar while persisting bounded final-expression metadata and immutable visual references. |
 | [ADR-076](076-library-lifecycle-progressive-disclosure.md) | Accepted; amended 2026-10-03 (ADR-217 setup owner) | Library uses destination-local, profile-persisted lifecycle composition rather than a global Beginner/Expert mode or a second onboarding wizard. |
-| [ADR-077](077-server-offloaded-scheduled-agent-tasks.md) | Accepted | tldw_server is the execution authority for server-scoped scheduled agent work (single-owner execution, notifications pass-back, phase-1 side-effect-free runs), amending ADR-018's execution-unavailable clause. |
+| [ADR-077](077-server-offloaded-scheduled-agent-tasks.md) | Accepted | tldw_server is the execution authority for server-scoped scheduled agent work (single-owner execution, notifications pass-back, phase-1 side-effect-free runs), amending ADR-291's execution-unavailable clause. |
 | [ADR-321](321-structured-agent-tool-outcome-provenance.md) | Accepted | Carry optional structured tool outcome provenance across the internal provider/runtime step boundary, with safe legacy fallback and no SQLite or external provider-wire migration. |
 | [ADR-079](079-console-library-conversation-authority.md) | Accepted | Separate manual search, automatic retrieval, and assistant Library tools with local per-conversation authority, fail-closed runtime composition, and minimized turn activity. |
 | [ADR-081](081-mcp-prompt-reduction-recommendations.md) | Accepted | Keep MCP prompt-reduction recommendations local-only, MCP-only, telemetry-free, and routed through the existing permission-store APIs. |
@@ -142,7 +142,7 @@ ADRs explain why significant architectural decisions were made. Backlog tasks, S
 | [ADR-212](212-shared-adaptive-pane-shell.md) | Accepted | Share the adaptive pane shell (grips, messages, rail rows, compact search input) between the Library and Roleplay through destination classes, neutral resolver aliases and an opt-in Tab region. |
 | [ADR-217](217-first-run-setup-shape-and-surfaces.md) | Accepted | One setup owner on a Textual-free setup core serves the first-run corridor (Quick 4 steps, Full 11), a re-run dashboard, single-step sheets and `tldw-cli setup --plain`; a stable step total; a Console probe-turn test message; provider keys stay in config.toml by default with the OS keychain optional. |
 | [ADR-219](219-console-chat-destinations-and-bounded-starts.md) | Accepted | Let Console agents create workspace or casual drafts and start background work with destination defaults, scoped approvals, shared finite budgets, and durable recovery. |
-| [ADR-351](351-file-notes-replica-retention.md) | Proposed | Bound the ADR-029 File Notes replica's recovery data: 50 most-recent checkpoints per unprotected note, 30-day tombstone/revision expiry on root change and session end, with protected paths and the most-recent tombstone never evicted. |
+| [ADR-351](351-file-notes-replica-retention.md) | Proposed | Bound the ADR-296 File Notes replica's recovery data: 50 most-recent checkpoints per unprotected note, 30-day tombstone/revision expiry on root change and session end, with protected paths and the most-recent tombstone never evicted. |
 | [ADR-221](221-prompt-injection-cold-start-caches.md) | Accepted | Pay prompt-injection cold starts (book fetch, entry processing, pattern compilation) once per store generation: a monotonic WorldBookManager generation counter, a lock-guarded 8-conversation LRU of built processors keyed (conversation, character, generation), precompiled entry keys, and id-set recursion dedup; chat dictionaries adopt the same contract. |
 
 | [ADR-211](211-ephemeral-provider-failure-presentation.md) | Accepted | Keep sanitized provider failure presentation transient across the gateway, agent outcome and Console while preserving typed fallback semantics and diagnostic persistence. |
@@ -206,6 +206,10 @@ required `derived-artifacts.yml` job) fails on any collision and names the next
 free number. The 50 numbers that were shared before TASK-36943.3 were
 renumbered on 2026-11-03; [renumbered-adr-index.md](renumbered-adr-index.md)
 maps each old number to the files that held it and the number each holds now.
+[renumbered-adr-references.tsv](renumbered-adr-references.tsv) lists every
+reference in living material that was rewritten to a new number, with the file it
+was attributed to. Done tasks, `Docs/QA/` reports and superpowers specs, plans and
+reviews keep their original numbers; resolve those through the index.
 
 ## Naming
 

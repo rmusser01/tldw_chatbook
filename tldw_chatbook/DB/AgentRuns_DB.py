@@ -326,7 +326,7 @@ class AgentRunsDB(SQLiteStoreKernel, BaseDB):
     """
 
     # Numbering note (v21): the routing snapshot was planned as v16 when this
-    # branch forked (ADR-147, TASK-32477); dev landed its own v16
+    # branch forked (ADR-344, TASK-32477); dev landed its own v16
     # (budget_tokens), v17 (automatic_work), v18 (runtime_owner) via #2641,
     # then v19 (definition_wall_seconds) and v20 (worktree_recovery) via
     # #2665 while this PR awaited merge, so the routing migration renumbers
@@ -336,7 +336,7 @@ class AgentRunsDB(SQLiteStoreKernel, BaseDB):
     _CURRENT_SCHEMA_VERSION = 25
     _swept_paths: set[str] = set()  # DB files already reconciled this process
 
-    #: BaseDB-provenance (ADR-228): connections open through BaseDB's
+    #: BaseDB-provenance (ADR-353): connections open through BaseDB's
     #: per-call path under the db.base owner; participants identity
     #: stays db.base, so no per-store policy entry is minted.
     _kernel_sqlite_owner = "db.base"
@@ -384,7 +384,7 @@ class AgentRunsDB(SQLiteStoreKernel, BaseDB):
         return GoalRunsStore(self)
 
     def _open_connection(self) -> sqlite3.Connection:
-        """Open through BaseDB's db.base path (ADR-228 provenance section)."""
+        """Open through BaseDB's db.base path (ADR-353 provenance section)."""
         return BaseDB._get_connection(self)
 
     def _configure_connection(self, conn: sqlite3.Connection) -> sqlite3.Connection:
@@ -461,7 +461,7 @@ class AgentRunsDB(SQLiteStoreKernel, BaseDB):
                         budget_tokens IS NULL OR
                         (typeof(budget_tokens) = 'integer' AND budget_tokens >= 0)
                     ),
-                    -- v21 (ADR-147, TASK-32477; planned as v16, renumbered
+                    -- v21 (ADR-344, TASK-32477; planned as v16, renumbered
                     -- past dev's v16-v20 via #2641 and #2665): the
                     -- resolved-target snapshot -- where this run's agent
                     -- ACTUALLY went after preset routing resolved
@@ -557,7 +557,7 @@ class AgentRunsDB(SQLiteStoreKernel, BaseDB):
                     instructions TEXT NOT NULL DEFAULT '',
                     tool_allowlist TEXT NOT NULL DEFAULT '[]',
                     model TEXT NOT NULL DEFAULT '',
-                    -- v21 (ADR-147, TASK-32477): preset routing -- the
+                    -- v21 (ADR-344, TASK-32477): preset routing -- the
                     -- provider this definition pins ('' = inherit the
                     -- caller's provider at spawn) and its sampling-param
                     -- overrides as a JSON object string ('{}' = none).
@@ -810,7 +810,7 @@ class AgentRunsDB(SQLiteStoreKernel, BaseDB):
                 )
             if "diff_line_text" not in note_columns:
                 conn.execute("ALTER TABLE change_notes ADD COLUMN diff_line_text TEXT")
-            # v20->v21 (ADR-147, TASK-32477): preset routing fields on
+            # v20->v21 (ADR-344, TASK-32477): preset routing fields on
             # agent_definitions; resolved-target snapshot on agent_runs.
             # Same idempotent-ALTER mechanism as every column above.
             # (Numbering: planned as v16; renumbered past dev's v16-v20
@@ -925,7 +925,7 @@ class AgentRunsDB(SQLiteStoreKernel, BaseDB):
             conn.execute("INSERT OR IGNORE INTO schema_version (version) VALUES (18)")
             conn.execute("INSERT OR IGNORE INTO schema_version (version) VALUES (19)")
             conn.execute("INSERT OR IGNORE INTO schema_version (version) VALUES (20)")
-            # v21 (ADR-147, TASK-32477): agent_definitions provider/params_json
+            # v21 (ADR-344, TASK-32477): agent_definitions provider/params_json
             # + agent_runs resolved-target snapshot (planned as v16;
             # renumbered past dev's v16-v20, landed via #2641 and #2665).
             conn.execute("INSERT OR IGNORE INTO schema_version (version) VALUES (21)")
@@ -1895,7 +1895,7 @@ class AgentRunsDB(SQLiteStoreKernel, BaseDB):
             run_id: Preallocated stable identity; generated when omitted.
             work_chain_id: Immutable accepted-work lineage. Children inherit
                 their parent's chain when omitted; legacy roots remain NULL.
-            resolved_provider: v21 (ADR-147, TASK-32477): the provider the
+            resolved_provider: v21 (ADR-344, TASK-32477): the provider the
                 spawn actually routed to after preset resolution; ``None``
                 when routing was not resolved at spawn time.
             resolved_model: The resolved model id; ``None`` likewise.
@@ -2063,7 +2063,7 @@ class AgentRunsDB(SQLiteStoreKernel, BaseDB):
     def _definition_row_to_dict(self, row: sqlite3.Row) -> dict:
         data = {key: row[key] for key in row.keys()}
         data["tool_allowlist"] = json.loads(data["tool_allowlist"] or "[]")
-        # v21 (ADR-147, TASK-32477): hand ``definition_from_row`` a decoded
+        # v21 (ADR-344, TASK-32477): hand ``definition_from_row`` a decoded
         # params mapping under the ``params`` key -- the same contract
         # ``tool_allowlist`` above follows (JSON text in, decoded value
         # out). ``provider`` needs no decoding and flows through as-is.
@@ -2739,7 +2739,7 @@ class AgentRunsDB(SQLiteStoreKernel, BaseDB):
     def get_run_resolved_target(self, run_id: str) -> dict | None:
         """Fetch the v21 resolved-target snapshot for ``run_id``.
 
-        ADR-147 (TASK-32477, Task 8): the spawn resolver's frozen target --
+        ADR-344 (TASK-32477, Task 8): the spawn resolver's frozen target --
         where this run ACTUALLY ran -- which a resume/continuation reuses
         instead of re-resolving the (possibly edited) preset live.
 

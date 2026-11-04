@@ -645,7 +645,7 @@ def spawn_override_targets(
 ) -> tuple[tuple[str, tuple[str, ...]], ...]:
     """Enumerate the allowlisted spawn-override targets for the schema.
 
-    ADR-147 Task 7: when ``spawn_override_enabled`` is on, the master model
+    ADR-344 Task 7: when ``spawn_override_enabled`` is on, the master model
     must be able to pick a VALID target, so the spawn schema enumerates one
     ``(provider, models)`` pair per allowlisted provider. Identity only --
     provider ids and model names; base URLs and params never leave this
@@ -740,7 +740,7 @@ def _chat_create_runtime_schemas(
     fork_chat_tool: "Callable[[dict], ToolResult] | None",
     new_chat_tool: "Callable[[dict], ToolResult] | None",
 ) -> list[ToolSchema]:
-    """ADR-150 v1 pinned these to primary; TASK-32531 extends to sub-agents
+    """ADR-348 v1 pinned these to primary; TASK-32531 extends to sub-agents
     (children are scoped to the parent conversation, so the fork source is
     that same conversation; the per-call confirm still gates every call)."""
     if agent_kind not in (AGENT_KIND_PRIMARY, AGENT_KIND_SUBAGENT):
@@ -804,9 +804,9 @@ def build_first_request_schema_plan(
         fleet_active: Whether the primary may coordinate a live agent fleet.
         worktree_merge_enabled: A real per-call worktree confirmation surface is available.
         fork_chat_enabled: Whether the primary may fork this chat into a new
-            chat (ADR-150; confirmation-gated).
+            chat (ADR-348; confirmation-gated).
         new_chat_enabled: Whether the primary may create a fresh chat
-            (ADR-150; confirmation-gated).
+            (ADR-348; confirmation-gated).
         fleet_max_live: Maximum live agents recorded in the frozen plan.
         agent_kind: Primary or sub-agent disclosure policy selector.
         direct_system_prompt: Prompt used when all allowed schemas fit directly.
@@ -1963,7 +1963,7 @@ def _effective_tool_timeout(
     regardless of how little of the run's budget is left (TASK-25913).
 
     Computed once, at dispatch: a human approval wait that happens afterwards
-    must not shrink a call that is already running, which is what ADR-067's
+    must not shrink a call that is already running, which is what ADR-314's
     refcounted marks protect inside `_call_with_timeout`.
 
     Args:
@@ -2031,7 +2031,7 @@ def _call_with_timeout(
     message instead of "timed out" -- the abandon-on-timeout semantics and
     the overall ``seconds`` ceiling are both preserved unchanged.
 
-    ADR-067: while ``pauses_deadline`` polls True the deadline RE-ARMS each
+    ADR-314: while ``pauses_deadline`` polls True the deadline RE-ARMS each
     slice, so elapsed human-deliberation time does not consume the budget --
     the ceiling counts actual tool execution, not wall-clock spent waiting
     on a person. This is what lets a blocking human prompt (approval card,
@@ -2474,7 +2474,7 @@ class AgentService:
         # never fires PostToolUse: behavior is byte-identical to before
         # this seam existed.
         self._post_tool_call = post_tool_call
-        # Primary-only by design (ADR-150): children never create chats in v1.
+        # Primary-only by design (ADR-348): children never create chats in v1.
         self._archive_recovery_provider = archive_recovery_provider
         self._fork_chat_tool = fork_chat_tool
         self._new_chat_tool = new_chat_tool
@@ -2624,7 +2624,7 @@ class AgentService:
         self.confirm_project_instruction_dispatch = confirm_project_instruction_dispatch
         self.project_instruction_context = project_instruction_context
         self.on_ephemeral_runtime_warning = on_ephemeral_runtime_warning
-        # ADR-147 (TASK-32477 Task 6): the app-config mapping the spawn
+        # ADR-344 (TASK-32477 Task 6): the app-config mapping the spawn
         # resolver reads (custom-endpoint registry, api_settings,
         # chat_defaults). Tests inject an explicit dict; production callers
         # (the Console bridge) pass nothing and ``_app_config`` falls back
@@ -2696,7 +2696,7 @@ class AgentService:
 
     @property
     def _app_config(self) -> Mapping[str, Any]:
-        """The app-config mapping the spawn resolver reads (ADR-147).
+        """The app-config mapping the spawn resolver reads (ADR-344).
 
         The injected mapping when one was supplied at construction (tests);
         otherwise ``config.load_settings()`` -- the same cached mapping the
@@ -4627,7 +4627,7 @@ class AgentService:
         # `None` (the default) means both tools fail closed with "no
         # approval surface is available in this session".
         request_worktree_merge_confirm: "Callable[[dict], dict] | None" = None,
-        # ADR-147 (Task 6): the spawn resolver's target, snapshotted onto
+        # ADR-344 (Task 6): the spawn resolver's target, snapshotted onto
         # this run's row (schema v21). Only the spawn closure passes these
         # (for children); every other caller keeps the None defaults, and
         # the row's resolved_* columns stay NULL.
@@ -4816,7 +4816,7 @@ class AgentService:
             )
         schema_plan = first_request_schema_plan
         if schema_plan is None:
-            # ADR-147 Task 7: the master sees provider/model override args
+            # ADR-344 Task 7: the master sees provider/model override args
             # ONLY when the operator opted in ([agents]
             # spawn_override_enabled); when it does, the schema enumerates
             # the allowlisted targets so the model can pick a valid one.
@@ -6137,7 +6137,7 @@ class AgentService:
                         ok=False,
                         error=(f"unknown agent '{agent}'; available: {available}"),
                     )
-            # ADR-147 (Task 6): resolve WHERE the child runs before touching
+            # ADR-344 (Task 6): resolve WHERE the child runs before touching
             # budget or fleet capacity. A refusal is an admission refusal:
             # no child run, no slot consumed, the coded error back to the
             # supervisor model. `resolved` (the named preset, when given) is
@@ -6314,7 +6314,7 @@ class AgentService:
                     if n not in (RAW_SHELL_TOOL_NAME, VIRTUAL_CLI_TOOL_NAME)
                 )
             child_system_prompt = get_internal_prompt("agents.subagent_system")
-            # The resolver owns model/provider selection now (ADR-147): the
+            # The resolver owns model/provider selection now (ADR-344): the
             # legacy inline `if resolved.model: child_model = ...` preset
             # override lives INSIDE resolve_spawn_target, so a preset model
             # with no provider keeps its same-endpoint behavior there.
@@ -6366,7 +6366,7 @@ class AgentService:
                 else config.personal_context_block,
                 response_reserve_tokens=config.response_reserve_tokens,
                 # The resolved target's own endpoint override and sampling
-                # params (ADR-147) -- empty/None on the plain inherit path's
+                # params (ADR-344) -- empty/None on the plain inherit path's
                 # built-in providers, populated for routed children.
                 base_url=target.base_url,
                 sampling_params=target.params,
@@ -6402,7 +6402,7 @@ class AgentService:
                 ],
                 config=child_config,
                 api_endpoint=target.provider,
-                # ADR-147 snapshot (schema v21): the resolved target frozen
+                # ADR-344 snapshot (schema v21): the resolved target frozen
                 # onto the child run row so resume/continuation (Task 8)
                 # reuses IT rather than live re-resolution. Params persist
                 # as JSON only when the resolver produced any.
@@ -7140,7 +7140,7 @@ class AgentService:
                     if n not in (RAW_SHELL_TOOL_NAME, VIRTUAL_CLI_TOOL_NAME)
                 )
             child_system_prompt = get_internal_prompt("agents.subagent_system")
-            # ADR-147 (Task 8): WHERE the resumed child runs comes from the
+            # ADR-344 (Task 8): WHERE the resumed child runs comes from the
             # v21 snapshot the ORIGINAL run froze at spawn time
             # (`get_run_resolved_target`), never from a live re-resolution
             # -- editing a preset between runs retargets NEW spawns only,
@@ -7214,7 +7214,7 @@ class AgentService:
                 workspace_context_note=config.workspace_context_note,
                 personal_context_block=config.personal_context_block,
                 response_reserve_tokens=config.response_reserve_tokens,
-                # Snapshot-owned routing (ADR-147, Task 8); both sit at
+                # Snapshot-owned routing (ADR-344, Task 8); both sit at
                 # their AgentConfig defaults on the legacy miss branch.
                 base_url=child_base_url,
                 sampling_params=child_sampling_params,
@@ -7262,7 +7262,7 @@ class AgentService:
                     *retained_steering,
                     (STEERING_SOURCE_SUPERVISOR, steer_text, resume_event_id),
                 ),
-                # ADR-147 (Task 8): re-freeze the snapshot onto the NEW row
+                # ADR-344 (Task 8): re-freeze the snapshot onto the NEW row
                 # so a later continuation of THIS run reuses the same
                 # target. The legacy miss branch leaves them NULL -- a
                 # pre-v21 row's continuations keep re-resolving live, as

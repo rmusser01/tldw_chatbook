@@ -82,4 +82,4 @@ Server-wins remains the default. Conflicts are surfaced in a dedicated workbench
 
 ## Renumbering provenance
 
-Renumbered from ADR-018 to ADR-291 on 2026-11-03 under TASK-36943.3 (owner decision 2026-10-25: the younger file of a shared number is renumbered). ADR-018 now refers to 018-watchlists-tui-screen.md.
+Renumbered from ADR-291 to ADR-291 on 2026-11-03 under TASK-36943.3 (owner decision 2026-10-25: the younger file of a shared number is renumbered). ADR-018 now refers to 018-watchlists-tui-screen.md.

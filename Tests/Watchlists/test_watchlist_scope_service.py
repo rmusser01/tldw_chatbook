@@ -532,7 +532,7 @@ async def test_import_opml_assigns_folder_membership():
 @pytest.mark.asyncio
 async def test_import_opml_reuses_existing_sources_by_url():
     """A feed URL already in the DB is reused, never duplicated -- the
-    additive-only round-trip no-op (ADR-043 rule 6) depends on it."""
+    additive-only round-trip no-op (ADR-307 rule 6) depends on it."""
     scope_service, local_service, _ = make_scope_service()
     local_service.find_source_id_by_url = AsyncMock(return_value=7)
     local_service.create_source = AsyncMock(

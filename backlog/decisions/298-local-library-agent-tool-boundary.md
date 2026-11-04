@@ -63,9 +63,9 @@ may also materialize vector or image BLOBs and all Skill supporting files, so
 response-only trimming is not a sufficient privacy or performance boundary.
 
 This decision extends the global-settings ownership described by ADR-003,
-follows ADR-009 for blocked Skill trust behavior, follows ADR-013 for raw text
+follows ADR-009 for blocked Skill trust behavior, follows ADR-289 for raw text
 versus FTS expressions, and preserves the versioned Prompt artifact semantics
-in ADR-029.
+in ADR-297.
 
 ## Alternatives Considered
 
@@ -115,9 +115,9 @@ in ADR-029.
 - [Implementation plan](../../Docs/superpowers/plans/2026-08-02-local-library-agent-tools.md)
 - [ADR-003: Settings Library/RAG Defaults Boundary](003-settings-library-rag-defaults.md)
 - [ADR-009: Local Skill Trust Boundary](009-local-skill-trust-boundary.md)
-- [ADR-013: Separate media plain-text search from FTS MATCH expressions](013-media-search-plain-text-fts-boundary.md)
-- [ADR-029: Versioned Prompt Artifacts and Safe Improvement Transactions](029-versioned-prompt-artifacts-and-safe-improvement-transactions.md)
+- [ADR-289: Separate media plain-text search from FTS MATCH expressions](289-media-search-plain-text-fts-boundary.md)
+- [ADR-297: Versioned Prompt Artifacts and Safe Improvement Transactions](297-versioned-prompt-artifacts-and-safe-improvement-transactions.md)
 
 ## Renumbering provenance
 
-Renumbered from ADR-030 to ADR-298 on 2026-11-03 under TASK-36943.3 (owner decision 2026-10-25: the younger file of a shared number is renumbered). ADR-030 now refers to 030-derived-index-lifecycle-and-atomic-media-migrations.md.
+Renumbered from ADR-298 to ADR-298 on 2026-11-03 under TASK-36943.3 (owner decision 2026-10-25: the younger file of a shared number is renumbered). ADR-030 now refers to 030-derived-index-lifecycle-and-atomic-media-migrations.md.

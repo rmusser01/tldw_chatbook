@@ -1,6 +1,6 @@
 """The trace planner keeps the rewritten tail narrow and bounded.
 
-TASK-33621.29 / TASK-33621.7 review (ADR-097 amendment 2026-10-27).
+TASK-33621.29 / TASK-33621.7 review (ADR-337 amendment 2026-10-27).
 ``Tests/Chat/test_console_trace_rewritten_tail.py`` pins the proof itself over
 a fake ledger. These cases drive ``prepare_current_surface_delta`` over a real
 database and trace ledger, so each planner gate around the proof is exercised:
@@ -279,7 +279,7 @@ def test_equal_count_unrelated_completed_witness_does_not_hide_rewritten_tail(
 
 
 def test_a_compacted_history_is_bounded_by_the_replacement_range(chat_factory):
-    """ADR-097 keeps the 256-node range: a longer history stays refused.
+    """ADR-337 keeps the 256-node range: a longer history stays refused.
 
     Compact now on a chat whose recorded history holds more than 256 rows
     still stops at the card (TASK-33621.29 review). Lifting that needs a

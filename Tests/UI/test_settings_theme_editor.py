@@ -439,7 +439,7 @@ async def test_settings_theme_editor_reset_confirms_before_discarding_edits(
     request, tmp_path
 ):
     """task-1371: Reset discards unapplied edits, so it follows the Settings
-    screen's revert rule (ADR-031): confirm first, cancel keeps the edits."""
+    screen's revert rule (ADR-299): confirm first, cancel keeps the edits."""
     editor = SettingsThemeEditor()
     app = _isolated_editor_app_with_real_screens(editor)
     async with app.run_test(size=(120, 40)) as pilot:

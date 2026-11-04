@@ -339,7 +339,7 @@ INSERT OR IGNORE INTO schema_version (version) VALUES (6);
 COMMIT;
 """
 
-    #: BaseDB-provenance (ADR-228): connections open through BaseDB's
+    #: BaseDB-provenance (ADR-353): connections open through BaseDB's
     #: per-call path under the db.base owner; participants identity
     #: stays db.base, so no per-store policy entry is minted.
     _kernel_sqlite_owner = "db.base"
@@ -355,7 +355,7 @@ COMMIT;
     def _open_connection(
         self, *, operation_deadline: float | None = None
     ) -> sqlite3.Connection:
-        """Open through BaseDB's db.base path (ADR-228 provenance section)."""
+        """Open through BaseDB's db.base path (ADR-353 provenance section)."""
         return BaseDB._get_connection(self, operation_deadline=operation_deadline)
 
     def _configure_connection(
@@ -421,7 +421,7 @@ COMMIT;
     #: Workspace's contract keeps the deferred-BEGIN default (registry
     #: read-then-write sites defer the lock; explicit immediate=True sites
     #: still win). A kernel class attribute instead of a method override
-    #: (ADR-228 tri-state).
+    #: (ADR-353 tri-state).
     _transaction_immediate_default = False
 
     def _initialize_schema(self) -> None:

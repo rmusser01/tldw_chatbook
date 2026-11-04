@@ -8,7 +8,7 @@ Amends: ADR-015 (destination set 14 -> 13; fold map gains mcp/tools_settings -> 
 Supersedes: the `mcp-defaults` Settings domain contract's "server operations stay
 in MCP" stance (the contract object is deleted with the category)
 Related: ADR-172 (retirement template reused), ADR-148 (workbench IA preserved
-unchanged), ADR-031/ADR-152 (shortcut lockstep for removing ctrl+9)
+unchanged), ADR-299/ADR-152 (shortcut lockstep for removing ctrl+9)
 
 Renumber note (2026-10-18): originally drafted under number 233; renumbered to
 237 on 2026-10-16 because 233-236 are claimed on sibling branches (served-web
@@ -64,7 +64,7 @@ decision re-homes the workbench intact and deletes the pointer card instead.
 
 - `SHELL_DESTINATION_ORDER` drops to 13 (14 pre-retirement — Research and
   Meetings postdate ADR-015's "13"); ctrl+9 leaves
-  `SHELL_DESTINATION_SHORTCUTS` in lockstep (ADR-031/152).
+  `SHELL_DESTINATION_SHORTCUTS` in lockstep (ADR-299/152).
 - ADR-148's rail IA, recovery review, and audit drill-down are unchanged;
   only the host screen changes.
 - The Tool Profiles "edit policy" handoff becomes an internal Settings
@@ -82,5 +82,5 @@ decision re-homes the workbench intact and deletes the pointer card instead.
 - [ADR-015: shell destination IA](015-shell-destination-ia.md)
 - [ADR-172: retirement template](172-library-artifacts-browse-and-navigation.md)
 - [ADR-148: workbench rail IA](148-mcp-hub-rail-ia-and-responsive-triad.md)
-- [ADR-031: keybinding and footer conventions](031-tui-keybinding-and-footer-hint-conventions.md)
+- [ADR-299: keybinding and footer conventions](299-tui-keybinding-and-footer-hint-conventions.md)
 - [ADR-152: nav-layer reservation](152-roleplay-mode-keys-single-letters-nav-layer-reserved.md)

@@ -61,7 +61,7 @@ deadline in the past, i.e. an immediate auto-deny). The card's countdown copy
 
 - A pending approval no longer expires; a session can sit in NEEDS_APPROVAL
   indefinitely and revive when the user returns. Stopping the run and owning-round teardown still deny/clear promptly.
-  Navigation retains live rounds for remounting, as clarified by ADR-094.
+  Navigation retains live rounds for remounting, as clarified by ADR-336.
 - Per-call wall-clock is now "execution time, excluding human-decision waits".
   A tool that arms a human wait and then hangs *after* the decision still dies
   at the full ceiling (the deadline re-arms while paused, it does not vanish).

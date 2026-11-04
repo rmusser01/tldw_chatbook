@@ -95,7 +95,7 @@ this is a prompt guarantee, not removal of unsolicited model labels.
 
 ## Governing decisions and docs
 
-ADR-005 (invest in local RAG mirroring tldw server), ADR-013 (plain-text vs FTS match boundary), ADR-024 (citation provenance and source resolution), ADR-003/030 (library RAG defaults, derived-index lifecycle). User guide: `Docs/User_Guide/library/search-and-rag.md`. QA evidence: `Docs/superpowers/qa/2026-08-14-rag-answer-first-query-hang/` (first-query stall — model load), `2026-08-17-cross-encoder/`, `2026-08-18-*` (merge tiering, granularity, prompts seam).
+ADR-288 (invest in local RAG mirroring tldw server), ADR-289 (plain-text vs FTS match boundary), ADR-024 (citation provenance and source resolution), ADR-003/030 (library RAG defaults, derived-index lifecycle). User guide: `Docs/User_Guide/library/search-and-rag.md`. QA evidence: `Docs/superpowers/qa/2026-08-14-rag-answer-first-query-hang/` (first-query stall — model load), `2026-08-17-cross-encoder/`, `2026-08-18-*` (merge tiering, granularity, prompts seam).
 
 ## Verified gotchas
 

@@ -1224,7 +1224,7 @@ CONSOLE_WORKBENCH_SHORTCUTS_SINGLE_PANE = (
 #: advertising "Enter send" is a lie -- Enter activates the focused setup-card
 #: action instead. The blocked variant hides the send hint and names the real
 #: action. `_register_console_footer_shortcuts` swaps between the two.
-#: Capture finding 3 (ADR-031 rule 5): every other workbench key returns at
+#: Capture finding 3 (ADR-299 rule 5): every other workbench key returns at
 #: once, or only puts focus back on the card, while the card blocks (Alt+M
 #: and Ctrl+O included, R10), so the blocked footer names only F1 and Ctrl+P.
 #: F6 is listed as unavailable so the app-wide cluster leaves it out too.
@@ -1859,7 +1859,7 @@ class ChatScreen(BaseAppScreen):
         ),
         Binding("ctrl+k", "open_console_session_switcher", "Switch session", show=True),
         # task-5 (console trajectory view): single-letter htop-style launch
-        # key per ADR-031. 'y', NOT 'j': the focused transcript consumes
+        # key per ADR-299. 'y', NOT 'j': the focused transcript consumes
         # j/k for next/previous-message selection (console_transcript.py
         # on_key), which would make the advertised footer hint a lie in
         # exactly the surface a trajectory reader comes from. The footer
@@ -5125,7 +5125,7 @@ class ChatScreen(BaseAppScreen):
             shortcuts = CONSOLE_WORKBENCH_SHORTCUTS_SINGLE_PANE
         else:
             shortcuts = CONSOLE_WORKBENCH_SHORTCUTS
-        # task-18812 / ADR-031: advertise the focus toggle in the footer —
+        # task-18812 / ADR-299: advertise the focus toggle in the footer —
         # the only exit affordance visible in focus mode (no nav bar). The
         # label names the action the key will perform, per the truthfulness
         # rule. PREPENDED, not appended: AppFooterStatus's degradation drops
@@ -23333,7 +23333,7 @@ class ChatScreen(BaseAppScreen):
         return wrap(original) if callable(wrap) else original
 
     def _update_console_approval_summary(self, round_id: str, text: str) -> None:
-        """ADR-090: patch the mounted approval card's summary line in place."""
+        """ADR-332: patch the mounted approval card's summary line in place."""
         try:
             task_cards = self.query_one("#console-task-surface", ChatTaskCards)
             card = task_cards.query_one(ChatApprovalCard)

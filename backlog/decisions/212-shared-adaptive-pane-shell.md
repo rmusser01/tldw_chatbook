@@ -5,7 +5,7 @@ Date: 2026-10-02
 Task: [TASK-33910.1](../tasks/task-33910.1%20-%20Roleplay-frame-B0-shared-pane-shell-primitives-and-the-frame-ADR-no-visible-change.md)
 Spec: [Roleplay on the Library frame (sub-project B)](../../Docs/superpowers/specs/2026-10-02-roleplay-library-frame-design.md), sections 2.1, 2.12, 4.3, 5.9 (G1, G1a, G1b, G2, G3, G15, G16) and 5.10
 Plan: [B0 implementation plan](../../Docs/superpowers/plans/2026-10-02-roleplay-b0-shared-frame-primitives.md)
-Amends: [ADR-086](086-library-adaptive-reader-shell.md) (the shell is no longer Library-local); [ADR-084](084-library-media-reader-ia.md) (its five-column grips become the shared grip grammar)
+Amends: [ADR-086](086-library-adaptive-reader-shell.md) (the shell is no longer Library-local); [ADR-329](329-library-media-reader-ia.md) (its five-column grips become the shared grip grammar)
 Supersedes: N/A
 
 ## Decision
@@ -64,7 +64,7 @@ B0 and B1 may proceed in parallel, except B1's shell-rule copy and parity test, 
 
 ### Grips are not slivers (G1a)
 
-`backlog/docs/design-language.md` §2.8 says a shell sidebar collapses "to zero width (never a sliver)". On adaptive-shell routes a collapsed pane keeps a full-height **five-cell grip** at every width. The grip is a labelled, reachable control — it paints the pane's name and its arrow, takes focus, and answers Enter and Space — not a sliver of the pane. Authority: ADR-084's accepted grips ("retains a five-column grip for each pane", ADR-084 lines 15-16; "Both collapsed panes continue to consume five columns each for reachable grips", lines 73-74) and the owner's 2026-09-09 change (PR #2550, `7fc19997e3`), which amended ADR-086 to keep "the intentionally five-cell controls" while widening the columns. Not ADR-148 (Proposed). Below 64 columns a zero-width form arrives only with the single-stage follow-up (spec R38); until then the grips stay at every width.
+`backlog/docs/design-language.md` §2.8 says a shell sidebar collapses "to zero width (never a sliver)". On adaptive-shell routes a collapsed pane keeps a full-height **five-cell grip** at every width. The grip is a labelled, reachable control — it paints the pane's name and its arrow, takes focus, and answers Enter and Space — not a sliver of the pane. Authority: ADR-329's accepted grips ("retains a five-column grip for each pane", ADR-329 lines 15-16; "Both collapsed panes continue to consume five columns each for reachable grips", lines 73-74) and the owner's 2026-09-09 change (PR #2550, `7fc19997e3`), which amended ADR-086 to keep "the intentionally five-cell controls" while widening the columns. Not ADR-148 (Proposed). Below 64 columns a zero-width form arrives only with the single-stage follow-up (spec R38); until then the grips stay at every width.
 
 ### Adaptive rails follow the Library policy (G1b)
 
@@ -76,7 +76,7 @@ B0 and B1 may proceed in parallel, except B1's shell-rule copy and parity test, 
 
 ## Context
 
-ADR-084 kept the first adaptive reader inside Media; ADR-086 shared it across five Library destinations but kept it Library-local and declined an application-wide implementation. The Roleplay redesign (spec, 2026-10-02) adopts the same frame. Copying the shell would duplicate the geometry, focus evacuation and persistence behaviour ADR-086 refused to clone; importing `Widgets/Library/` would pull the Library package onto Roleplay's route. Budgets at the base (`origin/dev @ fccf70d3b0`): boot CSS 608,040 / 608,090 B; broad selectors 273 / 274; UI-ready 1,033 / 1,033 modules; pre-import 557 / 557 modules.
+ADR-329 kept the first adaptive reader inside Media; ADR-086 shared it across five Library destinations but kept it Library-local and declined an application-wide implementation. The Roleplay redesign (spec, 2026-10-02) adopts the same frame. Copying the shell would duplicate the geometry, focus evacuation and persistence behaviour ADR-086 refused to clone; importing `Widgets/Library/` would pull the Library package onto Roleplay's route. Budgets at the base (`origin/dev @ fccf70d3b0`): boot CSS 608,040 / 608,090 B; broad selectors 273 / 274; UI-ready 1,033 / 1,033 modules; pre-import 557 / 557 modules.
 
 ## Alternatives Considered
 
@@ -101,7 +101,7 @@ ADR-084 kept the first adaptive reader inside Media; ADR-086 shared it across fi
 
 ## Links
 
-- [ADR-084: Library Media reader information architecture](084-library-media-reader-ia.md)
+- [ADR-329: Library Media reader information architecture](329-library-media-reader-ia.md)
 - [ADR-086: Share an adaptive reader shell within Library destinations](086-library-adaptive-reader-shell.md)
 - [ADR-097: Boot budget ratchets](097-boot-budget-ratchets.md)
 - [Spec: Roleplay on the Library frame (sub-project B)](../../Docs/superpowers/specs/2026-10-02-roleplay-library-frame-design.md)

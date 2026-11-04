@@ -162,7 +162,7 @@ retain their existing owners. The held-Unmount regression in
 `Tests/UI/test_console_transcript_ack_repaint.py` observes committed headless
 compositor frames and repaint resumption after interval cancellation; it makes
 no terminal-write or natural elapsed-blank-time claim. Runtime/store authority
-remains under ADR-094 and accepted ADR-230; general polling is unchanged.
+remains under ADR-336 and accepted ADR-230; general polling is unchanged.
 
 Project-instruction authority callbacks run directly when already on Textual's owning thread; worker callbacks use `call_from_thread` synchronously. A dispatch confirmation that never becomes answerable is cancelled after its finite notice deadline, preserving the chat's project-instruction preference. Once-mounted decisions retain the existing detached-view pause contract. Unsent-turn Restore/Discard releases only the exact refused turn's paused preparation -- a Library (retrieval) pause, or the destination/persistence pause a card Retry or Send once re-paused into (`SHELF_RELEASABLE_PAUSES`, TASK-33621.20) -- keeping the composer's current draft; newer preparations and authored input remain owned by their own flows. While the turn's transcript card is acting on it, the shelf does not offer it; teardown discards without releasing, because close and shutdown abandon every live preparation. Refusal and unexpected settlement diagnostics record status/error categories without draft, instruction, provider-error or endpoint bodies.
 
@@ -249,7 +249,7 @@ Streaming details, transforms (skills → chat dictionaries → world info), swi
 
 ## Approvals
 
-Approval requests surface as `ChatApprovalCard` widgets in the session surface's task-card region. Card decisions (`approve_once`, `approve_session`, `always_allow`, deny, timeout) resolve the pending round; permission persistence itself flows through the MCP permission store (see [mcp-hub.md](./mcp-hub.md)). Approval waits are indefinite by default (`[mcp] approval_timeout_seconds = 0`, ADR-067); headless runs return all keys unresolved-deny without a card.
+Approval requests surface as `ChatApprovalCard` widgets in the session surface's task-card region. Card decisions (`approve_once`, `approve_session`, `always_allow`, deny, timeout) resolve the pending round; permission persistence itself flows through the MCP permission store (see [mcp-hub.md](./mcp-hub.md)). Approval waits are indefinite by default (`[mcp] approval_timeout_seconds = 0`, ADR-314); headless runs return all keys unresolved-deny without a card.
 
 ## Saved archive recovery (ADR166)
 
@@ -264,7 +264,7 @@ Confirmation cards retain the latest payload before their fixed controls mount, 
 ## Branching, rewind, and variants
 
 - **Regenerate/swipes** fork a sibling node under the same parent; the anchor branch stays stored and resumable. See [chat-pipeline.md](./chat-pipeline.md) for the full mechanism.
-- **Fork/branch of conversations**: `console_chat_fork.py` fences whole-conversation copies (`ChatPersistenceService.fork_console_conversation_bundle`); authority boundaries are ADR-092.
+- **Fork/branch of conversations**: `console_chat_fork.py` fences whole-conversation copies (`ChatPersistenceService.fork_console_conversation_bundle`); authority boundaries are ADR-334.
 - **Image variants** remain a per-message variant set (`ConsoleVariantSet`, `store.add_variant`) browsed with variant-previous/next.
 
 ## Conversation memory and compaction (ADR-052)
@@ -304,7 +304,7 @@ The bridge binds each provider candidate to its actual resolution as continuatio
 
 Capture On uses `LiveNativeContinuationCustody` only for the current host invocation. After projected persistence succeeds, the optional runtime acknowledgment binds the exact runtime checkpoint and each capped model result to the store's projected, optionally sealed checkpoint. The current generation, active path, message version and checkpoint are checked under the generation scope and again in the trace transaction. The issued surface retains one current raw reference with diagnostic representations suppressed; cold trace bytes cannot recreate that authority.
 
-For a later native batch, `console_trace_service` proves the unchanged raw prefix, exact new call/result suffix, other continuation groups and frozen policy. It atomically replaces one continuation node and appends the new messages. `console_trace_continuation` stores a `native-continuation-round-v1` artifact containing only the new projected round and bounded metadata; the existing replacement edge identifies its predecessor. Both durable comparisons and the native reader resolve that node-aware chain with checkpoint limits. The ordinary full base stays readable. This makes new trace artifact and metadata storage linear in unique captured rounds; current assistant checkpoints and reconstruction CPU retain their existing costs. Fork/GC reachability follows the existing edges. Final-owner sweeping uses an operation-owned savepoint and temporary FK deferral for the segment/event cycle, checks the foreign keys of every table that references a swept trace table (not the whole database) before release and restores the caller's mode on success or rollback (ADR097).
+For a later native batch, `console_trace_service` proves the unchanged raw prefix, exact new call/result suffix, other continuation groups and frozen policy. It atomically replaces one continuation node and appends the new messages. `console_trace_continuation` stores a `native-continuation-round-v1` artifact containing only the new projected round and bounded metadata; the existing replacement edge identifies its predecessor. Both durable comparisons and the native reader resolve that node-aware chain with checkpoint limits. The ordinary full base stays readable. This makes new trace artifact and metadata storage linear in unique captured rounds; current assistant checkpoints and reconstruction CPU retain their existing costs. Fork/GC reachability follows the existing edges. Final-owner sweeping uses an operation-owned savepoint and temporary FK deferral for the segment/event cycle, checks the foreign keys of every table that references a swept trace table (not the whole database) before release and restores the caller's mode on success or rollback (ADR337).
 
 Explicit Resume projects only assistant text, exact native calls and existing results through `ConsoleProviderGateway.expand_provider_continuation`. After existing target, runtime and permission checks, `begin_generation_attempt` rechecks the active checkpoint and persisted owner version under the generation scope before resetting live attempt bookkeeping; it preserves partial text, private bytes and durable versions. Executing, foreign or stale owners refuse. It does not retry or activate automatically. A final-only response without prior native state still follows ordinary text settlement.
 
@@ -338,7 +338,7 @@ Notable keys: `workspace_root` (compatibility-only for Console file authority �
 
 ## Governing decisions
 
-ADR-052 (memory and compaction policy), ADR-067 (indefinite approval waits), ADR-082 (per-chat scratch), ADR-092 (fork and authority boundary), ADR-094 (turn lifetime), ADR-098 (bounded prompt queue), ADR-100 (active path), ADR-134/135 (fleet budgets/recovery), ADR-145 (live thinking), ADR-150 (fork & spawn), ADR-211 (destinations and bounded starts), [ADR-230](../../backlog/decisions/230-console-send-preparation-and-io-ownership.md) (received intent and finite preparation), and [ADR-231](../../backlog/decisions/231-console-polling-and-full-state-reconciliation.md) (accepted bounded manual Preparing amendment; general polling Proposed). Numerical latency, visible paint and remaining platform qualification stay open. Spec: `Docs/superpowers/specs/2026-10-02-console-chat-destinations-and-starts-design.md`. User guide: `Docs/User_Guide/console.md` and `Docs/User_Guide/console/`.
+ADR-052 (memory and compaction policy), ADR-314 (indefinite approval waits), ADR-082 (per-chat scratch), ADR-334 (fork and authority boundary), ADR-336 (turn lifetime), ADR-098 (bounded prompt queue), ADR-100 (active path), ADR-134/135 (fleet budgets/recovery), ADR-145 (live thinking), ADR-348 (fork & spawn), ADR-211 (destinations and bounded starts), [ADR-230](../../backlog/decisions/230-console-send-preparation-and-io-ownership.md) (received intent and finite preparation), and [ADR-231](../../backlog/decisions/231-console-polling-and-full-state-reconciliation.md) (accepted bounded manual Preparing amendment; general polling Proposed). Numerical latency, visible paint and remaining platform qualification stay open. Spec: `Docs/superpowers/specs/2026-10-02-console-chat-destinations-and-starts-design.md`. User guide: `Docs/User_Guide/console.md` and `Docs/User_Guide/console/`.
 
 ## Verified gotchas
 

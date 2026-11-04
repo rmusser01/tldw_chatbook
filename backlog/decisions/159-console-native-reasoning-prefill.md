@@ -5,7 +5,7 @@ Date: 2026-09-12
 Task: [TASK-32521](../tasks/task-32521%20-%20Design-native-reasoning-prefill-for-Console.md)
 Spec: [Console native reasoning prefill](../../Docs/superpowers/specs/2026-09-12-console-native-reasoning-prefill-design.md)
 Plan: [Implementation tasks and verification](../../Docs/superpowers/plans/2026-09-12-console-native-reasoning-prefill.md)
-Extends: ADR-063, ADR-064, ADR-090, ADR-092, ADR-095
+Extends: ADR-063, ADR-064, ADR-090, ADR-334, ADR-095
 
 ## Context
 
@@ -109,5 +109,5 @@ Related evidence:
 - [vLLM continuation controls](https://docs.vllm.ai/en/latest/api/vllm/entrypoints/openai/chat_completion/protocol/)
 - [Provider continuation ownership](063-hosted-provider-wire-and-durable-tool-continuation.md)
 - [Thinking display and replay ownership](090-console-thinking-block-ownership-and-replay.md)
-- [Fork exclusions](092-console-chat-fork-copy-and-authority-boundary.md)
+- [Fork exclusions](334-console-chat-fork-copy-and-authority-boundary.md)
 - [Conversation settings ownership](095-conversation-owned-console-generation-settings.md)

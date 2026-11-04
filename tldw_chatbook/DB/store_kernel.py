@@ -1,4 +1,4 @@
-"""The one SQLite store kernel: held connections and transactions (ADR-228).
+"""The one SQLite store kernel: held connections and transactions (ADR-353).
 
 Every store that hand-rolled the held thread-local connection + liveness-ping
 idiom and the BEGIN IMMEDIATE ``transaction()`` context manager migrates onto
@@ -68,7 +68,7 @@ class SQLiteStoreKernel:
 
     #: Default lock mode for ``transaction()`` (True = BEGIN IMMEDIATE,
     #: the kernel canonical). Stores with a deferred-BEGIN contract set
-    #: this to False instead of overriding the method (ADR-228).
+    #: this to False instead of overriding the method (ADR-353).
     _transaction_immediate_default: bool = True
     #: resolved database path (subclasses must set before first connection).
     db_path_str: str = ""
@@ -98,7 +98,7 @@ class SQLiteStoreKernel:
         ``_kernel_sqlite_owner``. Stores whose lineage connects via
         ``BaseDB._get_connection`` (the ``db.base`` owner) override this
         method to delegate there instead, keeping their participants
-        identity intact (ADR-228, BaseDB-provenance section).
+        identity intact (ADR-353, BaseDB-provenance section).
         """
         kwargs = (
             {}
@@ -263,7 +263,7 @@ class SQLiteStoreKernel:
             immediate: Reserve the write lock before the first read
                 (``BEGIN IMMEDIATE``). ``None`` (the default) resolves to
                 the store's ``_transaction_immediate_default`` class
-                attribute; an explicit value always wins (ADR-228
+                attribute; an explicit value always wins (ADR-353
                 tri-state).
 
         Raises:

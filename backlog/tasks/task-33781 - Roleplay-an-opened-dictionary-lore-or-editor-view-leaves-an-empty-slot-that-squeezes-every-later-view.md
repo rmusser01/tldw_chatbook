@@ -29,7 +29,7 @@ Line refs below were re-checked on origin/dev @ ab4df99959. Paths are under `tld
 
 **Who it hurts.** Character authors (J2) and world-info builders (J3) work through a peephole while most of the pane is blank. The blank space reads as a rendering fault, so nobody thinks to scroll the tiny inner region.
 
-**Origin.** A regression from TASK-31215 (mount heavy centre views on first use; ADR-115, `backlog/decisions/115-personas-demand-mounted-center-views.md`). First-use mounting is intended and stays; only the leaked layout share is the defect.
+**Origin.** A regression from TASK-31215 (mount heavy centre views on first use; ADR-342, `backlog/decisions/342-personas-demand-mounted-center-views.md`). First-use mounting is intended and stays; only the leaked layout share is the defect.
 
 **Evidence:**
 - `personas_screen.py:2030`: `_ensure_center_view` sets the slot visible after the first mount, and nothing hides a slot again.
@@ -45,6 +45,6 @@ Line refs below were re-checked on origin/dev @ ab4df99959. Paths are under `tld
 - [ ] #1 After each of the four heavy views (character editor, persona editor, dictionary detail, lore detail) has been opened once, in any order, the view shown next gets the full height of the work pane, and no blank band from an earlier view remains.
 - [ ] #2 At 120x36 and 160x45, after Lore and Dictionaries have been visited first, the character editor fills the detail stack (its height is at least the stack height minus 2 rows), the same as when it is opened first.
 - [ ] #3 At 120x36 and 160x45, after the character editor has been opened first, the lore and dictionary detail views (including their Settings tabs) and the conversation-transcript view fill the work pane.
-- [ ] #4 Each heavy view is still mounted only on first use; the ADR-115 behaviour is unchanged.
+- [ ] #4 Each heavy view is still mounted only on first use; the ADR-342 behaviour is unchanged.
 - [ ] #5 Regression tests mount all four heavy views, then open each view at 120x36 and 160x45 and assert the geometry above; they fail on the current code.
 <!-- AC:END -->

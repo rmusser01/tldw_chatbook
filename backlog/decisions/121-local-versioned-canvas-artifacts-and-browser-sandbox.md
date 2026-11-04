@@ -6,7 +6,7 @@ Integration note (2026-09-05): Renumbered from ADR-115 to ADR-121 to avoid the
 existing Personas decision's identifier. Historical execution reports may retain
 the original number; this is the same Canvas decision, with no policy change.
 Related Tasks: TASK-31226, TASK-31227, TASK-31228, TASK-31229, TASK-31230, TASK-31003
-Related: TASK-31003, ADR-069, ADR-032
+Related: TASK-31003, ADR-317, ADR-300
 
 ### Current-dev schema integration (2026-09-05, TASK-31742)
 
@@ -709,8 +709,8 @@ authoritative dashboards.
 - [Canvas V1 runtime compatibility and security boundary](../../Docs/Canvas/V1_RUNTIME_COMPATIBILITY.md)
 - [Served-mode authentication and operations](../../tldw_chatbook/Web_Server/README.md)
 - [TASK-31003: Define server synchronization contract for Canvas artifacts](../tasks/task-31003%20-%20Define-server-synchronization-contract-for-Canvas-artifacts.md)
-- [ADR-069: Console project-instruction local state and preflight](069-console-project-instruction-local-state-and-preflight.md)
-- [ADR-032: Local agent tool permission boundary](032-local-agent-tool-permission-boundary.md)
+- [ADR-317: Console project-instruction local state and preflight](317-console-project-instruction-local-state-and-preflight.md)
+- [ADR-300: Local agent tool permission boundary](300-local-agent-tool-permission-boundary.md)
 - [Claude Code artifacts](https://code.claude.com/docs/en/artifacts)
 - [Claude Code checkpointing](https://code.claude.com/docs/en/checkpointing)
 - [Claude Artifacts](https://support.claude.com/en/articles/9487310-what-are-artifacts-and-how-do-i-use-them)

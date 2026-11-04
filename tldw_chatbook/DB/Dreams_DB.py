@@ -93,7 +93,7 @@ class DreamsDB(SQLiteStoreKernel, BaseDB):
     _WAL_SETUP_TIMEOUT_SECONDS = 5.0
     #: Pinging a recently-used held connection on every call roughly doubles
     #: the statement count on query-heavy paths (task-261/3011); idle ones
-    #: BaseDB-provenance (ADR-228): connections open through BaseDB's
+    #: BaseDB-provenance (ADR-353): connections open through BaseDB's
     #: per-call path under the db.base owner; participants identity
     #: stays db.base, so no per-store policy entry is minted.
     _kernel_sqlite_owner = "db.base"
@@ -273,7 +273,7 @@ class DreamsDB(SQLiteStoreKernel, BaseDB):
             raise
 
     # ------------------------------------------------------------------
-    # Connection handling (SQLiteStoreKernel, ADR-228)
+    # Connection handling (SQLiteStoreKernel, ADR-353)
     # ------------------------------------------------------------------
 
     def _open_connection(
@@ -283,7 +283,7 @@ class DreamsDB(SQLiteStoreKernel, BaseDB):
 
         ``check_same_thread=False`` (as before): each thread still USES only
         the connection it holds; the one call that crosses threads is
-        ``close_all`` closing them (ADR-228 provenance + the kernel's
+        ``close_all`` closing them (ADR-353 provenance + the kernel's
         ``_on_connection_opened`` hook registering into ``_opened``).
         """
         return BaseDB._get_connection(

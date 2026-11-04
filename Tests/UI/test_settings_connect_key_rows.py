@@ -66,7 +66,7 @@ async def test_api_key_row_says_where_the_key_comes_from(
         # Capture finding 10: Clear shows only while there is a key to clear.
         assert clear.visible is (setup == "config")
         assert _FAKE_KEY not in "\n".join(_region_rows(screen, row))
-        # ADR-031 rule 4: the row names Clear's key only while it clears.
+        # ADR-299 rule 4: the row names Clear's key only while it clears.
         assert (_CLEAR_HINT in _text(screen, "#settings-provider-api-key-help")) is (
             setup == "config"
         )
@@ -93,7 +93,7 @@ async def test_api_key_row_says_where_the_key_comes_from(
         )
         assert "Focused setting: API key" in guide
         assert "A saved key is used before the env var." in guide
-        # ADR-031 rule 4 rests on this: while Clear is disabled its key does
+        # ADR-299 rule 4 rests on this: while Clear is disabled its key does
         # nothing, so the row names the key only for a saved one. Clear is
         # live beside a saved key, so that case disables it by hand.
         clear.disabled = True

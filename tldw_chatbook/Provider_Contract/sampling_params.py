@@ -1,4 +1,4 @@
-"""Shared sampling-param keys, validation, and layer-merge helpers (ADR-147).
+"""Shared sampling-param keys, validation, and layer-merge helpers (ADR-344).
 
 Single source of truth for the param names a preset, a registry entry, or
 the agent resolver may carry. Transport-level keys (``streaming``) are

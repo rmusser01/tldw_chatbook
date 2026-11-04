@@ -281,7 +281,7 @@ async def test_a_sentence_typed_on_the_status_line_does_not_crash_the_console() 
     stack itself is what this pins: the depth that crashed can no longer be
     built.
 
-    TASK-33622.3 (ADR-031 refinement 2026-10-27) changed where that sentence
+    TASK-33622.3 (ADR-299 refinement 2026-10-27) changed where that sentence
     goes: its first letter, which the line has no use for, moves focus to
     the composer, so the rest of it -- spaces included -- is typed into the
     draft and never activates the segment. Bursts of the activation keys

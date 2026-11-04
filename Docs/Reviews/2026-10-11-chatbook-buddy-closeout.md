@@ -6,7 +6,7 @@ The unchanged startup import guards exposed eager artwork-attribution imports. T
 
 The affected round trips exposed an inherited activation refusal: full review validation requested the profile directory while a transaction held only database authority. Directory/capacity preflight stays before the SQL operation, including after character file preparation. Source, staged bytes, UUID, actor revision and visual authority still revalidate inside Character and Persona commits. Buddy conversion keeps its source guard both before insertion and after writes. Removing the inner guard causes the new pre-insert assertion to fail; source bytes were restored afterwards.
 
-Local Persona views now always contain policy_rules under ADR-079. Actor Pack projection previously rejected that known field, even when empty. The repair carries rules through the existing Persona format, validates every rule with the existing strict schema, and preserves them through reviewed copy/import and re-export. Malformed fields and coercible permission values are rejected; local portrait/identity fields remain excluded. The existing review displays the carried actor fields.
+Local Persona views now always contain policy_rules under ADR-325. Actor Pack projection previously rejected that known field, even when empty. The repair carries rules through the existing Persona format, validates every rule with the existing strict schema, and preserves them through reviewed copy/import and re-export. Malformed fields and coercible permission values are rejected; local portrait/identity fields remain excluded. The existing review displays the carried actor fields.
 
 ## Verification
 
@@ -18,7 +18,7 @@ The [retained receipt](artifacts/buddy-closeout-20261011/verification.json) incl
 
 TASK-31585 closes against the requester-approved revised criterion: verified merged repairs and accepted native/local human voice evidence retain their original source attribution. The [acceptance closeout](artifacts/buddy-uat-20261003/acceptance-closeout-20261011.json) preserves the former criterion, requester decision and nine verified original hashes. Exact historical native revision/exit and full human microphone/playback OpenAI realtime remain coverage limits. No accepted UAT or provider/audio run was repeated.
 
-ADR required: no. Existing ADR-074, ADR-079, ADR-126 and ADR-139 govern these routine repairs. No storage, provider, runtime authority or dependency contract changed. Full suites were not run and normal user profiles were preserved.
+ADR required: no. Existing ADR-074, ADR-325, ADR-126 and ADR-139 govern these routine repairs. No storage, provider, runtime authority or dependency contract changed. Full suites were not run and normal user profiles were preserved.
 
 ## CI pre-import follow-up
 

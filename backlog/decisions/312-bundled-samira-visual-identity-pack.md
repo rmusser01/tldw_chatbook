@@ -4,7 +4,7 @@ Status: Accepted
 Date: 2026-08-14
 Related Task: [TASK-16319](../tasks/task-16319%20-%20Bundle-Samira-character-and-full-Visual-Identity-reaction-pack.md)
 Related Spec: [Samira built-in Visual Identity pack design](../../Docs/superpowers/specs/2026-08-14-task-16319-samira-builtin-visual-identity-pack-design.md)
-Amends: [ADR-026](026-brand-asset-source-and-export-boundary.md)
+Amends: [ADR-292](292-brand-asset-source-and-export-boundary.md)
 Supersedes: N/A
 
 ## Decision
@@ -16,7 +16,7 @@ canonical portrait, and reaction images are application assets licensed under
 
 This decision authorizes Samira's supplied `Sammy.png` portrait and the derived
 reaction pack as production in-application assets. It narrowly amends the public
-release gate in ADR-026 and the earlier Chatbook brand-mascot design. It does not
+release gate in ADR-292 and the earlier Chatbook brand-mascot design. It does not
 authorize the separate logo system, wordmark, advertising, merchandise, campaign
 art, or campaign copy. Those uses remain behind their existing production and
 clearance gates. The bundled character also does not become Chatbook's default
@@ -151,7 +151,7 @@ previous public-release decision.
 ## Links
 
 - [TASK-16319 design](../../Docs/superpowers/specs/2026-08-14-task-16319-samira-builtin-visual-identity-pack-design.md)
-- [ADR-026: Brand asset source and export boundary](026-brand-asset-source-and-export-boundary.md)
+- [ADR-292: Brand asset source and export boundary](292-brand-asset-source-and-export-boundary.md)
 - [ADR-032: Immutable installed distribution assets](032-immutable-installed-distribution-assets.md)
 - [ADR-037: Character and Persona identity separation](037-roleplay-assistant-identity-and-persona-user-profile-separation.md)
 - [ADR-040: Profile-owned state and shared asset paths](040-profile-owned-state-and-shared-asset-paths.md)

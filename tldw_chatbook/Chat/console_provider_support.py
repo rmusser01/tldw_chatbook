@@ -91,7 +91,7 @@ class ConsoleProviderCatalogEntry:
         return provider_setup_facts(self.readiness_key)
 
 
-# ADR-066: per-execution-key wire formats for Console thinking controls.
+# ADR-311: per-execution-key wire formats for Console thinking controls.
 # Level = reasoning_effort; budget = thinking_budget_tokens.
 CUSTOM_OPENAI_EXECUTION_KEYS = frozenset(
     {"custom-openai-api", "custom-openai-api-2", "custom-hosted"}
@@ -441,7 +441,7 @@ def reasoning_effort_values_sent(
     Args:
         provider: Provider identity, config key or ``custom-ep`` id.
         values: Candidate levels, in display order.
-        app_config: Config holding the ADR-146 endpoint registry.
+        app_config: Config holding the ADR-343 endpoint registry.
 
     Returns:
         The subset of ``values`` the request builder forwards, in order.
@@ -472,7 +472,7 @@ def provider_request_keys(
 
     Args:
         provider: Provider identity, config key or ``custom-ep`` id.
-        app_config: Config holding the ADR-146 endpoint registry.
+        app_config: Config holding the ADR-343 endpoint registry.
 
     Returns:
         The entry, or ``None`` when no request map decides the provider's
@@ -504,7 +504,7 @@ def supported_generation_fields(
     Args:
         provider: Provider identity or config key selected by the draft.
         model: Selected model identifier, when one is chosen.
-        app_config: Config holding the ADR-146 endpoint registry. With it, a
+        app_config: Config holding the ADR-343 endpoint registry. With it, a
             ``custom-ep`` id is decided as its entry's family, the way the
             gateway sends it; without it, a registry id has no map entry.
 
@@ -541,7 +541,7 @@ def console_generation_control_support(
         provider: Provider selected by the Console draft.
         model: Optional selected model identifier.
         control: Generation control whose support should be projected.
-        app_config: Config holding the ADR-146 endpoint registry. With it, a
+        app_config: Config holding the ADR-343 endpoint registry. With it, a
             ``custom-ep`` id is decided as its entry's family, the way
             ``supported_generation_fields`` and the gateway decide it.
 
@@ -717,7 +717,7 @@ def resolve_console_provider_identity(
     display_key = provider_config_key(raw_provider)
     exact_key = raw_provider.lower()
 
-    # ADR-146: a custom-ep id addresses a registry entry that only
+    # ADR-343: a custom-ep id addresses a registry entry that only
     # app_config-holding seams can resolve (``entry_for`` in
     # ``custom_endpoint_registry``). Importing that module here would cycle
     # (registry -> console_session_settings -> this module), so this is a

@@ -2039,7 +2039,7 @@ def test_receipt_operations_raise_focused_error_when_capability_is_unavailable(
         database.list_unseen_console_activity()
 
 
-# --- Task 4 (ADR-147, TASK-32477): schema v21 -- preset routing columns on
+# --- Task 4 (ADR-344, TASK-32477): schema v21 -- preset routing columns on
 # agent_definitions, resolved-target snapshot on agent_runs. ---
 
 

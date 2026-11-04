@@ -3,9 +3,9 @@
 Status: Accepted
 Date: 2026-08-09
 Related Task: N/A — task decomposition follows the approved design
-Extends: ADR-023, ADR-039, ADR-040
+Extends: ADR-023, ADR-304, ADR-040
 Supersedes: Only the conflicting generated-configuration and Windows deferrals
-in ADR-023 and ADR-039; all other boundaries remain in force
+in ADR-023 and ADR-304; all other boundaries remain in force
 
 ## Decision
 
@@ -208,7 +208,7 @@ companion files.
 
 - [Guided model setup design](../../Docs/superpowers/specs/2026-08-09-audio-cpp-guided-model-setup-design.md)
 - [ADR-023: TTS adapter registry and audio.cpp runtime](023-tts-adapter-registry-and-audio-cpp-runtime-boundary.md)
-- [ADR-039: Global and Studio TTS settings ownership](039-global-and-studio-tts-settings-ownership.md)
+- [ADR-304: Global and Studio TTS settings ownership](304-global-and-studio-tts-settings-ownership.md)
 - [ADR-040: Profile-owned state and shared asset paths](040-profile-owned-state-and-shared-asset-paths.md)
 - [Managed lifecycle design](../../Docs/superpowers/specs/2026-08-02-audio-cpp-managed-lifecycle-design.md)
 - [audio.cpp release-0.5.1](https://github.com/0xShug0/audio.cpp/releases/tag/release-0.5.1)

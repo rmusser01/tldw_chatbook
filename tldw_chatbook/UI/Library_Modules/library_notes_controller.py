@@ -4281,7 +4281,7 @@ class LibraryNotesController:
     def handle_library_note_link_picker_key(
         self, message: NoteEditorTextArea.LinkPickerKey
     ) -> None:
-        """Route one of the picker's keys (ADR-031: routed, not bound).
+        """Route one of the picker's keys (ADR-299: routed, not bound).
 
         Args:
             message: The key the body intercepted while the picker was open.
@@ -4329,7 +4329,7 @@ class LibraryNotesController:
         """Insert the highlighted note as a stored link, through the widget.
 
         ``TextArea.replace`` fires ``TextArea.Changed``, so the existing
-        mutate -> autosave path is the only writer (ADR-027): the edge is
+        mutate -> autosave path is the only writer (ADR-293): the edge is
         recorded by ``replace_note_links`` on save.
         """
         picker = self._library_note_link_picker_or_none()

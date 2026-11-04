@@ -3,11 +3,11 @@
 Status: Accepted for the user-authorized orchestration burn-down
 Date: 2026-09-29
 Task: TASK-32508
-Amends: ADR-147; extends ADR-110 with a separate preset policy
+Amends: ADR-344; extends ADR-110 with a separate preset policy
 
 ## Decision
 
-A named preset may author an ordered, bounded `fallback_models` list of explicit provider/model pairs. Empty is off. No URLs or model-authored parameters are accepted. Resolve and freeze each candidate's registry or effective configured/default endpoint URL, execution keys (including the custom engine choice), and child-owned sampling parameters through the existing ADR-147 resolver before admitting the child. Invalid authoring fails validation; unavailable candidates produce visible skips rather than silently shortening the chain.
+A named preset may author an ordered, bounded `fallback_models` list of explicit provider/model pairs. Empty is off. No URLs or model-authored parameters are accepted. Resolve and freeze each candidate's registry or effective configured/default endpoint URL, execution keys (including the custom engine choice), and child-owned sampling parameters through the existing ADR-344 resolver before admitting the child. Invalid authoring fails validation; unavailable candidates produce visible skips rather than silently shortening the chain.
 
 Reuse the existing fallback runtime and retry classifier. Preset fallback applies only to a fresh child before the first proposed/attempted tool batch, including runtime and refused tool calls. It is disabled for retained/private continuation. Only typed retryable rate-limit, overload, transport/provider timeout and explicitly classified unavailable-model failures authorize a switch; arbitrary 400/404, auth errors or exception text do not. Existing provider-only `fallback_providers` retains ADR-110's mid-run behavior and is not merged into a preset chain.
 

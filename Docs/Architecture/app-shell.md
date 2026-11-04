@@ -33,7 +33,7 @@ Construction is phased and timed (`self._startup_phases`, histogram `app_startup
 
 App-level state includes the DB handles (`media_db`, `prompts_db`, `subscriptions_db`) and the local model-catalog service.
 
-`compose()` yields only a `SplashScreen` widget when `[splash_screen] enabled` (default true); otherwise it mounts exactly one `Container(id="screen-container")`. Screen-based navigation is exclusive — each `BaseAppScreen` composes its own chrome; there is no multi-window tab UI anymore (ADR-014 retired it; `hide_inactive_windows()` survives as a vestigial no-op).
+`compose()` yields only a `SplashScreen` widget when `[splash_screen] enabled` (default true); otherwise it mounts exactly one `Container(id="screen-container")`. Screen-based navigation is exclusive — each `BaseAppScreen` composes its own chrome; there is no multi-window tab UI anymore (ADR-290 retired it; `hide_inactive_windows()` survives as a vestigial no-op).
 
 `action_quit` runs as `run_worker(group="application-quit", exclusive=True, exit_on_error=False)`, consults the current screen's `confirm_quit`/`prepare_for_quit` and the console-runtime quit confirmation; any pre-quit failure keeps the app alive with a notify.
 
@@ -95,7 +95,7 @@ The Console sheet is deliberately boot-parsed (the Console is the initial tab; l
 
 All visual values are `$ds-*` tokens in `core/_variables.tcss` (ADR-150): spacing, control sizing, motion durations, opacity, typography emphasis, colors/status, and component states. A governance test (`Tests/UI/test_design_token_governance.py`) fails on undefined `$ds-*` references and new hex literals. Themes (`css/Themes/themes.py`, `ALL_THEMES`, dozens including user-saved themes) hold the palettes.
 
-## Keybinding conventions (ADR-031)
+## Keybinding conventions (ADR-299)
 
 - `ctrl+q` (quit), `ctrl+p` (stable command palette), `f1` (help), `f6` (next pane) are app-global; screens must not bind them.
 - Never bind terminal-convention keys (ctrl+c/v/x/s/d/z/a/r/w) for app actions.
@@ -130,7 +130,7 @@ to action dispatch, guided-button composition and the custom footer/F1 help
 (TASK-35678). Focus, dirty state, worker fences, validation and destructive
 confirmation remain live checks with their existing owners. Guidance-only
 shortcuts stay bound; Theme and Personal Context widgets project their own
-focus/selection-dependent hints. These are the existing ADR-031/033 contracts.
+focus/selection-dependent hints. These are the existing ADR-299/033 contracts.
 
 Image/Video Settings completion acknowledges the submitted category draft, retaining later raw values through configuration reload. `UI/Settings_Modules/media_gen_save.py` owns the narrow completion/recomposition helpers; the screen retains staging and checked-write ownership. Current focus/selection and expanded backend sections survive replacement, and a deliberate focus move wins (TASK-36098).
 
@@ -160,7 +160,7 @@ edits update the existing rows without rebuilding the editor.
 
 ## Governing decisions
 
-ADR-014 (retire legacy navigation chrome), ADR-015 (shell destination IA), ADR-016 (palette liveness and hotkey layer), ADR-031 (keybinding and footer conventions), ADR-033 (application session state ownership), ADR-036 (composition root), ADR-150 (design token system) — all in `backlog/decisions/`. Style constitution: `backlog/docs/design-language.md`.
+ADR-290 (retire legacy navigation chrome), ADR-015 (shell destination IA), ADR-016 (palette liveness and hotkey layer), ADR-299 (keybinding and footer conventions), ADR-033 (application session state ownership), ADR-036 (composition root), ADR-150 (design token system) — all in `backlog/decisions/`. Style constitution: `backlog/docs/design-language.md`.
 
 ## Verified gotchas
 

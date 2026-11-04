@@ -71,7 +71,7 @@ def test_first_request_schema_plan_includes_chat_create_tools():
 
 
 # ---------------------------------------------------------------------------
-# TASK-32874: dynamic schema builders (ADR-147 pattern reused for the
+# TASK-32874: dynamic schema builders (ADR-344 pattern reused for the
 # chat-creation tools).
 # ---------------------------------------------------------------------------
 

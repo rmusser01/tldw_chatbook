@@ -11,11 +11,11 @@ Related Task: [TASK-2526](../tasks/task-2526%20-%20Ship-tiktoken-and-its-encodin
 Related Spec: [Offline tiktoken Runtime Assets](../../Docs/superpowers/specs/2026-08-27-offline-tiktoken-runtime-assets-design.md)
 
 Extends: [ADR-032](032-immutable-installed-distribution-assets.md) and
-[ADR-073](073-vendored-chunking-engine-parity.md)
+[ADR-318](318-vendored-chunking-engine-parity.md)
 
 ## Context
 
-ADR-073 makes `tiktoken` a core dependency for token-based chunking. Chatbook
+ADR-318 makes `tiktoken` a core dependency for token-based chunking. Chatbook
 also uses it for Console token and cost estimates. The Python package does not
 embed its BPE tables; it downloads them from OpenAI's public blob host on first
 use and caches them outside Chatbook's authority.
@@ -67,7 +67,7 @@ test workload.
 7. The default bundle is closed and deterministic. A new encoding requires an
    explicit Chatbook asset update. Token estimates log the load failure and use
    their existing character approximation; the `Chunk_Lib` tokens method keeps
-   ADR-073's real-tokenizer probe and raises before word-approximate chunks.
+   ADR-318's real-tokenizer probe and raises before word-approximate chunks.
    Direct vendored-engine imports retain upstream fallback behavior and are not
    the supported Chatbook chunking boundary; vendored files remain unmodified.
 8. Tests and production use one asset inventory. Core-dependency tests never

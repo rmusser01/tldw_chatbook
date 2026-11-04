@@ -1,6 +1,6 @@
 """Regression tests for the Schedules UX critique fixes (UX-001..UX-019).
 
-Covers ADR-031 binding conventions, footer-hint truthfulness, plain-language
+Covers ADR-299 binding conventions, footer-hint truthfulness, plain-language
 conflict labels, sync-bar copy, and reminder-form validation helper behavior.
 """
 
@@ -21,7 +21,7 @@ from tldw_chatbook.UI.Screens.scheduling.forms.reminder_form import ReminderForm
 from tldw_chatbook.UI.Screens.scheduling.schedules_workbench import SchedulesWorkbench
 from tldw_chatbook.UI.Screens.scheduling.sync_status_widget import SyncStatusWidget
 
-# ADR-031: keys screens must never bind for app actions.
+# ADR-299: keys screens must never bind for app actions.
 _FORBIDDEN_KEYS = {
     "ctrl+c",
     "ctrl+v",

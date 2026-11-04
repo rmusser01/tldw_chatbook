@@ -5,7 +5,7 @@ columns ←/→ (arrows or ``h``/``l``), cards ↑/↓ (or ``k``/``j``), Enter
 focuses the card detail inspector, ``shift+h``/``shift+l`` move the
 selected card to the adjacent column, ``n`` creates a card in the focused
 column, ``/`` focuses the filter, ``r`` refreshes. Adapted from
-backlog-md-py's ``tui/app.py`` controller logic; per ADR-031 the
+backlog-md-py's ``tui/app.py`` controller logic; per ADR-299 the
 upstream ``q``/``ctrl+q`` quit bindings are dropped (app-global
 ``ctrl+q`` owns quit) and refresh runs as an exclusive async worker on
 the screen instead of upstream's thread + fixed-interval polling — the

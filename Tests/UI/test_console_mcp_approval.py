@@ -2789,7 +2789,7 @@ def test_request_mcp_approvals_other_sessions_cancel_event_does_not_deny_this_ro
     controller, store = _build_controller()
     session_a = store.create_session(title="A").id
     session_b = store.create_session(title="B").id
-    # ADR-067: an app-less controller now fails closed before arming (see
+    # ADR-314: an app-less controller now fails closed before arming (see
     # `request_mcp_approvals`' no-app guard), so wire the usual fake
     # bridge -- this test's subject is cross-session cancel isolation, not
     # the no-app path.
@@ -4493,7 +4493,7 @@ def test_shutdown_still_denies_a_survivors_round():
     assert results[RUN_SURVIVOR] == {"mcp__srv__write": "deny"}
 
 
-# -- ADR-067: no-deadline approval rounds --------------------------------
+# -- ADR-314: no-deadline approval rounds --------------------------------
 #
 # The shipped default is now 0 = "no auto-deny": a round stays armed until
 # the user answers or the run is stopped. A positive timeout still denies
@@ -4649,7 +4649,7 @@ def test_request_mcp_approvals_without_ui_fails_closed_immediately():
 
 
 def test_mcp_approval_timeout_default_is_no_deadline(monkeypatch):
-    """ADR-067: the shipped default flips 120 -> 0 (armed until answered);
+    """ADR-314: the shipped default flips 120 -> 0 (armed until answered);
     auto-deny is opt-in via [mcp] approval_timeout_seconds."""
     import tldw_chatbook.Chat.console_chat_controller as cc_module
 
@@ -4662,7 +4662,7 @@ def test_mcp_approval_timeout_default_is_no_deadline(monkeypatch):
 
 
 def test_human_prompt_defaults_pin_no_deadline():
-    """ADR-067 contract pin: every blocking human prompt defaults to 0
+    """ADR-314 contract pin: every blocking human prompt defaults to 0
     (wait indefinitely). Flip any of these and this test must fail."""
     import tldw_chatbook.Chat.console_chat_controller as cc_module
 

@@ -171,7 +171,7 @@ The v2 export API lives in `tldw_chatbook/Chat/trajectory_export.py`
 (`preflight_trace_export`, `build_trace_export`, `write_trajectory_export`);
 version-dispatched import lives in `Chat/trajectory_import.py`. The current
 collaboration contract is [ADR-080](../../backlog/decisions/080-trace-v2-exhaustive-event-projection-and-collaboration.md);
-[ADR-067](../../backlog/decisions/067-trajectory-export-format.md) remains the
+[ADR-313](../../backlog/decisions/313-trajectory-export-format.md) remains the
 legacy v1 contract.
 
 ## What older conversations show
@@ -210,7 +210,7 @@ shows its `no timing data` placeholder. New turns get the full treatment.
 | `escape` | Close the view |
 
 All bindings follow the repo-wide TUI keybinding conventions
-([ADR-031](../../backlog/decisions/031-tui-keybinding-and-footer-hint-conventions.md));
+([ADR-299](../../backlog/decisions/299-tui-keybinding-and-footer-hint-conventions.md));
 the footer only advertises keys that work in the current context.
 
 ## Where the design lives
@@ -218,4 +218,4 @@ the footer only advertises keys that work in the current context.
 - Design spec: `Docs/superpowers/specs/2026-08-14-console-trajectory-view-design.md`
 - Sidecar schema and view architecture: `backlog/decisions/066-console-trajectory-view-and-trace-metadata.md`
 - Collaboration export/import v2: `backlog/decisions/080-trace-v2-exhaustive-event-projection-and-collaboration.md`
-- Legacy export format v1: `backlog/decisions/067-trajectory-export-format.md`
+- Legacy export format v1: `backlog/decisions/313-trajectory-export-format.md`

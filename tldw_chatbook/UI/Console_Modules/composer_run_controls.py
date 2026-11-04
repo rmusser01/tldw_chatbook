@@ -217,7 +217,7 @@ def route_composer_control_key(
 
 
 #: TASK-33622.4: the transcript is the Console's announced list mode (the
-#: ADR-031 refinement of 2026-10-27): its single letters act on messages, so
+#: ADR-299 refinement of 2026-10-27): its single letters act on messages, so
 #: while it holds focus the footer leads with that and with the way back.
 TRANSCRIPT_KEYS_FOOTER = (
     ("", "Transcript keys · Esc to type"),
@@ -306,7 +306,7 @@ def sync_transcript_keys_footer(screen: Any, focused: Any) -> None:
 def type_to_compose(screen: Any, composer: ConsoleComposerBar, event: Key) -> None:
     """Focus the draft for a printable key that no focused control claims.
 
-    TASK-33622.3 (owner ruling 2026-10-27, the ADR-031 refinement): a
+    TASK-33622.3 (owner ruling 2026-10-27, the ADR-299 refinement): a
     status-strip chip, rail button or header action has no use for a letter,
     and the Console's one text target is the composer. Keys typed there were
     dropped, and a bare ``y`` opened Trace. Runs in `ChatScreen.on_key` just

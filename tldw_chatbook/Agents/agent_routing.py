@@ -1,4 +1,4 @@
-"""Pure spawn-target routing for sub-agents (ADR-147, TASK-32477).
+"""Pure spawn-target routing for sub-agents (ADR-344, TASK-32477).
 
 Resolution order (each level fills only blanks left above): ad-hoc spawn
 args (gated) -> preset fields -> [agents] sub-agent default -> inherit
@@ -14,7 +14,7 @@ from typing import Any
 
 from tldw_chatbook.Agents.agent_models import AgentDefinition
 
-# Module-level only because ADR-147 defines sampling_params.py as the
+# Module-level only because ADR-344 defines sampling_params.py as the
 # pure, dependency-free leaf shared by presets, registry entries, and this
 # resolver; every other Chat import below stays lazy (inside functions) so
 # agent_service.py remains the only impure Agents module.
@@ -126,7 +126,7 @@ class RoutingError(Exception):
 
 @dataclass(frozen=True)
 class SpawnTarget:
-    """Where one spawned child runs, fully resolved (ADR-147).
+    """Where one spawned child runs, fully resolved (ADR-344).
 
     Args:
         provider: Provider id or ``custom-ep:<slug>`` the child sends
@@ -195,7 +195,7 @@ def _default_readiness(app_config: Mapping[str, Any], provider: str) -> str | No
     """None when the provider may be sent to, else the human-readable block.
 
     Wraps get_provider_readiness (Chat/provider_readiness.py:476) — the same
-    readiness the Console send path projects, custom-ep aware per ADR-146: a
+    readiness the Console send path projects, custom-ep aware per ADR-343: a
     ``custom-ep:<slug>`` id checks its registry entry's FAMILY readiness key
     (a raw custom-ep id is not an api_settings section and would always read
     as "Unknown provider"), and an entry whose declared credential does not

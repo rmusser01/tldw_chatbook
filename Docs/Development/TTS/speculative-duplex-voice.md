@@ -2,7 +2,7 @@
 
 This page is the implementation guide for the provider-neutral low-latency
 speech-to-text-to-speech pipeline governed by
-[ADR-098](../../../backlog/decisions/098-low-latency-speculative-duplex-voice-pipeline.md).
+[ADR-338](../../../backlog/decisions/338-low-latency-speculative-duplex-voice-pipeline.md).
 The detailed approved design is
 [the speculative duplex voice specification](../../superpowers/specs/2026-08-28-low-latency-speculative-duplex-voice-pipeline-design.md).
 
@@ -106,7 +106,7 @@ The launcher resolves this checkout and refuses a foreign package, detached
 checkout, abbreviated hash, or mismatched HEAD. The visible **Hands-free** switch
 is the normal entry; do not rely on Ctrl+Shift+H in a macOS terminal. Navigation
 and screen suspension stop provisional audio; already-claimed winning saves and
-ordinary accepted turns remain with the app runtime under ADR-094.
+ordinary accepted turns remain with the app runtime under ADR-336.
 
 Packaged platforms remain unqualified. The supported development entry is
 [run_speculative_voice_dev.py](../../../scripts/run_speculative_voice_dev.py),

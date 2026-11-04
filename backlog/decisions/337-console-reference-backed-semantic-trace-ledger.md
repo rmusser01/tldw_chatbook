@@ -12,7 +12,7 @@ Supersedes: [ADR-096](096-console-safe-capture-retention.md), which bounded Safe
 captures by discarding older semantic history.
 
 Amends: the Console Full semantic-capture policy and
-[ADR-092 Console chat fork](092-console-chat-fork-copy-and-authority-boundary.md).
+[ADR-334 Console chat fork](334-console-chat-fork-copy-and-authority-boundary.md).
 
 ## Context
 
@@ -234,7 +234,7 @@ project-instruction bodies never enter default durable capture.
 TASK-31976.1 applies decisions 6 and 8 to automatic `AGENTS.md` context: Capture
 On retains the actual provider-visible context as a `project_instruction`
 artifact under the frozen credential/PII policy. The owner explicitly requested
-this trajectory fidelity, superseding ADR-069's earlier durable-capture
+this trajectory fidelity, superseding ADR-317's earlier durable-capture
 exclusion; its other ephemerality and authority rules remain in force. Capture
 Off retains no such trace artifact. Context rows remain attached to their user
 turn for windowing and cannot replace the admitted saved message as call owner.
@@ -549,7 +549,7 @@ runtime boundary without making a transitive regex engine a core dependency.
 - [Approved design](../../Docs/superpowers/specs/2026-08-28-console-reference-backed-semantic-trace-ledger-design.md)
 - [TASK-23026](../tasks/task-23026%20-%20Exchange-capture-stores-the-whole-conversation-on-every-send-forever.md)
 - [Superseded ADR-096](096-console-safe-capture-retention.md)
-- [Console chat fork ADR](092-console-chat-fork-copy-and-authority-boundary.md)
+- [Console chat fork ADR](334-console-chat-fork-copy-and-authority-boundary.md)
 - [TASK-24206](../tasks/task-24206%20-%20Add-lossless-chunk-row-encoding-for-streamed-trace-events.md)
 - [DeepSeek Harness session model](https://github.com/deepseek-ai/deepseek-harness/blob/master/docs/subsystems/session.md)
 - [DeepSeek reconstructable requests](https://github.com/deepseek-ai/deepseek-harness/blob/master/.agents/notes/implemented/architecture/2026-07-05-reconstructable-requests.md)
@@ -626,7 +626,7 @@ registry, retention change or general history-replacement permission is introduc
 
 ### Integration recorded 2026-09-10: local terminal receipts
 
-The closed-history proof composes with ADR-094 terminal publication. In addition
+The closed-history proof composes with ADR-336 terminal publication. In addition
 to its existing empty metadata forms, it permits exactly the serialized
 `MessageMetadata` defaults plus one canonical, validated terminal receipt ID.
 Compare JSON field types as well as values; numeric zero is not a false boolean.

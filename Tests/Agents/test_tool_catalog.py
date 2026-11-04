@@ -85,7 +85,7 @@ def test_pseudo_tool_schemas():
     assert LOAD_TOOLS_SCHEMA.name == LOAD_TOOLS_NAME
 
 
-# --- ADR-147 (TASK-32477 Task 7): spawn schema gating + master visibility ---
+# --- ADR-344 (TASK-32477 Task 7): spawn schema gating + master visibility ---
 #
 # The spawn tool advertises `provider`/`model` override args ONLY when the
 # operator opted in via [agents] spawn_override_enabled, enumerates the

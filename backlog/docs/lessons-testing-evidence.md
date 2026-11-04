@@ -10606,7 +10606,7 @@ keeping such a test when it looks redundant next to the happy-path one.
 ## An unbounded wait default turns leaked test rounds into post-suite interpreter hangs
 
 **TASK-16789, 2026-08-15.** After flipping the human-prompt timeouts to a
-no-deadline default (ADR-067), `Tests/Chat/test_console_skill_script_confirm.py`
+no-deadline default (ADR-314), `Tests/Chat/test_console_skill_script_confirm.py`
 printed "1 failed, 28 passed in 7.49s" — and then the pytest process sat at 0%
 CPU for 20+ minutes producing no output (the `| tail` wrapper hid everything
 until exit). `sample <pid>` showed the main thread in
@@ -10745,7 +10745,7 @@ child order faked a "blocked prune" and stalled a selection-free End drain
 `Tests/Chat/test_console_runtime_lifetime.py`'s two AC#2 approval pins —
 "leaving Console denies a parked approval round" and "a round from the
 previous visit is not resurrected" — build the controller with
-`app is None`. That was fine when they were written. Then ADR-067 added a
+`app is None`. That was fine when they were written. Then ADR-314 added a
 no-`app` guard to `request_mcp_approvals` that denies every name on the spot,
 and from that moment the rounds never reached the poll loop at all: both tests
 passed on the guard's verdict, not on the cancellation signal they claim to
@@ -11896,7 +11896,7 @@ databases. Its module docstring named its enforcers precisely — the five tools
 in `Tools/file_operation_tools.py` — and every one of them really did call
 `is_sensitive_path`. Tests covered them thoroughly (`Tests/Tools/
 test_file_tool_sandbox.py`). All of that was true and none of it helped: the
-`fs_*` family (`Tools/local_tool_impls.py`, ADR-032) was added LATER as a
+`fs_*` family (`Tools/local_tool_impls.py`, ADR-300) was added LATER as a
 second, independent file-tool family, confined paths to `[console]
 workspace_root`, and never joined the contract. `grep is_sensitive_path` over
 `Tools/`+`Agents/` returned nine hits, all in the file that was already
@@ -22527,7 +22527,7 @@ do not prove unchanged provider input.
 
 ## A static tool schema can be only the gated base
 
-PR2995 Qodo finding4182699992 claimed that agents could never request provider/model/preset because NEW_CHAT_TOOL_SCHEMA listed only five fields. An independent review traced the actual Console first-request plan: build_chat_create_schema adds routed presets and opted-in overrides, and native/text serializers retain those dynamic properties. Unconditionally adding the fields would violate ADR147/219 disclosure gates.
+PR2995 Qodo finding4182699992 claimed that agents could never request provider/model/preset because NEW_CHAT_TOOL_SCHEMA listed only five fields. An independent review traced the actual Console first-request plan: build_chat_create_schema adds routed presets and opted-in overrides, and native/text serializers retain those dynamic properties. Unconditionally adding the fields would violate ADR344/219 disclosure gates.
 
 For a tool-discovery claim, inspect the runtime schema builder, its live call-site inputs and the provider serializer before editing a static constant. The false-positive disposition and source links are recorded in https://github.com/rmusser01/tldw_chatbook/pull/2995#discussion_r4183161209 and the final Task27 review. No executed provider matrix or new test run was claimed.
 
@@ -22909,7 +22909,7 @@ restored-first-fetch-4 four passing native restored-fetch cases with Dreams off.
 
 ## Qualify admitted trace lifetime before provider reservation
 
-**PR3010 current integration / TASK-34807, 2026-10-12.** The mounted learning journey intermittently retained a repair for recovery. Phase28 reproduced the cause using native SQLite, real durable admission, the real trace collector and actual call reservation: GC deleted the current semantic revisions between checkpoint acceptance and reservation. ADR097 already makes current host-owned work a root; current validated checkpoint ancestry now protects that interval and all five canonical checkpoint mutations advance the existing graph epoch. Positive ordinary/native-plus-hook reservation and negative revoked/orphan/invalid-owner reclamation controls are both necessary: merely preventing deletion can leak unreferenced history.
+**PR3010 current integration / TASK-34807, 2026-10-12.** The mounted learning journey intermittently retained a repair for recovery. Phase28 reproduced the cause using native SQLite, real durable admission, the real trace collector and actual call reservation: GC deleted the current semantic revisions between checkpoint acceptance and reservation. ADR337 already makes current host-owned work a root; current validated checkpoint ancestry now protects that interval and all five canonical checkpoint mutations advance the existing graph epoch. Positive ordinary/native-plus-hook reservation and negative revoked/orphan/invalid-owner reclamation controls are both necessary: merely preventing deletion can leak unreferenced history.
 
 Phase29 then proved a second lifetime error in the actual automatic collector loop: a completed epoch4 result remained cached at epoch6 after settlement because physical compaction was threshold-deferred. Explicit collect tests had passed. Qualify the automatic last-collected/pending-result path too, preserving reuse while the epoch is unchanged and recollecting after canonical ownership changes. Do not silence startup maintenance or widen retained roots to make a mounted test pass. Goal's automatic path intentionally uses Capture Off and must be qualified separately rather than assigned a fabricated USER checkpoint.
 

@@ -183,7 +183,7 @@ Tests/UI/test_settings_connect_key_rows.py::test_a_filled_required_endpoint_says
 # TASK-33003.20: production batch geometry, isolated profile and shipping CSS.
 Tests/UI/test_approval_batch_geometry.py
 Tests/UI/test_settings_model_defaults_rows.py::test_sampling_is_one_closed_row_naming_what_anthropic_does_not_accept
-# Parent AC#11 (ADR-033): the State line names its scope, in one row (17-29 s).
+# Parent AC#11 (ADR-303): the State line names its scope, in one row (17-29 s).
 # TASK-33002.17: the file whole since, in this test's place, with the Provider field's new-chat purpose pins (3 tests, ~14 s, private profile).
 Tests/UI/test_settings_provider_save_scope.py
 Tests/UI/test_library_notes_tree_scrolls_wide.py
@@ -670,7 +670,7 @@ Tests/UI/test_settings_connect_key_rows.py::test_a_key_reads_saved_before_its_ba
 Tests/UI/test_library_prompt_pending_drafts.py::test_save_acknowledges_only_submitted_prompt[False-basic-queued-metadata-False]
 Tests/UI/test_personas_pending_save_drafts.py::test_pending_save_retains_later_raw_draft_and_same_record_retry[update-character]
 Tests/UI/test_settings_connect_key_rows.py::test_a_key_reads_saved_before_its_base_url_is_set[env-cloudflare]
-# Parent AC#11 (ADR-033): the Inspector labels a staged field's commit model (17-29 s).
+# Parent AC#11 (ADR-303): the Inspector labels a staged field's commit model (17-29 s).
 Tests/UI/test_settings_save_commit_models.py::test_staged_fields_document_staged_save_in_the_inspector
 Tests/UI/test_personas_pending_save_drafts.py::test_pending_save_retains_later_raw_draft_and_same_record_retry[update-persona]
 Tests/UI/test_settings_providers_models_card_geometry.py::test_a_routed_pages_return_box_is_as_tall_as_its_rows[conflict-235x52]
@@ -709,7 +709,7 @@ Tests/UI/test_personas_pending_save_drafts.py::test_failed_pending_save_preserve
 Tests/UI/test_app_quit_under_modal.py::test_a_snapshot_preference_edit_is_kept_and_asked_about_from_console
 # A custom endpoint as the default: Revert relocks Discover, Save selected and Clear (11-19 s).
 Tests/UI/test_settings_custom_endpoint_default.py::test_revert_to_a_registry_default_relocks_model_discovery
-# Parent AC#11 (ADR-033): the Inspector labels the catalog fields' instant apply (17-29 s).
+# Parent AC#11 (ADR-303): the Inspector labels the catalog fields' instant apply (17-29 s).
 Tests/UI/test_settings_save_commit_models.py::test_model_catalog_fields_document_instant_apply_in_the_inspector
 Tests/UI/test_settings_media_pending_save_drafts.py::test_media_save_keeps_expanded_nondefault_editor_context[video-minimax]
 Tests/UI/test_settings_configuration_hub.py::test_settings_keyless_provider_save_keeps_template_env_name_out[legacy-env-unset]
@@ -866,7 +866,7 @@ Tests/UI/test_evals_grid_shortcuts.py::test_grid_footer_and_f1_follow_keyboard_p
 Tests/UI/test_settings_console_fallback_rows.py::test_a_hand_edited_fallback_shows_the_value_and_word_a_new_chat_resolves
 # Capture finding 19: Settings' focus-help line never describes the nav bar.
 Tests/UI/test_settings_configuration_hub.py::test_settings_focus_help_line_never_describes_the_nav_bar
-# Parent AC#11 (ADR-033) and TASK-33007.6 AC#7: the catalog controls are
+# Parent AC#11 (ADR-303) and TASK-33007.6 AC#7: the catalog controls are
 # labelled and set apart (17-29 s).
 Tests/UI/test_settings_save_commit_models.py::test_model_catalog_controls_are_labeled_and_visually_separated
 Tests/UI/test_personas_lore_save_responsiveness.py::test_cancelling_save_keeps_admission_until_native_write_finishes

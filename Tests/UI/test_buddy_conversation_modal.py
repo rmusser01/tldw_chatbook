@@ -575,7 +575,7 @@ async def test_explicit_buddy_retains_headless_decisions_after_close(kind):
             # No-view questions still require the exact retained Buddy target.
             assert request(app.other.id) == {"answered": False, "reason": "cancelled"}
         else:
-            # ADR-094's domain routers retain hidden skills, never authorize
+            # ADR-336's domain routers retain hidden skills, never authorize
             # execution or consume a finite allowance just by being installed.
             sibling = asyncio.create_task(asyncio.to_thread(request, app.other.id))
             try:

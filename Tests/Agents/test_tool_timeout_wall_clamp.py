@@ -6,7 +6,7 @@ but Console raises it to 3600s, so one hung tool could hold a run roughly an hou
 past a budget the user set -- the loop simply never got back to its own check.
 
 The clamp is computed once, at dispatch. A human approval wait that happens
-afterwards must not shrink a call that is already running (ADR-067).
+afterwards must not shrink a call that is already running (ADR-314).
 """
 
 from __future__ import annotations
@@ -137,7 +137,7 @@ def _slow_work(duration: float):
 
 
 def test_approval_wait_holds_a_clamped_call_open():
-    """AC#3: ADR-067's refcounted pause must survive the clamp.
+    """AC#3: ADR-314's refcounted pause must survive the clamp.
 
     The first version of this test let the work finish in about a millisecond,
     comfortably inside the bound -- it passed with `pauses_deadline` returning

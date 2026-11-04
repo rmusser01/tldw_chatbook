@@ -12,7 +12,7 @@ Fail-safe direction is ALWAYS verification-on: any invalid value (bad type,
 missing/unreadable file, unparseable PEM, bundle-write failure) logs an error
 with the remedy and yields default verification.
 
-Governance: backlog/decisions/079-network-tls-trust-policy.md and
+Governance: backlog/decisions/324-network-tls-trust-policy.md and
 Docs/superpowers/specs/2026-08-29-network-tls-trust-policy-design.md.
 """
 

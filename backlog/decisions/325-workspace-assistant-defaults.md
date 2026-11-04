@@ -4,9 +4,9 @@
 - **Date:** 2026-08-29
 - **Task:** [TASK-21969](../tasks/task-21969%20-%20Workspace-assistant-defaults-—-personas-policy-rules-permission-profiles.md)
 - **Design:** [Workspace Assistant Defaults design](../../Docs/superpowers/specs/2026-08-29-workspace-assistant-defaults-design.md)
-- **Related:** ADR-069 (console project-instruction bindings and tool authority),
+- **Related:** ADR-317 (console project-instruction bindings and tool authority),
   ADR-074 (actor packs; persona JSON authority), ADR-037 (persona/user-profile
-  boundary), ADR-078 (Research Workspace — explicitly out of scope here)
+  boundary), ADR-322 (Research Workspace — explicitly out of scope here)
 - **Server contracts:** `tldw_server` Workspace Persona Defaults PRD (V1 shipped
   server-side, PR #2286); Persona Tool Administration PRD (draft);
   `workspace_schemas.py` (`WorkspaceAssistantDefaults`,
@@ -29,7 +29,7 @@ Chatbook needs the same capability locally, shaped so the two stay mirrorable.
 The decision spans three stores — WorkspaceDB (schema v2), the persona JSON
 store, and the MCP permission store's dormant `profiles` dict — and layers a
 security-adjacent permission model on top of existing gates and floors
-(ADR-069 binding authority, kill switch, rug-pull definition-hash check,
+(ADR-317 binding authority, kill switch, rug-pull definition-hash check,
 high-risk floors, ephemeral restrictions).
 
 ## Decision
@@ -72,7 +72,7 @@ Persona profile records gain a `policy_rules` list mirroring the server's
 library, MCP — because the `ToolCatalogRegistry` is the unified tool surface.
 
 Semantics are narrowing-only, applied after all existing gates in a fixed
-order: config gates → ephemeral restrictions → ADR-069 binding access → kill
+order: config gates → ephemeral restrictions → ADR-317 binding access → kill
 switch → profile grant resolution → persona policy floor → call caps. With
 rules present for a kind, advertising is deny-by-default; `allowed=false`
 removes the tool from the advertised set; `require_confirmation=true` floors
@@ -133,10 +133,10 @@ an explicit user confirmation step in the workspace settings surface — the
 local analog of the server's backend-required
 `confirm_read_write_assistant_default=true` flag, kept as a UI-level gate.
 
-### 7. ADR-069 authority and every existing floor are unchanged
+### 7. ADR-317 authority and every existing floor are unchanged
 
 Project-instruction bodies (AGENTS.md / AGENTS.override.md) never grant
-permission or influence posture; read-only ADR-069 bindings still strip
+permission or influence posture; read-only ADR-317 bindings still strip
 mutating fs tools even if persona rules allow them. The kill switch, rug-pull
 hash, high-risk floors, and in-memory session approvals keep their current
 semantics. Runtime narrowing-only semantics make imported rules safe by
@@ -184,7 +184,7 @@ lifecycle decisions.
 
 ### Research Workspace adoption
 
-Out of scope per ADR-078: its chat has no agent loop; adoption is a later
+Out of scope per ADR-322: its chat has no agent loop; adoption is a later
 server-defined stage.
 
 ## Consequences

@@ -86,7 +86,7 @@ class SettingsLibraryRagDefaults:
     # (Chat_Functions, Internal_Prompts) into this otherwise-light module;
     # kept honest by test_reranker_top_k_default_matches_reranking_config.
     reranker_top_k: int = 20
-    # task-1337 (ADR-030): global [console] toggle -- when True, Console
+    # task-1337 (ADR-298): global [console] toggle -- when True, Console
     # agents get the 18 direct Library tools; when False, they fall back to
     # the bounded Library RAG tool. Global app config, NOT profile-scoped and
     # never serialized into per-conversation session settings; the adapter

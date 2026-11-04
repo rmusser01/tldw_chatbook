@@ -1892,7 +1892,7 @@ def test_make_default_for_registry_entry_writes_only_chat_defaults(
     tmp_path: Path,
     monkeypatch,
 ) -> None:
-    """ADR-146: a custom-ep provider id persists via chat_defaults only.
+    """ADR-343: a custom-ep provider id persists via chat_defaults only.
 
     The registry entry under ``[custom_endpoints.<slug>]`` is the endpoint
     and model carrier, so a Save-as-default for ``custom-ep:<slug>`` must not

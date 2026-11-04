@@ -7028,7 +7028,7 @@ async def test_landing_footer_advertises_the_landing_keyboard_story():
 
         footer = screen.query_one(AppFooterStatus)
         # (task-3022, coordinating with task-2860) The always-present-globals
-        # contract (ADR-031) means F1/Ctrl+P/Ctrl+Q still trail the screen's
+        # contract (ADR-299) means F1/Ctrl+P/Ctrl+Q still trail the screen's
         # own hints even though the screen's own "F6 next pane" copy now
         # covers F6 and excludes "F6 panes" from that trailing cluster --
         # see Tests/UI/test_screen_footer_hints.py for the identical,

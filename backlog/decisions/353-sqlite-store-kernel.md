@@ -89,4 +89,4 @@ helper callers keep native exceptions and no private exception body is logged.
 
 ## Renumbering provenance
 
-Renumbered from ADR-228 to ADR-353 on 2026-11-03 under TASK-36943.3 (owner decision 2026-10-25: the younger file of a shared number is renumbered). ADR-228 now refers to 228-config-encryption-derived-key-memoization.md.
+Renumbered from ADR-353 to ADR-353 on 2026-11-03 under TASK-36943.3 (owner decision 2026-10-25: the younger file of a shared number is renumbered). ADR-228 now refers to 228-config-encryption-derived-key-memoization.md.

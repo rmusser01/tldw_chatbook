@@ -188,7 +188,7 @@ class _StalledGateway:
 class _ThreadApp:
     """The app surface `request_mcp_approvals` needs to reach its poll loop.
 
-    **Not decoration.** ADR-067 added a no-`app` guard to
+    **Not decoration.** ADR-314 added a no-`app` guard to
     `request_mcp_approvals` that denies every name on the spot when
     `controller.app is None` -- so the two approval-round tests below,
     written before that guard existed, stopped exercising the poll loop

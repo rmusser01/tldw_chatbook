@@ -433,7 +433,7 @@ class LibraryCollectionsDB(SQLiteStoreKernel, BaseDB):
         """,
     )
 
-    #: BaseDB-provenance (ADR-228): connections open through BaseDB's
+    #: BaseDB-provenance (ADR-353): connections open through BaseDB's
     #: per-call path under the db.base owner; participants identity
     #: stays db.base, so no per-store policy entry is minted. Writes
     #: take BEGIN IMMEDIATE up front because the MCP server opens
@@ -494,7 +494,7 @@ class LibraryCollectionsDB(SQLiteStoreKernel, BaseDB):
         super().__init__(db_path, client_id)
 
     def _open_connection(self) -> sqlite3.Connection:
-        """Open through BaseDB's db.base path (ADR-228 provenance section)."""
+        """Open through BaseDB's db.base path (ADR-353 provenance section)."""
         return BaseDB._get_connection(self)
 
     def _enable_wal(self, conn: sqlite3.Connection) -> None:

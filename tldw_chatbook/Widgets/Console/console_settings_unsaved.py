@@ -1,6 +1,6 @@
 """Ask before a close gesture discards unapplied Chat settings edits.
 
-TASK-33003.5 (ADR-031 task-16211): Esc, a backdrop click and Cancel never
+TASK-33003.5 (ADR-299 task-16211): Esc, a backdrop click and Cancel never
 discard an edited Chat settings draft by themselves. The modal's close guard
 gains an ``unsaved`` mode, after the memory-reset and compaction modes, that
 names the edited fields and offers Apply to this chat (Enter), Discard (d)
@@ -309,7 +309,7 @@ def unsaved_labels(
 
 
 def esc_hint_copy(count: int, *, pending: str | None = None) -> str:
-    """Return the Esc hint for ``count`` unsaved edits (ADR-031 task-16211).
+    """Return the Esc hint for ``count`` unsaved edits (ADR-299 task-16211).
 
     Args:
         count: How many fields are unsaved.
@@ -349,7 +349,7 @@ def unsaved_prompt_copy(labels: Iterable[str], *, can_apply: bool = True) -> str
     Args:
         labels: The edited fields' labels.
         can_apply: Whether Apply to this chat is available; the key line
-            names only the keys that work (ADR-031 rule 4).
+            names only the keys that work (ADR-299 rule 4).
 
     Returns:
         The prompt's message: the edited fields, then the keys.

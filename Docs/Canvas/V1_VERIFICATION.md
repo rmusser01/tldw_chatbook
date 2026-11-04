@@ -136,7 +136,7 @@ The implemented repair composes exactly one verified replacement then
 one saved-user append; exact owned Retry and three-way commit reconciliation
 preserve at-most-once adapter entry. Operation-owned SQLite cleanup preserves
 borrowed connections. Governance is the amended
-[trace-ledger ADR-097](../../backlog/decisions/097-console-reference-backed-semantic-trace-ledger.md)
+[trace-ledger ADR-337](../../backlog/decisions/337-console-reference-backed-semantic-trace-ledger.md)
 and [repair plan](../superpowers/plans/2026-09-05-console-tool-turn-surface-transition.md).
 The original failure and earlier checkpoints below are historical, not current
 claims that the repair is absent.
@@ -154,7 +154,7 @@ repository sweep, global lint-clean or global resource-cleanliness claim is made
 
 After a direct local hardware check, the owner explicitly approved replacing the
 M4 Pro reference with this Mac17,6/M5 Max/18-core/128-GiB host. Fixture version 5
-and the [ADR-097 amendment](../../backlog/decisions/097-console-reference-backed-semantic-trace-ledger.md)
+and the [ADR-337 amendment](../../backlog/decisions/337-console-reference-backed-semantic-trace-ledger.md)
 record that change. No workload, numerical threshold, software pin, SQLite setting
 or non-reference refusal policy changed. This does not establish performance on
 the former M4 Pro or retroactively qualify the older diagnostic run.
@@ -284,7 +284,7 @@ repair would extend the shared typed admission/persistence contract, retaining
 exact terminal-response revision evidence, owner/head/range/value checks and
 atomic replacement-plus-append. Response links alone cannot grant authority.
 The existing trace ledger ADR
-`backlog/decisions/097-console-reference-backed-semantic-trace-ledger.md` must
+`backlog/decisions/337-console-reference-backed-semantic-trace-ledger.md` must
 be reassessed before implementation. TASK-31742's plan explicitly stops for
 architecture approval; no shared runtime fix, guard relaxation, capture bypass,
 merge or V2 work has been performed. Diagnostic tests remain uncommitted and
@@ -383,7 +383,7 @@ Independent static review passed; no production guard was relaxed.
   CSS **787,764/804,000 bytes**, pre-import pass **496/500 modules**,
   **365,641/378,740 LOC**, largest route **112,023/123,319 LOC**.
 
-Startup follow-up under ADR-097 (thresholds and snapshots unchanged):
+Startup follow-up under ADR-337 (thresholds and snapshots unchanged):
 
 - Group A (`0afa56dec`) defers Chatbook archive engines behind existing public
   exports and operation patch seams. Valid import-closure RED:2 failed/3 passed;
@@ -754,7 +754,7 @@ hooks directory and found no `pre-commit` hook installed. The validation evidenc
 below and independent scoped review are explicit; no hook pass is claimed.
 
 The scoped repairs preserve existing contracts rather than restoring obsolete
-fixtures: direct mutation guards remain intact, the later ADR-097 soft-delete
+fixtures: direct mutation guards remain intact, the later ADR-337 soft-delete
 envelope retention supersedes ADR-090's older clearing expectation, MCP filtering
 is still source-scoped, the strict promotion fake accepts its explicit trace
 boundary, and Settings waits on actual destination readiness without bypassing

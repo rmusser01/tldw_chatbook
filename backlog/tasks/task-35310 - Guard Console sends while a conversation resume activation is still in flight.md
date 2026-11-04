@@ -30,7 +30,7 @@ pinned to OLD. The decoupled send task then dies in branches that return without
 received-intent custody whose failure only logs. `refuse_send_from_unbound_composer` cannot
 fire because bound == active == OLD throughout the window.
 
-Governance: ADR-098 ("boundary-racing drafts never stranded or duplicated"), ADR-230, ADR-094;
+Governance: ADR-098 ("boundary-racing drafts never stranded or duplicated"), ADR-230, ADR-336;
 the refusal UX follows the shipped TASK-33622.7 tab-switch guard.
 <!-- SECTION:DESCRIPTION:END -->
 
@@ -55,9 +55,9 @@ the refusal UX follows the shipped TASK-33622.7 tab-switch guard.
 3. `refuse_send_from_unbound_composer` refuses while the flag is set (existing copy).
 4. Louden the silent branches; add the send-stage breadcrumb.
 5. GREEN + adjacent suites.
-PR3173 repair (2026-10-31): preserve current dev repaint/received-intent custody while reconciling the resume guard; verify held hydration and settled sends with targeted tests; inspect actual diagnostic changes and regenerate affected inventory/census pins. ADR required: no. ADR path: backlog/decisions/094-console-turn-lifetime-and-navigation-boundary.md; backlog/decisions/230-console-send-preparation-and-io-ownership.md. Reason: routine fixes within existing owners. Owner waived size limits for this repair; retain measured pins and document any adjustment. Independent requesting-code-review replaces Qodo for this authorized backlog cleanup; the user later waived CI waiting; independent review and resolved threads still apply.
+PR3173 repair (2026-10-31): preserve current dev repaint/received-intent custody while reconciling the resume guard; verify held hydration and settled sends with targeted tests; inspect actual diagnostic changes and regenerate affected inventory/census pins. ADR required: no. ADR path: backlog/decisions/336-console-turn-lifetime-and-navigation-boundary.md; backlog/decisions/230-console-send-preparation-and-io-ownership.md. Reason: routine fixes within existing owners. Owner waived size limits for this repair; retain measured pins and document any adjustment. Independent requesting-code-review replaces Qodo for this authorized backlog cleanup; the user later waived CI waiting; independent review and resolved threads still apply.
 
-Review repair plan (2026-10-31): reproduce held hydration through the actual Library handoff and Ctrl+K choice paths, then move the reentrant activation window to their shared hydration operation. Verify refusals, draft preservation, settled dispatch and depth retirement with targeted cases only. ADR required: no. ADR path: backlog/decisions/094-console-turn-lifetime-and-navigation-boundary.md; backlog/decisions/230-console-send-preparation-and-io-ownership.md. Reason: apply the existing admission boundary consistently to all current callers.
+Review repair plan (2026-10-31): reproduce held hydration through the actual Library handoff and Ctrl+K choice paths, then move the reentrant activation window to their shared hydration operation. Verify refusals, draft preservation, settled dispatch and depth retirement with targeted cases only. ADR required: no. ADR path: backlog/decisions/336-console-turn-lifetime-and-navigation-boundary.md; backlog/decisions/230-console-send-preparation-and-io-ownership.md. Reason: apply the existing admission boundary consistently to all current callers.
 <!-- SECTION:PLAN:END -->
 ## Implementation Notes
 
@@ -76,7 +76,7 @@ Review repair plan (2026-10-31): reproduce held hydration through the actual Lib
   All five resume/refusal cases pass against the real metadata sink, including teardown.
 - Registered the four resume/send regression nodes in the existing UI census. Size
   pins reflect exact measurements under the owner's 2026-10-31 size waiver;
-  no size check is disabled. Existing ADR-094/098/230 apply; no new ADR required.
+  no size check is disabled. Existing ADR-336/098/230 apply; no new ADR required.
 - Local controls: acknowledgement (9) and retained repaint (2) pass. The four
   `test_send_refuses_and_keeps_the_draft_when_the_composer_is_bound_elsewhere`
   variants fail their pre-send mounted state assertion on BOTH base and branch;

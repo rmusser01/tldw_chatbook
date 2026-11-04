@@ -148,7 +148,7 @@ lane follows those destinations' ordinary later lifecycle.
 Prompts without recognized variables and without a System lane retain the
 existing direct safe insertion path through the same guarded application
 helper. A System-only Prompt still opens the shared dialog so replacement must
-be authorized. Recipes remain non-executable under ADR-040: their existing
+be authorized. Recipes remain non-executable under ADR-305: their existing
 selection path must first create an unsaved Prompt working copy before variable
 application becomes available.
 
@@ -217,7 +217,7 @@ with the destination Console rather than the Library or modal.
 | Guess or create a destination when no Console target was ever published | System authorization would be bound to an undisclosed session; the honest recovery is to initialize Console once and retry. |
 | Enable System replacement by default | A Prompt could silently change session behavior while the user intended only to insert User text. |
 | Make composer and durable System persistence one advertised atomic transaction | The current durable write is a separate failure domain and cannot truthfully roll back all external effects. |
-| Execute Recipe lanes directly | Violates ADR-040's artifact boundary and bypasses the explicit unsaved Prompt-copy step. |
+| Execute Recipe lanes directly | Violates ADR-305's artifact boundary and bypasses the explicit unsaved Prompt-copy step. |
 
 ## Consequences
 
@@ -246,7 +246,7 @@ with the destination Console rather than the Library or modal.
 - [Library Prompt Enhancement Series design](../../Docs/superpowers/specs/2026-08-02-library-prompt-enhancement-series-design.md)
 - [ADR-011: Chatbook Workbench UI System](011-chatbook-workbench-ui-system.md)
 - [ADR-033: Application Session State Ownership](033-application-session-state-ownership.md)
-- [ADR-040: Versioned Prompt Artifacts and Safe Improvement Transactions](040-versioned-prompt-artifacts-and-safe-improvement-transactions.md)
+- [ADR-305: Versioned Prompt Artifacts and Safe Improvement Transactions](305-versioned-prompt-artifacts-and-safe-improvement-transactions.md)
 
 ## Renumbering provenance
 

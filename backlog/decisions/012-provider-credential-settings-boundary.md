@@ -39,7 +39,7 @@ It owns the existing `[SearchSettings] search_provider_default` and curated
 `[SearchEngines]` fields. Selecting which backend to edit does not change the
 default. Save applies the complete staged delta atomically through the config
 owner; Revert discards it. Provider and category navigation preserve drafts.
-The category uses ADR-033's staged model and ADR-032's shared-default policy.
+The category uses ADR-303's staged model and ADR-300's shared-default policy.
 
 A shared search-backend field catalog defines labels, required fields,
 secret flags, environment names, legacy aliases, and setup guidance. Runtime
@@ -55,7 +55,7 @@ it sends the visible sample query to the selected saved backend, may consume
 provider quota, does not invoke a synthesis LLM, and never silently saves a
 draft. Test state is invalidated by edits and stale results cannot update a
 different backend or a later Settings view. SearX endpoints may be local, as
-already allowed by ADR-032. Tests do not grant Console tool permission.
+already allowed by ADR-300. Tests do not grant Console tool permission.
 
 Backend requests resolve current config without rewriting a process-global
 request snapshot. Shipped Bing/SearX field spellings remain compatible with

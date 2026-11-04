@@ -1,13 +1,13 @@
 """Trajectory import: open a shared trace file as a read-only snapshot.
 
-The consumer side of the ADR-067 export format (task-16320): read a
+The consumer side of the ADR-313 export format (task-16320): read a
 ``tldw-trajectory`` JSON document, validate it through the EXPORT
 validator (``Chat/trajectory_export.validate_trajectory_export`` -- the
 shared seam, so import and export can never drift apart), and map the
 file's sections onto ``Chat/trajectory.derive_trajectory`` inputs to
 produce the same ``TrajectorySnapshot`` the live view renders.
 
-Read-only contract (ADR-067 §5)
+Read-only contract (ADR-313 §5)
     Imported traces are ephemeral view data. This module NEVER opens,
     writes, or references the application database -- it holds no DB
     imports at all -- and the snapshot it returns is consumed purely for
@@ -139,7 +139,7 @@ def _read_document(source: Path | str | Mapping) -> dict:
 
 
 def _v1_snapshot(document: Mapping, path: Path | None) -> TrajectorySnapshot:
-    """Validate and map the retained ADR-067 version-1 document."""
+    """Validate and map the retained ADR-313 version-1 document."""
     try:
         payload = validate_trajectory_export(document)
     except TrajectoryExportError as exc:

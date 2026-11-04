@@ -4,7 +4,7 @@ Status: Proposed
 Date: 2026-09-11
 Related Tasks: MCP Hub UX program 2026-09-11 (Wave F / O1)
 Spec: Docs/superpowers/specs/2026-09-11-mcp-hub-bulk-permission-actions-design.md
-Related: ADR-081 (prompt reduction — persistent permission changes must go through `set_tool_state`; no telemetry-driven or model-initiated auto-approval), ADR-090 (advisory surfaces never alter verdicts), ADR-079 (profile-scoped policy)
+Related: ADR-081 (prompt reduction — persistent permission changes must go through `set_tool_state`; no telemetry-driven or model-initiated auto-approval), ADR-332 (advisory surfaces never alter verdicts), ADR-325 (profile-scoped policy)
 
 ## Decision
 
@@ -63,4 +63,4 @@ filter already gives users a natural scoping gesture.
 
 ## Renumbering provenance
 
-Renumbered from ADR-150 to ADR-347 on 2026-11-03 under TASK-36943.3 (owner decision 2026-10-25: the younger file of a shared number is renumbered). ADR-150 now refers to 150-design-token-system-and-design-language.md.
+Renumbered from ADR-347 to ADR-347 on 2026-11-03 under TASK-36943.3 (owner decision 2026-10-25: the younger file of a shared number is renumbered). ADR-150 now refers to 150-design-token-system-and-design-language.md.

@@ -46,7 +46,7 @@ Pagination mirrors dsh: the newest ``PAGE_SIZE`` records mount first; a
 moves off the UI thread (``run_worker``) once the conversation exceeds
 ``WORKER_THRESHOLD`` records.
 
-Keybindings follow ADR-031: single-letter htop-style actions, no
+Keybindings follow ADR-299: single-letter htop-style actions, no
 terminal-convention chords, and contextual ``escape`` (clear a timeline
 range/anchor, blur search, then dismiss). Footer hints advertise only the
 actions that work in the focused context.
@@ -232,7 +232,7 @@ class TrajectoryScreen(ModalScreen[None]):
         Binding("c", "capture_policy", "Capture"),
     ]
 
-    #: Footer hints, 1:1 with the non-escape BINDINGS (ADR-031; tested).
+    #: Footer hints, 1:1 with the non-escape BINDINGS (ADR-299; tested).
     #: ``f follow`` is only RENDERED on live screens (``_refresh_hints``).
     TRAJECTORY_SHORTCUTS = (
         ("enter", "inspect"),
@@ -1307,7 +1307,7 @@ class TrajectoryScreen(ModalScreen[None]):
         """Render the hints line: 1:1 with BINDINGS minus what has no target.
 
         The ``e earlier`` hint drops while no older records remain (the
-        ADR-031 task-1340 refinement: advertised == working in the active
+        ADR-299 task-1340 refinement: advertised == working in the active
         context; pressing ``e`` then answers with guidance instead).
         """
         try:
@@ -1748,7 +1748,7 @@ class TrajectoryScreen(ModalScreen[None]):
         except Exception as exc:  # noqa: BLE001 - cursor clamp is best-effort
             logger.debug("Trajectory bar-select cursor move skipped: {}", type(exc))
 
-    # -- actions (ADR-031: single-letter htop-style) ----------------------------
+    # -- actions (ADR-299: single-letter htop-style) ----------------------------
 
     def action_dismiss(self) -> None:
         """Blur search or clear a range before dismissing the modal."""

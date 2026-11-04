@@ -12,10 +12,10 @@
   contextual workspace quick actions while Settings remains the full manager)
 - **Related:** ADR-005 (Console workspace server-readiness), ADR-027 (Default
   workspace chat grouping), ADR-028 (Settings workspace and folder-root
-  ownership), ADR-029 (local private data), ADR-031 (TUI keybindings), ADR-043
-  (explicit rail preferences versus responsive collapse), ADR-068 (local
+  ownership), ADR-029 (local private data), ADR-299 (TUI keybindings), ADR-043
+  (explicit rail preferences versus responsive collapse), ADR-315 (local
   research engine), ADR-070 (research run durability)
-  ownership), ADR-029 (local private data), ADR-031 (TUI keybindings), ADR-068
+  ownership), ADR-029 (local private data), ADR-299 (TUI keybindings), ADR-315
   (local research engine), ADR-070 (research run durability)
 
 ## Context

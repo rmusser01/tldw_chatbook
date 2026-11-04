@@ -23,7 +23,7 @@ Each scenario deliberately puts the denied path under the workspace root
 with NO dotted component in the RELATIVE portion where that is possible, so
 ``validate_path``'s own hidden-component check cannot mask whether the
 denylist ran at all -- except the two tests that specifically exercise a
-dotfile component, which is the shape ``allow_hidden=True`` (ADR-032)
+dotfile component, which is the shape ``allow_hidden=True`` (ADR-300)
 deliberately lets past confinement and which therefore depends entirely on
 the denylist.
 """
@@ -293,7 +293,7 @@ def test_fs_read_refuses_dotfile_component_credential_path():
     """``~/.aws/credentials``, reached through a DOTTED relative component.
 
     ``resolve_workspace_path`` passes ``allow_hidden=True`` to
-    ``validate_path`` (ADR-032: real workspaces need ``.git``/``.github``/
+    ``validate_path`` (ADR-300: real workspaces need ``.git``/``.github``/
     dotfile configs), so confinement alone lets ``.aws/credentials``
     through. Only the denylist stops it -- which is precisely why this
     shape is pinned separately.
@@ -330,12 +330,12 @@ def test_fs_write_refuses_dotfile_component_credential_path():
 def test_benign_workspace_dotfiles_stay_readable():
     """The allow_hidden=True decision, pinned.
 
-    ADR-032 keeps hidden components reachable under the workspace root on
+    ADR-300 keeps hidden components reachable under the workspace root on
     purpose -- a coding agent that cannot read ``.github/workflows/ci.yml``
     or ``.gitignore`` is useless. The denylist is what makes that safe: it
     matches by RESOLVED ANCESTRY against real credential/state locations,
     not by "the name starts with a dot". If this test ever has to change,
-    the allow_hidden decision is being reversed and ADR-032 needs amending.
+    the allow_hidden decision is being reversed and ADR-300 needs amending.
     """
     ws = _home() / "projects" / "repo"
     (ws / ".github" / "workflows").mkdir(parents=True, exist_ok=True)
@@ -438,7 +438,7 @@ def _denylisted_candidates() -> list[tuple[str, Path]]:
     ``test_both_families_refuse_the_TASK_19633_credential_paths`` below
     pins it in configurations where confinement cannot be what does the
     work. What remains is only the mechanism difference described above:
-    a deliberate ADR-032 policy split about DOTTED NAMES, not a gap in
+    a deliberate ADR-300 policy split about DOTTED NAMES, not a gap in
     what the denylist knows.
     """
     from tldw_chatbook import config as app_config
@@ -823,7 +823,7 @@ def test_resolve_workspace_path_still_confines_and_still_allows_hidden(tmp_path)
 # inside the git engine; this is the upstream cause -- an agent that can
 # write `.git/` reconfigures git for EVERY feature that shells out to it.
 #
-# `.git` is a dotted component under the root, which ADR-032's
+# `.git` is a dotted component under the root, which ADR-300's
 # `allow_hidden=True` deliberately lets past confinement, so this depends
 # entirely on the write guard.
 # ---------------------------------------------------------------------------
@@ -1132,7 +1132,7 @@ def test_binding_gate_still_allows_an_unrelated_root():
 # ---------------------------------------------------------------------------
 # TASK-19633: credential files the denylist did not cover.
 #
-# TASK-19551 kept `allow_hidden=True` (ADR-032) on the argument that "starts
+# TASK-19551 kept `allow_hidden=True` (ADR-300) on the argument that "starts
 # with a dot" is a name heuristic while `is_sensitive_path` answers the
 # question properly, by resolved ancestry. That decision is right, but
 # resolved-ancestry matching is only as strong as what the denylist knows:

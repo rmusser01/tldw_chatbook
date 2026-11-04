@@ -4,7 +4,7 @@
 - **Date:** 2026-08-29
 - **Task:** `TASK-21513` — Daily Reports surface and demo
 - **Spec:** [2026-08-29 daily-reports-demo-design](../../Docs/superpowers/specs/2026-08-29-daily-reports-demo-design.md)
-- **Amends:** nothing; aligns with [ADR-015](015-shell-destination-ia.md) (Artifacts charter already includes "reports") and [ADR-078](078-research-workspace-authority-and-screen-boundaries.md) (no second universal artifact database).
+- **Amends:** nothing; aligns with [ADR-015](015-shell-destination-ia.md) (Artifacts charter already includes "reports") and [ADR-322](322-research-workspace-authority-and-screen-boundaries.md) (no second universal artifact database).
 
 ## Context
 
@@ -19,7 +19,7 @@ briefings complete silently (only reminders dispatch notifications).
 1. **"Daily Report" is a briefing.** The Artifacts screen's Reports slot is fed
    by a read-only view over the existing `briefings`/`briefing_scripts`/
    `briefing_audio` tables across all watchlists. No new artifact store, no new
-   tables, no new scheduler task types (ADR-078 direction: presentation adapters
+   tables, no new scheduler task types (ADR-322 direction: presentation adapters
    over canonical owners).
 2. **The demo writes real, persistent data by design.** The one-click demo seeds
    a real "Daily Brief" watchlist (three RSS sources incl. Hacker News via

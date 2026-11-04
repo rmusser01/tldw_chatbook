@@ -364,7 +364,7 @@ class TrajectoryTimeline(Widget):
     (pull-only: it posts no messages, so a ledger cursor move can
     highlight a bar without echoing a selection event back).
 
-    All keys are single-character (ADR-031 legal).
+    All keys are single-character (ADR-299 legal).
     """
 
     can_focus = True

@@ -3,7 +3,7 @@
 - Status: Accepted
 - Date: 2026-09-17
 - Task: TASK-32719
-- Related: ADR-078, ADR-003, ADR-031, ADR-150
+- Related: ADR-078, ADR-003, ADR-299, ADR-150
 - Allocation: all reachable decision paths and 27 worktrees have maximum 163.
 
 ## Context

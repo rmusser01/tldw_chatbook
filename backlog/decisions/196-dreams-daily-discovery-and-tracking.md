@@ -6,8 +6,8 @@ Date: 2026-09-22
 Companion spec: [2026-09-22 Dreams design](../../Docs/superpowers/specs/2026-09-22-dreams-daily-discovery-design.md)
 Related: [ADR-029](029-local-private-data-boundary.md) (local private data
 boundary — extended here), [ADR-019](019-watchlist-scheduler-migration.md)
-(check scheduling Dreams attaches to), ADR-079 (Daily Reports / Artifacts
-slot precedent), ADR-150 (design tokens), ADR-031 (keybinding conventions)
+(check scheduling Dreams attaches to), ADR-323 (Daily Reports / Artifacts
+slot precedent), ADR-150 (design tokens), ADR-299 (keybinding conventions)
 
 ## Decision
 

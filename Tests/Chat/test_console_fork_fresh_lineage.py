@@ -13,7 +13,7 @@ boundary failed with "Saved Console fork parent is unavailable." and the user
 boundary with "Saved active leaf lineage is unavailable." until a restart. And
 unsaved command feedback (/help, /doctor, unknown-command hints) sat on the
 active path as a SYSTEM node that refused every later fork with "Only user and
-assistant messages can be forked." although ADR-092 defines the fork source as
+assistant messages can be forked." although ADR-334 defines the fork source as
 the USER/ASSISTANT parent chain.
 """
 

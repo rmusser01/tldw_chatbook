@@ -5,7 +5,7 @@ Date: 2026-09-25
 Task: TASK-25907.7
 Accepted future-design amendment to: [ADR-102](102-personal-context-profile-authority-sync-and-encryption.md)
 Extends: [ADR-182](182-personal-context-memory-evolution.md), [ADR-201](201-versioned-profile-evidence-and-temporal-claims.md), [ADR-202](202-dependency-aware-personal-context-forgetting.md)
-Related: [ADR-119](119-llamacpp-prompt-cache-snapshot-ownership.md), [ADR-147](147-agent-provider-routing.md), [ADR-080](080-trace-v2-exhaustive-event-projection-and-collaboration.md)
+Related: [ADR-119](119-llamacpp-prompt-cache-snapshot-ownership.md), [ADR-344](344-agent-provider-routing.md), [ADR-080](080-trace-v2-exhaustive-event-projection-and-collaboration.md)
 Design: [Provider disclosure controls](../../Docs/superpowers/specs/2026-09-25-personal-context-provider-disclosure-controls-design.md)
 
 ## Context

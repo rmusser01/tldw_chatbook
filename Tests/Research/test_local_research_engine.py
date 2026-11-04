@@ -1,4 +1,4 @@
-"""Local research execution engine (task-16322, ADR-068).
+"""Local research execution engine (task-16322, ADR-315).
 
 The engine drives an existing local run through planning -> collecting ->
 synthesizing -> packaging by REUSING the deep-search pipeline via injectable

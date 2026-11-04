@@ -6,7 +6,7 @@ Stage coverage in this file:
   registry record, the dispatch entry + ``CUSTOM_PROVIDER_PARAM_MAP``
   (legacy-surface parity), the engine closure's extended parameter surface
   with ``payload_flags`` gating, the ``api_settings.custom`` settings
-  fallbacks (section > record defaults; explicit kwargs win), the ADR-066
+  fallbacks (section > record defaults; explicit kwargs win), the ADR-311
   custom-row reasoning composition (``reasoning_effort`` verbatim, budget
   accepted-and-dropped), and the continuation ``_PAIRINGS`` additions.
 - Stage 2 (shared ``CUSTOM_OPENAI_EXECUTION_KEYS``): see
@@ -408,7 +408,7 @@ def test_payload_carries_record_default_max_tokens_when_section_silent() -> None
     assert "temperature" not in payload
 
 
-# --- Stage 1: ADR-066 reasoning composition (custom row) ---
+# --- Stage 1: ADR-311 reasoning composition (custom row) ---
 
 
 def test_reasoning_effort_composed_verbatim() -> None:
@@ -418,7 +418,7 @@ def test_reasoning_effort_composed_verbatim() -> None:
         messages_payload=_messages(),
         reasoning_effort="high",
     )
-    # ADR-066 custom row: top-level OpenAI-style reasoning_effort, verbatim.
+    # ADR-311 custom row: top-level OpenAI-style reasoning_effort, verbatim.
     assert payload["reasoning_effort"] == "high"
 
 
@@ -435,7 +435,7 @@ def test_thinking_budget_tokens_accepted_and_dropped() -> None:
         reasoning_effort="low",
         thinking_budget_tokens=2048,
     )
-    # ADR-066 custom row: budget dropped (strict OpenAI proxies may reject
+    # ADR-311 custom row: budget dropped (strict OpenAI proxies may reject
     # llama.cpp-specific fields); effort stays verbatim.
     assert with_budget["reasoning_effort"] == "low"
     assert "reasoning_budget_tokens" not in with_budget
@@ -774,7 +774,7 @@ async def test_custom_hosted_send_composes_reasoning_effort(
         topk=40,
     )
     payload = session.posts[0]["json"]
-    # ADR-066 custom row: effort verbatim; budget dropped; samplers flow.
+    # ADR-311 custom row: effort verbatim; budget dropped; samplers flow.
     assert payload["reasoning_effort"] == "high"
     assert "reasoning_budget_tokens" not in payload
     assert "chat_template_kwargs" not in payload

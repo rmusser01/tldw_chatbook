@@ -167,7 +167,7 @@ It also closes the D4 items that render in the Inspector or F1: class names in o
 3. **Focused-field guide rows outside "Saved as"** are rewritten wherever the T1 guard flags them. Known sites:
    - The Appearance Library-rail purpose ("…saved under library.<destination>_reader").
    - The Console Behavior tool-result display cap ("max_tool_result_chars ([agents] config…)" → "the separate limit on what the model sees (16,000 characters by default)").
-   - The permission-summary purpose "(ADR-090)" is removed.
+   - The permission-summary purpose "(ADR-332)" is removed.
    - The QwenCloud API-mode Validation row "responses or chat_completions" → "Responses or Chat Completions", the labels in `QWENCLOUD_API_MODE_OPTIONS`. This one is P7 residue.
 4. **`SettingsScreen._render_impact_pane_header`:** delete the "Selected category: <title>" Static. The rail's `>` mark and the detail title already name the category. Every other header row belongs to S2.
 5. **Ownership copy fields** in `_category_ownership_records` and `_domain_category_ownership_records`.

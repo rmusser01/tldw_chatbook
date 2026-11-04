@@ -4,9 +4,9 @@ Status: Accepted
 Amended by: [ADR-210](210-console-region-ownership.md) (accepted 2026-10-01)
 Date: 2026-08-22
 Related Task: [TASK-19900 - Make Console Library controls explicit per conversation](../tasks/task-19900%20-%20Make-Console-Library-controls-explicit-per-conversation.md)
-Amends: ADR-003's Settings ownership for future-session defaults, ADR-030's
+Amends: ADR-003's Settings ownership for future-session defaults, ADR-298's
 Console provider availability, and ADR-063's initial-dispatch-to-continuation
-ownership handoff; preserves ADR-030's Direct-versus-RAG selector
+ownership handoff; preserves ADR-298's Direct-versus-RAG selector
 
 Partially superseded by: [ADR-166](166-agent-assisted-archive-recovery.md) for a narrowly authenticated, interactive Console recovery capability available in either retrieval mode under the same captured Assistant Library authority. Recovery searches local archives across workspace/item scopes; other policies and general retrieval remain governed here.
 
@@ -99,11 +99,11 @@ selector, or provider change applies only to later executed turns.
 
 When assistant access is Blocked, the built-in Library provider is absent.
 The complete built-in Library namespace remains statically reserved in every
-mode, derived from ADR-030's descriptor registry plus the RAG tool-name
+mode, derived from ADR-298's descriptor registry plus the RAG tool-name
 constant: all 18 direct names and `search_library_rag`. Skills and MCP
 profiles cannot claim a name simply because the current conversation blocks
 or selects the other provider. This policy governs the built-in local Library
-capability only; MCP and workspace/file tools retain their own ADR-032
+capability only; MCP and workspace/file tools retain their own ADR-300
 permission principals and disclosures.
 
 Temporary sessions do not broadly trust the catalog source string `library`.
@@ -111,7 +111,7 @@ When Allowed, their ephemeral gate admits only an authenticated built-in
 Library provider and exact names from that audited read-only reserved set;
 unknown names and source spoofing fail closed.
 
-When assistant access is Allowed, ADR-030's existing global
+When assistant access is Allowed, ADR-298's existing global
 `direct_library_tools` value remains a selector, not an enable switch:
 `true` composes the six-category, 18-tool Direct provider; `false` composes
 the bounded RAG provider over Notes, Media, and Conversations. Provider/model
@@ -163,7 +163,7 @@ conditional CAS; strict bounded JSON columns contain authority,
 credential-free destination, origin/queue, and reconstructability metadata but
 no draft, prefill text, evidence body, attachment bytes, credential, or provider
 request. The table is not `message_trajectory_metadata`, has no sync/import or
-ADR-067 export mapping, and is removed after the assistant reaches a durable
+ADR-313 export mapping, and is removed after the assistant reaches a durable
 terminal state.
 
 The assistant owner carries a closed nullable
@@ -274,7 +274,7 @@ timing or appear twice. A separate pure projection supplies the Console's
 Selected turn Inspector group. It never enters Sources, staged context,
 prompts, provider history, or the next send. Default trajectory export redacts
 its query and source-reference details; full export remains an explicit user
-opt-in under ADR-067.
+opt-in under ADR-313.
 
 Device-local means never synchronized automatically, not a promise that
 explicit trajectory export cannot copy bounded/redacted data out of the device.
@@ -297,7 +297,7 @@ Inspector group rather than in Sources.
 Console currently exposes three ways to consult a user's Library but presents
 them as one loosely named RAG feature. A user can run Search Library, a global
 `rag_auto_retrieve_on_send` switch can retrieve before every text send, and an
-agent can receive either ADR-030 Direct tools or the RAG fallback whenever the
+agent can receive either ADR-298 Direct tools or the RAG fallback whenever the
 agent runtime is active. The current status chip reports whether evidence is
 staged, not who is authorized to retrieve it.
 
@@ -305,13 +305,13 @@ The inherited PR proposed one Off/Manual/Auto mode in synced
 `conversations.metadata` and interpreted `direct_library_tools=false` as no
 assistant access. That model conflates the user, application, and assistant;
 it cannot express automatic retrieval with an assistant blocked, or manual
-only with an assistant allowed. It also contradicts ADR-030, where `false`
+only with an assistant allowed. It also contradicts ADR-298, where `false`
 selects RAG rather than disabling the provider.
 
 This decision changes storage and migration, sync ownership, assistant
 permission and runtime composition, per-turn configuration, data minimization,
 and long-lived Console disclosure. A new ADR is required rather than editing
-accepted ADR-003, ADR-030, ADR-032, ADR-066, or ADR-067 in place.
+accepted ADR-003, ADR-298, ADR-300, ADR-066, or ADR-313 in place.
 
 ## Alternatives Considered
 
@@ -324,14 +324,14 @@ accepted ADR-003, ADR-030, ADR-032, ADR-066, or ADR-067 in place.
 | Enter `BEGIN IMMEDIATE` inside a nested v44 migration step | The existing outer deferred transaction has already read the version and cannot be safely upgraded under competing openers. The migration runner must acquire the write lock before that first read. |
 | Trust a session's cached policy at execution | Another tab or process could revoke access while the stale holder continued to expose Library tools. Durable execution-time re-read provides a clear linearization point. |
 | Classify egress from provider name/API-key presence | Custom endpoints and provider fallbacks make those signals unreliable. Only the gateway-resolved credential-free endpoint can support conservative classification. |
-| Interpret `direct_library_tools=false` as disabled | ADR-030 defines it as the RAG fallback selector; changing that meaning would break existing Settings, tests, and user expectations. |
+| Interpret `direct_library_tools=false` as disabled | ADR-298 defines it as the RAG fallback selector; changing that meaning would break existing Settings, tests, and user expectations. |
 | Reserve only names advertised in the current mode | A Skill or MCP tool could occupy a dormant built-in name, then shadow or break the trusted provider when policy or selector changes. |
 | Add `library` to the temporary-session audited-source whitelist | A future write tool or source-spoofing provider would become eligible automatically. Temporary execution instead requires the authenticated built-in provider and exact audited name. |
 | Keep retrieval pause state in the mounted Screen | Navigation, shutdown, and queued background work could orphan a claim or lose staged state. Store ownership plus compare-and-set transitions makes recovery lifecycle-safe. |
 | Publish first-persistence ID/title before commit | A rolled-back SQLite transaction could leave the session pointing at a nonexistent conversation or carrying a title for a send that never happened. Publication is a post-commit effect. |
 | Create the assistant/recovery owner after USER commit | A crash between those writes would leave an accepted USER with no durable owner capable of recovery. The assistant placeholder and dispatch checkpoint belong in the same transaction. |
 | Pass the raw SQLite cursor to a generic contribution and try to police it with a temporary authorizer | The supplied cursor exposes its connection and authorizer mutator, so a contribution can clear the guard and commit irreversibly before a postcondition runs. An insert-only writer capability keeps transaction control out of the public contribution API. |
-| Store dispatch recovery in `message_trajectory_metadata` | That event ledger has no checkpoint revision column and ADR-067 exports its rows. A dedicated temporary table gives CAS, atomic settlement, and explicit non-export ownership. |
+| Store dispatch recovery in `message_trajectory_metadata` | That event ledger has no checkpoint revision column and ADR-313 exports its rows. A dedicated temporary table gives CAS, atomic settlement, and explicit non-export ownership. |
 | Update the terminal assistant and delete its checkpoint separately | A crash could hydrate Retry anyway beside a completed response or lose a Discard halfway through. One expected-revision settlement transaction makes the pair indivisible. |
 | Keep assistant generation state in memory while syncing the empty owner | Another device or export would receive a blank checkpoint-free assistant. A closed message field makes unresolved and empty-terminal rows inert and truthful across every projection. |
 | Keep dispatch recovery beside an ADR-063 continuation | Two recovery owners could replay the provider request or its tool batch. The tool-batch transaction must hand ownership to ADR-063 before tools execute. |
@@ -353,7 +353,7 @@ accepted ADR-003, ADR-030, ADR-032, ADR-066, or ADR-067 in place.
   access to Search Library.
 - Existing conversations retain their effective behavior once, while later
   global changes cannot rewrite them.
-- ADR-030's Direct/RAG capability distinction stays intact behind an explicit
+- ADR-298's Direct/RAG capability distinction stays intact behind an explicit
   authorization gate.
 - Assistant Library reads are attributable and reviewable without becoming
   prompt context or a second copy of Library content.
@@ -426,11 +426,11 @@ accepted ADR-003, ADR-030, ADR-032, ADR-066, or ADR-067 in place.
 - [Design specification](../../Docs/superpowers/specs/2026-08-22-console-library-controls-design.md)
 - [ADR-003: Settings Library/RAG Defaults Boundary](003-settings-library-rag-defaults.md)
 - [ADR-024: Canonical RAG Citation Provenance](024-rag-citation-provenance-and-source-resolution.md)
-- [ADR-030: Direct Local Library Tool Boundary](030-local-library-agent-tool-boundary.md)
-- [ADR-031: TUI Keybinding and Footer-Hint Conventions](031-tui-keybinding-and-footer-hint-conventions.md)
-- [ADR-032: Local Agent Tool Permission Boundary](032-local-agent-tool-permission-boundary.md)
+- [ADR-298: Direct Local Library Tool Boundary](298-local-library-agent-tool-boundary.md)
+- [ADR-299: TUI Keybinding and Footer-Hint Conventions](299-tui-keybinding-and-footer-hint-conventions.md)
+- [ADR-300: Local Agent Tool Permission Boundary](300-local-agent-tool-permission-boundary.md)
 - [ADR-033: Application Session State Ownership](033-application-session-state-ownership.md)
 - [ADR-052: Console Conversation Memory and Compaction Policy](052-console-conversation-memory-and-compaction-policy.md)
 - [ADR-063: Hosted Provider Wire and Durable Tool Continuation](063-hosted-provider-wire-and-durable-tool-continuation.md)
 - [ADR-066: Console Trajectory View](066-console-trajectory-view-and-trace-metadata.md)
-- [ADR-067: Trajectory Export Format](067-trajectory-export-format.md)
+- [ADR-313: Trajectory Export Format](313-trajectory-export-format.md)

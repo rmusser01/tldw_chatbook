@@ -4,8 +4,8 @@ Diff rendering helpers for tool-call file edits.
 
 Uses the `textual-diff-view` package (`DiffView` widget) to render file
 before/after contents captured by file-writing tools as syntax-highlighted
-unified/split diffs. See ADR-032
-(`backlog/decisions/032-textual-diff-view-for-tool-call-diff-rendering.md`).
+unified/split diffs. See ADR-301
+(`backlog/decisions/301-textual-diff-view-for-tool-call-diff-rendering.md`).
 """
 
 from typing import Any, Dict, Literal, Optional, Tuple

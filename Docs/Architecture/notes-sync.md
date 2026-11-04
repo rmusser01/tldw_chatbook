@@ -57,7 +57,7 @@ Each synced folder is a **root** with a process lease: admission validates repar
 
 ## Session file-notes and git publishing
 
-Separately from lasting sync, `FileNotesService` provides session-scoped editing of file-backed notes (open/save/move/delete/restore/reconcile) with **disk authority** (ADR-029): the file is the truth; the DB follows. Guarded git publishing (`file_notes_git_*`) performs session commits and pushes with process containment (ADR-035/038/039) — commit and push are separately gated user actions, never automatic.
+Separately from lasting sync, `FileNotesService` provides session-scoped editing of file-backed notes (open/save/move/delete/restore/reconcile) with **disk authority** (ADR-296): the file is the truth; the DB follows. Guarded git publishing (`file_notes_git_*`) performs session commits and pushes with process containment (ADR-035/038/039) — commit and push are separately gated user actions, never automatic.
 
 Note templates (`Config_Files/create_custom_template.py`, stored in the user config dir) support `{date}`/`{time}`/`{datetime}` placeholders and feed the Library Notes UI.
 
@@ -74,7 +74,7 @@ Note templates (`Config_Files/create_custom_template.py`, stored in the user con
 
 ## Governing decisions
 
-ADR-021 (file-backed notes disk authority and recovery), ADR-029 (file-notes disk authority), ADR-035 (session git index controls), ADR-038/039 (guarded session commit/push), ADR-059 (notes folder import and device-local sync ownership), ADR-073 (round-trip and interoperability constraints). Feature doc: `Docs/Features/notes_bidirectional_sync.md` (owner table matches code).
+ADR-021 (file-backed notes disk authority and recovery), ADR-296 (file-notes disk authority), ADR-035 (session git index controls), ADR-038/039 (guarded session commit/push), ADR-059 (notes folder import and device-local sync ownership), ADR-073 (round-trip and interoperability constraints). Feature doc: `Docs/Features/notes_bidirectional_sync.md` (owner table matches code).
 
 ## Verified gotchas
 

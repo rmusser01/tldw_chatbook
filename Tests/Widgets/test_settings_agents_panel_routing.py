@@ -1,5 +1,5 @@
 """Settings ▸ Agents: preset routing, sub-agent defaults, override policy,
-and the "Test routing" dry-run (ADR-147, TASK-32477 task 9).
+and the "Test routing" dry-run (ADR-344, TASK-32477 task 9).
 
 Harness conventions follow Tests/UI/test_settings_agents_category.py
 (PanelHarness + runs_db fixture); config isolation follows

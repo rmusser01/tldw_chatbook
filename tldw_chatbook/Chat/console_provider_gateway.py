@@ -730,7 +730,7 @@ def _custom_entry_credential(
     entry: CustomEndpointEntry,
     environ: Mapping[str, str] | None,
 ) -> tuple[str | None, str | None]:
-    """Resolve an entry-declared credential per ADR-146 precedence.
+    """Resolve an entry-declared credential per ADR-343 precedence.
 
     The ``api_key_env`` reference wins over the stored ``api_key``; both are
     validated so blank or placeholder values never authenticate a send. The
@@ -4655,7 +4655,7 @@ class ConsoleProviderGateway:
             )
 
         app_config = self._config_provider() or {}
-        # ADR-146 custom endpoint registry: a resolvable ``custom-ep:<slug>``
+        # ADR-343 custom endpoint registry: a resolvable ``custom-ep:<slug>``
         # id executes through its entry's family -- llama_cpp entry -> direct
         # llama path, openai_compatible -> generic custom path, ollama ->
         # ollama -- with the entry, not ``api_settings``, as the
@@ -4692,7 +4692,7 @@ class ConsoleProviderGateway:
         entry_api_key: str | None = None
         entry_api_key_source: str | None = None
         if custom_entry is not None:
-            # ADR-146: an entry that declares a credential resolves it from
+            # ADR-343: an entry that declares a credential resolves it from
             # the entry, not the family readiness -- ``custom`` and
             # ``llama_cpp`` are keyless families, so without this override a
             # keyed entry sends unauthenticated (server 401) while the Task 3
@@ -4736,7 +4736,7 @@ class ConsoleProviderGateway:
                     api_key_source=readiness.api_key_source,
                 )
             if custom_entry is not None and not selection.base_url_is_pinned:
-                # ADR-146: the entry's base_url is the endpoint authority
+                # ADR-343: the entry's base_url is the endpoint authority
                 # for a custom-ep provider -- an edited entry re-resolves
                 # on the next send, so a stale session-pinned URL never
                 # outranks it. No UI path overrides a custom-ep URL (the
@@ -4929,7 +4929,7 @@ class ConsoleProviderGateway:
                 provider_settings,
             )
         else:
-            # ADR-146: for a custom-ep provider the entry's base_url is the
+            # ADR-343: for a custom-ep provider the entry's base_url is the
             # endpoint authority (an edited entry re-resolves on the next
             # send), so a stale session-pinned URL never outranks the entry;
             # every other provider keeps session-selection precedence.
@@ -5829,7 +5829,7 @@ class ConsoleProviderGateway:
         try:
             with sensitive_llm_request():
                 if resolution.provider in {"llama_cpp", "local_llamacpp"}:
-                    # Thinking controls follow ADR-066: level via
+                    # Thinking controls follow ADR-311: level via
                     # chat_template_kwargs, budget via top-level
                     # reasoning_budget_tokens. Auxiliary requests inherit session
                     # thinking settings (documented parity with cloud

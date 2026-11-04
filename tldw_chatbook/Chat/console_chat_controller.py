@@ -614,7 +614,7 @@ class _TodoWiring(TypedDict, total=False):
     on_todo_change: TodoChangeCallback
 
 
-#: ADR-067: 0 -- the default for all three human-prompt timeouts below --
+#: ADR-314: 0 -- the default for all three human-prompt timeouts below --
 #: means "no deadline": the round stays armed until the user answers or the
 #: run is stopped/cancelled. A positive value still fails undecided calls
 #: closed to ``"timeout"``. A human prompt is not a wedged tool; making the
@@ -681,7 +681,7 @@ def resolve_console_selection_core(
     # a provider IDENTITY -- the gateway resolves registry entries through
     # ``entry_for``, whose slugs are dashed, so the config-key normalizer's
     # underscore rewriting must not reach it. The unified lookup reads a
-    # registry entry by that identity (ADR-146), else the api_settings table.
+    # registry entry by that identity (ADR-343), else the api_settings table.
     provider = provider_identity_key(settings.provider) or "llama_cpp"
     explicit_model = selected(settings.model)
     provider_config = console_provider_settings(app_config, provider)
@@ -802,7 +802,7 @@ _CONSOLE_SETTINGS_FIELD_ORDER = (
 
 #: Fallback used when no `mcp_approval_timeout_seconds` seam is injected --
 #: mirrors `UnifiedMCPControlPlaneService.approval_timeout_seconds`'s own
-#: default (ADR-067), read directly here since the controller has no
+#: default (ADR-314), read directly here since the controller has no
 #: dependency on that service (T6 wires the service into `MCPToolProvider`,
 #: not into this controller).
 #:
@@ -824,24 +824,24 @@ _DEFAULT_MCP_APPROVAL_TIMEOUT_SECONDS = 0.0
 #: the Phase-5 plan) -- also the worst-case slack added on top of a
 #: configured timeout/cancellation before this method observes it.
 _MCP_APPROVAL_POLL_SECONDS = 1.0
-#: Same ADR-067 contract as `_DEFAULT_MCP_APPROVAL_TIMEOUT_SECONDS`, for
+#: Same ADR-314 contract as `_DEFAULT_MCP_APPROVAL_TIMEOUT_SECONDS`, for
 #: `request_skill_install_confirm`'s own wait loop (fallback used when no
 #: `skill_install_confirm_timeout_seconds` seam is injected).
 _DEFAULT_SKILL_INSTALL_CONFIRM_TIMEOUT_SECONDS = 0.0
-#: Same ADR-067 contract as `_DEFAULT_MCP_APPROVAL_TIMEOUT_SECONDS`, for
+#: Same ADR-314 contract as `_DEFAULT_MCP_APPROVAL_TIMEOUT_SECONDS`, for
 #: `request_skill_script_confirm`'s own wait loop (fallback used when no
 #: `skill_script_confirm_timeout_seconds` seam is injected).
 _DEFAULT_SKILL_SCRIPT_CONFIRM_TIMEOUT_SECONDS = 0.0
-#: Same ADR-067 contract as `_DEFAULT_SKILL_SCRIPT_CONFIRM_TIMEOUT_SECONDS`,
+#: Same ADR-314 contract as `_DEFAULT_SKILL_SCRIPT_CONFIRM_TIMEOUT_SECONDS`,
 #: for `request_chat_create_confirm`'s own wait loop (fallback used when no
 #: `chat_create_confirm_timeout_seconds` seam is injected).
 _DEFAULT_CHAT_CREATE_CONFIRM_TIMEOUT_SECONDS = 0.0
 _CHAT_CREATE_SESSION_GONE = "session_gone"
-#: Same ADR-067 contract, for `request_worktree_merge_confirm`'s own wait
+#: Same ADR-314 contract, for `request_worktree_merge_confirm`'s own wait
 #: loop (fallback used when no `worktree_merge_confirm_timeout_seconds`
 #: seam is injected).
 _DEFAULT_WORKTREE_MERGE_CONFIRM_TIMEOUT_SECONDS = 0.0
-#: PRD A7: `[console] ask_user_timeout_seconds`. 0 = no deadline (ADR-067);
+#: PRD A7: `[console] ask_user_timeout_seconds`. 0 = no deadline (ADR-314);
 #: a positive value auto-continues the run with `answered: false`.
 _DEFAULT_ASK_USER_TIMEOUT_SECONDS = 0.0
 #: Env override for `[console] ask_user_timeout_seconds` (env -> config -> default).
@@ -1283,7 +1283,7 @@ def _validate_project_instruction_binding(
     read (kind + locator) + the in-memory STATUS CACHE (never the stored
     status column) — the laptop's ``resolve(strict=True)``/stat is
     structurally impossible for a remote path. Semantics per the
-    spec/ADR-069 posture:
+    spec/ADR-317 posture:
 
     - READY / STALE_IDENTITY / cold cache (optimistic) → admit. A pin
       failure is not BLOCKED; the next worker call re-captures.
@@ -1601,7 +1601,7 @@ def _exclusion_paths_provider(
     Reads the binding's live exclusions on every call so a mid-run addition
     refuses the NEXT tool call (fail-closed shrink); the high-water mark
     keeps removals enforced for the rest of the run so run authority never
-    expands mid-run (spec 2026-09-20, ADR-102 discipline).
+    expands mid-run (spec 2026-09-20, ADR-340 discipline).
 
     LOCAL roots resolve each entry against the laptop root (absolute
     resolved ``Path``s, byte-identical to pre-Phase-3c). REMOTE roots
@@ -1847,7 +1847,7 @@ def _remote_instruction_io_for_selection(
     """Build the executor-backed instruction IO for one remote selection.
 
     Returns ``None`` for local selections and for any construction
-    failure (ADR-069 prep-failure posture: the caller warns content-free
+    failure (ADR-317 prep-failure posture: the caller warns content-free
     and proceeds without startup instructions — never a broken send).
     """
     from tldw_chatbook.Agents.project_instruction_resolver import RemoteInstructionIO
@@ -1938,7 +1938,7 @@ def capture_run_admitted_workspace_roots(
     Args:
         session: Console session that owns the run and its Workspace binding.
         registry: Workspace registry used to enumerate and revalidate bindings.
-        project_selection: Optional ADR-069 binding already selected for project
+        project_selection: Optional ADR-317 binding already selected for project
             instructions; when present, it is the run's only admitted root.
         project_authority_guard: Optional selected-project guard reused by the
             admitted authority.
@@ -4273,7 +4273,7 @@ class ConsoleChatController:
             self._maybe_fire_permission_summary
         )
 
-        # ADR-090: every path that pushes an approval head (teardown
+        # ADR-332: every path that pushes an approval head (teardown
         # promotion, revocation, activation, attach) fires the summary.
         self._approval_state_lock = self._interrupt_host.lock
         self._watchlists_receipt_lock = threading.Lock()
@@ -4445,7 +4445,7 @@ class ConsoleChatController:
         #:
         #: Nothing here weakens a fail-closed gate: the round still cannot
         #: resolve to anything but a human's own decision, a CONFIGURED
-        #: deadline (unchanged, never paused or extended -- ADR-067's
+        #: deadline (unchanged, never paused or extended -- ADR-314's
         #: ``<= 0`` default is "no deadline" for the mounted case too),
         #: this run's own cancel event, or these two teardown signals.
         self._headless_visit_cancel: threading.Event | None = None
@@ -4587,7 +4587,7 @@ class ConsoleChatController:
         #: _set_console_pending_approval``). Always invoked through
         #: ``self.app.call_from_thread`` from ``request_mcp_approvals``.
         self.set_pending_approval: Callable[[dict[str, Any] | None], None] | None = None
-        #: ADR-090: UI-thread bridge that patches a mounted approval card's
+        #: ADR-332: UI-thread bridge that patches a mounted approval card's
         #: advisory summary line ``(round_id, text)``. Registered by the
         #: Console screen alongside ``set_pending_approval``; None in
         #: headless contexts and delivery silently no-ops.
@@ -4706,7 +4706,7 @@ class ConsoleChatController:
         #: for a human decision before failing every undecided call to
         #: ``"timeout"``. Defaults to reading ``[mcp] approval_timeout_
         #: seconds`` (T2's ``approval_timeout_seconds``) when unset --
-        #: ADR-067: that default is 0 = no deadline (wait indefinitely);
+        #: ADR-314: that default is 0 = no deadline (wait indefinitely);
         #: a positive value re-arms the auto-deny clock.
         self.mcp_approval_timeout_seconds: Callable[[], float] | None = None
         #: Task 9 (Fix round 1): each batch-approval round's release signal
@@ -16051,7 +16051,7 @@ class ConsoleChatController:
         offered this run:
 
         - ``[console] local_tools_enabled`` is false (the master flag);
-        - no ``unified_mcp_service`` on the app -- ADR-032 reuses the MCP
+        - no ``unified_mcp_service`` on the app -- ADR-300 reuses the MCP
           permission store under the synthetic ``local:__local__`` server
           key, so without the service there is no state source, no
           session-approval cache, and no persistence path;
@@ -17667,7 +17667,7 @@ class ConsoleChatController:
 
         # TASK-32874: optional routing for the CREATED chat. Resolved
         # BEFORE anything is created; every RoutingError surfaces as the
-        # outcome's kind with nothing created (ADR-147 vocabulary).
+        # outcome's kind with nothing created (ADR-344 vocabulary).
         routed_settings: Any = None
         if req_provider or req_model or req_preset:
             from dataclasses import replace as _dc_replace
@@ -17739,7 +17739,7 @@ class ConsoleChatController:
                 return {"ok": False, "kind": str(exc.code), "error": str(exc)}
             # Qodo round finding 2: the resolver's merged params (preset
             # params above registry-entry params above defaults) ride the
-            # ADR-147 extra_sources seam so a routed chat keeps the
+            # ADR-344 extra_sources seam so a routed chat keeps the
             # preset/endpoint tuning, not just provider/model.
             routed_settings = _build_settings(
                 app_config,
@@ -20962,7 +20962,7 @@ class ConsoleChatController:
         """Resolve remote startup instructions through the executor reader.
 
         Task 19 dispatch-path guard (send path AND Next-Send preview).
-        ADR-069 prep-failure posture: EVERY failure mode below is
+        ADR-317 prep-failure posture: EVERY failure mode below is
         content-free and returns ``None`` — no exception text reaches the
         warning (remote failures carry no paths or bodies), and the send
         itself never breaks: the caller proceeds without startup

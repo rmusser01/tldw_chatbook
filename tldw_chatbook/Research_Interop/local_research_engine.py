@@ -1,4 +1,4 @@
-"""Local research execution engine (task-16322, ADR-068).
+"""Local research execution engine (task-16322, ADR-315).
 
 Drives an existing local research run through ``planning -> collecting ->
 synthesizing -> packaging -> completed`` by REUSING the deep-search pipeline
@@ -9,7 +9,7 @@ progress + events via ``update_run_progress``, artifacts via
 ``save_artifact``, terminal states via the service's own dedicated
 ``complete_run``/``fail_run``/``cancel_run`` transitions.
 
-Control semantics (ADR-068): pause and cancel are honored BETWEEN phases by
+Control semantics (ADR-315): pause and cancel are honored BETWEEN phases by
 polling ``control_state`` — a paused run is left non-terminal (an
 ``engine_paused`` event records where it stopped; a resumed run restarts
 from the top), a cancel request resolves through ``cancel_run`` exactly
@@ -427,7 +427,7 @@ class LocalResearchEngine:
         return self._get_run(run_id)
 
     def _check_control(self, run_id: str, next_phase: str) -> dict[str, Any]:
-        """Honor pause/cancel BEFORE entering ``next_phase`` (ADR-068).
+        """Honor pause/cancel BEFORE entering ``next_phase`` (ADR-315).
 
         Both resolutions are run-state writes and are fenced the same way
         artifact writes are (task-3 review finding 2): a displaced executor

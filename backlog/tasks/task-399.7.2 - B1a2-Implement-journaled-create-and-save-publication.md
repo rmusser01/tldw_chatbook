@@ -39,11 +39,11 @@ Implement the native path-safe mutation core for blank create and exact body sav
 ## Closeout 2026-10-04
 
 Closed superseded, not implemented as written. Create and body save landed
-with different (ADR-029) semantics: re-hash current disk state, then
+with different (ADR-296) semantics: re-hash current disk state, then
 hash-checked atomic write with no-clobber create and replica/projection/FTS
 updates in `tldw_chatbook/Notes/file_notes_service.py` (TASK-969
 implementation notes; PR #992). The durable journal / expected-state
 verification / native path-safe publication protocol specified above was
 never built.
 
-Superseded by: ADR-029 (backlog/decisions/029-file-notes-disk-authority.md) via TASK-969 (PR #992).
+Superseded by: ADR-296 (backlog/decisions/296-file-notes-disk-authority.md) via TASK-969 (PR #992).

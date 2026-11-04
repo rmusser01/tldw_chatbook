@@ -695,7 +695,9 @@ def test_propagation_follows_imports_not_names():
 # sha256 of the template bytes as they were inline in config.py at 88af9f9379
 # (before placeholder substitution). Any byte change to the data file, intended or
 # not, must update this pin on purpose.
-_TEMPLATE_SHA256 = "32a348ef0376086ad8734d658595351b79e51ef7983338b996b207726c1a8541"
+# TASK-36943.3 (2026-11-03): three comment-only ADR renumberings (146->343,
+# 147->344, 090->332) re-pinned on purpose.
+_TEMPLATE_SHA256 = "99615838d4a17b194c8e2e4988b6ed08d251b79a6aacaee25dfb773c02a3d38e"
 _TEMPLATE_RELATIVE = "tldw_chatbook/Config_Files/default_config.toml"
 
 

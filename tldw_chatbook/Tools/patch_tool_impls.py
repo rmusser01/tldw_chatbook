@@ -9,7 +9,7 @@ tldw_Server_API/app/core/MCP_unified/modules/implementations/filesystem_diff.py
 kept exactly so error handling stays in lockstep with the reference.
 
 The workspace wrapper (``patch_files``) is written fresh for tldw_chatbook:
-it enforces ADR-032 confinement via resolve_workspace_path and phase-2
+it enforces ADR-300 confinement via resolve_workspace_path and phase-2
 write discipline (encode-before-write, newline-preserving reads), and
 translates FilesystemPatchError into the shared LocalToolError.
 

@@ -655,7 +655,7 @@ class WorkspaceToolExecutor:
         one, so the remote worker (same bundle) parses it unchanged.
 
         Hidden-path policy (controller-confirmed reading): remote READS
-        allow hidden components under the root -- ADR-032 parity with the
+        allow hidden components under the root -- ADR-300 parity with the
         local builder's ``allow_hidden=True`` -- while remote WRITES
         reject a ``.git`` path component, the one lexically-checkable
         hidden-path rule the local side enforces.
@@ -782,7 +782,7 @@ def _normalize_remote_relative_path(path: str, *, intent: str = "read") -> str:
       with no resolved ancestry available to the parent, the component
       check IS the confinement;
     - NUL is rejected;
-    - hidden components are ALLOWED under the root (ADR-032 parity with
+    - hidden components are ALLOWED under the root (ADR-300 parity with
       the family's ``allow_hidden`` policy: a coding agent that cannot
       read ``.github/`` is useless);
     - write intents refuse an exact ``.git`` path component (case-insensitive,

@@ -7,9 +7,9 @@
 - Implementation plan: [Detailed plan for TASK-35582](../../Docs/superpowers/plans/2026-10-18-multi-model-code-review-implementation.md) (implementation in progress; not a completion claim)
 
 Extends the guide pattern in [ADR-149](149-offer-first-canvas-guide-and-inline-skill.md).
-Reuses [ADR-147](147-agent-provider-routing.md) routing and preserves
+Reuses [ADR-344](344-agent-provider-routing.md) routing and preserves
 [ADR-009](009-local-skill-trust-boundary.md),
-[ADR-032](032-local-agent-tool-permission-boundary.md), and
+[ADR-300](300-local-agent-tool-permission-boundary.md), and
 [Console file authority](../../Docs/Architecture/console-file-authority.md).
 Amends [ADR-135](135-fleet-completion-delivery-and-crash-recovery.md) only to add
 typed review-boundary continuation eligibility; preserves its accepted-attempt
@@ -447,7 +447,7 @@ does not manufacture intent or a complete seal. Reviewer coverage remains separa
 
 ### AC23-B qualification dependency: fixed worktree-root preparation
 
-The ordinary isolated-fleet regression gate also qualifies the ADR-126/ADR-228
+The ordinary isolated-fleet regression gate also qualifies the ADR-126/ADR-353
 amendment for independently preparing the fixed profile `agent_worktrees` root
 while retaining its exact parent AgentRuns operation. It changes no review role,
 source, budget or acceptance authority. AC23 still requires the complete focused
@@ -458,7 +458,7 @@ regression/resource evidence; AC24 live-provider qualification remains separate.
 
 TASK-35582's custom native coordinator exposed the existing raw-selection versus
 canonical-execution/origin-versus-base handoff mismatch. ADR-063's selected
-destination continuity amendment and ADR-147's durable primary selection amendment
+destination continuity amendment and ADR-344's durable primary selection amendment
 govern its repair under ADR-179's engine boundary. This evolves existing provider
 continuation JSON and frozen destination JSON; it adds no durable review-job owner
 or recovery, route registry, permission or child budget. Code-review source/role
@@ -467,7 +467,7 @@ leases and expiry still apply independently of any generic provider checkpoint.
 
 ### Native Capture On compatibility amendment (2026-10-27)
 
-TASK-35582 also applies the [ADR097 live-native trace amendment](097-console-reference-backed-semantic-trace-ledger.md)
+TASK-35582 also applies the [ADR337 live-native trace amendment](337-console-reference-backed-semantic-trace-ledger.md)
 for exact captured native tool-loop evolution. That existing-owner trace repair
 adds no model/tool authority, provider substitution or durable review-job recovery.
 Its focused design is adopted before source implementation, with strict custody,

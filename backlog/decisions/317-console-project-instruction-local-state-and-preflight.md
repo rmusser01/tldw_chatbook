@@ -3,7 +3,7 @@
 Status: Accepted
 Date: 2026-08-20
 Related Task: Implementation tasks will be created from the approved design during planning.
-Supersedes: ADR-068
+Supersedes: ADR-316
 
 ## Decision
 
@@ -83,7 +83,7 @@ ordinary persistence semantics.
 ### Amendment: capture-enabled trajectory history (TASK-31976.1, 2026-09-07)
 
 The owner explicitly requires traces to retain the project instructions the
-model received. Automatic project context therefore follows ADR-097's normal
+model received. Automatic project context therefore follows ADR-337's normal
 provider-artifact storage and credential/PII redaction rules when Capture On is
 admitted. This supersedes the exclusion from **durable captures** above; Capture
 Off, ordinary conversation messages, summaries, agent steps and logs retain the
@@ -96,7 +96,7 @@ message independently removable by request windowing. Provider message order
 is preserved; tracing excludes only verified context artifacts when identifying
 the active saved turn and still rejects an unsaved active user message.
 
-ADR-068 established the untrusted project-context boundary, Codex filename
+ADR-316 established the untrusted project-context boundary, Codex filename
 precedence, lazy nested activation, and nonpersistence requirement. A later
 readiness audit found three implementation-breaking assumptions:
 
@@ -167,10 +167,10 @@ nonexistent problem.
 ## Links
 
 - [Approved design spec](../../Docs/superpowers/specs/2026-08-20-agents-md-support-design.md)
-- [Superseded ADR-068](068-console-project-instruction-context-boundary.md)
+- [Superseded ADR-316](316-console-project-instruction-context-boundary.md)
 - [ADR-005: Console workspace/server readiness](005-console-workspace-server-readiness.md)
 - [ADR-028: Settings workspaces and folder roots](028-settings-workspaces-category-and-folder-roots.md)
-- [ADR-032: Local agent tool permission boundary](032-local-agent-tool-permission-boundary.md)
+- [ADR-300: Local agent tool permission boundary](300-local-agent-tool-permission-boundary.md)
 - [Codex AGENTS.md guide](https://learn.chatgpt.com/docs/agent-configuration/agents-md)
 - [Claude Code memory guide](https://code.claude.com/docs/en/memory)
 

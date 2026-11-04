@@ -3135,7 +3135,7 @@ def reset_session_stalls(*args: Any, **kwargs: Any) -> None:
 
     _impl(*args, **kwargs)
 
-#: ADR-147 Task 6B: per-call sampling kwarg (Task 6's ``_CHAT_CALL_PARAM_MAP``
+#: ADR-344 Task 6B: per-call sampling kwarg (Task 6's ``_CHAT_CALL_PARAM_MAP``
 #: values, Agents/agent_service.py) -> ``ConsoleProviderResolution`` field of
 #: the same meaning. ``stream_chat`` carries sampling on the RESOLUTION (the
 #: gateway maps fields onto ``chat_api_call`` kwargs in
@@ -3608,7 +3608,7 @@ class _StreamingModelAdapter:
 
         Runs inside ``_consume`` on the run's loop because
         ``resolve_for_send`` is async (the direct-llama path probes
-        reachability). The seam is custom-ep aware per ADR-146, so a
+        reachability). The seam is custom-ep aware per ADR-343, so a
         ``custom-ep:<slug>`` id resolves through its registry entry's family
         and credential. A routed run can pin its execution family separately.
         Re-resolving per call -- never caching -- matches
@@ -5278,7 +5278,7 @@ class ConsoleAgentBridge:
         self._skills_service = skills_service
         self._native_tools_enabled = native_tools_enabled
         self._ensure_run_hooks = ensure_run_hooks
-        # ADR-147: forwarded to every AgentService this bridge builds; None
+        # ADR-344: forwarded to every AgentService this bridge builds; None
         # (every production site) leaves the service on its live
         # ``load_settings()`` fallback. Tests inject a fake-key mapping so
         # the spawn resolver's readiness gate does not depend on host
@@ -7448,7 +7448,7 @@ class ConsoleAgentBridge:
         # `_stamps`. Compose whichever exist rather than leaving the gate's
         # state unguarded (it was, before this task, and unlike MCP it has
         # no per-call approval fallback to degrade to: a lost stamp fails
-        # closed outright). ADR-032 adds the local provider's stamp state
+        # closed outright). ADR-300 adds the local provider's stamp state
         # to the same composition.
         _scopes = [
             scope

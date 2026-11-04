@@ -580,7 +580,7 @@ async def test_restored_pending_install_never_mounts_an_actionable_card_through_
 
 
 def test_confirm_zero_timeout_keeps_round_armed_for_late_decision():
-    """ADR-067: timeout 0 = no deadline. The pre-ADR code armed
+    """ADR-314: timeout 0 = no deadline. The pre-ADR code armed
     `deadline = now + 0` and denied at the first 1s poll; the round must
     now stay armed and resolve on the user's decision."""
     controller, _ = _controller()

@@ -4,14 +4,14 @@ Status: Accepted
 Date: 2026-07-31
 Amended: 2026-08-02
 Partially superseded: 2026-08-09 by
-[ADR-050](050-audio-cpp-generated-model-setup-ownership.md), only for the new
+[ADR-308](308-audio-cpp-generated-model-setup-ownership.md), only for the new
 globally owned guided generated-configuration source; the four-owner model and
 existing External/user-JSON sources remain in force
 Related Task: N/A — program task decomposition follows the approved PRD
 Extends:
 [ADR-012 Provider Credential Settings Boundary](012-provider-credential-settings-boundary.md),
 [ADR-023 TTS Adapter Registry and audio.cpp Runtime Boundary](023-tts-adapter-registry-and-audio-cpp-runtime-boundary.md),
-[ADR-028 Character TTS Generation Profile Ownership](028-character-tts-generation-profile-ownership.md), and
+[ADR-294 Character TTS Generation Profile Ownership](294-character-tts-generation-profile-ownership.md), and
 [ADR-037 Roleplay Assistant Identity and Persona/User Profile Separation](037-roleplay-assistant-identity-and-persona-user-profile-separation.md)
 
 ## Context
@@ -353,7 +353,7 @@ down-migration.
 - [Managed audio.cpp lifecycle design](../../Docs/superpowers/specs/2026-08-02-audio-cpp-managed-lifecycle-design.md)
 - [ADR-012](012-provider-credential-settings-boundary.md)
 - [ADR-023](023-tts-adapter-registry-and-audio-cpp-runtime-boundary.md)
-- [ADR-028](028-character-tts-generation-profile-ownership.md)
+- [ADR-294](294-character-tts-generation-profile-ownership.md)
 - [ADR-037](037-roleplay-assistant-identity-and-persona-user-profile-separation.md)
 
 ## Renumbering provenance

@@ -1204,7 +1204,7 @@ class ConsolePromptQueueUIController:
         guardian_redacted = False
         # Guardian pre-send check (ADR-204 contract 4). This hook runs at
         # the very head of dispatch -- BEFORE the blocked-reason refusal
-        # gate below, and therefore BEFORE ADR-148 ``UserPromptSubmit``
+        # gate below, and therefore BEFORE ADR-345 ``UserPromptSubmit``
         # hooks fire: the verified hook-emission call site lives far
         # downstream in ``Chat.console_chat_controller._submit_draft_body``
         # (the "UserPromptSubmit" ``fire_async``), which dispatch reaches

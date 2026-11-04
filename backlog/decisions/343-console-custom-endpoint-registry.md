@@ -34,4 +34,4 @@ Chatbook could address only two user-defined OpenAI-compatible endpoints: the ha
 
 ## Renumbering provenance
 
-Renumbered from ADR-146 to ADR-343 on 2026-11-03 under TASK-36943.3 (owner decision 2026-10-25: the younger file of a shared number is renumbered). ADR-146 now refers to 146-independent-buddy-petdex-publication-and-character-creation.md.
+Renumbered from ADR-343 to ADR-343 on 2026-11-03 under TASK-36943.3 (owner decision 2026-10-25: the younger file of a shared number is renumbered). ADR-146 now refers to 146-independent-buddy-petdex-publication-and-character-creation.md.

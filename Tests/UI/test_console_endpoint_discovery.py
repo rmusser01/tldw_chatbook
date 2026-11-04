@@ -1569,7 +1569,7 @@ async def test_a_pick_keeps_the_endpoint_its_provider_had_last(detour):
 )
 def test_an_unseen_pick_keeps_the_chats_url_except_on_a_registry_entry(provider, kept):
     """TASK-35190: the rebaser keeps the URL the chat holds for an unseen
-    model on its own provider, but an entry's URL is its endpoint (ADR-146):
+    model on its own provider, but an entry's URL is its endpoint (ADR-343):
     a pick of another of its models takes the entry's saved URL, never one
     the chat's settings still hold."""
     from tldw_chatbook.Chat.console_settings_apply import FULL_MODEL_DEFAULT_FIELDS

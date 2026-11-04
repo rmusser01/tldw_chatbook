@@ -1,6 +1,6 @@
 """Recurring-question automation-definition create/edit modal (task-5).
 
-Mirrors `ReminderForm`'s structure (ADR-099 idiom parity: the modal box is
+Mirrors `ReminderForm`'s structure (ADR-339 idiom parity: the modal box is
 its own scroll container, a docked footer keeps the live preview/errors/
 actions visible, Escape triggers a discard guard). The recurring-cron
 schedule sub-form reuses `reminder_form.py`'s task-23102 pure helpers

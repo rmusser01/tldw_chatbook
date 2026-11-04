@@ -56,7 +56,7 @@ class _ThreadApp:
     approval test uses) and `notify` records, so an app-wide announcement
     is observable without a live Textual app.
 
-    **Wiring `app` at all matters:** ADR-067 added a no-`app` guard that
+    **Wiring `app` at all matters:** ADR-314 added a no-`app` guard that
     denies a round on the spot, so a round test built on a controller with
     `app is None` never reaches the poll loop and proves nothing about
     cancellation. Two of the lifetime landing's own AC#2 pins were in that

@@ -309,7 +309,7 @@ safe extraction remain available.
 - [ADR-036](036-application-service-composition-lifecycle.md): one application composition root and memory-only Sync dataset keys.
 - [ADR-021](021-file-backed-notes-disk-authority-and-recovery.md): File Notes filesystem authority and independent recovery ownership.
 - [ADR-059](059-notes-folder-import-and-device-local-sync-ownership.md), [ADR-060](060-notes-sync-round-trip-and-interoperability-constraints.md): device-local Notes sync and explicit paused recovery boundary.
-- [ADR-069](069-console-project-instruction-local-state-and-preflight.md): imported/local context state does not grant tool authority.
+- [ADR-317](317-console-project-instruction-local-state-and-preflight.md): imported/local context state does not grant tool authority.
 - [ADR-051](051-private-tts-clone-reference-assets.md): private voice reference assets and repository-owned validation.
 - [age v1 format](https://age-encryption.org/v1) and [official implementation](https://github.com/FiloSottile/age): standard encrypted-container boundary selected here.
 
@@ -1586,7 +1586,7 @@ The exact stock descriptor representability PermissionError13/marker may reach t
 
 ### Workspace kernel source and layout compatibility (PR3023, 2026-10-15)
 
-The existing optional finite stock run-log probe follows Workspace's current Kernel-first declaration under `backlog/decisions/228-sqlite-store-kernel.md`; that ADR's Proposed status is unchanged. Its finite source metadata must bind both effective Workspace lookups and the actual declaring Kernel methods, consumed local overrides/global hooks, wrapped/code/default identities and fixed class layout. It must not index inherited methods as if they were local definitions or copy older connection methods back into Workspace.
+The existing optional finite stock run-log probe follows Workspace's current Kernel-first declaration under `backlog/decisions/353-sqlite-store-kernel.md`; that ADR's Proposed status is unchanged. Its finite source metadata must bind both effective Workspace lookups and the actual declaring Kernel methods, consumed local overrides/global hooks, wrapped/code/default identities and fixed class layout. It must not index inherited methods as if they were local definitions or copy older connection methods back into Workspace.
 
 Cold and cached stock admission recognize only the canonical inherited `is_memory_db=False` layout, with no local field/method shadow and the same exact instance fields/native owner. Memory/custom/subclass/replaced source, body/default/global or class/instance shadow routes retain the original direct callback once with original return/error and lifetime. Generic source/function-current checks, Kernel implementation, `db.base` provenance, transactions, finite worker and owned/borrowed/uncertain retirement contracts remain unchanged; no permission or cleanup authority comes from this metadata.
 

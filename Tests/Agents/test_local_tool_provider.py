@@ -1697,9 +1697,9 @@ def test_local_tools_default_to_ask_without_an_explicit_server_allow(tmp_path):
         assert resolve_effective_state({}, p.hub_tool_for(name)).state == "ask", name
 
 
-# -- git_* read-only tool specs (phase 3b-ii, ADR-033) -------------------------
+# -- git_* read-only tool specs (phase 3b-ii, ADR-302) -------------------------
 #
-# ADR-033 binding: the git_* set is read-only over a fixed, allowlisted argv
+# ADR-302 binding: the git_* set is read-only over a fixed, allowlisted argv
 # surface, so the `process` risk tag is deliberately NOT applied. The no-tags
 # assertion below is the tripwire that keeps that decision visible -- if a
 # future change adds a mutating git subcommand, the tags must change too.
@@ -1715,7 +1715,7 @@ def test_git_specs_carry_no_risk_tags(tmp_path):
     p = make_provider(root=tmp_path)
     for name in GIT_TOOL_NAMES:
         assert p.hub_tool_for(name).tags == (), (
-            f"{name}: ADR-033 pins tags == () for the read-only allowlisted git set"
+            f"{name}: ADR-302 pins tags == () for the read-only allowlisted git set"
         )
 
 

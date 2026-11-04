@@ -65,11 +65,11 @@ def build_runtime_schema_plan(
     """Compose only runtime schemas enabled for this run and agent kind."""
     runtime: list[ToolSchema] = []
     if config.budget.max_subagents > 0:
-        # ADR-147 Task 7: provider/model override args appear ONLY when
+        # ADR-344 Task 7: provider/model override args appear ONLY when
         # the operator opted in; the enumerated targets let the master
         # pick a VALID one. With no definitions and the gate closed,
         # build_spawn_schema returns SPAWN_TOOL_SCHEMA itself -- the
-        # pre-ADR-147 payload stays byte-identical.
+        # pre-ADR-344 payload stays byte-identical.
         runtime.append(
             build_spawn_schema(
                 agent_definitions or (),
@@ -137,7 +137,7 @@ def build_runtime_schema_plan(
         runtime.append(RUN_SKILL_SCRIPT_TOOL_SCHEMA)
     if fork_chat_enabled:
         # TASK-32874: the DISCLOSED schema is built per run (preset
-        # roster + gated override args, ADR-147 pattern); the static
+        # roster + gated override args, ADR-344 pattern); the static
         # constant remains only as the nothing-to-add identity base.
         # TASK-32531: disclosed to sub-agents too (children are scoped
         # to the parent conversation; confirm still gates every call).

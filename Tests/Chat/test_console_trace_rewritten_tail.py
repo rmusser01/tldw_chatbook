@@ -1,6 +1,6 @@
 """The rewritten-tail proof admits only the current saved branch.
 
-TASK-33621.29 / TASK-33621.7 (ADR-097 amendment 2026-10-27). The planner may
+TASK-33621.29 / TASK-33621.7 (ADR-337 amendment 2026-10-27). The planner may
 replace a recorded surface tail after Compact now or Edit & resend, but only
 when every replacement row is a saved message on the current branch, linked
 parent to child, ending at the current user, and the oldest row hangs off a
@@ -245,7 +245,7 @@ def test_a_memory_anchor_may_follow_retained_saved_rows(branch):
 
     Pinned as today's behaviour: no link from the retained tail to the
     memory's range is proven, and the anchor is any active memory of the
-    conversation. Tightening both is TASK-37601 (ADR-097, 2026-10-29).
+    conversation. Tightening both is TASK-37601 (ADR-337, 2026-10-29).
     """
 
     branch.remember(branch.a1)

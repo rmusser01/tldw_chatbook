@@ -3,8 +3,8 @@
 Status: Accepted
 Date: 2026-08-09
 Related Tasks: TASK-13203, TASK-13204, TASK-13205, TASK-13206
-Extends: ADR-028, ADR-029, ADR-040, ADR-050
-Supersedes: The audio.cpp empty-options/no-reference limitation in ADR-028 only;
+Extends: ADR-294, ADR-029, ADR-040, ADR-308
+Supersedes: The audio.cpp empty-options/no-reference limitation in ADR-294 only;
 all other profile ownership and portability rules remain in force
 
 ## Decision
@@ -347,7 +347,7 @@ generated server-configuration decision.
 ## Links
 
 - [Guided model setup design](../../Docs/superpowers/specs/2026-08-09-audio-cpp-guided-model-setup-design.md)
-- [ADR-028: Character TTS generation profile ownership](028-character-tts-generation-profile-ownership.md)
+- [ADR-294: Character TTS generation profile ownership](294-character-tts-generation-profile-ownership.md)
 - [ADR-029: Local private data boundary](029-local-private-data-boundary.md)
 - [ADR-040: Profile-owned state and shared asset paths](040-profile-owned-state-and-shared-asset-paths.md)
-- [ADR-050: Generated audio.cpp model setup](050-audio-cpp-generated-model-setup-ownership.md)
+- [ADR-308: Generated audio.cpp model setup](308-audio-cpp-generated-model-setup-ownership.md)

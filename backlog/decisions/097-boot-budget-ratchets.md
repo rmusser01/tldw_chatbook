@@ -190,7 +190,7 @@ removed (TASK-23023's Research_Workspace diet). The added edges, traced:
   (→ `Tools.raw_cli_executor` → `Agents.run_log`): 3 modules.
 * `Chat.console_runtime` → `Chat.thinking_blocks`: 1 module.
 * `Widgets.splash_screen` → `Widgets.pausable_progress` (TASK-23022) and
-  `tldw_chatbook/__init__` → `Utils.tiktoken_runtime` (ADR-093): 1 module
+  `tldw_chatbook/__init__` → `Utils.tiktoken_runtime` (ADR-335): 1 module
   each; both look like genuine boot-path needs.
 
 Under this ADR the debt is repaid by deferral/shedding, not by raising 660.

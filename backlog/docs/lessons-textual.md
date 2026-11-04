@@ -2130,7 +2130,7 @@ exited with code 1, skipping the approved quit cleanup. Treating the vanish
 as Stay had fixed the hang and left the crash.
 
 **What to do.** Async self-closing (timers, polls, worker completions) must
-dismiss only when `self.app.screen is self` (ADR-031). That is now enforced at
+dismiss only when `self.app.screen is self` (ADR-299). That is now enforced at
 the shared primitive: `SafeModalDismissMixin.dismiss` refuses (logs at debug,
 returns a completed awaitable, delivers nothing) while the modal is covered or
 already popped, which covers the switcher, the video player and the other
@@ -2463,7 +2463,7 @@ class of bug.
 
 The PR3299 review repair suppressed the composer's Escape cue while Terminal owned Escape and repainted it on capture/release. With a draft exactly one row wide, leaving the composer removed its reserved caret row. Release restored a two-row draft-plus-cue renderable into the remaining93x1 surface; asserting only `renderable.plain` missed the cropped hint. The mounted RED r-7915a649 inspected `render_line` strips within the widget's actual content height and reproduced the missing paint. Refreshing measured draft geometry on cue ownership changes fixed both release and Terminal-to-Help transitions; cursor ticks keep their layout-free path. Those controls and the existing ordinary focus-height test passed in r-68903920. Check both content and available painted rows when a cue can return without its widget regaining focus.
 
-The same current-dev integration retained a newer U report shortcut but initially scoped only the incoming Y shortcut to transcript mode. A mounted prose-first U case reproduced report dispatch from Help. The fix applies the existing ADR031 ownership rule to both actions and moves U's footer/F1 hints with its scope. During a rebase, compare newly added base bindings against the branch's interaction contract as well as preserving their action implementations.
+The same current-dev integration retained a newer U report shortcut but initially scoped only the incoming Y shortcut to transcript mode. A mounted prose-first U case reproduced report dispatch from Help. The fix applies the existing ADR299 ownership rule to both actions and moves U's footer/F1 hints with its scope. During a rebase, compare newly added base bindings against the branch's interaction contract as well as preserving their action implementations.
 
 ## `Timer.pause()` cannot stop a screen tick that is already woken, so a queued recompose can lose to it (TASK-38650, 2026-11-03)
 

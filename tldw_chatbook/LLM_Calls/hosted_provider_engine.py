@@ -37,7 +37,7 @@ engine and presets design, "Data flow" step 2):
   the source reads still fails closed.
 - ``record.auth_scheme`` gates credential strictness (Phase 2, Task 3):
   ``"bearer"`` (the default) keeps the hard key requirement, while
-  ``"bearer_optional"`` lets keyless endpoints (ADR-146 custom endpoints)
+  ``"bearer_optional"`` lets keyless endpoints (ADR-343 custom endpoints)
   execute -- an unresolved chain yields ``api_key == ""`` and the transport
   sends no Authorization header at all. ``"api_key_header"`` is Phase 3.
 
@@ -635,7 +635,7 @@ def _resolve_api_key(
 
     ``"bearer"`` (the default) hard-requires a key: an unusable explicit or
     stored value, or an unresolved env chain, is an actionable configuration
-    error. ``"bearer_optional"`` lets keyless endpoints (ADR-146) execute:
+    error. ``"bearer_optional"`` lets keyless endpoints (ADR-343) execute:
     an explicit blank string is "no key" (not an invalid one) and falls
     through to the settings/env chain, and an unresolved chain resolves to
     ``""`` -- the transport then sends no Authorization header at all.
@@ -943,7 +943,7 @@ def build_hosted_chat_payload(
         logprobs: Boolean logprob request; requires its flag.
         top_logprobs: Count in [0, 20]; requires ``logprobs`` and its flag.
         thinking_budget_tokens: Positive thinking budget; requires its flag.
-            Accepted-and-dropped per the ADR-066 custom row (the record's
+            Accepted-and-dropped per the ADR-311 custom row (the record's
             reasoning composition decides emission; the custom family drops
             it so strict OpenAI proxies never see llama.cpp-specific fields).
         **_generic: Unknown keywords are ignored (one shared per-provider
@@ -1073,7 +1073,7 @@ def build_hosted_chat_payload(
         validators.positive_integer(
             "thinking_budget_tokens", thinking_budget_tokens
         )
-        # ADR-066 composition is record data: only a record whose
+        # ADR-311 composition is record data: only a record whose
         # composition consumes a budget emits one. Today every engine
         # record follows the custom row (accepted, validated, dropped).
         logger.debug(

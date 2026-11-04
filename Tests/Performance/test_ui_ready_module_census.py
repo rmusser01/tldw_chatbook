@@ -314,7 +314,7 @@ ABSENT_AT_READY_MODULES = (
     "tldw_chatbook.Terminal",
     "tldw_chatbook.Terminal.contracts",
     "tldw_chatbook.Terminal.session_manager",
-    # ADR-090: the external-summary LLM graph is approval-time work.
+    # ADR-332: the external-summary LLM graph is approval-time work.
     "tldw_chatbook.Chat.permission_summary_service",
     # TASK-21351: durable receipt coordination is first switcher/settlement
     # work. The bridge keeps a lazy proxy so the implementation module does

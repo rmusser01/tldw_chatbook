@@ -1,7 +1,7 @@
 """Engine ``bearer_optional`` auth: keyed-or-keyless hosted endpoints (ADR-179).
 
 Phase 2, Task 3: an engine preset may declare
-``auth_scheme="bearer_optional"`` so keyless endpoints (the ADR-146 custom
+``auth_scheme="bearer_optional"`` so keyless endpoints (the ADR-343 custom
 endpoints of Task 6) execute through the engine, while curated ``bearer``
 presets keep hard-requiring keys. Resolution contracts pinned here:
 

@@ -57,7 +57,7 @@ if TYPE_CHECKING:
     )
     from ..Screens.library_screen import LibraryScreen
 
-#: The replace prompt's title and button labels (ADR-031 modal grammar:
+#: The replace prompt's title and button labels (ADR-299 modal grammar:
 #: the safe choice is first, focused, and what Escape means).
 EXPORT_REPLACE_TITLE = "Replace existing file?"
 EXPORT_REPLACE_LABEL = "Replace"

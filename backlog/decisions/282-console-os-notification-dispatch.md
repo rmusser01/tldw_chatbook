@@ -2,7 +2,7 @@
 
 Status: Accepted
 Date: 2026-10-31
-Related: [TASK-18925](../tasks/task-18925%20-%20Opt-in-OS-notifications-for-background-Console-events.md), [repair plan](../../Docs/superpowers/plans/2026-10-31-task-18925-os-notifications-review-repair.md), [ADR-148](148-console-run-hooks.md)
+Related: [TASK-18925](../tasks/task-18925%20-%20Opt-in-OS-notifications-for-background-Console-events.md), [repair plan](../../Docs/superpowers/plans/2026-10-31-task-18925-os-notifications-review-repair.md), [ADR-345](345-console-run-hooks.md)
 
 ## Context
 

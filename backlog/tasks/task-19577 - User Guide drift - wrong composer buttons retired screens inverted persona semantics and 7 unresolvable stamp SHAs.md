@@ -81,7 +81,7 @@ worse than naming.** `shell_destinations.py:84-91` retired the long form
 `library.md:26-28` and `:305-307` name research among "the six retired
 screens". `screen_registry.py:157-159` registers it as a real route, and
 `:201-202` says explicitly: *"'research' is a REAL screen route again
-(task-16322, ADR-068)… deliberately NOT an alias."*
+(task-16322, ADR-315)… deliberately NOT an alias."*
 **The review additionally claimed that screen "crashes on first use". That is
 REPORTED-BUT-UNCONFIRMED and the evidence points the other way** — this
 filing's verification ran `Tests/UI/test_research_screen.py` (**43 passed**) and

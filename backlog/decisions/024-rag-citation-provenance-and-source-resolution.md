@@ -181,13 +181,13 @@ interfaces, source navigation, and privacy and authorization policy.
 - [Design spec](../../Docs/superpowers/specs/2026-07-23-rag-citation-provenance-design.md)
 - [Prior citation carry-through design](../../Docs/superpowers/specs/2026-05-23-citation-snippet-carry-through-epic-design.md)
 - [ADR-003: Settings Library/RAG defaults](003-settings-library-rag-defaults.md)
-- [ADR-005: Invest in local RAG](005-invest-in-local-rag-mirroring-tldw-server.md)
+- [ADR-288: Invest in local RAG](288-invest-in-local-rag-mirroring-tldw-server.md)
 - [ADR-008: Sync v2 M1 contract](008-sync-v2-client-m1-contract-alignment.md)
 - [`tldw_server` reviewed revision](https://github.com/rmusser01/tldw_server/commit/d9c245ac14c40df855d1ab6cd19b3c137b16b47b)
 
 ## Amendment 2026-11-01: first-use key publication without SQLite custody (TASK33620.8)
 
-Accepted under the parent integration rulings in Docs/superpowers/plans/2026-11-01-pr3323-backlog-integration.md. Extends the existing default-on/first-use/no-replacement contract and preserves ADR094/230 native ownership. Loading the original existing key remains valid with protected records; the no-protected-rows condition applies only to publication of a fresh key ID.
+Accepted under the parent integration rulings in Docs/superpowers/plans/2026-11-01-pr3323-backlog-integration.md. Extends the existing default-on/first-use/no-replacement contract and preserves ADR336/230 native ownership. Loading the original existing key remains valid with protected records; the no-protected-rows condition applies only to publication of a fresh key ID.
 
 ### Decision
 

@@ -609,7 +609,7 @@ class ConsoleSessionSwitcherModal(
                 # Screen.dismiss pops the app's TOP screen. Under the quit
                 # prompt (Ctrl+Q is live under modals, TASK-33622.10) that
                 # would pop the prompt instead; this poll repeats, so close
-                # once on top again (ADR-031).
+                # once on top again (ADR-299).
                 return
             self._query_pending = False
             self.dismiss(None)

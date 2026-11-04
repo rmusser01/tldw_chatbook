@@ -686,7 +686,7 @@ is kept deliberately small and biased toward names that are credential
 stores by definition; a name is added only when a false refusal would be
 a curiosity rather than routine obstruction -- which is why ``.env`` is
 deliberately NOT here (as often build configuration as secrets, and
-refusing it would break the ADR-032 coding-agent use case this module
+refusing it would break the ADR-300 coding-agent use case this module
 must not break). The cost is real and accepted: an agent cannot read a
 test fixture named ``credentials``, and the refusal names it as protected
 rather than failing silently.
@@ -695,7 +695,7 @@ The two families' HIDDEN-COMPONENT policies still differ, and that
 difference is design, not residue. Family 1 confines through
 ``validate_path_multi``, which defaults ``allow_hidden=False`` and so
 refuses any dotted component before this module is consulted; family 2
-passes ``allow_hidden=True`` (ADR-032 -- a coding agent that cannot read
+passes ``allow_hidden=True`` (ADR-300 -- a coding agent that cannot read
 ``.github/`` or ``.gitignore`` is useless). Family 1 is therefore
 strictly stricter for dotted NAMES, which is acceptable because the two
 roots are different kinds of place: family 1's sandbox root is app-owned
@@ -1621,7 +1621,7 @@ def is_git_metadata_write(path: Path) -> bool:
 
     Deliberately WRITE-only and deliberately NOT part of
     :func:`is_sensitive_path`: that denylist governs reads as well, and an
-    agent reading repository state is legitimate (ADR-032 adopted
+    agent reading repository state is legitimate (ADR-300 adopted
     ``allow_hidden`` precisely so a coding agent can see dotfiles). The
     read-side question -- ``.git/config`` can embed a credential in a remote
     URL -- is tracked separately rather than smuggled in here.
@@ -2123,7 +2123,7 @@ provider boundary.
 Path safety has TWO layers, and both are mandatory (TASK-19551):
 
 1. **Confinement** to the configured ``[console] workspace_root``
-   (ADR-032), enforced by ``validate_path`` inside
+   (ADR-300), enforced by ``validate_path`` inside
    ``resolve_workspace_path`` — the single choke point every path-taking
    function here (and in ``patch_tool_impls``/``git_tool_impls``) funnels
    through.
@@ -2248,7 +2248,7 @@ def resolve_workspace_path(path: str, workspace_root: Path, *, intent: PathInten
     Two checks, in order:
 
     1. **Confinement** (``validate_path``). Hidden components (``.github/``,
-       ``.gitignore``) are allowed under the root, per ADR-032: a coding
+       ``.gitignore``) are allowed under the root, per ADR-300: a coding
        agent that cannot read a repository's dotfile configuration is
        useless, and the ADR adopted ``allow_hidden`` for exactly this
        family. That parameter is deliberately KEPT — dotted names are how
@@ -2963,9 +2963,9 @@ def glob_files(pattern: str, *, workspace_root: Path, max_results: int=MAX_GLOB_
     """Match ``pattern`` under the workspace, newest-mtime first, capped.
 
     Paths in the result are workspace-relative. Hidden files/dirs under the
-    root ARE matched (workspace policy, ADR-032). Matches that escape the
+    root ARE matched (workspace policy, ADR-300). Matches that escape the
     root via ``..`` pattern segments are excluded (lexical check only —
-    symlinks are not resolved, per ADR-032 review). Denylisted matches are
+    symlinks are not resolved, per ADR-300 review). Denylisted matches are
     excluded too (TASK-19551): under a home-rooted workspace ``**/*`` would
     otherwise report ``.ssh/id_rsa`` back to the model by name.
 
@@ -4392,7 +4392,7 @@ tldw_Server_API/app/core/MCP_unified/modules/implementations/filesystem_diff.py
 kept exactly so error handling stays in lockstep with the reference.
 
 The workspace wrapper (``patch_files``) is written fresh for tldw_chatbook:
-it enforces ADR-032 confinement via resolve_workspace_path and phase-2
+it enforces ADR-300 confinement via resolve_workspace_path and phase-2
 write discipline (encode-before-write, newline-preserving reads), and
 translates FilesystemPatchError into the shared LocalToolError.
 

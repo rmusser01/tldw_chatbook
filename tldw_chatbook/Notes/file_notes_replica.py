@@ -25,12 +25,12 @@ from tldw_chatbook.Backup_Recovery.profile_paths import lexical_path
 
 from tldw_chatbook.Utils.fts5_match_forms import quote_fts5_phrase
 
-#: ADR-218: most-recent ``pre_edit`` revisions kept per note (protected
+#: ADR-351: most-recent ``pre_edit`` revisions kept per note (protected
 #: paths included -- protected saves are the only checkpoint writer, so
-#: exempting them would leave the growth ADR-218 exists to bound unbounded;
+#: exempting them would leave the growth ADR-351 exists to bound unbounded;
 #: PR #3016 review finding 14).
 MAX_REVISIONS_PER_NOTE = 50
-#: ADR-218: tombstones and revisions past this age are expired.
+#: ADR-351: tombstones and revisions past this age are expired.
 RECOVERY_EXPIRY_DAYS = 30
 #: Default bounded page size for revision-history listings; one definition
 #: shared by the replica and the service so the two layers cannot drift
@@ -749,7 +749,7 @@ class FileNotesReplica:
         *,
         now: datetime | None = None,
     ) -> None:
-        """Apply the ADR-218 retention bounds for one root atomically.
+        """Apply the ADR-351 retention bounds for one root atomically.
 
         Three rules, one transaction: each path keeps at most
         :data:`MAX_REVISIONS_PER_NOTE` most-recent ``pre_edit`` revisions;
@@ -772,7 +772,7 @@ class FileNotesReplica:
             # Rule 1: the per-note checkpoint cap. Every path is capped,
             # protected included (PR #3016 review finding 14): protected
             # saves are the only checkpoint writer, so exempting them would
-            # leave exactly the growth ADR-218 exists to bound unbounded.
+            # leave exactly the growth ADR-351 exists to bound unbounded.
             # Survivors are chosen by parsed UTC instant (finding 1), with
             # insertion order as the deterministic tie-break; unparseable
             # stamps rank newest, so they are always kept.
@@ -1164,7 +1164,7 @@ def _parse_utc_timestamp(value: str) -> datetime | None:
 
 #: Ranks above every parseable instant, so a revision whose stored stamp
 #: cannot be parsed is listed and kept rather than silently dropped or
-#: evicted (the ADR-218 fail-safe applied to ordering).
+#: evicted (the ADR-351 fail-safe applied to ordering).
 _MAX_SORT_INSTANT = datetime.max.replace(tzinfo=timezone.utc)
 
 

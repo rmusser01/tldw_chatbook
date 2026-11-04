@@ -352,7 +352,7 @@ class WatchlistBundleService:
         with self._db.transaction() as conn:
             # SQLite LOWER() is ASCII-only. Register the exact Python
             # normalization this lookup used before it moved into SQL, so
-            # ADR-043 reuse still treats names such as ÄI/äi as equal.
+            # ADR-307 reuse still treats names such as ÄI/äi as equal.
             conn.create_function("watchlist_name_key", 1, normalize, deterministic=True)
             row = conn.execute(
                 "SELECT id, name, description, tags, is_active, sort_order "

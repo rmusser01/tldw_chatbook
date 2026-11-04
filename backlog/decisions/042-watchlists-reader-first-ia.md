@@ -22,7 +22,7 @@ Re-shape the Watchlists screen around the reading loop instead of operations man
   operation is reversible.
 - **New Read keymap**: `m` toggle read/unread, `a` mark all read, `u` undo the
   latest mark-all-read batch, and `space` next unread — single-letter bindings per
-  ADR-031.
+  ADR-299.
 
 ## 2026-08-23 amendment: permanent Reader and collapsible side panes
 
@@ -137,4 +137,4 @@ disturbing the ops surfaces built in the rebuild.
   `Docs/superpowers/plans/2026-08-27-watchlists-runs-refresh-rerun-feedback.md`
 - Phase 1 plan: `Docs/superpowers/plans/2026-08-05-watchlists-reader-first-phase-1-reading-loop.md`
 - Amends: `backlog/decisions/018-watchlists-tui-screen.md`
-- Keybinding conventions: `backlog/decisions/031-tui-keybinding-and-footer-hint-conventions.md`
+- Keybinding conventions: `backlog/decisions/299-tui-keybinding-and-footer-hint-conventions.md`

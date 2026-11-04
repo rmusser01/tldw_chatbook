@@ -4,9 +4,9 @@ Date: 2026-10-02
 Status: Accepted after written-spec review on 2026-10-02
 Task: [TASK-34213](../tasks/task-34213%20-%20Design-Console-chat-destinations-and-bounded-agent-starts.md)
 Spec: [Console chat destinations and bounded agent starts](../../Docs/superpowers/specs/2026-10-02-console-chat-destinations-and-starts-design.md)
-Extends: [ADR-150 for agent chat creation](150-agent-chat-fork-and-spawn.md)
+Extends: [ADR-348 for agent chat creation](348-agent-chat-fork-and-spawn.md)
 Amends for automatic chat starts: [ADR-134](134-fleet-admission-and-automatic-work-budgets.md), [ADR-135](135-fleet-completion-delivery-and-crash-recovery.md)
-Follows: [ADR-006](006-provider-aware-generation-settings.md), [ADR-029](029-local-private-data-boundary.md), [ADR-069](069-console-project-instruction-local-state-and-preflight.md), [ADR-079](079-workspace-assistant-defaults.md), [ADR-082](082-console-per-chat-private-scratch-space.md)
+Follows: [ADR-006](006-provider-aware-generation-settings.md), [ADR-029](029-local-private-data-boundary.md), [ADR-317](317-console-project-instruction-local-state-and-preflight.md), [ADR-325](325-workspace-assistant-defaults.md), [ADR-082](082-console-per-chat-private-scratch-space.md)
 
 ## Context
 
@@ -37,7 +37,7 @@ destination-default and recovery behavior by themselves.
    staged inputs, or grants.
 3. Scope both approval caches to requesting session incarnation, tool, exact
    target scope/workspace, and mode. Remembered grants permit later bodies in
-   that scope under ADR-150's existing policy, but cannot authorize another
+   that scope under ADR-348's existing policy, but cannot authorize another
    mode/destination or renew a budget. Use trusted run context for lineage,
    separately from the source assistant-message identity.
 4. Preserve one-conversation work-chain and run ownership. Add an immutable,
@@ -108,7 +108,7 @@ application implementation follows the subsequent implementation plan.
 
 ## Current-dev compatibility clarification (2026-10-03)
 
-Preserve current-dev optional provider/model/preset routing on prepared new_chat: resolve from fresh destination generation defaults, retain ADR-147 override enablement/allowlist/final-provider guards and enabled routed preset parameters, capture/disclose before approval, persist the exact resolved snapshot, and retain prepared source/destination/runtime currentness. Never fill routing from source-session settings; chat creation ignores subagent default routing. The conditional schema continues to offer these arguments under its existing gates; the five base arguments above remain unchanged. Preset routing overrides provider/model and configured generation parameters only; it does not copy source persona, prompt, bindings, or grants. Explicit instructions and destination assistant identity follow the creation rules above. This preserves the existing [ADR-147 routing contract](147-agent-provider-routing.md) within the new preparation and approval boundary.
+Preserve current-dev optional provider/model/preset routing on prepared new_chat: resolve from fresh destination generation defaults, retain ADR-344 override enablement/allowlist/final-provider guards and enabled routed preset parameters, capture/disclose before approval, persist the exact resolved snapshot, and retain prepared source/destination/runtime currentness. Never fill routing from source-session settings; chat creation ignores subagent default routing. The conditional schema continues to offer these arguments under its existing gates; the five base arguments above remain unchanged. Preset routing overrides provider/model and configured generation parameters only; it does not copy source persona, prompt, bindings, or grants. Explicit instructions and destination assistant identity follow the creation rules above. This preserves the existing [ADR-344 routing contract](344-agent-provider-routing.md) within the new preparation and approval boundary.
 
 
 ## Native receipt schema compatibility (2026-10-04)

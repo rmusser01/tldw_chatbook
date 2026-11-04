@@ -48,7 +48,7 @@ Children TASK-399.8.1 and TASK-399.8.2 are Done — identity-preserving
 `move_file` and the bounded Base/Draft/Disk compare with resolution choices.
 TASK-399.8.3 is closed superseded: no read/write transition or B1 release
 gate ever shipped because the feature went straight to writable under
-ADR-029 (TASK-969, PR #992). With .3 superseded, the all-or-nothing gate this
+ADR-296 (TASK-969, PR #992). With .3 superseded, the all-or-nothing gate this
 tracker exists to roll up is moot.
 
-Superseded by: ADR-029 (backlog/decisions/029-file-notes-disk-authority.md) via TASK-969 (PR #992).
+Superseded by: ADR-296 (backlog/decisions/296-file-notes-disk-authority.md) via TASK-969 (PR #992).

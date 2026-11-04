@@ -23,7 +23,7 @@ This document describes the agent execution loop: the pure control loop in `Agen
 - `is_tool_call_preauthorized`, `before_tool_dispatch`, `post_tool_call`;
 - `prepare_tool_calls` — project-instruction whole-batch preparation (see [console-file-authority.md](./console-file-authority.md));
 - skill runtime tools (`read_skill_file` / `install_skill` / `run_skill_script`);
-- `fork_chat` / `new_chat` (ADR-150, primary-only);
+- `fork_chat` / `new_chat` (ADR-348, primary-only);
 - fleet tools (`wait_agents`, `check_agents`, `merge_agent_worktree`, `discard_agent_worktree`, `send_to_agent`, `report_to_supervisor`, `read_agent_messages`, `drain_mailbox`) — dispatched **in-loop**, deliberately not through `invoke_tool`, because waits must not be killed by the per-call timeout;
 - `on_step` / `on_trace_step` / `on_record` — observation hooks, never load-bearing (wrapped never-raise);
 - `persist_provider_continuation` / `expand_provider_continuation` — durable provider continuation.
@@ -78,7 +78,7 @@ permission denials count toward the separate denial circuit breaker (ADR-154).
 
 ## Tool execution bounds
 
-`AgentService._call_with_timeout` runs each call on a daemon thread with chunked joins; on timeout the worker is **abandoned** — it may still complete side effects, so retrying an abandoned call risks running it twice (documented trade-off). The per-call ceiling is clamped to the run's remaining wall budget; a `None` ceiling means "do not dispatch" rather than start-and-abandon. Tools with `ToolExecutionPolicy.DEFINITIVE_AFTER_START` skip the timeout wrapper entirely (cancel-before-start, scrubbed result, terminal notify); the default policy is `BOUNDED_ABANDONABLE`. ADR-067: approval waits re-arm the deadline while human input is pending — waiting on a human never consumes tool budget.
+`AgentService._call_with_timeout` runs each call on a daemon thread with chunked joins; on timeout the worker is **abandoned** — it may still complete side effects, so retrying an abandoned call risks running it twice (documented trade-off). The per-call ceiling is clamped to the run's remaining wall budget; a `None` ceiling means "do not dispatch" rather than start-and-abandon. Tools with `ToolExecutionPolicy.DEFINITIVE_AFTER_START` skip the timeout wrapper entirely (cancel-before-start, scrubbed result, terminal notify); the default policy is `BOUNDED_ABANDONABLE`. ADR-314: approval waits re-arm the deadline while human input is pending — waiting on a human never consumes tool budget.
 
 ## Sub-agents and the fleet
 
@@ -269,6 +269,6 @@ is blocked by missing saved destinations. Existing profile-guard failures and
 retained Workspace thread-owned handles remain explicit limitations; passing
 scripted journeys do not close those gates.
 
-### Capture-only native continuation acknowledgment (ADR097)
+### Capture-only native continuation acknowledgment (ADR337)
 
 `LoopDeps.acknowledge_provider_continuation` is optional and runs only after the existing projected persistence callback returns successfully. It receives the exact original/projected event pair and, for a finished call, its capped model-facing result. The Console adapter retains only current-batch projection provenance. The callback does not replace persistence, signing, transitions or tool-side-effect barriers; a failed or missing acknowledgment issues no usable trace custody. Ordinary and Capture Off callers leave it unset. Managed envelopes remain the store finalizer's responsibility, and raw event bodies never enter generic event serialization or provider kwargs through this seam.

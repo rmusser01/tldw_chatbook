@@ -13,7 +13,7 @@ from Tests.UI.background_signals import wait_for_signal
 # These tests retain the same source-bound config for their whole lifetime.
 pytestmark = pytest.mark.bootstrap_profile
 
-#: Pane-local chords that do not conflict with ADR-031's global/terminal keys.
+#: Pane-local chords that do not conflict with ADR-299's global/terminal keys.
 SUPPORTED_PANE_SHORTCUTS = {
     "ctrl+g": "generate_tts",
     "ctrl+l": "clear_text",
@@ -115,7 +115,7 @@ async def test_screen_level_random_text_mirror_reaches_the_mounted_pane():
         text_area.text = ""
 
         # Land focus on the rail row, not the pane's TextArea: a focused
-        # TextArea consumes plain printable keys as typing (ADR-031), which
+        # TextArea consumes plain printable keys as typing (ADR-299), which
         # would make this test pass for the wrong reason.
         rail_row = screen.query_one("#lab-speech-row-playground", Button)
         rail_row.focus()

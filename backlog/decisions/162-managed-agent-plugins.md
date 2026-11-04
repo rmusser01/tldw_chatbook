@@ -25,8 +25,8 @@ execution-affecting catalog definitions and settings that cannot safely be
 treated as cosmetic metadata.
 
 [Tool-use Packs](107-portable-tool-use-packs.md) deliberately contain policy,
-not executable installation. [Workspace defaults](079-workspace-assistant-defaults.md)
-and [project instructions](069-console-project-instruction-local-state-and-preflight.md)
+not executable installation. [Workspace defaults](325-workspace-assistant-defaults.md)
+and [project instructions](317-console-project-instruction-local-state-and-preflight.md)
 do not grant package or filesystem authority. The new system must preserve
 these boundaries and ADR-009's offline-tamper protection.
 

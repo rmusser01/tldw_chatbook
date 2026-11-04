@@ -8,8 +8,8 @@ Related Task: [TASK-22507](../tasks/task-22507%20-%20Enable-scoped-Full-semantic
 
 Related Spec: [Console Full Semantic Capture](../../Docs/superpowers/specs/2026-08-26-console-full-semantic-capture-design.md)
 
-Amends: ADR-069's unconditional exclusion of project-instruction bodies from durable
-exchange captures; all other ADR-069 boundaries remain accepted.
+Amends: ADR-317's unconditional exclusion of project-instruction bodies from durable
+exchange captures; all other ADR-317 boundaries remain accepted.
 
 Clarifies: ADR-066's Trace ledger remains read-only. A live Trace screen may host a
 control for future exchange-capture policy without mutating trajectory events; imported
@@ -18,7 +18,7 @@ Traces remain fully read-only.
 ## Context
 
 The Console Conversation Inspector persists allowlisted provider exchanges at the
-provider-adapter boundary. ADR-069 subsequently required automatic project-instruction
+provider-adapter boundary. ADR-317 subsequently required automatic project-instruction
 bodies to be removed from durable exchange captures, logs, transcripts, summaries, and
 tool results. This is a safe default, but it also means the historical Inspector cannot
 show all semantic context that caused a provider response.
@@ -31,7 +31,7 @@ Full records without deleting the conversation.
 
 This changes privacy, provider/runtime boundaries, local schema, deletion semantics,
 and the long-lived Inspector contract, so it requires a new ADR rather than an edit to
-accepted ADR-069.
+accepted ADR-317.
 
 ## Decision
 
@@ -56,7 +56,7 @@ accepted ADR-069.
    boundary. Endpoint fields reuse the existing canonical credential-free destination
    identity, excluding URL userinfo, query, and fragment. Secrets embedded inside
    allowed semantic text may be stored and are named in consent copy.
-6. **Amend ADR-069 narrowly.** Automatic project-instruction bodies may enter only an
+6. **Amend ADR-317 narrowly.** Automatic project-instruction bodies may enter only an
    explicitly Full durable exchange capture. They remain excluded from Safe captures,
    transcripts, agent steps, tool results, compaction summaries, metadata surfaces,
    ordinary logs, and permission/authority decisions. Full capture grants no workspace
@@ -167,7 +167,7 @@ data-loss consequences and requires a separate decision.
 - The canonical F9 Settings screen and Inspector edit one global source of truth.
 - Multiple app processes sharing one profile remain unsupported; within one process,
   revision checks prevent stale Inspector writes.
-- ADR-069 remains authoritative for instruction discovery, authority, permission,
+- ADR-317 remains authoritative for instruction discovery, authority, permission,
   delivery, transcript, metadata, summary, tool-result, and logging boundaries except
   for the explicit Full exchange-capture allowance recorded here.
 
@@ -175,7 +175,7 @@ data-loss consequences and requires a separate decision.
 
 - [Approved design](../../Docs/superpowers/specs/2026-08-26-console-full-semantic-capture-design.md)
 - [TASK-22507](../tasks/task-22507%20-%20Enable-scoped-Full-semantic-capture-in-Conversation-Inspector.md)
-- [ADR-069](069-console-project-instruction-local-state-and-preflight.md)
+- [ADR-317](317-console-project-instruction-local-state-and-preflight.md)
 - [ADR-066](066-console-trajectory-view-and-trace-metadata.md)
 - [Original Conversation Inspector design](../../Docs/superpowers/specs/2026-08-18-console-conversation-inspector-design.md)
 

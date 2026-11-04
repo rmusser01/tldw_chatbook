@@ -47,4 +47,4 @@ A design critique (see Links) found the app composes two parallel chrome systems
 
 ## Renumbering provenance
 
-Renumbered from ADR-014 to ADR-290 on 2026-11-03 under TASK-36943.3 (owner decision 2026-10-25: the younger file of a shared number is renumbered). ADR-014 now refers to 014-library-ingest-service-authority-and-recovery.md.
+Renumbered from ADR-290 to ADR-290 on 2026-11-03 under TASK-36943.3 (owner decision 2026-10-25: the younger file of a shared number is renumbered). ADR-014 now refers to 014-library-ingest-service-authority-and-recovery.md.

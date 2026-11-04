@@ -12,7 +12,7 @@ Parent task: backlog/tasks/task-33001 - Model-config-P1-root-cause-fixes-no-layo
 - ADR-126 storage admission gate: runtime storage and config calls raise RecoveryRequired in a clean worktree. A test that fails with RecoveryRequired in setup is environmental, not a regression. Prefer gate-free unit tests plus real-implementation tests at the seam.
 - Phase 1 changes NO CSS, design tokens or widget geometry.
 - Size ratchets: tldw_chatbook/UI/Screens/chat_screen.py has about 32 lines of headroom (Tests/Architecture/test_screen_size_ratchet.py). tldw_chatbook/Widgets/Console/console_settings_modal.py has ZERO headroom (Tests/Architecture/test_module_size_ratchet.py:68): net lines must be <= 0. ADR-097 ratchets never rise.
-- ADR-031: never bind Ctrl+C/V/X/S/D/Z/A/R/W. Footer hints must match working bindings.
+- ADR-299: never bind Ctrl+C/V/X/S/D/Z/A/R/W. Footer hints must match working bindings.
 - TDD: write the failing test first, see it fail, then make it pass. For config and provider surfaces, add at least one real-implementation integration test (no kwargs fakes).
 - Where a fix changes behaviour an existing test pins, rewrite that test on purpose and say so in the report.
 - Commit per task: `fix(model-config): <summary> (TASK-33001.N)` or `feat(...)`, ending with the line `Co-Authored-By: Claude Opus 5.5 (1M context) <noreply@anthropic.com>`. Never push, never merge.
@@ -29,7 +29,7 @@ Both Console editors rebase a provider change with no model: the Alt+M popover (
 
 This is not by design. ADR-006's precedence treats chat_defaults.model as belonging to chat_defaults.provider. The TASK-364 comment at console_model_popover.py:1097-1099 says a stale model from another provider must not linger. TASK-14812 AC#6 says a provider change cannot retain a model from the previous provider.
 
-Tests pin only the same-provider precedence: test_chat_defaults_model_outranks_provider_fallback (Tests/Chat/test_console_session_settings.py:161). No test covers a cross-provider rebase with no model; Tests/Chat/test_console_settings_apply.py:763-775 asserts only the provider. The resolver already computes a canonical provider id (_canonical_chat_provider_id, console_session_settings.py:1970), which handles case, legacy aliases and custom-endpoint registry ids (ADR-146). Absorbs TASK-14812.
+Tests pin only the same-provider precedence: test_chat_defaults_model_outranks_provider_fallback (Tests/Chat/test_console_session_settings.py:161). No test covers a cross-provider rebase with no model; Tests/Chat/test_console_settings_apply.py:763-775 asserts only the provider. The resolver already computes a canonical provider id (_canonical_chat_provider_id, console_session_settings.py:1970), which handles case, legacy aliases and custom-endpoint registry ids (ADR-343). Absorbs TASK-14812.
 
 ### Acceptance criteria
 
@@ -132,9 +132,9 @@ Task file: backlog/tasks/task-33001.4 - F6-and-Shift-F6-cycle-the-Settings-panes
 
 ### Why
 
-F6 is the app-global 'next pane' key and is advertised in the footer (app.py:7750; ADR-031 rule 1). The app hands it to the active screen's action_focus_next_workbench_pane and otherwise shows 'No workbench pane focus target is available.' (app.py:20175-20186). SettingsScreen (UI/Screens/settings_screen.py:2731) defines no handler, so on Settings F6 only shows that notice. Docs/User_Guide/settings.md:877 records this as a known limitation.
+F6 is the app-global 'next pane' key and is advertised in the footer (app.py:7750; ADR-299 rule 1). The app hands it to the active screen's action_focus_next_workbench_pane and otherwise shows 'No workbench pane focus target is available.' (app.py:20175-20186). SettingsScreen (UI/Screens/settings_screen.py:2731) defines no handler, so on Settings F6 only shows that notice. Docs/User_Guide/settings.md:877 records this as a known limitation.
 
-This breaks ADR-031 rule 4, which says advertised keys must work. It also leaves Settings as the one workbench whose panes can be reached only with Tab: Model is Tab stop 23.
+This breaks ADR-299 rule 4, which says advertised keys must work. It also leaves Settings as the one workbench whose panes can be reached only with Tab: Model is Tab stop 23.
 
 Personas, Library and Workflows already cycle panes with the shared focus_relative_workbench_pane helper (Widgets/workbench_focus.py:20). See personas_screen.py:16333-16347, and its shift+f6 binding at :1086. The Settings panes are #settings-category-pane, #settings-detail-pane and #settings-impact-pane (settings_screen.py:22436-22476). Related: TASK-2831 (category focus intent lost in recompose races) touches the same rail focus path.
 
@@ -155,7 +155,7 @@ Personas, Library and Workflows already cycle panes with the shared focus_relati
 - tldw_chatbook/app.py
 - tldw_chatbook/UI/Screens/personas_screen.py
 - Docs/User_Guide/settings.md
-- backlog/decisions/031-tui-keybinding-and-footer-hint-conventions.md
+- backlog/decisions/299-tui-keybinding-and-footer-hint-conventions.md
 
 ## Task 5: Untouched open chats follow newly saved defaults (D1) (TASK-33001.5)
 

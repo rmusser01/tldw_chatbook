@@ -20,7 +20,7 @@ Supersedes: N/A
 Workspace-local file, web, and todo tools join the Console agent runtime as a
 first-class `ToolProvider` at the `Agents/tool_catalog.py` seam. Local tools
 carry `local:<name>` catalog ids and `fs_`/`web_`/`todo_` tool names, following
-the ADR-030 `library_*` naming precedent.
+the ADR-298 `library_*` naming precedent.
 
 Local tools reuse the MCP permission store under the synthetic server key
 `local:__local__` — distinct from the existing `builtin:tldw_chatbook`
@@ -124,7 +124,7 @@ synthetic local principal.** Read-only `watchlists_*` tools may expose local
 feed/source metadata and bounded article evidence through the same
 `LocalToolProvider`, `local:__local__` permission principal, kill switch,
 definition-hash guard, and optional external MCP exposure established above.
-Their names follow ADR-030's domain-prefix precedent. Registration is not
+Their names follow ADR-298's domain-prefix precedent. Registration is not
 authorization: fresh/missing permission remains `ask`; external MCP cannot
 satisfy `ask` and requires an operator-recorded tool-level Allow.
 
@@ -432,7 +432,7 @@ root confinement with hidden components explicitly allowed under it.
 - [Implementation plan](../../Docs/superpowers/plans/2026-08-04-local-agent-tools-phase1.md)
 - [Watchlists agent boundary and provenance plan](../../Docs/superpowers/plans/2026-08-27-watchlists-agent-boundary-and-provenance.md)
 - [Console Watchlists commands and operations plan](../../Docs/superpowers/plans/2026-08-27-console-watchlists-commands-and-operations.md)
-- [ADR-030: Direct Local Library Tool Boundary for Console and MCP](030-local-library-agent-tool-boundary.md)
+- [ADR-298: Direct Local Library Tool Boundary for Console and MCP](298-local-library-agent-tool-boundary.md)
 
 
 ## Addendum: approval-history suggestions retain reviewed authority (TASK-18928, 2026-10-31)

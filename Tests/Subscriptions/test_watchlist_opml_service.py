@@ -81,7 +81,7 @@ def test_a_c1_control_byte_from_opml_import_is_stripped_at_the_sources_table_cel
     )
 
 
-# --- TASK-3604 plan task 2: parse preserves folder structure (ADR-043) ---------
+# --- TASK-3604 plan task 2: parse preserves folder structure (ADR-307) ---------
 
 
 def test_parse_groups_feeds_under_their_folder():
@@ -103,7 +103,7 @@ def test_parse_groups_feeds_under_their_folder():
 
 
 def test_parse_flattens_nested_folders_to_the_innermost():
-    """ADR-043 rule 2: the folder directly containing the feed wins."""
+    """ADR-307 rule 2: the folder directly containing the feed wins."""
     xml = (
         '<?xml version="1.0"?><opml version="2.0"><body>'
         '<outline text="Tech"><outline text="AI">'
@@ -116,7 +116,7 @@ def test_parse_flattens_nested_folders_to_the_innermost():
 
 
 def test_parse_a_feed_with_children_is_a_feed_and_children_inherit_its_context():
-    """ADR-043 rule 3: an outline with a feed URL AND children is a feed;
+    """ADR-307 rule 3: an outline with a feed URL AND children is a feed;
     its children are evaluated under its folder context, never under a
     folder of the feed's own making."""
     xml = (
@@ -170,7 +170,7 @@ def test_parse_malformed_xml_still_raises():
 
 @pytest.mark.asyncio
 async def test_import_assigns_membership_and_reimport_is_a_structural_noop(tmp_path):
-    """ADR-043 end to end at the service layer: folders become watchlists,
+    """ADR-307 end to end at the service layer: folders become watchlists,
     members join them, top-level feeds stay Unassigned -- and importing the
     same document twice changes nothing."""
     from tldw_chatbook.DB.Subscriptions_DB import SubscriptionsDB
@@ -365,7 +365,7 @@ async def test_import_reuses_existing_unicode_casefold_equivalent_folder(tmp_pat
     }
 
 
-# --- TASK-3604 plan task 4: export nests watchlists as folders (ADR-043 rule 5) -
+# --- TASK-3604 plan task 4: export nests watchlists as folders (ADR-307 rule 5) -
 
 
 def test_export_nests_watchlists_as_folders_with_unassigned_top_level():
@@ -524,7 +524,7 @@ async def test_import_counts_a_repeated_url_once_and_reports_unassigned_sources(
 
 @pytest.mark.asyncio
 async def test_export_then_import_round_trips_the_structure(tmp_path):
-    """The phase's done-when, machine-checked (ADR-043): exporting a
+    """The phase's done-when, machine-checked (ADR-307): exporting a
     structured profile and importing the document into a FRESH database
     reproduces the exact watchlists, memberships, and unassigned set."""
     from tldw_chatbook.DB.Subscriptions_DB import SubscriptionsDB

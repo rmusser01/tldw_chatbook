@@ -4,7 +4,7 @@ Status: Accepted — design direction approved, 2026-09-25; no deletion, migrati
 Date: 2026-09-25
 Task: TASK-25907.6
 Extends: [ADR-102](102-personal-context-profile-authority-sync-and-encryption.md), [ADR-182](182-personal-context-memory-evolution.md), [ADR-201](201-versioned-profile-evidence-and-temporal-claims.md)
-Related: [ADR-080](080-trace-v2-exhaustive-event-projection-and-collaboration.md), [ADR-092](092-console-full-semantic-capture-policy.md), [ADR-096](096-console-safe-capture-retention.md), [ADR-097](097-console-reference-backed-semantic-trace-ledger.md), [ADR-119](119-llamacpp-prompt-cache-snapshot-ownership.md), [ADR-052](052-console-conversation-memory-and-compaction-policy.md), [ADR-059](059-notes-folder-import-and-device-local-sync-ownership.md), [ADR-106](106-human-reviewed-agent-lesson-promotion.md)
+Related: [ADR-080](080-trace-v2-exhaustive-event-projection-and-collaboration.md), [ADR-092](092-console-full-semantic-capture-policy.md), [ADR-096](096-console-safe-capture-retention.md), [ADR-337](337-console-reference-backed-semantic-trace-ledger.md), [ADR-119](119-llamacpp-prompt-cache-snapshot-ownership.md), [ADR-052](052-console-conversation-memory-and-compaction-policy.md), [ADR-059](059-notes-folder-import-and-device-local-sync-ownership.md), [ADR-106](106-human-reviewed-agent-lesson-promotion.md)
 Design: [Dependency-aware forgetting](../../Docs/superpowers/specs/2026-09-25-personal-context-dependency-aware-forgetting-design.md)
 
 ## Context

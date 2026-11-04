@@ -683,7 +683,7 @@ class ProfileInterviewScreen(
 
         TASK-33622.15. A terminal operation can finish while another screen
         covers this one (a background push). The mixin refuses a covered
-        dismiss (ADR-031), and nothing retried it, so the screen stayed open
+        dismiss (ADR-299), and nothing retried it, so the screen stayed open
         and busy over a draft that no longer existed. The close is kept for
         ``on_screen_resume`` instead.
 

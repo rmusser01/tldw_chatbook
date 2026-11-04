@@ -40,7 +40,7 @@ tests; the dispatch handler and parameter-map entries are generated from the
 registry's engine records, so there is no `Chat_Functions` edit
 (TASK-36946.2). Sensitive-request audit and cloud/local classification become
 registry-coverage tests instead of hand-typed literals. Related: ADR-002, ADR-012, ADR-020, ADR-062, ADR-063,
-ADR-146.
+ADR-343.
 
 ## Links
 
@@ -49,7 +49,7 @@ ADR-146.
 - [ADR-020: Automatic Model Catalog Refresh](020-automatic-model-catalog-refresh.md)
 - [ADR-062: Hosted Chat Completions Provider Boundary](062-hosted-chat-completions-provider-boundary.md)
 - [ADR-063: Use a neutral hosted wire boundary with durable tool continuation](063-hosted-provider-wire-and-durable-tool-continuation.md)
-- [ADR-146: Console custom endpoint registry](146-console-custom-endpoint-registry.md)
+- [ADR-343: Console custom endpoint registry](343-console-custom-endpoint-registry.md)
 
 
 ## Current-owner integration amendment (2026-10-13)

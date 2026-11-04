@@ -90,7 +90,7 @@ must not create or retain an MCP-local enhanced service.
 
 - [Approved design](../../Docs/superpowers/specs/2026-08-23-task-3500-mcp-profile-driven-rag-search-design.md)
 - [ADR-003: Settings Library/RAG defaults boundary](003-settings-library-rag-defaults.md)
-- [ADR-030: Local Library agent tool boundary](030-local-library-agent-tool-boundary.md)
+- [ADR-298: Local Library agent tool boundary](298-local-library-agent-tool-boundary.md)
 - [TASK-3500](../tasks/task-3500%20-%20Align-MCP-perform_rag_search-with-profile-driven-retrieval.md)
 
 ## Renumbering provenance

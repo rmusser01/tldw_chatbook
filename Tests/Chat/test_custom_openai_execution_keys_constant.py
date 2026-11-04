@@ -59,7 +59,7 @@ _AUDITED_LITERAL_ALLOWLIST: dict[str, tuple[int, int]] = {
         1,
         1,
     ),
-    # The legacy named handlers and their ADR-066 wire keys (untouched by
+    # The legacy named handlers and their ADR-311 wire keys (untouched by
     # the swap; the kill switch keeps them the live path when off).
     "tldw_chatbook/LLM_Calls/LLM_API_Calls_Local.py": (3, 2),
     # Audit-leave: user-configured summarization endpoint dispatch;
@@ -90,7 +90,7 @@ def test_constant_shape() -> None:
 
 
 def test_membership_sites_consume_the_constant() -> None:
-    # support: ADR-066 thinking keys (and through them
+    # support: ADR-311 thinking keys (and through them
     # _LOCAL_REASONING_EXECUTION_KEYS) cover the swapped key.
     assert _CUSTOM_OPENAI_THINKING_KEYS is CUSTOM_OPENAI_EXECUTION_KEYS
     # gateway: the credential-decision providers are the constant.

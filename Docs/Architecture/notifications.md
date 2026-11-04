@@ -74,7 +74,7 @@ Store-level settings (`enabled`, `toast_enabled`, `persist_enabled`, per-categor
 
 ## Governing docs
 
-There is **no dedicated notification ADR**. Relevant decisions live inside ADR-018 (the Watchlists inbox surface), ADR-079 (the `briefing` category), ADR-033 (state ownership), ADR-067 (approval-related waits). Design anchors are in-code task tags (lazy schema, connection lifecycle, `exit_on_error`, failure-incident dedupe, markup-free toasts).
+There is **no dedicated notification ADR**. Relevant decisions live inside ADR-018 (the Watchlists inbox surface), ADR-323 (the `briefing` category), ADR-033 (state ownership), ADR-314 (approval-related waits). Design anchors are in-code task tags (lazy schema, connection lifecycle, `exit_on_error`, failure-incident dedupe, markup-free toasts).
 
 ## Verified gotchas
 

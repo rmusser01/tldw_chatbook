@@ -6,8 +6,8 @@ Related Task: [TASK-38534](../tasks/task-38534%20-%20Design-prompt-mix-ins-for-C
 Spec: [Console prompt mix-ins](../../Docs/superpowers/specs/2026-11-01-prompt-mix-ins-design.md)
 Plan: [Prompt mix-in implementation](../../Docs/superpowers/plans/2026-11-01-prompt-mix-ins-implementation.md)
 Implementation: Complete on focused dev branch with schema86/Prompts6; PR3346 independent review and corrections approved, TASK-38544 Done. Evidence: Docs/superpowers/qa/2026-11-01-prompt-mix-ins/verification.md
-Amends: [ADR-040](040-versioned-prompt-artifacts-and-safe-improvement-transactions.md), adding a separately discriminated mix-in artifact; [ADR-057](057-portable-chatbook-prompt-records.md), adding an explicitly versioned portable mix-in record
-Preserves: [ADR-097](097-console-reference-backed-semantic-trace-ledger.md), [ADR-098](098-visible-bounded-console-prompt-queue.md), [ADR-095](095-conversation-owned-console-generation-settings.md), [ADR-210](210-console-region-ownership.md)
+Amends: [ADR-305](305-versioned-prompt-artifacts-and-safe-improvement-transactions.md), adding a separately discriminated mix-in artifact; [ADR-057](057-portable-chatbook-prompt-records.md), adding an explicitly versioned portable mix-in record
+Preserves: [ADR-337](337-console-reference-backed-semantic-trace-ledger.md), [ADR-098](098-visible-bounded-console-prompt-queue.md), [ADR-095](095-conversation-owned-console-generation-settings.md), [ADR-210](210-console-region-ownership.md)
 
 ## Context
 
@@ -147,7 +147,7 @@ exact operational retry content, especially when capture is off.
 | Resolve queued modifiers only at dispatch | Edits or toggles change a message after the user queued it. |
 | Retry against current library/toggles | Cannot repeat the original attempt and hides the difference from regeneration. |
 | Recover exact Retry from diagnostic trace alone | Capture can be disabled, sanitized, purged or incomplete; operational behavior cannot depend on it. |
-| Duplicate complete provider requests per attempt | Reintroduces the growing-history storage problem addressed by ADR-097. |
+| Duplicate complete provider requests per attempt | Reintroduces the growing-history storage problem addressed by ADR-337. |
 | Maximize cache hits by retaining old instructions | Makes off unreliable; correctness takes precedence over a cache metric. |
 | Mix-in-specific rendering or automatic generation | The approved first version supplies instructions and uses existing response/tool behavior. |
 

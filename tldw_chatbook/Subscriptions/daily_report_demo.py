@@ -1,6 +1,6 @@
 """One-click Daily Report demo: seed a real watchlist, run it live.
 
-The demo IS the product (ADR-079): everything it creates -- watchlist, RSS
+The demo IS the product (ADR-323): everything it creates -- watchlist, RSS
 sources, briefing preset, 24h cadence -- is real, persistent, user-owned
 setup, and the run-now path is the same claim-guarded machinery the scheduler
 uses tomorrow. Idempotency keys on configured briefing schedules
@@ -96,7 +96,7 @@ def _every(seconds: int) -> str:
 def daily_report_demo_consequences(
     *, provider: str, model: str, existing: bool = False, existing_name: str = ""
 ) -> tuple[str, ...]:
-    """The consequence copy both demo entry points show (ADR-079: "CTA copy
+    """The consequence copy both demo entry points show (ADR-323: "CTA copy
     says so"; TASK-34000.23 review finding L-10).
 
     Pure: built from `DEMO_SOURCES`, `DEMO_CADENCE_SECONDS` and
@@ -120,7 +120,7 @@ def daily_report_demo_consequences(
         One sentence per line; the first line is the headline.
     """
     pair = f"{provider} · {model}" if model else provider
-    # ADR-079 Consequences: "LLM + TTS; CTA copy says so". `_generate_audio`
+    # ADR-323 Consequences: "LLM + TTS; CTA copy says so". `_generate_audio`
     # runs whenever a voice profile exists: `generate_script` is a SECOND
     # model call and `generate_script_audio` spends through the TTS provider.
     audio = (

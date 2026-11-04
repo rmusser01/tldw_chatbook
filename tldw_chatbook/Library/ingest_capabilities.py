@@ -1054,7 +1054,7 @@ _TYPE_GROUPS: dict[str, TypeGroupCapabilities] = {
                 name="generate_embeddings",
                 label="Generate embeddings",
                 type="checkbox",
-                # ADR-005 makes ingestion-time indexing the default. Keeping
+                # ADR-288 makes ingestion-time indexing the default. Keeping
                 # this on preserves retrieval for users who do not open this
                 # panel before importing.
                 default=True,

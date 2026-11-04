@@ -66,7 +66,7 @@ Foundations: **246** (persistent Chroma default) → **247** (ingestion-time ind
 
 ~~The honest alternative — if local semantic RAG is *not* a goal — is to drop the pretense: ship FTS5 as "Search", remove the semantic modes and the ~20 dead files, and route "RAG Answer" through the tldw server API instead. That decision should be made explicitly before anyone picks up 246/247.~~
 
-**DECIDED 2026-07-17 ([ADR-005](../decisions/005-invest-in-local-rag-mirroring-tldw-server.md)):** invest in full local RAG, copying the tldw_server pipeline as closely as the TUI context allows. The FTS-only/server-routed alternative is rejected. Tasks 246/247 are unblocked.
+**DECIDED 2026-07-17 ([ADR-288](../decisions/288-invest-in-local-rag-mirroring-tldw-server.md)):** invest in full local RAG, copying the tldw_server pipeline as closely as the TUI context allows. The FTS-only/server-routed alternative is rejected. Tasks 246/247 are unblocked.
 
 ## Method note
 

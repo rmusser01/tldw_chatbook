@@ -5,7 +5,7 @@ Superseded in part by: [ADR-210](210-console-region-ownership.md) (accepted 2026
 Date: 2026-08-22
 Related Task: [TASK-20937](../tasks/task-20937%20-%20Make-Console-rails-edge-native-and-organize-conversations-by-workspace.md)
 Related Spec: [Console edge rails and workspace Tree design](../../Docs/superpowers/specs/2026-08-22-console-edge-rails-workspace-tree-design.md)
-Amends: ADR-017, ADR-077
+Amends: ADR-017, ADR-319
 Preserves: ADR-043
 
 ## Decision
@@ -26,7 +26,7 @@ content budget to keep all headers simultaneously visible and no longer exposes
 `· no room` or `[>]` reprioritization for ordinary height pressure. Complete
 expanded sections retain their natural or capped height, and the Context outer
 body scrolls with `▼ more sections — scroll` when their sum exceeds the rail.
-Inspector remains fixed at ADR-077's independent 20-row contract.
+Inspector remains fixed at ADR-319's independent 20-row contract.
 
 Workspaces owns one native Textual `Tree` with a hidden, non-selectable
 synthetic root and top-level nodes for every visible/selectable, non-retired
@@ -46,7 +46,7 @@ plain Left/Right branch navigation, and prevents native shifted navigation from
 moving onto the hidden root. Search-time disclosure is temporary and restores
 the exact persisted pre-search snapshot on clear.
 
-The Workspaces Tree is the deliberate exception to ADR-077's
+The Workspaces Tree is the deliberate exception to ADR-319's
 overflow-only-focus rule for passive scroll viewports: whenever it contains an
 enabled selectable node it is keyboard-focusable even when all nodes fit.
 Overflow still controls its local hint and wheel handoff. Switch, New, and RAG
@@ -188,10 +188,10 @@ larger roleplay viewport safely.
 
 ADR-017 deliberately kept the earlier rail text-only and structurally stable;
 this design now needs a workspace Tree and a different ownership hierarchy.
-ADR-077 deliberately kept all Context headers visible by distributing a shared
+ADR-319 deliberately kept all Context headers visible by distributing a shared
 height budget; the product decision now prefers full natural section viewports
 plus ordinary outer scrolling. Those clauses are superseded narrowly. The
-remaining ADR-017 text labels and ADR-077 local hints, physical-row measurement,
+remaining ADR-017 text labels and ADR-319 local hints, physical-row measurement,
 focus recovery, offset continuity, mutation reconciliation, Inspector ownership,
 and nested-scroll handoff continue to govern.
 
@@ -264,7 +264,7 @@ custom Tree or generalized private rendering layer remains rejected.
 - [Approved design](../../Docs/superpowers/specs/2026-08-22-console-edge-rails-workspace-tree-design.md)
 - [ADR-017: Console left-rail usability redesign](017-console-left-rail-usability.md)
 - [ADR-043: Console rail compact collapse yields to explicit toggles](043-console-rail-compact-collapse-yields-to-explicit-toggle.md)
-- [ADR-077: Bound Console rail sections and expose hidden overflow](077-console-bounded-rail-section-scrolling.md)
+- [ADR-319: Bound Console rail sections and expose hidden overflow](319-console-bounded-rail-section-scrolling.md)
 - [TASK-20937](../tasks/task-20937%20-%20Make-Console-rails-edge-native-and-organize-conversations-by-workspace.md)
 
 ## Amendment (2026-09-10): Character portraits expand with the viewport

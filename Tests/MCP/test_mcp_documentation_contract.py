@@ -527,8 +527,8 @@ def test_skill_author_inventory_links_watchlists_task_and_permission_decisions()
         "task-16222%20-%20Expose-local-Watchlists-search-tools-to-Console-and-MCP.md"
         in text
     )
-    assert "030-local-library-agent-tool-boundary.md" in text
-    assert "032-local-agent-tool-permission-boundary.md" in text
+    assert "298-local-library-agent-tool-boundary.md" in text
+    assert "300-local-agent-tool-permission-boundary.md" in text
 
 
 @pytest.mark.parametrize("path", DOCUMENTS, ids=lambda path: path.name)

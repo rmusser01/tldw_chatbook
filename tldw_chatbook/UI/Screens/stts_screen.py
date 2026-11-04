@@ -110,7 +110,7 @@ class STTSScreen(LabScreen):
     and re-synced on every ``refresh_lab_status()`` pass.
     """
 
-    #: Footer hint context (registered on mount; matches BINDINGS, ADR-031).
+    #: Footer hint context (registered on mount; matches BINDINGS, ADR-299).
     #: The inherited Lab mode hints (``[ / ]``/``Enter``) register from
     #: ``LabScreen.on_mount``; these are the Speech playground keys.
     STTS_SHORTCUTS: tuple[tuple[str, str], ...] = (

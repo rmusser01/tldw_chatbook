@@ -5,7 +5,7 @@
 - **Related task:** N/A — design phase
 - **Supersedes:** N/A
 - **Extends:** [ADR-028: Settings owns workspace management; folders are file-tool access roots](028-settings-workspaces-category-and-folder-roots.md)
-- **Relates to:** [ADR-069: Console project-instruction local state and preflight](069-console-project-instruction-local-state-and-preflight.md), [Agent Change Review design](../../Docs/superpowers/specs/2026-08-02-agent-change-review-design.md), [Workspace Files design](../../Docs/superpowers/specs/2026-08-31-workspace-files-inspector-design.md)
+- **Relates to:** [ADR-317: Console project-instruction local state and preflight](317-console-project-instruction-local-state-and-preflight.md), [Agent Change Review design](../../Docs/superpowers/specs/2026-08-02-agent-change-review-design.md), [Workspace Files design](../../Docs/superpowers/specs/2026-08-31-workspace-files-inspector-design.md)
 
 ## Context
 

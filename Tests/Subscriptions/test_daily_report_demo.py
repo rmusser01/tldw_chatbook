@@ -170,7 +170,7 @@ def test_consequences_name_every_feed_the_cadence_and_the_pair():
     assert "API quota" in text
     assert "Watchlists" in text
     assert lines[0].startswith("This sets up a recurring Daily Brief")
-    # ADR-079: "LLM + TTS; CTA copy says so" -- the cast script is a second
+    # ADR-323: "LLM + TTS; CTA copy says so" -- the cast script is a second
     # model call and the audio spends through the TTS provider (review 1 #3).
     assert "cast script" in text and "second openai call" in text
     assert "TTS provider" in text

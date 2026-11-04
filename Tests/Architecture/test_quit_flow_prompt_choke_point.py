@@ -7,7 +7,7 @@ unanswered. A bare ``push_screen_wait`` (or ``push_screen(...,
 wait_for_dismiss=True)``) on that prompt never returns: the quit worker hangs,
 ``_quit_in_progress`` stays set and Ctrl+Q is dead for the session.
 ``await_quit_prompt`` (``Widgets/confirmation_dialog.py``) is the one choke
-point that cannot hang, and ADR-031's task-33622.10 refinement makes it the
+point that cannot hang, and ADR-299's task-33622.10 refinement makes it the
 rule.
 
 Nothing else enforces that rule: a new screen adding ``async def
@@ -228,7 +228,7 @@ def test_quit_flow_prompts_are_awaited_only_through_the_choke_point() -> None:
     assert offences == [], (
         "A quit-flow prompt waits on a pushed screen directly. A covered "
         "modal's dismiss() pops the TOP screen, so that wait can never "
-        "return and Ctrl+Q dies for the session (TASK-33622.10, ADR-031). "
+        "return and Ctrl+Q dies for the session (TASK-33622.10, ADR-299). "
         "Await it through await_quit_prompt (Widgets/confirmation_dialog.py) "
         "instead:\n  " + "\n  ".join(offences)
     )

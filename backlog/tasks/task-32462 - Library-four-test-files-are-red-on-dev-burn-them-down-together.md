@@ -87,7 +87,7 @@ Measured while verifying the task-32302/32393/32306/32303 branch: four Library t
 5. Record local completion separately from the original acceptance requirement to pass on dev; keep integration-dependent criteria open until the verified commits are integrated.
 
 ADR required: no for test/fixture corrections or direct bug fixes under existing contracts; reassess before any architectural change.
-ADR path: backlog/decisions/031-tui-keybinding-and-footer-hint-conventions.md; backlog/decisions/086-library-adaptive-reader-shell.md; backlog/decisions/161-component-pattern-library.md (existing)
+ADR path: backlog/decisions/299-tui-keybinding-and-footer-hint-conventions.md; backlog/decisions/086-library-adaptive-reader-shell.md; backlog/decisions/161-component-pattern-library.md (existing)
 Reason: restore verification and behavior required by the existing footer, adaptive Library ownership and component contracts without changing architecture.
 <!-- SECTION:PLAN:END -->
 
@@ -102,5 +102,5 @@ Test fixes: updated the footer fake, exercised a valid second conversation navig
 
 Verification: the complete Prompts file passes 342 tests. Seven complete neighboring files pass 159 tests, including footer, entry and the already-repaired Workspace file; a separate reusable-screen journey verifies ordinary leave/return refresh. Native terminal verification with exclusive private-profile ownership at a measured 170x48 retains Notes row focus through three refreshes and the first-saved Prompt text widget; real SQLite content/version checks pass and native exit is 0. All changed functions pass Ruff formatting, with no new complete-file lint diagnostics; existing lint debt and native Console startup warnings are documented. No full-suite run or integration was performed.
 
-Updated the workflow audit, archived selected verification evidence, and recorded the async-readiness and app-wide-worker-wait lessons. Self-review completed. Existing ADR-031, ADR-086 and ADR-161 apply; no new ADR is required because these repairs retain established footer, ownership and component contracts.
+Updated the workflow audit, archived selected verification evidence, and recorded the async-readiness and app-wide-worker-wait lessons. Self-review completed. Existing ADR-299, ADR-086 and ADR-161 apply; no new ADR is required because these repairs retain established footer, ownership and component contracts.
 <!-- SECTION:NOTES:END -->

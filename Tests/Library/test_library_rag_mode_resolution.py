@@ -1,7 +1,7 @@
 """rag mode must honor the active profile's default_search_mode.
 
 The live path hardcoded search_type="semantic"; the engine's hybrid
-(RRF k=60 + alpha, ADR-005 server parity) was unreachable, so a user who
+(RRF k=60 + alpha, ADR-288 server parity) was unreachable, so a user who
 picked "Hybrid Basic" or "BM25 Only" in Settings > RAG got vector-only
 retrieval anyway, silently. Routing rules and disclosures per the P0 spec,
 Workstream A.

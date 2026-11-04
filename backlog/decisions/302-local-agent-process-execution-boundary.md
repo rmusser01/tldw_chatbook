@@ -10,14 +10,14 @@ Partially Superseded By: [ADR-094: Raw and Virtual CLI Execution Boundaries](094
 
 Phases 3b-ii/4 of the local-agent-tools effort introduce the first
 model-invocable tools that spawn processes and answer the long-deferred
-raw-shell question. Three decisions follow, all under the ADR-032 naming,
+raw-shell question. Three decisions follow, all under the ADR-300 naming,
 confinement, and approval discipline.
 
 **Git tools process boundary.** The ported read-only git tools
 (`git_status`, `git_diff`, `git_log`, `git_blame`, `git_branches`) spawn
 `git` via fixed argv arrays with no shell interpolation, an allowlist of
 read-only subcommands and flags, cwd/repo discovery confined to the
-workspace root (ADR-032 confinement), a 30 s timeout, and a 1 MB output
+workspace root (ADR-300 confinement), a 30 s timeout, and a 1 MB output
 cap. They carry NO risk tag: the existing `process` tag in
 `HIGH_RISK_TAGS` (`MCP/permission_store.py:69`) is deliberately NOT
 applied to this read-only allowlisted set. The risk floor exists to force
@@ -50,7 +50,7 @@ here so the questions do not get re-asked.
 
 ## Context
 
-ADR-032 established the local tool permission boundary — synthetic server
+ADR-300 established the local tool permission boundary — synthetic server
 key `local:__local__`, fail-closed approval, workspace-root confinement —
 for tools that read and write files through Python code paths. Phase 3 of
 the design spec `Docs/superpowers/specs/2026-08-04-local-agent-tools-design.md`
@@ -118,7 +118,7 @@ recorded as a binding tripwire rather than silently accepted.
 - [TASK-2820](../tasks/task-2820%20-%20Local-agent-tools-phase-2-file-tools-fs_read-fs_write-fs_edit-fs_glob-fs_grep.md)
 - [Re-plan specification](../../Docs/superpowers/specs/2026-08-05-local-agent-tools-phases-3-4-replan.md)
 - [Original design specification](../../Docs/superpowers/specs/2026-08-04-local-agent-tools-design.md)
-- [ADR-032: Local Agent Tool Permission Boundary](032-local-agent-tool-permission-boundary.md)
+- [ADR-300: Local Agent Tool Permission Boundary](300-local-agent-tool-permission-boundary.md)
 - [ADR-094: Raw and Virtual CLI Execution Boundaries](094-raw-and-virtual-cli-execution-boundaries.md)
 
 ## Renumbering provenance

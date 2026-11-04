@@ -1,4 +1,4 @@
-"""Run-scoped marks for waits on a HUMAN decision (ADR-067).
+"""Run-scoped marks for waits on a HUMAN decision (ADR-314).
 
 Three blocking prompts arm a card and then poll for the user's answer:
 the tool approval round (``ConsoleChatController.request_mcp_approvals``),

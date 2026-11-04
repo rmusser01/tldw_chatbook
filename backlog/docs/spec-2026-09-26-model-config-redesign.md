@@ -75,7 +75,7 @@ Several reviewer findings are **by design** and are not reopened here:
 - Test does not check cloud keys (ADR-012:33). D2 amends this.
 - Discover feeds Save selected (ADR-002).
 - Model chips are capped at 25 characters (TASK-1671).
-- Legacy aliases stay selectable (task-180, ADR-066).
+- Legacy aliases stay selectable (task-180, ADR-311).
 
 See [verified-claims.md](../../qa/model-config-ux-review-2026-09-26/verified-claims.md).
 
@@ -85,7 +85,7 @@ See [verified-claims.md](../../qa/model-config-ux-review-2026-09-26/verified-cla
 |---|---|---|---|---|
 | **Switch model**: `ConsoleModelPopover`; `compose()` is replaced, class and ids are kept | Alt+M, `/model [query]`, model chip, rail "Change Alt+M" | Choose the provider·model pair for this chat, plus three quick values | Enter applies to this chat · Ctrl+N makes it the default for new chats · [Save as model default] | "Applies to: this chat only" |
 | **Chat settings**: `ConsoleSettingsModal`, renamed from "Conversation settings" | Ctrl+O, `/settings` | Tune everything for this chat | Ctrl+Enter applies to this chat · [Use saved defaults] · [Save as model default] · Ctrl+N | "Applies to this chat only · saved with the conversation" |
-| **Settings ▸ Providers & Models**: moves to `UI/Settings_Modules/providers_models_card.py` | F4 | Connect providers and set the defaults for new chats | `s` save · `r` revert · `t` test key (staged draft, ADR-033) | "Applies to new chats · open chats keep their own settings (in Console: Alt+M)" |
+| **Settings ▸ Providers & Models**: moves to `UI/Settings_Modules/providers_models_card.py` | F4 | Connect providers and set the defaults for new chats | `s` save · `r` revert · `t` test key (staged draft, ADR-303) | "Applies to new chats · open chats keep their own settings (in Console: Alt+M)" |
 
 Other surfaces:
 - **Display only, no editing:** the rail Model section ("Change Alt+M" plus
@@ -165,12 +165,12 @@ Other surfaces:
    - Esc with edits asks "Enter apply · d discard · Esc keep editing", on
      both Console surfaces.
    - Settings keeps `s`, `r` and `t`, and F6 / Shift+F6 start working there.
-   - Never bind Ctrl+S, Ctrl+R, Ctrl+Z or Ctrl+D (ADR-031).
-   - Every key is printed where it works (ADR-031 rule 4).
+   - Never bind Ctrl+S, Ctrl+R, Ctrl+Z or Ctrl+D (ADR-299).
+   - Every key is printed where it works (ADR-299 rule 4).
    - Ctrl+O is a new screen binding. Verify live that it reaches the app.
 5. **Honest scope.**
    - Every commit surface prints "Applies to …".
-   - The Settings State badge stays (ADR-033, task-1717) and gains a count:
+   - The Settings State badge stays (ADR-303, task-1717) and gains a count:
      "Draft — save with s · 2 unsaved".
    - Save copy names its scope (`settings_screen.py:30215`, `:30242`).
 6. **No new stores.**
@@ -498,7 +498,7 @@ Each UI phase updates `Docs/User_Guide/{console,settings}.md` and runs
 - Scope the leaked rules.
 - The fold hint re-checks `scroll_y`.
 - Esc in Chat settings gets a dirty guard: Apply / Discard / Keep editing
-  (ADR-031, task-16211).
+  (ADR-299, task-16211).
 - Grid-line and rail-focus contrast reach at least 3:1.
 - Modal edits net ≤ 0 lines. Moving the DEFAULT_CSS rules at `:1066-1071` to
   the app tier pays for them.
@@ -551,7 +551,7 @@ Each UI phase updates `Docs/User_Guide/{console,settings}.md` and runs
   Advanced. ADR-002 and ADR-020 keep both.
 - One Streaming Select (Inherit / On / Off).
 - The catalog-refresh checkboxes become one table with On/Off words, still
-  labelled APPLIES IMMEDIATELY (ADR-033).
+  labelled APPLIES IMMEDIATELY (ADR-303).
 - Delete the catalog prose rows (`:17410-17438`) and the raw
   `chat_defaults.streaming is canonical…` line (`:18704`).
 - Rewrite the test that pins Generation defaults as collapsed
@@ -561,7 +561,7 @@ Each UI phase updates `Docs/User_Guide/{console,settings}.md` and runs
 
 **First run, connect in place.**
 - Recovery routes through `PendingHandoffStore` with a return path, as
-  ADR-033 requires.
+  ADR-303 requires.
 - "Use Ollama" opens the switcher filtered to that provider.
 - NEEDS SETUP rows use the same route (D4).
 - Then run task-1379, the Settings critique re-run.
@@ -593,13 +593,13 @@ Each UI phase updates `Docs/User_Guide/{console,settings}.md` and runs
 - **Constraints this program must hold:**
   - ADR-006: Settings owns persisted defaults and Console resolves them. An
     unsupported control shows "unavailable" or is omitted.
-  - ADR-033: three honestly labelled commit models, a truthful State badge,
+  - ADR-303: three honestly labelled commit models, a truthful State badge,
     no new root state, and handoffs through `PendingHandoffStore`.
   - ADR-002 and ADR-020: manual Discover/Save stays, and so does the
     catalog-refresh consent gate.
-  - ADR-031: keys.
-  - ADR-146: custom endpoints; `custom` and `custom_2` stay.
-  - ADR-066: legacy aliases can be hidden, but not deleted.
+  - ADR-299: keys.
+  - ADR-343: custom endpoints; `custom` and `custom_2` stay.
+  - ADR-311: legacy aliases can be hidden, but not deleted.
   - ADR-150 and ADR-161: geometry comes from tokens.
   - ADR-097: ratchets.
 

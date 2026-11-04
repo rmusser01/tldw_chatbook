@@ -1,4 +1,4 @@
-"""Pure registry for user-defined Console custom endpoints (ADR-146).
+"""Pure registry for user-defined Console custom endpoints (ADR-343).
 
 Entries persist as ``[custom_endpoints.<slug>]`` tables in the CLI config,
 outside ``api_settings``, so provider-key iteration surfaces never see
@@ -112,7 +112,7 @@ class CustomEndpointEntry:
 class _EndpointEntryConfig(BaseModel):
     """Validated raw shape of one ``[custom_endpoints.<slug>]`` table.
 
-    The boundary model for ``load_custom_endpoints`` (ADR-146): every raw
+    The boundary model for ``load_custom_endpoints`` (ADR-343): every raw
     mapping is validated through it before any downstream construction, so
     malformed optional credentials and model collections surface as
     structured field errors instead of silent normalization. Business rules
@@ -164,7 +164,7 @@ def split_custom_endpoint_id(provider: str | None) -> str | None:
     Accepts the canonicalized spelling ``custom_ep:<slug>`` as well:
     ``provider_config_key`` (the readiness id canonicalizer) rewrites dashes
     to underscores, so an id round-tripped through it reaches the registry in
-    that form (ADR-146; the defaults-mutation path is the first such caller).
+    that form (ADR-343; the defaults-mutation path is the first such caller).
 
     Args:
         provider: Candidate provider id (may be None or any string).

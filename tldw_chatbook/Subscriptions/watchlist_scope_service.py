@@ -1102,7 +1102,7 @@ class WatchlistScopeService:
     ) -> dict[str, Any]:
         """Import watchlist sources from an OPML document.
 
-        ADR-043: folder outlines map to watchlists (resolved or created by
+        ADR-307: folder outlines map to watchlists (resolved or created by
         case-insensitive name), their feeds join as members, top-level
         feeds stay Unassigned, and a feed URL already in the roster is
         reused rather than duplicated -- import is additive only.
@@ -1142,7 +1142,7 @@ class WatchlistScopeService:
         # created/reused lists name each watchlist once.
         resolved_folders: dict[str, dict[str, Any]] = {}
         for payload_index, payload in enumerate(payloads):
-            # ADR-043 rule 6 (additive only): a feed URL already in the
+            # ADR-307 rule 6 (additive only): a feed URL already in the
             # roster is reused, never duplicated.
             url = str(payload.get("url") or "")
             source_key = f"url:{url}" if url else f"payload:{payload_index}"
@@ -1222,7 +1222,7 @@ class WatchlistScopeService:
         self._enforce_policy(backend, "export")
         if backend == WatchlistBackend.SERVER:
             # The server backend's source model carries no local watchlist
-            # membership for this seam; keep the pre-ADR-043 flat export
+            # membership for this seam; keep the pre-ADR-307 flat export
             # there rather than fail a previously-working path.
             sources = await self.list_watch_items(
                 runtime_backend=backend, limit=WC_EXPORT_OPML_MAX_SOURCES, offset=0

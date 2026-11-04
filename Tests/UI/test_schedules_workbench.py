@@ -4513,7 +4513,7 @@ async def test_conflicts_tab_renders_rows_and_resolves():
         assert table.row_count == 1
         server_button = tab.query_one("#scheduling-use-server", Button)
         local_button = tab.query_one("#scheduling-use-local", Button)
-        # The Lab/Schedules/Logs UX overhaul (9dd2374b5, ADR-031) replaced the
+        # The Lab/Schedules/Logs UX overhaul (9dd2374b5, ADR-299) replaced the
         # per-button resolve tooltips with one guidance line set by
         # `_set_actions_enabled` whenever rows exist; this pin tracks that
         # shipped copy (the old per-version tooltips only exist pre-populate).

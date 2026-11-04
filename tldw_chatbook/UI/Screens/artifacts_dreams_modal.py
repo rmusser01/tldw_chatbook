@@ -406,7 +406,7 @@ class DreamsStoryModal(SafeModalDismissMixin, ModalScreen[None]):
                         "Less like this (l)", id="dsm-less-button", compact=True
                     )
                 yield Button("Close (q)", id="dsm-close-button", compact=True)
-            # ADR-031 rule 4: the hint line advertises EXACTLY the
+            # ADR-299 rule 4: the hint line advertises EXACTLY the
             # implemented actions -- all eleven for a story with an http(s)
             # URL (Watch question included), Close only for a synthetic
             # failed-cycle row, and no Ingest/Track/Untrack for a
@@ -529,7 +529,7 @@ class DreamsStoryModal(SafeModalDismissMixin, ModalScreen[None]):
         except Exception as exc:  # noqa: BLE001 - a broken refresh must not crash
             logger.warning(f"Dreams on_changed callback failed: {type(exc).__name__}")
 
-    # --- Actions (ADR-031 single letters; synthetic rows are no-ops) -------
+    # --- Actions (ADR-299 single letters; synthetic rows are no-ops) -------
 
     def action_keep(self) -> None:
         """Toggle kept + refresh the screen rows.

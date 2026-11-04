@@ -263,7 +263,7 @@ rows, run-grouped `eval_runs`, per-artifact `eval_results`) with no schema
 migration.
 
 Design: [Docs/superpowers/specs/2026-09-20-skill-eval-design.md](../../Docs/superpowers/specs/2026-09-20-skill-eval-design.md) ·
-Decision record: [ADR-172](../../backlog/decisions/172-skill-eval-sub-harness.md)
+Decision record: [ADR-349](../../backlog/decisions/349-skill-eval-sub-harness.md)
 
 ## Developer Guide
 
@@ -562,7 +562,7 @@ configuration contract.
 Backup recovery discovers the same private override path. Only a genuinely absent override is unused; a directory, dangling link, other non-file object, or unreadable path blocks complete backup. Older retained Eval
 definition files keep their existing authenticated provenance and inactive state;
 they are not automatically imported or rewritten as overrides. See
-[ADR-220](../../backlog/decisions/220-evaluation-defaults-and-private-overrides.md).
+[ADR-352](../../backlog/decisions/352-evaluation-defaults-and-private-overrides.md).
 
 The shipped configuration includes:
 

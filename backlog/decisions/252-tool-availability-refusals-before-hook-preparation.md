@@ -3,7 +3,7 @@
 Status: Accepted
 Date: 2026-10-28
 Related task: TASK-37146
-Related decisions: ADR-104 (replaceable tool working sets), ADR-078 (tool outcome provenance), ADR-154 (authoritative denial facts)
+Related decisions: ADR-104 (replaceable tool working sets), ADR-321 (tool outcome provenance), ADR-154 (authoritative denial facts)
 
 ## Context
 

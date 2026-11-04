@@ -30,8 +30,8 @@ The card moves into UI/Settings_Modules/, the home DESIGN.md:359-364 names for S
 
 Constraints:
 - ADR-002:10-12 and ADR-020:52 keep Discover / Save selected / Clear unchanged. The saved list therefore moves under Advanced instead of disappearing.
-- ADR-033 keeps three honestly labelled commit models and the State badge (settings_screen.py:9408-9419).
-- ADR-066 allows legacy aliases to be hidden but not deleted.
+- ADR-303 keeps three honestly labelled commit models and the State badge (settings_screen.py:9408-9419).
+- ADR-311 allows legacy aliases to be hidden but not deleted.
 - ADR-012 and owner decision D4 keep all credential entry here.
 - ADR-150/161 allow geometry only in css/core/_variables.tcss (Tests/UI/test_component_pattern_governance.py:266-289).
 - ADR-097 ratchets never rise.
@@ -58,8 +58,8 @@ Baseline reds: task-15512 lists Settings provider-default contract tests that ar
 - [ ] #7 Every Input and Select row in Providers & Models and Console Behavior renders one row tall at 211x44 (the Settings select-row inversion ends on these cards).
 - [ ] #8 Inside the detail pane the card draws no frame of its own: the pane border is the only frame, and each section starts with a one-row header.
 - [ ] #9 Discover, Save selected and Clear behave as before under Advanced (ADR-002, ADR-020).
-- [ ] #10 Legacy provider aliases stay selectable and are listed last (ADR-066).
-- [ ] #11 The State badge and each control's commit model are unchanged and labelled (ADR-033).
+- [ ] #10 Legacy provider aliases stay selectable and are listed last (ADR-311).
+- [ ] #11 The State badge and each control's commit model are unchanged and labelled (ADR-303).
 - [ ] #12 No raw numeric dimension appears outside css/core/_variables.tcss, and there are no new Python style writes.
 - [ ] #13 The boot CSS bytes, ui-ready module census and screen pre-import payload ratchets are not raised (ADR-097).
 - [ ] #14 Keyboard-only live captures are attached to the PR at 211x44 and 235x52, using the real stylesheet and a scratch TLDW_CONFIG_PATH. They cover the card at rest, the model picker open, one Advanced disclosure open, and Console Behavior's fallback section.
@@ -75,7 +75,7 @@ Baseline reds: task-15512 lists Settings provider-default contract tests that ar
 - ADR-126 RecoveryRequired in a clean worktree is environmental: compare failure-NAME sets against origin/dev.
 - Size ratchets never rise (ADR-097); console_settings_modal.py net lines <= 0 against its current row.
 - Geometry only through tokens in css/core/_variables.tcss (ADR-150/161); rebuild the CSS bundle with the repo script.
-- ADR-031: never bind Ctrl+C/V/X/S/D/Z/A/R/W; footer hints must match working bindings.
+- ADR-299: never bind Ctrl+C/V/X/S/D/Z/A/R/W; footer hints must match working bindings.
 - TDD; real-implementation tests for config/provider surfaces; rewrite pinned tests on purpose and name them.
 - Commit per task `fix|feat(model-config): <summary> (TASK-33007.N)` + `Co-Authored-By: Claude Opus 5.5 (1M context) <noreply@anthropic.com>`. Never push; NEVER merge origin/dev into the branch.
 - Tick ACs, set Done, add Implementation Notes in each subtask file. Update Docs/User_Guide CONTENT; never add "Verified against" paragraphs (record verification in task notes).
@@ -160,7 +160,7 @@ Tests/UI/test_settings_provider_view_model.py:121 pins today's group order.
 ### Acceptance criteria
 
 - [ ] #1 Provider is one row and one Tab stop.
-- [ ] #2 The provider list shows providers that already have a credential or a saved endpoint first, then the rest, with legacy aliases last; aliases stay selectable and labelled as legacy (task-180, ADR-066).
+- [ ] #2 The provider list shows providers that already have a credential or a saved endpoint first, then the rest, with legacy aliases last; aliases stay selectable and labelled as legacy (task-180, ADR-311).
 - [ ] #3 Typing in the provider control filters by display name or id, and the focus cue hides no option's first character at 211x44.
 - [ ] #4 The API key row is masked and says in words whether the key is saved in config, comes from an env var, or is missing (ADR-012:29). It still offers clearing the saved key.
 - [ ] #5 Env var and Endpoint are one row each, each with a Source word and a one-line help.
@@ -178,7 +178,7 @@ Tests/UI/test_settings_provider_view_model.py:121 pins today's group order.
 - tldw_chatbook/css/features/_settings.tcss
 - Tests/UI/test_settings_provider_view_model.py
 - backlog/decisions/012-provider-credential-settings-boundary.md
-- backlog/decisions/066-local-provider-thinking-controls.md
+- backlog/decisions/311-local-provider-thinking-controls.md
 
 ## Task 3: Make the default model a searchable picker with discovered models merged in (TASK-33007.3)
 
@@ -327,8 +327,8 @@ Checkbox and discovered-list state is shown by colour only; task-32465 covers ra
 
 Constraints:
 - ADR-002 (002:10-12) and ADR-020 (020:52) keep Discover / Save selected / Clear as they are.
-- ADR-033 rule 3 requires the instant-apply controls (catalog refresh, custom endpoints) to keep their 'applies immediately' label and stay out of the staged draft. Tests/UI/test_settings_save_commit_models.py:40 and :113 pin this.
-- ADR-146 governs custom endpoints, and ADR-119 owns snapshots.
+- ADR-303 rule 3 requires the instant-apply controls (catalog refresh, custom endpoints) to keep their 'applies immediately' label and stay out of the staged draft. Tests/UI/test_settings_save_commit_models.py:40 and :113 pin this.
+- ADR-343 governs custom endpoints, and ADR-119 owns snapshots.
 - .settings-focus-card is shared by other categories (15 uses), so only this card drops its frame.
 
 Field search already expands a collapsed ancestor when it jumps to a field (settings_screen.py:9343-9348), so folding does not hide fields from '/'.
@@ -362,9 +362,9 @@ The judge's mockup also lists a 'Reasoning replay override' row here, but that c
 - Tests/UI/test_llamacpp_snapshot_settings.py
 - backlog/decisions/002-openai-compatible-model-discovery.md
 - backlog/decisions/020-automatic-model-catalog-refresh.md
-- backlog/decisions/033-settings-commit-models-three-honestly-labeled.md
+- backlog/decisions/303-settings-commit-models-three-honestly-labeled.md
 - backlog/decisions/119-llamacpp-prompt-cache-snapshot-ownership.md
-- backlog/decisions/146-console-custom-endpoint-registry.md
+- backlog/decisions/343-console-custom-endpoint-registry.md
 - backlog/decisions/090-console-thinking-block-ownership-and-replay.md
 
 ## Task 7: Give Console Behavior's global fallbacks the shared rows and one streaming control (TASK-33007.7)

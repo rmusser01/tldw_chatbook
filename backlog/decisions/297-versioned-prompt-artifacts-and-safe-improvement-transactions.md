@@ -3,7 +3,7 @@
 Status: Accepted
 Date: 2026-08-01
 Related Task: N/A
-Supersedes: ADR-028
+Supersedes: ADR-295
 
 ## Decision
 
@@ -68,13 +68,13 @@ block.
 
 ## Context
 
-ADR-028 assigned the new Console block document schema version 1. The server
+ADR-295 assigned the new Console block document schema version 1. The server
 already owns a different structured prompt schema version 1 whose Pydantic
 model forbids extra fields. Reusing the number would cause valid Console block
 documents to be rejected and make two incompatible document shapes appear to
 share one version.
 
-ADR-028 also inferred Prompt versus Recipe from JSON. Prompt list responses do
+ADR-295 also inferred Prompt versus Recipe from JSON. Prompt list responses do
 not load the full definition, while artifact type affects browse labels,
 selection, execution, usage accounting, and save behavior. A durable column is
 therefore required even though it adds a migration.
@@ -166,7 +166,7 @@ the adapters that construct and log the final request.
 ## Links
 
 - [Console Prompt Workbench and Improvement Design](../../Docs/superpowers/specs/2026-08-01-console-prompt-improvement-design.md)
-- [ADR-028: Structured Prompt Artifacts and Auxiliary Improvement Calls](028-structured-prompts-and-auxiliary-improvement-calls.md)
+- [ADR-295: Structured Prompt Artifacts and Auxiliary Improvement Calls](295-structured-prompts-and-auxiliary-improvement-calls.md)
 - [ADR-005: Console Workspace Server Readiness](005-console-workspace-server-readiness.md)
 - [ADR-006: Provider-Aware Generation Settings](006-provider-aware-generation-settings.md)
 - [ADR-011: Chatbook Workbench UI System](011-chatbook-workbench-ui-system.md)

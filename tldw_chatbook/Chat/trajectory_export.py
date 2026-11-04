@@ -1,6 +1,6 @@
 """Trajectory export: versioned JSON trace format, writer, and validator.
 
-Implements ADR-067 (``backlog/decisions/067-trajectory-export-format.md``):
+Implements ADR-313 (``backlog/decisions/313-trajectory-export-format.md``):
 one self-contained JSON document per conversation carrying everything the
 trajectory projection (``Chat/trajectory.derive_trajectory``) needs to
 render the exact TrajectoryScreen view -- messages with usage, the
@@ -13,7 +13,7 @@ Purity contract
     writer and validator are pure stdlib. The validator is the import
     seam (task-16320), so export and import can never drift apart.
 
-Privacy contract (ADR-067 §3/§4)
+Privacy contract (ADR-313 §3/§4)
     Tool ``payload_json`` may contain file contents, so redaction is the
     DEFAULT: tool rows get preview-only payload stubs unless the caller
     passes ``include_payloads=True``. The document-level ``redacted``
@@ -81,10 +81,10 @@ __all__ = [
     "write_trajectory_export",
 ]
 
-#: Document format marker (ADR-067 §1).
+#: Document format marker (ADR-313 §1).
 TRAJECTORY_EXPORT_FORMAT = "tldw-trajectory"
 
-#: Current format version; a public contract (ADR-067 §2).
+#: Current format version; a public contract (ADR-313 §2).
 TRAJECTORY_EXPORT_VERSION = 1
 
 #: Cap for redacted payload previews, matching the projection's cap.
@@ -96,7 +96,7 @@ TRACE_EXPORT_VERSION = 2
 _TOOL_KINDS = frozenset({"tool_call", "tool_result"})
 _COMPACTION_PURPOSE = "conversation_compaction"
 
-#: Exported per-message fields; image blobs are omitted entirely (ADR-067 §1).
+#: Exported per-message fields; image blobs are omitted entirely (ADR-313 §1).
 _MESSAGE_KEYS = (
     "id",
     "sender",
@@ -108,7 +108,7 @@ _MESSAGE_KEYS = (
 )
 
 #: Reserved conversation-round-trip names that diagnostic V1 must never
-#: accept as additive extensions. ADR-067 keeps other additive fields valid.
+#: accept as additive extensions. ADR-313 keeps other additive fields valid.
 _RESERVED_THINKING_FIELDS = frozenset(
     {"_thinking", "thinking_blocks", "thinking_blocks_json"}
 )
@@ -183,7 +183,7 @@ def _redacted_payload_json(payload_json: str | None) -> str | None:
     Keeps the ``name`` plus first-120-char single-line previews of the
     result and args; anything unparseable degrades to empty previews
     rather than leaking raw text. Returns JSON text matching the stub
-    shape from ADR-067 §3.
+    shape from ADR-313 §3.
     """
     data: dict = {}
     if payload_json:
@@ -1272,7 +1272,7 @@ def build_trajectory_export(
     include_payloads: bool = False,
     variant_sets: Sequence[Any] = (),
 ) -> dict:
-    """Build the export payload for one conversation (ADR-067 §1).
+    """Build the export payload for one conversation (ADR-313 §1).
 
     Reads the same seams the live projection uses:
     ``get_conversation_by_id`` / ``get_messages_for_conversation(...,
@@ -1440,11 +1440,11 @@ def validate_trajectory_export(payload: Any) -> dict:
     """Validate an export payload and return it normalized (import seam).
 
     Checks the format marker and version (rejecting higher versions with
-    an actionable error per ADR-067 §2), required sections and types, and
+    an actionable error per ADR-313 §2), required sections and types, and
     required keys on each message / trajectory row entry. Optional
     sections (``compaction_records``, ``variants``,
     ``active_leaf_message_id``) are filled to ``[]`` / ``None`` when
-    absent; unknown additive fields are ignored (ADR-067 §2).
+    absent; unknown additive fields are ignored (ADR-313 §2).
 
     Args:
         payload: The parsed JSON document.

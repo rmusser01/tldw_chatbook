@@ -36,7 +36,7 @@ Character/Persona Save messages carry detached raw form snapshots from the widge
 
 ## Governing decisions
 
-ADR-004 (`004-personas-destination-native-workbench.md` — the CCP route retirement), ADR-007 (`007-personas-workbench-route-consolidation.md`), ADR-015 (folds + palette aliases; the Coding→Console fold), ADR-026 (Console owns conversation entry), ADR-032 (the diff rendering that replaced CCP tool-call widgets). Historical: `Docs/Development/ccp-refactoring-complete.md` (predates the message-manager deletion — cite as history). Key tasks: task-19873 (never-runnable handlers), task-15780 (dictionary/prompt editor widgets), task-32899 (dead-tier deletion), task-651 (legacy root state).
+ADR-287 (`287-personas-destination-native-workbench.md` — the CCP route retirement), ADR-007 (`007-personas-workbench-route-consolidation.md`), ADR-015 (folds + palette aliases; the Coding→Console fold), ADR-026 (Console owns conversation entry), ADR-301 (the diff rendering that replaced CCP tool-call widgets). Historical: `Docs/Development/ccp-refactoring-complete.md` (predates the message-manager deletion — cite as history). Key tasks: task-19873 (never-runnable handlers), task-15780 (dictionary/prompt editor widgets), task-32899 (dead-tier deletion), task-651 (legacy root state).
 
 ## Verified gotchas
 

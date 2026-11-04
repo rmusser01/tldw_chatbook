@@ -1,7 +1,7 @@
 # Console semantic trace reachability inventory
 
 This is the schema-derived deletion contract for the reference-backed Console
-trace ledger. ADR-097 is authoritative. The inventory describes ChaChaNotes
+trace ledger. ADR-337 is authoritative. The inventory describes ChaChaNotes
 schema v63; every future trace owner or edge must update this file, the epoch
 mutation matrix, and the adversarial GC fixtures in the same change.
 

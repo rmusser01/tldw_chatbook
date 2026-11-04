@@ -39,7 +39,7 @@ _RunStateSource = Callable[[], Mapping[str, Any] | None]
 def _timeout_seconds(raw: Any) -> int:
     """Coerce the console payload's timeout to the protocol's int form.
 
-    The console payload carries a float (``0.0`` = no timeout, ADR-067);
+    The console payload carries a float (``0.0`` = no timeout, ADR-314);
     ``relay.approval.raised`` requires a non-bool ``int >= 0``.
     """
 

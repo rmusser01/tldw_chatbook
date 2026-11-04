@@ -6,7 +6,7 @@ Related Task: [TASK-1350](../tasks/task-1350%20-%20Add-guarded-session-commit-to
 Amends: [ADR-035 File Notes Session Git Index Controls](035-file-notes-session-git-index-controls.md)
 Conforms to:
 [ADR-033 Application Session State Ownership](033-application-session-state-ownership.md),
-[ADR-029 File Notes disk authority](029-file-notes-disk-authority.md), and
+[ADR-296 File Notes disk authority](296-file-notes-disk-authority.md), and
 [ADR-011 Chatbook Workbench UI System](011-chatbook-workbench-ui-system.md)
 
 ## Context
@@ -201,6 +201,6 @@ those constraints explicit rather than imply stronger isolation.
 - [Design specification](../../Docs/superpowers/specs/2026-07-29-file-notes-guarded-session-commit-design.md)
 - [ADR-035](035-file-notes-session-git-index-controls.md)
 - [ADR-033](033-application-session-state-ownership.md)
-- [ADR-029](029-file-notes-disk-authority.md)
+- [ADR-296](296-file-notes-disk-authority.md)
 - [ADR-011](011-chatbook-workbench-ui-system.md)
 - [TASK-1350](../tasks/task-1350%20-%20Add-guarded-session-commit-to-File-Notes.md)

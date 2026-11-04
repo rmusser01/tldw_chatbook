@@ -3,7 +3,7 @@
 Status: Accepted
 Date: 2026-08-31
 Related Task: Implementation tasks will be created from the approved design during planning.
-Related: ADR-069, ADR-032
+Related: ADR-317, ADR-300
 
 ## Decision
 
@@ -29,7 +29,7 @@ risk badges, path-precheck warnings, decision options, defaults, deadlines, or
 any verdict; they are never persisted, synchronized, logged with content, or
 fed back to the working model. The external call's prompt is bounded to stored
 user/assistant visible text plus redacted tool-call information; automatic
-project-instruction bodies never reach it (per ADR-069). Both lanes are
+project-instruction bodies never reach it (per ADR-317). Both lanes are
 length-capped, control-stripped, plain-text rendered, and visually subordinate
 to the machine-owned fields. The default summarizer prompt is neutral and
 forbids approve/deny recommendations.
@@ -52,7 +52,7 @@ when richer synthesis is wanted — a one-shot call to a fast model the user
 designates, for which the repo already has per-feature provider+model
 precedents (`[analysis_defaults]`, the auxiliary completion gateway).
 
-ADR-069 established the governing principle: optional context preparation is
+ADR-317 established the governing principle: optional context preparation is
 kept strictly separate from the security-review boundary and its failure
 posture. This design keeps both lanes entirely outside `review_tool_calls`'
 verdict mechanics — they are decoration on the decision surface, never inputs
@@ -62,7 +62,7 @@ to it.
 
 | Option | Why rejected |
 | --- | --- |
-| Compute summaries inside `review_tool_calls` before card mount | Puts a network call inside the security-review boundary, delays every approval, and eats the auto-deny deadline — the coupling ADR-069 exists to prevent. |
+| Compute summaries inside `review_tool_calls` before card mount | Puts a network call inside the security-review boundary, delays every approval, and eats the auto-deny deadline — the coupling ADR-317 exists to prevent. |
 | Card widget requests summaries itself | Widgets making network calls breaks the controller/screen worker pattern and complicates headless testing. |
 | External-only summaries (no model-authored lane) | Loses free context the working model already produces; the passive lane is unconditional and costs nothing. |
 | Preamble harvest only (no fence `rationale` key) | Leaves fence-protocol users without an explicit, per-call precise channel. |
@@ -94,8 +94,8 @@ to it.
 ## Links
 
 - [Approved design spec](../../Docs/superpowers/specs/2026-08-31-permission-request-summaries-design.md)
-- [ADR-069: Console project-instruction local state and preflight](069-console-project-instruction-local-state-and-preflight.md)
-- [ADR-032: Local agent tool permission boundary](032-local-agent-tool-permission-boundary.md)
+- [ADR-317: Console project-instruction local state and preflight](317-console-project-instruction-local-state-and-preflight.md)
+- [ADR-300: Local agent tool permission boundary](300-local-agent-tool-permission-boundary.md)
 
 ## Renumbering provenance
 

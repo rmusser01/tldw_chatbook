@@ -38,4 +38,4 @@ Library Search/RAG accepts plain user text. It therefore needs to preserve the r
 
 ## Renumbering provenance
 
-Renumbered from ADR-013 to ADR-289 on 2026-11-03 under TASK-36943.3 (owner decision 2026-10-25: the younger file of a shared number is renumbered). ADR-013 now refers to 013-library-ingest-ownership-and-job-lifecycle.md.
+Renumbered from ADR-289 to ADR-289 on 2026-11-03 under TASK-36943.3 (owner decision 2026-10-25: the younger file of a shared number is renumbered). ADR-013 now refers to 013-library-ingest-ownership-and-job-lifecycle.md.

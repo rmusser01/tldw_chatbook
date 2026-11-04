@@ -389,10 +389,10 @@ class MCPPendingCall:
     #: Runtime ownership after approved execution starts.  Unknown/external
     #: rows retain the bounded default; only an exact code-owned enum opts in.
     execution_policy: ToolExecutionPolicy = ToolExecutionPolicy.BOUNDED_ABANDONABLE
-    #: ADR-090: the model's advisory rationale for this call (advisory
+    #: ADR-332: the model's advisory rationale for this call (advisory
     #: display only -- never gates, never persists).
     rationale: str = ""
-    #: ADR-090: the tool definition's description, for the external
+    #: ADR-332: the tool definition's description, for the external
     #: summarizer prompt; "" when the owner had none at hand.
     description: str = ""
 
@@ -1266,7 +1266,7 @@ class MCPToolProvider:
                 (`ensure_tool_call_ids` fills those in for the native path);
                 an empty id makes the row collapse by name, which shares one
                 verdict across every same-name call in the batch.
-            rationale: The call's advisory rationale (ADR-090), copied
+            rationale: The call's advisory rationale (ADR-332), copied
                 verbatim onto the row.
 
         Returns:

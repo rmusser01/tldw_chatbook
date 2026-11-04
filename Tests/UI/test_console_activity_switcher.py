@@ -1385,7 +1385,7 @@ async def test_authority_change_never_pops_a_screen_covering_the_switcher():
     Ctrl+Q is live under modals now, so the "Quit Chatbook?" prompt can sit
     on top of the switcher. ``Screen.dismiss`` pops the app's TOP screen, so
     a bare dismiss from this poll would pop that prompt instead and leave
-    its quit worker waiting forever. ADR-031: async cancellation may dismiss
+    its quit worker waiting forever. ADR-299: async cancellation may dismiss
     only the still-mounted active top screen -- the poll repeats, so the
     switcher closes as soon as it is on top again.
     """

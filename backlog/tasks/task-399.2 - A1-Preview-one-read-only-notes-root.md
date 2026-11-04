@@ -37,7 +37,7 @@ Let users safely evaluate one existing local folder without activating it, chang
 
 ## Closeout 2026-10-04
 
-Closed superseded, not implemented as written. ADR-029 dropped the memory-only
+Closed superseded, not implemented as written. ADR-296 dropped the memory-only
 preview stage by design: folder adoption is scan-on-link
 (`FileNotesService.scan`, `tldw_chatbook/Notes/file_notes_service.py`), the
 Change-folder flow offers cancel/keep-previous-folder semantics
@@ -49,4 +49,4 @@ collision report, and root confinement is enforced by the root-scoped
 persist-nothing evaluation, coordinator election, mutation leases, and the
 default-off A gate — was never implemented.
 
-Superseded by: ADR-029 (backlog/decisions/029-file-notes-disk-authority.md) via TASK-969 (PR #992).
+Superseded by: ADR-296 (backlog/decisions/296-file-notes-disk-authority.md) via TASK-969 (PR #992).

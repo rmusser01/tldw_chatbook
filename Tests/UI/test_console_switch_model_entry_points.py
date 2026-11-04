@@ -10,7 +10,7 @@ real writers own, as in ``test_console_switch_model_keys``):
   Apply, a new chat and switching back (AC#2, task-338), within ADR-083's
   15-row cap (AC#4), and its action reads "Change  Alt+M" (AC#3).
 - Ctrl+O opens Chat settings (AC#5), and every surface that teaches Alt+M or
-  Ctrl+O names a key that works (AC#6, ADR-031 rule 4).
+  Ctrl+O names a key that works (AC#6, ADR-299 rule 4).
 """
 
 from __future__ import annotations
@@ -406,7 +406,7 @@ async def test_rail_streaming_row_follows_apply_new_chat_and_switching_back(
 
 
 def test_footer_f1_palette_and_bindings_teach_keys_that_work():
-    """AC#6 and ADR-031 rule 4: the footer, F1 help and the palette name
+    """AC#6 and ADR-299 rule 4: the footer, F1 help and the palette name
     Switch model (Alt+M) and Chat settings (Ctrl+O), each key is a Console
     binding to the action that opens that surface, and F1 teaches /model."""
     from tldw_chatbook.UI.console_command_provider import ConsoleCommandProvider

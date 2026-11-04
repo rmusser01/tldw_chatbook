@@ -47,7 +47,7 @@ The 2026-07-24 amendment records the subsequently established navigation contrac
 
 | Option | Why rejected |
 | --- | --- |
-| Grouped nav of ~20 destinations | A rail of ~20 tabs is unscannable and recreates the retired 18-tab chrome (ADR-014). Folding related screens under 13 destinations keeps the rail readable and gives each fold a clear owner. |
+| Grouped nav of ~20 destinations | A rail of ~20 tabs is unscannable and recreates the retired 18-tab chrome (ADR-290). Folding related screens under 13 destinations keeps the rail readable and gives each fold a clear owner. |
 | Keep Logs folded under Settings | Diagnostics are a direct operational workflow during failures; requiring a Settings detour weakens recovery access and contradicts the established top-level route contract. |
 | Promote Coding to a destination | The Coding screen is a sidebar shell around one working tool (`CodeRepoCopyPasteWindow`) plus placeholder panes; it does not carry a top-level destination. Console is where code work happens (agent chat with tools), so Coding merges there and its route folds into Console. |
 | Keep the Console `DestinationHeader` hidden and show the legacy statics instead | The legacy statics are one-off markup; the whole point of the step is one consistent identity component. The statics stay mounted (hidden) only because contract tests read them. |
@@ -66,4 +66,4 @@ The 2026-07-24 amendment records the subsequently established navigation contrac
 ## Links
 
 - [UI critique motivating this change](../../.impeccable/critique/2026-07-17T01-08-49Z__k-ui-tab-bar-screen-headers-app-wide-console-first.md)
-- [ADR-014: Retire the legacy navigation chrome](014-retire-legacy-navigation-chrome.md)
+- [ADR-290: Retire the legacy navigation chrome](290-retire-legacy-navigation-chrome.md)

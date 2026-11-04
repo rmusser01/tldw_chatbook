@@ -498,7 +498,7 @@ async def test_escalated_notify_or_redact_does_not_arm_cooldown(gate_on, tmp_pat
 async def test_block_short_circuits_before_hooks(dummy_hook_spy=None):
     # Seam-level pin (the checker alone cannot observe hook emission):
     # dispatching through the real ConsolePromptQueueUIController with a
-    # blocking checker must never reach the send chain where ADR-148
+    # blocking checker must never reach the send chain where ADR-345
     # UserPromptSubmit hooks fire. Implemented against the seam harness in
     # test_dispatch_seam, which owns the fakes.
     from Tests.Guardian.test_dispatch_seam import (

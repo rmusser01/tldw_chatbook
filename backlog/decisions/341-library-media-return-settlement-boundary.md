@@ -3,7 +3,7 @@
 Status: Accepted
 Date: 2026-08-30
 Related Task: TASK-18918
-Amends: [ADR-084](084-library-media-reader-ia.md), [ADR-086](086-library-adaptive-reader-shell.md)
+Amends: [ADR-329](329-library-media-reader-ia.md), [ADR-086](086-library-adaptive-reader-shell.md)
 
 ## Decision
 
@@ -84,7 +84,7 @@ stored data or migration is involved.
 ## Links
 
 - [Library Media return settlement design](../../Docs/superpowers/specs/2026-08-30-library-media-return-settlement-design.md)
-- [ADR-084: Library Media reader information architecture](084-library-media-reader-ia.md)
+- [ADR-329: Library Media reader information architecture](329-library-media-reader-ia.md)
 - [ADR-086: Shared adaptive Library reader shell](086-library-adaptive-reader-shell.md)
 
 ## Renumbering provenance

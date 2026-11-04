@@ -202,7 +202,7 @@ async def test_defaults_line_follows_the_view_switch(edited) -> None:
 async def test_every_advertised_key_works_from_a_field(key, action, mask) -> None:
     """AC#2/#3/#7: Ctrl+N and Ctrl+Enter submit their buttons' actions from
     a focused field; Apply carries no default mask (it writes no
-    configuration), and the modal binds no ADR-031 rule 2 key."""
+    configuration), and the modal binds no ADR-299 rule 2 key."""
     banned = {f"ctrl+{letter}" for letter in "cvxsdzarw"}
     bound = {
         key.strip()
