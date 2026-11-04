@@ -7,6 +7,7 @@ import hashlib
 import sqlite3
 import threading
 from collections.abc import Callable
+from concurrent.futures import Future, ThreadPoolExecutor
 from contextlib import asynccontextmanager
 from dataclasses import replace
 from itertools import product
@@ -52,6 +53,7 @@ from tldw_chatbook.Notes.file_notes_session_owner import (  # noqa: E402
     SessionChange,
 )
 from tldw_chatbook.Notes.file_notes_service import (  # noqa: E402
+    ACTIVATION_WARNING,
     INTERACTIVE_FILE_CHARS,
     LARGE_FILE_EXCERPT_CHARS,
     FileNoteEntry,
@@ -1634,9 +1636,14 @@ async def test_file_notes_field_labels_persist_across_path_context(
         await pilot.pause()
         assert str(search_label.renderable) == "Search"
         workspace.query_one("#file-notes-path-cancel", Button).press()
-        await pilot.pause()
-        assert workspace.path_task == "none"
-        assert str(path_label.renderable) == expected_label
+        await _wait_until(
+            pilot,
+            lambda: (
+                workspace.path_task == "none"
+                and str(path_label.renderable) == expected_label
+            ),
+            "Cancel of the new path task did not restore the field label",
+        )
 
         assert await workspace.open_path("open.md")
         assert str(path_label.renderable) == expected_label
@@ -1650,8 +1657,14 @@ async def test_file_notes_field_labels_persist_across_path_context(
         path.value = "moved.md"
         await pilot.pause()
         workspace.query_one("#file-notes-path-cancel", Button).press()
-        await pilot.pause()
-        assert str(path_label.renderable) == expected_label
+        await _wait_until(
+            pilot,
+            lambda: (
+                workspace.path_task == "none"
+                and str(path_label.renderable) == expected_label
+            ),
+            "Cancel of the move path task did not restore the field label",
+        )
 
         for save_state in ("dirty", "conflict", "error"):
             workspace._set_save_state(save_state)
@@ -3309,6 +3322,136 @@ async def test_file_notes_linked_root_leads_with_friendly_folder_identity(
     replica.close()
 
 
+async def _settled_root_row(pilot, workspace: LibraryFileNotesWorkspace) -> str:
+    """Return the folder row's painted status once its deferred fit has run."""
+    status = workspace.query_one("#file-notes-root-status", Static)
+    await pilot.pause()
+    await _wait_until(
+        pilot,
+        lambda: (
+            0
+            < cell_len(_static_text(workspace, "#file-notes-root-status"))
+            <= status.content_region.width
+        ),
+        "folder row status was not fitted to its width",
+    )
+    await pilot.pause()
+    return _painted_text_in_region(pilot.app, status.region)
+
+
+def _is_middle_elision_of(fitted: str, full: str) -> bool:
+    """Whether ``fitted`` is ``full`` whole or with only its middle cut."""
+    if fitted == full:
+        return True
+    head, separator, tail = fitted.partition("...")
+    return bool(
+        separator and head and tail and full.startswith(head) and full.endswith(tail)
+    )
+
+
+@pytest.mark.asyncio
+async def test_file_notes_root_row_keeps_state_and_folder_at_60_columns(
+    tmp_path: Path,
+) -> None:
+    """TASK-36513: every linked state paints whole beside Details and Change….
+
+    The pairing review takes room on the row only while a restored pairing
+    awaits review, which the service reports as its activation warning.
+    """
+    root = tmp_path / "deep" / "nested" / "Research Notes"
+    root.mkdir(parents=True)
+    replica = FileNotesReplica(":memory:")
+    # The reconciles below are seeded by hand; keep the poll from replacing them.
+    workspace = LibraryFileNotesWorkspace(
+        root=root, replica=replica, poll_interval=3600
+    )
+
+    async with _WorkspaceHarness(workspace).run_test(size=(60, 20)) as pilot:
+        await _wait_until(pilot, lambda: workspace.initialized, "scan did not finish")
+        review = workspace.query_one("#file-notes-recovery-review", Button)
+        locked = "Recovery unavailable: replica locked"
+        for state, result, pairing in (
+            ("Linked", ReconcileResult(status="ok"), False),
+            ("Offline", ReconcileResult(status="offline", offline=True), False),
+            ("Warning", ReconcileResult(status="ok", replica_warning=locked), False),
+            (
+                "Warning",
+                ReconcileResult(status="ok", replica_warning=ACTIVATION_WARNING),
+                True,
+            ),
+        ):
+            workspace._apply_reconcile(result, ())
+            painted = await _settled_root_row(pilot, workspace)
+            prefix = f"{state} · "
+            assert painted.startswith(prefix), (state, pairing, painted)
+            folder = painted.removeprefix(prefix).removeprefix("Local folder: ")
+            assert _is_middle_elision_of(folder, "Research Notes"), painted
+            assert review.display is pairing, (state, pairing)
+            on_row = ["#file-notes-root-details", "#file-notes-choose-root"]
+            if pairing:
+                on_row.append("#file-notes-recovery-review")
+            for selector in on_row:
+                button = workspace.query_one(selector, Button)
+                assert button.display, selector
+                assert 0 <= button.region.x and button.region.right <= 60, (
+                    selector,
+                    button.region,
+                )
+
+    replica.close()
+
+
+@pytest.mark.parametrize(
+    ("state", "offline"), (("Warning", False), ("Offline", True))
+)
+@pytest.mark.asyncio
+async def test_file_notes_root_row_keeps_state_word_beside_pairing_review_at_40_columns(
+    tmp_path: Path,
+    state: str,
+    offline: bool,
+) -> None:
+    """TASK-36513: with a pairing pending, 40 columns still paint the state word.
+
+    Details, Change… and the pairing review leave the status 9 cells; the
+    folder name goes, and Offline outranks Warning when only one word fits.
+    """
+    root = tmp_path / "deep" / "nested" / "Research Notes"
+    root.mkdir(parents=True)
+    replica = FileNotesReplica(":memory:")
+    workspace = LibraryFileNotesWorkspace(
+        root=root, replica=replica, poll_interval=3600
+    )
+
+    async with _WorkspaceHarness(workspace).run_test(size=(40, 20)) as pilot:
+        await _wait_until(pilot, lambda: workspace.initialized, "scan did not finish")
+        workspace._apply_reconcile(
+            ReconcileResult(
+                status="offline" if offline else "ok",
+                offline=offline,
+                replica_warning=ACTIVATION_WARNING,
+            ),
+            (),
+        )
+        painted = await _settled_root_row(pilot, workspace)
+        assert painted == state or painted.startswith(f"{state} · "), painted
+        review = workspace.query_one("#file-notes-recovery-review", Button)
+        assert review.display
+        assert "pairing" in str(review.tooltip)
+        for selector in (
+            "#file-notes-root-details",
+            "#file-notes-choose-root",
+            "#file-notes-recovery-review",
+        ):
+            button = workspace.query_one(selector, Button)
+            assert button.display, selector
+            assert 0 <= button.region.x and button.region.right <= 40, (
+                selector,
+                button.region,
+            )
+
+    replica.close()
+
+
 @pytest.mark.asyncio
 async def test_file_notes_root_details_preserve_exact_path_and_warning(
     tmp_path: Path,
@@ -3706,18 +3849,11 @@ async def test_initial_root_scan_projects_checking_authority_while_actions_are_g
                 scan_started.is_set,
                 "initial root scan did not start",
             )
-            # TASK-36383: a deferred refresh fits the painted row to 11 cells
-            # at 60x20 ("Chec...otes"). That width is a known defect: the
-            # always-shown "Review recovered pairing…" button takes 27 cells
-            # (QA N-37), and the 60x20 case of
-            # test_file_notes_linked_root_leads_with_friendly_folder_identity
-            # is red for it. TASK-34000.30 AC#10 covers the no-folder state
-            # only; this linked row is TASK-36513. Until that lands, check the
-            # row's copy and the tooltip set with it, neither of which the fit
-            # rewrites.
-            root_status = workspace.query_one("#file-notes-root-status", Static)
-            assert "Checking" in workspace._root_status_summary
-            assert "Checking" in str(root_status.tooltip)
+            # TASK-36513: the painted row, once its deferred fit has run --
+            # at 60x20 it used to be "Chec...otes" behind an always-shown
+            # pairing-review button.
+            painted = await _settled_root_row(pilot, workspace)
+            assert painted.startswith("Checking · "), painted
             authority = _static_text(workspace, "#file-notes-authority")
             assert "Checking folder" in authority
             assert "Folder: notes" in authority
@@ -7178,11 +7314,35 @@ async def test_poll_completion_ignores_partially_detached_surface(
     replica.close()
 
 
+class _ThreadPerCallExecutor(ThreadPoolExecutor):
+    """Run every call on a new thread, as a busy default pool does (TASK-36531).
+
+    A file-backed replica closes only on the thread that opened it. An idle
+    pool often hands the open and the close the same thread and hides a
+    leak that a loaded one shows.
+    """
+
+    def submit(self, fn, /, *args, **kwargs):
+        future: Future = Future()
+
+        def run() -> None:
+            if not future.set_running_or_notify_cancel():
+                return
+            try:
+                future.set_result(fn(*args, **kwargs))
+            except BaseException as error:
+                future.set_exception(error)
+
+        threading.Thread(target=run, daemon=True).start()
+        return future
+
+
 @pytest.mark.asyncio
 async def test_library_database_files_switch_retains_workspace_and_database_canvas(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    asyncio.get_running_loop().set_default_executor(_ThreadPerCallExecutor())
     root = tmp_path / "notes"
     root.mkdir()
     (root / "library.md").write_text("library file", encoding="utf-8")
@@ -7252,6 +7412,15 @@ async def test_library_database_files_switch_retains_workspace_and_database_canv
             lambda: screen._notes_state.source == "files",
             "Files source handler did not run",
         )
+        # The Database fetch was in flight across the switch. Release it now,
+        # not after the Files mount: the product bounds a note load at
+        # LIBRARY_NOTE_LOAD_DEADLINE_SECONDS (3.0 s), and under load the mount
+        # and first scan alone took 3.95-4.90 s, timing the load out
+        # (TASK-36531).
+        release_detail.set()
+        await detail_task
+        assert screen._library_note_detail is not None
+        assert screen._library_note_detail["id"] == "db-note-1"
         await _wait_until(
             pilot,
             lambda: bool(screen.query("#library-file-notes-workspace")),
@@ -7269,14 +7438,12 @@ async def test_library_database_files_switch_retains_workspace_and_database_canv
         editor = retained.query_one("#file-notes-editor", TextArea)
         owned_replica = retained._replica
         assert owned_replica is not None
+        owned_connection = owned_replica._connection
+        assert owned_connection is not None
         assert retained is workspace
         # task-2850: Files mode renders INSIDE the same rail + canvas frame
         # every other notes view uses -- it must never blank the rail.
         assert screen.query_one("#library-rail")
-
-        release_detail.set()
-        await detail_task
-        assert screen._library_note_detail is not None
         assert screen._library_note_detail["id"] == "db-note-1"
         screen._notes_state.view = "list"
         screen._notes_state.selected_note_id = None
@@ -7457,8 +7624,12 @@ async def test_library_database_files_switch_retains_workspace_and_database_canv
         assert text_during_open == before_open
     assert workspace._shutdown
     await workspace.shutdown()
+    # TASK-36531: the connection the workspace opened is closed by its quit.
+    # A closed file-backed replica reopens on its next use (b5251e9a6e), so
+    # reusing the replica proves nothing; probe the retired handle instead.
+    assert owned_replica._connection is None
     with pytest.raises(sqlite3.ProgrammingError):
-        owned_replica.list_deleted(str(root.resolve()))
+        owned_connection.execute("SELECT 1")
 
 
 @pytest.mark.asyncio

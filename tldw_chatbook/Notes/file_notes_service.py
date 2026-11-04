@@ -48,7 +48,9 @@ SUPPORTED_EXTENSIONS = frozenset({".md", ".markdown", ".txt", ".text"})
 #: default and its ceiling are defined once beside the replica's listing
 #: API so the two layers cannot drift (PR #3016 review finding 5).
 REVISION_HISTORY_LIMIT = REVISION_HISTORY_DEFAULT_LIMIT
-_ACTIVATION_WARNING = "Recovery activation required; replica refresh is inactive"
+#: The ``replica_warning`` a scan or reconcile reports while a restored
+#: pairing awaits review; the workspace offers the pairing review on it.
+ACTIVATION_WARNING = "Recovery activation required; replica refresh is inactive"
 UTF8_BOM = b"\xef\xbb\xbf"
 
 OperationStatus = Literal[
@@ -89,7 +91,7 @@ def _serialized(method: _ServiceMethod) -> _ServiceMethod:
                                     status=scan.status,
                                     entries=scan.entries,
                                     offline=scan.offline,
-                                    replica_warning=_ACTIVATION_WARNING,
+                                    replica_warning=ACTIVATION_WARNING,
                                 )
                             return method(service, *args, **kwargs)
                         finally:
@@ -461,7 +463,7 @@ class FileNotesService:
         warning: str | None = (
             self._forget_hidden_tombstones()
             if self._inspection_refresh_allowed
-            else _ACTIVATION_WARNING
+            else ACTIVATION_WARNING
         )
         observed, uncertain_paths, _ = self._walk_candidates(
             should_cancel=should_cancel,
@@ -530,7 +532,7 @@ class FileNotesService:
             warning,
             self._upsert_opened(opened)
             if self._inspection_refresh_allowed
-            else _ACTIVATION_WARNING,
+            else ACTIVATION_WARNING,
         )
         return _replace_opened(
             opened,

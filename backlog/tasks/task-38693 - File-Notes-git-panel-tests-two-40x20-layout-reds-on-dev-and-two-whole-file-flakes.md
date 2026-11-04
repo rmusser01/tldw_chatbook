@@ -3,6 +3,7 @@ id: TASK-38693
 title: "File Notes git panel tests: two 40x20 layout reds on dev and two whole-file flakes"
 status: To Do
 created_date: 2026-11-03 11:40
+updated_date: 2026-11-03 22:24
 labels:
 - follow-up
 - tests
@@ -39,3 +40,7 @@ PR #3377 adds this file's new quit and removal tests to the UI census (8 entries
 - [ ] #2 test_commit_operation_observer_exception_does_not_invent_uncertain and test_commit_review_enter_escape_cancel_and_execution_are_state_aware pass 10 of 10 whole-file -n 4 runs
 - [ ] #3 The whole file passes 3 of 3 -n 4 runs on dev
 <!-- AC:END -->
+
+## Implementation Notes
+
+- 2026-11-03 (branch fu/r5-filenotes2, TASK-36513/36528/36531): `test_40x20_prepare_scrolls_actions_below_a_long_linked_root` was red because of the folder row. The always-displayed "Review recovered pairing…" button left the root status 1 cell (".") at 40 columns, so the test's `"..."` wait never held. TASK-36513 now hides that button unless a pairing awaits review, and fits the row by parts, so the row reads "Linked · notes". The test's row expectation is updated to that form; the tooltip still carries the exact path. The rest of the test (Details disclosure, keyboard scrolling to the Git actions, stage/unstage) passed unchanged. The test passes alone and in whole-file `-n 4` runs on that branch. AC#1's other node, `test_prepare_session_fixed_regions_remain_visible_at_40_by_20`, still fails there with its stray "." before "Conflict"; this branch did not touch it.
