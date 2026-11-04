@@ -747,7 +747,9 @@ async def test_second_save_to_library_press_cannot_cancel_an_in_flight_save():
 
     The scope service runs a local write in a thread (TASK-38686), so the
     save worker suspends mid-write. Its exclusive restart used to cancel it
-    after the write landed, dropping its outcome copy and saving again.
+    after the write landed, dropping its outcome copy and saving again. Both
+    presses show "Saving…", and when the name field changed meanwhile, the
+    outcome names the prompt that was saved.
     """
     import asyncio
 
@@ -776,18 +778,23 @@ async def test_second_save_to_library_press_cannot_cancel_an_in_flight_save():
 
     async with Host().run_test() as pilot:
         await pilot.pause()
-        modal.query_one(f"#{NAME_INPUT_ID}", Input).value = "Formal Tone"
+        name = modal.query_one(f"#{NAME_INPUT_ID}", Input)
+        name.value = "Formal Tone"
         button = modal.query_one(f"#{SAVE_LIBRARY_BUTTON_ID}", Button)
+        status = modal.query_one(f"#{SAVE_STATUS_ID}", Static)
         button.press()
         await asyncio.wait_for(entered.wait(), 5)
+        assert _static_plain_text(status) == "Saving…"
+        name.value = "Formal Tone v2"
         button.press()
         await pilot.pause()
+        assert _static_plain_text(status) == "Saving…"
         release.set()
         await pilot.app.workers.wait_for_complete()
         await pilot.pause()
         assert calls == ["Formal Tone"]
-        status = modal.query_one(f"#{SAVE_STATUS_ID}", Static)
-        assert _static_plain_text(status) == "Saved."
+        # The field now names another prompt, so the outcome names what saved.
+        assert _static_plain_text(status) == 'Prompt "Formal Tone": Saved.'
 
 
 # ---------------------------------------------------------------------------

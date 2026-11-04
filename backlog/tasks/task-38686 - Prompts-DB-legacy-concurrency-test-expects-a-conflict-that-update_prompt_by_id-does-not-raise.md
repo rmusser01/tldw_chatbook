@@ -5,7 +5,7 @@ status: Done
 assignee:
 - '@claude'
 created_date: 2026-11-03 11:40
-updated_date: '2026-11-04 04:08'
+updated_date: '2026-11-04 04:27'
 labels:
 - follow-up
 - tests
@@ -153,6 +153,17 @@ The SQLITE_BUSY case happens when the loser's read-to-write upgrade meets the wi
     - `test_literal_save_keeps_live_defining_module_policy_callbacks`, which failed at its "Save did not reach its source worker" wait, before any real save runs, and passed 3 of 3 alone afterwards.
   - Most failures on both sides are the local RecoveryRequired setup trap (TASK-38111).
 - `Tests/Prompts_DB` + `Tests/Prompt_Management`: 53 failed, 1124 passed, 3 errors, with the same failing tests as before (all red on dev). `Tests/CI`: 1198 passed, 1 skipped. Ratchets: green.
+
+**Review round 3 (2026-11-04): the ignored Save to Library press gave no feedback.**
+- The modal dropped a second press silently, so the first save's "Saved." read as confirming the second press, even after a Name edit. In the review's probe, "Formal Tone v2" was never saved.
+- Both the first press and an ignored press now show "Saving…" in the save status, which the first save's outcome then replaces.
+- When the Name field no longer matches the saved name, the outcome names it on one line: `Prompt "Formal Tone": Saved.` (same form as `Prompt "<name>" has no system part.`).
+- The status `Static` is `markup=False`, so the interpolated name renders literally (TASK-1513).
+- `test_second_save_to_library_press_cannot_cancel_an_in_flight_save` now edits the name between the presses. It asserts "Saving…" after each press and the named outcome.
+  - At b4bd34ea0e it was red at `'' == 'Saving…'`.
+  - With the two Saving asserts temporarily removed, it was red at `'Saved.' == 'Prompt "Formal Tone": Saved.'`.
+  - Green 3 of 3 after, alongside the review's probe.
+- User Guide: `console/context-and-rag.md` (System prompt) and `console.md` (Prompt mix-ins) describe the saving state.
 
 **AC#3: not on a PR lane, by this brief's rule.** The only Prompts_DB lane target is `test_prompt_export_mixins.py` in `derived-artifacts.yml`, and this burn-down allowed workflow edits only for TASK-38699. The legacy file is green (72 tests, about 5 s), so it could be gated whole (proposed follow-up).
 

@@ -39,6 +39,7 @@ SAVE_LIBRARY_BUTTON_LABEL = "Save to Library"
 MISSING_NAME_COPY = "Enter a name to save this system prompt to Library."
 MISSING_TEXT_COPY = "Enter a system prompt to save."
 SAVE_TO_LIBRARY_ERROR_COPY = "Couldn't save this prompt. Try again."
+SAVING_COPY = "Saving…"
 
 # Async callable the caller binds to the scope service's create-prompt seam
 # (Task 4's save flow); receives the modal's current (name, text) and
@@ -148,22 +149,29 @@ class ConsoleSystemPromptModal(SafeModalDismissMixin, ModalScreen[Optional[str]]
         if not text:
             self._set_save_status(MISSING_TEXT_COPY)
             return
-        if self._save_worker is not None and not self._save_worker.is_finished:
-            # Its write runs in a thread; an exclusive restart would cancel it
-            # after the write lands and drop its outcome (TASK-38686).
-            return
-        self._save_worker = self.run_worker(
-            self._run_save_to_library(name, text),
-            exclusive=True,
-            group="console-system-prompt-save-library",
-        )
+        # A save already running keeps going: its write runs in a thread, and
+        # an exclusive restart would cancel it after it lands (TASK-38686).
+        if self._save_worker is None or self._save_worker.is_finished:
+            self._save_worker = self.run_worker(
+                self._run_save_to_library(name, text),
+                exclusive=True,
+                group="console-system-prompt-save-library",
+            )
+        self._set_save_status(SAVING_COPY)
 
     async def _run_save_to_library(self, name: str, text: str) -> None:
         try:
             status = await self._save_to_library(name, text)
         except Exception:
             status = SAVE_TO_LIBRARY_ERROR_COPY
-        self._set_save_status(status)
+        try:
+            current = self.query_one(f"#{NAME_INPUT_ID}", Input).value.strip()
+        except (NoMatches, QueryError):
+            current = name
+        # The field was edited during the save: name the prompt this was for.
+        self._set_save_status(
+            status if current == name else f'Prompt "{name}": {status}'
+        )
 
     def _set_save_status(self, text: str) -> None:
         try:
