@@ -2267,6 +2267,193 @@ async def test_workspace_push_observer_exception_renders_sanitized_attention(
     replica.close()
 
 
+async def _poll_rehydrate(
+    workspace: LibraryFileNotesWorkspace,
+    owner: FileNotesSessionOwner,
+    binding: SessionBinding,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Run the poll's own refresh once the owner revision moved (TASK-38648)."""
+    rehydrates: list[object] = []
+    rehydrate = workspace._rehydrate_push_state
+
+    def counted(*args, **kwargs):
+        rehydrates.append(args)
+        return rehydrate(*args, **kwargs)
+
+    monkeypatch.setattr(workspace, "_rehydrate_push_state", counted)
+    assert owner.record_change(binding, SessionChange("modified", "three.md"))
+    assert await workspace.refresh_files()
+    assert rehydrates, "the refresh did not rehydrate push state"
+
+
+def _assert_attention_kept(
+    workspace: LibraryFileNotesWorkspace,
+    title: str,
+) -> None:
+    label = str(workspace.query_one("#file-notes-session-changes", Button).label)
+    assert "Push needs attention" in label, label
+    assert workspace._push_phase == "needs_attention"
+    assert workspace._git_panel_widget.push_phase == "result"
+    projection = workspace._push_result_projection
+    assert projection is not None and projection.title == title
+
+
+@pytest.mark.asyncio
+async def test_workspace_rehydrate_keeps_review_admission_attention(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """TASK-38700: a poll rehydrate must not set the label idle under the copy."""
+    owner, binding, replica, service, workspace = _push_workspace_fixture(tmp_path)
+    _publish_candidate_on_owner(
+        owner,
+        binding,
+        service.repository,
+        parent_oid="a" * 40,
+        candidate_oid="d" * 40,
+    )
+
+    def reject_review(current_binding: SessionBinding) -> None:
+        raise GitMutationAdmissionError("mutation_active", "review refused")
+
+    monkeypatch.setattr(service, "start_push_review", reject_review)
+
+    async with _WorkspaceHarness(workspace).run_test() as pilot:
+        await _until(
+            pilot,
+            lambda: workspace.initialized,
+            "workspace initialization did not settle",
+        )
+        workspace._navigator_mode = "git"
+        workspace._sync_navigator_mode()
+        workspace._rehydrate_git_presentation()
+        review = workspace.query_one("#file-notes-git-push-review", Button)
+        await _until(pilot, lambda: review.display, "push availability did not render")
+        review.press()
+        await _until(
+            pilot,
+            lambda: workspace._git_panel_widget.push_phase == "result",
+            "admission failure did not replace the list with a result",
+        )
+        _assert_attention_kept(workspace, "Push review unavailable")
+
+        await _poll_rehydrate(workspace, owner, binding, monkeypatch)
+        await pilot.pause()
+
+        _assert_attention_kept(workspace, "Push review unavailable")
+
+    await workspace.shutdown()
+    owner.shutdown()
+    replica.close()
+
+
+@pytest.mark.asyncio
+async def test_workspace_rehydrate_keeps_observer_failure_attention(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """TASK-38700: the same unsettled operation must not go back to checking."""
+    owner, binding, replica, service, workspace = _push_workspace_fixture(tmp_path)
+    _publish_candidate_on_owner(
+        owner,
+        binding,
+        service.repository,
+        parent_oid="a" * 40,
+        candidate_oid="d" * 40,
+    )
+    release = asyncio.Event()
+    operation = service.retain_push_operation(
+        binding,
+        "local_proof",
+        _push_destination_policy_result("blocked"),
+        release,
+    )
+    wait = RetainedPushOperation.wait
+
+    async def failing_wait(current: RetainedPushOperation):
+        if current is operation:
+            raise RuntimeError("observer could not observe")
+        return await wait(current)
+
+    monkeypatch.setattr(RetainedPushOperation, "wait", failing_wait)
+
+    async with _WorkspaceHarness(workspace).run_test() as pilot:
+        await _until(
+            pilot,
+            lambda: workspace.initialized,
+            "workspace initialization did not settle",
+        )
+        workspace._navigator_mode = "git"
+        workspace._sync_navigator_mode()
+        workspace._rehydrate_git_presentation()
+        observer = workspace._push_observer_task
+        assert observer is not None
+        await observer
+        assert not operation.settled
+        _assert_attention_kept(workspace, "Push check needs attention")
+
+        await _poll_rehydrate(workspace, owner, binding, monkeypatch)
+        await pilot.pause()
+
+        assert not operation.settled
+        _assert_attention_kept(workspace, "Push check needs attention")
+        release.set()
+
+    await workspace.shutdown()
+    owner.shutdown()
+    replica.close()
+
+
+@pytest.mark.asyncio
+async def test_workspace_push_observer_cancellation_publishes_nothing(
+    tmp_path: Path,
+) -> None:
+    """TASK-38700: loop teardown cancels the observer; that is not a failure."""
+    owner, binding, replica, service, workspace = _push_workspace_fixture(tmp_path)
+    _publish_candidate_on_owner(
+        owner,
+        binding,
+        service.repository,
+        parent_oid="a" * 40,
+        candidate_oid="d" * 40,
+    )
+    release = asyncio.Event()
+    operation = service.retain_push_operation(
+        binding,
+        "local_proof",
+        _push_destination_policy_result("blocked"),
+        release,
+    )
+
+    async with _WorkspaceHarness(workspace).run_test() as pilot:
+        await _until(
+            pilot,
+            lambda: workspace.initialized,
+            "workspace initialization did not settle",
+        )
+        workspace._navigator_mode = "git"
+        workspace._sync_navigator_mode()
+        workspace._rehydrate_git_presentation()
+        observer = workspace._push_observer_task
+        assert observer is not None
+        assert workspace._push_phase == "checking"
+
+        observer.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await observer
+
+        assert not operation.settled
+        assert workspace._push_phase == "checking"
+        assert workspace._push_result_projection is None
+        assert workspace._git_panel_widget.push_phase != "result"
+        release.set()
+
+    await workspace.shutdown()
+    owner.shutdown()
+    replica.close()
+
+
 @pytest.mark.asyncio
 async def test_workspace_push_review_admission_failure_has_safe_back(
     tmp_path: Path,

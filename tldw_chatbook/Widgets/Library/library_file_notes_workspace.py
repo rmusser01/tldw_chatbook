@@ -1680,6 +1680,8 @@ class LibraryFileNotesWorkspace(Vertical):
         self._push_review_projection: PushPanelReviewProjection | None = None
         self._push_result: object | None = None
         self._push_result_projection: PushPanelResultProjection | None = None
+        # TASK-38700: attention only this workspace knows (no owner record).
+        self._push_attention_projection: PushPanelResultProjection | None = None
         self._push_authorization_dialog_operation_id: int | None = None
         self._push_observer_task: asyncio.Task[None] | None = None
         self._push_settlement_tasks: set[asyncio.Task[None]] = set()
@@ -4213,7 +4215,14 @@ class LibraryFileNotesWorkspace(Vertical):
                     self._render_session_git_label()
                     self._render_current_push_view()
             result = await operation.wait()
-        except (asyncio.CancelledError, Exception):
+        except asyncio.CancelledError:
+            task = asyncio.current_task()
+            if task is not None and task.cancelling():
+                raise  # TASK-38700: this observer was cancelled (loop teardown).
+            # A cancelled settlement is an observation failure like any other.
+            self._publish_push_observer_failure(operation, key, operation_id)
+            return
+        except Exception:
             self._publish_push_observer_failure(operation, key, operation_id)
             return
         if not self._push_operation_is_current(operation, key, operation_id):
@@ -4243,7 +4252,7 @@ class LibraryFileNotesWorkspace(Vertical):
             return
         pre_network = operation.kind in {"local_proof", "preflight"}
         self._push_phase = "needs_attention"
-        self._set_push_result_projection(
+        self._set_push_attention(
             PushPanelResultProjection(
                 title=(
                     "Push check needs attention"
@@ -4486,6 +4495,19 @@ class LibraryFileNotesWorkspace(Vertical):
         self._push_view_phase = "result"
         self._render_current_push_view()
 
+    def _set_push_attention(self, projection: PushPanelResultProjection) -> None:
+        """Show attention the owner has no record of (TASK-38700)."""
+        self._push_attention_projection = projection
+        self._set_push_result_projection(projection)
+
+    def _push_attention_shown(self) -> bool:
+        """Whether the panel still shows that attention, so rehydrate keeps it."""
+        return (
+            self._push_view_phase == "result"
+            and self._push_attention_projection is not None
+            and self._push_result_projection is self._push_attention_projection
+        )
+
     def _publish_push_review_admission_failure(self) -> None:
         """Replace a silent local-review start failure with safe copy."""
         if self._push_view_phase == "list":
@@ -4496,7 +4518,7 @@ class LibraryFileNotesWorkspace(Vertical):
             self._push_observer_task = None
             self._push_result = None
         self._push_phase = "needs_attention"
-        self._set_push_result_projection(
+        self._set_push_attention(
             PushPanelResultProjection(
                 title="Push review unavailable",
                 message=(
@@ -4807,7 +4829,9 @@ class LibraryFileNotesWorkspace(Vertical):
                 self._return_push_to_list()
             self._push_key = candidate_key
             self._push_phase = (
-                "needs_attention" if snapshot.push_recovery is not None else "idle"
+                "needs_attention"
+                if snapshot.push_recovery is not None or self._push_attention_shown()
+                else "idle"
             )
             self._render_session_git_label()
             return availability is not None or snapshot.push_recovery is not None
@@ -4849,6 +4873,7 @@ class LibraryFileNotesWorkspace(Vertical):
                 and self._push_operation_key == operation_key
                 and self._push_result is None
                 and not operation.settled
+                and not self._push_attention_shown()
             ):
                 self._push_key = operation_key
                 self._push_phase = (

@@ -780,7 +780,10 @@ _BUDGETS: dict[str, int] = {
     # action buttons truncate instead of wrapping, so no width can raise.
     # TASK-38711, 2026-11-04 (same waiver): 9599 -> 9615 (+16). Direct
     # replica reads share the owner thread, so quit's close queues behind.
-    "tldw_chatbook/Widgets/Library/library_file_notes_workspace.py": 9615,
+    # TASK-38700, 2026-11-04 (same waiver): 9615 -> 9640 (+25). Attention
+    # only the workspace knows survives a rehydrate; a cancelled observer
+    # publishes nothing.
+    "tldw_chatbook/Widgets/Library/library_file_notes_workspace.py": 9640,
     "tldw_chatbook/DB/Client_Media_DB_v2.py": 9429,  # 2026-11-02: +3 shared store-error import (TASK-36949.5)
     # TASK-37270: bounded template reads moved to local_reasoning_metadata.
     # 2026-10-29, TASK-33622.6 (owner decision: raise with a dated comment):
