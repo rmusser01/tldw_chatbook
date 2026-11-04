@@ -496,9 +496,12 @@ def _denylist_pathspecs(
         # core.precomposeunicode off, keeps a name in the normalization it was
         # created in, so each rule excludes both its NFC and NFD spellings.
         # TASK-38463: a non-ASCII rule that folds to ASCII (``Straße`` ->
-        # ``strasse``) also gets that spelling, since stored ASCII names never
-        # reach ``_withheld_names``. A stored non-ASCII spelling these miss
-        # (non-ASCII case, mixed normalization) is ``git_diff``'s scan's job.
+        # ``strasse``) also gets that spelling: an unscoped ``git_diff`` scans
+        # only non-ASCII names (``_withheld_names``), so there a stored ASCII
+        # name is excluded here or not at all. (A scoped diff scans every
+        # name in its scope; ``git_status`` filters every entry.) A stored
+        # non-ASCII spelling these miss (non-ASCII case, mixed normalization)
+        # is ``git_diff``'s scan's job.
         spellings = [unicodedata.normalize(form, raw_value) for form in ("NFC", "NFD")]
         if not raw_value.isascii() and (folded := fold_path_part(raw_value)).isascii():
             spellings.append(folded)
