@@ -1557,7 +1557,7 @@ def test_fleet_tools_are_primary_only(db):
     ],
 )
 def test_coerce_max_live_subagents(configured, expected):
-    assert agent_service._coerce_max_live_subagents(configured) == expected
+    assert agent_service.coerce_max_live_subagents(configured) == expected
 
 
 @pytest.mark.parametrize(
@@ -2323,7 +2323,7 @@ def test_config_of_one_or_less_keeps_the_inline_path(db, monkeypatch, configured
     default is now 3, so junk resolves to a FLEET -- that half moved to
     `test_config_of_junk_now_lands_on_the_default_fleet` below rather than
     being dropped. `-5` replaces them here: a negative is still floored to
-    1 by `_coerce_max_live_subagents`, so it still means inline.
+    1 by `coerce_max_live_subagents`, so it still means inline.
 
     The guarantee itself is unchanged and is what a user opting out gets:
     no coordinator, no fleet tools, spawn returns the child's own answer.
@@ -3920,7 +3920,7 @@ def test_capped_child_times_out_without_narrowing_uncapped_sibling(db):
     ],
 )
 def test_coerce_autowake_enabled(configured, expected):
-    assert agent_service._coerce_autowake_enabled(configured) is expected
+    assert agent_service.coerce_autowake_enabled(configured) is expected
 
 
 def test_autowake_ships_on_by_default():

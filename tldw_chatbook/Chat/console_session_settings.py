@@ -1942,7 +1942,7 @@ def build_console_settings_readiness(
     )
     if entry is not None and readiness.ready:
         readiness = (
-            _custom_endpoint_missing_key_readiness(entry, provider_key, environ)
+            custom_endpoint_missing_key_readiness(entry, provider_key, environ)
             or readiness
         )
     # H4 wording: an entry that declares a resolving credential rides the
@@ -2523,7 +2523,7 @@ def _custom_endpoint_declared_credential(
 ) -> tuple[str, CredentialSource] | None:
     """Return the provenance descriptor and source for an entry credential.
 
-    Companion to :func:`_custom_endpoint_missing_key_readiness`: that helper
+    Companion to :func:`custom_endpoint_missing_key_readiness`: that helper
     blocks when a declared credential does not resolve; this one names the
     credential that DOES flow for a ready entry, so the readiness copy never
     claims "No API key is required" while a send authenticates with one.
@@ -2681,7 +2681,7 @@ def provider_left_at_shipped_default(
         return False
 
 
-def _custom_endpoint_missing_key_readiness(
+def custom_endpoint_missing_key_readiness(
     entry: "CustomEndpointEntry",
     provider_key: str,
     environ: Mapping[str, str] | None,
@@ -2776,6 +2776,7 @@ def _custom_endpoint_missing_key_readiness(
         reason=reason,
         recovery=recovery,
     )
+
 
 
 def _provider_settings_with_validity(

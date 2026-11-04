@@ -111,7 +111,7 @@ def capture_run_tool_read(controller, session_id, turn_context, project_guard, *
     service = getattr(app, "unified_mcp_service", None)
     if (
         not original_methods()
-        or not providers._controller_factory_current(owner.MCPToolProvider)
+        or not providers.controller_factory_current(owner.MCPToolProvider)
         or not snapshot.standard_console_catalog_sources(service)
     ):
         return result
@@ -125,7 +125,7 @@ def capture_run_tool_read(controller, session_id, turn_context, project_guard, *
     def current():
         if (
             not original_methods()
-            or not providers._controller_factory_current(owner.MCPToolProvider)
+            or not providers.controller_factory_current(owner.MCPToolProvider)
             or controller.app is not app
             or getattr(app, "app_config", None) is not app_config
             or controller.store is not store
@@ -296,8 +296,8 @@ async def compose_run_mcp_provider(
         from tldw_chatbook.MCP import console_tool_preparation as preparation_source
 
         if (
-            provider_source._controller_factory_current(type(provider))
-            and provider_source._console_preparation_pipeline_current(preparation_source)
+            provider_source.controller_factory_current(type(provider))
+            and provider_source.console_preparation_pipeline_current(preparation_source)
         ):
             try:
                 prepared = await preparation_source.prepare_console_tools(

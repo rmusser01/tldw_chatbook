@@ -421,7 +421,7 @@ FLEET_JOIN_TIMEOUT_SECONDS = 5.0
 _SPAWN_ECHO_CHARS = 120
 
 
-def _coerce_max_live_subagents(value) -> int:
+def coerce_max_live_subagents(value) -> int:
     """Read the fleet size from config, tolerating any junk in the file.
 
     Args:
@@ -454,10 +454,16 @@ def _coerce_max_live_subagents(value) -> int:
     return max(parsed, 1)
 
 
-def _coerce_retained_transcripts(value) -> int:
+def setting(key: str, default):
+    """Public ``[agents]`` read for Console; goes through ``_setting`` per call
+    so a pin on ``agent_service._setting`` reaches it."""
+    return _setting(key, default)
+
+
+def coerce_retained_transcripts(value) -> int:
     """Read the retention COUNT cap from config, tolerating any junk.
 
-    Same posture as ``_coerce_max_live_subagents`` (int-or-float parse,
+    Same posture as ``coerce_max_live_subagents`` (int-or-float parse,
     junk falls back to the default -- a malformed config key must never
     stop an agent run) with one difference: the floor is 0, not 1,
     because 0 is a meaningful opt-out (retain nothing; finished children
@@ -481,10 +487,10 @@ def _coerce_retained_transcripts(value) -> int:
     return max(parsed, 0)
 
 
-def _coerce_retained_transcript_max_chars(value) -> int:
+def coerce_retained_transcript_max_chars(value) -> int:
     """Read the retention SIZE cap from config, tolerating any junk.
 
-    Same rules as ``_coerce_retained_transcripts`` directly above: junk
+    Same rules as ``coerce_retained_transcripts`` directly above: junk
     falls back to the default; the floor is 0 (a meaningful opt-out --
     nothing fits, so nothing is retained; ruling #2 forbids truncating a
     transcript to fit).
@@ -521,7 +527,7 @@ def _coerce_child_max_wall_seconds(value) -> float:
         The configured ceiling as a float. Unparseable, non-finite (NaN
         or infinite), or missing values fall back to
         ``DEFAULT_CHILD_MAX_WALL_SECONDS`` rather than raising -- same
-        rule as ``_coerce_max_live_subagents``: a malformed config key
+        rule as ``coerce_max_live_subagents``: a malformed config key
         must never stop an agent run.
 
         The floor at 1 second is deliberately NOT enforced here -- it
@@ -555,7 +561,7 @@ def _coerce_subagents_outlive_turn(value) -> bool:
     Returns:
         The configured switch. An unrecognised value falls back to the
         default rather than raising -- same rule as
-        ``_coerce_max_live_subagents``: a malformed config key must never
+        ``coerce_max_live_subagents``: a malformed config key must never
         stop an agent run, and must never silently mean its opposite.
     """
     if isinstance(value, bool):
@@ -569,7 +575,7 @@ def _coerce_subagents_outlive_turn(value) -> bool:
     return DEFAULT_SUBAGENTS_OUTLIVE_TURN
 
 
-def _coerce_autowake_enabled(value) -> bool:
+def coerce_autowake_enabled(value) -> bool:
     """Read the auto-wake switch from config, tolerating any junk.
 
     Identical posture to ``_coerce_subagents_outlive_turn`` (its sibling
@@ -633,7 +639,7 @@ def append_personal_context(system_content: str, block: str) -> str:
     return f"{system_content}\n\n{block}"
 
 
-def _spawn_override_targets(
+def spawn_override_targets(
     app_config: Mapping[str, Any],
     routing: AgentsRoutingConfig,
 ) -> tuple[tuple[str, tuple[str, ...]], ...]:
@@ -681,7 +687,7 @@ class _ProjectInstructionPayloadError(RuntimeError):
     """Content-free terminal error for a staged row dropped by bounding."""
 
 
-def _count_model_messages(
+def count_model_messages(
     messages: list[dict],
     model: str,
     provider: str,
@@ -809,7 +815,7 @@ def build_first_request_schema_plan(
             provider/model args ([agents] spawn_override_enabled).
         spawn_override_targets: Allowlisted ``(provider, models)`` pairs the
             spawn schema enumerates when the override gate is open;
-            identity-only, from ``_spawn_override_targets``.
+            identity-only, from ``spawn_override_targets``.
         context_window: The send's own ``ContextWindowResolution``; when given,
             the plan is sized against it (an unverified one conservatively,
             see ``first_request_window``) instead of the static catalog limit.
@@ -1154,7 +1160,7 @@ def _first_request_plan_fits(
     system_content = _append_workspace_context_note(
         system_content, config.workspace_context_note
     )
-    used = _count_model_messages(
+    used = count_model_messages(
         [{"role": "system", "content": system_content}, *messages],
         config.model,
         api_endpoint,
@@ -1718,7 +1724,7 @@ def _response_message(resp) -> dict:
     return message if isinstance(message, dict) else {}
 
 
-def _budget_weighted_tokens(resp, *, provider: str, model: str) -> int | None:
+def budget_weighted_tokens(resp, *, provider: str, model: str) -> int | None:
     """Tokens for the run budget, with cache-read/write priced honestly.
 
     TASK-18603. `_usage_total_tokens` below sums `prompt_tokens +
@@ -2749,7 +2755,7 @@ class AgentService:
             native=native,
             enabled=evict_enabled,
             min_recent_rounds=min_recent_rounds,
-            count_fn=lambda rows, _model: _count_model_messages(
+            count_fn=lambda rows, _model: count_model_messages(
                 rows,
                 config.model,
                 api_endpoint,
@@ -2793,7 +2799,7 @@ class AgentService:
             reserve = config.response_reserve_tokens
             if type(reserve) is not int or reserve < 0:
                 return 0
-            used = _count_model_messages(
+            used = count_model_messages(
                 list(request.messages),
                 config.model,
                 api_endpoint,
@@ -2842,7 +2848,7 @@ class AgentService:
                 or reserve < 0
             ):
                 return False
-            used = _count_model_messages(
+            used = count_model_messages(
                 list(request.messages),
                 config.model,
                 api_endpoint,
@@ -4872,7 +4878,7 @@ class AgentService:
                     spawn_routing and spawn_routing.spawn_override_enabled
                 ),
                 spawn_override_targets=(
-                    _spawn_override_targets(self._app_config, spawn_routing)
+                    spawn_override_targets(self._app_config, spawn_routing)
                     if spawn_routing is not None
                     and spawn_routing.spawn_override_enabled
                     else ()
@@ -6074,7 +6080,7 @@ class AgentService:
                         raise ReviewRefused(refusal)
                     inline = (
                         fleet is None
-                        or _coerce_max_live_subagents(
+                        or coerce_max_live_subagents(
                             _setting(MAX_LIVE_SUBAGENTS_KEY, DEFAULT_MAX_LIVE_SUBAGENTS)
                         )
                         == 1
@@ -9512,7 +9518,7 @@ class AgentService:
             max_live = (
                 planned_max_live
                 if planned_max_live is not None
-                else _coerce_max_live_subagents(
+                else coerce_max_live_subagents(
                     _setting(MAX_LIVE_SUBAGENTS_KEY, DEFAULT_MAX_LIVE_SUBAGENTS)
                 )
             )

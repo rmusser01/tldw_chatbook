@@ -1151,7 +1151,7 @@ def _swap_console_resolution():
 
     ``provider`` keeps the raw selection identity (``custom-ep:<slug>``) and
     ``execution_key`` carries the engine preset the swap routed onto -- the
-    exact field split ``_apply_custom_endpoint_engine_swap`` produces.
+    exact field split ``apply_custom_endpoint_engine_swap`` produces.
     """
     from tldw_chatbook.Chat.console_provider_gateway import (
         ConsoleProviderResolution,

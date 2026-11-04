@@ -144,7 +144,7 @@ def test_runtime_steering_retains_current_exchange_annotation():
 
 
 def test_agent_budget_counts_exact_model_projected_reasoning():
-    from tldw_chatbook.Agents.agent_service import _count_model_messages
+    from tldw_chatbook.Agents.agent_service import count_model_messages
     from tldw_chatbook.Chat.local_reasoning import ReasoningReplayPolicy
 
     capture = ThinkingCapture(assistant_owner_id="tool")
@@ -163,14 +163,14 @@ def test_agent_budget_counts_exact_model_projected_reasoning():
         {"role": "assistant", "content": "call", "_tldw_call_thinking": envelope},
     ]
     policy = ReasoningReplayPolicy("all", "override")
-    included = _count_model_messages(
+    included = count_model_messages(
         messages,
         "org/exact-model",
         "llama_cpp",
         reasoning_replay=policy,
         tokenizer_model="exact-model",
     )
-    excluded = _count_model_messages(
+    excluded = count_model_messages(
         messages,
         "org/exact-model",
         "llama_cpp",

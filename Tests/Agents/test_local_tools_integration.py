@@ -571,7 +571,7 @@ def test_mcp_registered_last_remains_reachable_through_discovery_and_approval(
         agent_service, "catalog_schema_tokens", lambda *_args, **_kwargs: 1_001
     )
     monkeypatch.setattr(
-        agent_service, "_count_model_messages", lambda *_args, **_kwargs: 50
+        agent_service, "count_model_messages", lambda *_args, **_kwargs: 50
     )
     config = AgentConfig(
         model="test-model",

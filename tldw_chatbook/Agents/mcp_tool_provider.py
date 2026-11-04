@@ -546,7 +546,7 @@ class MCPToolProvider:
         if _freeze_definition_maximum_on_compose and (
             maximum_tool_ids is not None
             or maximum_definition_hashes is not None
-            or not _controller_factory_current(type(self))
+            or not controller_factory_current(type(self))
         ):
             raise PermissionError("mcp_catalog_source_changed")
         self._composition_definition_ceiling = _freeze_definition_maximum_on_compose
@@ -556,12 +556,12 @@ class MCPToolProvider:
         # Retain the raw ceiling decision: normalization must not qualify
         # custom or non-frozen inputs for omission of an external dependency.
         self._maximum_needs_external_catalog = True
-        if type(maximum_tool_ids) is frozenset and _controller_factory_current(
+        if type(maximum_tool_ids) is frozenset and controller_factory_current(
             type(self)
         ):
             from tldw_chatbook.MCP import console_tool_preparation as preparation_source
 
-            if _console_preparation_pipeline_current(preparation_source):
+            if console_preparation_pipeline_current(preparation_source):
                 self._maximum_needs_external_catalog = (
                     preparation_source.hub_catalog.maximum_needs_external_catalog(
                         maximum_tool_ids
@@ -642,7 +642,7 @@ class MCPToolProvider:
         service = self._service
         if self._composition_definition_ceiling and (
             not standard_console_catalog_sources(service)
-            or not _controller_factory_current(type(self))
+            or not controller_factory_current(type(self))
         ):
             raise PermissionError("mcp_catalog_source_changed")
         if not standard_console_catalog_sources(service):
@@ -697,7 +697,7 @@ class MCPToolProvider:
         def require_current():
             if self._service is not service:
                 raise PermissionError("mcp_catalog_owner_changed")
-            if self._composition_definition_ceiling and not _controller_factory_current(type(self)):
+            if self._composition_definition_ceiling and not controller_factory_current(type(self)):
                 raise PermissionError("mcp_catalog_source_changed")
             if captured is not None:
                 captured.require_current()
@@ -728,8 +728,8 @@ class MCPToolProvider:
         from tldw_chatbook.MCP import console_tool_preparation as preparation_source
         include_external = not (captured is not None
             and not self._maximum_needs_external_catalog
-            and _controller_factory_current(type(self))
-            and _console_preparation_pipeline_current(preparation_source))
+            and controller_factory_current(type(self))
+            and console_preparation_pipeline_current(preparation_source))
         records = await (
             captured.catalog_callback() if captured is not None else service.local_external_catalog()
         ) if include_external else []
@@ -829,7 +829,7 @@ class MCPToolProvider:
         ):
             raise PermissionError("mcp_catalog_source_changed")
         composition.require_current(type(self), self)
-        if not _console_preparation_pipeline_current(preparation_source):
+        if not console_preparation_pipeline_current(preparation_source):
             raise PermissionError("mcp_catalog_source_changed")
         preparation.require_current(self._service)
         if preparation.profile_id != self._profile_id():
@@ -2338,7 +2338,7 @@ _CONTROLLER_COMPOSE_COUNT_GETTER = (
 )
 
 
-def _controller_factory_current(factory) -> bool:
+def controller_factory_current(factory) -> bool:
     if (
         sys.modules.get(__name__) is not _CONTROLLER_COMPOSE_MODULE
         or MCPToolProvider is not _CONTROLLER_COMPOSE_FACTORY
@@ -2382,7 +2382,7 @@ def _controller_factory_current(factory) -> bool:
     )
 
 
-def _console_preparation_pipeline_current(preparation_source, binding=None):
+def console_preparation_pipeline_current(preparation_source, binding=None):
     """Qualify detached-data methods before executing a supplied result callback."""
     binding = binding or preparation_source._CONSOLE_PREPARATION_CHECK
     checker, code, namespace, inputs = binding
@@ -2413,7 +2413,7 @@ class _ControllerCatalogComposition:
     def require_current(self, factory, provider=None):
         checker, code, namespace, inputs = self.pipeline_checker
         if not (
-            _controller_factory_current(factory)
+            controller_factory_current(factory)
             and factory is self.factory
             and sys.modules.get(self.snapshot.__name__) is self.snapshot
             and self.snapshot.controller_precheck_pipeline_current is checker
@@ -2464,7 +2464,7 @@ class _ControllerCatalogComposition:
 
 def capture_standard_controller_composition(factory, service):
     """Qualify the one stock route whose own compose performs a fresh switch read."""
-    if not _controller_factory_current(factory):
+    if not controller_factory_current(factory):
         return None
     from tldw_chatbook.MCP import console_snapshot as snapshot
 
@@ -2506,8 +2506,8 @@ _CONTROLLER_COMPOSE_HELPERS = tuple(
     for owner, name in (
         (_CONTROLLER_COMPOSE_MODULE, "_controller_inputs_current"),
         (_CONTROLLER_COMPOSE_MODULE, "_controller_inputs_checker_current"),
-        (_CONTROLLER_COMPOSE_MODULE, "_controller_factory_current"),
-        (_CONTROLLER_COMPOSE_MODULE, "_console_preparation_pipeline_current"),
+        (_CONTROLLER_COMPOSE_MODULE, "controller_factory_current"),
+        (_CONTROLLER_COMPOSE_MODULE, "console_preparation_pipeline_current"),
         (_CONTROLLER_COMPOSE_MODULE, "capture_standard_controller_composition"),
         (_ControllerCatalogComposition, "__init__"),
         (_ControllerCatalogComposition, "require_current"),

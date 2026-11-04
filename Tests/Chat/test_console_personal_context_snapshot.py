@@ -13,7 +13,8 @@ pytestmark = pytest.mark.bootstrap_profile
 
 import tldw_chatbook.Chat.console_agent_bridge as bridge_module
 from Tests.private_profile import private_profile_test
-from tldw_chatbook.Agents.agent_service import AgentService, _count_model_messages
+from tldw_chatbook.Agents import agent_service
+from tldw_chatbook.Agents.agent_service import AgentService, count_model_messages
 from tldw_chatbook.Agents.canvas_tool_provider import (
     CANVAS_RUNTIME_GUIDANCE,
     CanvasToolProvider,
@@ -327,7 +328,7 @@ def test_first_request_profile_budget_reserves_disclosed_tool_protocol(
     builder = _ProfileContextBuilder()
 
     plan = _plan(builder)
-    naive_required = _count_model_messages(
+    naive_required = count_model_messages(
         [
             {"role": "system", "content": plan.config.system_prompt},
             {"role": "user", "content": "question"},
@@ -371,13 +372,13 @@ def test_first_request_profile_budget_reserves_canvas_runtime_guidance(
     )
     authority = provider.issue_registration_authority()
     captured_system_prompts: list[str] = []
-    original_count = bridge_module._count_model_messages
+    original_count = agent_service.count_model_messages
 
     def capture(messages, model, provider_name, **kwargs):
         captured_system_prompts.append(str(messages[0].get("content", "")))
         return original_count(messages, model, provider_name, **kwargs)
 
-    monkeypatch.setattr(bridge_module, "_count_model_messages", capture)
+    monkeypatch.setattr(agent_service, "count_model_messages", capture)
 
     _plan(
         _ProfileContextBuilder(),
@@ -562,7 +563,7 @@ async def test_agent_next_send_uses_one_pinned_snapshot_without_double_append(
     raw_available = (
         get_model_token_limit("gpt-4o-mini", "openai")
         - 2_048
-        - _count_model_messages(
+        - count_model_messages(
             [{"role": "user", "content": "question"}],
             "gpt-4o-mini",
             "openai",

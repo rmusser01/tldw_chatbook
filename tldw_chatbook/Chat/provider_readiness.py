@@ -739,7 +739,7 @@ def custom_endpoint_family_readiness(
     never the entry's credential, so a keyless family blocked only because
     that key is still ``enc:`` ciphertext reads as ready here; the caller
     then applies the entry's own credential rule
-    (``_custom_endpoint_missing_key_readiness``). TASK-34100.4 review (F3):
+    (``custom_endpoint_missing_key_readiness``). TASK-34100.4 review (F3):
     every path that read the family readiness directly -- Settings, the
     Console header, the send gateway, sub-agent routing -- blocked an entry
     with a working key of its own, with recovery naming the wrong page.
@@ -795,7 +795,7 @@ def _custom_endpoint_readiness(
         slug, or None when ``provider_name`` is not a registry id.
     """
     # Lazy: the registry imports console_session_settings, which imports this module.
-    from .console_session_settings import _custom_endpoint_missing_key_readiness
+    from .console_session_settings import custom_endpoint_missing_key_readiness
     from .custom_endpoint_registry import (
         CUSTOM_ENDPOINT_ID_PREFIX,
         SLUG_PATTERN,
@@ -835,7 +835,7 @@ def _custom_endpoint_readiness(
         background_credentials=background_credentials,
     )
     if family.ready:
-        missing_key = _custom_endpoint_missing_key_readiness(entry, family_key, environ)
+        missing_key = custom_endpoint_missing_key_readiness(entry, family_key, environ)
         if missing_key is not None:
             return missing_key
         # The slot's env var is not the entry's either (the Test row printed it).

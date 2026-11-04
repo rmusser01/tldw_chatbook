@@ -258,7 +258,7 @@ class ConsoleChatStartCoordinator:
 
     def _runtime_refusal(self, request: AgentChatStartRequest) -> str | None:
         """Recheck current native support and enablement at each admission fence."""
-        from tldw_chatbook.Agents.agent_service import _coerce_autowake_enabled
+        from tldw_chatbook.Agents.agent_service import coerce_autowake_enabled
         from tldw_chatbook.config import get_cli_setting
 
         controller = self._controller
@@ -268,7 +268,7 @@ class ConsoleChatStartCoordinator:
             self._disposed
             or controller._disposed
             or not controller._agent_runtime_enabled
-            or not _coerce_autowake_enabled(
+            or not coerce_autowake_enabled(
                 get_cli_setting("agents", "autowake_enabled", True)
             )
         ):

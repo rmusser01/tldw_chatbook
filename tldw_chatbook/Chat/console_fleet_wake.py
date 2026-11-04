@@ -25,9 +25,9 @@ from tldw_chatbook.Agents.agent_models import TERMINAL_RUN_STATUSES, RunBudget
 from tldw_chatbook.Agents.agent_service import (
     AUTOWAKE_ENABLED_KEY,
     DEFAULT_AUTOWAKE_ENABLED,
-    _coerce_autowake_enabled,
+    coerce_autowake_enabled,
 )
-from tldw_chatbook.Agents.run_log import _setting
+from tldw_chatbook.Agents.run_log import setting as _setting
 from tldw_chatbook.Chat.console_fleet_attention import (
     clear_fleet_unseen_completion,
     set_fleet_unseen_completion,
@@ -49,14 +49,14 @@ def autowake_enabled() -> bool:
     """Read the ``[agents] autowake_enabled`` kill switch (default ON).
 
     Same env -> TOML -> default chain and junk tolerance as its sibling
-    fleet switches (``_setting`` + ``_coerce_autowake_enabled``). Read
+    fleet switches (``_setting`` + ``coerce_autowake_enabled``). Read
     fresh at every fire point, so flipping the key takes effect on the
     next wake decision without a restart.
 
     Returns:
         Whether a finished background sub-agent may wake its supervisor.
     """
-    return _coerce_autowake_enabled(
+    return coerce_autowake_enabled(
         _setting(AUTOWAKE_ENABLED_KEY, DEFAULT_AUTOWAKE_ENABLED)
     )
 

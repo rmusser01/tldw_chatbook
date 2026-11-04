@@ -992,17 +992,20 @@ def test_fenced_nested_delivery_counts_exact_transformed_payload_before_mark(
     events = []
     monkeypatch.setattr(agent_service_module, "get_model_token_limit", lambda *_: 100)
     monkeypatch.setattr(
-        agent_service_module, "_count_model_messages", lambda *_, **_kwargs: 10
-    )
-    monkeypatch.setattr(
         bridge_module, "get_model_token_limit", lambda *_: 100, raising=False
     )
-    monkeypatch.setattr(
-        bridge_module,
-        "_count_model_messages",
-        lambda *_, **_kwargs: transformed_tokens,
-        raising=False,
-    )
+    # The bridge reads the module through its own `agent_service_module`
+    # binding: give it a proxy whose count is the transformed one, and keep
+    # AgentService's own count at 10.
+    monkeypatch.setattr(agent_service_module, "count_model_messages", lambda *_a, **_k: 10)
+
+    class _BridgeAgentService:
+        count_model_messages = staticmethod(lambda *_a, **_k: transformed_tokens)
+
+        def __getattr__(self, name):
+            return getattr(agent_service_module, name)
+
+    monkeypatch.setattr(bridge_module, "agent_service_module", _BridgeAgentService())
     marks = []
     real_mark = bridge_module.InstructionActivationLedger.mark_payload_sent
 

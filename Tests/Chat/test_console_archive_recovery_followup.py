@@ -1504,7 +1504,7 @@ async def test_retained_metadata_enters_real_first_request_fit_and_no_fit(
     rig = native_followup
     await rig.send("Find my archived conversations.")
     original = rig.gateway.original_page
-    real_count = agent_service._count_model_messages
+    real_count = agent_service.count_model_messages
     real_schema_count = agent_service.catalog_schema_tokens
     real_fit = agent_service._first_request_plan_fits
     samples = []
@@ -1539,7 +1539,7 @@ async def test_retained_metadata_enters_real_first_request_fit_and_no_fit(
         samples.append(sample)
         return sample["fits"]
 
-    monkeypatch.setattr(agent_service, "_count_model_messages", observe_count)
+    monkeypatch.setattr(agent_service, "count_model_messages", observe_count)
     monkeypatch.setattr(agent_service, "catalog_schema_tokens", observe_schema_count)
     monkeypatch.setattr(agent_service, "_first_request_plan_fits", observe_fit)
     rig.gateway.phase, rig.gateway.index = "observe", 0

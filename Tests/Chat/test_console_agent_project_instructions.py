@@ -272,7 +272,7 @@ def test_token_omission_notice_keeps_content_free_source_metadata(
     )
     # The base request fits; only the optional instruction row exceeds budget.
     monkeypatch.setattr(agent_service, "get_model_token_limit", lambda *_a, **_k: 100)
-    monkeypatch.setattr(agent_service, "_count_model_messages", lambda *_a, **_k: 95)
+    monkeypatch.setattr(agent_service, "count_model_messages", lambda *_a, **_k: 95)
     monkeypatch.setattr(agent_service, "count_tokens_messages", lambda *_a, **_k: 20)
     monkeypatch.setattr(agent_service, "estimate_tokens", lambda *_a, **_k: 0)
     service.run_turn(
@@ -443,7 +443,7 @@ def test_child_chain_uses_its_own_exact_first_request_budget(monkeypatch, tmp_pa
     monkeypatch.setattr(agent_service, "estimate_tokens", lambda *_a, **_k: 0)
     monkeypatch.setattr(
         agent_service,
-        "_count_model_messages",
+        "count_model_messages",
         lambda messages, *_a, reasoning_replay=None, tokenizer_model=None: (
             95 if "sub-agent" in str(messages[0].get("content", "")).lower() else 10
         ),
@@ -506,7 +506,7 @@ def test_primary_token_omission_is_delivery_local_when_child_admits(
     monkeypatch.setattr(agent_service, "estimate_tokens", lambda *_a, **_k: 0)
     monkeypatch.setattr(
         agent_service,
-        "_count_model_messages",
+        "count_model_messages",
         lambda messages, *_a, reasoning_replay=None, tokenizer_model=None: (
             10 if "sub-agent" in str(messages[0].get("content", "")).lower() else 95
         ),

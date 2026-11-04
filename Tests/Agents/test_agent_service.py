@@ -571,7 +571,7 @@ def test_first_request_plan_direct_discloses_many_compact_schemas(monkeypatch):
     )
     monkeypatch.setattr(agent_service, "get_model_token_limit", lambda *_a: 10_000)
     monkeypatch.setattr(agent_service, "catalog_schema_tokens", lambda *_a, **_k: 999)
-    monkeypatch.setattr(agent_service, "_count_model_messages", lambda *_a, **_k: 500)
+    monkeypatch.setattr(agent_service, "count_model_messages", lambda *_a, **_k: 500)
 
     plan = build_first_request_schema_plan(
         registry,
@@ -603,7 +603,7 @@ def _fleet_schema_plan(monkeypatch, *, worktree_merge_enabled: bool):
     )
     monkeypatch.setattr(agent_service, "get_model_token_limit", lambda *_a: 10_000)
     monkeypatch.setattr(agent_service, "catalog_schema_tokens", lambda *_a, **_k: 50)
-    monkeypatch.setattr(agent_service, "_count_model_messages", lambda *_a, **_k: 500)
+    monkeypatch.setattr(agent_service, "count_model_messages", lambda *_a, **_k: 500)
 
     return build_first_request_schema_plan(
         registry,
@@ -680,7 +680,7 @@ def test_first_request_plan_defers_large_or_history_cramped_catalog(monkeypatch)
         system = str(messages[0].get("content", ""))
         return 9_000 if FIND_TOOLS_NAME in system else 9_901
 
-    monkeypatch.setattr(agent_service, "_count_model_messages", count)
+    monkeypatch.setattr(agent_service, "count_model_messages", count)
 
     plan = build_first_request_schema_plan(
         registry,
@@ -719,7 +719,7 @@ def test_first_request_plan_drops_discovery_tools_when_only_no_tool_request_fits
         rendered = str(messages[0].get("content", ""))
         return 91 if "tool_0" in rendered or FIND_TOOLS_NAME in rendered else 80
 
-    monkeypatch.setattr(agent_service, "_count_model_messages", count)
+    monkeypatch.setattr(agent_service, "count_model_messages", count)
 
     plan = build_first_request_schema_plan(
         registry,
@@ -771,7 +771,7 @@ def test_first_request_plan_counts_canvas_guidance_before_direct_disclosure(
         measured_systems.append(system)
         return 91 if "V1 supports inline HTML/CSS and classic scripts" in system else 80
 
-    monkeypatch.setattr(agent_service, "_count_model_messages", count)
+    monkeypatch.setattr(agent_service, "count_model_messages", count)
 
     plan = build_first_request_schema_plan(
         registry,
@@ -802,7 +802,7 @@ def test_first_request_plan_stops_before_provider_when_even_no_tool_request_fail
 ):
     monkeypatch.setattr(agent_service, "get_model_token_limit", lambda *_a: 100)
     monkeypatch.setattr(agent_service, "catalog_schema_tokens", lambda *_a, **_k: 5)
-    monkeypatch.setattr(agent_service, "_count_model_messages", lambda *_a, **_k: 91)
+    monkeypatch.setattr(agent_service, "count_model_messages", lambda *_a, **_k: 91)
     service, chat = make_service(db, ["must not send"])
     config = dataclasses.replace(
         CFG,
@@ -842,7 +842,7 @@ def test_first_request_plan_counts_workspace_context_note(monkeypatch):
             return 9_000
         return 9_901 if "BOUND WORKSPACE AUTHORITY" in system else 500
 
-    monkeypatch.setattr(agent_service, "_count_model_messages", count)
+    monkeypatch.setattr(agent_service, "count_model_messages", count)
 
     plan = build_first_request_schema_plan(
         registry,
@@ -3141,7 +3141,7 @@ def test_protocol_rerenders_when_replacement_changes_same_named_schema(db, monke
             return ToolResult(ok=True, content=tool_id)
 
     monkeypatch.setattr(agent_service, "get_model_token_limit", lambda *_a: 100_000)
-    monkeypatch.setattr(agent_service, "_count_model_messages", lambda *_a, **_k: 1)
+    monkeypatch.setattr(agent_service, "count_model_messages", lambda *_a, **_k: 1)
     registry = ToolCatalogRegistry()
     registry.register_provider(MutableSchemaProvider())
     config = AgentConfig(

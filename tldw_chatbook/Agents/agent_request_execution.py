@@ -277,7 +277,7 @@ def make_call_model(
             native=native,
             enabled=effective_log_active and evict_requested,
             min_recent_rounds=min_recent_rounds,
-            count_fn=lambda rows, _model: runtime._count_model_messages(
+            count_fn=lambda rows, _model: runtime.count_model_messages(
                 rows,
                 config.model,
                 api_endpoint,
@@ -475,7 +475,7 @@ def make_call_model(
             review_capture.capture_review_output(run_id, text, terminal=False)
         # TASK-18603: cache-aware. Identical to the flat sum whenever
         # this turn read nothing from a prompt cache.
-        tokens = runtime._budget_weighted_tokens(
+        tokens = runtime.budget_weighted_tokens(
             resp, provider=api_endpoint, model=config.model
         )
         provider_continuation = getattr(resp, "provider_continuation", None)
@@ -493,7 +493,7 @@ def make_call_model(
             est_model = (
                 config.model.split("/", 1)[-1] if "/" in config.model else config.model
             )
-            tokens = runtime._count_model_messages(
+            tokens = runtime.count_model_messages(
                 payload,
                 config.model,
                 api_endpoint,

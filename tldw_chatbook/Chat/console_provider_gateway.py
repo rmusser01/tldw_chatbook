@@ -148,7 +148,7 @@ from tldw_chatbook.Chat.console_provider_support import (
     resolve_console_provider_identity,
 )
 from tldw_chatbook.Chat.console_session_settings import (
-    _custom_endpoint_missing_key_readiness,
+    custom_endpoint_missing_key_readiness,
     configured_provider_model,
     console_provider_settings,
 )
@@ -359,7 +359,7 @@ def _custom_endpoints_use_engine(app_config: Mapping[str, Any]) -> bool:
     return False
 
 
-def _apply_custom_endpoint_engine_swap(
+def apply_custom_endpoint_engine_swap(
     identity: ConsoleProviderIdentity,
     entry: CustomEndpointEntry,
     app_config: Mapping[str, Any],
@@ -1487,9 +1487,9 @@ def _automatic_budget_tokens(
     for name in ("cache_read_input_tokens", "cache_creation_input_tokens"):
         if name in payload and (type(payload[name]) is not int or payload[name] < 0):
             return None
-    from tldw_chatbook.Agents.agent_service import _budget_weighted_tokens
+    from tldw_chatbook.Agents.agent_service import budget_weighted_tokens
 
-    return _budget_weighted_tokens(
+    return budget_weighted_tokens(
         {"usage": dict(payload)}, provider=provider, model=model
     )
 
@@ -4680,7 +4680,7 @@ class ConsoleProviderGateway:
             )
             identity = replace(identity, execution_key=frozen_execution)
         elif custom_entry is not None:
-            identity = _apply_custom_endpoint_engine_swap(
+            identity = apply_custom_endpoint_engine_swap(
                 resolve_console_provider_identity(
                     family_execution_key(custom_entry.family)
                 ),
@@ -4700,7 +4700,7 @@ class ConsoleProviderGateway:
             # session-settings semantics so the UI and the gateway block
             # identically. Entry presence owns the credential decision, including
             # None: a keyless entry never borrows the ordinary family's key.
-            missing_entry_key = _custom_endpoint_missing_key_readiness(
+            missing_entry_key = custom_endpoint_missing_key_readiness(
                 custom_entry, identity.readiness_key, self._environ
             )
             if missing_entry_key is not None:
