@@ -5,7 +5,7 @@ status: Done
 assignee:
   - '@claude'
 created_date: 2026-11-03 11:40
-updated_date: 2026-11-04 02:58
+updated_date: 2026-11-04 04:27
 labels:
 - follow-up
 - tests
@@ -56,7 +56,7 @@ Depends on TASK-38652 (in PR #3366).
 
 **Evidence after both fixes** (branch, `-n 4`): 5 of 5 whole-file runs gave 43 passed (load 14-27), and 4 of 4 runs with two at once gave 42 passed (plateau deselected, load 16-20) with no refusal logged. Base at the same plain load also showed `test_receipt_refresh_refusal_keeps_native_source_safe[source_switch]` failing 2 of 9 runs at `assert not rig.console.query(".archive-recovery-receipt")`. It never failed in 19 branch runs, but I did not establish its mechanism; it is listed as a follow-up.
 
-**AC#3, the lane.** The whole file is 42 mounted-Console cases, ~6 serial minutes here (call times 3-15 s), too heavy for one 20-minute UI shard. So two node ids are appended at the census tail: the plateau test, and `test_native_result_refresh_remains_manual_and_imported_json_is_inert` (a mounted send through the fixed harness, plus TASK-38688's imported-JSON copy). `MINIMUM_FILES` is 1373. Both are unverified on Linux CI; the plateau test skips without `lsof`.
+**AC#3, the lane.** The whole file is 42 mounted-Console cases, ~6 serial minutes here (call times 3-24 s), too heavy for one 20-minute UI shard. So two node ids are appended at the census tail: the plateau test, and `test_native_result_refresh_remains_manual_and_imported_json_is_inert` (a mounted send through the fixed harness, plus TASK-38688's imported-JSON copy). `MINIMUM_FILES` is 1373. Both are unverified on Linux CI; the plateau test skips without `lsof`. Review follow-up (2026-11-04): the plateau node's call time is 15-24 s (5 runs here, 15.4-19.8 s, under a concurrent whole-file run at load ~14; the reviewer measured 23.7-24.1 s). The census comment now says so. Its plateau-equality assert passed in all 5 runs.
 
 **Files.** `Tests/UI/test_console_archive_recovery_flow.py`, `scripts/ui_pr_gate_census.txt`, `scripts/check_ui_pr_gate_census.py`, `backlog/docs/lessons-testing-evidence.md` (lesson: a harness that reassigns an owner the product keeps rebinding).
 
