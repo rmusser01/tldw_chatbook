@@ -29,7 +29,7 @@ from typing import TYPE_CHECKING, Any, Mapping  # noqa: UP035
 from loguru import logger
 
 from tldw_chatbook.app_service_wiring import TldwCli  # class proxy (see its docstring)
-from tldw_chatbook.config import CLI_APP_CLIENT_ID, get_chachanotes_db_lazy
+from tldw_chatbook.config import CLI_APP_CLIENT_ID
 from tldw_chatbook.Constants import MODEL_CATALOG_REFRESH_WORKER_GROUP
 from tldw_chatbook.DB.Subscriptions_DB import SubscriptionsDB
 from tldw_chatbook.LLM_Provider_Catalog.model_auto_refresh import ModelCatalogRefreshed
@@ -290,16 +290,8 @@ class FeatureGlueMixin:
         from tldw_chatbook import config as config_module
 
         try:
-            # TASK-38462: a profile with no database has no messages to index.
-            # Opening it here would CREATE it (every schema step plus seeding,
-            # seconds on Windows) in a run no cancel can stop, which outlived
-            # the app's exit and its 3 s worker join.
-            db = (
-                get_chachanotes_db_lazy()
-                if config_module.chachanotes_db is not None
-                or config_module.get_chachanotes_db_path().exists()
-                else None
-            )
+            # Use the App-selected database; an absent owner must not create one.
+            db = getattr(self, "chachanotes_db", None)
             if db is None:
                 logger.debug(
                     "ChaChaNotes messages FTS backfill skipped: no database instance."

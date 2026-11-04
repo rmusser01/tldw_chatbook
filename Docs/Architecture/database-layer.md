@@ -344,3 +344,20 @@ Canonical 87 retains operational preferences, snapshots, attempts and checkpoint
 markers. Recent v81→87 migration bodies live in
 `DB/chachanotes_recent_migrations.py`; the original `CharactersRAGDB` entrypoints,
 transaction custody and errors remain.
+
+Receipt schema views are loaded lazily inside the existing bounded decoder.
+Empty Chat, note and definition censuses still execute their original SQL and
+budget checks, without importing the historical schema registry. Actual receipt
+validation loads the same canonical table/domain/composite declarations; cached
+views and the existing six schema ports preserve their original identities.
+Unknown module/import probes do not trigger loading. This changes import timing,
+not grammar, checksums, quarantine, native ownership or write authority.
+
+`Backup_Recovery/mobile_runs_history.py::_qualify_history_census` always performs
+the first generic sealed-manifest verification and document equality check.
+Within the existing registered RowData lifetime, its final revalidation reuses
+that frozen tuple/model data while retaining two fresh budgeted whole-seal hashes
+and checking current owner, source, partition and encrypted provenance. This
+removes one parse/serialization cycle while preserving all four physical hashes,
+full fresh inverse-inventory proof and the original native 16 MiB allowance.
+Unframed callers retain both generic verifications (ADR-244).

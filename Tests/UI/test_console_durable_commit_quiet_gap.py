@@ -30,7 +30,7 @@ import contextlib
 
 import pytest
 
-from Tests.UI.test_console_config_sync_cadence import _held_run
+from Tests.UI.test_console_config_sync_cadence import _held_run, _replay_pending
 from Tests.UI.test_console_send_acknowledgement import (
     build,
     eager_tasks,
@@ -80,7 +80,13 @@ async def test_a_durable_commit_runs_its_first_sync_then_holds_until_the_next_ti
             syncs = _Syncs(monkeypatch, console)
 
             async def settled() -> None:
-                await until(lambda: not console._console_sync_in_progress, timeout=30)
+                await until(
+                    lambda: (
+                        not console._console_sync_in_progress
+                        and not _replay_pending(console)
+                    ),
+                    timeout=30,
+                )
 
             async def tick() -> None:
                 await settled()

@@ -1709,12 +1709,70 @@ def test_native_discovery_child_requires_exact_issued_copy_and_lists(
             )
 
 
+@contextmanager
+def _public_owning_operation(tmp_path, monkeypatch):
+    """Observe the genuine public worker without lending it test-issued budgets."""
+    from Tests.Backup_Recovery import mobile_consolidation_fixture
+    from Tests.Backup_Recovery.test_mobile_consolidation_lifecycle import (
+        _capture_fixture,
+    )
+    from Tests.network_guard import blocked_attempts
+    from Tests.real_profile_guard import take_violations
+    from tldw_chatbook.Backup_Recovery import mobile_native_operation, storage_admission
+    from tldw_chatbook.Backup_Recovery.recovery_service import RecoveryService
+    from tldw_chatbook.Chat.console_trace_read_budget import _mobile_budget_pair
+
+    with _capture_fixture(tmp_path, monkeypatch) as values:
+        _, journal, config, _, preview, _, _ = values
+    monkeypatch.setenv("TLDW_CONFIG_PATH", str(preview.target_selector))
+    before = mobile_consolidation_fixture.fingerprints(preview.source_dir)
+    captured_operations, pairs = [], []
+    consolidate = mobile_native_operation._consolidate
+
+    def observed(captured, *, password, cancel):
+        admission = storage_admission._mobile_admission(captured.session)
+        pair = admission[4], admission[2]
+        assert _mobile_budget_pair(*pair)
+        assert 0 <= pair[0]._remaining < 4 * 1024**3
+        assert 0 <= pair[1]._remaining <= 16 * 1024**2
+        if captured_operations:
+            assert captured_operations[0] is captured
+            assert all(left is right for left, right in zip(pairs[0], pair, strict=True))
+        else:
+            captured_operations.append(captured)
+            pairs.append(pair)
+        return consolidate(captured, password=password, cancel=cancel)
+
+    with monkeypatch.context() as observation:
+        observation.setattr(mobile_native_operation, "_consolidate", observed)
+        service = RecoveryService(journal.root.parent)
+        try:
+            reviewed = service.preview_mobile_consolidation(config, config)
+            assert reviewed.source_fingerprint == preview.source_fingerprint
+            assert mobile_consolidation_fixture.fingerprints(preview.source_dir) == before
+            yield service, reviewed, captured_operations
+        finally:
+            service.close()
+    assert len(captured_operations) == len(pairs) == 1
+    assert not captured_operations[0].active
+    assert _mobile_budget_pair(*pairs[0])
+    assert 0 <= pairs[0][0]._remaining < 4 * 1024**3
+    assert 0 <= pairs[0][1]._remaining < 16 * 1024**2
+    assert mobile_consolidation_fixture.fingerprints(preview.source_dir) == before
+    assert not take_violations()
+    assert not blocked_attempts()
+
+
 def test_actual_writer_publishes_native_history_and_commits_member_witnesses(
     tmp_path, monkeypatch
 ):
     from pathlib import Path
 
     from Tests.Backup_Recovery import mobile_consolidation_fixture
+    from tldw_chatbook.Backup_Recovery import (
+        mobile_journal_frame,
+        mobile_native_operation,
+    )
     from tldw_chatbook.Backup_Recovery.journal import observe_artifact
     from tldw_chatbook.Chat.console_trace_read_budget import _TraceReadBudget
     from tldw_chatbook.DB.mobile_consolidation_receipts import _read_owner_receipt
@@ -1727,32 +1785,59 @@ def test_actual_writer_publishes_native_history_and_commits_member_witnesses(
         return result
 
     monkeypatch.setattr(mobile_consolidation_fixture, "_seed", seed)
-    with captured_operation(tmp_path, monkeypatch) as captured:
-        stores = captured.preview.destination
-        # Component proof ends at an actual interrupted terminal boundary;
-        # ordinary public completion is qualified by separate public callers.
-        from tldw_chatbook.Backup_Recovery import mobile_journal_frame
+    receipts, terminal = [], []
+    append = mobile_journal_frame._Frame.append
 
-        def interrupt_terminal(*args, **kwargs):
+    def interrupt_terminal(frame, event, evidence):
+        if event == "mobile_committed":
+            assert any(row.event == "mobile_history_verified" for row in frame.records)
+            assert {row["owner_id"] for row in evidence["owners"]} == {
+                "db.chachanotes.primary",
+                "db.workspaces",
+                "db.agent_runs",
+            }
+            terminal.append(frame.journal.operation_id)
             raise OSError("injected before terminal journal entry")
+        return append(frame, event, evidence)
+
+    with _public_owning_operation(tmp_path, monkeypatch) as (service, preview, captures):
+        stores = preview.destination
+        consolidate = mobile_native_operation._consolidate
+
+        def inspect_terminal_failure(captured, *, password, cancel):
+            try:
+                return consolidate(captured, password=password, cancel=cancel)
+            except OSError as error:
+                assert str(error) == "injected before terminal journal entry"
+                with (
+                    captured.owner("db.agent_runs") as owner,
+                    owner.transaction() as connection,
+                ):
+                    receipts.append(
+                        _read_owner_receipt(
+                            connection,
+                            captured.journal.operation_id,
+                            captured.preview.source_fingerprint,
+                            "runs",
+                            _TraceReadBudget(),
+                        )
+                    )
+                raise
 
         with monkeypatch.context() as fault:
-            fault.setattr(mobile_journal_frame, "_locked_mobile", interrupt_terminal)
-            with pytest.raises(OSError, match="injected before terminal journal entry"):
-                captured.consolidate(
-                    password=b"test-private-mobile-rollback", cancel=Event()
-                )
-        with (
-            captured.owner("db.agent_runs") as owner,
-            owner.transaction() as connection,
-        ):
-            receipt = _read_owner_receipt(
-                connection,
-                captured.journal.operation_id,
-                captured.preview.source_fingerprint,
-                "runs",
-                _TraceReadBudget(),
+            fault.setattr(mobile_journal_frame._Frame, "append", interrupt_terminal)
+            fault.setattr(mobile_native_operation, "_consolidate", inspect_terminal_failure)
+            operation = service.start_mobile_consolidation(
+                preview,
+                destination_confirmed=True,
+                rollback_password=b"test-private-mobile-rollback",
             )
+            state = service.wait(operation)
+        assert state["state"] == "recovery_required", dict(state)
+        assert terminal == [operation]
+        assert "finish" in service.status(operation)["actions"]
+        (captured,) = captures
+        (receipt,) = receipts
     assert receipt is not None
     children = receipt[1]
     roots = [row["data"] for row in children if row["kind"] == "runlog_root"]
@@ -1785,25 +1870,23 @@ def test_native_publication_failure_resumes_same_objects_before_owner_commits(
     from pathlib import Path
 
     from Tests.Backup_Recovery import mobile_consolidation_fixture
-    from Tests.Backup_Recovery.test_mobile_consolidation_lifecycle import (
-        _capture_fixture,
-    )
+    from Tests.network_guard import blocked_attempts
+    from Tests.real_profile_guard import take_violations
+    from tldw_chatbook.Backup_Recovery import mobile_native_operation, storage_admission
     from tldw_chatbook.Backup_Recovery.journal import observe_artifact
-    from tldw_chatbook.Backup_Recovery.mobile_consolidation_apply import (
-        _captured_mobile,
-        _resume_captured_mobile,
-    )
     from tldw_chatbook.Backup_Recovery.mobile_history_files import _HistoryFiles
-    from tldw_chatbook.Chat.console_trace_read_budget import _TraceReadBudget
+    from tldw_chatbook.Backup_Recovery.recovery_service import RecoveryService
+    from tldw_chatbook.Chat.console_trace_read_budget import (
+        _mobile_budget_pair,
+        _TraceReadBudget,
+    )
     from tldw_chatbook.DB.mobile_consolidation_receipts import _read_owner_receipt
 
     def seed(stores, **kwargs):
         return _small_native_seed(stores, **kwargs, source_case="history")
 
     monkeypatch.setattr(mobile_consolidation_fixture, "_seed", seed)
-    destination = tmp_path / "archives"
-    destination.mkdir(mode=0o700)
-    published = []
+    published, cipher_observations, rejected = [], [], []
     publish = _HistoryFiles.publish
 
     def fail_after_native_publication(scope):
@@ -1814,78 +1897,108 @@ def test_native_publication_failure_resumes_same_objects_before_owner_commits(
         )
         raise OSError("publication completed before owner interruption")
 
-    with _capture_fixture(tmp_path, monkeypatch) as (  # noqa: SIM117 -- Native resource lifetime boundary.
-        session,
-        journal,
-        _config,
-        _legacy,
-        preview,
-        inventory,
-        authority,
-    ):
-        with _captured_mobile(
-            session,
-            journal,
-            preview,
-            inventory.scope_digest,
-            destination=destination,
-            password=b"test-private-mobile-rollback",
-            cancel=Event(),
-        ) as captured:
-            original_ciphers = (
-                observe_artifact(captured.source.path),
-                observe_artifact(captured.canonical.path),
+    with _public_owning_operation(tmp_path, monkeypatch) as (service, preview, captures):
+        stores = preview.destination
+        source_before = mobile_consolidation_fixture.fingerprints(preview.source_dir)
+        consolidate = mobile_native_operation._consolidate
+
+        def inspect_publication_failure(captured, *, password, cancel):
+            cipher_observations.append(
+                (
+                    observe_artifact(captured.source.path),
+                    observe_artifact(captured.canonical.path),
+                )
             )
-            with monkeypatch.context() as fault:
-                fault.setattr(_HistoryFiles, "publish", fail_after_native_publication)
-                with pytest.raises(OSError, match="publication completed"):
-                    captured.consolidate(
-                        password=b"test-private-mobile-rollback", cancel=Event()
-                    )
-            assert published
-            with journal._locked(exclusive=False) as fd:
-                events = journal._records(fd)
-                assert events[-1].event == "mobile_history_verified"
-                assert not any(event.event == "mobile_owner_opened" for event in events)
-            with pytest.raises(ValueError, match="already_attempted"):
-                captured.consolidate(
-                    password=b"test-private-mobile-rollback", cancel=Event()
-                )
-    with authority.maintenance(("bootstrap.unbound", "mobile.profile"), 2) as fresh:  # noqa: SIM117 -- Keep the explicit native resource/fault lifetime boundary.
-        with _resume_captured_mobile(
-            fresh,
-            journal,
-            destination=destination,
-            password=b"test-private-mobile-rollback",
-            cancel=Event(),
-        ) as captured:
-            assert (
-                observe_artifact(captured.source.path),
-                observe_artifact(captured.canonical.path),
-            ) == original_ciphers
-            with _native_terminal_interruption(monkeypatch):
-                captured.consolidate(
-                    password=b"test-private-mobile-rollback", cancel=Event()
-                )
-            with (
-                captured.owner("db.agent_runs") as owner,
-                owner.transaction() as connection,
-            ):
-                receipt = _read_owner_receipt(
-                    connection,
-                    journal.operation_id,
-                    captured.preview.source_fingerprint,
-                    "runs",
-                    _TraceReadBudget(),
-                )
-            actual = {
-                child["data"]["logical_id"]: child["data"]["artifact"]
-                for child in receipt[1]
-                if child["kind"] == "runlog"
-            }
-            assert actual == dict(published)
-            for artifact in actual.values():
-                assert observe_artifact(Path(artifact["path"])) == artifact
+            try:
+                return consolidate(captured, password=password, cancel=cancel)
+            except OSError as error:
+                assert str(error) == "publication completed before owner interruption"
+                assert published
+                with captured.journal._locked(exclusive=False) as fd:
+                    events = captured.journal._records(fd)
+                    assert events[-1].event == "mobile_history_verified"
+                    assert not any(event.event == "mobile_owner_opened" for event in events)
+                with pytest.raises(ValueError, match="already_attempted"):
+                    consolidate(captured, password=password, cancel=cancel)
+                rejected.append(captured)
+                raise
+
+        with monkeypatch.context() as fault:
+            fault.setattr(_HistoryFiles, "publish", fail_after_native_publication)
+            fault.setattr(mobile_native_operation, "_consolidate", inspect_publication_failure)
+            operation = service.start_mobile_consolidation(
+                preview,
+                destination_confirmed=True,
+                rollback_password=b"test-private-mobile-rollback",
+            )
+            state = service.wait(operation)
+        assert state["state"] == "recovery_required", dict(state)
+        (captured,) = captures
+        assert rejected == [captured]
+        (original_ciphers,) = cipher_observations
+        journal = captured.journal
+        assert "finish" in service.status(operation)["actions"]
+
+    resumed_pairs, resumed_captures = [], []
+    consolidate = mobile_native_operation._consolidate
+
+    def observe_resume(captured, *, password, cancel):
+        admission = storage_admission._mobile_admission(captured.session)
+        pair = admission[4], admission[2]
+        assert _mobile_budget_pair(*pair)
+        assert 0 <= pair[0]._remaining < 4 * 1024**3
+        assert 0 <= pair[1]._remaining <= 16 * 1024**2
+        assert captured.journal.operation_id == operation
+        assert (
+            observe_artifact(captured.source.path),
+            observe_artifact(captured.canonical.path),
+        ) == original_ciphers
+        resumed_pairs.append(pair)
+        resumed_captures.append(captured)
+        return consolidate(captured, password=password, cancel=cancel)
+
+    with monkeypatch.context() as observation:
+        observation.setattr(mobile_native_operation, "_consolidate", observe_resume)
+        fresh_service = RecoveryService(journal.root.parent)
+        try:
+            resumed = fresh_service.start_recovery(
+                operation,
+                action="finish",
+                rollback_password=b"test-private-mobile-rollback",
+            )
+            state = fresh_service.wait(resumed)
+            assert state["state"] == "succeeded", dict(state)
+            assert state["result"]["mobile_consolidated"] is True
+            assert fresh_service.pending_operations() == ()
+        finally:
+            fresh_service.close()
+    assert len(resumed_pairs) == len(resumed_captures) == 1
+    assert resumed_captures[0] is not captured and not resumed_captures[0].active
+    assert _mobile_budget_pair(*resumed_pairs[0])
+    assert 0 <= resumed_pairs[0][0]._remaining < 4 * 1024**3
+    assert 0 <= resumed_pairs[0][1]._remaining < 16 * 1024**2
+    assert mobile_consolidation_fixture.fingerprints(preview.source_dir) == source_before
+    with (
+        _ordinary_imported_owner(stores, "db.agent_runs") as owner,
+        owner.transaction() as connection,
+    ):
+        receipt = _read_owner_receipt(
+            connection,
+            journal.operation_id,
+            preview.source_fingerprint,
+            "runs",
+            _TraceReadBudget(),
+        )
+    actual = {
+        child["data"]["logical_id"]: child["data"]["artifact"]
+        for child in receipt[1]
+        if child["kind"] == "runlog"
+    }
+    assert actual == dict(published)
+    for artifact in actual.values():
+        assert observe_artifact(Path(artifact["path"])) == artifact
+    assert not take_violations()
+    assert not blocked_attempts()
 
 
 def test_actual_goal_note_definition_owners_preserve_history_and_current_guards(
@@ -2017,18 +2130,18 @@ def test_actual_passive_chat_rows_commit_with_native_consumer_disposition(
         return value
 
     monkeypatch.setattr(mobile_consolidation_fixture, "_seed", seed)
-    with captured_operation(tmp_path, monkeypatch) as captured:
-        stores = captured.preview.destination
-        from tldw_chatbook.Backup_Recovery.mobile_native_operation import (
-            _NativeOperationBlocked,
+    with _public_owning_operation(tmp_path, monkeypatch) as (service, preview, captures):
+        stores = preview.destination
+        operation = service.start_mobile_consolidation(
+            preview,
+            destination_confirmed=True,
+            rollback_password=b"test-private-mobile-rollback",
         )
-
-        try:
-            captured.consolidate(
-                password=b"test-private-mobile-rollback", cancel=Event()
-            )
-        except _NativeOperationBlocked as error:
-            pytest.fail(repr(error.blockers))
+        state = service.wait(operation)
+        assert state["state"] == "succeeded", dict(state)
+        assert state["result"]["mobile_consolidated"] is True
+        assert service.pending_operations() == ()
+        (captured,) = captures
     with _ordinary_imported_owner(stores, "db.chachanotes.primary") as owner:
         with owner.transaction() as cursor:
             _master, children = _read_owner_receipt(
@@ -2093,9 +2206,18 @@ def test_actual_failed_snapshot_retains_native_history_without_git(
         return result
 
     monkeypatch.setattr(mobile_consolidation_fixture, "_seed", seed)
-    with captured_operation(tmp_path, monkeypatch) as captured:
-        stores = captured.preview.destination
-        captured.consolidate(password=b"test-private-mobile-rollback", cancel=Event())
+    with _public_owning_operation(tmp_path, monkeypatch) as (service, preview, captures):
+        stores = preview.destination
+        operation = service.start_mobile_consolidation(
+            preview,
+            destination_confirmed=True,
+            rollback_password=b"test-private-mobile-rollback",
+        )
+        state = service.wait(operation)
+        assert state["state"] == "succeeded", dict(state)
+        assert state["result"]["mobile_consolidated"] is True
+        assert service.pending_operations() == ()
+        (captured,) = captures
     with (
         _ordinary_imported_owner(stores, "db.agent_runs") as owner,
         owner.transaction() as connection,

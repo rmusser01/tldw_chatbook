@@ -1,5 +1,5 @@
 # tldw_chatbook.* modules resident at _ui_ready (warm second boot).
-# 1036 modules; warm boots wobble +/-1 (see the guard's docstring). Written ONLY by scripts/update_boot_budget_snapshots.py (ADR-097).
+# 1030 modules; warm boots wobble +/-1 (see the guard's docstring). Written ONLY by scripts/update_boot_budget_snapshots.py (ADR-097).
 tldw_chatbook
 tldw_chatbook.ACP_Interop
 tldw_chatbook.ACP_Interop.runtime_process
@@ -70,6 +70,7 @@ tldw_chatbook.Backup_Recovery.journal
 tldw_chatbook.Backup_Recovery.limits
 tldw_chatbook.Backup_Recovery.local_content_lifetime
 tldw_chatbook.Backup_Recovery.mcp_source_participants
+tldw_chatbook.Backup_Recovery.mobile_preview_budget
 tldw_chatbook.Backup_Recovery.models
 tldw_chatbook.Backup_Recovery.native_files
 tldw_chatbook.Backup_Recovery.native_platform
@@ -154,12 +155,10 @@ tldw_chatbook.Chat.console_chat_start
 tldw_chatbook.Chat.console_chat_store
 tldw_chatbook.Chat.console_command_grammar
 tldw_chatbook.Chat.console_command_suggestions
-tldw_chatbook.Chat.console_compaction_hooks
 tldw_chatbook.Chat.console_configuration_capture
 tldw_chatbook.Chat.console_context_compaction
 tldw_chatbook.Chat.console_context_policy
 tldw_chatbook.Chat.console_context_repository
-tldw_chatbook.Chat.console_conversation_activation
 tldw_chatbook.Chat.console_conversation_hydration
 tldw_chatbook.Chat.console_cost_tracker
 tldw_chatbook.Chat.console_dispatch_checkpoint
@@ -176,7 +175,6 @@ tldw_chatbook.Chat.console_generation_settings_metadata
 tldw_chatbook.Chat.console_glyphs
 tldw_chatbook.Chat.console_hands_free
 tldw_chatbook.Chat.console_history_budget
-tldw_chatbook.Chat.console_hook_review
 tldw_chatbook.Chat.console_hook_review_host
 tldw_chatbook.Chat.console_image_edit_operations
 tldw_chatbook.Chat.console_image_view
@@ -188,7 +186,6 @@ tldw_chatbook.Chat.console_library_policy
 tldw_chatbook.Chat.console_library_policy_coordinator
 tldw_chatbook.Chat.console_library_policy_repository
 tldw_chatbook.Chat.console_live_work
-tldw_chatbook.Chat.console_local_review_hook
 tldw_chatbook.Chat.console_memory_banner
 tldw_chatbook.Chat.console_message_actions
 tldw_chatbook.Chat.console_onboarding_state
@@ -210,6 +207,7 @@ tldw_chatbook.Chat.console_realtime_loop
 tldw_chatbook.Chat.console_received_dispatch
 tldw_chatbook.Chat.console_received_intent
 tldw_chatbook.Chat.console_received_turn
+tldw_chatbook.Chat.console_remote_models
 tldw_chatbook.Chat.console_roleplay_identity
 tldw_chatbook.Chat.console_roleplay_metadata
 tldw_chatbook.Chat.console_runtime
@@ -243,6 +241,7 @@ tldw_chatbook.Chat.console_turn_preparation
 tldw_chatbook.Chat.conversation_local_marks_service
 tldw_chatbook.Chat.cost_display
 tldw_chatbook.Chat.custom_endpoint_registry
+tldw_chatbook.Chat.custom_tokenizers
 tldw_chatbook.Chat.library_activity
 tldw_chatbook.Chat.library_preparation
 tldw_chatbook.Chat.llamacpp_think_filter
@@ -258,7 +257,6 @@ tldw_chatbook.Chat.provider_test_evidence
 tldw_chatbook.Chat.provider_usage
 tldw_chatbook.Chat.rag_scope
 tldw_chatbook.Chat.reply_sentence_sequencer
-tldw_chatbook.Chat.scope_picker_listers
 tldw_chatbook.Chat.server_chat_conversation_service
 tldw_chatbook.Chat.trajectory
 tldw_chatbook.Chat_Grammars_Interop
@@ -293,12 +291,18 @@ tldw_chatbook.DB.VisualIdentity_DB
 tldw_chatbook.DB.Workspace_DB
 tldw_chatbook.DB.base_db
 tldw_chatbook.DB.canvas_payload_validation
+tldw_chatbook.DB.console_command_receipts
+tldw_chatbook.DB.console_execution_owner
 tldw_chatbook.DB.keyword_store
 tldw_chatbook.DB.library_search_engine
+tldw_chatbook.DB.media_db_errors
+tldw_chatbook.DB.mobile_import_authority
+tldw_chatbook.DB.mobile_preview_lineage
 tldw_chatbook.DB.private_sqlite
 tldw_chatbook.DB.private_sqlite_files
 tldw_chatbook.DB.private_sqlite_process
 tldw_chatbook.DB.private_sqlite_protocol
+tldw_chatbook.DB.private_sqlite_values
 tldw_chatbook.DB.recovery_sqlite
 tldw_chatbook.DB.sql_identifier_core
 tldw_chatbook.DB.sql_logging
@@ -306,6 +310,7 @@ tldw_chatbook.DB.sql_validation
 tldw_chatbook.DB.sqlite_datetime_fix
 tldw_chatbook.DB.store_errors
 tldw_chatbook.DB.store_kernel
+tldw_chatbook.DB.subscriptions_provenance
 tldw_chatbook.DB.transaction_observer
 tldw_chatbook.Evals
 tldw_chatbook.Evals.concurrency_manager
@@ -405,7 +410,6 @@ tldw_chatbook.Library.library_rag_service
 tldw_chatbook.Library.library_rag_state
 tldw_chatbook.Library.library_shell_state
 tldw_chatbook.Library.library_tool_contract
-tldw_chatbook.Library.local_library_tool_service
 tldw_chatbook.Library.server_ingest_reconcile
 tldw_chatbook.Library.server_ingest_request
 tldw_chatbook.Library.server_ingest_status
@@ -856,7 +860,6 @@ tldw_chatbook.Utils.library_rail_width
 tldw_chatbook.Utils.log_sanitizer
 tldw_chatbook.Utils.mosaic_render
 tldw_chatbook.Utils.optional_deps
-tldw_chatbook.Utils.os_notifications
 tldw_chatbook.Utils.path_validation
 tldw_chatbook.Utils.paths
 tldw_chatbook.Utils.persistent_diagnostics
@@ -870,6 +873,7 @@ tldw_chatbook.Utils.sensitive_paths
 tldw_chatbook.Utils.startup_errors
 tldw_chatbook.Utils.startup_logging
 tldw_chatbook.Utils.terminal_utils
+tldw_chatbook.Utils.text
 tldw_chatbook.Utils.text_selection_crash_guard
 tldw_chatbook.Utils.textual_css_fastpath
 tldw_chatbook.Utils.tiktoken_runtime
@@ -910,15 +914,11 @@ tldw_chatbook.Widgets.Console.console_background_effect
 tldw_chatbook.Widgets.Console.console_bounded_section
 tldw_chatbook.Widgets.Console.console_canvas_card
 tldw_chatbook.Widgets.Console.console_character_context
-tldw_chatbook.Widgets.Console.console_character_picker_modal
-tldw_chatbook.Widgets.Console.console_citation_sources_modal
 tldw_chatbook.Widgets.Console.console_command_popup
 tldw_chatbook.Widgets.Console.console_composer_bar
 tldw_chatbook.Widgets.Console.console_composer_menu_modal
 tldw_chatbook.Widgets.Console.console_context_controls
 tldw_chatbook.Widgets.Console.console_control_bar
-tldw_chatbook.Widgets.Console.console_edit_message_modal
-tldw_chatbook.Widgets.Console.console_fork_chat_modal
 tldw_chatbook.Widgets.Console.console_generation_card
 tldw_chatbook.Widgets.Console.console_image_viewer_modal
 tldw_chatbook.Widgets.Console.console_inspector_ownership
@@ -932,13 +932,10 @@ tldw_chatbook.Widgets.Console.console_rag_settings_modal
 tldw_chatbook.Widgets.Console.console_rail_handle
 tldw_chatbook.Widgets.Console.console_retrieval_scope_row
 tldw_chatbook.Widgets.Console.console_run_inspector
-tldw_chatbook.Widgets.Console.console_save_as_modal
-tldw_chatbook.Widgets.Console.console_scope_picker_modal
 tldw_chatbook.Widgets.Console.console_selection
 tldw_chatbook.Widgets.Console.console_selection_menu
 tldw_chatbook.Widgets.Console.console_send_authority_summary
 tldw_chatbook.Widgets.Console.console_session_surface
-tldw_chatbook.Widgets.Console.console_session_switcher_modal
 tldw_chatbook.Widgets.Console.console_settings_summary
 tldw_chatbook.Widgets.Console.console_setup_modal
 tldw_chatbook.Widgets.Console.console_speech_controls
@@ -953,7 +950,6 @@ tldw_chatbook.Widgets.Console.console_video_preview
 tldw_chatbook.Widgets.Console.console_workbench_state
 tldw_chatbook.Widgets.Console.console_workspace_context
 tldw_chatbook.Widgets.Console.console_workspace_details
-tldw_chatbook.Widgets.Console.console_workspace_switcher_modal
 tldw_chatbook.Widgets.Console.console_workspace_tree
 tldw_chatbook.Widgets.Console.conversation_row_presentation
 tldw_chatbook.Widgets.Console.portrait_radio
@@ -975,7 +971,6 @@ tldw_chatbook.Widgets.pausable_progress
 tldw_chatbook.Widgets.project_skills_import_modal
 tldw_chatbook.Widgets.recompose_capture_guard
 tldw_chatbook.Widgets.splash_screen
-tldw_chatbook.Widgets.status_line
 tldw_chatbook.Workspaces
 tldw_chatbook.Workspaces.change_bounds
 tldw_chatbook.Workspaces.change_review_consent
@@ -1005,7 +1000,6 @@ tldw_chatbook.app_lifecycle
 tldw_chatbook.app_navigation
 tldw_chatbook.app_served
 tldw_chatbook.app_service_wiring
-tldw_chatbook.app_shutdown
 tldw_chatbook.app_skill_wiring
 tldw_chatbook.chunking_engine_version
 tldw_chatbook.config

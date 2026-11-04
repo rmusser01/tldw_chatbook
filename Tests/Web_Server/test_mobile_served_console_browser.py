@@ -1830,6 +1830,24 @@ async def _run_transport(root):
                     await expect(phone.locator("#chat-transcript")).to_contain_text(
                         "EXACT_REPLY:" + prompt, timeout=30000
                     )
+                if fault == "after-acceptance":
+                    # Assistant text precedes the native first-send config save.
+                    returned = json.loads(
+                        await _wait_file(
+                            data
+                            / (
+                                "console-turn-returned-"
+                                + create_receipt["native_id"]
+                                + ".json"
+                            )
+                        )
+                    )
+                    assert returned["pid"] == pid
+                    assert returned["session_id"] == create_receipt["native_id"]
+                    assert returned["turn_id"] == row["command_id"]
+                    assert returned["turn_returned"] and returned["accepted"]
+                    assert returned["first_send_persisted"]
+                    row["native_turn_return"] = returned
                 # Reconnection is read-only; it must not mint/replay this command.
                 await phone.reload()
                 await expect(phone.locator("#new-chat-button")).to_be_visible(

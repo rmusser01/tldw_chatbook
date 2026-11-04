@@ -1133,6 +1133,33 @@ def main() -> None:
                 client.start = observed_control_start
 
             runtime = app.console_runtime
+            native_turn = runtime._run_custodied_turn
+
+            async def observed_turn_return(record, **options):
+                session_id, turn_id = record.session_id, record.turn_id
+                result = await native_turn(record, **options)
+                from tldw_chatbook.Backup_Recovery.inventory import read_profile_config
+
+                persisted = read_profile_config(
+                    config_module._get_effective_config_path()
+                )
+                _publish_owner_receipt(
+                    data_root / ("console-turn-returned-" + session_id + ".json"),
+                    {
+                        "pid": os.getpid(),
+                        "session_id": session_id,
+                        "turn_id": turn_id,
+                        "turn_returned": True,
+                        "accepted": getattr(result, "accepted", False) is True,
+                        "first_send_persisted": persisted.get("console", {})
+                        .get("onboarding", {})
+                        .get("first_send_completed")
+                        is True,
+                    },
+                )
+                return result
+
+            runtime._run_custodied_turn = observed_turn_return
             native_receipts = runtime.ensure_remote_receipts
 
             def observed_receipts(identity, **options):

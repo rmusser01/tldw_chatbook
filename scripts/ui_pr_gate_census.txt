@@ -2444,3 +2444,7 @@ Tests/UI/test_console_phone_trace_recovery.py
 # Served control loss retains native physical ownership through ordinary shutdown.
 Tests/UI/test_console_recovered_image_shutdown.py::test_control_loss_keeps_execution_lease_through_native_app_drains
 Tests/UI/test_console_recovered_image_shutdown.py::test_control_loss_still_exits_after_native_controller_fence_error
+# TASK-36769 (2026-11-04): retain the complete conversation-row P0 sweep
+# in existing UI shards 31/32; all action cases adopt the stricter 180 s cap.
+Tests/UI/test_console_row_menu_action_sweep.py::test_the_sweep_covers_every_declared_action_constant
+Tests/UI/test_console_row_menu_action_sweep.py::test_conversation_row_action_never_ends_the_app

@@ -479,11 +479,11 @@ class ConsoleLibraryOutcomeLines:
         source = self._source() if turns else None
         if source is None:
             return {}
-        database, session_id, conversation_id, off_loop = source
+        database, session_identity, conversation_id, off_loop = source
         # A record is written in the acceptance that gives its USER turn a
         # durable id, so a new turn moves this key once; opening a chat (a new
-        # session, a restart) moves it too and reads the records afresh.
-        key = (database, session_id, conversation_id, tuple(turns))
+        # incarnation, a restart) moves it too and reads the records afresh.
+        key = (database, session_identity, conversation_id, tuple(turns))
         if key != self._landed_key:
             if off_loop:
                 self._request(key)
@@ -495,8 +495,8 @@ class ConsoleLibraryOutcomeLines:
             if durable_id in self._views
         }
 
-    def _source(self) -> tuple[Any, str, str, bool] | None:
-        """Return (database, session, conversation, read off the loop?) or None."""
+    def _source(self) -> tuple[Any, tuple[str, str], str, bool] | None:
+        """Return database, session identity, conversation and read mode."""
         from tldw_chatbook.Chat.chat_persistence_service import (
             ChatPersistenceService,
         )
@@ -523,7 +523,7 @@ class ConsoleLibraryOutcomeLines:
             and type(database) is CharactersRAGDB
             and not database.is_memory_db
         )
-        return database, session_id, conversation_id, off_loop
+        return database, (session_id, session.incarnation_id), conversation_id, off_loop
 
     def _land(self, key: tuple, rows: Iterable[Any] | None) -> None:
         """Make ``key`` current, projecting ``rows`` onto its turns.
@@ -546,7 +546,7 @@ class ConsoleLibraryOutcomeLines:
 
         A local storage pause lands nothing, so the next sync reads again.
         """
-        database, _session_id, conversation_id, _turns = key
+        database, _session_identity, conversation_id, _turns = key
         try:
             rows = tuple(database.get_trajectory_rows(conversation_id))
         except Exception as error:  # noqa: BLE001 - payload-free display degradation
@@ -574,7 +574,7 @@ class ConsoleLibraryOutcomeLines:
         """
         from .view_workers import owned_display_read
 
-        database, _session_id, conversation_id, _turns = key
+        database, _session_identity, conversation_id, _turns = key
         rows: tuple[Any, ...] | None = None
         paused = False
         try:

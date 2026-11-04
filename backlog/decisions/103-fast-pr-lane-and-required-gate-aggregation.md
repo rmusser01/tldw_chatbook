@@ -443,3 +443,37 @@ fails when it is not `success`. On PR #3334's run 41169081459 lane 2 with these
 suites hit its 35-min cap at 99% (about 17 CI-min for 211 mounted tests, 485 s
 serial locally). One more runner per PR: 24 concurrent test runners, 25 with
 perf-guard, 35 eligible test jobs.
+
+## Application (2026-11-04, TASK-36769): conserve the row-menu P0 sweep in existing UI capacity
+
+Run 41799814461/job 126501087681 exhausted the Console P0 job's unchanged
+20-minute cap: setup 54 s, sandboxed 7m16s (249 passed), admission 12m04s at 98%,
+with three cases and the active case's remainder still outstanding. The old
+median 11.6/max 13.9-minute forecast no longer describes this roster. The complete
+conversation-row sweep occupied 145.26 s (21 cases, including its coverage guard).
+
+Move only its two existing selectors, the declared-action coverage guard and
+`test_conversation_row_action_never_ends_the_app` with all derived parameter
+cases, to the existing UI census. Append them after all 1,374 prior selectors,
+leaving every prior shard position unchanged; they reach shards 31/32. Preserve
+the original inherited roster in the CI contract, account explicitly for this
+relocation, and reject missing, commented or duplicate census enrollment. The
+coverage floor becomes 1,376, a stricter coverage requirement rather than a
+larger resource ceiling. The unscheduled workspace-row sibling is not added.
+
+Both original P0 pytest commands remain serial with the remaining argument
+order, profile split, conditions and 180/300-second command timeouts intact.
+Moved cases adopt the UI lane's stricter 180-second per-case limit. UI remains
+32 shards, max-parallel 17, the same dependencies and 20-minute job cap. The
+required aggregate, eligible runner count and peak concurrency are unchanged.
+No new job, runner, status substitute, filter, skip or timeout exception is
+introduced; this applies the existing bounded-lane policy.
+
+The retained current-head metadata records full UI job 31 at 577 s and job 32
+at 603 s, including setup and all existing test work; both completed with
+assertion failures, not timeout. Conservatively charging the entire 145.26 s
+sweep to each recipient projects 722.26 s and 748.26 s, below the unchanged 1,200 s
+cap. Existing replay plus exact roster conservation checks qualify this
+placement as a forecast. Original P0 commands and recipient shards still need
+current-source execution, and hosted final-head results remain required;
+these projections do not turn the retained assertion failures into passes.

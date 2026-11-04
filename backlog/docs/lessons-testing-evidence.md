@@ -24968,3 +24968,46 @@ producer; 169's one-shot refresh was legitimately coalesced. The final fixture
 retries real admission within its original five seconds, yielding at the existing
 0.05-second polling cadence. Strict 60-second GGUF and tour qualification were
 still pending when this lesson was recorded.
+
+## Stable saved-chat IDs do not identify a restored display owner (PR3345, 2026-11-04)
+
+The Library outcome reload guard assumed `reuse_existing=False` made another live
+chat, but shared Console ownership deliberately deduplicates the saved identity.
+Closing through the real lifecycle and reopening produced a fresh incarnation
+with the same canonical ID. Its deletion negative then found a real cache bug:
+`ConsoleLibraryOutcomeLines` reused a key containing only that ID and the same
+durable message IDs, so it never reread the removed trajectory record. Including
+the incarnation fixes that identity. The negative must also await the actual
+asynchronous projection, rather than message bodies already painted by an older
+read; it retains its final absence assertion. Epoch 351 retains the concrete RED.
+
+The same CI repair reproduced an independent incomplete-settling fixture: a whole
+Console sync can decline work while its checked-display replay is pending even
+when `_console_sync_in_progress` is false. The existing cadence `_replay_pending`
+helper captures this state. A bounded queued-replay control reproduced the
+original exact-count failure; waiting for that state preserved every count and
+deadline. Epoch 350 records the control, and 351 its passing correction.
+
+
+During PR3345 public history recovery qualification363, the native allowance
+refused a codec requirement of974896 with750816 remaining after fresh inverse
+inventory. One late generic verification was also reparsing the retained frozen
+manifest. Review found that RowData is issued after acquisition: using it to
+replace the first full manifest comparison could launder a pre-frame model
+substitution. Regression364 reproduced only the redundant late native parse;
+365 then passed actual same-operation recovery and native/ordinary four-hash
+controls after retaining that first comparison. The native data holder must be
+an actual immutable tuple, and every repeated new digest needs its own prior
+reservation. Test the digest constructor itself on exhaustion; a later file-open
+refusal alone cannot prove the earlier allocation was priced. Acquisition's
+encrypted `input` copy also has a different path from the original captured
+archive; bind the actual provenance instead of assuming those paths are equal.
+
+
+## Assistant text can precede a native turn's config save (PR3345, 2026-11-04)
+
+The original 15-case mobile UAT failed its third lost-ACK case after the first successful reply appeared. An isolated pass-through probe reproduced it: the native first-send onboarding save replaced the selected config and matching profile fingerprint between the ordinary cutover observer's two checks, which correctly refused `mobile_cutover_changed`. The fixture had started its next independent fault case before `_run_custodied_turn` returned through that awaited save. A content-free child witness now binds PID, session and exact turn, awaits the original once, checks the actual persisted boolean and publishes atomically only on normal return. The parent waits for that witness before the unchanged reload. Do not preseed onboarding, retry the action, or weaken the observer; its genuine concurrent-publication refusal remains a required control. A returned await is not proof that the task's later physical custody-release callback ran.
+
+## Observe actual pointer events when a button click produces no request (PR3345, 2026-11-04)
+
+The same UAT retained a cold Send with no ticket or effect request; a natural passive rerun passed and did not establish that occurrence's cause. A controlled real-asset probe in Chromium and WebKit then held refresh metadata while injecting a normal change hint between physical pointer-down/up. The same button stayed under the pointer, but becoming disabled suppressed click and submit, yielding zero commands. The no-hint control dispatched once. The regression keeps metadata held through actual command acceptance; releasing it before the assertion could falsely qualify a deferred command queue. Ordinary hints now refresh without revoking prior confirmation; genuine reset/loss still pauses controls and never replays the gesture.
