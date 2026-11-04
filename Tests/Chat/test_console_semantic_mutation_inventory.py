@@ -6,6 +6,7 @@ import ast
 import hashlib
 import re
 import textwrap
+from collections import Counter
 from collections.abc import Iterator
 from dataclasses import dataclass
 from functools import cache
@@ -2617,43 +2618,532 @@ def _derive_loop_targets(
 
 
 _STORE_CONSTRUCTIONS: dict[
-    tuple[int, str],
+    tuple[int, str, str, bool],
     tuple[ast.Module, tuple[ast.Call, ...], frozenset[str]],
 ] = {}
 _REFLECTIVE_WRITERS = frozenset({"setattr", "delattr", "__setattr__", "__delattr__"})
-
-
-def _own_self_spec_writes(module: ast.Module) -> set[int]:
-    """``self.spec`` writes in a method's own body, where ``self`` is its class's."""
-    return {
-        id(node)
-        for owner in ast.walk(module)
-        if isinstance(owner, ast.ClassDef)
-        for method in owner.body
-        if isinstance(method, (ast.FunctionDef, ast.AsyncFunctionDef))
-        and method.args.args
-        and method.args.args[0].arg == "self"
-        for node in _function_body_nodes(method)
-        if isinstance(node, ast.Attribute)
-        and node.attr == "spec"
-        and isinstance(node.value, ast.Name)
-        and node.value.id == "self"
+_NAMESPACE_WRITERS = frozenset(
+    {
+        "update",
+        "setdefault",
+        "pop",
+        "popitem",
+        "clear",
+        "__setitem__",
+        "__delitem__",
+        "__ior__",
     }
+)
+#: Package-wide sites that could rebind a keyword store's ``spec`` (or force a
+#: field of its frozen spec) without naming either: a reflective write whose
+#: attribute name is not a literal, an instance-namespace (``__dict__`` /
+#: ``vars()``) write whose key is not, a ``__dict__``/``__class__``
+#: assignment, and an explicit ``.__init__`` other than ``super().__init__``.
+#: Rows are ``ast.unparse`` text per module, one per occurrence. Recorded
+#: 2026-11-03 when the rule was added (TASK-38702 re-review): a row records
+#: that the site predates the rule, not a proof it cannot reach a store. A new
+#: site fails until it is reviewed and pinned here; a removed one fails until
+#: its row is dropped.
+_REVIEWED_STORE_REACH_SITES: dict[str, tuple[str, ...]] = {
+    "tldw_chatbook.Audio.meeting_owner": ("setattr(self.settings, key, value)",),
+    "tldw_chatbook.Audio.native_duplex_stream": ("self.raw_stream.__init__",),
+    "tldw_chatbook.Audio.parakeet_voice_worker": ("ParakeetFailure.__init__",),
+    "tldw_chatbook.Backup_Recovery.chat_source_participants": (
+        "LocalCharacterPersonaService.__init__",
+        "LocalChatDictionaryService.__init__",
+        "setattr(item, name, value)",
+    ),
+    "tldw_chatbook.Backup_Recovery.config_participants": (
+        "setattr(source, name, value)",
+        "setattr(source, name, value)",
+        "setattr(source, name, value)",
+    ),
+    "tldw_chatbook.Character_Chat.world_book_manager": (
+        "setattr(db, attribute, cell)",
+        "setattr(db, pending_attribute, pending)",
+    ),
+    "tldw_chatbook.Chat.console_chat_controller": (
+        "ConsoleChatController.__init__",
+        "ConsoleChatController.__init__",
+    ),
+    "tldw_chatbook.Chat.console_chat_models": (
+        "copied.__dict__.update({name: values[name] for name in names})",
+    ),
+    "tldw_chatbook.Chat.console_chat_store": (
+        "setattr(live, item.name, deepcopy(getattr(candidate, item.name)))",
+        "setattr(message, item.name, deepcopy(getattr(candidate, item.name)))",
+        "setattr(message, item.name, deepcopy(getattr(message_snapshot, item.name)))",
+        "setattr(message, message_field.name, getattr(baseline, message_field.name))",
+        "setattr(session, name, deepcopy(value))",
+    ),
+    "tldw_chatbook.Chat.console_configuration_preparation": (
+        "object.__setattr__(self, name, None if value is None else _freeze(value))",
+    ),
+    "tldw_chatbook.Chat.console_display_state": (
+        "ConsoleDisplayRow.__init__",
+        "ConsoleDisplayRow.__init__",
+        "ConsoleInspectorAction.__init__",
+        "ConsoleInspectorAction.__init__",
+        "ConsoleInspectorState.__init__",
+        "ConsoleInspectorState.__init__",
+        "object.__setattr__(launch, _EVIDENCE_BUNDLE_CACHE_ATTR, (evidence_payload, bundle))",
+    ),
+    "tldw_chatbook.Chat.console_fleet_attention": (
+        "setattr(app, FLEET_UNSEEN_REVISION_ATTR, int(getattr(app, FLEET_UNSEEN_REVISION_ATTR, 0)) + 1)",
+    ),
+    "tldw_chatbook.Chat.console_runtime": (
+        "setattr(app, CONSOLE_RUNTIME_ATTR, runtime)",
+        "setattr(target, slot.name, hooks.get(slot.name, slot.viewless_default))",
+        "setattr(target, slot.name, slot.viewless_default)",
+        "setattr(view, _VIEW_RUNTIME_FALLBACK_ATTR, runtime)",
+    ),
+    "tldw_chatbook.Chat.console_session_settings": (
+        "object.__setattr__(self, field_name, value)",
+    ),
+    "tldw_chatbook.Chat.console_trace_provenance": (
+        "TraceProvenancePersistenceError.__init__",
+        "failure.__dict__.clear()",
+        "object.__setattr__(self, name, _freeze_descriptors(tuple(getattr(self, name)), name))",
+        "object.__setattr__(self, name, _freeze_descriptors(tuple(getattr(self, name)), name))",
+        "object.__setattr__(self, name, _freeze_descriptors(tuple(getattr(self, name)), name))",
+    ),
+    "tldw_chatbook.Chat.console_turn_context": (
+        "object.__setattr__(self, field_name, _freeze(getattr(self, field_name)))",
+    ),
+    "tldw_chatbook.Chat.provider_test_evidence": (
+        "setattr(owner, _OWNER_ATTRIBUTE, existing)",
+    ),
+    "tldw_chatbook.DB.private_sqlite": (
+        "object.__setattr__(destination, private_name, -1)",
+        "setattr(self, role, -1)",
+    ),
+    "tldw_chatbook.Event_Handlers.LLM_Management_Events.server_lifecycle": (
+        "setattr(app, attribute, None)",
+        "setattr(app, process_attr, None)",
+        "setattr(app, process_attr, None)",
+        "setattr(app, process_attr, None)",
+        "setattr(app, process_attr, process)",
+        "setattr(app, process_attr, process)",
+    ),
+    "tldw_chatbook.LLM_Calls.pricing_catalog": ("PricingCatalog.__init__",),
+    "tldw_chatbook.Logging_Config": ("setattr(record, _REDACTED_BODY_ATTR, body)",),
+    "tldw_chatbook.MCP.server_unified_service": (
+        "setattr(ServerUnifiedMCPService, _operation_name, guarded(producer_call(getattr(ServerUnifiedMCPService, _operation_name))))",
+    ),
+    "tldw_chatbook.Model_Artifacts.service": (
+        "setattr(bounded, _REMOVAL_CLEANUP_OWNER_ATTRIBUTE, cleanup_owner)",
+        "setattr(control, _REMOVAL_CLEANUP_OWNER_ATTRIBUTE, cleanup_owner)",
+        "setattr(error, _REMOVAL_CLEANUP_OWNER_ATTRIBUTE, None)",
+        "setattr(self, attribute, None)",
+        "setattr(winner, _REMOVAL_CLEANUP_OWNER_ATTRIBUTE, winning_owner)",
+    ),
+    "tldw_chatbook.Notes.git_process_containment": ("setattr(self, attribute, 0)",),
+    "tldw_chatbook.Notes.note_import_execution_models": (
+        "object.__setattr__(self, field_name, _copy_private_collection(getattr(self, field_name), validator=validator))",
+    ),
+    "tldw_chatbook.RAG_Search.config_profiles": (
+        "setattr(custom_config, key, value)",
+        "setattr(custom_config.rag_config, key, value)",
+    ),
+    "tldw_chatbook.RAG_Search.semantic_availability": (
+        "setattr(app, APP_RAG_SERVICE_GENERATION_ATTR, generation)",
+    ),
+    "tldw_chatbook.RAG_Search.simplified.active_config": (
+        "setattr(config.search, key, value)",
+    ),
+    "tldw_chatbook.RAG_Search.simplified.enhanced_rag_service": (
+        "setattr(config, key, value)",
+    ),
+    "tldw_chatbook.Research_Workspace.source_operations": (
+        "object.__setattr__(self, field_name, value)",
+    ),
+    "tldw_chatbook.Subscriptions.site_config_manager": (
+        "setattr(config, key, value)",
+        "setattr(existing, key, value)",
+    ),
+    "tldw_chatbook.TTS.adapter_types": (
+        "BaseException.__setattr__(self, name, value)",
+        "object.__setattr__(duplicate, name, getattr(self, name))",
+    ),
+    "tldw_chatbook.TTS.audio_cpp_guided_launch": (
+        "setattr(cancellation, _CLEANUP_OWNER_ATTRIBUTE, artifact)",
+        "setattr(error, _CLEANUP_OWNER_ATTRIBUTE, None)",
+        "setattr(error, _CLEANUP_OWNER_ATTRIBUTE, artifact)",
+        "setattr(error, _CLEANUP_OWNER_ATTRIBUTE, artifact)",
+        "setattr(error, _CLEANUP_OWNER_ATTRIBUTE, artifact)",
+    ),
+    "tldw_chatbook.TTS.backends.chatterbox": (
+        "setattr(self, key, value)",
+        "setattr(self, key, value)",
+    ),
+    "tldw_chatbook.TTS.backends.higgs": ("self._higgs_serve_engine.__init__",),
+    "tldw_chatbook.TTS.profile_errors": ("setattr(self, attribute, -1)",),
+    "tldw_chatbook.TTS.profile_schema": ("ProfileRepositoryError.__init__",),
+    "tldw_chatbook.Terminal.screen_model": (
+        "setattr(_AlternateScreenAdapter, event, make_forwarder(event))",
+    ),
+    "tldw_chatbook.Third_Party.textual_fspicker.parts.progressive_directory_navigation": (
+        "Option.__init__",
+    ),
+    "tldw_chatbook.UI.CCP_Modules.ccp_enhanced_handlers": (
+        "setattr(handler_class, marker, True)",
+    ),
+    "tldw_chatbook.UI.Console_Modules.hands_free": (
+        "delattr(store, name)",
+        "setattr(store, name, original)",
+        "setattr(store, name, wrapper)",
+    ),
+    "tldw_chatbook.UI.Console_Modules.pricing_display": (
+        "DisplayPricingCatalog.__init__",
+    ),
+    "tldw_chatbook.UI.Console_Modules.reaction_preview": (
+        "setattr(app, _APP_COORDINATOR_ATTR, coordinator)",
+    ),
+    "tldw_chatbook.UI.Console_Modules.send_acknowledgement": (
+        "setattr(screen, ACK_ATTRIBUTE, ack)",
+        "setattr(screen, FLIGHT_ATTRIBUTE, flight)",
+    ),
+    "tldw_chatbook.UI.Console_Modules.session": (
+        "object.__setattr__(session, field, value)",
+    ),
+    "tldw_chatbook.UI.Console_Modules.transcript": (
+        "setattr(screen, _REFREEZE_PAINTED_ATTRIBUTE, (key, heap_freeze_epoch()))",
+        "setattr(screen, _REFREEZE_PAINTED_ATTRIBUTE, (key, shown[1]))",
+    ),
+    "tldw_chatbook.UI.Dictation_Window_Improved": ("setattr(service, callback, None)",),
+    "tldw_chatbook.UI.Library_Modules.library_collections_controller": (
+        "setattr(LibraryCollectionsController, '_library_collections_' + _lcc_field.name, property(lambda self, _n=_lcc_field.name: getattr(self._collections_state_accessor(), _n), lambda self, value, _n=_lcc_field.name: setattr(self._collections_state_accessor(), _n, value)))",
+        "setattr(self, attribute, event.value)",
+        "setattr(self._collections_state_accessor(), _n, value)",
+    ),
+    "tldw_chatbook.UI.Library_Modules.library_conversation_reader_controller": (
+        "setattr(LibraryConversationReaderController, _rc_prefix + _rc_field.name, property(lambda self, _n=_rc_field.name: getattr(self._conversations_state_accessor(), _n), lambda self, value, _n=_rc_field.name: setattr(self._conversations_state_accessor(), _n, value)))",
+        "setattr(self._conversations_state_accessor(), _n, value)",
+    ),
+    "tldw_chatbook.UI.Library_Modules.library_conversation_recovery": (
+        "setattr(state, metadata_name, {**getattr(state, metadata_name), 'archived': archived, 'version': changed[identity]})",
+    ),
+    "tldw_chatbook.UI.Library_Modules.library_conversations_controller": (
+        "setattr(LibraryConversationsController, _cc_prefix + _cc_field.name, property(lambda self, _n=_cc_field.name: getattr(self._conversations_state_accessor(), _n), lambda self, value, _n=_cc_field.name: setattr(self._conversations_state_accessor(), _n, value)))",
+        "setattr(self._conversations_state_accessor(), _n, value)",
+    ),
+    "tldw_chatbook.UI.Library_Modules.library_export_controller": (
+        "setattr(LibraryExportController, '_library_export_' + _lec_field.name, property(lambda self, _n=_lec_field.name: getattr(self._export_state_accessor(), _n), lambda self, value, _n=_lec_field.name: setattr(self._export_state_accessor(), _n, value)))",
+        "setattr(self._export_state_accessor(), _n, value)",
+    ),
+    "tldw_chatbook.UI.Library_Modules.library_file_export": (
+        "setattr(app, _LAST_EXPORT_DIRECTORY_ATTR, str(destination.parent))",
+    ),
+    "tldw_chatbook.UI.Library_Modules.library_ingest_controller": (
+        "setattr(LibraryIngestController, '_library_ingest_' + _lic_field.name, property(lambda self, _n=_lic_field.name: getattr(self._ingest_state_accessor(), _n), lambda self, value, _n=_lic_field.name: setattr(self._ingest_state_accessor(), _n, value)))",
+        "setattr(self._ingest_state_accessor(), _n, value)",
+    ),
+    "tldw_chatbook.UI.Library_Modules.library_inspection_admission": (
+        "delattr(owner, name)",
+        "setattr(owner, name, value)",
+    ),
+    "tldw_chatbook.UI.Library_Modules.library_media_controller": (
+        "setattr(LibraryMediaController, media_state_shim_attr(_lmc_field.name), property(lambda self, _n=_lmc_field.name: getattr(self._media_state_accessor(), _n), lambda self, value, _n=_lmc_field.name: setattr(self._media_state_accessor(), _n, value)))",
+        "setattr(self._media_state_accessor(), _n, value)",
+    ),
+    "tldw_chatbook.UI.Library_Modules.library_notes_controller": (
+        "setattr(LibraryNotesController, notes_state_shim_attr(_lnc_field.name), property(lambda self, _n=_lnc_field.name: getattr(self._notes_state_accessor(), _n), lambda self, value, _n=_lnc_field.name: setattr(self._notes_state_accessor(), _n, value)))",
+        "setattr(self._notes_state_accessor(), _n, value)",
+    ),
+    "tldw_chatbook.UI.Library_Modules.library_prompts_controller": (
+        "setattr(LibraryPromptsController, prompt_state_shim_attr(_lpc_field.name), property(lambda self, _n=_lpc_field.name: getattr(self._prompts_state_accessor(), _n), lambda self, value, _n=_lpc_field.name: setattr(self._prompts_state_accessor(), _n, value)))",
+        "setattr(self._prompts_state_accessor(), _n, value)",
+    ),
+    "tldw_chatbook.UI.Library_Modules.library_rag_search_controller": (
+        "setattr(LibraryRagSearchController, _rsc_prefix + _rsc_field.name, property(lambda self, _n=_rsc_field.name: getattr(self._rag_search_state_accessor(), _n), lambda self, value, _n=_rsc_field.name: setattr(self._rag_search_state_accessor(), _n, value)))",
+        "setattr(self._rag_search_state_accessor(), _n, value)",
+    ),
+    "tldw_chatbook.UI.Library_Modules.library_skills_controller": (
+        "setattr(LibrarySkillsController, skill_state_shim_attr(_lsc_field.name), property(lambda self, _n=_lsc_field.name: getattr(self._skills_state_accessor(), _n), lambda self, value, _n=_lsc_field.name: setattr(self._skills_state_accessor(), _n, value)))",
+        "setattr(self._skills_state_accessor(), _n, value)",
+    ),
+    "tldw_chatbook.UI.Library_Modules.prompt_collection_manager_modal": (
+        "setattr(self, attribute, control.value)",
+    ),
+    "tldw_chatbook.UI.Navigation.conversation_settings_navigation": (
+        "object.__setattr__(self, name, getattr(validated, name))",
+        "object.__setattr__(self, name, getattr(validated, name))",
+    ),
+    "tldw_chatbook.UI.Navigation.main_navigation": (
+        "setattr(app, CONSOLE_ATTENTION_ATTR, int(pending))",
+    ),
+    "tldw_chatbook.UI.Research_Workspace_Modules.quick_notes_section": (
+        "setattr(self, attribute, False)",
+        "setattr(self, attribute, not unavailable)",
+    ),
+    "tldw_chatbook.UI.Screens.chat_screen": (
+        "delattr(child, CONSOLE_RAIL_PRIOR_DISPLAY)",
+        "setattr(app, self._CONSOLE_PENDING_STASH_ATTR, stash)",
+        "setattr(app, self._CONSOLE_PENDING_STASH_ATTR, {})",
+        "setattr(child, CONSOLE_RAIL_PRIOR_DISPLAY, bool(child.display))",
+        "setattr(self._owner(instance), self._state_name, value)",
+    ),
+    "tldw_chatbook.UI.Screens.library_screen": (
+        "setattr(app, _INGEST_OPTIONS_CACHE_ATTR, (identity, payload))",
+        "setattr(form, name, value)",
+        "setattr(self, attr, None)",
+        "setattr(self._export_state, field, int(value) if usable else None)",
+        "setattr(target, tail, value)",
+    ),
+    "tldw_chatbook.UI.Screens.personas_screen": (
+        "setattr(self.conversations, attribute, value)",
+    ),
+    "tldw_chatbook.UI.Screens.settings_speech_tts": (
+        "setattr(owner, attribute, store)",
+    ),
+    "tldw_chatbook.UI.Screens.study_screen": ("setattr(controller, attribute, value)",),
+    "tldw_chatbook.UI.Screens.watchlists_collections_screen": (
+        "setattr(pane, attribute, value)",
+        "setattr(pane, name, value)",
+        "setattr(self.query_one(selector, pane_type), attribute, None)",
+    ),
+    "tldw_chatbook.UI.Wizards.first_run_provider_detection": (
+        "delattr(self, attribute)",
+        "delattr(self, attribute)",
+    ),
+    "tldw_chatbook.UI.Wizards.first_run_provider_step": (
+        "delattr(self, attribute)",
+        "delattr(self, attribute)",
+    ),
+    "tldw_chatbook.UI.Wizards.first_run_setup_widgets": (
+        "setattr(cls, hook_name, _make(hook))",
+    ),
+    "tldw_chatbook.UI.Wizards.first_run_step_guard": (
+        "setattr(cls, name, _contained_action(member))",
+        "setattr(container, _FAILED_PICK_ATTR, '')",
+        "setattr(container, _FAILED_PICK_ATTR, provider_key)",
+        "setattr(container, _FENCED_FOCUS_ATTR, None)",
+        "setattr(container, _FENCED_FOCUS_ATTR, focused)",
+        "setattr(container, _SHOWN_ATTR, '')",
+        "setattr(container, _SHOWN_ATTR, shown)",
+        "setattr(owner, _REPORTED_ATTR, reported)",
+        "setattr(wrapper, _CONTAINED_ACTION_ATTR, True)",
+    ),
+    "tldw_chatbook.Utils.textual_css_fastpath": (
+        "setattr(apply, _MARKER, True)",
+        "setattr(stylesheet, _CACHE_ATTR, (rules_map, index, requirements, candidate_cache))",
+    ),
+    "tldw_chatbook.Utils.windows_files": (
+        "setattr(self, name, member.__get__(self, type(self)))",
+    ),
+    "tldw_chatbook.Widgets.Console.console_composer_bar": (
+        "setattr(widget.styles, 'width' if prefix == 'w-' else 'height', None)",
+    ),
+    "tldw_chatbook.Widgets.Console.console_inspector_section": (
+        "setattr(widget, CONSOLE_RAIL_PRIOR_DISPLAY, bool(visible))",
+    ),
+    "tldw_chatbook.Widgets.Console.console_run_inspector": (
+        "delattr(child, CONSOLE_RAIL_PRIOR_DISPLAY)",
+    ),
+    "tldw_chatbook.Widgets.Console.console_session_surface": (
+        "setattr(message, _CLICK_RECORD_ATTRIBUTE, record)",
+    ),
+    "tldw_chatbook.Widgets.Console.console_settings_modal": (
+        "object.__setattr__(self, name, snapshot_unsaved_baseline(getattr(self, name)))",
+    ),
+    "tldw_chatbook.Widgets.NewIngest.ProcessingDashboard": (
+        "super().__setattr__(name, value)",
+    ),
+    "tldw_chatbook.Widgets.NewIngest.SmartFileDropZone": (
+        "super().__setattr__(name, value)",
+    ),
+    "tldw_chatbook.Widgets.Persona_Widgets.persona_profile_editor_widget": (
+        "setattr(self.query_one(f'#personas-editor-{name}', widget_type), attribute, value)",
+    ),
+    "tldw_chatbook.Widgets.Persona_Widgets.personas_character_editor_widget": (
+        "setattr(self.query_one(f'#personas-char-editor-{name}', widget_type), attribute, value)",
+    ),
+    "tldw_chatbook.Widgets.Prompts.prompt_block_editor_state": (
+        "object.__setattr__(transient, field_name, value)",
+    ),
+    "tldw_chatbook.Widgets.Tamagotchi.base_tamagotchi": (
+        "setattr(self, stat, new_value)",
+    ),
+    "tldw_chatbook.Widgets.compact_model_bar": (
+        "_CompactSetup.__init__",
+        "_CompactSetup.__init__",
+    ),
+    "tldw_chatbook.Widgets.enhanced_file_picker": ("Option.__init__",),
+    "tldw_chatbook.Widgets.quit_while_working": (
+        "setattr(screen, _REFUSED_ACTIVITY_ATTR, activity)",
+    ),
+    "tldw_chatbook.Workspaces.models": (
+        "object.__setattr__(self, field_name, _required_text(getattr(self, field_name), field_name))",
+    ),
+    "tldw_chatbook.app_collections_wiring": (
+        "delattr(self._resolve(), name)",
+        "setattr(self._resolve(), name, value)",
+    ),
+    "tldw_chatbook.config": (
+        "close_error.__init__",
+        "close_error.__init__",
+        "native.__init__",
+        "windows_files._AdmissionMetadataHandle.__init__",
+        "windows_files._AdmissionMetadataHandle.__init__",
+    ),
+    "tldw_chatbook.css.Themes.themes": (
+        "setattr(theme, _PINNED_ATTR, frozenset(pinned))",
+        "setattr(theme, _PINNED_ATTR, frozenset(pinned))",
+    ),
+    "tldw_chatbook.runtime_policy.server_parity_models": ("dict.__init__",),
+}
+
+
+def _zero_arg_super_init(statement: ast.stmt) -> bool:
+    call = statement.value if isinstance(statement, ast.Expr) else None
+    return (
+        isinstance(call, ast.Call)
+        and isinstance(call.func, ast.Attribute)
+        and call.func.attr == "__init__"
+        and isinstance(call.func.value, ast.Call)
+        and isinstance(call.func.value.func, ast.Name)
+        and call.func.value.func.id == "super"
+        and not call.func.value.args
+        and not call.func.value.keywords
+    )
+
+
+def _guarded_spec_bindings(module: ast.Module, store: str, *, own: bool) -> set[int]:
+    """``self.spec`` bindings that no ``store`` instance can reach.
+
+    In the store's own module, its ``__init__`` (bound once from its ``spec``
+    parameter, checked by the caller). Anywhere else (production: the Console
+    video and generation cards), an ``__init__`` whose first statement is a
+    zero-argument ``super().__init__(...)``: that raises ``TypeError`` for a
+    receiver that is not an instance of the class, and the store has no base
+    classes and cannot be named as one, so even ``Card.__init__(store, other)``
+    stops before the binding. ``self`` must not be rebound, nor ``super`` in
+    the module.
+    """
+    super_rebound = any(
+        (
+            isinstance(node, ast.Name)
+            and node.id == "super"
+            and not isinstance(node.ctx, ast.Load)
+        )
+        or (
+            isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef))
+            and node.name == "super"
+        )
+        or (isinstance(node, ast.alias) and (node.asname or node.name) == "super")
+        for node in ast.walk(module)
+    )
+    allowed: set[int] = set()
+    for owner in ast.walk(module):
+        if not isinstance(owner, ast.ClassDef):
+            continue
+        for method in owner.body:
+            if not (
+                isinstance(method, (ast.FunctionDef, ast.AsyncFunctionDef))
+                and method.name == "__init__"
+                and not method.decorator_list
+                and method.args.args
+                and method.args.args[0].arg == "self"
+            ):
+                continue
+            nodes = _function_body_nodes(method)
+            body = [
+                statement
+                for index, statement in enumerate(method.body)
+                if not (
+                    index == 0
+                    and isinstance(statement, ast.Expr)
+                    and _literal_string_value(statement.value) is not None
+                )
+            ]
+            if any(
+                isinstance(node, ast.Name)
+                and node.id == "self"
+                and not isinstance(node.ctx, ast.Load)
+                for node in nodes
+            ) or not (
+                (own and owner.name == store)
+                or (not super_rebound and body and _zero_arg_super_init(body[0]))
+            ):
+                continue
+            allowed.update(
+                id(node)
+                for node in nodes
+                if isinstance(node, ast.Attribute)
+                and node.attr == "spec"
+                and isinstance(node.ctx, ast.Store)
+                and isinstance(node.value, ast.Name)
+                and node.value.id == "self"
+            )
+    return allowed
+
+
+def _reflective_name(call: ast.Call) -> ast.expr | None:
+    """The attribute-name argument of a ``setattr``-family call."""
+    if call.keywords or any(isinstance(arg, ast.Starred) for arg in call.args):
+        return None
+    name = _call_name(call) or ""
+    # setattr(obj, name, value) / delattr(obj, name) and the unbound
+    # Class.__setattr__(obj, name, value) / Class.__delattr__(obj, name) name
+    # second; the bound obj.__setattr__(name, value) / obj.__delattr__(name)
+    # name first.
+    unbound = len(call.args) == (3 if "set" in name else 2)
+    index = 1 if name in {"setattr", "delattr"} or unbound else 0
+    return call.args[index] if len(call.args) > index else None
+
+
+def _is_namespace(node: ast.AST) -> bool:
+    return (isinstance(node, ast.Attribute) and node.attr == "__dict__") or (
+        isinstance(node, ast.Call) and _call_name(node) == "vars"
+    )
+
+
+def _namespace_keys(call: ast.Call) -> list[str | None]:
+    """Keys a ``__dict__``/``vars()`` mutator call writes; ``None`` if unknown."""
+    method = call.func.attr if isinstance(call.func, ast.Attribute) else ""
+    if method == "update":
+        keys: list[str | None] = [keyword.arg for keyword in call.keywords]
+        for argument in call.args:
+            if isinstance(argument, ast.Dict):
+                keys.extend(
+                    None if key is None else _literal_string_value(key)
+                    for key in argument.keys
+                )
+            else:
+                keys.append(None)
+        return keys
+    if method in {"setdefault", "pop", "__setitem__", "__delitem__"} and call.args:
+        return [_literal_string_value(call.args[0])]
+    return [None]  # clear(), popitem(), |=: every key, spec among them
 
 
 def _store_constructions(
-    module: ast.Module, store: str
+    module: ast.Module, store: str, name: str, *, own: bool
 ) -> tuple[tuple[ast.Call, ...], frozenset[str]]:
     """Every direct ``store(...)`` call in ``module``; any other use fails closed.
 
     The same walk returns every attribute name ``module`` writes or deletes
-    through ``setattr``/``__setattr__`` (and the ``del`` forms), and fails on a
-    ``.spec`` write whose receiver is not a method's own ``self``: either can
-    swap a built store's spec, or force a field of its frozen spec, without
-    touching a construction. Memoized per module object: each keyword-store
-    review re-reads the whole production tree, and one walk of it costs seconds.
+    by literal name -- through ``setattr``/``__setattr__`` (and the ``del``
+    forms) or an instance namespace (``x.__dict__[...]``, ``vars(x)[...]`` and
+    their mutators) -- for the caller to check against the reviewed fields.
+    It fails on a ``.spec`` write outside ``_guarded_spec_bindings``, and on
+    any site that could rebind ``spec`` without naming it (a non-literal name
+    or key, a ``__dict__``/``__class__`` assignment, an explicit ``.__init__``
+    other than ``super().__init__``) unless it is pinned for ``name`` in
+    ``_REVIEWED_STORE_REACH_SITES``. Memoized per module object: each
+    keyword-store review re-reads the whole production tree, and one walk of
+    it costs seconds.
+
+    Limits -- this is a static census of the plausible routes, not a sandbox.
+    It does not follow aliases (``d = vars(store); d["spec"] = x``,
+    ``f = setattr``, ``getattr(store, "__init__")``), reads of a class's own
+    namespace (``vars(type(store))["__init__"]``), ``exec``/``eval``, or
+    state restored without calling the store (``pickle``, ``copy`` with a
+    custom ``__reduce__``). A pinned row is not proof its site cannot reach a
+    store.
     """
-    cached = _STORE_CONSTRUCTIONS.get((id(module), store))
+    key = (id(module), store, name, own)
+    cached = _STORE_CONSTRUCTIONS.get(key)
     if cached is not None and cached[0] is module:
         return cached[1], cached[2]
     nodes = list(ast.walk(module))
@@ -2671,16 +3161,64 @@ def _store_constructions(
         and isinstance(node.ctx, (ast.Store, ast.Del))
     ]
     if spec_writes:
-        own = _own_self_spec_writes(module)
-        assert all(id(node) in own for node in spec_writes), (
-            ".spec was written outside its own class's methods"
+        guarded = _guarded_spec_bindings(module, store, own=own)
+        assert all(id(node) in guarded for node in spec_writes), (
+            ".spec was written outside its own class's __init__, or in an "
+            "__init__ that does not open with a zero-argument super().__init__()"
         )
-    reflected = frozenset(
-        name
+    reflected = {
+        attribute
         for node in nodes
         if isinstance(node, ast.Call) and _call_name(node) in _REFLECTIVE_WRITERS
         for argument in node.args[:2]
-        if (name := _literal_string_value(argument)) is not None
+        if (attribute := _literal_string_value(argument)) is not None
+    }
+    unreviewed: list[str] = []
+    for node in nodes:
+        if isinstance(node, ast.Call) and _call_name(node) in _REFLECTIVE_WRITERS:
+            argument = _reflective_name(node)
+            if argument is None or _literal_string_value(argument) is None:
+                unreviewed.append(ast.unparse(node))
+        keys: list[str | None] = []
+        if (
+            isinstance(node, ast.Subscript)
+            and isinstance(node.ctx, (ast.Store, ast.Del))
+            and _is_namespace(node.value)
+        ):
+            keys = [_literal_string_value(node.slice)]
+        elif (
+            isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Attribute)
+            and node.func.attr in _NAMESPACE_WRITERS
+            and _is_namespace(node.func.value)
+        ):
+            keys = _namespace_keys(node)
+        if None in keys:
+            unreviewed.append(ast.unparse(node))
+        reflected.update(key for key in keys if key is not None)
+        if (
+            isinstance(node, ast.Attribute)
+            and node.attr in {"__dict__", "__class__"}
+            and not isinstance(node.ctx, ast.Load)
+        ) or (
+            isinstance(node, ast.Attribute)
+            and node.attr == "__init__"
+            and not (
+                isinstance(node.value, ast.Call)
+                and isinstance(node.value.func, ast.Name)
+                and node.value.func.id == "super"
+                and not node.value.args
+                and not node.value.keywords
+            )
+        ):
+            unreviewed.append(ast.unparse(node))
+    pinned = Counter(_REVIEWED_STORE_REACH_SITES.get(name, ()))
+    found = Counter(unreviewed)
+    assert found == pinned, (
+        f"{name or '<store module>'}: unreviewed site(s) could rebind "
+        f"{store}.spec without naming it; review, then pin in "
+        f"_REVIEWED_STORE_REACH_SITES\nnew={sorted((found - pinned).elements())}"
+        f"\nstale={sorted((pinned - found).elements())}"
     )
     for node in nodes:
         referenced = (
@@ -2704,8 +3242,9 @@ def _store_constructions(
             and len(node.args) >= 2
             and _literal_string_value(node.args[1]) == store
         ), f"{store} was reflected through getattr()"
-    _STORE_CONSTRUCTIONS[(id(module), store)] = (module, calls, reflected)
-    return calls, reflected
+    frozen = frozenset(reflected)
+    _STORE_CONSTRUCTIONS[key] = (module, calls, frozen)
+    return calls, frozen
 
 
 def _derive_spec_field_targets(
@@ -2753,6 +3292,19 @@ def _derive_spec_field_targets(
         and node.attr == "spec"
         and isinstance(node.ctx, (ast.Store, ast.Del))
     ]
+    store_class = next(
+        (
+            node
+            for node in tree.body
+            if isinstance(node, ast.ClassDef) and node.name == evidence.store
+        ),
+        None,
+    )
+    # A guarded ``super().__init__()`` elsewhere relies on this: an instance
+    # of a base-less store is never an instance of another class.
+    assert store_class is not None and not (
+        store_class.bases or store_class.keywords
+    ), f"{evidence.store} must have no base classes"
     init = _evidence_function(tree, f"{evidence.store}.__init__")
     assignment = next(
         (
@@ -2777,7 +3329,9 @@ def _derive_spec_field_targets(
     }
     reviewed = {"spec", *evidence.fields}
     for module_name, module in sorted(unique.values(), key=lambda item: item[0]):
-        calls, reflected = _store_constructions(module, evidence.store)
+        calls, reflected = _store_constructions(
+            module, evidence.store, module_name, own=module is tree
+        )
         assert not reflected & reviewed, (
             f"{evidence.store}.spec or a reviewed {evidence.spec} field is "
             "written reflectively"
@@ -5166,6 +5720,12 @@ def test_spec_field_evidence_rejects_unproven_constructions(
             _SPEC_STORE_SOURCE.replace("link_table}", "keywords_table}"),
             "spec fields changed",
         ),
+        (
+            _SPEC_STORE_SOURCE.replace(
+                "class KeywordStore:", "class KeywordStore(Card):"
+            ),
+            "no base classes",
+        ),
     ],
 )
 def test_spec_field_evidence_rejects_a_rebound_or_unreviewed_field(
@@ -5192,6 +5752,72 @@ def test_spec_field_evidence_rejects_a_rebound_or_unreviewed_field(
         ('setattr(store, "spec", other)', "reflectively"),
         ('store.__setattr__("spec", other)', "reflectively"),
         ('delattr(store, "spec")', "reflectively"),
+        # Re-review 2026-11-03: each of these was accepted while the
+        # derivation still returned {"Links"}.
+        (
+            (
+                "class Card:\n"
+                "    def rebind(self, other):\n"
+                "        self.spec = other\n"
+                "Card.rebind(store, other)"
+            ),
+            "spec was written",
+        ),
+        (
+            (
+                "class Card:\n"
+                "    def __init__(self, spec):\n"
+                "        self.spec = spec\n"
+                "Card.__init__(store, other)"
+            ),
+            "spec was written",
+        ),
+        (
+            (
+                "class Card:\n"
+                "    def __init__(self, spec):\n"
+                "        self.spec = spec\n"
+                "        super().__init__()"
+            ),
+            "spec was written",
+        ),
+        (
+            (
+                "class Card:\n"
+                "    def __init__(self, spec, store):\n"
+                "        super().__init__()\n"
+                "        self = store\n"
+                "        self.spec = spec"
+            ),
+            "spec was written",
+        ),
+        (
+            (
+                "def super():\n"
+                "    return object()\n"
+                "class Card:\n"
+                "    def __init__(self, spec):\n"
+                "        super().__init__()\n"
+                "        self.spec = spec"
+            ),
+            "spec was written",
+        ),
+        ('store.__dict__["spec"] = other', "reflectively"),
+        ('vars(store)["spec"] = other', "reflectively"),
+        ('del vars(store)["spec"]', "reflectively"),
+        ('SPEC.__dict__["link_table"] = "messages"', "reflectively"),
+        ("store.__dict__.update(spec=other)", "reflectively"),
+        ('vars(store).setdefault("spec", other)', "reflectively"),
+        ("setattr(store, name, other)", "unreviewed"),
+        ("delattr(store, name)", "unreviewed"),
+        ("store.__setattr__(name, other)", "unreviewed"),
+        ("object.__setattr__(SPEC, name, value)", "unreviewed"),
+        ("vars(store)[name] = other", "unreviewed"),
+        ("vars(store).update(mapping)", "unreviewed"),
+        ("store.__dict__.clear()", "unreviewed"),
+        ("store.__dict__ = mapping", "unreviewed"),
+        ("store.__class__ = Card", "unreviewed"),
+        ("store.__init__(db, other)", "unreviewed"),
     ],
 )
 def test_spec_field_evidence_rejects_a_spec_rewritten_outside_its_store(
@@ -5210,14 +5836,23 @@ def test_spec_field_evidence_rejects_a_spec_rewritten_outside_its_store(
 
 
 def test_spec_field_evidence_allows_another_class_own_spec_attribute() -> None:
-    """Another class's ``self.spec`` and unrelated reflective writes are not
-    the store's spec (production: the Console video and generation cards)."""
+    """Another class's ``self.spec`` and unrelated literal writes are not the
+    store's spec (production: the Console video and generation cards). Its
+    ``__init__`` opens with a zero-argument ``super().__init__()``, which
+    raises ``TypeError`` for any receiver that is not a ``Card``, so even
+    ``Card.__init__(store, other)`` never reaches the binding."""
     hosts = _spec_hosts(
         'store = KeywordStore(db, KeywordStoreSpec(link_table="Links"))\n'
         "class Card:\n"
         "    def __init__(self, spec):\n"
+        '        """A card."""\n'
+        "        super().__init__()\n"
         "        self.spec = spec\n"
-        'setattr(widget, "label", "x")'
+        'setattr(widget, "label", "x")\n'
+        'vars(widget)["label"] = "x"\n'
+        'widget.__dict__.pop("label", None)\n'
+        'vars(module).update({"LABEL": "x"})\n'
+        "super().__init__()"
     )
 
     derived = _derive_target_evidence(
@@ -5225,6 +5860,31 @@ def test_spec_field_evidence_allows_another_class_own_spec_attribute() -> None:
     )
 
     assert derived.targets == {"Links"}
+
+
+def test_spec_field_evidence_accepts_only_exactly_pinned_reach_sites(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A reviewed non-literal site passes once pinned for its module; a pin
+    whose site is gone fails, so the inventory cannot outlive its code."""
+    host = (
+        'store = KeywordStore(db, KeywordStoreSpec(link_table="Links"))\n'
+        "setattr(widget, name, value)"
+    )
+    site = ("setattr(widget, name, value)",)
+
+    def derive() -> _DerivedTargetEvidence:
+        return _derive_target_evidence(
+            ast.parse(_SPEC_STORE_SOURCE),
+            _SPEC_EVIDENCE,
+            imported_modules=_spec_hosts(host),
+        )
+
+    monkeypatch.setitem(_REVIEWED_STORE_REACH_SITES, "fixture.host0", site)
+    assert derive().targets == {"Links"}
+    monkeypatch.setitem(_REVIEWED_STORE_REACH_SITES, "fixture.host0", site * 2)
+    with pytest.raises(AssertionError, match="stale"):
+        derive()
 
 
 @pytest.mark.parametrize(
