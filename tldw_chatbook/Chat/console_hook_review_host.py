@@ -14,10 +14,6 @@ from typing import TYPE_CHECKING, Any, Literal
 from loguru import logger
 
 from tldw_chatbook.Chat.console_chat_models import CONSOLE_PENDING_HOOK_REVIEW_KIND
-from tldw_chatbook.Chat.console_hook_review import (
-    ConsoleHookReviewProjection,
-    HookReviewResult,
-)
 
 if TYPE_CHECKING:
     from tldw_chatbook.Agents.hook_permissions import (
@@ -27,6 +23,16 @@ if TYPE_CHECKING:
     from tldw_chatbook.Chat.console_chat_controller import (
         ConsolePendingDecisionProjection,
     )
+
+    from .console_hook_review import ConsoleHookReviewProjection, HookReviewResult
+
+
+def __getattr__(name: str) -> Any:
+    if name in {"HookReviewResult", "ConsoleHookReviewProjection"}:
+        from . import console_hook_review
+
+        return getattr(console_hook_review, name)
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
 
 @dataclass(slots=True, eq=False)
@@ -167,6 +173,8 @@ class InitialHookReviewMixin:
                 return False
             state["settled"] = True
             state["revoked"] = True
+            from .console_hook_review import HookReviewResult
+
             state["result"] = HookReviewResult("cancel")
             state["terminal_reason"] = "cancel"
             if state["operation"] is not None:
@@ -303,6 +311,8 @@ class InitialHookReviewMixin:
                         ),
                     )
                     self.decision_view_revision += 1
+                from .console_hook_review import ConsoleHookReviewProjection
+
                 return ConsoleHookReviewProjection(
                     review_id=review_id,
                     session_id=state["session_id"],
@@ -440,6 +450,8 @@ class InitialHookReviewMixin:
                         or snapshot.store_path != state["snapshot"].store_path
                     )
                 ):
+                    from .console_hook_review import HookReviewResult
+
                     terminal = HookReviewResult("cancel")
                 else:
                     if snapshot is not None:
@@ -454,6 +466,8 @@ class InitialHookReviewMixin:
                         and state["store"].active_session_id == state["session_id"]
                         and self._hook_review_head_locked(state)
                     ):
+                        from .console_hook_review import HookReviewResult
+
                         terminal = HookReviewResult("ready", snapshot)
                     changed = True
                 if terminal is not None and not state.get("settled"):
@@ -521,6 +535,8 @@ class InitialHookReviewMixin:
                 if not state.get("settled"):
                     state["settled"] = True
                     state["revoked"] = True
+                    from .console_hook_review import HookReviewResult
+
                     state["result"] = HookReviewResult("cancel")
                     state["terminal_reason"] = "cancel"
                     if state["operation"] is not None:

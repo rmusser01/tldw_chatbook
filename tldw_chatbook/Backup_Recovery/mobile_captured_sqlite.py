@@ -1,9 +1,11 @@
 """Fixed native captured SQLite reads; no semantic plan or import authority."""
 
 import hashlib
+import sqlite3
 import stat
 import zipfile
 from contextlib import ExitStack, contextmanager
+from contextvars import ContextVar
 from uuid import uuid4
 
 from tldw_chatbook.Utils.platform_files import os
@@ -151,6 +153,306 @@ def _borrowed_capture_discovery(session, partition, budget):
     finally:
         # Preserve the original end-of-discovery check, including failure.
         child.sqlite_copies.verify_sources()
+
+
+_row_data_marker = ContextVar("mobile_plan_row_data", default=None)
+
+
+def _row_data(reads, budget=None):
+    """Require agreement before a retained page or clone can be used."""
+    if (
+        type(reads) is not _CapturedSQLite
+        or not reads.active
+        or getattr(_local, "mobile_sqlite_scope", None) is not reads
+        or not any(scope is reads for scope in reads.session._scopes)
+        or "_row_data_owner" not in reads.__dict__
+        or type(reads.resources) is not list
+    ):
+        raise ValueError("mobile_row_data_changed")
+    registration = reads._row_data_owner
+    marker = _row_data_marker.get()
+    registered = None
+    for resource in reads.resources:
+        if type(resource) is _RowData:
+            if registered is not None:
+                raise ValueError("mobile_row_data_changed")
+            registered = resource
+    if registration is None and marker is None and registered is None:
+        return None
+    if (
+        type(registration) is not tuple
+        or len(registration) != 2
+        or marker is not registration
+        or type(registered) is not _RowData
+        or registration[0] is not registered
+        or registered.registration is not registration
+        or registered.origin is not registration[1]
+    ):
+        raise ValueError("mobile_row_data_changed")
+    registered._check(reads, budget)
+    return registered
+
+
+class _RowData:
+    """Native writer's immutable pages; no verdict or read authority."""
+
+    def __init__(self):
+        raise TypeError("mobile_row_data_is_native_issued")
+
+    def _check(self, reads, budget):
+        from tldw_chatbook.DB.private_sqlite import _SQLiteDescriptorOutcome
+
+        from .storage_admission import _CaptureLease, _mobile_admission
+
+        origin = self.origin
+        if type(origin) is not tuple or len(origin) != 18 or origin[0] is not self:
+            raise ValueError("mobile_row_data_changed")
+        binding = origin[3]
+        if (
+            self.closed
+            or reads is not origin[1]
+            or reads.resources is not origin[2]
+            or reads.binding is not binding
+            or reads.versions is not origin[4]
+            or reads.admission is not origin[5]
+            or reads.read_budget is not origin[6]
+            or type(reads.read_budget) is not _TraceReadBudget
+            or reads.read_budget._parent is not origin[7]
+            or budget is not None
+            and budget is not origin[6]
+            or reads._connections is not origin[8]
+            or reads.custody is not origin[9]
+            or reads._source_archive is not origin[10]
+            or reads._canonical_archive is not origin[11]
+            or reads.owner_history is not origin[12]
+            or reads.discovery_bindings is not origin[13]
+            or reads.recovery_anchor is not origin[14]
+            or reads.operation_id is not origin[15]
+            or self.pages is not origin[17]
+            or reads.session is not binding[0]
+            or reads.captured is not binding[1]
+            or reads.journal is not binding[2]
+            or reads.captured.claim is not binding[3]
+            or reads.captured.preview is not binding[4]
+            or reads.captured.source is not binding[5]
+            or reads.captured.canonical is not binding[6]
+            or reads.captured.session is not reads.session
+            or reads.captured.journal is not reads.journal
+            or reads.session._mobile_journal is not reads.journal
+            or not any(scope is reads.captured for scope in reads.session._scopes)
+        ):
+            raise ValueError("mobile_row_data_changed")
+        admission = _mobile_admission(reads.session)
+        if (
+            admission is not origin[5]
+            or admission[2] is not origin[6]
+            or admission[4] is not origin[7]
+            or admission[1] is not origin[12]
+            or admission[3] is not origin[13]
+            or _mobile_pairs.get(origin[6]) is not origin[7]
+            or type(reads.custody) is not _CaptureFileDescriptors
+            or reads.custody.scope is not reads
+            or not any(resource is reads.custody for resource in reads.resources)
+            or any(
+                getattr(resource, "close_failed", False)
+                or getattr(resource, "resource_close_failed", False)
+                for resource in reads.resources
+            )
+            or len(reads._connections) != len(origin[16])
+        ):
+            raise ValueError("mobile_row_data_changed")
+        for key, member, lease, outcome, stream in origin[16]:
+            connection, restrictions, _, _, _ = member
+            if (
+                reads._connections.get(key) is not member
+                or type(lease) is not _CaptureLease
+                or lease.scope is not reads
+                or lease.connection is not connection
+                or lease.resource_closed
+                or not any(resource is lease for resource in reads.resources)
+                or type(outcome) is not _SQLiteDescriptorOutcome
+                or lease.descriptor_outcome is not outcome
+                or outcome.connection is not connection
+                or outcome.connection_pending
+                or outcome.connector_pending
+                or outcome.duplicate_pending
+                or outcome.duplicate is not None
+                and not outcome.duplicate_closed
+                or outcome.connection_close_attempted
+                or outcome.connection_closed
+                or restrictions.capture_scope is not reads
+                or restrictions.capture_stream is not stream
+                or stream.closed
+            ):
+                raise ValueError("mobile_row_data_changed")
+            sqlite3.Connection.in_transaction.__get__(connection)
+            if restrictions.expired():
+                raise ValueError("sqlite_resource_limit")
+        archive_reader._check(reads.cancel)
+
+    def _selectors(self, purpose, family, table, offset, limit):
+        if (
+            type(purpose) is not str
+            or type(family) is not str
+            or type(table) is not str
+            or type(offset) is not int
+            or not 0 <= offset <= 2**31 - 1
+            or type(limit) is not int
+            or not 1 <= limit <= _PAGE_ROWS
+        ):
+            raise ValueError("mobile_sqlite_page_limit")
+        for key, member, _, _, _ in self.origin[16]:
+            if key[0] == purpose and key[1] == family:
+                if table not in member[2]:
+                    raise ValueError("mobile_sqlite_table_invalid")
+                return
+        raise ValueError("mobile_sqlite_member_absent")
+
+    def page(self, purpose, family, table, *, offset, limit):
+        reads, budget = self.origin[1], self.origin[6]
+        if _row_data(reads, budget) is not self:
+            raise ValueError("mobile_row_data_changed")
+        self._selectors(purpose, family, table, offset, limit)
+        budget.container(5)
+        key = purpose, family, table, offset, limit
+        result = self.pages.get(key)
+        if result is None:
+            result = reads.page(purpose, family, table, offset=offset, limit=limit)
+            if _row_data(reads, budget) is not self:
+                raise ValueError("mobile_row_data_changed")
+            budget.value(result[0])
+            budget.value(result[1])
+            budget.container(2)
+            budget.container(2)
+            self.pages[key] = result
+        return result
+
+    def retire(self):
+        # Ambiguous release waits for issuer-local finally; never clear self.pages.
+        if self.closed:
+            return
+        self.closed = True
+        reads = getattr(_local, "mobile_sqlite_scope", None)
+        registration = _row_data_marker.get()
+        if (
+            type(reads) is not _CapturedSQLite
+            or type(reads.session) is not MaintenanceSession
+            or getattr(_local, "maintenance_session", None) is not reads.session
+            or not any(scope is reads for scope in reads.session._scopes)
+            or type(registration) is not tuple
+            or len(registration) != 2
+            or registration[0] is not self
+            or getattr(reads, "_row_data_owner", None) is not registration
+            or self.registration is not registration
+            or self.origin is not registration[1]
+        ):
+            return
+        origin = registration[1]
+        if (
+            type(origin) is tuple
+            and len(origin) == 18
+            and origin[0] is self
+            and origin[1] is reads
+            and origin[2] is reads.resources
+            and type(reads.resources) is list
+            and type(origin[17]) is dict
+            and sum(type(resource) is _RowData for resource in reads.resources) == 1
+            and any(resource is self for resource in reads.resources)
+        ):
+            origin[17].clear()
+
+
+@contextmanager
+def _plan_row_data(reads, budget):
+    """Retain data only while the native writer derives its one pure plan."""
+    from .storage_admission import _CaptureLease, _mobile_admission
+
+    if _row_data(reads, budget) is not None:
+        raise ValueError("mobile_row_data_changed")
+    _check_plan_candidates(reads)
+    admission = _mobile_admission(reads.session)
+    if (
+        type(budget) is not _TraceReadBudget
+        or budget is not admission[2]
+        or budget is not reads.read_budget
+        or admission is not reads.admission
+        or budget._parent is not admission[4]
+        or _mobile_pairs.get(budget) is not admission[4]
+    ):
+        raise ValueError("mobile_row_data_changed")
+    budget.container(4)
+    budget.container()
+    budget.container(len(reads._connections))
+    members = []
+    for key, member in reads._connections.items():
+        lease = None
+        for resource in reads.resources:
+            if type(resource) is _CaptureLease and resource.connection is member[0]:
+                if lease is not None:
+                    raise ValueError("mobile_row_data_changed")
+                lease = resource
+        if lease is None:
+            raise ValueError("mobile_row_data_changed")
+        budget.container(5)
+        members.append(
+            (key, member, lease, lease.descriptor_outcome, member[1].capture_stream)
+        )
+    budget.container(len(members))
+    budget.container(18)
+    budget.container(4)
+    owner = object.__new__(_RowData)
+    owner.closed, owner.pages = False, {}
+    owner.origin = (
+        owner,
+        reads,
+        reads.resources,
+        reads.binding,
+        reads.versions,
+        admission,
+        budget,
+        budget._parent,
+        reads._connections,
+        reads.custody,
+        reads._source_archive,
+        reads._canonical_archive,
+        reads.owner_history,
+        reads.discovery_bindings,
+        reads.recovery_anchor,
+        reads.operation_id,
+        tuple(members),
+        owner.pages,
+    )
+    budget.container(2)
+    registration = owner, owner.origin
+    owner.registration = registration
+    resources, pages = reads.resources, owner.pages
+    token = None
+    try:
+        reads._row_data_owner = registration
+        resources.append(owner)
+        token = _row_data_marker.set(registration)
+        if _row_data(reads, budget) is not owner:
+            raise ValueError("mobile_row_data_changed")
+        yield
+        if _row_data(reads, budget) is not owner:
+            raise ValueError("mobile_row_data_changed")
+        _check_plan_candidates(reads)
+        if _row_data(reads, budget) is not owner:
+            raise ValueError("mobile_row_data_changed")
+    finally:
+        owner.closed = True
+        pages.clear()
+        if getattr(reads, "_row_data_owner", None) is registration:
+            reads._row_data_owner = None
+        index = len(resources) - 1
+        while index >= 0:
+            if resources[index] is owner:
+                del resources[index]
+            index -= 1
+        owner.origin = None
+        owner.registration = None
+        if token is not None and _row_data_marker.get() is registration:
+            _row_data_marker.reset(token)
 
 
 class _CapturedSQLite:
@@ -1144,6 +1446,7 @@ def _sqlite_reads(captured, *, password, cancel):
         captured.canonical,
     )
     scope.active, scope.resources, scope.roots, scope.cancel = True, [], [], cancel
+    scope._row_data_owner = None
     scope._connections = {}
     scope._canonical_archive = None
     scope._source_archive = None

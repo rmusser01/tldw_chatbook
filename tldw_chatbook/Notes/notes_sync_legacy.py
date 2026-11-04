@@ -1450,7 +1450,7 @@ def _persist_imported_notes(
     store, plan, budget, *, note_scope_id, file_notes_roots=(), private_paths=()
 ):
     """Recheck current private ownership after the canonical snapshot has closed."""
-    from tldw_chatbook.Chat.console_trace_read_budget import _TraceReadBudget
+    from tldw_chatbook.Backup_Recovery.models import _TraceReadBudget
 
     if not isinstance(store, NotesDeviceStateStore):
         raise TypeError("store must be a NotesDeviceStateStore")
@@ -1792,7 +1792,7 @@ def build_notes_sync_import_reviewer(
     selected_private_paths = tuple(private_paths)
 
     def review() -> bool:
-        from tldw_chatbook.Chat.console_trace_read_budget import _TraceReadBudget
+        from tldw_chatbook.Backup_Recovery.models import _TraceReadBudget
 
         from .notes_sync_legacy import (
             _core_import_read,

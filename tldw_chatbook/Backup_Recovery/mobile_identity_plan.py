@@ -149,8 +149,17 @@ def _ordered(reads, domain, table):
 
 
 def _rows(reads, purpose, family, table, *, _read_budget=None):
-    from .mobile_captured_sqlite import _runs24_receipts_absent
+    from .mobile_captured_sqlite import _row_data, _runs24_receipts_absent
 
+    owner = _row_data(reads, _read_budget)
+    if owner is not None:
+        if (
+            type(purpose) is not str
+            or type(family) is not str
+            or type(table) is not str
+        ):
+            raise ValueError("mobile_sqlite_page_limit")
+        _read_budget = owner.origin[6]
     if _runs24_receipts_absent(reads, purpose, family, table):
         return ()
     if not any(p == purpose and f == family for p, f, _ in reads.versions):
@@ -159,10 +168,13 @@ def _rows(reads, purpose, family, table, *, _read_budget=None):
         _read_budget.container()
     result, offset = [], 0
     while True:
-        columns, rows = reads.page(purpose, family, table, offset=offset, limit=1000)
+        columns, rows = (reads if owner is None else owner).page(
+            purpose, family, table, offset=offset, limit=1000
+        )
         for row in rows:
             if _read_budget is not None:
-                _read_budget.value(row)
+                if owner is None:
+                    _read_budget.value(row)
                 _read_budget.container(len(columns) * 2)
             result.append(dict(zip(columns, row, strict=True)))
         if len(rows) < 1000:

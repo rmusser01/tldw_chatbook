@@ -5,9 +5,7 @@ import os
 from contextlib import ExitStack, contextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass
-from functools import partial
 from pathlib import Path
-from types import MethodType
 from weakref import WeakSet
 
 from tldw_chatbook.Backup_Recovery import bootstrap
@@ -16,6 +14,9 @@ from tldw_chatbook.Backup_Recovery.activation import (
     activation_permission,
 )
 from tldw_chatbook.Backup_Recovery.admission_runtime import execution_identity
+from tldw_chatbook.Backup_Recovery.participants import (
+    native_scratch_writer as _native_writer,
+)
 from tldw_chatbook.Backup_Recovery.storage_admission import (
     StorageLease,
     acquire_storage,
@@ -31,77 +32,6 @@ def _refuse():
     from .activation import AgentActivationRequired
 
     raise AgentActivationRequired()
-
-
-def _method(instance, name):
-    value = inspect.getattr_static(instance, name, None)
-    return value.__func__ if type(value) is staticmethod else value
-
-
-def _methods_unchanged(instance, record):
-    owner, methods = record
-    if (
-        type(instance) is not owner
-        or inspect.getattr_static(owner, "__getattribute__")
-        is not object.__getattribute__
-    ):
-        return False
-    for name, function, versions, wrapped in methods:
-        if (
-            _method(instance, name) is not function
-            or getattr(function, "__wrapped__", None) is not wrapped
-        ):
-            return False
-        for callback, code, defaults, kwdefaults, items, closure, cells in versions:
-            if (
-                callback.__code__ is not code
-                or callback.__defaults__ is not defaults
-                or callback.__kwdefaults__ is not kwdefaults
-                or len(callback.__kwdefaults__ or {}) != len(items)
-                or any(
-                    (callback.__kwdefaults__ or {}).get(key) is not value
-                    for key, value in items
-                )
-                or callback.__closure__ is not closure
-                or any(cell.cell_contents is not value for cell, value in cells)
-            ):
-                return False
-    return True
-
-
-def _native_writer(writer):
-    from tldw_chatbook.Chat.console_scratch_space import (
-        _SCRATCH_ADMISSION_ORIGINAL,
-        ConsoleScratchSnapshot,
-    )
-
-    from .run_log import _RUN_LOG_SCRATCH_ORIGINAL
-
-    if not _methods_unchanged(writer, _RUN_LOG_SCRATCH_ORIGINAL):
-        return None
-    access = inspect.getattr_static(writer, "_access_scope", None)
-    if (
-        type(access) is not partial
-        or access.keywords
-        or len(access.args) != 1
-        or type(access.func) is not MethodType
-    ):
-        return None
-    manager, snapshot = access.func.__self__, access.args[0]
-    if (
-        not _methods_unchanged(manager, _SCRATCH_ADMISSION_ORIGINAL)
-        or access.func.__func__ is not _SCRATCH_ADMISSION_ORIGINAL[0].lease
-        or type(snapshot) is not ConsoleScratchSnapshot
-    ):
-        return None
-    manager._check_process()
-    with manager._condition:
-        record = manager._matching_record_locked(snapshot)
-        if record is None or record.snapshot is not snapshot:
-            return None
-    if inspect.getattr_static(writer, "_explicit_root", None) != snapshot.root:
-        return None
-    return manager, snapshot
 
 
 @dataclass(eq=False)

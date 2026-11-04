@@ -1,16 +1,89 @@
 """Installed persistence maintenance participants (ADR-126)."""
 
-from contextlib import contextmanager
-from functools import wraps
+import inspect
 import sqlite3
 import threading
 import time
 import weakref
+from contextlib import contextmanager
+from functools import partial, wraps
+from types import MethodType
 from typing import Protocol
 
 from tldw_chatbook import DB as store_registry
 
 from .models import Inventory
+
+
+def _method(instance, name):
+    value = inspect.getattr_static(instance, name, None)
+    return value.__func__ if type(value) is staticmethod else value
+
+
+def _methods_unchanged(instance, record):
+    owner, methods = record
+    if (
+        type(instance) is not owner
+        or inspect.getattr_static(owner, "__getattribute__")
+        is not object.__getattribute__
+    ):
+        return False
+    for name, function, versions, wrapped in methods:
+        if (
+            _method(instance, name) is not function
+            or getattr(function, "__wrapped__", None) is not wrapped
+        ):
+            return False
+        for callback, code, defaults, kwdefaults, items, closure, cells in versions:
+            if (
+                callback.__code__ is not code
+                or callback.__defaults__ is not defaults
+                or callback.__kwdefaults__ is not kwdefaults
+                or len(callback.__kwdefaults__ or {}) != len(items)
+                or any(
+                    (callback.__kwdefaults__ or {}).get(key) is not value
+                    for key, value in items
+                )
+                or callback.__closure__ is not closure
+                or any(cell.cell_contents is not value for cell, value in cells)
+            ):
+                return False
+    return True
+
+
+def native_scratch_writer(writer):
+    """Qualify the exact installed scratch manager and its original run writer."""
+    from tldw_chatbook.Agents.run_log import _RUN_LOG_SCRATCH_ORIGINAL
+    from tldw_chatbook.Chat.console_scratch_space import (
+        _SCRATCH_ADMISSION_ORIGINAL,
+        ConsoleScratchSnapshot,
+    )
+
+    if not _methods_unchanged(writer, _RUN_LOG_SCRATCH_ORIGINAL):
+        return None
+    access = inspect.getattr_static(writer, "_access_scope", None)
+    if (
+        type(access) is not partial
+        or access.keywords
+        or len(access.args) != 1
+        or type(access.func) is not MethodType
+    ):
+        return None
+    manager, snapshot = access.func.__self__, access.args[0]
+    if (
+        not _methods_unchanged(manager, _SCRATCH_ADMISSION_ORIGINAL)
+        or access.func.__func__ is not _SCRATCH_ADMISSION_ORIGINAL[0].lease
+        or type(snapshot) is not ConsoleScratchSnapshot
+    ):
+        return None
+    manager._check_process()
+    with manager._condition:
+        record = manager._matching_record_locked(snapshot)
+        if record is None or record.snapshot is not snapshot:
+            return None
+    if inspect.getattr_static(writer, "_explicit_root", None) != snapshot.root:
+        return None
+    return manager, snapshot
 
 
 class Participant(Protocol):

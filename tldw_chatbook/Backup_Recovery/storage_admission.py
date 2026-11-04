@@ -48,7 +48,7 @@ def _mobile_admission(session):
     if state is None or state[0] is not session._scopes:
         raise bootstrap.RecoveryRequired("mobile_admission_registry_changed")
     if state[4] is not None:
-        from tldw_chatbook.Chat.console_trace_read_budget import _mobile_budget_pair
+        from tldw_chatbook.Backup_Recovery.models import _mobile_budget_pair
 
         if not _mobile_budget_pair(state[4], state[2]):
             raise bootstrap.RecoveryRequired("mobile_budget_pair_changed")
@@ -56,7 +56,7 @@ def _mobile_admission(session):
 
 
 def _attach_mobile_budgets(session, pair):
-    from tldw_chatbook.Chat.console_trace_read_budget import _mobile_budget_pair
+    from tldw_chatbook.Backup_Recovery.models import _mobile_budget_pair
 
     state = _mobile_admission(session)
     if type(pair) is not tuple or len(pair) != 2 or not _mobile_budget_pair(*pair):
@@ -2187,7 +2187,7 @@ def _preview_reads(*, limits=None, byte_budget=None, _read_budget=None):
     ):
         raise bootstrap.RecoveryRequired("nested_preview_scope")
     if _read_budget is not None:
-        from tldw_chatbook.Chat.console_trace_read_budget import _TraceReadBudget
+        from tldw_chatbook.Backup_Recovery.models import _TraceReadBudget
 
         if type(_read_budget) is not _TraceReadBudget:
             raise TypeError("invalid_preview_materialization_budget")
@@ -3813,7 +3813,7 @@ def _recovery_read_budget(scope, supplied):
     native = getattr(scope, "read_budget", None)
     if supplied is None:
         return native
-    from tldw_chatbook.Chat.console_trace_read_budget import _TraceReadBudget
+    from tldw_chatbook.Backup_Recovery.models import _TraceReadBudget
 
     from .mobile_preview_budget import current
 

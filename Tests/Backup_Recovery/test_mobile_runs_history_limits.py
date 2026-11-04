@@ -55,9 +55,9 @@ def test_actual_history_failure_preserves_effect_free_retirement(
     original_frames = mobile_runs_history._frame_runs
     observed = {}
 
-    def integrated(reads, *, _read_budget=None):
+    def integrated(reads, *, _read_budget=None, **options):
         observed["budget"] = _read_budget
-        return original_integrated(reads, _read_budget=_read_budget)
+        return original_integrated(reads, _read_budget=_read_budget, **options)
 
     monkeypatch.setattr(mobile_integrated_plan, "_plan_integrated", integrated)
     with content_reads(

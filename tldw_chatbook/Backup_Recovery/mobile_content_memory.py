@@ -531,7 +531,7 @@ def _memory_rows(builder, originals):
 
     def projected(snapshot, original_id):
         """The native manual-memory checkpoint's fixed virtual row grammar."""
-        from tldw_chatbook.Chat.provider_continuation import (
+        from tldw_chatbook.Provider_Contract.provider_continuation import (
             parse_provider_continuation_json,
         )
 

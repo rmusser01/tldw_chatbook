@@ -176,6 +176,327 @@ def test_production_operation_derives_all_inputs_and_refuses_before_first_effect
                 pytest.fail("same live operation reissued capture lifecycle")
 
 
+def test_real_writer_row_data_prices_once_and_refuses_marker_loss(
+    tmp_path, monkeypatch
+):
+    from functools import partial
+
+    from Tests.Backup_Recovery import mobile_consolidation_fixture
+    from Tests.Backup_Recovery.test_mobile_owning_transactions import _small_native_seed
+    from tldw_chatbook.Backup_Recovery import (
+        mobile_captured_sqlite,
+        mobile_identity_plan,
+        mobile_runs_preflight,
+        mobile_sync_plan,
+    )
+    from tldw_chatbook.Backup_Recovery.limits import _TraceReadLimit
+    from tldw_chatbook.Backup_Recovery.mobile_identity_plan import _rows
+    from tldw_chatbook.Backup_Recovery.models import _TraceReadBudget
+    from tldw_chatbook.Backup_Recovery.storage_admission import (
+        _local,
+        _mobile_admission,
+    )
+
+    monkeypatch.setattr(
+        mobile_consolidation_fixture,
+        "_seed",
+        partial(_small_native_seed, source_case="physical_snapshot"),
+    )
+    native_plan = mobile_runs_preflight._plan_runs
+    native_page = mobile_captured_sqlite._CapturedSQLite.page
+    physical, observed = [], []
+    foreign_pages = {"foreign": "must remain untouched"}
+    foreign_marker = ("foreign registration",)
+
+    def page(self, purpose, family, table, *, offset=0, limit=100):
+        result = native_page(self, purpose, family, table, offset=offset, limit=limit)
+        physical.append((purpose, family, table, offset, limit))
+        return result
+
+    def observe(reads, *, _read_budget):
+        budget = _read_budget
+        admission = _mobile_admission(reads.session)
+        assert budget is reads.read_budget is admission[2]
+        assert budget._parent is admission[4] is None
+        owner = mobile_captured_sqlite._row_data(reads, budget)
+        registration = reads._row_data_owner
+        origin, resources, pages = owner.origin, reads.resources, owner.pages
+        assert registration is owner.registration
+        assert registration is mobile_captured_sqlite._row_data_marker.get()
+        assert registration[0] is owner and registration[1] is origin
+        fee_ids = []
+        native_value = _TraceReadBudget.value
+
+        def value(self, actual, **options):
+            if self is budget:
+                fee_ids.append(id(actual))
+            return native_value(self, actual, **options)
+
+        with monkeypatch.context() as fee:
+            fee.setattr(_TraceReadBudget, "value", value)
+            first = _rows(reads, "legacy", "chat", "console_trace_artifacts")
+            columns, native_rows = pages[
+                "legacy", "chat", "console_trace_artifacts", 0, 1000
+            ]
+            assert first and all(fee_ids.count(id(row)) == 1 for row in native_rows)
+            paid = len(fee_ids)
+            second = _rows(
+                reads, "legacy", "chat", "console_trace_artifacts", _read_budget=budget
+            )
+            assert len(fee_ids) == paid
+            sync_first = _rows(reads, "legacy", "chat", "sync_log", _read_budget=budget)
+            paid = len(fee_ids)
+            sync_second = mobile_sync_plan._sync_rows(reads, budget)
+            assert sync_first and sync_first == sync_second
+            assert len(fee_ids) == paid
+            assert all(
+                left is not right
+                for left, right in zip(sync_first, sync_second, strict=True)
+            )
+            assert all(
+                left[key] is right[key]
+                for left, right in zip(sync_first, sync_second, strict=True)
+                for key in left
+            )
+        assert first == second and first is not second
+        assert all(left is not right for left, right in zip(first, second, strict=True))
+        blob = next(name for name in columns if type(first[0][name]) is bytes)
+        original_blob = native_rows[0][columns.index(blob)]
+        assert first[0][blob] is second[0][blob] is original_blob
+        first[0][blob] = b"caller-local replacement"
+        assert second[0][blob] is original_blob
+        assert (
+            physical.count(("legacy", "chat", "console_trace_artifacts", 0, 1000)) == 1
+        )
+        owner.page("legacy", "chat", "console_trace_artifacts", offset=0, limit=1)
+        assert physical.count(("legacy", "chat", "console_trace_artifacts", 0, 1)) == 1
+        empty = owner.page(
+            "legacy", "chat", "console_trace_artifacts", offset=2**31 - 1, limit=1000
+        )
+        assert empty[1] == ()
+        assert (
+            owner.page(
+                "legacy",
+                "chat",
+                "console_trace_artifacts",
+                offset=2**31 - 1,
+                limit=1000,
+            )
+            is empty
+        )
+
+        absent = []
+        native_absence = mobile_captured_sqlite._runs24_receipts_absent
+
+        def absence(*args):
+            result = native_absence(*args)
+            absent.append(result)
+            return result
+
+        with monkeypatch.context() as receipt:
+            receipt.setattr(mobile_captured_sqlite, "_runs24_receipts_absent", absence)
+            for _ in range(2):
+                assert _rows(reads, "legacy", "runs", "console_command_receipts") == ()
+        assert absent == [True, True]
+        assert ("legacy", "runs", "console_command_receipts", 0, 1000) not in pages
+
+        class Hostile(str):
+            def __eq__(self, other):
+                pytest.fail("selector equality ran before exact type guard")
+
+            def __hash__(self) -> int:
+                raise AssertionError("selector hashing ran before exact type guard")
+
+        for offset, width, purpose in (
+            (False, 1000, "legacy"),
+            (0, 1000.0, "legacy"),
+            (0, 1000, Hostile("legacy")),
+        ):
+            before = budget._remaining, len(physical)
+            with pytest.raises(ValueError, match="^mobile_sqlite_page_limit$"):
+                owner.page(
+                    purpose,
+                    "chat",
+                    "console_trace_artifacts",
+                    offset=offset,
+                    limit=width,
+                )
+            assert (budget._remaining, len(physical)) == before
+
+        def no_lookup(*args, **kwargs):
+            pytest.fail("invalid row-data reached page lookup")
+
+        cases = (
+            "slot",
+            "marker",
+            "resource",
+            "slot-marker",
+            "slot-resource",
+            "marker-resource",
+            "missing-slot",
+            "origin",
+            "resources-origin",
+            "marker-origin",
+            "registration-pair",
+            "copied-owner",
+            "counter",
+            "parent",
+            "tls",
+            "member",
+        )
+        for case in cases:
+            before = budget._remaining, len(physical)
+            token = None
+            removed_at = swapped_at = None
+            with monkeypatch.context() as fault:
+                fault.setattr(mobile_captured_sqlite._RowData, "page", no_lookup)
+                if case in {"slot", "slot-marker", "slot-resource"}:
+                    fault.setattr(reads, "_row_data_owner", None)
+                if case == "missing-slot":
+                    fault.delattr(reads, "_row_data_owner")
+                if case in {"resource", "slot-resource", "marker-resource"}:
+                    removed_at = resources.index(owner)
+                    resources.pop(removed_at)
+                if case in {"origin", "resources-origin", "marker-origin"}:
+                    replacement = list(resources)
+                    altered = origin[:2] + (replacement,) + origin[3:]
+                    fault.setattr(owner, "origin", altered)
+                    if case == "resources-origin":
+                        fault.setattr(reads, "resources", replacement)
+                if case in {
+                    "marker",
+                    "slot-marker",
+                    "marker-resource",
+                    "marker-origin",
+                    "registration-pair",
+                }:
+                    marker = (
+                        (owner, owner.origin)
+                        if case in {"marker-origin", "registration-pair"}
+                        else None
+                    )
+                    token = mobile_captured_sqlite._row_data_marker.set(marker)
+                    if case == "registration-pair":
+                        fault.setattr(reads, "_row_data_owner", marker)
+                if case == "copied-owner":
+                    swapped_at = resources.index(owner)
+                    resources[swapped_at] = copy(owner)
+                if case == "counter":
+                    fault.setattr(reads, "read_budget", copy(budget))
+                if case == "parent":
+                    fault.setattr(budget, "_parent", object())
+                if case == "tls":
+                    fault.setattr(_local, "mobile_sqlite_scope", None)
+                if case == "member":
+                    fault.setitem(
+                        reads._connections,
+                        ("legacy", "chat"),
+                        reads._connections["canonical", "chat"],
+                    )
+                try:
+                    with pytest.raises(ValueError, match="^mobile_row_data_changed$"):
+                        _rows(reads, "legacy", "chat", "console_trace_artifacts")
+                    assert (budget._remaining, len(physical)) == before, case
+                finally:
+                    if token is not None:
+                        mobile_captured_sqlite._row_data_marker.reset(token)
+                    if removed_at is not None:
+                        resources.insert(removed_at, owner)
+                    if swapped_at is not None:
+                        resources[swapped_at] = owner
+
+        plan = native_plan(reads, _read_budget=budget)
+        assert plan.source_rows and plan.blockers == ()
+
+        # Spend the SAME allowance; admit list/key, refuse before a fresh dict.
+        def no_dict(*args, **kwargs):
+            pytest.fail("fresh dict constructed before its native reservation")
+
+        assert len(columns) >= 3
+        key_fee, list_fee = 64 + 32 * 5, 64
+        row_fee = 64 + 32 * (len(columns) * 2)
+        budget.reserve(budget._remaining - (list_fee + key_fee + row_fee - 1))
+        before = len(physical)
+        with monkeypatch.context() as clone:
+            clone.setattr(mobile_identity_plan, "dict", no_dict, raising=False)
+            with pytest.raises(_TraceReadLimit, match="mobile_trace_input_limit"):
+                _rows(reads, "legacy", "chat", "console_trace_artifacts")
+        assert len(physical) == before
+        # A fresh physical page fits the key fee but cannot be retained unpriced.
+        before = len(physical)
+        with pytest.raises(_TraceReadLimit, match="mobile_trace_input_limit"):
+            owner.page("legacy", "chat", "console_trace_artifacts", offset=0, limit=999)
+        assert len(physical) == before + 1
+        assert ("legacy", "chat", "console_trace_artifacts", 0, 999) not in pages
+        budget.reserve(budget._remaining)
+        assert budget._remaining == 0
+        before = len(physical), len(pages)
+        with pytest.raises(_TraceReadLimit, match="mobile_trace_input_limit"):
+            owner.page(
+                "legacy", "chat", "console_trace_artifacts", offset=0, limit=1000
+            )
+        assert (len(physical), len(pages)) == before
+        owner.pages = foreign_pages
+        owner.retire()
+        assert owner.closed and pages == {}
+        assert foreign_pages == {"foreign": "must remain untouched"}
+        assert reads._row_data_owner is registration
+        assert any(resource is owner for resource in resources)
+        assert owner.origin is origin
+        for lose_marker in (False, True):
+            before = budget._remaining, len(physical)
+            token = (
+                mobile_captured_sqlite._row_data_marker.set(None)
+                if lose_marker
+                else None
+            )
+            try:
+                with pytest.raises(ValueError, match="^mobile_row_data_changed$"):
+                    _rows(reads, "legacy", "chat", "console_trace_artifacts")
+                assert (budget._remaining, len(physical)) == before
+            finally:
+                if token is not None:
+                    mobile_captured_sqlite._row_data_marker.reset(token)
+        # Leave these corruptions in place: lexical cleanup must use issuer locals.
+        owner.origin = ()
+        owner.pages = foreign_pages
+        mobile_captured_sqlite._row_data_marker.set(foreign_marker)
+        observed.append((reads, owner, resources, pages, origin[16][0][1][0]))
+        return plan
+
+    monkeypatch.setattr(mobile_captured_sqlite._CapturedSQLite, "page", page)
+    monkeypatch.setattr(mobile_runs_preflight, "_plan_runs", observe)
+    with captured_operation(tmp_path, monkeypatch) as captured:
+        before = _fingerprints(tmp_path / "profile")
+        with captured.journal._locked(exclusive=False) as fd:
+            records = tuple(captured.journal._records(fd))
+        restore = mobile_captured_sqlite._row_data_marker.set(
+            mobile_captured_sqlite._row_data_marker.get()
+        )
+        try:
+            with pytest.raises(ValueError, match="^mobile_row_data_changed$"):
+                captured.consolidate(
+                    password=b"test-private-mobile-rollback", cancel=Event()
+                )
+            assert len(observed) == 1
+            reads, owner, resources, pages, connection = observed[0]
+            assert owner.closed and pages == {} and owner.origin is None
+            assert reads._row_data_owner is None
+            assert not any(resource is owner for resource in resources)
+            assert reads.resources == []
+            owner.retire()
+            assert foreign_pages == {"foreign": "must remain untouched"}
+            with pytest.raises(sqlite3.ProgrammingError, match="closed"):
+                sqlite3.Connection.in_transaction.__get__(connection)
+            assert mobile_captured_sqlite._row_data_marker.get() is foreign_marker
+            assert _fingerprints(tmp_path / "profile") == before
+            with captured.journal._locked(exclusive=False) as fd:
+                assert tuple(captured.journal._records(fd)) == records
+            captured.claim.check()
+        finally:
+            mobile_captured_sqlite._row_data_marker.reset(restore)
+
+
 def test_native_owner_revalidates_capture_before_subsequent_transaction(
     tmp_path, monkeypatch
 ):
@@ -538,3 +859,73 @@ def test_uncertain_source_claim_retirement_child(tmp_path, monkeypatch):
     )
     # Actual process exit is the only retirement of this uncertain native claim.
     os._exit(0)
+
+
+def test_real_writer_reproves_candidate_after_data_hit_before_effects(
+    tmp_path, monkeypatch
+):
+    from functools import partial
+
+    from Tests.Backup_Recovery import mobile_consolidation_fixture
+    from Tests.Backup_Recovery.test_mobile_owning_transactions import _small_native_seed
+    from tldw_chatbook.Backup_Recovery import (
+        mobile_captured_sqlite,
+        mobile_runs_preflight,
+    )
+    from tldw_chatbook.Backup_Recovery.storage_admission import _mobile_admission
+
+    monkeypatch.setattr(
+        mobile_consolidation_fixture,
+        "_seed",
+        partial(_small_native_seed, source_case="physical_snapshot"),
+    )
+    native_plan, native_page = (
+        mobile_runs_preflight._plan_runs,
+        mobile_captured_sqlite._CapturedSQLite.page,
+    )
+    physical, observed = [], []
+
+    def page(self, purpose, family, table, *, offset=0, limit=100):
+        result = native_page(self, purpose, family, table, offset=offset, limit=limit)
+        physical.append((purpose, family, table, offset, limit))
+        return result
+
+    def observe(reads, *, _read_budget):
+        admission = _mobile_admission(reads.session)
+        assert _read_budget is reads.read_budget is admission[2]
+        plan = native_plan(reads, _read_budget=_read_budget)
+        owner = mobile_captured_sqlite._row_data(reads, _read_budget)
+        key = ("legacy", "chat", "messages", 0, 1000)
+        assert key in owner.pages
+        before = len(physical)
+        assert owner.page(*key[:3], offset=key[3], limit=key[4]) is owner.pages[key]
+        assert len(physical) == before
+        candidate = reads._connections["legacy", "chat"][3]
+        with candidate.open("r+b") as stream:
+            first = stream.read(1)
+            assert len(first) == 1
+            stream.seek(0)
+            stream.write(bytes([first[0] ^ 1]))
+            stream.flush()
+        observed.append((reads, owner))
+        return plan
+
+    monkeypatch.setattr(mobile_captured_sqlite._CapturedSQLite, "page", page)
+    monkeypatch.setattr(mobile_runs_preflight, "_plan_runs", observe)
+    with captured_operation(tmp_path, monkeypatch) as captured:
+        before = _fingerprints(tmp_path / "profile")
+        with captured.journal._locked(exclusive=False) as fd:
+            records = tuple(captured.journal._records(fd))
+        with pytest.raises(ValueError, match="^mobile_sqlite_candidate_changed$"):
+            captured.consolidate(
+                password=b"test-private-mobile-rollback", cancel=Event()
+            )
+        assert len(observed) == 1
+        reads, owner = observed[0]
+        assert owner.closed and owner.pages == {} and owner.origin is None
+        assert reads.resources == [] and reads._row_data_owner is None
+        assert mobile_captured_sqlite._row_data_marker.get() is None
+        assert _fingerprints(tmp_path / "profile") == before
+        with captured.journal._locked(exclusive=False) as fd:
+            assert tuple(captured.journal._records(fd)) == records
+        captured.claim.check()

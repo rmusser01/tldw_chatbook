@@ -119,7 +119,7 @@ def _message_state(payload, role, budget, *, captured_delete=False):
     from tldw_chatbook.Chat.assistant_generation_state import (
         normalize_assistant_generation_state,
     )
-    from tldw_chatbook.Chat.provider_continuation import (
+    from tldw_chatbook.Provider_Contract.provider_continuation import (
         dump_provider_continuation_json,
         parse_provider_continuation_json,
     )
@@ -260,13 +260,19 @@ def _previous(entry, original, identities, budget):
 
 
 def _sync_rows(reads, budget):
+    from .mobile_captured_sqlite import _row_data
+
+    owner = _row_data(reads, budget)
+    if owner is not None:
+        budget.container()
     result, offset = [], 0
     while True:
-        columns, rows = reads.page(
+        columns, rows = (reads if owner is None else owner).page(
             "legacy", "chat", "sync_log", offset=offset, limit=1000
         )
         for row in rows:
-            budget.value(row)
+            if owner is None:
+                budget.value(row)
             budget.container(len(columns))
             result.append(dict(zip(columns, row, strict=True)))
         if len(rows) < 1000:
@@ -281,7 +287,7 @@ def _plan_sync(reads, *, _read_budget=None):
     if type(reads) is not _CapturedSQLite:
         raise _SyncRefusal("mobile_sync_native_snapshot_required")
     reads.check()
-    from tldw_chatbook.Chat.console_trace_read_budget import _TraceReadBudget
+    from tldw_chatbook.Backup_Recovery.models import _TraceReadBudget
 
     from .mobile_trace_plan import _plan_traces
 

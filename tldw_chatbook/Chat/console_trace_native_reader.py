@@ -7,6 +7,7 @@ import json
 from collections.abc import Mapping
 from typing import Any
 
+from tldw_chatbook.Backup_Recovery.models import _TraceReadBudget
 from tldw_chatbook.Chat.console_exchange_capture import CaptureDetail, ExchangeCapture
 from tldw_chatbook.Chat.console_semantic_revision import (
     project_semantic_revision_provider_continuations,
@@ -19,7 +20,6 @@ from tldw_chatbook.Chat.console_trace_continuation import (
 from tldw_chatbook.Chat.console_trace_models import TraceCallState
 from tldw_chatbook.Chat.console_trace_projection import NormalizedTraceCall
 from tldw_chatbook.Chat.console_trace_provenance import TraceTransformKind
-from tldw_chatbook.Chat.console_trace_read_budget import _TraceReadBudget
 from tldw_chatbook.Chat.console_trace_redaction import (
     CREDENTIAL_SANITIZER_UNAVAILABLE,
     PII_DETECTOR_UNAVAILABLE,

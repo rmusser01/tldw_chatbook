@@ -111,30 +111,8 @@ def _is_destination_key(key: Any) -> bool:
     return bool(tokens & _DESTINATION_TOKENS)
 
 
-def summarize_arguments(arguments: Mapping[str, Any] | None) -> str:
-    """Return ONE payload as a compact, ``markup=False``-safe summary.
-
-    TASK-695: the summary used to be one ``json.dumps`` blob clipped at
-    ``_ARGS_SUMMARY_LIMIT``, and ``json.dumps`` preserves the model's key
-    order -- so a ``write_file`` emitting ``content`` before ``file_path``
-    showed 67 characters of file body and truncated the destination out of
-    view. The card asked "may I write this?" without showing where.
-
-    Two changes fix that without raising the global cap (which would only
-    move the cliff): destination-like keys are rendered FIRST, and every
-    value gets its own budget so one bulk payload cannot consume the line.
-
-    Secret-looking values (``api_key``, ``token``, ``password``, ...) are
-    redacted before rendering -- redaction parity with every other MCP
-    display/log boundary (see ``tldw_chatbook.MCP.redaction``'s module
-    docstring); the approval card is the one place a raw secret argument
-    was still reaching the screen unredacted. Redaction runs BEFORE the
-    reordering and clipping below, so neither can expose a secret.
-    """
-    try:
-        redacted = redact_mapping(dict(arguments or {}))
-    except Exception:  # noqa: BLE001 -- a bad arg must never crash rendering
-        return str(arguments or {})[:_ARGS_SUMMARY_LIMIT]
+def format_redacted_arguments(redacted: Mapping[str, Any]) -> str:
+    """Format already-redacted native review arguments, destinations first."""
     if not redacted:
         return "{}"
 
@@ -175,6 +153,33 @@ def summarize_arguments(arguments: Mapping[str, Any] | None) -> str:
     if len(text) > _ARGS_SUMMARY_LIMIT:
         return text[: _ARGS_SUMMARY_LIMIT - 1] + "…"
     return text
+
+
+def summarize_arguments(arguments: Mapping[str, Any] | None) -> str:
+    """Return ONE payload as a compact, ``markup=False``-safe summary.
+
+    TASK-695: the summary used to be one ``json.dumps`` blob clipped at
+    ``_ARGS_SUMMARY_LIMIT``, and ``json.dumps`` preserves the model's key
+    order -- so a ``write_file`` emitting ``content`` before ``file_path``
+    showed 67 characters of file body and truncated the destination out of
+    view. The card asked "may I write this?" without showing where.
+
+    Two changes fix that without raising the global cap (which would only
+    move the cliff): destination-like keys are rendered FIRST, and every
+    value gets its own budget so one bulk payload cannot consume the line.
+
+    Secret-looking values (``api_key``, ``token``, ``password``, ...) are
+    redacted before rendering -- redaction parity with every other MCP
+    display/log boundary (see ``tldw_chatbook.MCP.redaction``'s module
+    docstring); the approval card is the one place a raw secret argument
+    was still reaching the screen unredacted. Redaction runs BEFORE the
+    reordering and clipping below, so neither can expose a secret.
+    """
+    try:
+        redacted = redact_mapping(dict(arguments or {}))
+    except Exception:  # noqa: BLE001 -- a bad arg must never crash rendering
+        return str(arguments or {})[:_ARGS_SUMMARY_LIMIT]
+    return format_redacted_arguments(redacted)
 
 
 def summarize_row_arguments(entry: Mapping[str, Any]) -> str:
