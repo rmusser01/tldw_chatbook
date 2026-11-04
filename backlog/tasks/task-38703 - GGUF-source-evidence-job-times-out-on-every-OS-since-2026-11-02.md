@@ -113,6 +113,8 @@ No GGUF run happened between that merge and 11-02 17:41Z, because the workflow i
   - `Tests/UI/test_console_tokenizer_preparation.py`: 12 passed.
   - Neighbouring projection suites, including `Tests/Performance/test_console_tokenizer_owned.py` with the real wiring: 206 passed, 4 failed. Three of the four fail identically with HEAD's and with dev 335f984bd2's `console_spend_projection.py`, so they predate this change: `test_actual_mode_bar_defers_cold_config_and_uses_owned_presentation`, `test_active_run_copy_takes_priority_over_an_earlier_rule_verdict` and `test_actual_settings_open_waits_for_shared_cold_checked_policy`. The fourth, `test_console_mount_refreshes_never_wait_for_a_config_rebuild[roleplay]`, passes in isolation and only fails under xdist load.
   - ruff: no new findings.
+
+**Re-review round (2026-11-03).** Commit c13fd0ad13. (1) A slot whose screen moved to another model stayed in the dict, so every refresh and `warm()` re-ran its failed preparation (probe: A ran 5 times across 4 refreshes while only B was asked). `_TokenizerSlot.asked` is set by `tokenizer_ready`; `tokenizer_due` and the refresh snapshot consider only asked slots, and the refresh clears the mark, so an unasked slot is neither read nor waited on, and the alternating chip/session asks of one sync still stay prepared. (2) Eviction is now least recently asked: `tokenizer_ready` pops the key and re-inserts it on every hit or recapture. RED/GREEN: `test_slot_nobody_asks_for_is_not_prepared_again` (A ran 9 times before, 1 after) and `test_tokenizer_slots_evict_the_least_recently_asked` (wrong order before); `Tests/UI/test_console_tokenizer_preparation.py` 14 passed.
 <!-- SECTION:IMPLEMENTATION_NOTES:END -->
 
 ## Final Summary

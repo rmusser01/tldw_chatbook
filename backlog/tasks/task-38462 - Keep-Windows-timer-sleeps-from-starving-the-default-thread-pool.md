@@ -84,6 +84,8 @@ On Windows, Textual runs every timer sleep, and every timer cancellation, as a b
 - RED on macOS: with the old setup line the `earlier_boot` cases failed 2 of 4. The unmodified old module also failed both cases when `install_windows_timer_sleep()` ran under a patched `win32` platform before it, which is the reviewer's reproduction. With the fix, both runs pass 4 of 4.
 - Intervals use `time.perf_counter`. On Windows Python 3.12, `time.monotonic` ticks every 15.625 ms, so `>= 0.025` after a 30 ms sleep could flake. This one cannot be shown as a failing test on macOS.
 - `Tests/App/test_windows_timer_sleep.py`: 10 passed.
+
+**Re-review round (2026-11-03).** Commit 55fe92f2f2. `test_other_platforms_keep_textuals_sleep[earlier_boot=True]` installed the Windows sleep, which the test's own reset line then overwrote before the body ran, so it guarded only that reset, and it leaked the pool it created. Off win32 nothing installs that sleep, so the parameter is dropped and the reset keeps a comment saying why it exists; the test creates no executor. `Tests/App/test_windows_timer_sleep.py`: 8 passed.
 <!-- SECTION:IMPLEMENTATION_NOTES:END -->
 
 ## Final Summary
