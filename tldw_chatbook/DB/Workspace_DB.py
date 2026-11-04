@@ -873,10 +873,10 @@ _RUN_LOG_PROBE_SLOTS = (
     *(
         (vars(_store_kernel), name, vars(_store_kernel)[name])
         for name in (
-            "_core_access",
-            "_core_cached_connection",
-            "_register_core_connection",
-            "_core_closing",
+            "core_access",
+            "core_cached_connection",
+            "register_core_connection",
+            "core_closing",
         )
     ),
 )

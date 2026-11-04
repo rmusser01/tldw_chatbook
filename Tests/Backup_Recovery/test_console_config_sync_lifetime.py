@@ -22,7 +22,7 @@ def fail_native_config_write():
  original_write=private_paths.os.write
  before=selected.read_bytes()
  def failed_write(fd,payload):
-  if raw._runtime_operation() is not None:raise OSError('synthetic native write failure')
+  if raw.runtime_operation() is not None:raise OSError('synthetic native write failure')
   return original_write(fd,payload)
  private_paths.os.write=failed_write
  try:assert not config.save_setting_to_cli_config('general','users_name','unsaved')
@@ -212,7 +212,7 @@ try:
  assert len(scheduled)==1 and scheduled[0][0]>0
  assert not rebuild._is_owned() and not file_lock._is_owned()
  assert not storage._pending_acquisitions and not storage._raw_operations
- assert raw._runtime_operation() is None and config._CONFIG_PERSISTENCE_ERROR==before
+ assert raw.runtime_operation() is None and config._CONFIG_PERSISTENCE_ERROR==before
  if blocked is file_lock:
   available=[]
   def probe_partial_release():
@@ -250,7 +250,7 @@ assert not scheduled and not screen._console_control_bar_sync_scheduled
 assert operations[0] is not None and all(value is operations[0] for value in operations)
 assert not rebuild._is_owned() and not file_lock._is_owned()
 assert not storage._pending_acquisitions and not storage._raw_operations
-assert raw._runtime_operation() is None and all(value not in raw._states for value in operations)
+assert raw.runtime_operation() is None and all(value not in raw._states for value in operations)
 assert config._CONFIG_PERSISTENCE_ERROR==before
 storage._shutdown()
 print('retired and reopened')

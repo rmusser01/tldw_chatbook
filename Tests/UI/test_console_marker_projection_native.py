@@ -18,7 +18,7 @@ async def test_original_marker_read_leaves_shared_loop_responsive(request):
     from tldw_chatbook import config
     from tldw_chatbook.Agents.tool_catalog import ToolCatalogRegistry
     from tldw_chatbook.Backup_Recovery import storage_admission as storage
-    from tldw_chatbook.Backup_Recovery.participants import _repository_participant
+    from tldw_chatbook.Backup_Recovery.participants import repository_participant
     from tldw_chatbook.Chat.console_agent_bridge import ConsoleAgentBridge
     from tldw_chatbook.Chat.console_chat_models import (
         ConsoleChatMessage,
@@ -49,7 +49,7 @@ async def test_original_marker_read_leaves_shared_loop_responsive(request):
         adds=2,
     )
     database.close()
-    participant = _repository_participant(database)
+    participant = repository_participant(database)
     bridge = ConsoleAgentBridge(
         agent_runs_db=database,
         store=None,
@@ -214,7 +214,7 @@ async def test_marker_read_keeps_native_custody_and_current_publication(
     from tldw_chatbook import config
     from tldw_chatbook.Agents.tool_catalog import ToolCatalogRegistry
     from tldw_chatbook.Backup_Recovery import storage_admission as storage
-    from tldw_chatbook.Backup_Recovery.participants import _repository_participant
+    from tldw_chatbook.Backup_Recovery.participants import repository_participant
     from tldw_chatbook.Chat.console_agent_bridge import ConsoleAgentBridge
     from tldw_chatbook.Chat.console_runtime import ConsoleRuntime
     from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
@@ -241,7 +241,7 @@ async def test_marker_read_keeps_native_custody_and_current_publication(
         adds=2,
     )
     database.close()
-    participant = _repository_participant(database)
+    participant = repository_participant(database)
     bridge = ConsoleAgentBridge(
         agent_runs_db=database,
         store=None,

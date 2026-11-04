@@ -117,7 +117,7 @@ def source_for(profile):
 
 def db_source(db):
     from ..DB.ChaChaNotes_DB import CharactersRAGDB
-    from .participants import _repository_participant
+    from .participants import repository_participant
 
     try:
         old = _repositories.get(db)
@@ -134,7 +134,7 @@ def db_source(db):
             != db.db_path
         ):
             raise bootstrap.RecoveryRequired("visual_identity_repository_changed")
-        _repository_participant(db)
+        repository_participant(db)
         return old
     config = sys.modules.get("tldw_chatbook.config")
     if (
@@ -146,7 +146,7 @@ def db_source(db):
         != db.db_path
     ):
         return None
-    _repository_participant(db)
+    repository_participant(db)
     source = source_for(profile_paths.user_data_dir(config._CONFIG_CACHE))
     _repositories[db] = source
     return source
@@ -168,7 +168,7 @@ def db_guard(function):
         from contextlib import nullcontext
 
         from ..DB.ChaChaNotes_DB import CharactersRAGDB
-        from .participants import _core_operation
+        from .participants import core_operation
 
         with request():
             source = db_source(db) if isinstance(db, CharactersRAGDB) else None
@@ -188,7 +188,7 @@ def db_guard(function):
                     else profile_paths.lexical_path(selected),
                 )
             with (
-                _core_operation(db)
+                core_operation(db)
                 if isinstance(db, CharactersRAGDB)
                 else nullcontext()
             ):
@@ -228,10 +228,10 @@ def repository_guard(function):
                 and callee is function
                 and type(operation) is storage._Operation
             ):
-                from .participants import _repository_participant
+                from .participants import repository_participant
 
                 source = db_source(repository.db)
-                participant = _repository_participant(repository.db)
+                participant = repository_participant(repository.db)
                 if source is not None and operation.participant is participant:
                     storage._check_operation(operation, participant.path)
                     return function(repository, *args, **kwargs)
@@ -260,15 +260,15 @@ def request():
         attempt.close()
 
 
-def _shape(value):
+def value_shape(value):
     if is_dataclass(value):
         return type(value), tuple(
-            (f.name, _shape(getattr(value, f.name))) for f in fields(value)
+            (f.name, value_shape(getattr(value, f.name))) for f in fields(value)
         )
     if isinstance(value, dict):
-        return tuple(sorted((key, _shape(item)) for key, item in value.items()))
+        return tuple(sorted((key, value_shape(item)) for key, item in value.items()))
     if isinstance(value, (tuple, list)):
-        return tuple(_shape(item) for item in value)
+        return tuple(value_shape(item) for item in value)
     return value
 
 
@@ -294,7 +294,7 @@ def candidate_shape(value):
         "_lock",
         "_maintenance_identity",
     )
-    return type(value), tuple((name, _shape(getattr(value, name))) for name in names)
+    return type(value), tuple((name, value_shape(getattr(value, name))) for name in names)
 
 
 def issue(value, db):
@@ -323,7 +323,7 @@ def candidate_source(value, db, profile):
     return source
 
 
-def _identity(path):
+def path_identity(path):
     try:
         info = os.stat(path, follow_symlinks=False)
     except FileNotFoundError:
@@ -394,7 +394,7 @@ def check(state):
         candidate = state.candidate
         if state.candidate_generation != (
             candidate_shape(candidate),
-            _shape(candidate._replacements),
+            value_shape(candidate._replacements),
             frozenset(candidate._cleared),
             candidate.default_expression_key,
         ):
@@ -434,12 +434,12 @@ def _check_path(state, selected, *, writing=False):
     ):
         raise bootstrap.RecoveryRequired("visual_identity_path_outside_scope")
     expected = state.expectations[selected]
-    if _identity(selected) != expected:
+    if path_identity(selected) != expected:
         raise bootstrap.RecoveryRequired("visual_identity_file_identity_changed")
     for parent in selected.parents:
         if (
             parent in state.expectations
-            and _identity(parent) != state.expectations[parent]
+            and path_identity(parent) != state.expectations[parent]
         ):
             raise bootstrap.RecoveryRequired("visual_identity_parent_identity_changed")
 
@@ -496,7 +496,7 @@ def files(
             if candidate is not None:
                 state.candidate_generation = (
                     candidate_shape(candidate),
-                    _shape(candidate._replacements),
+                    value_shape(candidate._replacements),
                     frozenset(candidate._cleared),
                     candidate.default_expression_key,
                 )
@@ -512,14 +512,14 @@ def files(
             for p in paths + directories:
                 for ancestor in (p, *p.parents):
                     if ancestor not in state.expectations:
-                        state.expectations[ancestor] = _identity(ancestor)
+                        state.expectations[ancestor] = path_identity(ancestor)
             for p in (paths + directories) or (None,):
                 attempt.check()
                 lease = storage.acquire_storage(p)
                 state.leases.append(lease)
                 state.holds.append(storage._holds.get(lease._key))
             for p, identity in state.expectations.items():
-                if _identity(p) != identity:
+                if path_identity(p) != identity:
                     raise bootstrap.RecoveryRequired(
                         "visual_identity_preflight_changed"
                     )
@@ -635,7 +635,7 @@ def native_open(value, flags, mode=0o777, *, dir_fd=None):
     if flags & os.O_CREAT and flags & os.O_EXCL:
         state.expectations[selected] = identity
         state.owned[selected] = identity
-    if state.expectations[selected] != identity or _identity(selected) != identity:
+    if state.expectations[selected] != identity or path_identity(selected) != identity:
         raise bootstrap.RecoveryRequired("visual_identity_file_identity_changed")
     return fd
 
@@ -799,7 +799,7 @@ def cleanup_selection(db, token, profile, candidate):
         ):
             raise bootstrap.RecoveryRequired("visual_identity_source_changed")
         for path, identity in record[2].items():
-            if _identity(path) != identity:
+            if path_identity(path) != identity:
                 raise bootstrap.RecoveryRequired(
                     "visual_identity_candidate_identity_changed"
                 )
@@ -1045,8 +1045,8 @@ def restoring_rows(candidate, assets):
             old_shape = dict(record[3][1])
             new_shape = dict(updated[1])
             if (
-                new_shape.pop("assets") != _shape(original + expected)
-                or old_shape.pop("assets") != _shape(original)
+                new_shape.pop("assets") != value_shape(original + expected)
+                or old_shape.pop("assets") != value_shape(original)
                 or new_shape != old_shape
             ):
                 raise bootstrap.RecoveryRequired(
@@ -1119,3 +1119,7 @@ def evaluate_repository_publication_guard(guard):
     finally:
         _local.state = state
         storage._operation_local.operation = core
+
+
+_identity = path_identity
+_shape = value_shape

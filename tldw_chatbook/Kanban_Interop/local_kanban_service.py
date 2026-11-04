@@ -11,9 +11,9 @@ from pathlib import Path
 from typing import Any, Iterator
 
 from tldw_chatbook.Backup_Recovery.participants import (
-    _core_access,
-    _core_getter,
-    _core_transaction,
+    core_access,
+    core_getter,
+    core_transaction,
 )
 from tldw_chatbook.Backup_Recovery.profile_paths import lexical_path
 
@@ -89,25 +89,25 @@ class LocalKanbanService:
                 conn.close()
             self._schema_ready = True
 
-    @_core_getter
+    @core_getter
     def connect(self):
-        _core_access(self)
+        core_access(self)
         self._ensure_schema()
         conn = open_connection(self.db_path, _source=self)
         try:
-            _core_access(self)
+            core_access(self)
             return conn
         except BaseException:
             conn.close()
             raise
 
-    @_core_transaction
+    @core_transaction
     @contextmanager
     def connection(self) -> Iterator[Any]:
         """Count a lexical native use; callers retain their existing close boundary."""
         yield self.connect()
 
-    @_core_transaction
+    @core_transaction
     @contextmanager
     def transaction(self) -> Iterator[Any]:
         with self.connection() as conn:

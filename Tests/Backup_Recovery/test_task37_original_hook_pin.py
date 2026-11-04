@@ -43,9 +43,9 @@ def _original_hook_pin_work(owner, config):
     witness = OriginalStorageUnitObserver({}, lambda: True, lambda unit: None)
     members = (
         (raw, "_pin_parent"),
-        (raw, "_check"),
+        (raw, "check"),
         (raw, "_check_parent_pins"),
-        (raw, "_close_descriptor"),
+        (raw, "close_descriptor"),
         (storage, "_path_evidence"),
         (storage, "_note_derived"),
         (storage, "_ordinary_hold"),
@@ -166,7 +166,7 @@ def _original_hook_pin_work(owner, config):
                 assert frame.f_locals["entry"] is pin.f_locals["evidence"]
                 previous = hold.derived_evidence.get(key) if hold is not None else None
                 row["notes"].append((hold, key, frame.f_locals["entry"], previous))
-            elif code is codes["_close_descriptor"]:
+            elif code is codes["close_descriptor"]:
                 state, fd = frame.f_locals["state"], frame.f_locals["fd"]
                 if state.source is owner or state.source is config:
                     closes[id(frame)] = state, fd
@@ -219,7 +219,7 @@ def _original_hook_pin_work(owner, config):
                 elif code is codes["stat_many_for_admission"]:
                     assert not frame.f_locals["opened"] and not frame.f_locals["failed"]
                     counts["retired_metadata_snapshots"] += 1
-                elif code is codes["_close_descriptor"] and id(frame) in closes:
+                elif code is codes["close_descriptor"] and id(frame) in closes:
                     state, fd = closes.pop(id(frame))
                     try:
                         os.fstat(fd)
@@ -327,7 +327,7 @@ def test_warm_hook_snapshot_skips_unpublishable_pin_evidence(
             if row["notes"][0][0] is not None:
                 assert row["eligibility_rejections"] == 1
         counts = observed.counts
-        assert counts["_check"] > 0 and counts["_check_parent_pins"] > 0
+        assert counts["check"] > 0 and counts["_check_parent_pins"] > 0
         assert counts["_acquire_storage"] > 0
         if os.name == "nt":
             assert counts["native_admission"] + counts["native_admission_evidence"] > 0

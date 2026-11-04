@@ -117,11 +117,11 @@ from .sql_validation import (
 )
 from .sql_logging import preview_params
 from tldw_chatbook.Backup_Recovery.participants import (
-    _core_cached_connection,
-    _core_closing,
-    _core_getter,
-    _core_operation,
-    _register_core_connection,
+    core_cached_connection,
+    core_closing,
+    core_getter,
+    core_operation,
+    register_core_connection,
 )
 from .private_sqlite import backup_connection_to_private, connect_private_sqlite
 from .private_sqlite_process import HelperTimeoutError
@@ -2963,7 +2963,7 @@ DELETE FROM keywords
             ) from exc
 
     # --- Connection Management ---
-    @_core_getter
+    @core_getter
     def _get_thread_connection(
         self, *, operation_deadline: float | None = None
     ) -> sqlite3.Connection:
@@ -2990,9 +2990,9 @@ DELETE FROM keywords
         Raises:
             CharactersRAGDBError: If connecting to the database fails.
         """
-        from tldw_chatbook.Backup_Recovery.participants import _core_access
+        from tldw_chatbook.Backup_Recovery.participants import core_access
 
-        _core_access(self)
+        core_access(self)
         if operation_deadline is not None and time.monotonic() >= operation_deadline:
             raise TimeoutError("Conversation connection budget exhausted")
         try:
@@ -3001,7 +3001,7 @@ DELETE FROM keywords
             raise CharactersRAGDBError(str(exc)) from exc
         opened_here = False
         try:
-            conn = _core_cached_connection(self, getattr(self._local, "conn", None))
+            conn = core_cached_connection(self, getattr(self._local, "conn", None))
             if conn is not None and not self._connection_quiescence.is_registered(conn):
                 conn = None
                 self._local.conn = None
@@ -3083,8 +3083,8 @@ DELETE FROM keywords
                     opened_here = True
                     if not isinstance(conn, _QuiescentSQLiteConnection):
                         raise RuntimeError("quiescent_connection_factory")
-                    _register_core_connection(self, conn)
-                    _core_access(self)
+                    register_core_connection(self, conn)
+                    core_access(self)
                     conn.attach_quiescence_registry(self._connection_quiescence)
                     conn.row_factory = sqlite3.Row
 
@@ -3153,7 +3153,7 @@ DELETE FROM keywords
                     self._local.canvas_revision_deletion_authorization = (
                         canvas_deletion_authorization
                     )
-                    _core_access(self)
+                    core_access(self)
                     if operation_deadline is not None:
                         if time.monotonic() >= operation_deadline:
                             raise TimeoutError(
@@ -3494,7 +3494,7 @@ DELETE FROM keywords
 
     def _close_connection_handle(self, conn, local, registry, *, strict=False):
         """Apply the current close policy to this exact captured native handle."""
-        with _core_closing(self, conn) as allowed:
+        with core_closing(self, conn) as allowed:
             if not allowed:
                 if strict:
                     raise RuntimeError("notes_connection_retirement_refused")
@@ -25346,7 +25346,7 @@ class TransactionContextManager:
         self.immediate = bool(immediate)
 
     def __enter__(self):
-        self._maintenance_context = _core_operation(self.db)
+        self._maintenance_context = core_operation(self.db)
         self._maintenance_context.__enter__()
         try:
             try:
@@ -25629,10 +25629,10 @@ _CONSOLE_BROWSER_NOTES_SOURCE = (
         for name in (
             "CharactersRAGDB",
             "TransactionContextManager",
-            "_core_operation",
-            "_core_closing",
-            "_core_cached_connection",
-            "_register_core_connection",
+            "core_operation",
+            "core_closing",
+            "core_cached_connection",
+            "register_core_connection",
             "connect_private_sqlite",
             "_QuiescentSQLiteConnection",
         )
@@ -25693,21 +25693,21 @@ _CONSOLE_BROWSER_NOTES_SOURCE = (
 # Definition-time identities for the optional finite stock browser callback.
 # No handle, authority verdict or query result is retained by these records.
 _CONSOLE_BROWSER_NOTES_CORE_SOURCE = (
-    _core_operation.__wrapped__.__globals__,
-    _core_operation.__wrapped__.__globals__["__file__"],
-    _core_operation.__wrapped__.__globals__["__spec__"],
-    getattr(_core_operation.__wrapped__.__globals__["__spec__"], "origin", None),
+    core_operation.__wrapped__.__globals__,
+    core_operation.__wrapped__.__globals__["__file__"],
+    core_operation.__wrapped__.__globals__["__spec__"],
+    getattr(core_operation.__wrapped__.__globals__["__spec__"], "origin", None),
     (),
     tuple(
-        (name, _core_operation.__wrapped__.__globals__[name])
+        (name, core_operation.__wrapped__.__globals__[name])
         for name in (
-            "_core_operation",
-            "_core_closing",
-            "_core_getter",
-            "_core_access",
-            "_core_cached_connection",
-            "_register_core_connection",
-            "_repository_participant",
+            "core_operation",
+            "core_closing",
+            "core_getter",
+            "core_access",
+            "core_cached_connection",
+            "register_core_connection",
+            "repository_participant",
         )
     ),
     tuple(
@@ -25723,18 +25723,18 @@ _CONSOLE_BROWSER_NOTES_CORE_SOURCE = (
             vars(function).get("__wrapped__"),
         )
         for function in tuple(
-            _core_operation.__wrapped__.__globals__[name]
+            core_operation.__wrapped__.__globals__[name]
             for name in (
-                "_core_operation",
-                "_core_closing",
-                "_core_getter",
-                "_core_access",
-                "_core_cached_connection",
-                "_register_core_connection",
-                "_repository_participant",
+                "core_operation",
+                "core_closing",
+                "core_getter",
+                "core_access",
+                "core_cached_connection",
+                "register_core_connection",
+                "repository_participant",
             )
         )
-        + (_core_operation.__wrapped__, _core_closing.__wrapped__)
+        + (core_operation.__wrapped__, core_closing.__wrapped__)
     ),
 )
 
@@ -25750,7 +25750,7 @@ _CONSOLE_BROWSER_NOTES_CLOSE_SOURCE = (
         (CharactersRAGDB, name, inspect.getattr_static(CharactersRAGDB, name))
         for name in ("_close_connection_handle", "__getattribute__", "__dict__")
     ),
-    tuple((name, globals()[name]) for name in ("CharactersRAGDB", "_core_closing")),
+    tuple((name, globals()[name]) for name in ("CharactersRAGDB", "core_closing")),
     tuple(
         (
             function,
@@ -25771,14 +25771,14 @@ _CONSOLE_BROWSER_NOTES_CLOSE_SOURCE = (
 # Definition-time identities for the optional finite stock browser callback.
 # No handle, authority verdict or query result is retained by these records.
 _CONSOLE_BROWSER_NOTES_CLOSING_SOURCE = (
-    _core_operation.__wrapped__.__globals__,
-    _core_operation.__wrapped__.__globals__["__file__"],
-    _core_operation.__wrapped__.__globals__["__spec__"],
-    getattr(_core_operation.__wrapped__.__globals__["__spec__"], "origin", None),
+    core_operation.__wrapped__.__globals__,
+    core_operation.__wrapped__.__globals__["__file__"],
+    core_operation.__wrapped__.__globals__["__spec__"],
+    getattr(core_operation.__wrapped__.__globals__["__spec__"], "origin", None),
     (),
     tuple(
-        (name, _core_operation.__wrapped__.__globals__[name])
-        for name in ("_core_closing", "_repository_participant", "_repository_types")
+        (name, core_operation.__wrapped__.__globals__[name])
+        for name in ("core_closing", "repository_participant", "repository_types")
     ),
     tuple(
         (
@@ -25793,14 +25793,14 @@ _CONSOLE_BROWSER_NOTES_CLOSING_SOURCE = (
             vars(function).get("__wrapped__"),
         )
         for function in tuple(
-            _core_operation.__wrapped__.__globals__[name]
+            core_operation.__wrapped__.__globals__[name]
             for name in (
-                "_core_closing",
-                "_repository_participant",
-                "_repository_types",
+                "core_closing",
+                "repository_participant",
+                "repository_types",
             )
         )
-        + (_core_closing.__wrapped__,)
+        + (core_closing.__wrapped__,)
     ),
 )
 

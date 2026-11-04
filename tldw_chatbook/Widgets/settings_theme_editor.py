@@ -275,8 +275,8 @@ class SettingsThemeEditor(Vertical):
 
         self.custom_themes_path = get_user_themes_dir()
         try:
-            with raw._scope(self, "theme_directory", writing=True) as operation:
-                raw._mkdirs(operation)
+            with raw.scope(self, "theme_directory", writing=True) as operation:
+                raw.mkdirs(operation)
         except RecoveryRequired:
             # TASK-32942: a backup/recovery pause must not crash Settings;
             # the picker reports the files as unavailable instead.
@@ -676,8 +676,8 @@ class SettingsThemeEditor(Vertical):
         """
         files: dict[str, Path] = {}
         unreadable: dict[str, tuple[Path, str]] = {}
-        with raw._scope(self, "theme_directory") as operation:
-            state = raw._check(operation)
+        with raw.scope(self, "theme_directory") as operation:
+            state = raw.check(operation)
             for theme_file in sorted(state.rejected_files):
                 # Qodo 4109320408: refused by the backup layer, never opened.
                 unreadable[theme_file.stem] = (
@@ -687,7 +687,7 @@ class SettingsThemeEditor(Vertical):
             for theme_file in sorted(state.observed_files):
                 theme_data: Any = None
                 try:
-                    with raw._file(operation, theme_file, "r") as f:
+                    with raw.file(operation, theme_file, "r") as f:
                         theme_data = toml.load(f)
                     # Qodo 4107495864: key by the name startup registers.
                     name = theme_from_file_data(
@@ -904,8 +904,8 @@ class SettingsThemeEditor(Vertical):
         theme_path = self._user_theme_files().get(theme_name)
         if theme_path is None:
             return None
-        with raw._scope(self, "theme_file", selected_read=theme_path) as operation:
-            with raw._file(operation, theme_path, "r") as f:
+        with raw.scope(self, "theme_file", selected_read=theme_path) as operation:
+            with raw.file(operation, theme_path, "r") as f:
                 theme_data = toml.load(f)
         # Follow-up (R41): validate what was read, not the scan's copy --
         # the file can change in between.
@@ -1400,16 +1400,16 @@ class SettingsThemeEditor(Vertical):
             RecoveryRequired: backup/recovery holds the theme files.
             OSError: the write failed; the old file is untouched.
         """
-        with raw._scope(
+        with raw.scope(
             self, "theme_file", writing=True, selected_read=theme_path
         ) as operation:
             temporary = theme_path.with_suffix(theme_path.suffix + ".tmp")
             try:
-                with raw._file(operation, temporary, "w") as f:
+                with raw.file(operation, temporary, "w") as f:
                     toml.dump(data, f)
-                raw._replace(operation, temporary, theme_path)
+                raw.replace(operation, temporary, theme_path)
             finally:
-                raw._remove_temporary(operation, temporary)
+                raw.remove_temporary(operation, temporary)
 
     def _read_toml(self, theme_path: Path) -> dict[str, Any]:
         """Read one saved theme file in the backup scope (worker thread).
@@ -1419,8 +1419,8 @@ class SettingsThemeEditor(Vertical):
             OSError, ValueError: the read or parse failed.
         """
         with (
-            raw._scope(self, "theme_file", selected_read=theme_path) as operation,
-            raw._file(operation, theme_path, "r") as f,
+            raw.scope(self, "theme_file", selected_read=theme_path) as operation,
+            raw.file(operation, theme_path, "r") as f,
         ):
             return toml.load(f)
 
@@ -1431,7 +1431,7 @@ class SettingsThemeEditor(Vertical):
             RecoveryRequired: backup/recovery holds the theme files.
             OSError: the unlink failed.
         """
-        with raw._scope(
+        with raw.scope(
             self, "theme_file", writing=True, selected_read=theme_path
         ) as operation:
             raw._unlink(operation, theme_path)
@@ -2340,17 +2340,17 @@ class SettingsThemeEditor(Vertical):
             FileExistsError: the file is not the one ``expected`` names.
             RecoveryRequired, OSError: the write failed.
         """
-        with raw._scope(
+        with raw.scope(
             self, "theme_export", writing=True, selected_read=export_path
         ) as operation:
-            raw._mkdirs(operation)
+            raw.mkdirs(operation)
             temporary = export_path.with_suffix(export_path.suffix + ".tmp")
             try:
-                with raw._file(operation, temporary, "w") as f:
+                with raw.file(operation, temporary, "w") as f:
                     toml.dump(theme_data, f)
-                raw._replace(operation, temporary, export_path, expected=expected)
+                raw.replace(operation, temporary, export_path, expected=expected)
             finally:
-                raw._remove_temporary(operation, temporary)
+                raw.remove_temporary(operation, temporary)
 
     async def import_theme(self, source: str) -> str | None:
         """Import the theme file at ``source`` (a typed, pasted or dropped path).

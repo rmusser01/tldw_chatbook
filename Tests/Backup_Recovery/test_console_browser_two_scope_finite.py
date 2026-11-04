@@ -93,7 +93,7 @@ def main():
     Controller = workspace_module.ConsoleWorkspaceController
     list_method = inspect.getattr_static(Service, 'list_conversations')
     browser = inspect.getattr_static(Controller, '_persisted_console_browser_rows')
-    register = participants._register_core_connection
+    register = participants.register_core_connection
     getter_wrapper = inspect.getattr_static(Database, '_get_thread_connection')
     assert type(getter_wrapper) is FunctionType
     getter = vars(getter_wrapper)['__wrapped__']
@@ -103,14 +103,14 @@ def main():
     assert getter_wrapper.__closure__ is not None and len(getter_wrapper.__closure__) == 1
     assert getter_wrapper.__closure__[0].cell_contents is getter
     assert getter.__globals__ is notes_module.__dict__ and getter.__closure__ is None
-    assert notes_module._register_core_connection is register
+    assert notes_module.register_core_connection is register
     helper = inspect.getattr_static(private_sqlite.HelperLease, 'start').__func__
     assert private_sqlite.HelperLease is helper_module.HelperLease
     assert helper.__globals__ is helper_module.__dict__
     close_method = inspect.getattr_static(Database, 'close_connection')
-    core_close_body = vars(participants._core_closing)['__wrapped__']
+    core_close_body = vars(participants.core_closing)['__wrapped__']
     assert type(core_close_body) is FunctionType and core_close_body.__globals__ is participants.__dict__
-    assert notes_module._core_closing is participants._core_closing
+    assert notes_module.core_closing is participants.core_closing
     registry_type = base_db.SQLiteConnectionQuiescenceRegistry
     registry_unregister = inspect.getattr_static(registry_type, 'unregister')
     methods = (list_method, browser, getter, register, helper, close_method, core_close_body, registry_unregister,
@@ -130,7 +130,7 @@ def main():
         assert type(method) is FunctionType
         declared = nested(compiled[method.__globals__['__name__']], method.__code__.co_qualname)
         assert declared is not None and shape(declared) == shape(method.__code__)
-    declared_wrapper = nested(compiled[participants.__name__], '_core_getter.<locals>.accessed')
+    declared_wrapper = nested(compiled[participants.__name__], 'core_getter.<locals>.accessed')
     assert declared_wrapper is not None and shape(declared_wrapper) == shape(getter_wrapper.__code__)
     notes_tree = ast.parse(sources[Path(notes_module.__file__).resolve()])
     database_node = next(node for node in notes_tree.body if isinstance(node, ast.ClassDef)
@@ -139,14 +139,14 @@ def main():
                        and node.name == '_get_thread_connection')
     assert len(getter_node.decorator_list) == 1
     assert isinstance(getter_node.decorator_list[0], ast.Name)
-    assert getter_node.decorator_list[0].id == '_core_getter'
+    assert getter_node.decorator_list[0].id == 'core_getter'
     records = tuple((fn, fn.__code__, fn.__globals__, fn.__defaults__, fn.__kwdefaults__,
                      fn.__closure__, tuple(cell.cell_contents for cell in fn.__closure__ or ()))
                     for fn in (*methods, getter_wrapper))
     guarded_bindings = tuple((module, name, module.__dict__[name]) for module, name in (
         (storage, '_acquire_storage'), (storage, '_check_operation'),
-        (participants, '_core_operation'), (participants, '_core_getter'),
-        (participants, '_core_transaction'), (participants, '_core_closing'),
+        (participants, 'core_operation'), (participants, 'core_getter'),
+        (participants, 'core_transaction'), (participants, 'core_closing'),
         (private_sqlite, 'connect_private_sqlite'),
         (base_db, 'operation_owned_connection'),
     ))
@@ -448,7 +448,7 @@ def main():
                         lease = participant.connections.get(borrower)
                         assert lease in storage._live_leases and lease.resource_thread is threading.current_thread()
                     if outcome == 'body_error_close_refused':
-                        # Real explicit close enters the original _core_closing body and
+                        # Real explicit close enters the original core_closing body and
                         # yields False while the original caller transaction is live.
                         previous_refusals = explicit_close_refusal_before = len(retirement_refusals)
                         database.close_connection()
@@ -559,8 +559,8 @@ def main():
                and fn.__defaults__ is defaults and fn.__kwdefaults__ is kwdefaults
                and fn.__closure__ is closure
                for fn, code, defining, defaults, kwdefaults, closure in guarded_records)
-    assert vars(participants._core_closing)['__wrapped__'] is core_close_body
-    assert notes_module._core_closing is participants._core_closing
+    assert vars(participants.core_closing)['__wrapped__'] is core_close_body
+    assert notes_module.core_closing is participants.core_closing
     assert inspect.getattr_static(Database, 'close_connection') is close_method
     assert base_db.SQLiteConnectionQuiescenceRegistry is registry_type
     assert inspect.getattr_static(registry_type, 'unregister') is registry_unregister

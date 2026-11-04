@@ -18,11 +18,11 @@ from weakref import WeakValueDictionary
 from loguru import logger
 
 from tldw_chatbook.Backup_Recovery.participants import (
-    _core_access,
-    _core_cached_connection,
-    _core_getter,
-    _core_transaction,
-    _register_core_connection,
+    core_access,
+    core_cached_connection,
+    core_getter,
+    core_transaction,
+    register_core_connection,
 )
 from tldw_chatbook.Utils.private_paths import lexical_path
 from tldw_chatbook.DB.private_sqlite import connect_private_sqlite
@@ -626,7 +626,7 @@ class NotesDeviceStateStore:
             self._operation_locks[operation_id] = lock
         return lock
 
-    @_core_getter
+    @core_getter
     def _connect(
         self,
         *,
@@ -634,7 +634,7 @@ class NotesDeviceStateStore:
         must_exist: bool = False,
         **connection_options: object,
     ) -> sqlite3.Connection:
-        _core_access(self)
+        core_access(self)
         connection = connect_private_sqlite(
             "notes.sync_state",
             self._database_path,
@@ -643,10 +643,10 @@ class NotesDeviceStateStore:
             **connection_options,
         )
         try:
-            _register_core_connection(self, connection)
-            _core_access(self)
+            register_core_connection(self, connection)
+            core_access(self)
             connection.execute("PRAGMA foreign_keys = ON")
-            _core_access(self)
+            core_access(self)
         except BaseException:
             connection.close()
             raise
@@ -680,11 +680,11 @@ class NotesDeviceStateStore:
             raise
         return connection
 
-    @_core_getter
+    @core_getter
     def _get_connection(self) -> sqlite3.Connection:
-        _core_access(self)
+        core_access(self)
         connection = getattr(self._thread_local, "connection", None)
-        if connection is not None and _core_cached_connection(self, connection) is None:
+        if connection is not None and core_cached_connection(self, connection) is None:
             self._thread_local.connection = None
             with self._connections_guard:
                 if connection in self._connections:
@@ -698,7 +698,7 @@ class NotesDeviceStateStore:
             self._connections.append(connection)
         return connection
 
-    @_core_transaction
+    @core_transaction
     @contextmanager
     def transaction(self, *, immediate: bool = False) -> Iterator[sqlite3.Connection]:
         """Yield this thread's schema-ready held connection in one transaction."""

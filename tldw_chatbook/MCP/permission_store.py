@@ -2961,7 +2961,7 @@ def _console_owned_load_current(source, captured) -> bool:
     for name, callback, bodies in guards:
         if (
             vars(raw).get(name) is not callback
-            or name == "_scope"
+            or name == "scope"
             and getattr(callback, "__wrapped__", None) is not bodies[1][0]
         ):
             return False
@@ -3033,13 +3033,13 @@ def _load_in_owned_scope(source, operation, captured) -> dict[str, Any]:
                 raise mcp_sources.bootstrap.RecoveryRequired(
                     "raw_operation_provenance_invalid"
                 )
-            current = raw._live_state(operation, None, True)
+            current = raw.live_state(operation, None, True)
             if (
                 current.source is not source
                 or current.route != mcp_sources.ROUTE
                 or current.participant is None
                 or current.selected != captured[2]
-                or raw._participant_identity(current.participant).source() is not source
+                or raw.participant_identity(current.participant).source() is not source
             ):
                 raise mcp_sources.bootstrap.RecoveryRequired("mcp_source_not_installed")
             return current

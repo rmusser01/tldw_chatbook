@@ -401,7 +401,7 @@ async def test_storage_replacement_during_original_admission_cannot_enter_succes
     owned_console_databases(successor_db)
     baseline_connections = db.registered_connection_count()
     entered, release, retired = threading.Event(), threading.Event(), threading.Event()
-    original_admission = participants._core_operation
+    original_admission = participants.core_operation
     original_callback = store.commit_durable_turn
     callback_calls = []
     paused = False
@@ -426,7 +426,7 @@ async def test_storage_replacement_during_original_admission_cannot_enter_succes
         callback_calls.append(exact_acceptance)
         return original_callback(exact_acceptance)
 
-    monkeypatch.setattr(participants, "_core_operation", held_original_admission)
+    monkeypatch.setattr(participants, "core_operation", held_original_admission)
     monkeypatch.setattr(store, "commit_durable_turn", observed_callback)
     task = asyncio.create_task(commit_durable_turn_owned(store, acceptance))
     try:

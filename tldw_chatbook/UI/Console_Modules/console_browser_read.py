@@ -41,7 +41,7 @@ _RETIREMENT_SOURCE = _notes_module._CONSOLE_BROWSER_NOTES_RETIREMENT_SOURCE
 _SERVICE_TYPE = _SERVICE_SOURCE[5][0][1]
 _NOTES_TYPE = _NOTES_SOURCE[5][0][1]
 _REGISTRY_TYPE = _RETIREMENT_SOURCE[5][0][1]
-_CORE_OPERATION = dict(_NOTES_SOURCE[5])["_core_operation"]
+_CORE_OPERATION = dict(_NOTES_SOURCE[5])["core_operation"]
 _RETIRE_HANDLE = {
     name: descriptor
     for owner, name, descriptor in _NOTES_SOURCE[4]

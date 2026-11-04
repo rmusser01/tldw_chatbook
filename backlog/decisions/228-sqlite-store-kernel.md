@@ -13,7 +13,7 @@ The DB layer grew by copy-paste convergence: 25 independent `transaction()` cont
 - transaction rollback must catch `BaseException`, not `Exception`, or an escaped `CancelledError`/`KeyboardInterrupt` leaves the transaction open and silently loses every later write on that thread (task-32801.5, proven on Prompts_DB),
 - a liveness probe with careful invalidation handling must transparently replace a connection another component closed.
 
-`Backup_Recovery/participants.py` (TASK-32628 lineage) already coordinates stores through the `_core_getter`/`_core_transaction` decorators and `_core_*` hooks — but it observes whatever machinery each store still hand-rolls; it does not provide that machinery.
+`Backup_Recovery/participants.py` (TASK-32628 lineage) already coordinates stores through the `core_getter`/`core_transaction` decorators and `core_*` hooks — but it observes whatever machinery each store still hand-rolls; it does not provide that machinery.
 
 ## Decision
 
@@ -22,7 +22,7 @@ Extract one kernel — `DB/store_kernel.py`, a `SQLiteStoreKernel` mixin consuma
 1. **Held connection**: per-thread `threading.local` connection, opened through a single overridable `_configure_connection` (the one place per-connection PRAGMAs and `isolation_level = None` live), with the 30-second liveness ping and the invalidated-connection replacement dance.
 2. **`transaction()`**: `BEGIN IMMEDIATE`; body yields the held connection; `except BaseException: rollback; raise`; clean exit commits.
 3. **Nesting is fail-loud**: a nested `transaction()` on the same thread raises `sqlite3.OperationalError`, with the rollback still landing through the outer block. This is the deliberate, documented semantics of the reference ports — not an accident to fix.
-4. **Participants integration is built in**: the kernel's getter/transaction entry points carry the `_core_getter`/`_core_transaction` decoration and call `_core_access`/`_register_core_connection`/`_core_cached_connection`, so every migrated store is observable by `Backup_Recovery/participants.py` by construction.
+4. **Participants integration is built in**: the kernel's getter/transaction entry points carry the `core_getter`/`core_transaction` decoration and call `core_access`/`register_core_connection`/`core_cached_connection`, so every migrated store is observable by `Backup_Recovery/participants.py` by construction.
 5. **`:memory:` policy is per-store**: the kernel stays uniformly thread-local (Workspace/RAG semantics); stores that need a shared in-memory connection (e.g. ClientNotificationsDB's inbox) override the accessor and say so in their docstring, as they do today.
 
 **EventStateRepository is an ADR-228 exception**: its connections are keyed by thread ident in a plain dict rather than a ``threading.local`` because ``close()`` must reach connections it does not own (requiring ``check_same_thread=False`` on the file branch), and its ``:memory:`` branch deliberately shares ONE connection (an in-memory database lives inside its connection). Both properties conflict with the kernel's per-thread store; migrating it would regress worker-pool cleanup. ClientNotificationsDB demonstrates the other documented exception shape: it consumes the kernel for connection/transaction/close while keeping its ensure-schema lock, dual-owner open (``db.base`` file seam + ``notifications.client`` memory branch), and shared-connection ``:memory:`` policy as overrides — and gains the task-32801.5 BaseException rollback its old ``except Exception`` lacked.
@@ -33,7 +33,7 @@ Migration is incremental, one store per PR, pilot first (`RAG_Indexing_DB` — t
 
 ### BaseDB-provenance stores (review round 1)
 
-Most planned migrations subclass `BaseDB`, whose per-call `_get_connection()` opens through the **`db.base`** private-sqlite owner, and `_register_core_connection` validates participants identity against exactly that policy. The kernel's `_kernel_sqlite_owner` is the *connect* owner for stores that open their own connections (like the pilot's `db.rag_indexing`); it is not a new participants identity, and no per-store `db.<name>` policy entries should be minted for BaseDB-provenance stores. For those stores:
+Most planned migrations subclass `BaseDB`, whose per-call `_get_connection()` opens through the **`db.base`** private-sqlite owner, and `register_core_connection` validates participants identity against exactly that policy. The kernel's `_kernel_sqlite_owner` is the *connect* owner for stores that open their own connections (like the pilot's `db.rag_indexing`); it is not a new participants identity, and no per-store `db.<name>` policy entries should be minted for BaseDB-provenance stores. For those stores:
 
 - **MRO is load-bearing**: declare `class Store(SQLiteStoreKernel, BaseDB)` — kernel first — so the kernel's autocommit `_get_connection()`, `transaction()`, and the participants-gated `close()` win over `BaseDB`'s per-call/non-autocommit `_get_connection` and its no-op `close()` (which the retirement closers map calls).
 - Where a store needs BaseDB's per-call connection for specific operations, it retains that seam explicitly rather than blending the two.

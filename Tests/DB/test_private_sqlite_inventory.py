@@ -1763,7 +1763,7 @@ def test_explicit_exclusions_and_absence_of_async_owner_are_documented() -> None
             isinstance(node, ast.Call) and _is_named_call(node, "raw", method)
             for node in ast.walk(json_backup)
         )
-        for method in ("_file", "_replace")
+        for method in ("file", "replace")
     )
     assert not any(
         isinstance(node, ast.Call) and _is_sqlite3_connect(node)

@@ -13,7 +13,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from types import MappingProxyType
 
-from tldw_chatbook.Backup_Recovery.participants import _core_operation
+from tldw_chatbook.Backup_Recovery.participants import core_operation
 from tldw_chatbook.Chat.console_trace_legacy import (
     LegacyDecodedByteLimitError,
     LegacyTraceNormalizer,
@@ -788,7 +788,7 @@ class LegacyTraceMaintenance:
         """
         if self.provider_active():
             return LegacyMaintenanceBatch(False, 0, 0, False)
-        with _core_operation(self.db):
+        with core_operation(self.db):
             return self._run_admitted_batch()
 
     def _run_admitted_batch(self) -> LegacyMaintenanceBatch:

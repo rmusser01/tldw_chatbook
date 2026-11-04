@@ -36,7 +36,7 @@ def main():
     anchors = ((config, 'replace_cli_config'), (config, '_write_raw_cli_config_unlocked'),
                (config, 'read_cli_config_serialized'), (config, '_load_settings_guarded'),
                (config, '_load_settings_uncached'), (life, 'operation'),
-               (raw, '_check'), (storage, 'acquire_storage'), (toml, 'dumps'))
+               (raw, 'check'), (storage, 'acquire_storage'), (toml, 'dumps'))
     bodies = [(owner, name, getattr(owner, name), getattr(owner, name).__code__)
               for owner, name in anchors]
     files = (Path(config.__file__).absolute(),

@@ -5839,7 +5839,7 @@ class ConsoleWorkspaceController:
         scope; reconciliation and all subsequent resume effects stay on-loop.
         Custom and in-memory readers retain their original synchronous route.
         """
-        from ...Backup_Recovery.participants import _core_operation
+        from ...Backup_Recovery.participants import core_operation
         from ...Chat.console_preparation_reads import run_preparation_read
 
         app = self.app_instance
@@ -5929,7 +5929,7 @@ class ConsoleWorkspaceController:
                 )
 
         def read():
-            with operation_owned_connection(database), _core_operation(database):
+            with operation_owned_connection(database), core_operation(database):
                 source_current()
                 return reader()
 
@@ -7165,7 +7165,7 @@ class ConsoleWorkspaceController:
 
     async def _read_owned_workspace_availability(self, registry, database, workspace_ids):
         """Retain the original callback's exact finite DB scopes through cancel."""
-        from ...Backup_Recovery.participants import _core_operation
+        from ...Backup_Recovery.participants import core_operation
         from ...Chat.console_preparation_reads import run_preparation_read
         from ...DB.base_db import operation_owned_connection
 
@@ -7192,7 +7192,7 @@ class ConsoleWorkspaceController:
         def read_captured_availability():
             # Same complete repository interval and newly-created-handle custody
             # as run_owned_db_call; its global/custom API remains unchanged.
-            with operation_owned_connection(database), _core_operation(database):
+            with operation_owned_connection(database), core_operation(database):
                 current()
                 return reader(registry, database, workspace_ids)
 

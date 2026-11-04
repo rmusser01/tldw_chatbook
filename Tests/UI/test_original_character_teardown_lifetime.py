@@ -160,7 +160,7 @@ async def test_real_app_resume_character_worker_retires_before_owned_exit(
     from Tests.UI import test_console_session_tab_close as original
     from Tests.UI.app_factory import drain_active_service_patches, drain_created_dirs
     from Tests.UI.background_signals import await_background_task
-    from tldw_chatbook.Backup_Recovery.participants import _close_settled_core_cache
+    from tldw_chatbook.Backup_Recovery.participants import close_settled_core_cache
 
     app = _stock_private_app()
     gate = None
@@ -216,7 +216,7 @@ async def test_real_app_resume_character_worker_retires_before_owned_exit(
                 # This is the exact shipping App-exit stage, not a substitute
                 # runtime/close function or a narrowed storage authority guard.
                 await app._shutdown_console_runtime()
-                closed = _close_settled_core_cache(database)
+                closed = close_settled_core_cache(database)
                 if not closed:
                     facts = gate.boundary_facts()
                     assert (
@@ -231,7 +231,7 @@ async def test_real_app_resume_character_worker_retires_before_owned_exit(
                     await _retire_exact_reader(gate)
                 else:
                     gate.release.set()
-            assert _close_settled_core_cache(database), (
+            assert close_settled_core_cache(database), (
                 "actual declared creator owner did not retire after callback completion"
             )
         # All ordinary original App lifecycle and fixture-owned cache cleanup
@@ -261,7 +261,7 @@ async def test_prepared_host_console_sync_retires_before_creator_close(
         OriginalCharacterTeardownGate,
     )
     from Tests.UI import test_console_session_tab_close as original
-    from tldw_chatbook.Backup_Recovery.participants import _close_settled_core_cache
+    from tldw_chatbook.Backup_Recovery.participants import close_settled_core_cache
     from tldw_chatbook.Chat.console_runtime import dispose_console_runtime
 
     gate = None
@@ -333,7 +333,7 @@ async def test_prepared_host_console_sync_retires_before_creator_close(
                 # Current fixture owns this runtime/database; keep its original
                 # disposal-before-close order and exact settled creator check.
                 await dispose_console_runtime(app)
-                if not _close_settled_core_cache(database):
+                if not close_settled_core_cache(database):
                     facts = gate.boundary_facts()
                     from tldw_chatbook.Backup_Recovery import (
                         storage_admission as storage,
@@ -387,7 +387,7 @@ async def test_prepared_host_console_sync_retires_before_creator_close(
                         await _retire_exact_reader(gate)
                     else:
                         gate.release.set()
-            assert _close_settled_core_cache(database)
+            assert close_settled_core_cache(database)
     finally:
         if gate is not None:
             receipt = _write(

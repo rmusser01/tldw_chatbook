@@ -35,7 +35,7 @@ def permission(tmp_path, monkeypatch):
 async def test_actual_witness_disk_read_does_not_hold_storage_coordinator(permission):
     entered, release = threading.Event(), threading.Event()
     captured = []
-    check_code = raw._check.__code__
+    check_code = raw.check.__code__
     witness_code = selected_path.__code__
 
     def observe(frame, event, arg):
@@ -86,7 +86,7 @@ async def test_native_parent_proof_cannot_return_revoked_custody(
 ):
     entered, release = threading.Event(), threading.Event()
     captured, published, errors = [], [], []
-    check_code = raw._check.__code__
+    check_code = raw.check.__code__
     participant_code = raw._participant_state.__code__
     parent_proof_code = raw._check_parent_pins.__code__
     fstat = raw.os.fstat
@@ -124,11 +124,11 @@ async def test_native_parent_proof_cannot_return_revoked_custody(
         assert release.wait(10)
 
     def read():
-        with raw._scope(permission, "mcp_store", writing=True) as operation:
+        with raw.scope(permission, "mcp_store", writing=True) as operation:
             previous = sys.getprofile()
             sys.setprofile(observe)
             try:
-                published.append(raw._check(operation))
+                published.append(raw.check(operation))
             except Exception as error:  # noqa: BLE001 - record observer failures without skipping physical test cleanup.
                 errors.append(error)
             finally:
@@ -174,7 +174,7 @@ def test_remaining_source_entry_proofs_do_not_hold_coordinator(permission, entry
     target = (
         raw._raw_participant.__code__
         if entry == "participant"
-        else raw._scope.__wrapped__.__code__
+        else raw.scope.__wrapped__.__code__
     )
     observed = []
 
@@ -193,7 +193,7 @@ def test_remaining_source_entry_proofs_do_not_hold_coordinator(permission, entry
         if entry == "participant":
             raw._raw_participant(permission)
         else:
-            with raw._scope(permission, "mcp_store", writing=True):
+            with raw.scope(permission, "mcp_store", writing=True):
                 assert permission.get_kill_switch() is False
     finally:
         sys.setprofile(previous)
@@ -228,7 +228,7 @@ async def test_maintenance_metadata_gates_do_not_reacquire_during_accepted_pause
     monkeypatch.setattr(recovery_activation, "acquire_storage", observed)
 
     def update():
-        with raw._scope(permission, "mcp_store", writing=True) as operation:
+        with raw.scope(permission, "mcp_store", writing=True) as operation:
             operations.append(operation)
             assert raw._states[operation].participant is participant
             entered.set()
@@ -263,7 +263,7 @@ async def test_maintenance_metadata_gates_do_not_reacquire_during_accepted_pause
 def test_retained_mcp_observation_rejects_real_lease_for_another_path(permission):
     from tldw_chatbook.Backup_Recovery.bootstrap import RecoveryRequired
 
-    with raw._scope(permission, "mcp_store", writing=True) as operation:
+    with raw.scope(permission, "mcp_store", writing=True) as operation:
         state = raw._states[operation]
         original = state.mcp_observation_lease
         sibling = state.mcp_canonical.with_name("different-canonical.json")
@@ -273,7 +273,7 @@ def test_retained_mcp_observation_rejects_real_lease_for_another_path(permission
         state.mcp_observation_lease = other
         try:
             with pytest.raises(RecoveryRequired, match="execution_selection_changed"):
-                raw._mcp_observation(permission, state.mcp_canonical)
+                raw.mcp_observation(permission, state.mcp_canonical)
         finally:
             state.mcp_observation_lease = original
             state.leases.pop()
@@ -292,7 +292,7 @@ async def test_retained_observation_rechecks_source_after_actual_lease_validatio
     entered, release = threading.Event(), threading.Event()
     captured, published, errors = [], [], []
     context_code = storage.StorageLease.execution_context.__code__
-    observation_code = raw._mcp_observation.__code__
+    observation_code = raw.mcp_observation.__code__
 
     def profile(frame, event, _arg):
         if (
@@ -309,12 +309,12 @@ async def test_retained_observation_rechecks_source_after_actual_lease_validatio
         assert release.wait(10)
 
     def observe():
-        with raw._scope(permission, "mcp_store", writing=True) as operation:
+        with raw.scope(permission, "mcp_store", writing=True) as operation:
             previous = sys.getprofile()
             sys.setprofile(profile)
             try:
                 published.append(
-                    raw._mcp_observation(
+                    raw.mcp_observation(
                         permission, raw._states[operation].mcp_canonical
                     )
                 )

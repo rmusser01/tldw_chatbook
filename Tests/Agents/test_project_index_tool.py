@@ -871,7 +871,7 @@ async def test_real_provider_registry_owner_spans_outer_close(
         capture_run_admitted_workspace_roots,
     )
     from tldw_chatbook.Backup_Recovery import storage_admission as storage
-    from tldw_chatbook.Backup_Recovery.participants import _retire_current_thread_caches
+    from tldw_chatbook.Backup_Recovery.participants import retire_current_thread_caches
 
     root = tmp_path / "project"
     root.mkdir()
@@ -983,7 +983,7 @@ async def test_real_provider_registry_owner_spans_outer_close(
         assert pins and all(pin.closed for pin in pins)
         assert not service._searches and not results and not returned.is_set()
         pause = storage._begin_local_pause()
-        _retire_current_thread_caches(pause)
+        retire_current_thread_caches(pause)
         assert not pause.drain(
             time.monotonic()
         ), "outer registry handle lost native admission"

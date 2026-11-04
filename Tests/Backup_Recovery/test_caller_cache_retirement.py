@@ -9,7 +9,7 @@ import asyncio, sqlite3, threading, time, sys
 from pathlib import Path
 from tldw_chatbook import config
 from tldw_chatbook.Backup_Recovery import storage_admission as storage
-from tldw_chatbook.Backup_Recovery.participants import _retire_current_thread_caches
+from tldw_chatbook.Backup_Recovery.participants import retire_current_thread_caches
 
 route, outcome = sys.argv[1:]
 root = Path.home()
@@ -38,8 +38,8 @@ connection.execute('SELECT 1').fetchone()
 extra = db._get_connection() if outcome == 'uncached' else None
 operation = None
 if outcome == 'operation':
-    from tldw_chatbook.Backup_Recovery.participants import _core_operation
-    operation = _core_operation(db)
+    from tldw_chatbook.Backup_Recovery.participants import core_operation
+    operation = core_operation(db)
     operation.__enter__()
 if outcome == 'transaction':
     connection.execute('BEGIN')
@@ -58,19 +58,19 @@ if outcome == 'foreign':
     assert foreign_entered.wait(5)
 pause = storage._begin_local_pause()
 try:
-    _retire_current_thread_caches(pause)
+    retire_current_thread_caches(pause)
     if operation is not None:
         assert connection.execute('SELECT 1').fetchone()[0] == 1
         assert not pause.drain(time.monotonic())
         operation.__exit__(None, None, None)
         operation = None
-        _retire_current_thread_caches(pause)
+        retire_current_thread_caches(pause)
     if outcome == 'transaction':
         assert connection.in_transaction
         assert connection.execute('SELECT 1').fetchone()[0] == 1
         assert not pause.drain(time.monotonic())
         connection.rollback()
-        _retire_current_thread_caches(pause)
+        retire_current_thread_caches(pause)
     with __import__('pytest').raises(sqlite3.ProgrammingError):
         connection.execute('SELECT 1')
     if extra is not None:
@@ -94,7 +94,7 @@ finally:
 assert get().execute('SELECT 1').fetchone()[0] == 1
 close()
 with __import__('pytest').raises(Exception, match='local_pause_inactive'):
-    _retire_current_thread_caches(pause)
+    retire_current_thread_caches(pause)
 print('retired and reopened')
 """
 
@@ -125,7 +125,7 @@ from pathlib import Path
 from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB,CharactersRAGDBError
 from tldw_chatbook.DB.base_db import _QuiescentSQLiteConnection
 from tldw_chatbook.Backup_Recovery import storage_admission as storage
-from tldw_chatbook.Backup_Recovery.participants import _retire_current_thread_caches
+from tldw_chatbook.Backup_Recovery.participants import retire_current_thread_caches
 db=CharactersRAGDB(Path.home()/'notes.db',client_id='setup-failure')
 db.close_connection();participant=db._maintenance_participant
 assert not participant.connections
@@ -148,7 +148,7 @@ finally:
 assert getattr(db._local,'conn',None) is None
 pause=storage._begin_local_pause()
 try:
- _retire_current_thread_caches(pause)
+ retire_current_thread_caches(pause)
  if close_failure:
   assert len(participant.connections)==1
   connection,lease=next(iter(participant.connections.items()))

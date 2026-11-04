@@ -342,8 +342,8 @@ def _require_collections_setup_current(request):
 
 def _build_deferred_collections_capture_parts(request):
     from tldw_chatbook.Backup_Recovery.participants import (
-        _core_cached_connection,
-        _core_closing,
+        core_cached_connection,
+        core_closing,
     )
     from tldw_chatbook.Utils.private_paths import lexical_path
 
@@ -357,7 +357,7 @@ def _build_deferred_collections_capture_parts(request):
     data_root = _source_wiring.get_user_data_dir()
     request.require_current()
     database, local = request.database, request.local
-    previous = _core_cached_connection(database, getattr(local, "conn", None))
+    previous = core_cached_connection(database, getattr(local, "conn", None))
     connection = None
     try:
         request.require_current()
@@ -373,7 +373,7 @@ def _build_deferred_collections_capture_parts(request):
         )
     finally:
         if connection is not None and connection is not previous:
-            with _core_closing(database, connection) as allowed:
+            with core_closing(database, connection) as allowed:
                 if not allowed:
                     raise RuntimeError("collections_capture_connection_not_retired")
                 connection.close()

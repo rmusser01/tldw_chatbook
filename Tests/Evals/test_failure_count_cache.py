@@ -238,13 +238,13 @@ def test_run_group_change_invalidates_its_result_counts(db):
 
 def test_cached_counts_keep_the_repository_admission_fence(tmp_path):
     from tldw_chatbook.Backup_Recovery.bootstrap import RecoveryRequired
-    from tldw_chatbook.Backup_Recovery.participants import _repository_participant
+    from tldw_chatbook.Backup_Recovery.participants import repository_participant
 
     db = EvalsDB(tmp_path / "admission.sqlite3", client_id="b6_admission")
     group_id, run_id = _seed_group(db, "admission")
     _store_cell(db, run_id, errored=True)
     assert db.run_group_cell_failure_counts() == {group_id: (1, 1)}
-    participant = _repository_participant(db)
+    participant = repository_participant(db)
     try:
         participant.close_admission()
         with pytest.raises(RecoveryRequired, match="storage_locally_paused"):

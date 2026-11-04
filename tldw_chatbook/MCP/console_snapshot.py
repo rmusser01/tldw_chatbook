@@ -298,13 +298,13 @@ async def _owned_worker(call: Callable[[], Any]) -> Any:
 def _checked_read(source: Any, call: Callable[[], Any]) -> tuple[Any, tuple[Any, ...]]:
     # The receipt is captured from the actual issued scope while the original
     # source method and all its fresh native guards execute inside that scope.
-    with raw._scope(source, sources.ROUTE, writing=True) as operation:
+    with raw.scope(source, sources.ROUTE, writing=True) as operation:
         state = raw._states[operation]
         if state.source is not source or state.participant is None:
             raise RecoveryRequired("mcp_source_not_installed")
         before = _source_identity(source)
         payload = call()
-        raw._check(operation, state.selected)
+        raw.check(operation, state.selected)
         after = _source_identity(source)
         if before != after or Path(source.path) != state.selected:
             raise RecoveryRequired("mcp_source_selection_changed")

@@ -147,7 +147,7 @@ def test_actual_lock_refuses_post_creation_posture_drift(lock_case, monkeypatch,
     with retirement_cases._original_tracked_closes(case.source) as retirement:
         with (
             case.config.locked_hooks_config_snapshot() as config_snapshot,
-            raw._scope(
+            raw.scope(
                 case.source,
                 "hook_permissions",
                 writing=True,

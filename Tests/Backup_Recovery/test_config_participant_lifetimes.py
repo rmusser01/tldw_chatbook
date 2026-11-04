@@ -98,7 +98,7 @@ def test_config_failed_write_retains_generation_cache_and_error(source, monkeypa
     original = private_paths.os.write
 
     def fail(fd, payload):
-        if raw._runtime_operation() is not None:
+        if raw.runtime_operation() is not None:
             raise OSError("write failed")
         return original(fd, payload)
 
@@ -249,13 +249,13 @@ def opened(*args, **kwargs):
     global fd_target
     fd = original_open(*args, **kwargs)
     direct_body = failure == 'direct_parent' and any(frame.function == '_prepare_config_parent' for frame in inspect.stack())
-    if raw._runtime_operation() is not None or direct_body:
+    if raw.runtime_operation() is not None or direct_body:
         if (failure == 'ancestor' or direct_body) and args[0] == '/': fd_target = fd
         if failure.startswith('lock_') and str(args[0]).endswith('.lock'): fd_target = fd
     return fd
 def writing(fd, payload):
     global fd_target
-    if failure.startswith('temp_') and raw._runtime_operation() is not None: fd_target = fd
+    if failure.startswith('temp_') and raw.runtime_operation() is not None: fd_target = fd
     return original_write(fd, payload)
 def loading(stream, *args, **kwargs):
     global fd_target

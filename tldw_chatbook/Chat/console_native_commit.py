@@ -107,9 +107,9 @@ async def _run_owned_native_call[Result](
 
         with operation_owned_connection(database):
             if type(database) is CharactersRAGDB and not database.is_memory_db:
-                from tldw_chatbook.Backup_Recovery.participants import _core_operation
+                from tldw_chatbook.Backup_Recovery.participants import core_operation
 
-                with _core_operation(database):
+                with core_operation(database):
                     return invoke_bound()
             return invoke_bound()
 

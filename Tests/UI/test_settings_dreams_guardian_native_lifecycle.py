@@ -11,7 +11,7 @@ import pytest
 import Tests.UI.app_factory  # noqa: F401 - source-bound config admission
 from Tests.UI.test_destination_shells import _build_test_app
 from Tests.UI.test_settings_dreams import _read_toml, _seed_config
-from tldw_chatbook.Backup_Recovery.participants import _repository_participant
+from tldw_chatbook.Backup_Recovery.participants import repository_participant
 from tldw_chatbook.DB.Dreams_DB import DreamsDB
 from tldw_chatbook.DB.Guardian_DB import GuardianDB
 from tldw_chatbook.UI.Screens.settings_screen import SettingsScreen
@@ -83,7 +83,7 @@ async def test_settings_real_getter_constructor_lifetime(
             operation.cancel()
             with pytest.raises(asyncio.CancelledError):
                 await operation
-            participant = _repository_participant(owners[0])
+            participant = repository_participant(owners[0])
             participant.close_admission()
             assert not participant.drain(time.monotonic() + 0.02)
             participant.resume()
@@ -112,7 +112,7 @@ async def test_settings_real_getter_constructor_lifetime(
         # handle before inspecting the installed recovery participant.
         owner._held_connection().execute("SELECT 1")
         owner.close()
-        participant = _repository_participant(owner)
+        participant = repository_participant(owner)
         participant.close_admission()
         assert participant.drain(time.monotonic() + 0.02) is (mode != "borrowed")
         participant.resume()
@@ -126,7 +126,7 @@ async def test_settings_real_getter_constructor_lifetime(
         if operation is not None:
             await asyncio.gather(operation, return_exceptions=True)
         for owner in owners:
-            _repository_participant(owner).resume()
+            repository_participant(owner).resume()
             await loop.run_in_executor(pool, owner.close)
             owner.close()
         loop._default_executor = previous

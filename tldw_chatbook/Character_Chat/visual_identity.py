@@ -2367,7 +2367,7 @@ def publish_visual_identity_candidate(
         if any(not isinstance(path, os.PathLike) for path in source_files):
             source_binding = None
             source_files = tuple(path for path in source_files if isinstance(path, os.PathLike))
-        if any(visual_lifetime._identity(path) is not None for path in (staging_dir, final_dir)):
+        if any(visual_lifetime.path_identity(path) is not None for path in (staging_dir, final_dir)):
             _reset_candidate_publication(candidate)
             raise VisualIdentityPublicationError("visual_identity_publication_denied")
         with visual_lifetime.files(source_binding, source_files + output_files, directories,

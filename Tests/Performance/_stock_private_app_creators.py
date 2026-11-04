@@ -33,7 +33,7 @@ class OriginalPrivateAppCreators(OriginalStorageUnitObserver):
                 (self.app_type, "__init__", app_init),
             )
         )
-        self.original_types = participants._repository_types()
+        self.original_types = participants.repository_types()
         assert EvalsDB in self.original_types and SubscriptionsDB in self.original_types
         self.roles, self.births, self.owners = {}, {}, []
         self.parallel_methods = {}
@@ -190,10 +190,10 @@ class OriginalPrivateAppCreators(OriginalStorageUnitObserver):
             path = Path(owner.db_path)
             assert path.is_absolute() and path.resolve().is_relative_to(self.root)
             from tldw_chatbook.Backup_Recovery.participants import (
-                _repository_participant,
+                repository_participant,
             )
 
-            participant = _repository_participant(owner)
+            participant = repository_participant(owner)
             assert participant.repository() is owner and participant.path == path
             self.owners.append(
                 (owner, expected, path, participant, tuple(participant.connections))
@@ -221,7 +221,7 @@ class OriginalPrivateAppCreators(OriginalStorageUnitObserver):
 
     def retire(self):
         from tldw_chatbook.Backup_Recovery import storage_admission as storage
-        from tldw_chatbook.Backup_Recovery.participants import _close_settled_core_cache
+        from tldw_chatbook.Backup_Recovery.participants import close_settled_core_cache
 
         assert threading.current_thread() is self.creator and not self.retired
         for owner, expected, path, participant, initial_connections in self.owners:
@@ -242,7 +242,7 @@ class OriginalPrivateAppCreators(OriginalStorageUnitObserver):
                     getattr(a.operation, "participant", None) is participant
                     for a in storage._pending_acquisitions
                 )
-            closed = settled_closed or _close_settled_core_cache(owner)
+            closed = settled_closed or close_settled_core_cache(owner)
             if not closed:
                 with storage._lock:
                     remaining = tuple(participant.connections.items())

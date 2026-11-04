@@ -8,7 +8,7 @@ from tldw_chatbook import config
 from tldw_chatbook.Agents import agent_worktree
 from tldw_chatbook.Backup_Recovery import bootstrap
 from tldw_chatbook.Backup_Recovery import storage_admission as storage
-from tldw_chatbook.Backup_Recovery.participants import _core_operation
+from tldw_chatbook.Backup_Recovery.participants import core_operation
 from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
 from tldw_chatbook.Utils.private_paths import PrivatePathError, secure_private_directory
 
@@ -32,7 +32,7 @@ def test_real_worktree_root_preparation_restores_exact_borrowed_database_scope(
     database, tmp_path
 ):
     owner, connection = database
-    with _core_operation(owner):
+    with core_operation(owner):
         original = storage._operation_local.operation
         base = agent_worktree._worktrees_base()
         assert base == config.get_user_data_dir() / "agent_worktrees"
@@ -62,7 +62,7 @@ def test_native_worktree_directory_failure_restores_parent_scope(
     outside.mkdir(mode=0o700)
     base.symlink_to(outside, target_is_directory=True)
     try:
-        with _core_operation(database[0]):
+        with core_operation(database[0]):
             original = storage._operation_local.operation
             if create_worktree:
                 result = agent_worktree.create_agent_worktree(git_repo, "symlink-child")
@@ -95,7 +95,7 @@ def test_pause_before_native_worktree_directory_admission_restores_parent(
         return native_acquire(path, related_paths=related_paths)
 
     monkeypatch.setattr(storage, "acquire_storage", pause_then_acquire)
-    with _core_operation(database[0]):
+    with core_operation(database[0]):
         original = storage._operation_local.operation
         try:
             if create_worktree:

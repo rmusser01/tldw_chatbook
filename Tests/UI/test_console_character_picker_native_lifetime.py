@@ -31,7 +31,7 @@ async def test_exact_picker_fetch_retires_only_its_owned_native_work(
     from Tests.UI.test_console_character_controller import _controller
     from tldw_chatbook import config
     from tldw_chatbook.Backup_Recovery import storage_admission as storage
-    from tldw_chatbook.Backup_Recovery.participants import _repository_participant
+    from tldw_chatbook.Backup_Recovery.participants import repository_participant
     from tldw_chatbook.Character_Chat.character_conversation_navigation import (
         ResolvedLocalCharacterKey,
     )
@@ -43,7 +43,7 @@ async def test_exact_picker_fetch_retires_only_its_owned_native_work(
     )
 
     database = CharactersRAGDB(config.get_user_data_dir() / "picker.sqlite", "picker")
-    participant = _repository_participant(database)
+    participant = repository_participant(database)
     character_id = database.add_character_card({"name": "Original"})
     key = ResolvedLocalCharacterKey(database.get_local_authority_id(), character_id)
     database.close()

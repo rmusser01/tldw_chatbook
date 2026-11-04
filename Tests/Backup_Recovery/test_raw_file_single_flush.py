@@ -28,7 +28,7 @@ class _HistoryFlushObservation:
 
         self.history = history
         self.windows = windows_files
-        self.file_body = inspect.unwrap(raw._file)
+        self.file_body = inspect.unwrap(raw.file)
         self.flush = windows_files.flush_file
         self.bindings = (
             (self.file_body, self.file_body.__code__),
@@ -216,7 +216,7 @@ class _HistoryFlushObservation:
     def assert_retired(self):
         assert self.retired and not self.errors, self.errors
         assert not self.pending and not self.flush_pending
-        assert inspect.unwrap(raw._file) is self.file_body
+        assert inspect.unwrap(raw.file) is self.file_body
         assert self.windows.flush_file is self.flush
         assert raw.flush_file is self.bindings[1][0]
         assert self.windows.WindowsOS.fsync is self.bindings[3][0]

@@ -80,14 +80,14 @@ class _Binding:
     companions: tuple = ()
 
 
-def _validate(source):
+def validate(source):
     bound = _BINDINGS.get(source)
     if bound is None:
         return None
     cls, (_, _, attribute, leaf) = _source_kind(source)
     config = bound.config
     data = config._CONFIG_CACHE
-    from .participants import _repository_participant
+    from .participants import repository_participant
 
     if (
         type(source) is not bound.source_type
@@ -105,7 +105,7 @@ def _validate(source):
         or profile_paths.database_path(data, "chachanotes_db_path") != bound.db.db_path
     ):
         raise bootstrap.RecoveryRequired("chat_source_selection_changed")
-    _repository_participant(bound.db)
+    repository_participant(bound.db)
     if cls.__name__ == "ChatConversationService":
         expected = bound.companions[0]() if bound.companions else None
         if source.citation_legacy_migration is not expected:
@@ -119,7 +119,7 @@ def _validate(source):
 
 
 def check_citation_attachment(source, migration):
-    bound = _validate(source)
+    bound = validate(source)
     if bound is not None:
         expected = bound.companions[0]() if bound.companions else None
         if migration is not expected:
@@ -129,7 +129,7 @@ def check_citation_attachment(source, migration):
 def binding(source):
     if source not in _BINDINGS:
         return None
-    bound = _validate(source)
+    bound = validate(source)
     return _source_kind(source)[1][1], bound.path, True
 
 
@@ -137,7 +137,7 @@ def selection(source, route, target=None):
     _, (actual_route, _, attribute, _) = _source_kind(source)
     if route != actual_route:
         raise bootstrap.RecoveryRequired("chat_source_not_supported")
-    bound = _validate(source)
+    bound = validate(source)
     value = getattr(source, attribute)
     if value is None:
         raise bootstrap.RecoveryRequired("chat_source_has_no_file")
@@ -149,7 +149,7 @@ def selection(source, route, target=None):
 
 def _install(source, db, config, selected):
     from ..DB.ChaChaNotes_DB import CharactersRAGDB
-    from .participants import _repository_participant
+    from .participants import repository_participant
 
     # An arbitrary injected DB remains ordinary. No owner/path flag installs it.
     if type(db) is not CharactersRAGDB or db.is_memory_db:
@@ -159,7 +159,7 @@ def _install(source, db, config, selected):
         != db.db_path
     ):
         return
-    _repository_participant(db)
+    repository_participant(db)
     _BINDINGS[source] = _Binding(
         type(source),
         db,
@@ -211,8 +211,8 @@ def bind_citation_services(service, migration):
         selected = config.get_user_data_dir() / "tldw_chatbook_chat_rag_context.json"
         attempt.check()
         if service in _BINDINGS or migration in _BINDINGS:
-            _validate(service)
-            _validate(migration)
+            validate(service)
+            validate(migration)
             return
         if (
             type(service) is not ChatConversationService
@@ -252,7 +252,7 @@ def _cache_names(source):
 
 
 def drain_ready(source):
-    _validate(source)
+    validate(source)
     return getattr(source, "_chat_persistence_error", None) is None
 
 
@@ -260,15 +260,15 @@ def drain_ready(source):
 def operation(source):
     """Preadmit the fixed actual pair, then discover both existing scopes."""
     from . import raw_participants as raw
-    from .participants import _core_operation
+    from .participants import core_operation
 
-    bound = _validate(source)
+    bound = validate(source)
     route, _, attribute, _ = _source_kind(source)[1]
     active = getattr(_LOCAL, "active", None)
     if active is not None and any(item is source for item, _ in active):
         for item, token in active:
-            _validate(item)
-            raw._check(token)
+            validate(item)
+            raw.check(token)
         core = getattr(storage._operation_local, "operation", None)
         if core is not None:
             storage._check_operation(core, source.db.db_path)
@@ -328,20 +328,20 @@ def operation(source):
             from ..DB.ChaChaNotes_DB import CharactersRAGDB
 
             if isinstance(source.db, CharactersRAGDB):
-                scopes.enter_context(_core_operation(source.db))
+                scopes.enter_context(core_operation(source.db))
                 core = getattr(storage._operation_local, "operation", None)
             tokens = []
             for item in members:
                 item_route = _source_kind(item)[1][0]
-                token = scopes.enter_context(raw._scope(item, item_route, writing=True))
+                token = scopes.enter_context(raw.scope(item, item_route, writing=True))
                 tokens.append((item, token))
             # Both native scopes exist before exposure. No pause-time acquisition.
             attempt.check()
             for item, token in tokens:
-                _validate(item)
-                state = raw._check(token)
+                validate(item)
+                state = raw.check(token)
                 if bound is not None:
-                    state.observed_files[state.selected] = _sidecar_identity(
+                    state.observed_files[state.selected] = sidecar_identity(
                         state.selected
                     )
                 if (
@@ -407,7 +407,7 @@ def operation(source):
         if previous_core is not None:
             storage._check_operation(previous_core, previous_core.path)
         if previous_raw is not None:
-            raw._check(previous_raw)
+            raw.check(previous_raw)
 
 
 def guarded(function):
@@ -430,7 +430,7 @@ def read_text(source):
 
     with operation(source) as token:
         path = selection(source, _source_kind(source)[1][0])[0]
-        with raw._file(token, path, "r") as stream:
+        with raw.file(token, path, "r") as stream:
             return stream.read()
 
 
@@ -440,26 +440,26 @@ def write_text(source, text):
     with operation(source) as token:
         selected = selection(source, _source_kind(source)[1][0])[0]
         temporary = selected.with_suffix(selected.suffix + ".tmp")
-        raw._mkdirs(token)
+        raw.mkdirs(token)
         try:
-            with raw._file(token, temporary, "w") as stream:
+            with raw.file(token, temporary, "w") as stream:
                 stream.write(text)
-            state = raw._check(token, selected, writing=True)
-            if _validate(source) is not None and (
-                _sidecar_identity(selected, writing=True)
+            state = raw.check(token, selected, writing=True)
+            if validate(source) is not None and (
+                sidecar_identity(selected, writing=True)
                 != state.observed_files.get(selected)
             ):
                 raise bootstrap.RecoveryRequired("chat_sidecar_identity_changed")
-            raw._replace(token, temporary, selected)
-            if _validate(source) is not None:
-                state.observed_files[selected] = _sidecar_identity(selected)
+            raw.replace(token, temporary, selected)
+            if validate(source) is not None:
+                state.observed_files[selected] = sidecar_identity(selected)
         finally:
             state = raw._states[token]
             if temporary in state.created_files and not state.uncertain:
-                raw._remove_temporary(token, temporary)
+                raw.remove_temporary(token, temporary)
 
 
-def _sidecar_identity(path, *, writing=False):
+def sidecar_identity(path, *, writing=False):
     try:
         info = os.stat(path, follow_symlinks=False)
     except FileNotFoundError:
@@ -489,7 +489,7 @@ def sidecar_descriptor(source):
         raise bootstrap.RecoveryRequired("chat_source_not_supported")
     with operation(source) as token:
         selected = profile_paths.lexical_path(source.sidecar_path)
-        state = raw._check(token, selected)
+        state = raw.check(token, selected)
         flags = os.O_RDONLY | getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NOFOLLOW", 0)
         if state.pinned:
             descriptor = os.open(
@@ -501,4 +501,8 @@ def sidecar_descriptor(source):
         try:
             yield descriptor
         finally:
-            raw._close_descriptor(state, descriptor)
+            raw.close_descriptor(state, descriptor)
+
+
+_sidecar_identity = sidecar_identity
+_validate = validate

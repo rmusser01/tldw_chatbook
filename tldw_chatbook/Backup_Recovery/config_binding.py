@@ -19,7 +19,7 @@ from .native_files import flush_directory
 def preserve_owned_binding(source, selected, serialized):
     """Advance only a valid bound fingerprint, never enroll or choose storage."""
     operation = getattr(raw_participants._local, "operation", None)
-    state = raw_participants._check(operation, selected, writing=True)
+    state = raw_participants.check(operation, selected, writing=True)
     if (
         state.source is not source
         or state.route != "config"
@@ -70,7 +70,7 @@ def preserve_owned_binding(source, selected, serialized):
         selected_before = os.stat(selected, follow_symlinks=False)
 
         def check_authority():
-            raw_participants._check(operation, selected, writing=True)
+            raw_participants.check(operation, selected, writing=True)
             current_pending, _, _ = bootstrap._control_records(root)
             if (
                 current_pending != pending
@@ -94,7 +94,7 @@ def preserve_owned_binding(source, selected, serialized):
         )
 
         def check_publication():
-            raw_participants._check(operation, selected, writing=True)
+            raw_participants.check(operation, selected, writing=True)
             info = os.stat(selected, follow_symlinks=False)
             if (
                 state.config_publication != (selected, (info.st_dev, info.st_ino))

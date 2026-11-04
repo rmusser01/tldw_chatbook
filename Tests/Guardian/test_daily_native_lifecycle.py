@@ -9,7 +9,7 @@ from datetime import UTC, datetime, timedelta
 
 import pytest
 
-from tldw_chatbook.Backup_Recovery.participants import _repository_participant
+from tldw_chatbook.Backup_Recovery.participants import repository_participant
 from tldw_chatbook.DB.Guardian_DB import GuardianDB
 from tldw_chatbook.Guardian import settings
 from tldw_chatbook.Notifications import (
@@ -93,7 +93,7 @@ async def test_actual_daily_analysis_native_lifetime_and_drain(
     pool = ThreadPoolExecutor(max_workers=1)
     previous = loop._default_executor
     loop.set_default_executor(pool)
-    participant = _repository_participant(db)
+    participant = repository_participant(db)
     try:
         await handler.handle({"id": "guardian:trends"})
         await asyncio.wait_for(entered.wait(), 3)

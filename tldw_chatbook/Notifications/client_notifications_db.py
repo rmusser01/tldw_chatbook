@@ -29,9 +29,9 @@ _CATEGORY_NOTIFICATION_SETTINGS = (
 
 
 from tldw_chatbook.Backup_Recovery.participants import (
-    _core_access,
-    _core_getter,
-    _register_core_connection,
+    core_access,
+    core_getter,
+    register_core_connection,
 )
 
 
@@ -105,7 +105,7 @@ class ClientNotificationsDB(SQLiteStoreKernel, BaseDB):
             self._initialize_schema()
             self._schema_ready = True
 
-    @_core_getter
+    @core_getter
     def _get_connection(self) -> sqlite3.Connection:
         self._ensure_schema()
         return self._open_connection()
@@ -130,15 +130,15 @@ class ClientNotificationsDB(SQLiteStoreKernel, BaseDB):
                 self._memory_conn.execute("PRAGMA synchronous = NORMAL")
                 self._memory_conn.isolation_level = None
             return self._memory_conn
-        _core_access(self)
+        core_access(self)
         # Explicit BaseDB target: a bare super() now resolves to the kernel
         # (MRO), whose _get_connection calls _open_connection back -- the
         # recursion this line caused before the explicit target (ADR-228
         # provenance pattern).
         conn = BaseDB._get_connection(self)
-        _register_core_connection(self, conn)
+        register_core_connection(self, conn)
         try:
-            _core_access(self)
+            core_access(self)
             conn.execute("PRAGMA journal_mode = WAL")
             # NORMAL is safe under WAL (app-crash-safe; only an OS/power crash can
             # lose the last commit, acceptable for this local notification inbox)
@@ -159,7 +159,7 @@ class ClientNotificationsDB(SQLiteStoreKernel, BaseDB):
             # update_settings (now wrapped in an explicit `transaction()`), and
             # read-only SELECTs elsewhere.
             conn.isolation_level = None
-            _core_access(self)
+            core_access(self)
         except BaseException:
             # Registration retains uncertain native close; never drop its lease.
             conn.close()

@@ -741,7 +741,7 @@ async def test_production_runtime_pin_drains_idle_and_spans_writer_retirement(
         close_project_index_service,
     )
     from tldw_chatbook.Backup_Recovery import storage_admission as storage
-    from tldw_chatbook.Backup_Recovery.participants import _retire_current_thread_caches
+    from tldw_chatbook.Backup_Recovery.participants import retire_current_thread_caches
 
     root = tmp_path / "project"
     root.mkdir()
@@ -760,7 +760,7 @@ async def test_production_runtime_pin_drains_idle_and_spans_writer_retirement(
         current = service.status(key)
         enabled = service.enable(key, POLICY, expected_scope=current.scope)
         pause = storage._begin_local_pause()
-        _retire_current_thread_caches(pause)
+        retire_current_thread_caches(pause)
         assert pause.drain(time.monotonic() + 2), "idle index retained a storage lease"
         pause.resume()
         pause = None
@@ -773,7 +773,7 @@ async def test_production_runtime_pin_drains_idle_and_spans_writer_retirement(
         runs = tuple(service._runs.values())
         assert len(runs) == 1 and not runs[0].pin.closed
         pause = storage._begin_local_pause()
-        _retire_current_thread_caches(pause)
+        retire_current_thread_caches(pause)
         assert not pause.drain(
             time.monotonic()
         ), "held writer lost retained storage admission"
@@ -784,7 +784,7 @@ async def test_production_runtime_pin_drains_idle_and_spans_writer_retirement(
         assert runs[0].native_retired and runs[0].pin.closed
         assert not runs[0].writer.is_alive() and not runs[0].supervisor.is_alive()
         pause = storage._begin_local_pause()
-        _retire_current_thread_caches(pause)
+        retire_current_thread_caches(pause)
         assert pause.drain(
             time.monotonic() + 2
         ), "retired writer leaked registry handles"
@@ -1468,7 +1468,7 @@ async def test_strict_registry_scope_preserves_borrowed_and_refuses_denied_close
     from tldw_chatbook.Workspaces.project_index.models import (
         ProjectIndexRetirementUnproven,
     )
-    from tldw_chatbook.Backup_Recovery.participants import _core_cached_connection
+    from tldw_chatbook.Backup_Recovery.participants import core_cached_connection
     import sqlite3
 
     database = WorkspaceDB(tmp_path / "registry.db")
@@ -1480,11 +1480,11 @@ async def test_strict_registry_scope_preserves_borrowed_and_refuses_denied_close
         database.close()
         with project_index_registry_connections(database):
             owned = database._held_connection()
-        assert _core_cached_connection(database, owned) is None
+        assert core_cached_connection(database, owned) is None
         with pytest.raises(sqlite3.ProgrammingError):
             sqlite3.Connection.in_transaction.__get__(owned)
 
-        closing = store_kernel._core_closing
+        closing = store_kernel.core_closing
 
         @contextmanager
         def denied(repository, connection):
@@ -1492,11 +1492,11 @@ async def test_strict_registry_scope_preserves_borrowed_and_refuses_denied_close
                 yield False if repository is database else allowed
 
         with monkeypatch.context() as patch:
-            patch.setattr(store_kernel, "_core_closing", denied)
+            patch.setattr(store_kernel, "core_closing", denied)
             with pytest.raises(ProjectIndexRetirementUnproven):
                 with project_index_registry_connections(database):
                     retained = database._held_connection()
-            assert _core_cached_connection(database, retained) is retained
+            assert core_cached_connection(database, retained) is retained
             assert sqlite3.Connection.in_transaction.__get__(retained) is False
     finally:
         database.close()
@@ -1706,7 +1706,7 @@ async def test_failed_start_history_race_retires_unrecorded_production_pin(
 ):
     from types import SimpleNamespace
     from tldw_chatbook.Backup_Recovery import storage_admission as storage
-    from tldw_chatbook.Backup_Recovery.participants import _retire_current_thread_caches
+    from tldw_chatbook.Backup_Recovery.participants import retire_current_thread_caches
     from tldw_chatbook.DB.Workspace_DB import WorkspaceDB
     from tldw_chatbook.Workspaces.registry_service import LocalWorkspaceRegistryService
     from tldw_chatbook.Workspaces.project_index.runtime import (
@@ -1812,7 +1812,7 @@ async def test_failed_start_history_race_retires_unrecorded_production_pin(
         assert not service._operations and not service._runs
         await close_project_index_service(app)
         pause = storage._begin_local_pause()
-        _retire_current_thread_caches(pause)
+        retire_current_thread_caches(pause)
         assert pause.drain(time.monotonic() + 2), "failed start leaked a storage pin"
     finally:
         attempted.set()

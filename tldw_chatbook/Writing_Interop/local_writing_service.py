@@ -16,11 +16,11 @@ from typing import Any, Iterator
 from loguru import logger
 
 from tldw_chatbook.Backup_Recovery.participants import (
-    _core_access,
-    _core_cached_connection,
-    _core_getter,
-    _core_transaction,
-    _register_core_connection,
+    core_access,
+    core_cached_connection,
+    core_getter,
+    core_transaction,
+    register_core_connection,
 )
 
 from tldw_chatbook.Utils.private_paths import lexical_path
@@ -124,7 +124,7 @@ class LocalWritingService:
             self._init_schema()
             self._schema_ready = True
 
-    @_core_getter
+    @core_getter
     def _connect(self) -> sqlite3.Connection:
         """Return this thread's held connection, opening it on first use.
 
@@ -133,7 +133,7 @@ class LocalWritingService:
         private seam's artifact verifications. Callers now share one connection
         per thread for the life of the service.
         """
-        _core_access(self)
+        core_access(self)
         self._ensure_schema()
         if self._is_memory:
             # close() drops the connection AND clears _schema_ready, so the
@@ -147,7 +147,7 @@ class LocalWritingService:
         ident = threading.get_ident()
         with self._lifecycle:
             held = self._connections.get(ident)
-            if held is not None and _core_cached_connection(self, held) is None:
+            if held is not None and core_cached_connection(self, held) is None:
                 self._connections.pop(ident, None)
                 held = None
             if held is not None:
@@ -201,29 +201,29 @@ class LocalWritingService:
                 # branch below (task-15465).
                 self._memory_conn.execute("PRAGMA synchronous = NORMAL")
             return self._memory_conn
-        _core_access(self)
+        core_access(self)
         conn = connect_private_sqlite(
             "writing.local",
             self.db_path,
             check_same_thread=False,
             isolation_level=None,
         )
-        _register_core_connection(self, conn)
+        register_core_connection(self, conn)
         try:
-            _core_access(self)
+            core_access(self)
             conn.row_factory = sqlite3.Row
             conn.execute("PRAGMA journal_mode = WAL")
             # NORMAL is safe under WAL (app-crash-safe; only an OS/power crash can
             # lose the last commit, acceptable for this local writing-suite
             # store) and avoids an fsync per commit (task-15465).
             conn.execute("PRAGMA synchronous = NORMAL")
-            _core_access(self)
+            core_access(self)
         except BaseException:
             conn.close()
             raise
         return conn
 
-    @_core_transaction
+    @core_transaction
     @contextmanager
     def _transaction(self) -> Iterator[sqlite3.Connection]:
         """Run one explicit transaction on this thread's held connection.

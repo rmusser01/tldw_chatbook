@@ -26,7 +26,7 @@ from tldw_chatbook.Utils.private_paths import (
     secure_private_directory,
 )
 
-from .participants import _core_access, _register_core_connection
+from .participants import core_access, register_core_connection
 from .recovered_media_schema import SCHEMAS, migrate, schema_policy
 
 MAX_PAYLOAD_BYTES = 512 * 1024 * 1024
@@ -580,7 +580,7 @@ class RecoveredMedia:
 
     @contextmanager
     def _connection(self, *, must_exist=False, expected_identity=None):
-        _core_access(self)
+        core_access(self)
         with closing(
             connect_private_sqlite(
                 "recovered.media",
@@ -589,7 +589,7 @@ class RecoveredMedia:
                 expected_identity=expected_identity,
             )
         ) as connection:
-            _register_core_connection(self, connection)
+            register_core_connection(self, connection)
             connection.execute("PRAGMA foreign_keys=ON")
             yield connection
 

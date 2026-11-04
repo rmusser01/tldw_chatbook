@@ -125,7 +125,7 @@ async def test_mounted_marker_held_read_retires_without_closed_publication(
     import sqlite3
 
     from tldw_chatbook.Backup_Recovery import storage_admission as storage
-    from tldw_chatbook.Backup_Recovery.participants import _repository_participant
+    from tldw_chatbook.Backup_Recovery.participants import repository_participant
     from tldw_chatbook.Chat.console_chat_models import ConsoleMessageRole
     from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
     from tldw_chatbook.Widgets.Console.console_transcript import ConsoleTranscript
@@ -157,7 +157,7 @@ async def test_mounted_marker_held_read_retires_without_closed_publication(
             adds=2,
         )
         projection = screen._change_review_projection
-        participant = _repository_participant(database)
+        participant = repository_participant(database)
         code = AgentRunsDB.list_change_review_run_anchors.__code__
         entered, release = threading.Event(), threading.Event()
         captured = {}

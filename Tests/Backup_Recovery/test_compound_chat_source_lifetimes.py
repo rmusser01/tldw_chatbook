@@ -254,7 +254,7 @@ def test_dictionary_import_finishes_core_after_parser_pause(configured_db, monke
     from contextlib import contextmanager
     from tldw_chatbook.Backup_Recovery import raw_participants as raw
 
-    original = raw._file
+    original = raw.file
     pauses = []
 
     @contextmanager
@@ -264,7 +264,7 @@ def test_dictionary_import_finishes_core_after_parser_pause(configured_db, monke
             if raw._states[token].source is cdl and mode == "r" and not pauses:
                 pauses.append(storage._begin_local_pause())
 
-    monkeypatch.setattr(raw, "_file", pause_after_parser)
+    monkeypatch.setattr(raw, "file", pause_after_parser)
     try:
         result = cdl.import_dictionary_from_file(db, str(path))
         assert result is not None, (
@@ -317,7 +317,7 @@ def test_dictionary_history_publication_flushes_its_own_bytes(
 ):
     """A durable rename over non-durable contents is the classic corruption.
 
-    ``raw_participants._replace`` fsynced the destination DIRECTORY after
+    ``raw_participants.replace`` fsynced the destination DIRECTORY after
     ``os.replace`` while ``_file`` closed the temporary without ever flushing
     its descriptor. A power loss could then persist the directory entry and
     leave it pointing at a file whose blocks were never written. The config
@@ -474,7 +474,7 @@ def test_pause_between_pair_acquisitions_has_no_core_or_cache_effect(
 
     db, _ = configured_db
     source = chat.build_dictionary_service(db)
-    original = raw._scope
+    original = raw.scope
     pauses = []
 
     @contextmanager
@@ -484,7 +484,7 @@ def test_pause_between_pair_acquisitions_has_no_core_or_cache_effect(
         with original(actual_source, route, **kwargs) as token:
             yield token
 
-    monkeypatch.setattr(raw, "_scope", interrupted)
+    monkeypatch.setattr(raw, "scope", interrupted)
     try:
         with pytest.raises(RecoveryRequired, match="storage_locally_paused"):
             source.create_dictionary({"name": "not committed"})
@@ -758,7 +758,7 @@ def test_native_pair_close_failure_retains_exclusion(
     # Actual source/core holds now provide the independent native exclusion proof.
     startup = storage._startups[(os.getpid(), str(local_root))]
     startup.close()
-    real_replace, real_close = raw._replace, os.close
+    real_replace, real_close = raw.replace, os.close
     target = []
 
     def arm_after_publication(token, temporary, destination):
@@ -774,7 +774,7 @@ def test_native_pair_close_failure_retains_exclusion(
             raise OSError("injected native close ambiguity")
         return real_close(fd)
 
-    monkeypatch.setattr(raw, "_replace", arm_after_publication)
+    monkeypatch.setattr(raw, "replace", arm_after_publication)
     monkeypatch.setattr(os, "close", ambiguous_close)
     with pytest.raises(RecoveryRequired, match="raw_resources_not_retired"):
         source.create_dictionary({"name": "durably published"})
@@ -1418,7 +1418,7 @@ def test_library_external_copy_native_maintenance_lifetime(
 
     monkeypatch.setenv("PYTHONPATH", str(Path(__file__).resolve().parents[2]))
     storage._startups[(os.getpid(), str(local_root))].close()
-    real_file = raw._file
+    real_file = raw.file
     pauses, children = [], []
 
     @contextmanager
@@ -1433,7 +1433,7 @@ def test_library_external_copy_native_maintenance_lifetime(
                 children.append(child)
                 assert not select.select([child.stdout], [], [], 0.05)[0]
 
-    monkeypatch.setattr(raw, "_file", parse_pause)
+    monkeypatch.setattr(raw, "file", parse_pause)
     try:
         ident = cdl.import_dictionary_from_file(db, external.name)
         assert ident is not None

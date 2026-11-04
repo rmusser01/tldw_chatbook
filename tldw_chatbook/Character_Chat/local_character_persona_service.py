@@ -288,23 +288,23 @@ class LocalCharacterPersonaService:
         with _chat_sources.operation(self) as token:
             selected = _chat_sources.selection(self, "persona_sidecar")[0]
             temporary = selected.with_suffix(selected.suffix + ".tmp")
-            raw._mkdirs(token)
+            raw.mkdirs(token)
             try:
-                with raw._file(token, temporary, "w") as stream:
+                with raw.file(token, temporary, "w") as stream:
                     stream.buffer.write(payload)
-                state = raw._check(token, selected, writing=True)
+                state = raw.check(token, selected, writing=True)
                 if _chat_sources.binding(self) is not None and (
-                    _chat_sources._sidecar_identity(selected, writing=True)
+                    _chat_sources.sidecar_identity(selected, writing=True)
                     != state.observed_files.get(selected)
                 ):
                     raise _chat_sources.bootstrap.RecoveryRequired("chat_sidecar_identity_changed")
-                raw._replace(token, temporary, selected)
+                raw.replace(token, temporary, selected)
                 if _chat_sources.binding(self) is not None:
-                    state.observed_files[selected] = _chat_sources._sidecar_identity(selected)
+                    state.observed_files[selected] = _chat_sources.sidecar_identity(selected)
             finally:
                 state = raw._states[token]
                 if temporary in state.created_files and not state.uncertain:
-                    raw._remove_temporary(token, temporary)
+                    raw.remove_temporary(token, temporary)
 
     @_chat_sources.guarded
     def _persist_personas(self) -> None:
@@ -492,7 +492,7 @@ class LocalCharacterPersonaService:
 
             with _chat_sources.operation(self) as token:
                 selected = _chat_sources.selection(self, "persona_sidecar")[0]
-                with raw._file(token, selected, "r") as stream:
+                with raw.file(token, selected, "r") as stream:
                     return stream.buffer.read()
         except FileNotFoundError:
             return b""

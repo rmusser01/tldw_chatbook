@@ -21,11 +21,11 @@ from croniter import croniter
 from loguru import logger
 
 from tldw_chatbook.Backup_Recovery.participants import (
-    _core_access,
-    _core_getter,
-    _core_operation,
-    _core_transaction,
-    _register_core_connection,
+    core_access,
+    core_getter,
+    core_operation,
+    core_transaction,
+    register_core_connection,
 )
 
 from tldw_chatbook.DB.base_db import BaseDB
@@ -237,7 +237,7 @@ class ScheduledTasksDB(BaseDB):
     ):
         super().__init__(db_path, client_id, check_integrity_on_startup)
 
-    @_core_getter
+    @core_getter
     def _get_connection(self) -> sqlite3.Connection:
         """Open one fresh, caller-closed connection (see class usage).
 
@@ -257,11 +257,11 @@ class ScheduledTasksDB(BaseDB):
         plus the ``Scheduling/db/migrations`` version stamps -- its own
         task. Do NOT copy this pattern into a store that holds connections.
         """
-        _core_access(self)
+        core_access(self)
         conn = super()._get_connection()
-        _register_core_connection(self, conn)
+        register_core_connection(self, conn)
         try:
-            _core_access(self)
+            core_access(self)
             if not self.is_memory_db:
                 conn.execute("PRAGMA journal_mode = WAL")
             # NORMAL is safe under WAL (app-crash-safe; only an OS/power crash can
@@ -271,14 +271,14 @@ class ScheduledTasksDB(BaseDB):
             # `transaction()` throughout this file), so synchronous must be
             # re-applied on every open, not just the first (task-15465).
             conn.execute("PRAGMA synchronous = NORMAL")
-            _core_access(self)
+            core_access(self)
         except BaseException:
             # Registration retains uncertain native close; never drop its lease.
             conn.close()
             raise
         return conn
 
-    @_core_transaction
+    @core_transaction
     @contextmanager
     def connection(self) -> Iterator[sqlite3.Connection]:
         """Hold one admitted read scope through its actual native close."""
@@ -335,7 +335,7 @@ class ScheduledTasksDB(BaseDB):
             migrate as migrate_v6_to_v7,
         )
 
-        with _core_operation(self):
+        with core_operation(self):
             migrate_v0_to_v1(self)
             migrate_v1_to_v2(self)
             migrate_v2_to_v3(self)
@@ -369,7 +369,7 @@ class ScheduledTasksDB(BaseDB):
             row = cursor.fetchone()
             return int(row[0]) if row else 0
 
-    @_core_transaction
+    @core_transaction
     @contextmanager
     def transaction(self) -> Iterator[sqlite3.Connection]:
         """Run a block inside a SQLite transaction.

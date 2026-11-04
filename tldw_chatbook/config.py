@@ -4828,7 +4828,7 @@ def _bind_config_interprocess_lock(definition):
             try:
                 from tldw_chatbook.Backup_Recovery import raw_participants
 
-                operation = raw_participants._runtime_operation(config_path)
+                operation = raw_participants.runtime_operation(config_path)
                 while True:
                     _config_participants.check_lock_wait(sys.modules[__name__], operation)
                     try:

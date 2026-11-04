@@ -134,12 +134,12 @@ def test_kernel_wiring_is_participants_observable(tmp_path, monkeypatch) -> None
 
         return hook
 
-    monkeypatch.setattr(kernel_mod, "_core_access", recorder("access"))
+    monkeypatch.setattr(kernel_mod, "core_access", recorder("access"))
     monkeypatch.setattr(
-        kernel_mod, "_register_core_connection", recorder("register")
+        kernel_mod, "register_core_connection", recorder("register")
     )
     monkeypatch.setattr(
-        kernel_mod, "_core_cached_connection",
+        kernel_mod, "core_cached_connection",
         lambda repo, conn: recorder("cached")(repo) or conn,
     )
 

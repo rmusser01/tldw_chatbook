@@ -235,7 +235,7 @@ class HookPermissions:
 
             # Retain config's lease and writer locks while independently admitting
             # this concrete store; config helpers keep their original narrow scope.
-            with raw_participants._scope(
+            with raw_participants.scope(
                 self, "hook_permissions", writing=True, selected_read=path
             ):
                 lock_path = path.with_name(path.name + ".lock")

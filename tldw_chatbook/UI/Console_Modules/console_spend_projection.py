@@ -263,7 +263,7 @@ class ConsoleReadinessConfigProjection:
                     config.current_config_identity,
                     config._get_effective_config_path,
                     participants.binding,
-                    raw._participant_identity,
+                    raw.participant_identity,
                     loader,
                 )
                 with participants.operation(config) as active:
@@ -324,7 +324,7 @@ class ConsoleReadinessConfigProjection:
                     after = participants.checked_config_identity(config, active)
                     with storage._lock:
                         participant = raw._states[active].participant
-                        participant_state = raw._participant_identity(participant)
+                        participant_state = raw.participant_identity(participant)
                 proof = None
                 if (
                     type(projection) is ConsoleReadinessConfigProjection
@@ -786,7 +786,7 @@ def _checked_display_status(projection: Any) -> bool | None:
                     config.current_config_identity,
                     config._get_effective_config_path,
                     participants.binding,
-                    raw._participant_identity,
+                    raw.participant_identity,
                     chat_screen.load_settings,
                 ),
                 proof.aliases,
@@ -814,7 +814,7 @@ def _checked_display_status(projection: Any) -> bool | None:
         return False
     try:
         try:
-            state = raw._participant_identity(proof.participant)
+            state = raw.participant_identity(proof.participant)
         except RecoveryRequired as error:
             if error.args != ("raw_participant_not_installed",):
                 raise

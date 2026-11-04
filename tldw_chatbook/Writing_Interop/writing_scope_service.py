@@ -180,7 +180,7 @@ class WritingScopeService:
         if type(self.local_service) is not LocalWritingService:
             raise RuntimeError("runtime_owner_unqualified")
         from tldw_chatbook.Backup_Recovery.participants import (
-            _close_settled_core_cache,
+            close_settled_core_cache,
         )
 
         if self._maintenance_close_task is None or (
@@ -189,7 +189,7 @@ class WritingScopeService:
         ):
             self._maintenance_close_task = asyncio.create_task(
                 _run_on_backend_thread(
-                    functools.partial(_close_settled_core_cache, self.local_service)
+                    functools.partial(close_settled_core_cache, self.local_service)
                 )
             )
         try:

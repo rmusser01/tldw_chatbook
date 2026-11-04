@@ -35,7 +35,7 @@ async def test_real_app_detached_character_worker_retires_before_owned_exit(
     from Tests.UI import test_console_session_tab_close as original
     from Tests.UI.app_factory import drain_active_service_patches, drain_created_dirs
     from Tests.UI.background_signals import await_background_task
-    from tldw_chatbook.Backup_Recovery.participants import _close_settled_core_cache
+    from tldw_chatbook.Backup_Recovery.participants import close_settled_core_cache
 
     app = _stock_private_app()
     gate = None
@@ -110,7 +110,7 @@ async def test_real_app_detached_character_worker_retires_before_owned_exit(
                 # This is the exact shipping App-exit stage, not a substitute
                 # runtime/close function or a narrowed storage authority guard.
                 await app._shutdown_console_runtime()
-                closed = _close_settled_core_cache(database)
+                closed = close_settled_core_cache(database)
                 if not closed:
                     facts = gate.boundary_facts()
                     assert (
@@ -125,7 +125,7 @@ async def test_real_app_detached_character_worker_retires_before_owned_exit(
                     await _retire_exact_reader(gate)
                 else:
                     gate.release.set()
-            assert _close_settled_core_cache(database), (
+            assert close_settled_core_cache(database), (
                 "actual declared creator owner did not retire after callback completion"
             )
         # All ordinary original App lifecycle and fixture-owned cache cleanup

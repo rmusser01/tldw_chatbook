@@ -47,12 +47,12 @@ if TYPE_CHECKING:
 from tldw_chatbook.Metrics.metrics_logger import log_counter, log_histogram
 from tldw_chatbook.DB.private_sqlite import connect_private_sqlite
 from tldw_chatbook.Backup_Recovery.participants import (
-    _core_access,
-    _core_cached_connection,
-    _core_closing,
-    _core_getter,
-    _core_transaction,
-    _register_core_connection,
+    core_access,
+    core_cached_connection,
+    core_closing,
+    core_getter,
+    core_transaction,
+    register_core_connection,
 )
 from tldw_chatbook.Backup_Recovery.profile_paths import lexical_path
 
@@ -244,7 +244,7 @@ class EvalsDB:
 
         logger.info(f"EvalsDB initialized with path: {self.db_path}")
 
-    @_core_getter
+    @core_getter
     def _get_connection(self) -> sqlite3.Connection:
         """Get thread-local database connection.
 
@@ -267,20 +267,20 @@ class EvalsDB:
         (including un-nesting the nested pair) -- do that as its own task,
         and do NOT copy this store's pattern into new code.
         """
-        _core_access(self)
-        conn = _core_cached_connection(self, getattr(self._local, "connection", None))
+        core_access(self)
+        conn = core_cached_connection(self, getattr(self._local, "connection", None))
         if conn is None:
             conn = connect_private_sqlite(
                 "db.evals", self.db_path, check_same_thread=False
             )
             try:
-                _register_core_connection(self, conn)
-                _core_access(self)
+                register_core_connection(self, conn)
+                core_access(self)
                 conn.row_factory = sqlite3.Row
                 conn.execute("PRAGMA foreign_keys = ON")
                 conn.execute("PRAGMA journal_mode = WAL")
                 conn.execute("PRAGMA synchronous = NORMAL")
-                _core_access(self)
+                core_access(self)
             except BaseException:
                 conn.close()
                 raise
@@ -289,7 +289,7 @@ class EvalsDB:
             self.invalidate_run_group_failure_cache()
         return conn
 
-    @_core_transaction
+    @core_transaction
     @contextmanager
     def connection(self) -> Iterator[sqlite3.Connection]:
         """Count this lexical use without changing native transaction ownership."""
@@ -2625,7 +2625,7 @@ class EvalsDB:
         """Close database connection."""
         if hasattr(self._local, "connection"):
             conn = self._local.connection
-            with _core_closing(self, conn) as allowed:
+            with core_closing(self, conn) as allowed:
                 if allowed:
                     conn.close()
                     delattr(self._local, "connection")

@@ -1449,7 +1449,7 @@ class _SQLiteAdmissionOutcome:
 def _independent_sqlite_helpers() -> Iterator[None]:
     """Keep outer raw ownership live while independently admitted SQLite opens."""
     raw = sys.modules.get("tldw_chatbook.Backup_Recovery.raw_participants")
-    discover = getattr(raw, "_runtime_operation", None)
+    discover = getattr(raw, "runtime_operation", None)
     previous = discover() if discover is not None else None
     if previous is None:
         yield
@@ -1462,7 +1462,7 @@ def _independent_sqlite_helpers() -> Iterator[None]:
     finally:
         primary = sys.exception()
         try:
-            raw._check(previous)
+            raw.check(previous)
         except BaseException as cleanup:
             if primary is not None and (
                 not isinstance(primary, Exception) or isinstance(cleanup, Exception)
@@ -1586,10 +1586,10 @@ def _with_storage_admission(function):
                             participant = getattr(lease, "resource_participant", None)
                             if participant is not None:
                                 from tldw_chatbook.Backup_Recovery.participants import (
-                                    _retired_core_connections,
+                                    retired_core_connections,
                                 )
 
-                                _retired_core_connections.add(self)
+                                retired_core_connections.add(self)
                                 participant.connections.pop(self, None)
                                 lease.resource_participant = None
                             storage._changed.notify_all()

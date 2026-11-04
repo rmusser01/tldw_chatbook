@@ -38,7 +38,7 @@ class _NativeLedger:
         self.previous = sys.getprofile()
         self.allocate = private._allocate_native_descriptor.__code__
         self.component = private._open_directory_component.__code__
-        self.raw_close = raw._close_descriptor.__code__
+        self.raw_close = raw.close_descriptor.__code__
         self.native_close = private._native_close.__code__
 
     def identity(self, fd):
@@ -151,7 +151,7 @@ def _attempt(source, route, selected, monkeypatch, *, ordinary, kind, change):
     module, slot = ((mcp_sources, "history_operation") if kind == "mcp"
                     else (config_sources, "binding"))
     callback = vars(module)[slot]
-    runtime_code = raw._runtime_operation.__code__
+    runtime_code = raw.runtime_operation.__code__
     phase = "setup"
 
     def delegated(value):
@@ -167,13 +167,13 @@ def _attempt(source, route, selected, monkeypatch, *, ordinary, kind, change):
 
     sys.setprofile(ledger.observe)
     try:
-        with raw._scope(source, route, writing=True) as operation:
+        with raw.scope(source, route, writing=True) as operation:
             ledger.attach(operation)
             state = ledger.state
             leases = tuple(state.leases)
             assert state.active and state.participant is not None and state.pins
             assert state.source is source and state.pinned
-            assert raw._participant_identity(state.participant).owner == (
+            assert raw.participant_identity(state.participant).owner == (
                 "mcp.history" if kind == "mcp" else "config")
             assert all(lease in storage._live_leases for lease in leases)
             baseline = set(state.descriptors)

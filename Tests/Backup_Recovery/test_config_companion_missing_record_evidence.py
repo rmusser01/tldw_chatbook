@@ -350,7 +350,7 @@ def test_valid_shaped_profile_insertion_after_first_acquire_keeps_scope_mismatch
             "roots": registry["profile"]["roots"],
         }
     )
-    scope_code = inspect.unwrap(raw._scope).__code__
+    scope_code = inspect.unwrap(raw.scope).__code__
     acquire = storage.acquire_storage
     acquire_code, acquire_globals = acquire.__code__, acquire.__globals__
     inserted = []
