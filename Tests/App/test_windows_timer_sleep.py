@@ -128,16 +128,12 @@ async def test_textual_timers_never_reach_the_default_executor(windows_timer_sle
     assert windows_timer_sleep.jobs and set(windows_timer_sleep.jobs) == {time.sleep}
 
 
-@pytest.mark.parametrize("earlier_boot", [False, True])
 @pytest.mark.parametrize("platform", ["darwin", "linux"])
-def test_other_platforms_keep_textuals_sleep(monkeypatch, platform, earlier_boot):
-    if earlier_boot:
-        # On win32 a TldwCli booted earlier in the same process leaves the
-        # Windows sleep installed process-wide; start from Textual's own sleep
-        # rather than from whatever is installed.
-        monkeypatch.setattr(textual.timer, "sleep", textual.timer.sleep)
-        monkeypatch.setattr(guard, "_windows_timer_pool", None)
-        _install_as_windows(monkeypatch)
+def test_other_platforms_keep_textuals_sleep(monkeypatch, platform):
+    # On win32 a TldwCli booted earlier in the same process leaves the Windows
+    # sleep installed process-wide; start from Textual's own sleep rather than
+    # from whatever is installed. (Off win32 nothing ever installs it, so no
+    # earlier-boot case exists to test, and this test creates no pool.)
     monkeypatch.setattr(textual.timer, "sleep", textual._time.sleep)
     monkeypatch.setattr(guard, "_windows_timer_pool", None)
     with monkeypatch.context() as patched:
