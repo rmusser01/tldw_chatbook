@@ -245,6 +245,7 @@ Do not reuse numbers.
 | [ADR-286](286-console-prompt-mix-ins.md) | Accepted | Add literal Before/After Mix-in library artifacts through the existing composer Prompts button, with chat-owned selections, exact retry snapshots and current-send-only caching semantics. |
 
 | [ADR-358: Bug report evidence and sharing](358-bug-report-evidence-and-sharing.md) | Accepted for implementation planning | Copy one bounded, user-reviewed Markdown report from retained logs and governed Console evidence, with diagnostic facts by default and redacted tool content only by opt-in. |
+| [ADR-354](354-windows-textual-timer-waits-use-the-event-loop.md) | Accepted | Keep Windows Textual timer waits and cancellation off the shared default worker pool, retaining native Timer behavior and unchanged worker limits. |
 
 | [ADR-359](359-isolated-self-hosted-ci-runners.md) | Accepted; host qualified | Separate disposable local CI test/control pools, repository-scoped registration and hosted rollback. |
 

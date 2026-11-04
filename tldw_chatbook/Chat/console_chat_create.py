@@ -111,7 +111,7 @@ def execute_agent_chat_create(
 
     # TASK-32874: optional routing for the CREATED chat. Resolved
     # BEFORE anything is created; every RoutingError surfaces as the
-    # outcome's kind with nothing created (ADR-147 vocabulary).
+    # outcome's kind with nothing created (ADR-344 vocabulary).
     routed_settings: host.Any = None
     if req_provider or req_model or req_preset:
         from dataclasses import replace as _dc_replace
@@ -181,7 +181,7 @@ def execute_agent_chat_create(
             return {"ok": False, "kind": str(exc.code), "error": str(exc)}
         # Qodo round finding 2: the resolver's merged params (preset
         # params above registry-entry params above defaults) ride the
-        # ADR-147 extra_sources seam so a routed chat keeps the
+        # ADR-344 extra_sources seam so a routed chat keeps the
         # preset/endpoint tuning, not just provider/model.
         routed_settings = _build_settings(
             app_config,
