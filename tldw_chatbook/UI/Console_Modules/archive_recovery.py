@@ -18,6 +18,7 @@ from tldw_chatbook.Chat.archive_recovery.runtime import (
     ArchiveRecoveryPresentation,
     ArchiveRecoveryRuntime,
 )
+from tldw_chatbook.Chat.console_stream_persistence import visible_message_texts
 from tldw_chatbook.Widgets.Chat_Widgets.archive_recovery_cards import (
     ArchiveRecoveryConfirmCard,
     ArchiveRecoveryResultsCard,
@@ -167,9 +168,9 @@ class ConsoleArchiveRecoveryView:
                 await self._mount_results(record)
             if not current():
                 return
-            imported = not presentations and any(
-                "result_set_id" in message.content and "result_ref" in message.content
-                for message in store.messages_for_session(session_id)
+            imported = not presentations and any(  # No copy: TASK-38688.
+                "result_set_id" in text and "result_ref" in text
+                for text in visible_message_texts(store, session_id)
             )
             if imported and not surface.query("#recovery-manual-library"):
                 library_button = RecoveryActionButton(

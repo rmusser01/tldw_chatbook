@@ -32,6 +32,15 @@ class RecoveryCardApp(App):
         self.decisions.append(event)
 
 
+def _empty_source_store():
+    """A real store whose active chat ``source`` holds no messages."""
+    from tldw_chatbook.Chat.console_chat_store import ConsoleChatStore
+
+    store = ConsoleChatStore()
+    store.create_session(session_id="source")
+    return store
+
+
 def confirmation(*, expired=False):
     return RecoveryConfirmation(
         "request",
@@ -478,9 +487,7 @@ async def test_sync_waits_for_recovery_root_mount_then_initializes_controls(
         checked_pending_mount = False
 
         def compose(self):
-            store = SimpleNamespace(
-                active_session_id="source", messages_for_session=lambda _: []
-            )
+            store = _empty_source_store()
             runtime = SimpleNamespace(
                 presentations=lambda _: [],
                 coordinator=SimpleNamespace(
@@ -568,9 +575,7 @@ async def test_recovery_controls_are_inert_when_app_exits(
 
     class MountApp(App):
         def compose(self):
-            self.screen._console_chat_store = SimpleNamespace(
-                active_session_id="source", messages_for_session=lambda _: []
-            )
+            self.screen._console_chat_store = _empty_source_store()
             runtime = SimpleNamespace(
                 presentations=lambda _: [],
                 coordinator=SimpleNamespace(
@@ -629,9 +634,7 @@ async def test_receipt_only_retires_its_own_mounted_confirmation(status, own_ope
 
     class ReceiptApp(App):
         def compose(self):
-            self.screen._console_chat_store = SimpleNamespace(
-                active_session_id="source", messages_for_session=lambda _: []
-            )
+            self.screen._console_chat_store = _empty_source_store()
             runtime = SimpleNamespace(
                 presentations=lambda _: [],
                 coordinator=SimpleNamespace(
@@ -765,3 +768,90 @@ async def test_sync_stops_when_its_chat_is_replaced_mid_sync(monkeypatch, during
         card = app.query_one(ArchiveRecoveryConfirmCard)
         assert card.confirmation is pending and card.display
         assert not app.query("#recovery-manual-library")
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("imported", ["none", "split", "saved", "streamed"])
+async def test_sync_answers_imported_recovery_without_copying_the_transcript(
+    monkeypatch, imported
+):
+    """TASK-38688: a sync with no live presentations copies no message.
+
+    Whether to show the imported-recovery copy needs only one message whose
+    text carries both ``result_set_id`` and ``result_ref``. The sync used to
+    ask ``messages_for_session``, which snapshots every message of the chat,
+    and it runs on every full Console sync. Counted only around the syncs,
+    as TASK-24300 counts the keystroke path, so the setup's own appends
+    (each returns a snapshot) are not billed to the sync.
+    """
+    import json
+    from types import SimpleNamespace
+
+    from textual.containers import Vertical
+
+    from tldw_chatbook.Chat.console_chat_models import ConsoleMessageRole
+    from tldw_chatbook.Chat.console_chat_store import ConsoleChatStore
+    from tldw_chatbook.UI.Console_Modules.archive_recovery import (
+        ConsoleArchiveRecoveryView,
+    )
+
+    store = ConsoleChatStore()
+    chat = store.create_session()
+    assistant = ConsoleMessageRole.ASSISTANT
+    for index in range(40):
+        role = assistant if index % 2 else ConsoleMessageRole.USER
+        store.append_message(chat.id, role=role, content=f"turn {index}")
+    if imported == "split":  # Both keys, but never in one message.
+        store.append_message(chat.id, role=assistant, content='{"result_set_id": 1}')
+        store.append_message(chat.id, role=assistant, content='{"result_ref": 2}')
+    elif imported == "saved":
+        payload = json.dumps({"result_set_id": "page", "result_ref": "ref"})
+        store.append_message(chat.id, role=assistant, content=payload)
+    elif imported == "streamed":  # Still in the unfolded stream buffer.
+        reply = store.append_message(chat.id, role=assistant, content="")
+        store.append_stream_chunk(reply.id, '{"result_set_id": "page", ')
+        store.append_stream_chunk(reply.id, '"result_ref": "ref"}')
+
+    copies = []
+    real_messages_for_session = ConsoleChatStore.messages_for_session
+    real_snapshot = ConsoleChatStore._snapshot
+
+    def counted_messages_for_session(self, session_id):
+        copies.append("messages_for_session")
+        return real_messages_for_session(self, session_id)
+
+    def counted_snapshot(message):
+        copies.append(message.id)
+        return real_snapshot(message)
+
+    class SyncApp(App):
+        def compose(self):
+            self.screen._console_chat_store = store
+            runtime = SimpleNamespace(
+                presentations=lambda _: (),
+                coordinator=SimpleNamespace(
+                    snapshot=lambda _: None, receipts=lambda _: ()
+                ),
+            )
+            self.screen._console_runtime = lambda: SimpleNamespace(
+                view=self.screen, ensure_archive_recovery=lambda: runtime
+            )
+            self.view = ConsoleArchiveRecoveryView(self.screen)
+            yield Vertical(id="console-archive-recovery")
+
+    app = SyncApp()
+    async with app.run_test(size=(80, 30)):
+        monkeypatch.setattr(
+            ConsoleChatStore, "messages_for_session", counted_messages_for_session
+        )
+        monkeypatch.setattr(ConsoleChatStore, "_snapshot", staticmethod(counted_snapshot))
+        await app.view.sync()
+        await app.view.sync()  # A settled second sync copies nothing either.
+        monkeypatch.undo()
+        shown = bool(app.query("#recovery-manual-library"))
+    assert not copies, (
+        f"two syncs of a {store.message_count(chat.id)}-message chat made "
+        f"{copies.count('messages_for_session')} messages_for_session calls and "
+        f"{len(copies) - copies.count('messages_for_session')} message snapshots"
+    )
+    assert shown is (imported in {"saved", "streamed"})
