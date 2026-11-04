@@ -836,7 +836,7 @@ def _captured_mobile(
     """
     import hashlib
 
-    from tldw_chatbook.Chat.console_trace_read_budget import _TraceReadBudget
+    from tldw_chatbook.Backup_Recovery.models import _TraceReadBudget
 
     from .profile_paths import lexical_path
     from .replacement import require_rollback_password
@@ -947,7 +947,7 @@ def _review_mobile_operation(session, journal):
     if type(session) is not MaintenanceSession:
         raise ValueError("native_maintenance_required")
     session._check()
-    from tldw_chatbook.Chat.console_trace_read_budget import _TraceReadBudget
+    from tldw_chatbook.Backup_Recovery.models import _TraceReadBudget
 
     from .storage_admission import _mobile_admission
 

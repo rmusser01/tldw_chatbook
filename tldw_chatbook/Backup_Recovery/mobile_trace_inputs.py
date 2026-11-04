@@ -6,11 +6,11 @@ import sqlite3
 from contextlib import contextmanager
 from dataclasses import asdict, dataclass, field
 
+from tldw_chatbook.Backup_Recovery.models import _TraceReadBudget
 from tldw_chatbook.Chat.citation_trace_identity import LocalCitationIdentityContext
 from tldw_chatbook.Chat.console_trace_legacy import LegacyTraceNormalizer
 from tldw_chatbook.Chat.console_trace_native_reader import ConsoleTraceNativeReader
 from tldw_chatbook.Chat.console_trace_projection import ConsoleTraceProjection
-from tldw_chatbook.Chat.console_trace_read_budget import _TraceReadBudget
 from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
 
 from .credentials import _citation_context_values, _unused_citation_reference

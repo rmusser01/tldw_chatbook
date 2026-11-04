@@ -17,11 +17,11 @@ from dataclasses import dataclass, field, fields, replace
 from enum import Enum
 from typing import Any, Mapping, Sequence
 
+from tldw_chatbook.Backup_Recovery.models import _TraceReadBudget
 from tldw_chatbook.Chat.console_project_instructions import (
     EPHEMERAL_ORIGIN_KEY,
     canonical_provider_endpoint_identity,
 )
-from tldw_chatbook.Chat.console_trace_read_budget import _TraceReadBudget
 from tldw_chatbook.Chat.console_trace_redaction import CredentialSanitizer
 from tldw_chatbook.DB.transaction_observer import (
     UnreadableCaptureBlobError,

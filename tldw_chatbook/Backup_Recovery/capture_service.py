@@ -109,7 +109,7 @@ def _capture_names(
 
     _read_budget, _custody = read_options(_read_budget, _custody)
     if _read_budget is not None:
-        from tldw_chatbook.Chat.console_trace_read_budget import _TraceReadBudget
+        from tldw_chatbook.Backup_Recovery.models import _TraceReadBudget
 
         from .storage_admission import _CaptureFileDescriptors
 

@@ -1067,6 +1067,25 @@ All six captured members are checked before and after composition. The original
 Run/Goal, operational-history, identity, history, and closure work; it is neither
 renewed nor a measurement of Python heap usage.
 
+During native `_consolidate`, `_plan_row_data` in `mobile_captured_sqlite.py`
+retains immutable SQLite page data only for its one `_plan_runs` call. Each real
+miss uses the unchanged native page reader and pays the representation cost once
+from the original admitted counter. Repeated consumers share those scalar values
+but receive fresh dictionaries and pay for every new container and reference.
+The original absence predicates and semantic validators run on each consumption;
+standalone diagnostic calls keep their existing reads and accounting. Composed
+Run preflight omits temporary generic Run-duty tags that its native Run/Goal
+handlers immediately replace; standalone integrated planning retains those tags.
+
+The reader slot and ContextVar pin the same immutable issued registration, and
+the original reader resource list retains its exact data owner. Reader, admission,
+counter, member, connection, custody, cancellation and expiry bindings must hold
+before reuse. Entry and successful exit run the unchanged full
+`_check_plan_candidates` proof before any handler or effect can consume the plan.
+Early retirement closes the owner and clears only authenticated original data;
+ambiguous release waits for issuer-local final cleanup. Foreign maps and markers
+are preserved. This lifetime retains data, never a schema, source or policy verdict.
+
 Goal requests use native typed JSON validation and canonical serialization after
 mapping their actual Workspace/binding references. Request hashes are recomputed
 for that exact transformed request and both hashes are retained. Checkpoint
@@ -1204,9 +1223,9 @@ captures, skipped all committed Workspace insertion, and verified exact receipts
 rows, the nonempty binding/exclusion and its unreviewed authority hold. That
 historical private preterminal proof does not establish current-code recovery,
 public completion or graceful teardown of the deliberately terminated process.
-Fresh private recovery under R130 currently exhausts the unchanged native 16 MiB
-allowance at final receipt materialization; its early terminal check returns
-successfully. The failed operation remains preserved. Both production migration
+The retained R130 private-recovery attempt exhausted the unchanged native 16 MiB
+allowance at final receipt materialization; its early terminal check returned
+successfully. That failed operation remains preserved as historical evidence. Both production migration
 entry points use the public coupled pair. The fresh R145 public Workspace proof
 now exits after the same durable commit and finishes the same operation in a new
 process, preserving exact receipts, Workspace rows, exclusions, holds and captures

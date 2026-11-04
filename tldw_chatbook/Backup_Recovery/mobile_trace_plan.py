@@ -4,6 +4,7 @@ import hashlib
 import json
 from dataclasses import dataclass, field, replace
 
+from tldw_chatbook.Backup_Recovery.models import _TraceReadBudget
 from tldw_chatbook.Chat.console_exchange_capture import CaptureDetail, ExchangeCapture
 from tldw_chatbook.Chat.console_trace_models import (
     FrozenTracePolicy,
@@ -14,7 +15,6 @@ from tldw_chatbook.Chat.console_trace_projection import (
     ConsoleTraceProjection,
     NormalizedTraceCall,
 )
-from tldw_chatbook.Chat.console_trace_read_budget import _TraceReadBudget
 from tldw_chatbook.Chat.console_trace_repository import HeaderComponentRef
 
 from .mobile_content_graph import _ContentBlocker, _ContentRow, _UnprovedReference

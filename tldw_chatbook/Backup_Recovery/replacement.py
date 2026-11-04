@@ -441,7 +441,7 @@ def capture_verify_rollback(
         or _source_read_budget is not None
         or _source_journal is not None
     ):
-        from tldw_chatbook.Chat.console_trace_read_budget import _TraceReadBudget
+        from tldw_chatbook.Backup_Recovery.models import _TraceReadBudget
 
         from .archive_models import SealedArchive
         from .journal import Journal

@@ -390,7 +390,7 @@ def _publication_source_context(
     from hashlib import sha256
     from threading import Event
 
-    from tldw_chatbook.Chat.console_trace_read_budget import _TraceReadBudget
+    from tldw_chatbook.Backup_Recovery.models import _TraceReadBudget
 
     from . import bootstrap
     from .archive_models import SealedArchive

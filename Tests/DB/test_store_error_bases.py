@@ -73,4 +73,19 @@ def test_old_import_paths_resolve_to_same_objects():
     from tldw_chatbook.DB.ChaChaNotes_DB import ConflictError as C
     from tldw_chatbook.DB.Prompts_DB import SchemaError as S
     assert C is ChaChaNotes_DB.ConflictError and S is Prompts_DB.SchemaError
-    assert Client_Media_DB_v2.InputError.__module__ == "tldw_chatbook.DB.Client_Media_DB_v2"
+    assert (
+        Client_Media_DB_v2.InputError.__module__
+        == "tldw_chatbook.DB.Client_Media_DB_v2"
+    )
+
+    import pickle
+
+    from tldw_chatbook.DB import media_db_errors
+
+    for name in ("DatabaseError", "SchemaError", "InputError", "ConflictError"):
+        cls = getattr(Client_Media_DB_v2, name)
+        assert cls is getattr(media_db_errors, name)
+        error = cls("message")
+        restored = pickle.loads(pickle.dumps(error))
+        assert type(restored) is cls
+        assert str(restored) == str(error)

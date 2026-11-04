@@ -917,7 +917,7 @@ def _preserved_builtin_validation(
     ):
         raise ValueError("mobile_canonical_config_data_changed")
     if installed_data:
-        from tldw_chatbook.Chat.console_trace_read_budget import _TraceReadBudget
+        from tldw_chatbook.Backup_Recovery.models import _TraceReadBudget
 
         from .mobile_builtin_preservation import _preservation_budget
         from .storage_admission import MaintenanceSession, _CaptureFileDescriptors
@@ -2537,9 +2537,7 @@ def execute_rollback(
                 )
             source_options = {}
             if type(proof) is _CanonicalCopy:
-                from tldw_chatbook.Chat.console_trace_read_budget import (
-                    _TraceReadBudget,
-                )
+                from tldw_chatbook.Backup_Recovery.models import _TraceReadBudget
 
                 safety_budget = _TraceReadBudget()
                 safety_budget.reserve(512)

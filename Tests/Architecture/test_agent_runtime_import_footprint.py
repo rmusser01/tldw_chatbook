@@ -83,7 +83,10 @@ def test_old_ephemeral_origin_and_tool_catalog_paths_still_resolve():
         "from tldw_chatbook.Provider_Contract.provider_continuation import EPHEMERAL_ORIGIN_KEY as b\n"
         "from tldw_chatbook.Agents.tool_catalog import PathAwareToolProvider as c, ToolPathTarget as d\n"
         "from tldw_chatbook.Agents import agent_models as m\n"
-        "print('SAME=' + json.dumps(a == b and c is m.PathAwareToolProvider and d is m.ToolPathTarget))\n",
+        "from tldw_chatbook.Chat.console_project_instructions import PROJECT_INSTRUCTION_ROW_KEY as e\n"
+        "from tldw_chatbook.Provider_Contract.provider_continuation import PROJECT_INSTRUCTION_ROW_KEY as f\n"
+        "from tldw_chatbook.Agents.project_instruction_runtime import PROJECT_INSTRUCTION_ROW_KEY as g\n"
+        "print('SAME=' + json.dumps(a == b and c is m.PathAwareToolProvider and d is m.ToolPathTarget and e is f is g))\n",
         "SAME=",
     )
     assert same is True

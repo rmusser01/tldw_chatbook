@@ -169,13 +169,15 @@ def _close_dependencies(
         rows = retained
 
 
-def _plan_integrated(reads, *, _read_budget=None):
+def _plan_integrated(reads, *, _read_budget=None, _include_run_duties=True):
     from .mobile_captured_sqlite import _CapturedSQLite
 
     if type(reads) is not _CapturedSQLite:
         raise ValueError("mobile_integrated_native_snapshot_required")
     reads.check()
-    from tldw_chatbook.Chat.console_trace_read_budget import _TraceReadBudget
+    if type(_include_run_duties) is not bool:
+        raise TypeError("mobile_integrated_run_duties_required")
+    from tldw_chatbook.Backup_Recovery.models import _TraceReadBudget
 
     from .mobile_sync_plan import _plan_sync
 
@@ -325,20 +327,21 @@ def _plan_integrated(reads, *, _read_budget=None):
         for s in semantic_discharges
         if s.handler == "S"
     ]
-    for spec in _TABLES:
-        if spec.handler == "A-runs" and not spec.canonical_only:
-            for value in _rows(
-                reads, "legacy", spec.family, spec.table, _read_budget=budget
-            ):
-                budget.container(len(spec.identity_columns) + 6)
-                duties.append(
-                    _PendingOwnerDuty(
-                        "A-runs",
-                        spec.table,
-                        tuple(value[k] for k in spec.identity_columns),
-                        "native_run_goal_handler_and_complete_closure",
+    if _include_run_duties:
+        for spec in _TABLES:
+            if spec.handler == "A-runs" and not spec.canonical_only:
+                for value in _rows(
+                    reads, "legacy", spec.family, spec.table, _read_budget=budget
+                ):
+                    budget.container(len(spec.identity_columns) + 6)
+                    duties.append(
+                        _PendingOwnerDuty(
+                            "A-runs",
+                            spec.table,
+                            tuple(value[k] for k in spec.identity_columns),
+                            "native_run_goal_handler_and_complete_closure",
+                        )
                     )
-                )
     # A row tag is an obligation, never proof of passive native recovery or a hold.
     for row in rows:
         for proof in row.required_proofs:

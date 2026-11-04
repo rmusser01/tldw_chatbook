@@ -192,7 +192,7 @@ def issue_message(code: str) -> str:
 
 def issue_code(error: Exception, *, kind: str = "") -> str:
     """Only fixed local codes cross into a view; arbitrary exception text stays out."""
-    from tldw_chatbook.Chat.console_trace_read_budget import _TraceReadLimit
+    from tldw_chatbook.Backup_Recovery.limits import _TraceReadLimit
 
     from .admission import AdmissionTimeout
     from .capture import CaptureReviewRequired
@@ -895,9 +895,7 @@ class RecoveryService:
             raise ValueError("recovery_action_unavailable")
 
         def recover(operation, cancel):
-            from tldw_chatbook.Chat.console_trace_read_budget import (
-                _mobile_operation_budgets,
-            )
+            from tldw_chatbook.Backup_Recovery.models import _mobile_operation_budgets
 
             from .replacement import recover_replacement
 

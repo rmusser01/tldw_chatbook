@@ -652,12 +652,13 @@ def _consolidate(captured, *, password, cancel):
     """Derive complete input in this call; retain no reusable readiness object."""
     from tldw_chatbook.Utils.timestamps import utc_now_iso
 
-    from tldw_chatbook.Chat.console_trace_read_budget import _TraceReadBudget
+    from tldw_chatbook.Backup_Recovery.models import _TraceReadBudget
     from tldw_chatbook.DB.console_command_history import (
         _commit_command_history,
         _prepare_command_history,
     )
 
+    from .mobile_captured_sqlite import _plan_row_data
     from .mobile_native_receipts import _encode_receipts, _receipt_children
     from .mobile_native_rows import (
         _advance_snapshot_allocator,
@@ -870,7 +871,7 @@ def _consolidate(captured, *, password, cancel):
         return
     from contextlib import nullcontext
 
-    from tldw_chatbook.Chat.console_trace_read_budget import _mobile_budget_pair
+    from tldw_chatbook.Backup_Recovery.models import _mobile_budget_pair
 
     from .mobile_journal_frame import _locked_mobile, _verify_current_mobile
 
@@ -897,7 +898,8 @@ def _consolidate(captured, *, password, cancel):
             reads._source_archive,
             reads._canonical_archive,
         )
-        plan = _plan_runs(reads, _read_budget=budget)
+        with _plan_row_data(reads, budget):
+            plan = _plan_runs(reads, _read_budget=budget)
         blockers = _required_handlers(plan, budget)
         if not blockers:
             ordered = _prepare_rows(plan, budget)

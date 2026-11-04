@@ -71,7 +71,7 @@ from tldw_chatbook.Chat.console_trace_provenance import (
     TraceTransformKind,
     _project_verified_provider_request_provenance,
 )
-from tldw_chatbook.Chat.console_trace_read_budget import _TraceReadBudget
+from tldw_chatbook.Backup_Recovery.models import _TraceReadBudget
 from tldw_chatbook.Chat.console_trace_redaction import (
     CREDENTIAL_FILTER_VERSION,
     READABLE_CREDENTIAL_FILTER_VERSIONS,

@@ -325,7 +325,7 @@ def _plan_content_workflows(reads):
         dump_console_turn_library_authority_json,
     )
     from tldw_chatbook.Chat.console_dispatch_repository import ConsoleDispatchRepository
-    from tldw_chatbook.Chat.provider_continuation import (
+    from tldw_chatbook.Provider_Contract.provider_continuation import (
         parse_provider_continuation_json,
         read_provider_continuation_json,
     )

@@ -21,11 +21,15 @@ if TYPE_CHECKING:
         HookPermissions,
         HookReviewSnapshot,
     )
+    from tldw_chatbook.Chat.console_hook_review import HookReviewResult
 
 
-from tldw_chatbook.Chat.console_hook_review import (
-    HookReviewResult as HookReviewResult,  # noqa: PLC0414 - explicit compatibility or pytest-fixture re-export.
-)
+def __getattr__(name: str) -> Any:
+    if name == "HookReviewResult":
+        from tldw_chatbook.Chat.console_hook_review import HookReviewResult
+
+        return HookReviewResult
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
 
 def same_captured_draft(

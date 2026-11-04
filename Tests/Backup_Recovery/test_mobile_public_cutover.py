@@ -58,6 +58,38 @@ def test_public_service_completes_same_native_target(tmp_path, monkeypatch):
         budgets.append(actual)
 
     monkeypatch.setattr(_TraceReadBudget, "__init__", counted)
+    from tldw_chatbook.Backup_Recovery import mobile_runs_preflight
+    from tldw_chatbook.Backup_Recovery.mobile_captured_sqlite import _CapturedSQLite
+    from tldw_chatbook.Backup_Recovery.storage_admission import _mobile_admission
+
+    native_plan, native_page = mobile_runs_preflight._plan_runs, _CapturedSQLite.page
+    active_plan, page_keys, completed_plans = [], set(), []
+
+    def one_physical_read(self, purpose, family, table, *, offset=0, limit=100):
+        if active_plan and self is active_plan[0]:
+            key = (purpose, family, table, offset, limit)
+            assert key not in page_keys, ("repeated native plan page", key)
+            page_keys.add(key)
+        return native_page(self, purpose, family, table, offset=offset, limit=limit)
+
+    def composed_plan(reads, *, _read_budget):
+        admission = _mobile_admission(reads.session)
+        assert _read_budget is reads.read_budget is admission[2]
+        assert _mobile_budget_pair(admission[4], _read_budget)
+        before = (_read_budget._remaining, admission[4]._remaining)
+        active_plan.append(reads)
+        try:
+            result = native_plan(reads, _read_budget=_read_budget)
+            assert page_keys
+            assert 0 <= _read_budget._remaining < before[0] < 16 * 1024 * 1024
+            assert 0 <= admission[4]._remaining < before[1]
+            completed_plans.append(result)
+            return result
+        finally:
+            active_plan.pop()
+
+    monkeypatch.setattr(_CapturedSQLite, "page", one_physical_read)
+    monkeypatch.setattr(mobile_runs_preflight, "_plan_runs", composed_plan)
     try:
         service = RecoveryService(journal.root.parent)
         try:
@@ -73,6 +105,7 @@ def test_public_service_completes_same_native_target(tmp_path, monkeypatch):
             )
             state = service.wait(operation)
             assert state["state"] == "succeeded", (dict(state), errors)
+            assert len(completed_plans) == 1
             assert state["result"]["mobile_consolidated"] is True
             assert service.pending_operations() == ()
             assert bootstrap.startup_permission(config, authority.control_root.parent)[

@@ -443,8 +443,6 @@ APPROVED_EXCEPTIONS: tuple[ExceptionRule, ...] = (
         Disposition.PERSISTED_DEFAULT,
         "compare shipped database sentinels before mapping isolated or replacement destinations; never open these literal paths",
     ),
-    # ADR-256 portable roots are confined acquired/private-attempt members;
-    # exact contexts and counts retain the same owner-path census enforcement.
     ExceptionRule(
         "tldw_chatbook/Backup_Recovery/detached_layout.py",
         "function:_owner_items",
