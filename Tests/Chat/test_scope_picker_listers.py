@@ -490,3 +490,25 @@ async def test_keyword_tag_lister_builds_usage_counts_once_per_modal():
     assert [t.tag for t in first] == ["alpha", "alpine"]  # usage desc, then name
     assert [t.tag for t in second] == ["beta"]
     assert {t.tag for t in third} == {"alpha", "beta", "alpine"}
+
+
+def test_scope_picker_contract_has_no_widgets_or_textual_import() -> None:
+    """The lister and the contract it implements stay below Widgets (TASK-36944.5).
+
+    Static imports only, at any level; an ``importlib`` call would not be seen.
+    """
+    import ast
+    from pathlib import Path
+
+    import tldw_chatbook.Chat as chat_pkg
+
+    for name in ("scope_picker_listers.py", "rag_scope.py"):
+        tree = ast.parse((Path(chat_pkg.__file__).parent / name).read_text())
+        mods = []
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Import):
+                mods += [a.name for a in node.names]
+            elif isinstance(node, ast.ImportFrom):
+                mods.append(("." * node.level) + (node.module or ""))
+        bad = [m for m in mods if "Widgets" in m or m.split(".")[0] == "textual"]
+        assert not bad, f"{name} imports {bad}"

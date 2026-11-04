@@ -170,10 +170,9 @@ from tldw_chatbook.Widgets.Console.console_save_as_modal import ConsoleSaveAsMod
 from tldw_chatbook.Widgets.Console.console_save_markdown_modal import (
     ConsoleSaveMarkdownModal,
 )
+from tldw_chatbook.Chat.rag_scope import ScopeListPage, TagCount
 from tldw_chatbook.Widgets.Console.console_scope_picker_modal import (
     ConsoleScopePickerModal,
-    ScopeListPage,
-    TagCount,
 )
 from tldw_chatbook.Widgets.Console.console_session_switcher_modal import (
     ConsoleSessionSwitcherModal,
