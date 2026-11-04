@@ -32,7 +32,7 @@ from tldw_chatbook.Chat.console_chat_models import (
     ConsoleDispatchRecoveryState,
     console_dispatch_recovery_from_checkpoint,
 )
-from tldw_chatbook.Chat.provider_continuation import (
+from tldw_chatbook.Provider_Contract.provider_continuation import (
     ContinuationValidationError,
     ContinuationConflictError,
     ContinuationRestoreTarget,
@@ -41,7 +41,7 @@ from tldw_chatbook.Chat.provider_continuation import (
     parse_provider_continuation_json,
     read_provider_continuation_json,
 )
-from tldw_chatbook.Chat.thinking_blocks import (
+from tldw_chatbook.Provider_Contract.thinking_blocks import (
     ThinkingEnvelopeValidationError,
     dump_thinking_blocks_json,
     parse_thinking_blocks_json,

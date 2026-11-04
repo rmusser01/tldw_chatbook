@@ -32,11 +32,11 @@ from ..Chat.assistant_generation_state import normalize_assistant_generation_sta
 from ..Chat.citation_service_factory import (
     build_local_citation_conversation_service,
 )
-from ..Chat.provider_continuation import (
+from ..Provider_Contract.provider_continuation import (
     dump_provider_continuation_json,
     parse_provider_continuation_json,
 )
-from ..Chat.thinking_blocks import (
+from ..Provider_Contract.thinking_blocks import (
     THINKING_EXPORT_WARNING,
     ThinkingEnvelopeValidationError,
     ThinkingEnvelopeVersionError,

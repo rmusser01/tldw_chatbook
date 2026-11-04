@@ -49,7 +49,7 @@ from tldw_chatbook.Chat.console_trace_service import (
     TraceCallPersistenceError,
     _is_rendered_system_row,
 )
-from tldw_chatbook.Chat.provider_continuation import (
+from tldw_chatbook.Provider_Contract.provider_continuation import (
     ContinuationRestoreTarget,
     parse_provider_continuation_json,
     validate_continuation_restore,

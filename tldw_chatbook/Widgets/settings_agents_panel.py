@@ -59,7 +59,7 @@ from tldw_chatbook.Chat.custom_endpoint_registry import (
     split_custom_endpoint_id,
 )
 from tldw_chatbook.Chat.provider_readiness import provider_config_key
-from tldw_chatbook.Chat.sampling_params import (
+from tldw_chatbook.Provider_Contract.sampling_params import (
     params_to_tuple,
     parse_params_text,
     validate_sampling_params,

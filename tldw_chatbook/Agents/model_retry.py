@@ -19,7 +19,7 @@ import random
 from dataclasses import dataclass
 from typing import Any, Callable
 
-from tldw_chatbook.Chat.Chat_Deps import (
+from tldw_chatbook.Provider_Contract import (
     ChatAPIError,
     ChatAuthenticationError,
     ChatBadRequestError,

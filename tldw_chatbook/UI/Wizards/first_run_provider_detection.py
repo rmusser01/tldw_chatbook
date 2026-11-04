@@ -297,7 +297,7 @@ class ProviderDetectionStep(SetupStep):
 
     @staticmethod
     def _setup_facts(provider_key: str):
-        from tldw_chatbook.Chat.provider_setup_facts import provider_setup_facts
+        from tldw_chatbook.Provider_Contract.provider_setup_facts import provider_setup_facts
 
         return provider_setup_facts(provider_key)
 
@@ -318,7 +318,7 @@ class ProviderDetectionStep(SetupStep):
         per-account URL is labelled per provider; 'Find local servers' shows
         only for local rows and 'Test connection' only where it can enable.
         """
-        from tldw_chatbook.Chat.provider_setup_facts import endpoint_example
+        from tldw_chatbook.Provider_Contract.provider_setup_facts import endpoint_example
 
         facts = self._setup_facts(provider_key)
         if facts.base_url_label:
@@ -346,7 +346,7 @@ class ProviderDetectionStep(SetupStep):
 
     def _refresh_endpoint_resolution(self, readiness: Any = None) -> None:
         """Chat URL preview and the endpoint's own status line."""
-        from tldw_chatbook.Chat.provider_endpoint_contract import (
+        from tldw_chatbook.Provider_Contract.provider_endpoint_contract import (
             resolve_provider_endpoint,
         )
 
@@ -370,7 +370,7 @@ class ProviderDetectionStep(SetupStep):
         an empty field reads neutral. A disabled 'Test connection' says what
         enables it (review provider-15).
         """
-        from tldw_chatbook.Chat.provider_endpoint_contract import (
+        from tldw_chatbook.Provider_Contract.provider_endpoint_contract import (
             resolve_provider_endpoint,
         )
 
@@ -412,7 +412,7 @@ class ProviderDetectionStep(SetupStep):
 
     def _invalid_draft_refusal(self) -> str:
         """Commit's refusal when the draft won't resolve: name the field."""
-        from tldw_chatbook.Chat.provider_endpoint_contract import (
+        from tldw_chatbook.Provider_Contract.provider_endpoint_contract import (
             resolve_provider_endpoint,
         )
 
@@ -552,7 +552,7 @@ class ProviderDetectionStep(SetupStep):
 
         from tldw_chatbook.Chat.local_server_discovery import DiscoveredLocalServer
         from tldw_chatbook.Chat.provider_catalog import provider_display_name
-        from tldw_chatbook.Chat.provider_endpoint_contract import (
+        from tldw_chatbook.Provider_Contract.provider_endpoint_contract import (
             resolve_provider_endpoint,
         )
 
@@ -615,7 +615,7 @@ class ProviderDetectionStep(SetupStep):
 
     def _apply_discovered_server(self, server: Any) -> None:
         """Say which found server the selection uses (review provider-21 (b))."""
-        from tldw_chatbook.Chat.provider_endpoint_contract import (
+        from tldw_chatbook.Provider_Contract.provider_endpoint_contract import (
             resolve_provider_endpoint,
         )
         from tldw_chatbook.UI.Wizards.first_run_provider_list import (
@@ -652,7 +652,7 @@ class ProviderDetectionStep(SetupStep):
     def _use_found_server(self, server: Any) -> None:
         """Adopt a detected server: its row, its port, its models (provider-02)."""
         from tldw_chatbook.Chat.local_server_discovery import DiscoveredLocalServer
-        from tldw_chatbook.Chat.provider_endpoint_contract import (
+        from tldw_chatbook.Provider_Contract.provider_endpoint_contract import (
             resolve_provider_endpoint,
         )
 

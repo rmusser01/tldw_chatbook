@@ -14,7 +14,7 @@ from typing import Any, Generator, Union, Dict, Optional, List
 import requests
 from urllib3 import Retry
 
-from tldw_chatbook.Chat.Chat_Deps import (
+from tldw_chatbook.Provider_Contract import (
     ChatProviderError,
     ChatBadRequestError,
     ChatConfigurationError,

@@ -42,7 +42,7 @@ from .task_loader import TaskConfig
 
 # Use existing Chat infrastructure for LLM calls
 from tldw_chatbook.Chat.Chat_Functions import chat_api_call
-from tldw_chatbook.Chat.Chat_Deps import (
+from tldw_chatbook.Provider_Contract import (
     ChatProviderError as EvalProviderError,
     ChatAPIError as EvalAPIError,
     ChatAuthenticationError as EvalAuthenticationError,

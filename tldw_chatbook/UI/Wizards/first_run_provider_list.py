@@ -292,8 +292,8 @@ def usable_found_server(server: Any) -> bool:
         resolve_console_provider_identity,
     )
     from tldw_chatbook.Chat.local_server_discovery import DiscoveredLocalServer
-    from tldw_chatbook.Chat.provider_endpoint_contract import resolve_provider_endpoint
-    from tldw_chatbook.Chat.provider_setup_facts import provider_setup_facts
+    from tldw_chatbook.Provider_Contract.provider_endpoint_contract import resolve_provider_endpoint
+    from tldw_chatbook.Provider_Contract.provider_setup_facts import provider_setup_facts
 
     if type(server) is not DiscoveredLocalServer:
         return False
@@ -472,7 +472,7 @@ def provider_options(entries: Sequence[Any]) -> list[Option]:
 
 def legacy_keys_in_use(app_config: Mapping[str, Any], resumed_provider: str = "") -> frozenset[str]:
     """Legacy keys the user already relies on, which stay listed (provider-12)."""
-    from tldw_chatbook.Chat.provider_setup_facts import LEGACY_PROVIDER_KEYS
+    from tldw_chatbook.Provider_Contract.provider_setup_facts import LEGACY_PROVIDER_KEYS
     from tldw_chatbook.config import normalize_provider_config_key
 
     defaults = app_config.get("chat_defaults") if isinstance(app_config, Mapping) else {}
@@ -718,7 +718,7 @@ class ProviderListStep(ProviderKeyEntryStep):
         from tldw_chatbook.Chat.console_provider_endpoints import (
             first_configured_endpoint,
         )
-        from tldw_chatbook.Chat.provider_endpoint_contract import (
+        from tldw_chatbook.Provider_Contract.provider_endpoint_contract import (
             canonical_connection_identity,
         )
         from tldw_chatbook.config import DEFAULT_CONFIG_FROM_TOML

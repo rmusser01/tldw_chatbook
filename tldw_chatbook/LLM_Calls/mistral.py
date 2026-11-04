@@ -29,7 +29,7 @@ from typing import Any
 
 from loguru import logger
 
-from tldw_chatbook.Chat.Chat_Deps import (
+from tldw_chatbook.Provider_Contract import (
     ChatAuthenticationError,
     ChatBadRequestError,
     ChatConfigurationError,

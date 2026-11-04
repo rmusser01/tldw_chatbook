@@ -99,7 +99,7 @@ from tldw_chatbook.Chat.console_turn_grouping import (
     ordered_assistant_activities,
     project_thinking_activities,
 )
-from tldw_chatbook.Chat.thinking_blocks import (
+from tldw_chatbook.Provider_Contract.thinking_blocks import (
     DisplayableThinkingBlock,
     ProprietaryThinkingBlock,
     ThinkingEnvelope,

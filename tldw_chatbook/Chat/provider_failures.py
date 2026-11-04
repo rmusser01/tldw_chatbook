@@ -11,7 +11,7 @@ through this module.
 import asyncio
 from collections.abc import Callable
 
-from tldw_chatbook.Chat.Chat_Deps import ChatAPIError, ChatConfigurationError
+from tldw_chatbook.Provider_Contract import ChatAPIError, ChatConfigurationError
 from tldw_chatbook.Chat.console_trace_errors import TraceCallPersistenceError
 
 _MDN_BOILERPLATE_MARKER = "For more information check:"

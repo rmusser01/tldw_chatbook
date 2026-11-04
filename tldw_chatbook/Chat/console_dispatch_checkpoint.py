@@ -615,7 +615,7 @@ def dump_console_resolved_destination_json(
         destination.continuation_base_url,
     )
     if any(value is not None for value in values):
-        from tldw_chatbook.Chat.provider_continuation import (
+        from tldw_chatbook.Provider_Contract.provider_continuation import (
             ContinuationRestoreTarget,
             validate_continuation_target,
         )

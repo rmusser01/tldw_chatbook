@@ -58,7 +58,7 @@ from tldw_chatbook.Chat.custom_endpoint_registry import (
 from tldw_chatbook.Chat.console_provider_support import GENERATION_FIELD_REQUEST_KEYS  # noqa: F401 - lazy request helper compatibility seam
 from tldw_chatbook.Chat.provider_readiness import provider_config_key
 from tldw_chatbook.Chat.trajectory import contains_local_path, redact_local_paths
-from tldw_chatbook.Chat.sampling_params import params_to_dict, params_to_tuple
+from tldw_chatbook.Provider_Contract.sampling_params import params_to_dict, params_to_tuple
 from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
 from tldw_chatbook.Utils.token_counter import (
     count_tokens_messages,
@@ -138,7 +138,7 @@ from .agent_models import (
     # invoking the parameter's value (None/str) instead.
     definition_fingerprint as compute_definition_fingerprint,
 )
-from tldw_chatbook.Chat.provider_continuation import (
+from tldw_chatbook.Provider_Contract.provider_continuation import (
     ContinuationConflictError,
     ContinuationOwnerGroup,
     ContinuationRestoreTarget,
@@ -9152,7 +9152,7 @@ class AgentService:
                     steps=[self._service_error_step(run_id, str(error))],
                 )
             except Exception as exc:  # noqa: BLE001 — a run never raises out
-                from tldw_chatbook.Chat.Chat_Deps import ChatAPIError
+                from tldw_chatbook.Provider_Contract import ChatAPIError
                 from tldw_chatbook.Chat.console_trace_service import (
                     TraceCallPersistenceError,
                 )

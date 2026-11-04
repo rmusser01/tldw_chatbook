@@ -54,7 +54,7 @@ from ...Chat.console_turn_preparation import (
     ConsoleTurnPreparation,
     ConsoleTurnPreparationState,
 )
-from ...Chat.provider_continuation import ProviderContinuationCheckpoint
+from ...Provider_Contract.provider_continuation import ProviderContinuationCheckpoint
 from ...Utils.egress import latest_rate_limit_headers
 from ...Utils.input_validation import validate_console_draft
 from ...Widgets.Console.console_context_controls import (

@@ -15,7 +15,7 @@ from threading import Lock, RLock
 from typing import TYPE_CHECKING, Literal, Protocol, get_args
 from unicodedata import category as unicode_category
 
-from .provider_endpoint_contract import canonical_connection_identity
+from ..Provider_Contract.provider_endpoint_contract import canonical_connection_identity
 
 if TYPE_CHECKING:
     from .console_session_settings import ConsoleSessionSettings

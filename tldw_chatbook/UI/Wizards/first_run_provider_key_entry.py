@@ -378,7 +378,7 @@ def key_help_line(provider_key: str, readiness: Any) -> Text:
         environment and config.toml routes ("" while a URL is what's missing).
     """
     from tldw_chatbook.Chat.provider_catalog import provider_display_name
-    from tldw_chatbook.Chat.provider_setup_facts import (
+    from tldw_chatbook.Provider_Contract.provider_setup_facts import (
         key_help_text,
         provider_setup_facts,
     )

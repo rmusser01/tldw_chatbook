@@ -229,9 +229,9 @@ from tldw_chatbook.Chat.console_thinking_capture import (
     consume_call_thinking,  # noqa: F401 - lazy request helper compatibility seam
 )
 from tldw_chatbook.Chat.console_thinking_history import ProviderThinkingSidecar
-from tldw_chatbook.Chat.thinking_blocks import ThinkingEnvelope, ThinkingHistoryPolicy
+from tldw_chatbook.Provider_Contract.thinking_blocks import ThinkingEnvelope, ThinkingHistoryPolicy
 from tldw_chatbook.Chat.console_history_budget import DEFAULT_RESPONSE_RESERVATION
-from tldw_chatbook.Chat.provider_continuation import (
+from tldw_chatbook.Provider_Contract.provider_continuation import (
     ContinuationOwnerGroup,
     bind_continuation_to_target,  # noqa: F401 - lazy request helper compatibility seam
     ContinuationRestoreTarget,
@@ -3236,7 +3236,7 @@ class _StreamingModelAdapter:
         from tldw_chatbook.Chat.console_trace_continuation import (
             LiveNativeContinuationCustody,
         )
-        from tldw_chatbook.Chat.provider_continuation import transition_provider_call
+        from tldw_chatbook.Provider_Contract.provider_continuation import transition_provider_call
 
         self._live_native_custody = None
         if projected is not self._live_native_persisted_event:

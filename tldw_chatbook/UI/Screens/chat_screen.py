@@ -353,7 +353,7 @@ from ...Chat.console_provider_gateway import (
     DEFAULT_LLAMACPP_BASE_URL,
     normalize_llamacpp_base_url,
 )
-from ...Chat.Chat_Deps import (
+from ...Provider_Contract import (
     ChatAuthenticationError,
     ChatBadRequestError,
     ChatConfigurationError,

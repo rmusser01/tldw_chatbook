@@ -736,7 +736,7 @@ def key_url_line(provider: str) -> str:
     Returns:
         'New keys: <url>.' or the dashboard line; "" when no key is needed.
     """
-    from ...Chat.provider_setup_facts import key_help_text, provider_setup_facts
+    from tldw_chatbook.Provider_Contract.provider_setup_facts import key_help_text, provider_setup_facts
 
     key = provider_config_key(provider)
     if key not in PROVIDERS_REQUIRING_API_KEY_KEYS:

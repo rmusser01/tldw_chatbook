@@ -33,7 +33,7 @@ from rich.markup import escape as escape_markup  # noqa: F401 -- live recovery-c
 
 from tldw_chatbook.Metrics.metrics_logger import log_counter
 
-from tldw_chatbook.Chat.Chat_Deps import (
+from tldw_chatbook.Provider_Contract import (
     ChatAPIError,
     project_provider_error,
     ChatBadRequestError,
@@ -135,7 +135,7 @@ from tldw_chatbook.Chat.console_history_budget import (
     is_deleted_history_value,
     provider_continuation_owner_groups,
 )
-from tldw_chatbook.Chat.provider_continuation import (
+from tldw_chatbook.Provider_Contract.provider_continuation import (
     project_provider_continuation,
     ContinuationRestoreTarget,
     ProviderContinuationCheckpoint,
@@ -160,7 +160,7 @@ from tldw_chatbook.Chat.custom_endpoint_registry import (
     CustomEndpointEntry,
 )
 from tldw_chatbook.Chat.llamacpp_think_filter import StartAnchoredThinkSplitter
-from tldw_chatbook.Chat.thinking_blocks import (
+from tldw_chatbook.Provider_Contract.thinking_blocks import (
     MAX_THINKING_PROVENANCE_CHARS,
     MAX_THINKING_TEXT_BYTES,
     THINKING_ENVELOPE_VERSION,
@@ -7422,7 +7422,7 @@ class ConsoleProviderGateway:
                     provider_message = str(exc)
                 except BaseException:  # noqa: BLE001 - classification is optional
                     provider_message = ""
-                from tldw_chatbook.Chat.Chat_Deps import ChatModelUnavailableError
+                from tldw_chatbook.Provider_Contract import ChatModelUnavailableError
                 from tldw_chatbook.Chat.provider_error_reason import (
                     is_image_input_rejection,
                 )

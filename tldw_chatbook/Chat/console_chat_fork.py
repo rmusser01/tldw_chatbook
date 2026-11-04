@@ -46,7 +46,7 @@ from tldw_chatbook.Chat.console_session_endpoint_policy import (
     ConsoleEphemeralEndpointPolicy,
 )
 from tldw_chatbook.Chat.console_speech_preferences import ConsoleSpeechPreferences
-from tldw_chatbook.Chat.thinking_blocks import (
+from tldw_chatbook.Provider_Contract.thinking_blocks import (
     ThinkingHistoryPolicy,
     normalize_thinking_history_policy,
 )

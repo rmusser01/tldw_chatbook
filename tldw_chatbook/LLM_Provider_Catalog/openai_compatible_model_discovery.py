@@ -23,7 +23,7 @@ from tldw_chatbook.Chat.local_server_discovery import (
     classify_transport_failure,
     read_bounded_model_response,
 )
-from tldw_chatbook.Chat.provider_endpoint_contract import (
+from tldw_chatbook.Provider_Contract.provider_endpoint_contract import (
     ConnectionProbeAvailability,
     ProviderEndpointResolution,
     connection_probe_availability,

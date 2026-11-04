@@ -32,7 +32,7 @@ from tldw_chatbook.Chat.local_server_discovery import (
     classify_transport_failure,
     read_bounded_model_response,
 )
-from tldw_chatbook.Chat.provider_endpoint_contract import resolve_provider_endpoint
+from tldw_chatbook.Provider_Contract.provider_endpoint_contract import resolve_provider_endpoint
 from tldw_chatbook.Chat.provider_test_evidence import ProviderProbeResult
 from tldw_chatbook.Utils.tls_trust import build_httpx_async_client
 from tldw_chatbook.TTS.openai_compatible_config import (

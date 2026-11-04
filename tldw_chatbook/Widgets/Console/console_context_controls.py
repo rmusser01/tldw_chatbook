@@ -52,7 +52,7 @@ from tldw_chatbook.Chat.console_session_settings import (
 from tldw_chatbook.Chat.console_thinking_history import (
     EffectiveThinkingHistoryPolicy,
 )
-from tldw_chatbook.Chat.thinking_blocks import (
+from tldw_chatbook.Provider_Contract.thinking_blocks import (
     ThinkingHistoryPolicy,
     normalize_thinking_history_policy,
 )

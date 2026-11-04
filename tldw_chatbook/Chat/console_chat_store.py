@@ -275,7 +275,7 @@ from tldw_chatbook.Chat.message_metadata import (
     MessageMetadata,
     terminal_receipt_id_for_message,
 )
-from tldw_chatbook.Chat.provider_continuation import (
+from tldw_chatbook.Provider_Contract.provider_continuation import (
     ContinuationRestoreTarget,
     ProviderContinuationCheckpoint,
     dump_provider_continuation_json,
@@ -284,7 +284,7 @@ from tldw_chatbook.Chat.provider_continuation import (
 )
 from tldw_chatbook.Chat.provider_usage import ProviderUsage
 from tldw_chatbook.Chat.rag_scope import RagScope, SessionScopeHolder, serialize_scope
-from tldw_chatbook.Chat.thinking_blocks import (
+from tldw_chatbook.Provider_Contract.thinking_blocks import (
     ProprietaryThinkingBlock,
     ThinkingEnvelope,
     ThinkingHistoryPolicy,

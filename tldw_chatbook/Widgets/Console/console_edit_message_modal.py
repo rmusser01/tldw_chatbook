@@ -10,7 +10,7 @@ from textual.containers import Horizontal, Vertical
 from textual.screen import ModalScreen
 from textual.widgets import Button, Static, TextArea
 
-from tldw_chatbook.Chat.thinking_blocks import MAX_THINKING_TEXT_BYTES
+from tldw_chatbook.Provider_Contract.thinking_blocks import MAX_THINKING_TEXT_BYTES
 from tldw_chatbook.Widgets.modal_dismissal import SafeModalDismissMixin
 
 

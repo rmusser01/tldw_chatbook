@@ -45,7 +45,7 @@ from ...Chat.console_session_settings import (
     resolve_console_value_layers,
 )
 from ...Chat.provider_readiness import provider_config_key
-from ...Chat.sampling_params import temperature_range
+from ...Provider_Contract.sampling_params import temperature_range
 from ...config import coerce_bool_setting
 from ...Utils.input_validation import escape_markup
 from ...Widgets.Console.console_settings_field_row import (

@@ -67,7 +67,7 @@ from ...Widgets.modal_dismissal import SafeModalDismissMixin
 
 from ...Chat.console_runtime import ensure_console_runtime
 from ...Agents.agent_models import LOOP_DETECTION_N
-from ...Chat.Chat_Deps import ChatConfigurationError
+from ...Provider_Contract import ChatConfigurationError
 from ...Chat.console_chat_models import CONSOLE_DEFAULT_MAX_PARALLEL_RUNS
 from ...Canvas.limits import CanvasLimits
 from ...Chat.console_chat_controller import CapturePolicyMutationStatus
@@ -147,7 +147,7 @@ from ...Chat.provider_test_evidence import (
     model_facet,
     shared_connection_evidence,
 )
-from ...Chat.sampling_params import temperature_range
+from ...Provider_Contract.sampling_params import temperature_range
 from ...Chat.console_provider_support import (
     CARRY_FORWARD_OPTIONS,
     GENERATION_FIELD_REQUEST_KEYS,

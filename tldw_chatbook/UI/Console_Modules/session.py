@@ -210,7 +210,7 @@ from ...Chat.console_switcher_state import (
     SwitcherTargetKind,
     UnavailableSessionNotice,
 )
-from ...Chat.thinking_blocks import normalize_thinking_history_policy
+from ...Provider_Contract.thinking_blocks import normalize_thinking_history_policy
 from ...Chat.console_scratch_space import ConsoleScratchSnapshot
 from ...Chat.console_turn_context import ConsoleTurnConfigurationSnapshot
 from ...Chat.console_prompt_mixins import decode_mixin_preferences, encode_mixin_preferences

@@ -247,7 +247,7 @@ def build_first_run_model_discovery_key(
 ) -> FirstRunModelDiscoveryKey:
     """Build a canonical cache/evidence key without reading credential value."""
 
-    from tldw_chatbook.Chat.provider_endpoint_contract import (
+    from tldw_chatbook.Provider_Contract.provider_endpoint_contract import (
         canonical_connection_identity,
         resolve_provider_endpoint,
     )
@@ -376,7 +376,7 @@ def _resolve_first_run_provider_endpoints(
         effective_provider_discovery_endpoint,
         first_configured_endpoint,
     )
-    from tldw_chatbook.Chat.provider_endpoint_contract import resolve_provider_endpoint
+    from tldw_chatbook.Provider_Contract.provider_endpoint_contract import resolve_provider_endpoint
 
     endpoint = editable_endpoint.strip()
     owner_key = _first_run_provider_owner_key(provider)
@@ -416,7 +416,7 @@ def build_current_first_run_model_discovery_key(
 ) -> FirstRunModelDiscoveryKey:
     """Resolve a current secret-free discovery key for persistence CAS."""
 
-    from tldw_chatbook.Chat.provider_endpoint_contract import (
+    from tldw_chatbook.Provider_Contract.provider_endpoint_contract import (
         canonical_connection_identity,
     )
 
@@ -472,7 +472,7 @@ def build_first_run_provider_commit(
 ) -> ProviderSetupMutation:
     """Delegate one validated first-run provider/default commit to its owner."""
 
-    from tldw_chatbook.Chat.provider_endpoint_contract import resolve_provider_endpoint
+    from tldw_chatbook.Provider_Contract.provider_endpoint_contract import resolve_provider_endpoint
     from tldw_chatbook.Chat.provider_setup_persistence import (
         ProviderSetupDraft,
         ProviderSetupMutation,

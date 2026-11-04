@@ -19,7 +19,7 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from .agent_routing import SpawnTarget
 
-from tldw_chatbook.Chat.Chat_Deps import ChatAPIError
+from tldw_chatbook.Provider_Contract import ChatAPIError
 
 from .native_tools import provider_supports_native_tools
 

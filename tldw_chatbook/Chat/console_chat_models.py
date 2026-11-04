@@ -27,9 +27,9 @@ if TYPE_CHECKING:
         ConsoleDispatchCheckpoint,
     )
     from tldw_chatbook.Chat.message_metadata import MessageMetadata
-    from tldw_chatbook.Chat.provider_continuation import ProviderContinuationCheckpoint
+    from tldw_chatbook.Provider_Contract.provider_continuation import ProviderContinuationCheckpoint
     from tldw_chatbook.Chat.provider_usage import ProviderUsage
-    from tldw_chatbook.Chat.thinking_blocks import ThinkingEnvelope
+    from tldw_chatbook.Provider_Contract.thinking_blocks import ThinkingEnvelope
     from tldw_chatbook.Personal_Context.context_service import ProfileContextSnapshot
     from tldw_chatbook.Video_Generation.video_metadata import VideoGenerationMetadata
 

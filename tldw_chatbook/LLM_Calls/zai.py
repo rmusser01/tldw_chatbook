@@ -13,10 +13,10 @@ from copy import deepcopy
 from dataclasses import dataclass, field
 from typing import Any, cast
 
-from tldw_chatbook.Chat.Chat_Deps import (
+from tldw_chatbook.Provider_Contract import (
     ChatProviderError,
 )
-from tldw_chatbook.Chat.provider_continuation import (
+from tldw_chatbook.Provider_Contract.provider_continuation import (
     ContinuationCall,
     ContinuationRound,
     ContinuationRestoreTarget,
