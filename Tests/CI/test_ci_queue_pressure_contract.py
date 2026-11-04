@@ -185,17 +185,12 @@ FAST_LANE_TARGETS = (
     "Tests/Chat/test_console_canvas_profile_preview.py::test_canvas_changes_discard_late_profile_preview",
     "Tests/Chat/test_console_canvas_profile_preview.py::test_preview_runtime_roster_retires_only_its_worker_connection",
     # TASK-38544: cover all general module rows and canonical screen limits.
-    # Changed Library controllers retain their own ceiling/slack and discovery
-    # guards; an unrelated unchanged Skills overrun remains outside this rider.
     "Tests/Architecture/test_module_size_ratchet.py",
     "Tests/Architecture/test_screen_size_ratchet.py",
-    "Tests/Architecture/test_library_modules_size_ratchet.py::test_every_controller_file_has_a_budget_row",
-    "Tests/Architecture/test_library_modules_size_ratchet.py::test_controller_does_not_grow_past_its_budget[tldw_chatbook/UI/Library_Modules/library_prompt_browse_controller.py]",
-    "Tests/Architecture/test_library_modules_size_ratchet.py::test_budget_is_not_left_slack_after_a_move[tldw_chatbook/UI/Library_Modules/library_prompt_browse_controller.py]",
-    "Tests/Architecture/test_library_modules_size_ratchet.py::test_controller_does_not_grow_past_its_budget[tldw_chatbook/UI/Library_Modules/library_prompts_controller.py]",
-    "Tests/Architecture/test_library_modules_size_ratchet.py::test_budget_is_not_left_slack_after_a_move[tldw_chatbook/UI/Library_Modules/library_prompts_controller.py]",
-    "Tests/Architecture/test_library_modules_size_ratchet.py::test_controller_does_not_grow_past_its_budget[tldw_chatbook/UI/Library_Modules/library_media_controller.py]",
-    "Tests/Architecture/test_library_modules_size_ratchet.py::test_budget_is_not_left_slack_after_a_move[tldw_chatbook/UI/Library_Modules/library_media_controller.py]",
+    # TASK-38699: every Library controller row. TASK-38544 ran only the three
+    # changed controllers' nodes, and the Skills overrun they left out sat red
+    # on dev. The whole file is pure and takes about a second.
+    "Tests/Architecture/test_library_modules_size_ratchet.py",
     "Tests/Prompts_DB/test_prompt_export_mixins.py",
     "Tests/Architecture/test_library_prompts_wiring.py",
     "Tests/Scripts/test_check_textual_worker_contract.py::test_w002_literal_dependency_catchers_preserve_lookup_protection",
