@@ -37,6 +37,10 @@ from Tests.UI.test_library_shell import (
 from Tests.UI.test_product_maturity_gate1_core_loop_screen_adaptation import (
     ConsoleHarness,
 )
+from Tests.UI.test_settings_category_sweep import (
+    _click_settings_category,
+    _settle_settings,
+)
 from tldw_chatbook.Home.dashboard_state import HomeActiveWorkItem
 from tldw_chatbook.UI.Navigation.main_navigation import (
     MainNavigationBar,
@@ -406,21 +410,6 @@ def _is_effectively_displayed(widget) -> bool:
             return False
         current = getattr(current, "parent", None)
     return True
-
-
-async def _click_settings_category(screen, pilot, category_id: str) -> None:
-    """Click a settings sidebar category, scrolling it into view first."""
-    selector = f"#settings-category-{category_id}"
-    await _wait_for_selector(screen, pilot, selector)
-    try:
-        category_list = screen.query_one("#settings-category-list")
-        category_list.scroll_to_widget(
-            screen.query_one(selector), animate=False, immediate=True
-        )
-        await pilot.pause()
-    except Exception:
-        pass
-    await pilot.click(selector)
 
 
 class StaticArtifactsChatbookService:
@@ -2602,7 +2591,8 @@ async def test_settings_dirty_category_status_has_visual_marker_class():
 
     async with host.run_test(size=(140, 42)) as pilot:
         screen = _active_destination_screen(host)
-        await _click_settings_category(screen, pilot, "console-behavior")
+        await _settle_settings(pilot)
+        await _click_settings_category(pilot, "console-behavior")
         toggle = screen.query_one(
             "#settings-console-collapse-large-pastes-toggle", Checkbox
         )
@@ -2631,7 +2621,8 @@ async def test_settings_advanced_config_controls_use_action_and_status_rows():
 
     async with host.run_test(size=(180, 50)) as pilot:
         screen = _active_destination_screen(host)
-        await _click_settings_category(screen, pilot, "advanced-config")
+        await _settle_settings(pilot)
+        await _click_settings_category(pilot, "advanced-config")
         await _wait_for_selector(screen, pilot, "#settings-advanced-config-editor")
 
         await pilot.click("#settings-advanced-validate-config")
