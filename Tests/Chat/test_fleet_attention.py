@@ -570,3 +570,299 @@ def test_toast_copy_grammar_is_exact():
         "2 background sub-agents in “T”: 1 finished, 1 cancelled.",
         "warning",
     )
+
+
+@pytest.mark.bootstrap_profile
+@pytest.mark.parametrize("mode", ["receipt", "lazy", "borrowed", "fallback"])
+def test_native_attention_returns_only_its_new_worker_handles(tmp_path, mode):
+    import sqlite3
+    import sys
+    from contextlib import ExitStack
+
+    from tldw_chatbook.Backup_Recovery import participants, storage_admission
+    from tldw_chatbook.Chat.console_activity_receipts import (
+        ConsoleActivityReceiptService,
+    )
+    from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
+
+    chacha = CharactersRAGDB(str(tmp_path / "attention.sqlite"), client_id="attention")
+    runs = AgentRunsDB(tmp_path / "attention-runs.sqlite")
+    app = _AppStub(chacha)
+    receipts = ConsoleActivityReceiptService(runs, app.conversation_local_marks_service)
+    if mode == "lazy":
+        from tldw_chatbook.Chat.console_runtime import (
+            _LazyConsoleActivityReceiptService,
+        )
+
+        receipts = _LazyConsoleActivityReceiptService(
+            runs, app.conversation_local_marks_service
+        )
+    loop = asyncio.new_event_loop()
+    loop.close()
+    consumer = ConsoleFleetAttentionConsumer(
+        app, loop=loop, receipt_service=receipts if mode != "fallback" else None
+    )
+    if mode == "lazy":
+        assert receipts._delegate is None
+        consumer(_drain(children=[_child(after_turn=False)]))
+        assert receipts._delegate is None
+    connections, errors = [], []
+
+    def observe(frame, event, result):
+        if (
+            event == "return"
+            and frame.f_code is participants._register_core_connection.__code__
+            and frame.f_locals.get("repository") in (chacha, runs)
+        ):
+            connection = frame.f_locals["connection"]
+            participant, lease = frame.f_locals["participant"], frame.f_locals["lease"]
+            assert (
+                result is connection
+                and lease.resource_thread is threading.current_thread()
+            )
+            connections.append((connection, participant, lease))
+
+    def worker():
+        sys.setprofile(observe)
+        try:
+            with ExitStack() as borrowed:
+                if mode == "borrowed":
+                    chacha_connection = borrowed.enter_context(
+                        chacha.transaction()
+                    ).connection
+                    runs_connection = borrowed.enter_context(runs.connection())
+                    originals = tuple(connections)
+                consumer(_drain(children=[_child()]))
+                assert connections
+                if mode == "borrowed":
+                    assert tuple(connections) == originals
+                    for connection, participant, lease in originals:
+                        assert (
+                            connection is chacha_connection
+                            or connection is runs_connection
+                        )
+                        assert connection.in_transaction is (
+                            connection is chacha_connection
+                        )
+                        assert connection.execute("SELECT 1").fetchone()[0] == 1
+                        with storage_admission._lock:
+                            assert participant.connections[connection] is lease
+                            assert lease in storage_admission._live_leases
+                else:
+                    for connection, participant, lease in connections:
+                        with storage_admission._lock:
+                            assert connection not in participant.connections
+                            assert lease not in storage_admission._live_leases
+                        with pytest.raises(sqlite3.ProgrammingError):
+                            connection.execute("SELECT 1")
+            if mode == "borrowed":
+                # The test's original worker acquired these before the callback.
+                chacha.close_connection()
+                runs.close()
+        except BaseException as error:  # noqa: BLE001 - return the exact worker failure.
+            errors.append(error)
+        finally:
+            sys.setprofile(None)
+
+    thread = threading.Thread(target=worker, name="original-attention-worker")
+    try:
+        thread.start()
+        thread.join(5)
+        assert not thread.is_alive()
+        if errors:
+            raise errors[0]
+        assert connections
+        if mode == "lazy":
+            assert type(receipts._delegate) is ConsoleActivityReceiptService
+        with storage_admission._lock:
+            assert all(
+                connection not in participant.connections
+                and lease not in storage_admission._live_leases
+                for connection, participant, lease in connections
+            )
+        assert app.conversation_local_marks_service.has_mark("conv-att", "fleet_unseen")
+        if mode != "fallback":
+            assert len(receipts.unseen_snapshot()) == 1
+            assert receipts.unseen_snapshot()[0].run_id == "run-1"
+        assert len(app.notifications) == 1
+    finally:
+        runs.close()
+        chacha.close()
+
+
+def test_attention_preserves_lazy_custom_getter_boundaries():
+    from types import SimpleNamespace
+
+    calls, queued = [], []
+
+    class Title:
+        def get_conversation_by_id(self, _conversation):
+            calls.append("title-query")
+            return {"title": "Original title"}
+
+    class Marks:
+        FLEET_UNSEEN = "fleet_unseen"
+
+        @property
+        def db(self):
+            raise AssertionError("custom marks storage must not be inspected")
+
+        def set_mark(self, *_args):
+            calls.append("mark")
+
+    class App(_AppStub):
+        def __init__(self):
+            self.notifications, self.staged = [], []
+            self.screen = object()
+            self.pending_handoffs = self._Handoffs(self.staged)
+
+        @property
+        def chachanotes_db(self):
+            calls.append("title-getter")
+            return Title()
+
+        @property
+        def conversation_local_marks_service(self):
+            calls.append("marks-getter")
+            return Marks()
+
+    class Receipts:
+        @property
+        def _db(self):
+            raise AssertionError("custom receipt storage must not be inspected")
+
+        @property
+        def _marks(self):
+            raise AssertionError("custom receipt marks must not be inspected")
+
+        def publish_fleet_drain(self, _event):
+            calls.append("publish")
+            return SimpleNamespace(complete=True)
+
+    loop = SimpleNamespace(
+        is_closed=lambda: False,
+        call_soon_threadsafe=lambda callback, *args: queued.append((callback, args)),
+    )
+    app = App()
+    consumer = ConsoleFleetAttentionConsumer(app, loop=loop, receipt_service=Receipts())
+    consumer(_drain(children=[_child(after_turn=False)]))
+    assert calls == [] and queued == []
+    consumer(_drain(children=[_child()]))
+    assert calls == ["publish"] and len(queued) == 1
+    callback, args = queued.pop()
+    callback(*args)
+    assert calls == ["publish", "title-getter", "title-query"]
+    calls.clear()
+    fallback = ConsoleFleetAttentionConsumer(
+        app, loop=SimpleNamespace(is_closed=lambda: True)
+    )
+    fallback(_drain(children=[_child()]))
+    assert calls == ["marks-getter", "mark", "title-getter", "title-query"]
+
+
+@pytest.mark.bootstrap_profile
+def test_attention_preserves_native_memory_database_owner():
+    database = CharactersRAGDB(":memory:", client_id="attention-memory")
+    connection = database.get_connection()
+    try:
+        app = _AppStub(database)
+        consumer = ConsoleFleetAttentionConsumer(app, loop=None)
+        consumer(_drain(children=[_child()]))
+        assert database.get_connection() is connection
+        assert connection.execute("SELECT 1").fetchone()[0] == 1
+        assert app.conversation_local_marks_service.has_mark("conv-att", "fleet_unseen")
+    finally:
+        database.close_connection()
+
+
+def _native_attention_close_failure(root):
+    """An isolated injected close error keeps the actual native lease visible."""
+    import os
+    import sys
+
+    from tldw_chatbook.Backup_Recovery import participants, storage_admission
+    from tldw_chatbook.Chat.console_activity_receipts import (
+        ConsoleActivityReceiptService,
+    )
+    from tldw_chatbook.Chat.console_agent_bridge import FleetDrainFanout
+    from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
+
+    database = CharactersRAGDB(str(root / "failed-close.sqlite"), client_id="close")
+    runs = AgentRunsDB(root / "failed-close-runs.sqlite")
+    app = _AppStub(database)
+    receipts = ConsoleActivityReceiptService(runs, app.conversation_local_marks_service)
+    consumer = ConsoleFleetAttentionConsumer(app, loop=None, receipt_service=receipts)
+    fanout = FleetDrainFanout()
+    fanout.register("attention", consumer)
+    later, errors, registrations, calls = [], [], [], []
+    fanout.register("after-attention", later.append)
+    failure = RuntimeError("original attention close did not return")
+
+    def refuse_close():
+        calls.append(failure)
+        raise failure
+
+    database.close_connection = refuse_close
+
+    def observe(frame, event, result):
+        if (
+            event == "return"
+            and frame.f_code is participants._register_core_connection.__code__
+            and frame.f_locals.get("repository") is database
+        ):
+            connection = frame.f_locals["connection"]
+            participant, lease = frame.f_locals["participant"], frame.f_locals["lease"]
+            assert (
+                result is connection
+                and lease.resource_thread is threading.current_thread()
+            )
+            registrations.append((connection, participant, lease))
+
+    event = _drain(children=[_child()])
+
+    def worker():
+        sys.setprofile(observe)
+        try:
+            fanout.fire(event)
+            assert calls == [failure] and later == [event]
+            assert registrations
+            with storage_admission._lock:
+                assert all(
+                    participant.connections.get(connection) is lease
+                    and lease in storage_admission._live_leases
+                    for connection, participant, lease in registrations
+                )
+            assert len(receipts.unseen_snapshot()) == 1
+        except BaseException as error:  # noqa: BLE001 - preserve original diagnostic failure.
+            errors.append(error)
+        finally:
+            sys.setprofile(None)
+
+    thread = threading.Thread(target=worker, name="original-attention-close-failure")
+    thread.start()
+    thread.join(5)
+    assert not thread.is_alive()
+    if errors:
+        raise errors[0]
+    assert all(lease.resource_thread is thread for _, _, lease in registrations)
+    print("ATTENTION_ORIGINAL_CLOSE_RETAINED; no creator drain", flush=True)
+    os._exit(17)
+
+
+@pytest.mark.bootstrap_profile
+def test_attention_close_failure_keeps_actual_lease_and_fanout_continues(tmp_path):
+    from Tests.Backup_Recovery.test_home_citation_retirement import _run
+
+    script = """
+import os
+from pathlib import Path
+from Tests import network_guard, real_profile_guard
+from Tests.windows_private_fixture_runner import user_fixture_default_owner
+network_guard.install()
+real_profile_guard.install()
+with user_fixture_default_owner():
+    from Tests.Chat.test_fleet_attention import _native_attention_close_failure
+    _native_attention_close_failure(Path(os.environ["XDG_DATA_HOME"]).parent)
+"""
+    with pytest.raises(AssertionError, match="ATTENTION_ORIGINAL_CLOSE_RETAINED"):
+        _run(tmp_path, "attention-close", "retained", script=script, timeout=60)

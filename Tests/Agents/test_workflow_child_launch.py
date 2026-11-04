@@ -199,55 +199,66 @@ def test_concurrent_duplicate_cannot_allocate_or_clobber_running_client(
         return scripted(**kwargs)
 
     service, _ = _prepared_service(host, chat, child_scope=scope)
-    actual = service._launch_prepared_child
+    actual = AgentService._launch_prepared_child.__code__
 
-    def delayed(*args, **kwargs):
-        launch_entered.set()
-        assert release_launch.wait(5)
-        return actual(*args, **kwargs)
+    def delayed(frame, event, _arg):
+        if (
+            event == "call"
+            and frame.f_code is actual
+            and frame.f_locals.get("self") is service
+        ):
+            launch_entered.set()
+            assert release_launch.wait(5)
 
-    monkeypatch.setattr(service, "_launch_prepared_child", delayed)
-    results = []
-    launcher = threading.Thread(target=lambda: results.append(_launch(service, host)))
-    launcher.start()
+    previous_profile = threading.getprofile()
+    threading.setprofile(delayed)
     try:
-        assert launch_entered.wait(5)
-        before = service.runtime_capacity.snapshot()
-        with pytest.raises(PermissionError, match="already claimed"):
-            _launch(service, host)
-        assert service.runtime_capacity.snapshot() == before
-        assert host.db.list_runs(host.authorization.claim.conversation_id) == []
-        release_launch.set()
-        launcher.join(5)
-        assert not launcher.is_alive()
-        receipt = results[0]
-        assert model_entered.wait(5)
-        before = service.runtime_capacity.snapshot()
-        original = host.db.get_run(receipt.run_id)
-        for _ in range(3):
-            assert _launch(service, host) is receipt
-        assert host.db.get_run(receipt.run_id) == original
-        assert service.runtime_capacity.snapshot() == before
-        assert counts == {"open": 1, "close": 0}
-        assert len(host.authorization._native_preparation[0].threads) == 1
-        with host.phase.context.scope():
-            foreign = AgentService(
-                db=host.db,
-                registry=host.registry,
-                runtime_capacity=service.runtime_capacity,
-                chat_call=lambda **_: pytest.fail("foreign service dispatched"),
-            )
-        with pytest.raises(PermissionError, match="preparation required"):
-            _launch(foreign, host)
-        assert host.db.get_run(receipt.run_id) == original
-        assert service.runtime_capacity.snapshot() == before
+        results = []
+        launcher = threading.Thread(
+            target=lambda: results.append(_launch(service, host))
+        )
+        launcher.start()
+        try:
+            assert launch_entered.wait(5)
+            before = service.runtime_capacity.snapshot()
+            with pytest.raises(PermissionError, match="already claimed"):
+                _launch(service, host)
+            assert service.runtime_capacity.snapshot() == before
+            assert host.db.list_runs(host.authorization.claim.conversation_id) == []
+            release_launch.set()
+            launcher.join(5)
+            assert not launcher.is_alive()
+            receipt = results[0]
+            assert model_entered.wait(5)
+            before = service.runtime_capacity.snapshot()
+            original = host.db.get_run(receipt.run_id)
+            for _ in range(3):
+                assert _launch(service, host) is receipt
+            assert host.db.get_run(receipt.run_id) == original
+            assert service.runtime_capacity.snapshot() == before
+            assert counts == {"open": 1, "close": 0}
+            assert len(host.authorization._native_preparation[0].threads) == 1
+            with host.phase.context.scope():
+                foreign = AgentService(
+                    db=host.db,
+                    registry=host.registry,
+                    runtime_capacity=service.runtime_capacity,
+                    chat_call=lambda **_: pytest.fail("foreign service dispatched"),
+                )
+            with pytest.raises(PermissionError, match="preparation required"):
+                _launch(foreign, host)
+            assert host.db.get_run(receipt.run_id) == original
+            assert service.runtime_capacity.snapshot() == before
+        finally:
+            release_launch.set()
+            release_model.set()
+            launcher.join(5)
+            _join(host)
+        assert counts == {"open": 1, "close": 1}
+        assert host.db.get_run(receipt.run_id)["status"] == "done"
+
     finally:
-        release_launch.set()
-        release_model.set()
-        launcher.join(5)
-        _join(host)
-    assert counts == {"open": 1, "close": 1}
-    assert host.db.get_run(receipt.run_id)["status"] == "done"
+        threading.setprofile(previous_profile)
 
 
 def test_failed_native_thread_start_refunds_only_reserved_launch(
@@ -481,29 +492,51 @@ def test_capacity_wait_releases_unbound_activity_and_keeps_original_allowance(
     workflow_host, monkeypatch
 ):
     from Tests.Agents.test_agent_service import ScriptedChat
-    from tldw_chatbook.Agents.execution_capacity import CapacityRefused
+    from tldw_chatbook.Agents.execution_capacity import CapacityRefused, WorkOrigin
 
     host = workflow_host
-    service, _ = _prepared_service(host, ScriptedChat(["done"]))
-    actual = service.runtime_capacity.begin_execution
-
-    def refuse(**kwargs):
-        raise CapacityRefused("automatic_child_capacity")
-
-    monkeypatch.setattr(service.runtime_capacity, "begin_execution", refuse)
-    with pytest.raises(CapacityRefused):
-        _launch(service, host)
-    with host.activity.prelaunch(footprint=host.authorization.footprint) as available:
-        assert available is not None
-    with host.db.connection() as conn:
-        assert (
-            conn.execute(
-                "SELECT state FROM automatic_work_reservations WHERE id=?",
-                (host.authorization.claim.reservation_id,),
-            ).fetchone()[0]
-            == "reserved"
-        )
-    monkeypatch.setattr(service.runtime_capacity, "begin_execution", actual)
+    scripted = ScriptedChat(["done"])
+    service, _ = _prepared_service(host, scripted)
+    capacity = service.runtime_capacity
+    capacity._refresh_limits()
+    allowance = capacity.max_child_executions - capacity.reserved_manual_children
+    assert 0 < allowance <= capacity.max_child_executions
+    competitors, returns = [], []
+    try:
+        for _ in range(allowance):
+            owner = capacity.begin_execution(
+                origin=WorkOrigin.AUTOMATIC,
+                conversation_id="capacity-competitor",
+                child=True,
+            )
+            competitors.append(owner)
+            owner.on_drained(
+                lambda proven, owner=owner: returns.append((owner, proven))
+            )
+        assert capacity.snapshot().child_executions == allowance
+        with pytest.raises(CapacityRefused, match="^automatic_child_capacity$"):
+            _launch(service, host)
+        assert host.authorization._native_launch == []
+        assert host.authorization._native_preparation[0].activity_claims == []
+        assert host.db.list_runs(host.authorization.claim.conversation_id) == []
+        with host.activity.prelaunch(
+            footprint=host.authorization.footprint
+        ) as available:
+            assert available is not None
+        with host.db.connection() as conn:
+            assert (
+                conn.execute(
+                    "SELECT state FROM automatic_work_reservations WHERE id=?",
+                    (host.authorization.claim.reservation_id,),
+                ).fetchone()[0]
+                == "reserved"
+            )
+    finally:
+        for owner in competitors:
+            owner.finish_root()
+        assert len(returns) == len(competitors)
+        assert all(proven is True for _owner, proven in returns)
+        assert all(any(returned is owner for returned, _ in returns) and not owner.is_admitted for owner in competitors)
     receipt = _launch(service, host)
     _join(host)
     assert host.db.get_run(receipt.run_id)["status"] == "done"

@@ -540,7 +540,12 @@ planner separately. The planner need not be an execution target. Native readines
 full target equality, source, binding and admission checks precede acceptance and
 billing. Original `prepare_workflow_planning` and `run_planning` retain planning
 custody through required plan/accounting and physical return; planning does not
-launch approved tasks.
+launch approved tasks. Before initial or repair preparation returns, the public
+coordinator retains the actual pending invocation, issuing Task and prepared
+object. Stop cancels that same issuer and waits for its original finite reads and
+unused cleanup. Only an exact returned planning receipt can abort a still-PREPARED
+attempt and release its reserved generation; accepted charges are never refunded.
+Missing read/receipt or uncertain source return retains the original pending run.
 
 `approve` uses the same original E acceptance cell for truthful initial or
 remaining decisions. Exact command duplicates return their original outcome;
@@ -551,12 +556,52 @@ conclusive pre-prepare refusal releases admission only after those positive
 returns; a missing reader or entered PREPARED attempt retains custody.
 
 The accepted execution driver prepares finite native tasks and composes
-`console_workflow_wave.run_workflow_wave`. Capacity/activity/fleet notifications
+`console_workflow_wave.run_workflow_wave`. Earlier-phase dependencies become
+eligible only through the accepted decision's exact completed, drained and fresh
+result/checkpoint references; original native preparation and launch repeat
+freshness checks. Capacity/activity/fleet notifications
 are subscribed before readiness recheck. A genuine no-dispatch wait retries the
 same preparation/TaskAuth only after both original scope/operation returns and
 wave B/E settlement; negative or uncertain return markers retain the original
 preparation, operation and fence. Workflow child membership excludes these tasks
 from ordinary fleet automatic-wake synthesis without changing unrelated fanout.
+
+Direct and wave launches retain an invocation-local native result through their
+original storage and execution scopes. Only that invocation's created operation
+can be finished; a duplicate receipt cannot finish another launch. Enrollment,
+launch and close cooperate under the existing task-authorization lock, with
+reservation and finish callbacks outside the lock. Unknown scope return or an
+invoked-but-unreturned bridge Thread.start retains original custody. Ordinary and
+no-bridge launch cleanup keep their existing contracts. Native binding and close
+check their original source receivers before invoking them.
+
+A capacity wait stops active-time charging only after the same finite preparation
+read, producer, storage scopes, owner/claim and actual returned wave B/E are
+positively proven. Its closed interval retains durable `retirement=unknown`; only
+the same live phase's exact idle-return witness satisfies that specific accounting
+uncertainty. Database-only readers and restart remain conservative, including
+native attempts recovered to `review_required`. Work consumes the idle witness
+before the original admission reopens charging. A private original cleanup
+receiver can charge already-owned cleanup after revocation or budget exhaustion;
+it grants no new work and cannot prevent physically authorized cleanup if
+accounting fails. A proven current-clock OPEN interval continues charging even
+when a later wrapper fails: an exact running clock is separate from final total,
+physical return and retained recovery.
+
+Ordinary automatic wake delivery starts its independently authorized Task with
+an empty `contextvars.Context`; child-thread execution guards cannot flow through
+retry Handles into that Task. The original delivery still issues its own native
+AutomaticWorkContext, which propagates through unchanged runtime custody. Native
+fleet-attention callbacks own only newly opened same-thread file-backed storage
+handles; borrowed handles, active transactions and lazy/custom getter timing keep
+their original contracts.
+
+After exact execution return and release of its original intake and primary
+token, G notifies the existing pending-wake receiver. Notification failure stays
+separate from physical-return failure and cannot restore released custody.
+Runtime disposal permanently fences the original native wake receiver before
+closing G, including callbacks already posted on the host loop; fence failures
+and caller cancellation retain their separate error and cleanup semantics.
 
 Explicit workflow-ID Pause stops new launches while committed native work settles.
 Read-only planning Pause waits the original plan return before its paused CAS.

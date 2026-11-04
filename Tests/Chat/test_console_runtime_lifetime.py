@@ -373,11 +373,100 @@ async def test_archive_reservation_and_recovery_follow_actual_custody(
         assert runtime._app._conversation_send_inflight == {}
         recovery = runtime._turn_recoveries[turn_id]
         assert recovery.draft == request.draft
-        assert recovery.attachments == attachments
+        assert recovery.attachments == ()
+        assert tuple(store.pending_attachments(session.id)) == attachments
+        assert all(
+            actual is original
+            for actual, original in zip(
+                store.pending_attachments(session.id), attachments, strict=True
+            )
+        )
     finally:
         release.set()
         task.cancel()
         await asyncio.gather(task, return_exceptions=True)
+
+
+@pytest.mark.bootstrap_profile
+@pytest.mark.asyncio
+async def test_native_post_transfer_cancellation_recovers_same_attachment():
+    from dataclasses import replace
+
+    from Tests.Chat.test_console_prompt_queue_coordinator import SequencedGateway
+    from Tests.Chat.test_console_received_custody import _case
+
+    runtime, store, session, request = _case()
+    attachment = PendingAttachment(
+        "/received-image",
+        "image.png",
+        "image",
+        "attachment",
+        data=b"image",
+        mime_type="image/png",
+    )
+    assert store.add_pending_attachment(session.id, attachment)
+    request = replace(
+        request,
+        attachment_ids=(attachment.attachment_id,),
+        configuration=ConsoleTurnConfigurationSnapshot.capture(
+            session_id=session.id,
+            provider_selection=ConsoleProviderSelection(
+                provider="llama_cpp", explicit_model="test-model"
+            ),
+            capabilities={"vision": True, "max_history_images": 1},
+        ),
+    )
+    entered, release = asyncio.Event(), asyncio.Event()
+    owners, drains = [], []
+
+    class HeldResolution(SequencedGateway):
+        async def resolve_for_send(self, selection):
+            record = runtime._turn_custody[request.turn_id]
+            assert record.received_claim is store.received_turn_for_session(session.id)
+            assert record.inputs.attachments_transferred
+            assert record.inputs.attachments == (attachment,)
+            assert record.inputs.attachments[0] is attachment
+            assert store.pending_attachments(session.id) == []
+            with runtime.execution_capacity._lock:
+                owners.extend(runtime.execution_capacity._owners.values())
+            assert owners
+            for owner in owners:
+                owner.on_drained(
+                    lambda positive, owner=owner: drains.append((owner, positive))
+                )
+            entered.set()
+            await release.wait()
+            return await super().resolve_for_send(selection)
+
+    gateway = HeldResolution()
+    controller = ConsoleChatController(store=store, provider_gateway=gateway)
+    runtime.set_provider_gateway(gateway)
+    runtime.set_chat_controller(controller)
+    task = None
+    try:
+        turn = runtime.accept_turn(request)
+        task = runtime._turn_custody[turn].task
+        await asyncio.wait_for(entered.wait(), 5)
+        task.cancel()
+        release.set()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+        await asyncio.sleep(0)
+        recovery = runtime._turn_recoveries[turn]
+        assert recovery.attachments == (attachment,)
+        assert recovery.attachments[0] is attachment
+        assert store.pending_attachments(session.id) == []
+        assert gateway.user_turns == []
+    finally:
+        release.set()
+        if task is not None:
+            if not task.done():
+                task.cancel()
+            await asyncio.gather(task, return_exceptions=True)
+        await runtime.dispose()
+    assert len(drains) == len(owners) and all(positive for _, positive in drains)
+    assert all(not owner.is_admitted for owner in owners)
+    assert runtime.execution_capacity.snapshot().executions == ()
 
 
 @pytest.mark.asyncio
@@ -769,13 +858,20 @@ async def test_the_wake_exemption_never_outlives_its_turn():
     """A wake turn that finishes leaves nothing exempt behind."""
     store = ConsoleChatStore()
     controller = ConsoleChatController(store=store, provider_gateway=_StalledGateway())
-    with pytest.raises(PermissionError):
-        # No coordinator-issued token -> refused before anything runs, which
-        # is enough to prove the registry is not populated by the attempt.
-        await controller.submit_draft(
-            "notice", origin=ConsoleSubmissionOrigin.AGENT_WAKE
-        )
-    assert controller._agent_wake_turn_sessions == set()
+    runtime = ConsoleRuntime(app=None)
+    runtime.set_chat_store(store)
+    runtime.set_provider_gateway(controller.provider_gateway)
+    runtime.set_chat_controller(controller)
+    try:
+        with pytest.raises(PermissionError):
+            # No coordinator-issued token -> refused before anything runs, which
+            # is enough to prove the registry is not populated by the attempt.
+            await controller.submit_draft(
+                "notice", origin=ConsoleSubmissionOrigin.AGENT_WAKE
+            )
+        assert controller._agent_wake_turn_sessions == set()
+    finally:
+        await runtime.dispose()
 
 
 # -- the per-visit Event, captured at ARM time -----------------------------

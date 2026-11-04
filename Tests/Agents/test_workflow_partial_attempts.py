@@ -262,6 +262,7 @@ def test_original_launch_marker_excludes_unused_retirement(task_host):
         _launch,
         _prepared_service,
     )
+    from tldw_chatbook.Agents.agent_service import _WORKFLOW_LAUNCH_CODE
     from tldw_chatbook.Agents.workflow_models import WorkflowTaskResult
     from tldw_chatbook.Agents.workflow_run_service import WorkflowRunService
 
@@ -277,8 +278,7 @@ def test_original_launch_marker_excludes_unused_retirement(task_host):
     def observe(frame, event, _arg):
         if (
             event == "call"
-            and frame.f_code.co_qualname
-            == "AgentService.launch_workflow_task.<locals>.launch"
+            and frame.f_code is _WORKFLOW_LAUNCH_CODE
         ):
             assert host.authorization._native_launch == [None]
             entered.set()

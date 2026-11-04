@@ -51,6 +51,56 @@ class WorkflowProvider:
         return result
 
 
+class WorkflowFleetProvider(WorkflowProvider):
+    """Construction-time script for a genuine independent parent and survivors."""
+
+    parent_instruction = "Start the two independent fixture survivors"
+    children = ("Independent fixture survivor A", "Independent fixture survivor B")
+
+    def __init__(self):
+        super().__init__()
+        self.child_entered = {task: threading.Event() for task in self.children}
+        self.child_release = {task: threading.Event() for task in self.children}
+        self.parent_calls = 0
+        self.wake_calls = []
+
+    def __call__(self, **kwargs):
+        from tldw_chatbook.Chat.console_fleet_wake import WAKE_NOTICE_HEADER
+
+        messages = kwargs.get("messages", kwargs.get("messages_payload", ()))
+        contents = [row.get("content") for row in messages]
+        child = next((task for task in self.children if task in contents), None)
+        if any(
+            isinstance(content, str) and content.startswith(WAKE_NOTICE_HEADER)
+            for content in contents
+        ):
+            with self._lock:
+                self.wake_calls.append(kwargs)
+            content = "Acknowledged the independent survivor results."
+        elif child is not None:
+            self.child_entered[child].set()
+            assert self.child_release[child].wait(10), "original survivor not released"
+            content = "Independent survivor finished"
+        elif self.parent_instruction in contents:
+            from Tests.Chat.test_console_agent_bridge import _fence
+
+            with self._lock:
+                index = self.parent_calls
+                self.parent_calls += 1
+            content = (
+                _fence("spawn_subagent", {"task": self.children[index]})
+                if index < len(self.children)
+                else "Independent parent finished"
+            )
+        else:
+            return super().__call__(**kwargs)
+        from Tests.Chat.test_automatic_provider_budget import response
+
+        result = response()
+        result["choices"][0]["message"]["content"] = content
+        return result
+
+
 @dataclass
 class WorkflowRig:
     workflow: Any
@@ -148,6 +198,8 @@ async def build_workflow_rig(
     session_base_url=None,
     change_review=False,
     public_coordinator=True,
+    native_fleet_consumers=False,
+    approve_missing_file_read=False,
 ):
     """Construct the real private App and keep its original creator retirement."""
     import tldw_chatbook.Widgets.compact_model_bar  # noqa: F401
@@ -206,7 +258,33 @@ async def build_workflow_rig(
             provider_gateway_factory=lambda: gateway,
             skills_service=app.skills_scope_service,
         )
-        controller._agent_bridge = bridge
+        if native_fleet_consumers:
+            controller.update_agent_runtime(enabled=True, bridge=bridge)
+        else:
+            controller._agent_bridge = bridge
+        if approve_missing_file_read:
+            from tldw_chatbook.Chat.console_turn_context import (
+                resolve_turn_tool_policy_profile_id,
+            )
+            from tldw_chatbook.MCP.permission_store import MCPPermissionStore
+            from tldw_chatbook.MCP.unified_control_plane_service import (
+                UnifiedMCPControlPlaneService,
+            )
+
+            permissions = app.unified_mcp_service
+            assert type(permissions) is UnifiedMCPControlPlaneService
+            permission_store = permissions.permission_store
+            assert type(permission_store) is MCPPermissionStore
+            profile_id = resolve_turn_tool_policy_profile_id(app, session.workspace_id)
+            assert profile_id == "default"
+            permissions.approve_for_session(
+                "local:__local__", "fs_read", profile_id=profile_id
+            )
+            assert permissions.is_session_approved(
+                "local:__local__", "fs_read", profile_id=profile_id
+            )
+            assert app.unified_mcp_service is permissions
+            assert permissions.permission_store is permission_store
         runtime.ensure_hook_permissions()
         service = runtime.ensure_workflow_service()
         controller._fleet_wake.start_recovery()

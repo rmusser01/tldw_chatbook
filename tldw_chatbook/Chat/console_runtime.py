@@ -6837,10 +6837,47 @@ class ConsoleRuntime:
         controller = self._chat_controller
         recovery_owner = None
         workflow_cancellation = None
+        wake_fence_error = None
         try:
             # Native waves must finish their actual B/E and child/source tails
             # before capacity and consent owners close. No new wave may enter.
             self._workflow_closing = True
+            # Capture only the installed stock field, before any await permits
+            # an already-posted ordinary retry to enter during permanent close.
+            try:
+                namespace = (
+                    object.__getattribute__(controller, "__dict__")
+                    if controller is not None
+                    else {}
+                )
+            except (AttributeError, TypeError):
+                namespace = {}
+            candidate = namespace.get("_fleet_wake")
+            if candidate is not None:
+                from . import console_fleet_wake as native_wake
+
+                if type(candidate) is native_wake._WORKFLOW_WAKE_CLASS:
+                    recovery_owner = candidate
+                    try:
+                        source = native_wake._WORKFLOW_WAKE_SOURCE
+                        if (
+                            native_wake._workflow_wake_source is not source[0]
+                            or source[0].__code__ is not source[1]
+                            or source[0].__defaults__ is not source[2]
+                            or source[0].__kwdefaults__ is not source[3]
+                            or tuple((source[0].__kwdefaults__ or {}).items())
+                            != source[4]
+                            or source[0].__closure__ is not source[5]
+                            or candidate._controller is not controller
+                            or namespace.get("_fleet_wake") is not candidate
+                        ):
+                            raise PermissionError(
+                                "original workflow wake fence source changed"
+                            )
+                        source[0](candidate)
+                        recovery_owner.dispose()
+                    except BaseException as error:  # noqa: BLE001 - a failed fence cannot skip already-owned physical cleanup.
+                        wake_fence_error = error
             coordinator = getattr(self, "_workflow_coordinator", None)
             if coordinator is not None:
                 workflow_cancellation = await coordinator.close(_runtime_disposal=self)
@@ -6891,19 +6928,14 @@ class ConsoleRuntime:
                         break
                 if wave.driver.done() and not wave.driver.cancelled():
                     wave.driver.exception()  # An unresolved required window stays retained.
-            # Capture only the installed stock field; custom facade getters
-            # and optional presentation methods remain outside this cleanup.
-            try:
-                namespace = object.__getattribute__(controller, "__dict__") if controller is not None else {}
-            except (AttributeError, TypeError):
-                namespace = {}
-            candidate = namespace.get("_fleet_wake")
-            if candidate is not None:
-                from .console_fleet_wake import ConsoleFleetWakeCoordinator
-
-                if type(candidate) is ConsoleFleetWakeCoordinator:
-                    recovery_owner = candidate
-                    recovery_owner.dispose()
+            # Preserve the original pre-downstream-disposal failure boundary,
+            # after required G/planning/wave physical returns were attempted.
+            if wake_fence_error is not None:
+                if workflow_cancellation is not None:
+                    raise workflow_cancellation from wake_fence_error
+                if wave_cancelled or planning_cancelled:
+                    raise asyncio.CancelledError from wake_fence_error
+                raise wake_fence_error
             await self._dispose_owned(
                 timeout_seconds=timeout_seconds,
                 _recovery_owner=recovery_owner,
@@ -6912,6 +6944,14 @@ class ConsoleRuntime:
                 raise workflow_cancellation
             if wave_cancelled or planning_cancelled:
                 raise asyncio.CancelledError
+        except BaseException as error:
+            if wake_fence_error is not None and error is not wake_fence_error:
+                logger.opt(exception=wake_fence_error).error(
+                    "Console runtime wake fence failed during required physical cleanup"
+                )
+                if error.__cause__ is None:
+                    raise error from wake_fence_error
+            raise
         finally:
             cancelled = False
             cancelled |= await self._drain_change_review_initialization()

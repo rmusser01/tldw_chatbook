@@ -158,7 +158,7 @@ class WorkflowRunsStore:
             )
             return self._snapshot(conn, self._row(conn, workflow_id))
 
-    def _snapshot(self, conn, row):
+    def _snapshot(self, conn, row, *, _accounting=None):
         request = WorkflowRequest.model_validate_json(row["request_json"])
         chain = conn.execute(
             "SELECT conversation_id,allowance_root_chain_id,root_submission_id,limits_json FROM automatic_work_chains WHERE id=?",
@@ -211,7 +211,7 @@ class WorkflowRunsStore:
             status=row["status"],
             plans=tuple(plans),
             results=results,
-            accounting=self.db.automatic_work._snapshot(conn, row["chain_id"]),
+            accounting=self.db.automatic_work._snapshot(conn, row["chain_id"], _accounting=_accounting),
         )
 
     @staticmethod
@@ -239,14 +239,14 @@ class WorkflowRunsStore:
         if actual_phases != phases or actual_tasks != tasks:
             raise ValueError("invalid_workflow_plan_ownership")
 
-    def get(self, workflow_id: str) -> WorkflowSnapshot:
+    def get(self, workflow_id: str, *, _accounting=None) -> WorkflowSnapshot:
         """Read a consistent private history snapshot; no recovery sweep."""
         with self.db.connection() as conn:
             if conn.in_transaction:
-                return self._snapshot(conn, self._row(conn, workflow_id))
+                return self._snapshot(conn, self._row(conn, workflow_id), _accounting=_accounting)
             conn.execute("BEGIN")
             try:
-                return self._snapshot(conn, self._row(conn, workflow_id))
+                return self._snapshot(conn, self._row(conn, workflow_id), _accounting=_accounting)
             finally:
                 conn.rollback()
 

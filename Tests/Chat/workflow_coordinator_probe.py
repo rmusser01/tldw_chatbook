@@ -10,18 +10,31 @@ from Tests import network_guard, real_profile_guard
 from Tests.windows_private_fixture_runner import user_fixture_default_owner
 
 os.environ["TLDW_AGENTS_WORKFLOW_RUNS_ENABLED"] = "true"
-os.environ["TLDW_AGENTS_AUTOWAKE_ENABLED"] = "false"
+os.environ["TLDW_AGENTS_AUTOWAKE_ENABLED"] = (
+    "true" if sys.argv[1] == "mixed-wake" else "false"
+)
 os.environ["OPENAI_API_KEY"] = "private-native-workflow-test"
 network_guard.install()
 real_profile_guard.install()
 
 routes = {
+    "live-bind": "test_workflow_native_return",
+    "callback-baseexception": "test_workflow_native_return",
+    "wave-capture": "test_workflow_native_return",
+    "native-return": "test_workflow_native_return",
+    "storage-source": "test_workflow_native_return",
     "dispatch": "test_console_workflow_dispatch",
+    "planning-pending": "test_console_workflow_dispatch",
+    "hook-retained": "test_console_runtime_shutdown",
     "scheduling": "test_console_workflow_scheduling",
+    "fleet-setup": "test_console_workflow_scheduling",
+    "mixed-wake": "test_console_workflow_scheduling",
+    "q1-release": "test_workflow_settlement_delivery",
     "activity": "test_workflow_activity_admission",
     **dict.fromkeys(
         (
             "capacity-notification",
+            "capacity-accounting",
             "capacity-lost-wake",
             "capacity-stop",
             "capacity-fenced",
@@ -32,6 +45,7 @@ routes = {
     "unknown-usage": "test_workflow_settlement_delivery",
     "routing": "test_console_workflow_scheduling",
     "next-phase": "test_console_workflow_dispatch",
+    "phase-dependency": "test_console_workflow_dispatch",
     "repair": "test_console_workflow_dispatch",
     **dict.fromkeys(
         ("stale-initial", "partial-resume"), "test_console_workflow_dispatch"
@@ -73,11 +87,27 @@ routes = {
     ),
 }
 with user_fixture_default_owner():
-    module = importlib.import_module("Tests.Chat." + routes[sys.argv[1]])
+    module = importlib.import_module(
+        "Tests.Agents.test_workflow_launch_freshness"
+        if sys.argv[1] == "excluded-prepared"
+        else "Tests.Chat." + routes[sys.argv[1]]
+    )
     method = {
+        "live-bind": "live_bind_source_journey",
+        "callback-baseexception": "callback_baseexception_journey",
+        "wave-capture": "wave_capture_close_journey",
+        "excluded-prepared": "excluded_prepared_path_journey",
+        "native-return": "native_return_journey",
+        "storage-source": "storage_source_journey",
         "unknown-usage": "unknown_usage_journey",
         "routing": "routing_journey",
         "next-phase": "next_phase_journey",
+        "phase-dependency": "next_phase_journey",
+        "planning-pending": "pending_planning_journey",
+        "hook-retained": "retained_hook_journey",
+        "fleet-setup": "foreign_survivor_setup_journey",
+        "mixed-wake": "mixed_wake_journey",
+        "q1-release": "execution_release_retention_journey",
         "pending-acceptance": "pending_acceptance_journey",
         "pending-wrapper": "pending_wrapper_failure_journey",
     }.get(sys.argv[1], "journey")
@@ -105,6 +135,7 @@ with user_fixture_default_owner():
         journey = module.refusal_and_remaining_journey
     elif sys.argv[1] in {
         "capacity-notification",
+        "capacity-accounting",
         "capacity-lost-wake",
         "capacity-stop",
         "capacity-fenced",

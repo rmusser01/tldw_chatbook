@@ -36,9 +36,18 @@ from __future__ import annotations
 
 import asyncio
 from collections import Counter
+from contextlib import ExitStack, nullcontext
 from typing import Any
 
 from loguru import logger
+
+from tldw_chatbook.Chat.console_activity_receipts import ConsoleActivityReceiptService
+from tldw_chatbook.Chat.conversation_local_marks_service import (
+    ConversationLocalMarksService,
+)
+from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
+from tldw_chatbook.DB.base_db import operation_owned_connection
+from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
 
 #: App attribute bumped on every durable mark write/clear, so screen-side
 #: caches of the unseen set can re-read only when something changed rather
@@ -309,18 +318,51 @@ class ConsoleFleetAttentionConsumer:
         if not statuses:
             return
         if self._receipt_service is not None:
-            publication = self._receipt_service.publish_fleet_drain(event)
-            if not getattr(publication, "complete", False):
-                try:
-                    written = self._receipt_service.ensure_fleet_mark(conversation_id)
-                except Exception as exc:  # noqa: BLE001 - retain the fallback path
-                    logger.warning(
-                        "fleet receipt fallback failed (exception_type={})",
-                        type(exc).__name__,
-                    )
-                    written = False
-                if not written:
-                    self._write_mark(conversation_id)
+            from .console_runtime import _LazyConsoleActivityReceiptService
+
+            with ExitStack() as storage:
+                # The direct native child has no ordinary-tree storage stack.
+                # Own only native handles this complete callback newly opens;
+                # do not resolve app/custom/lazy getters to discover storage.
+                if type(self._receipt_service) in {
+                    ConsoleActivityReceiptService,
+                    _LazyConsoleActivityReceiptService,
+                }:
+                    values = vars(self._receipt_service)
+                    databases = [
+                        values[
+                            "_runs_db"
+                            if type(self._receipt_service)
+                            is _LazyConsoleActivityReceiptService
+                            else "_db"
+                        ]
+                    ]
+                    marks = values["_marks"]
+                    if type(marks) is ConversationLocalMarksService:
+                        databases.append(vars(marks)["db"])
+                    seen = set()
+                    for database in databases:
+                        if (
+                            type(database) in {AgentRunsDB, CharactersRAGDB}
+                            and not database.is_memory_db
+                            and id(database) not in seen
+                        ):
+                            seen.add(id(database))
+                            storage.enter_context(operation_owned_connection(database))
+                publication = self._receipt_service.publish_fleet_drain(event)
+                if not getattr(publication, "complete", False):
+                    try:
+                        written = self._receipt_service.ensure_fleet_mark(
+                            conversation_id
+                        )
+                    except Exception as exc:  # noqa: BLE001 - retain the fallback path
+                        logger.warning(
+                            "fleet receipt fallback failed (exception_type={})",
+                            type(exc).__name__,
+                        )
+                        written = False
+                    if not written:
+                        self._write_mark(conversation_id)
         else:
             self._write_mark(conversation_id)
         session_id = str(getattr(survivors[-1], "session_id", "") or "")
@@ -343,7 +385,17 @@ class ConsoleFleetAttentionConsumer:
         if service is None:
             return
         try:
-            service.set_mark(conversation_id, service.FLEET_UNSEEN)
+            database = (
+                vars(service)["db"]
+                if type(service) is ConversationLocalMarksService
+                else None
+            )
+            with (
+                operation_owned_connection(database)
+                if type(database) is CharactersRAGDB and not database.is_memory_db
+                else nullcontext()
+            ):
+                service.set_mark(conversation_id, service.FLEET_UNSEEN)
         except Exception as exc:  # noqa: BLE001 -- a lost mark is a missing badge, not a broken settle
             logger.warning(
                 "fleet unseen mark write failed (exception_type={})",
@@ -383,7 +435,12 @@ class ConsoleFleetAttentionConsumer:
         get_conversation = getattr(db, "get_conversation_by_id", None)
         if callable(get_conversation):
             try:
-                row = get_conversation(conversation_id)
+                with (
+                    operation_owned_connection(db)
+                    if type(db) is CharactersRAGDB and not db.is_memory_db
+                    else nullcontext()
+                ):
+                    row = get_conversation(conversation_id)
                 title = str((row or {}).get("title") or "").strip()
                 if title:
                     return title

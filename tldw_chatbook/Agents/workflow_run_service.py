@@ -35,6 +35,15 @@ if TYPE_CHECKING:
     from .workflow_task_scope import WorkflowTaskAuthorization
 
 
+@dataclass(frozen=True, slots=True)
+class _TaskInputResult:
+    """Original finite predicate value; no execution or retirement authority."""
+
+    value: Any
+    error: BaseException | None = field(default=None, repr=False)
+    conclusive: bool = True
+
+
 def _workflow_root_identity(chain) -> str:
     """Content-free captured directory identity for native plan provenance."""
     return "directory-chain:" + digest(
@@ -136,17 +145,33 @@ def _task_record(db, snapshot, task, *, partial=False):
 
 
 def _read_scope(binding, root, relative):
+    result = _read_scope_result(binding, root, relative)
+    if result.error is not None:
+        raise result.error
+    return result.value
+
+
+def _read_scope_result(binding, root, relative):
     from tldw_chatbook.Utils.filesystem_identity import capture_directory_chain
     from tldw_chatbook.Workspaces.worktree_activity import WorktreeScope
 
     path = _bound_path(binding, root, relative)
     # The collector opens the original components with O_NOFOLLOW.
     if path != Path(root) / relative or path.resolve() != path:
-        raise ValueError("freshness_source_identity_changed")
-    return WorktreeScope(path, path.is_dir(), capture_directory_chain(Path(root)))
+        return _TaskInputResult(None, ValueError("freshness_source_identity_changed"))
+    return _TaskInputResult(
+        WorktreeScope(path, path.is_dir(), capture_directory_chain(Path(root)))
+    )
 
 
 def _dependency_read_scopes(db, snapshot, tasks, binding):
+    result = _dependency_read_scopes_result(db, snapshot, tasks, binding)
+    if result.error is not None:
+        raise result.error
+    return result.value
+
+
+def _dependency_read_scopes_result(db, snapshot, tasks, binding):
     from tldw_chatbook.Tools.raw_cli_executor import resolve_shell_argv
     from tldw_chatbook.Utils.filesystem_identity import capture_directory_chain
     from tldw_chatbook.Workspaces.worktree_activity import WorktreeScope
@@ -156,7 +181,7 @@ def _dependency_read_scopes(db, snapshot, tasks, binding):
     for task in tasks:
         checkpoint, result = _task_record(db, snapshot, task)
         if result.status != "completed":
-            raise ValueError("task_not_completed")
+            return _TaskInputResult(None, ValueError("task_not_completed"))
         paths = [*task.outputs, *(p.split(":", 1)[-1] for p in task.inputs)]
         for check_id in task.expected_checks:
             spec = next((v for v in task.verifiers if v.id == check_id), None)
@@ -169,7 +194,7 @@ def _dependency_read_scopes(db, snapshot, tasks, binding):
                 None,
             )
             if spec is None or native is None:
-                raise ValueError("native_check_missing_or_stale")
+                return _TaskInputResult(None, ValueError("native_check_missing_or_stale"))
             paths.extend(
                 (str(Path(spec.verifier_path).relative_to(root)), *spec.input_paths)
             )
@@ -183,26 +208,47 @@ def _dependency_read_scopes(db, snapshot, tasks, binding):
                 or shell.resolve(strict=True) != shell
                 or not shell.is_file()
             ):
-                raise ValueError("freshness_shell_identity_changed")
+                return _TaskInputResult(None, ValueError("freshness_shell_identity_changed"))
             if shell.is_relative_to(root):
-                scopes.append(_read_scope(binding, root, str(shell.relative_to(root))))
+                scope = _read_scope_result(binding, root, str(shell.relative_to(root)))
+                if scope.error is not None:
+                    return scope
+                scopes.append(scope.value)
             else:
                 scopes.append(
                     WorktreeScope(shell, False, capture_directory_chain(shell.parent))
                 )
-        scopes.extend(_read_scope(binding, root, path) for path in paths)
-    return tuple(scopes)
+        for path in paths:
+            scope = _read_scope_result(binding, root, path)
+            if scope.error is not None:
+                return scope
+            scopes.append(scope.value)
+    return _TaskInputResult(tuple(scopes))
 
 
 def _task_freshness_reads(db, snapshot, task, binding):
     """Derive host read scopes from collector metadata without opening file bodies."""
+    result = _task_freshness_reads_result(db, snapshot, task, binding)
+    if result.error is not None:
+        raise result.error
+    return result.value
+
+
+def _task_freshness_reads_result(db, snapshot, task, binding):
     root = snapshot.request.binding.locator
     definitions = {t.id: t for p in snapshot.plans[-1].phases for t in p.tasks}
-    return tuple(
-        _read_scope(binding, root, path.split(":", 1)[-1]) for path in task.inputs
-    ) + _dependency_read_scopes(
+    inputs = []
+    for path in task.inputs:
+        scope = _read_scope_result(binding, root, path.split(":", 1)[-1])
+        if scope.error is not None:
+            return scope
+        inputs.append(scope.value)
+    dependencies = _dependency_read_scopes_result(
         db, snapshot, (definitions[i] for i in task.dependencies), binding
     )
+    if dependencies.error is not None:
+        return dependencies
+    return _TaskInputResult(tuple(inputs) + dependencies.value)
 
 
 @dataclass
@@ -387,6 +433,7 @@ class WorkflowRunService:
             WorkflowRunService.runtime_snapshot,
             WorkflowRunService.set_status,
             WorkflowRunService.phase_task_ids,
+            WorkflowRunService.reviewed_task_ids,
             WorkflowRunService.prepare_task_inputs,
             WorkflowRunService.validate_task_inputs,
             WorkflowRunService.checkpoint_task,
@@ -416,9 +463,9 @@ class WorkflowRunService:
         return await run_owned_db_call(self.db, invoke)
 
     @goal_storage_operation
-    def get(self, workflow_id: str) -> WorkflowSnapshot:
+    def get(self, workflow_id: str, *, _accounting=None) -> WorkflowSnapshot:
         """Read saved workflow state without dispatch or startup recovery."""
-        return self.db.workflow_runs.get(workflow_id)
+        return self.db.workflow_runs.get(workflow_id, _accounting=_accounting)
 
     @goal_storage_operation
     def set_status(self, workflow_id, *, status, expected_control_revision):
@@ -443,7 +490,70 @@ class WorkflowRunService:
             )
 
     @goal_storage_operation
-    def runtime_snapshot(self, workflow_id):
+    def reviewed_task_ids(self, phase, decision):
+        """Map the original accepted review to completed predecessor task IDs.
+
+        This passive mapping grants no launch authority. Native preparation and
+        dispatch still recheck the live input, output and verifier evidence.
+        """
+        attempt = phase.attempt
+        with self.db.connection() as conn:
+
+            def read():
+                row = conn.execute(
+                    "SELECT p.* FROM workflow_phase_attempts p "
+                    "JOIN automatic_wake_attempts a ON a.id=p.native_attempt_id "
+                    "WHERE p.native_attempt_id=? AND p.workflow_id=? "
+                    "AND a.owner_id=? AND a.state='accepted'",
+                    (attempt.id, attempt.workflow_id, attempt.owner_id),
+                ).fetchone()
+                if (
+                    row is None
+                    or row["purpose"] != "execution"
+                    or row["plan_revision"] != attempt.revision_id
+                    or row["phase_id"] != attempt.phase_id
+                    or self.db.workflow_runs._attempt_decision(conn, row) != decision
+                ):
+                    raise ValueError("workflow_decision_link_unproven")
+                snapshot = self.get(attempt.workflow_id)
+                if len(snapshot.plans) != attempt.revision_id:
+                    raise ValueError("workflow_revision_changed")
+                plan = snapshot.plans[-1]
+                index = next(
+                    i
+                    for i, item in enumerate(plan.phases)
+                    if item.id == attempt.phase_id
+                )
+                selected = set(self.phase_task_ids(phase))
+                required = [task for item in plan.phases[:index] for task in item.tasks]
+                required.extend(
+                    task for task in plan.phases[index].tasks if task.id not in selected
+                )
+                refs = []
+                for task in required:
+                    checkpoint, result = _task_record(self.db, snapshot, task)
+                    if (
+                        result.status != "completed"
+                        or checkpoint.output_manifest is None
+                    ):
+                        raise ValueError("required_predecessor_unavailable")
+                    refs.append(result.attempt_id)
+                if len(refs) != len(decision.result_refs) or set(refs) != set(
+                    decision.result_refs
+                ):
+                    raise ValueError("workflow_decision_link_unproven")
+                return tuple(task.id for task in required)
+
+            if conn.in_transaction:
+                return read()
+            conn.execute("BEGIN")
+            try:
+                return read()
+            finally:
+                conn.rollback()
+
+    @goal_storage_operation
+    def runtime_snapshot(self, workflow_id, *, _accounting=None):
         """Read finite body-free metadata in one original storage transaction."""
         from .workflow_models import WorkflowRuntimeSnapshot, WorkflowRuntimeTask
 
@@ -509,7 +619,7 @@ class WorkflowRunService:
                     status=state,
                     phase_id=phase["phase_id"] if phase else None,
                     tasks=tasks,
-                    accounting=self.db.automatic_work._snapshot(conn, row["chain_id"]),
+                    accounting=self.db.automatic_work._snapshot(conn, row["chain_id"], _accounting=_accounting),
                 )
 
             if conn.in_transaction:
@@ -799,13 +909,37 @@ class WorkflowRunService:
             self._tasks[authorization.claim.id] = tracker
         return messages
 
-    @goal_storage_operation
     def validate_task_inputs(
         self,
         authorization: WorkflowTaskAuthorization,
         messages: tuple[dict, ...] | list[dict] | None = None,
     ) -> None:
-        """Recheck the original finite seed and all dependencies before admission."""
+        """Recheck the original finite seed and dependencies before admission."""
+        if (
+            _workflow_input_sources is not _INPUT_SOURCE[0]
+            or _workflow_input_sources.__code__ is not _INPUT_SOURCE[1]
+            or _workflow_input_sources.__defaults__ is not _INPUT_SOURCE[2]
+            or _workflow_input_sources.__kwdefaults__ is not _INPUT_SOURCE[3]
+            or _workflow_input_sources.__closure__ is not _INPUT_SOURCE[5]
+        ):
+            raise PermissionError("original workflow helper source changed")
+        _workflow_input_sources(self)
+        result = self._task_input_result(authorization, messages)
+        if result.error is not None:
+            raise result.error
+
+    @goal_storage_operation
+    def _task_input_result(self, authorization, messages=None):
+        """Carry a body refusal through the actual original storage return."""
+        if (
+            _workflow_input_sources is not _INPUT_SOURCE[0]
+            or _workflow_input_sources.__code__ is not _INPUT_SOURCE[1]
+            or _workflow_input_sources.__defaults__ is not _INPUT_SOURCE[2]
+            or _workflow_input_sources.__kwdefaults__ is not _INPUT_SOURCE[3]
+            or _workflow_input_sources.__closure__ is not _INPUT_SOURCE[5]
+        ):
+            raise PermissionError("original workflow helper source changed")
+        _workflow_input_sources(self)
         tracker = self._tasks.get(authorization.claim.id)
         if tracker is None or tracker.authorization is not authorization:
             raise ValueError("native_task_custody_required")
@@ -814,24 +948,39 @@ class WorkflowRunService:
             messages is not None
             and json.dumps(messages, ensure_ascii=False) != tracker.seed_json
         ):
-            raise ValueError("required_task_seed_changed")
+            return _TaskInputResult(None, ValueError("required_task_seed_changed"))
         snapshot = self.get(authorization.claim.workflow_id)
-        if authorization._freshness_reads != _task_freshness_reads(
+        reads = _task_freshness_reads_result(
             self.db, snapshot, authorization.task, authorization.binding
-        ):
-            raise ValueError("freshness_source_identity_changed")
+        )
+        if reads.error is not None:
+            return reads
+        if authorization._freshness_reads != reads.value:
+            return _TaskInputResult(None, ValueError("freshness_source_identity_changed"))
         paths = tuple(path.split(":", 1)[-1] for path in authorization.task.inputs)
-        if tracker.inputs != _manifest(
+        actual = _manifest(
             snapshot.request.binding.locator, paths, authorization=authorization
-        ):
-            raise ValueError("required_inputs_changed")
+        )
+        if tracker.inputs != actual:
+            return _TaskInputResult(
+                None,
+                ValueError("required_inputs_changed"),
+                tracker.inputs is not None and actual is not None,
+            )
         definitions = {t.id: t for p in snapshot.plans[-1].phases for t in p.tasks}
-        results = [
-            self._fresh_task_result(snapshot, definitions[identity]).canonical_json()
-            for identity in authorization.task.dependencies
-        ]
+        results = []
+        conclusive = tracker.inputs is not None and actual is not None
+        for identity in authorization.task.dependencies:
+            result = self._fresh_task_result_value(snapshot, definitions[identity])
+            if result.error is not None:
+                return result
+            conclusive = conclusive and result.conclusive
+            results.append(result.value.canonical_json())
         if tracker.dependency_digest != digest(json.dumps(results)):
-            raise ValueError("required_predecessor_changed")
+            return _TaskInputResult(
+                None, ValueError("required_predecessor_changed"), conclusive
+            )
+        return _TaskInputResult(None, conclusive=conclusive)
 
     def bind_native_receipt(
         self, authorization: WorkflowTaskAuthorization, receipt: WorkflowChildReceipt
@@ -1392,32 +1541,57 @@ class WorkflowRunService:
         )
 
     def _fresh_task_result(self, snapshot, task, *, partial=False):
+        if (
+            _workflow_input_sources is not _INPUT_SOURCE[0]
+            or _workflow_input_sources.__code__ is not _INPUT_SOURCE[1]
+            or _workflow_input_sources.__defaults__ is not _INPUT_SOURCE[2]
+            or _workflow_input_sources.__kwdefaults__ is not _INPUT_SOURCE[3]
+            or _workflow_input_sources.__closure__ is not _INPUT_SOURCE[5]
+        ):
+            raise PermissionError("original workflow helper source changed")
+        _workflow_input_sources(self)
+        result = self._fresh_task_result_value(snapshot, task, partial=partial)
+        if result.error is not None:
+            raise result.error
+        return result.value
+
+    def _fresh_task_result_value(self, snapshot, task, *, partial=False):
+        """Preserve predicate order without throwing a known body refusal."""
+        if (
+            _workflow_input_sources is not _INPUT_SOURCE[0]
+            or _workflow_input_sources.__code__ is not _INPUT_SOURCE[1]
+            or _workflow_input_sources.__defaults__ is not _INPUT_SOURCE[2]
+            or _workflow_input_sources.__kwdefaults__ is not _INPUT_SOURCE[3]
+            or _workflow_input_sources.__closure__ is not _INPUT_SOURCE[5]
+        ):
+            raise PermissionError("original workflow helper source changed")
+        _workflow_input_sources(self)
         record = _task_record(self.db, snapshot, task, partial=partial)
         if record is None:
-            return None
+            return _TaskInputResult(None)
         checkpoint, result = record
         if result.status != "completed" and not partial:
-            raise ValueError("task_not_completed")
-        if (
-            not partial and checkpoint.output_manifest is None
-        ) or checkpoint.output_manifest != self._source_manifest(
-            snapshot, task.outputs
-        ):
-            raise ValueError("stale_task_output")
-        if result.status == "completed" and (
-            checkpoint.input_manifest is None
-            or checkpoint.input_manifest
-            != self._source_manifest(
+            return _TaskInputResult(None, ValueError("task_not_completed"))
+        if not partial and checkpoint.output_manifest is None:
+            return _TaskInputResult(None, ValueError("stale_task_output"), False)
+        actual = self._source_manifest(snapshot, task.outputs)
+        conclusive = checkpoint.output_manifest is not None and actual is not None
+        if checkpoint.output_manifest != actual:
+            return _TaskInputResult(None, ValueError("stale_task_output"), conclusive)
+        if result.status == "completed":
+            if checkpoint.input_manifest is None:
+                return _TaskInputResult(None, ValueError("stale_task_input"), False)
+            actual = self._source_manifest(
                 snapshot, tuple(path.split(":", 1)[-1] for path in task.inputs)
             )
-        ):
-            raise ValueError("stale_task_input")
+            conclusive = conclusive and actual is not None
+            if checkpoint.input_manifest != actual:
+                return _TaskInputResult(None, ValueError("stale_task_input"), conclusive)
         for check_id in task.expected_checks if result.status == "completed" else ():
             spec = next((v for v in task.verifiers if v.id == check_id), None)
             native = next(
                 (
-                    v
-                    for v in reversed(checkpoint.verifiers)
+                    v for v in reversed(checkpoint.verifiers)
                     if v.verifier_id == check_id
                 ),
                 None,
@@ -1435,16 +1609,35 @@ class WorkflowRunService:
                 or native.exit_code != spec.expected_exit_code
                 or native.verifier_sha256 != spec.verifier_sha256
                 or native.arguments_digest != digest(json.dumps(spec.arguments))
-                or native.shell_manifest != _shell_manifest(native.shell_path)
+            ):
+                return _TaskInputResult(
+                    None, ValueError("native_check_missing_or_stale"), conclusive
+                )
+            shell = _shell_manifest(native.shell_path)
+            conclusive = (
+                conclusive and shell is not None and native.shell_manifest is not None
+            )
+            if (
+                native.shell_manifest != shell
                 or verifier_digest(spec) != spec.verifier_sha256
-                or native.input_manifest
-                != self._source_manifest(snapshot, spec.input_paths)
+            ):
+                return _TaskInputResult(
+                    None, ValueError("native_check_missing_or_stale"), conclusive
+                )
+            actual = self._source_manifest(snapshot, spec.input_paths)
+            conclusive = (
+                conclusive and actual is not None and native.input_manifest is not None
+            )
+            if (
+                native.input_manifest != actual
                 or native.output_manifest != checkpoint.output_manifest
                 or native.output_digest
                 != digest(json.dumps((native.stdout, native.stderr)))
             ):
-                raise ValueError("native_check_missing_or_stale")
-        return result
+                return _TaskInputResult(
+                    None, ValueError("native_check_missing_or_stale"), conclusive
+                )
+        return _TaskInputResult(result, conclusive=conclusive)
 
     def _source_manifest(self, snapshot, paths):
         """Read bounded metadata under the selected binding's current exclusions."""
@@ -1822,3 +2015,113 @@ class WorkflowRunService:
                 conn, workflow_id, expected_control_revision, "closed"
             )
             return self.get(workflow_id)
+
+
+# Original predicate sources, captured with the definitions, never on first use.
+from tldw_chatbook.Tools import local_tool_impls as _input_local_tools
+
+from ..Chat.console_ordinary_tree import (
+    _function_record as _input_record,
+)
+from ..Chat.console_ordinary_tree import (
+    _function_unchanged as _input_unchanged,
+)
+from . import goal_iteration as _input_iteration
+from . import goal_storage_lifetime as _input_storage
+
+
+def _workflow_input_sources(service):
+    import inspect
+
+    checker = _input_unchanged
+    if (
+        checker is not _INPUT_CHECKER[0]
+        or checker.__code__ is not _INPUT_CHECKER[1]
+        or checker.__defaults__ is not _INPUT_CHECKER[2]
+        or checker.__kwdefaults__ is not _INPUT_CHECKER[3]
+        or checker.__closure__ is not _INPUT_CHECKER[5]
+        or type(service) is not WorkflowRunService
+        or _TaskInputResult is not _INPUT_RESULT_CLASS
+        or any(not checker(record) for record in _INPUT_RESULT_METHODS)
+        or any(
+            inspect.getattr_static(service, name, None) is not method
+            or inspect.getattr_static(WorkflowRunService, name, None) is not method
+            or any(not checker(record) for record in records)
+            for name, method, records in _INPUT_METHODS
+        )
+        or any(not checker(record) for record in _INPUT_BODIES)
+        or any(
+            vars(module).get(name) is not record[0] or not checker(record)
+            for module, name, record in _INPUT_FUNCTIONS
+        )
+    ):
+        raise PermissionError("original workflow input source changed")
+
+
+_INPUT_CHECKER = _input_record(_input_unchanged)
+_INPUT_METHODS = tuple(
+    (
+        name,
+        method,
+        tuple(
+            _input_record(fn)
+            for fn in (
+                method,
+                *([method.__wrapped__] if hasattr(method, "__wrapped__") else []),
+            )
+        ),
+    )
+    for name in (
+        "validate_task_inputs",
+        "_task_input_result",
+        "_fresh_task_result",
+        "_fresh_task_result_value",
+        "_source_manifest",
+        "_binding_reason",
+        "get",
+    )
+    for method in (vars(WorkflowRunService)[name],)
+)
+import sys as _input_sys
+
+_INPUT_FUNCTIONS = tuple(
+    (module, name, _input_record(vars(module)[name]))
+    for module, names in (
+        (
+            _input_sys.modules[__name__],
+            (
+                "_workflow_input_sources",
+                "_manifest",
+                "_shell_manifest",
+                "_task_record",
+                "_task_freshness_reads",
+                "_task_freshness_reads_result",
+                "_read_scope",
+                "_read_scope_result",
+                "_dependency_read_scopes",
+                "_dependency_read_scopes_result",
+                "_bound_path",
+                "capture_manifest",
+                "goal_storage_operation",
+            ),
+        ),
+        (_input_iteration, ("capture_manifest",)),
+        (_input_local_tools, ("resolve_workspace_path",)),
+        (_input_storage, ("goal_storage_operation", "owned_goal_storage")),
+    )
+    for name in names
+)
+
+_INPUT_BODIES = tuple(
+    _input_record(record[0].__wrapped__)
+    for _module, _name, record in _INPUT_FUNCTIONS
+    if hasattr(record[0], "__wrapped__")
+)
+
+_INPUT_SOURCE = _input_record(_workflow_input_sources)
+_INPUT_RESULT_CLASS = _TaskInputResult
+_INPUT_RESULT_METHODS = tuple(
+    _input_record(method)
+    for method in vars(_TaskInputResult).values()
+    if callable(method) and hasattr(method, "__code__")
+)

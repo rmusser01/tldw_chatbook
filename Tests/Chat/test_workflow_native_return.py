@@ -1,0 +1,4470 @@
+"""Native invocation returns exclude competing launch and retirement writers."""
+
+import asyncio
+import contextlib
+import dis
+import sys
+import threading
+
+import pytest
+
+from Tests.Chat import test_console_native_preparation as native_tests
+from Tests.Chat.test_console_native_preparation import (
+    native_host as native_host,  # noqa: PLC0414
+)
+from tldw_chatbook.Agents.agent_service import (
+    _WORKFLOW_LAUNCH_CODE,
+    AgentService,
+    _WorkflowChildWait,
+    _WorkflowLaunchReturn,
+)
+from tldw_chatbook.Agents.execution_capacity import OwnedOperation, WorkOrigin
+from tldw_chatbook.Backup_Recovery.participants import _core_operation
+from tldw_chatbook.Chat.console_workflow_wave import _WorkflowWave, run_workflow_wave
+from tldw_chatbook.Utils.filesystem_identity import capture_directory_chain
+from tldw_chatbook.Workspaces.worktree_activity import WorktreeFootprint, WorktreeScope
+
+pytestmark = [pytest.mark.bootstrap_profile, pytest.mark.asyncio]
+
+
+@pytest.mark.parametrize("contention", [False, True])
+async def test_original_direct_scope_excludes_wave_close_and_duplicate_finish(
+    native_host, contention
+):
+    h = native_host
+    prepared = await h.bridge._prepare_workflow_reply(
+        phase=h.phase, task_id="task-1", binding=h.binding, resolution=h.selected
+    )
+    auth = prepared.authorization
+    entered, release = threading.Event(), threading.Event()
+    saved, errors, order = {}, [], []
+    competitor = claim = None
+    competitor_returns = []
+    if contention:
+        competitor = h.runtime.execution_capacity.begin_execution(
+            origin=WorkOrigin.MANUAL, conversation_id="original-contender"
+        )
+        competitor.on_drained(competitor_returns.append)
+        claim = h.runtime.worktree_activity.try_acquire(
+            owner=competitor,
+            footprint=WorktreeFootprint(
+                writes=(WorktreeScope(h.root, True, capture_directory_chain(h.root)),)
+            ),
+        )
+        assert claim is not None
+
+    core_code = _core_operation.__wrapped__.__code__
+    inner_code = next(
+        code
+        for code in contextlib.ContextDecorator.__call__.__code__.co_consts
+        if isinstance(code, type(core_code)) and code.co_name == "inner"
+    )
+    codes = {
+        _WORKFLOW_LAUNCH_CODE,
+        core_code,
+        AgentService._workflow_launch_result.__code__,
+        OwnedOperation.finish.__code__,
+    }
+
+    def observe(frame, event, result):
+        if (
+            frame.f_code not in codes
+            or event != "return"
+            or dis.opname[frame.f_code.co_code[frame.f_lasti]]
+            not in {"RETURN_VALUE", "RETURN_CONST"}
+        ):
+            return
+        try:
+            if frame.f_code is _WORKFLOW_LAUNCH_CODE:
+                if (
+                    type(result) is not _WorkflowLaunchReturn
+                    or result.entry.preparation is not prepared
+                ):
+                    return
+                assert not saved
+                saved.update(
+                    result=result, entry=result.entry, operation=result.operation
+                )
+                order.append("body")
+            elif frame.f_code is core_code and saved and not entered.is_set():
+                exit_frame = frame.f_back
+                wrapper = exit_frame.f_back if exit_frame is not None else None
+                if wrapper is None or wrapper.f_code is not inner_code:
+                    return
+                function = wrapper.f_locals.get("func")
+                if function is None or function.__code__ is not _WORKFLOW_LAUNCH_CODE:
+                    return
+                cells = dict(
+                    zip(
+                        function.__code__.co_freevars,
+                        (cell.cell_contents for cell in function.__closure__ or ()),
+                    )
+                )
+                if cells.get("entry") is not saved["entry"]:
+                    return
+                assert frame.f_locals["repository"] is prepared.native.service.db
+                assert exit_frame.f_locals["self"].gen.gi_frame is frame
+                saved.update(core=frame, wrapper=wrapper, function=function)
+                order.append("core-return-held")
+                entered.set()
+                if not release.wait(5):
+                    errors.append(
+                        AssertionError("original core return hold exceeded 5s")
+                    )
+            elif frame.f_code is AgentService._workflow_launch_result.__code__:
+                if frame.f_locals.get("authorization") is auth:
+                    if result.duplicate:
+                        assert result.operation is None
+                        assert result.receipt is saved["result"].receipt
+                        saved["duplicate"] = result
+                        return
+                    assert result is saved["result"]
+                    order.append("own-return")
+            elif frame.f_code is OwnedOperation.finish.__code__ and saved:
+                if frame.f_locals.get("self") is saved["operation"]:
+                    order.append("operation-return")
+        except BaseException as error:  # noqa: BLE001 - observation must not replace native errors.
+            errors.append(error)
+            entered.set()
+
+    previous_thread_profile, previous_profile = threading.getprofile(), sys.getprofile()
+    threading.setprofile_all_threads(observe)
+    launch = asyncio.create_task(native_tests._launch_native_for_test(h, prepared))
+    receipt = None
+    try:
+        assert await asyncio.to_thread(entered.wait, 5)
+        if errors:
+            raise errors[0]
+        result = saved["result"]
+        assert result.entry is saved["entry"]
+        assert prepared._wave is None and h.runtime._workflow_waves == {}
+        if contention:
+            assert (
+                result.owner is None
+                and result.operation is None
+                and result.receipt is None
+            )
+            assert result.wait and isinstance(result.error, _WorkflowChildWait)
+            assert auth._native_launch == [None]
+            with pytest.raises(PermissionError, match="already claimed"):
+                await native_tests._launch_native_for_test(h, prepared)
+        else:
+            operation = result.operation
+            assert operation is prepared._launch_operation
+            assert (
+                operation.owner is result.owner
+                and operation in result.owner._operations
+            )
+            assert (
+                await native_tests._launch_native_for_test(h, prepared)
+                is result.receipt
+            )
+            assert prepared._launch_operation is operation
+            assert operation in result.owner._operations
+            assert "operation-return" not in order
+            assert saved["duplicate"].operation is None
+        with pytest.raises(PermissionError, match="preparation already claimed"):
+            await run_workflow_wave(h.phase, (prepared,))
+        assert prepared._wave is None and h.runtime._workflow_waves == {}
+        with pytest.raises(PermissionError, match="launch return has not completed"):
+            await prepared.close()
+        assert not prepared._closed and not prepared._closing
+        assert not launch.done()
+    finally:
+        release.set()
+        try:
+            if contention:
+                with pytest.raises(_WorkflowChildWait) as refused:
+                    await launch
+                assert refused.value is saved["result"].error
+            else:
+                receipt = await launch
+        finally:
+            threading.setprofile_all_threads(previous_thread_profile)
+            sys.setprofile(previous_profile)
+            if competitor is not None:
+                competitor.finish_root()
+                claim.settle(durable=True)
+                assert competitor_returns == [True] and not competitor.is_admitted
+    if errors:
+        raise errors[0]
+    assert order[:2] == ["body", "core-return-held"]
+    assert "own-return" in order
+    if contention:
+        assert auth._native_launch == [] and prepared._launch_operation is None
+        assert h.calls == []
+        receipt = await native_tests._launch_native_for_test(h, prepared)
+    else:
+        assert order.index("own-return") < order.index("operation-return")
+        assert prepared._launch_operation is None and receipt is saved["result"].receipt
+    await native_tests._settle_native_for_test(h, prepared, receipt)
+    assert h.runtime.execution_capacity.snapshot().executions == ()
+
+
+async def test_cancelled_caller_receives_original_positive_wait_unlink(native_host):
+    h = native_host
+    prepared = await h.bridge._prepare_workflow_reply(
+        phase=h.phase, task_id="task-1", binding=h.binding, resolution=h.selected
+    )
+    capacity = h.runtime.execution_capacity
+    capacity._refresh_limits()
+    allowance = capacity.max_child_executions - capacity.reserved_manual_children
+    assert 0 < allowance <= capacity.max_child_executions
+    competitors, returns, saved, errors = [], [], {}, []
+    issuing = None
+    caught = []
+    message = "original-positive-wait-cancellation"
+
+    def trace(frame, event, value):
+        if frame.f_code is not run_workflow_wave.__code__:
+            return None
+        try:
+            if event == "exception" and isinstance(value[1], asyncio.CancelledError):
+                assert asyncio.current_task() is issuing
+                assert frame is issuing.get_coro().cr_frame
+                caught.append(value[1])
+        except BaseException as error:  # noqa: BLE001 - observation cannot replace native outcome.
+            errors.append(error)
+        return trace
+
+    def observe(frame, event, result):
+        if (
+            event != "return"
+            or frame.f_code is not _WorkflowWave._release.__code__
+            or dis.opname[frame.f_code.co_code[frame.f_lasti]]
+            not in {"RETURN_VALUE", "RETURN_CONST"}
+        ):
+            return
+        wave = frame.f_locals["self"]
+        if wave.prepared != (prepared,):
+            return
+        try:
+            assert result is None and wave.closed
+            assert wave not in h.runtime._workflow_waves and prepared._wave is wave
+            assert wave.driver is asyncio.current_task()
+            assert (
+                not wave.driver.done()
+                and wave.reservation is None
+                and wave.source is None
+            )
+            assert tuple(wave.unlaunched) == (prepared,)
+            assert not wave.receipts and not wave.unproven_launches
+            saved.update(wave=wave, driver=wave.driver)
+            assert issuing.cancel(message)
+        except BaseException as error:  # noqa: BLE001 - preserve original native return.
+            errors.append(error)
+
+    previous_thread_profile, previous_profile = threading.getprofile(), sys.getprofile()
+    previous_trace = sys.gettrace()
+    try:
+        for _ in range(allowance):
+            owner = capacity.begin_execution(
+                origin=WorkOrigin.AUTOMATIC,
+                conversation_id="original-competitor",
+                child=True,
+            )
+            competitors.append(owner)
+            owner.on_drained(
+                lambda proven, owner=owner: returns.append((owner, proven))
+            )
+        threading.setprofile_all_threads(observe)
+        sys.settrace(trace)
+        issuing = asyncio.create_task(
+            run_workflow_wave(h.phase, (prepared,), _retain_waits=True)
+        )
+        with pytest.raises(asyncio.CancelledError) as cancelled:
+            await issuing
+        assert caught and cancelled.value is caught[0]
+        assert cancelled.value.args == (message,)
+        assert all(error is caught[0] for error in caught)
+        if errors:
+            raise errors[0]
+        wave, driver = saved["wave"], saved["driver"]
+        assert driver is wave.driver and driver.done() and not driver.cancelled()
+        assert driver.exception() is None and driver.result() is None
+        assert prepared._wave is None and not prepared._closed and not prepared._closing
+        assert wave.closed and wave not in h.runtime._workflow_waves
+        assert prepared.authorization._native_launch == []
+        assert prepared.authorization._native_preparation[0].threads == {}
+        assert h.calls == []
+    finally:
+        threading.setprofile_all_threads(previous_thread_profile)
+        sys.setprofile(previous_profile)
+        sys.settrace(previous_trace)
+        for owner in competitors:
+            owner.finish_root()
+        assert len(returns) == len(competitors)
+        assert all(
+            proven is True and not owner.is_admitted for owner, proven in returns
+        )
+    await prepared.close()
+    record = prepared._finite_reads[-1]
+    prepared._finite_read_return(record)
+    assert record.positive and record.wrapper_error is None
+    assert prepared._closed and prepared._source_scope is None
+    assert capacity.snapshot().executions == ()
+
+
+async def test_repeated_cancellation_retains_first_before_original_driver_error(
+    native_host,
+):
+    from tldw_chatbook.Chat.console_workflow_preparation import _PreparedWorkflowReply
+    from tldw_chatbook.Chat.console_workflow_wave import _WaveOpenRefusal
+
+    h = native_host
+    prepared = await h.bridge._prepare_workflow_reply(
+        phase=h.phase, task_id="task-1", binding=h.binding, resolution=h.selected
+    )
+    capacity = h.runtime.execution_capacity
+    capacity._refresh_limits()
+    allowance = capacity.max_child_executions - capacity.reserved_manual_children
+    assert 0 < allowance <= capacity.max_child_executions
+    competitors, returns, caught, errors = [], [], [], []
+    saved = {}
+    entered, release = threading.Event(), threading.Event()
+    first_saved, second_saved = asyncio.Event(), asyncio.Event()
+    issuing = None
+    finish_code = next(
+        code
+        for code in _PreparedWorkflowReply.close.__code__.co_consts
+        if isinstance(code, type(run_workflow_wave.__code__))
+        and code.co_name == "finish"
+    )
+    invoke_code = next(
+        code
+        for code in _PreparedWorkflowReply._read.__code__.co_consts
+        if isinstance(code, type(finish_code)) and code.co_name == "invoke"
+    )
+
+    def trace(frame, event, value):
+        if frame.f_code is not run_workflow_wave.__code__:
+            return None
+        try:
+            assert asyncio.current_task() is issuing
+            if event == "exception" and isinstance(value[1], asyncio.CancelledError):
+                caught.append(value[1])
+            if event == "line" and caught:
+                cancellation = frame.f_locals.get("cancellation")
+                if cancellation is not None:
+                    assert cancellation is caught[0]
+                    if len(caught) == 1:
+                        first_saved.set()
+                    elif len(caught) == 2:
+                        second_saved.set()
+        except BaseException as error:  # noqa: BLE001 - preserve original outcome.
+            errors.append(error)
+            first_saved.set()
+            second_saved.set()
+        return trace
+
+    def observe(frame, event, result):
+        if (
+            event != "return"
+            or frame.f_code not in {_WorkflowWave._open.__code__, finish_code}
+            or dis.opname[frame.f_code.co_code[frame.f_lasti]]
+            not in {"RETURN_VALUE", "RETURN_CONST"}
+        ):
+            return
+        try:
+            if frame.f_code is _WorkflowWave._open.__code__:
+                wave = frame.f_locals["self"]
+                if wave.prepared != (prepared,):
+                    return
+                assert type(result) is _WaveOpenRefusal and not result.retain
+                assert result.source is None and result.footprint is None
+                assert isinstance(result.error, _WorkflowChildWait)
+                assert result.error.reason == "runtime_capacity"
+                assert asyncio.current_task() is wave.driver
+                saved.update(wave=wave, driver=wave.driver, refusal=result)
+                return
+            if frame.f_locals.get("self") is not prepared:
+                return
+            parent = frame.f_back
+            assert parent.f_code is invoke_code
+            callback = parent.f_locals["callback"]
+            record = parent.f_locals["record"]
+            assert callback.__code__ is finish_code
+            assert record.prepared is prepared and record.issuing is saved["driver"]
+            assert record.callback.__code__ is invoke_code
+            assert prepared._wave is saved["wave"]
+            assert result is None and prepared._closed and not prepared._closing
+            assert prepared._native_closed and not record.positive
+            assert not saved["driver"].done()
+            saved.update(record=record, callback=callback, finish_frame=frame)
+            entered.set()
+            if not release.wait(5):
+                errors.append(AssertionError("original close return hold exceeded 5s"))
+        except BaseException as error:  # noqa: BLE001 - preserve original return.
+            errors.append(error)
+            entered.set()
+
+    previous_thread_profile, previous_profile = threading.getprofile(), sys.getprofile()
+    previous_trace = sys.gettrace()
+    try:
+        for _ in range(allowance):
+            owner = capacity.begin_execution(
+                origin=WorkOrigin.AUTOMATIC,
+                conversation_id="original-competitor",
+                child=True,
+            )
+            competitors.append(owner)
+            owner.on_drained(
+                lambda proven, owner=owner: returns.append((owner, proven))
+            )
+        threading.setprofile_all_threads(observe)
+        sys.settrace(trace)
+        issuing = asyncio.create_task(run_workflow_wave(h.phase, (prepared,)))
+        async with asyncio.timeout(5):
+            assert await asyncio.to_thread(entered.wait, 5)
+            if errors:
+                raise errors[0]
+            assert issuing.cancel("first-original-cancellation")
+            await first_saved.wait()
+            assert issuing.cancel("second-original-cancellation")
+            await second_saved.wait()
+        if errors:
+            raise errors[0]
+        assert len(caught) == 2 and caught[0] is not caught[1]
+        assert caught[0].args == ("first-original-cancellation",)
+        assert caught[1].args == ("second-original-cancellation",)
+        assert not saved["driver"].done() and not saved["record"].positive
+        release.set()
+        with pytest.raises(_WorkflowChildWait) as refused:
+            await issuing
+        assert refused.value is saved["refusal"].error
+        driver, wave, record = saved["driver"], saved["wave"], saved["record"]
+        assert driver.done() and not driver.cancelled()
+        assert driver.exception() is refused.value
+        prepared._finite_read_return(record)
+        assert record.positive and record.wrapper_error is None
+        assert prepared._closed and prepared._source_scope is None
+        assert wave.closed and wave not in h.runtime._workflow_waves
+        assert not wave.receipts and not wave.unlaunched and not wave.unproven_launches
+        assert wave.source is None and wave.reservation is None
+        assert prepared.authorization._native_launch == []
+        assert prepared.authorization._native_preparation[0].threads == {}
+        assert h.calls == []
+    finally:
+        release.set()
+        try:
+            if issuing is not None and not issuing.done():
+                with pytest.raises(_WorkflowChildWait):
+                    await issuing
+        finally:
+            threading.setprofile_all_threads(previous_thread_profile)
+            sys.setprofile(previous_profile)
+            sys.settrace(previous_trace)
+            for owner in competitors:
+                owner.finish_root()
+            assert len(returns) == len(competitors)
+            assert all(
+                proven is True and not owner.is_admitted for owner, proven in returns
+            )
+    if errors:
+        raise errors[0]
+    assert capacity.snapshot().executions == ()
+
+
+async def test_strict_constructor_failure_returns_native_owner_and_reserved_charge(
+    native_host,
+):
+    from tldw_chatbook.Agents.agent_service import _WorkflowChildLaunchFailed
+
+    h = native_host
+    prepared = await h.bridge._prepare_workflow_reply(
+        phase=h.phase, task_id="task-1", binding=h.binding, resolution=h.selected
+    )
+    auth = prepared.authorization
+    native = auth._native_preparation[0]
+    saved, errors = {}, []
+    injected = RuntimeError("original constructor-entry test failure")
+
+    def observe(frame, event, result):
+        if event != "call" or frame.f_code is not threading.Thread.__init__.__code__:
+            return
+        parent = frame.f_back
+        if parent.f_code is not AgentService._launch_prepared_child_result.__code__:
+            return
+        entry = parent.f_locals.get("entry")
+        if entry is None or entry.preparation is not prepared:
+            return
+        try:
+            assert (
+                entry.mode == "D"
+                and entry.authorization is auth
+                and entry.native is native
+            )
+            assert parent.f_locals["thread"] is None
+            assert parent.f_locals["start_entered"] is False
+            assert frame.f_locals["target"] is parent.f_locals["run_child_owned"]
+            saved.update(
+                entry=entry,
+                owner=parent.f_locals["child_owner"],
+                claim=parent.f_locals["child_kwargs"]["workflow_activity_claim"],
+                launch=prepared._launch_operation,
+                close=prepared._close_operation,
+            )
+        except BaseException as error:  # noqa: BLE001 - only explicit injection changes native outcome.
+            errors.append(error)
+            return
+        threading.setprofile_all_threads(None)
+        raise injected
+
+    from tldw_chatbook.Agents import activation as agent_activation
+    from tldw_chatbook.Backup_Recovery import activation, admission_runtime
+
+    trace_rows, trace_errors = [], []
+    guard_code = admission_runtime.RecoveryAdmissionGuard.execution.__wrapped__.__code__
+    scope_code = activation.execution_scope.__wrapped__.__code__
+    close_code = type(prepared)._close_on_native_owner.__code__
+    source_code = type(prepared.source).activate.__wrapped__.__code__
+    trace_codes = {
+        guard_code,
+        scope_code,
+        activation._source_scope_admitted.__code__,
+        activation.activation_permission.__code__,
+    }
+
+    def trace(frame, event, result):
+        if frame.f_code is close_code and frame.f_locals.get("self") is prepared:
+            if event == "return":
+                threading.settrace_all_threads(None)
+                sys.settrace(None)
+            return trace
+        if frame.f_code not in trace_codes or not saved:
+            return None
+        try:
+            ancestors = []
+            current = frame.f_back
+            while current is not None:
+                ancestors.append(current)
+                current = current.f_back
+            closes = [
+                item
+                for item in ancestors
+                if item.f_code is close_code
+                and item.f_locals.get("self") is prepared
+                and item.f_locals.get("owner") is saved["owner"]
+            ]
+            sources = [
+                item
+                for item in ancestors
+                if item.f_code is source_code
+                and item.f_locals.get("self") is prepared.source
+            ]
+            if len(closes) != 1 or len(sources) != 1:
+                return trace
+            if event not in {"exception", "return"}:
+                return trace
+            row = {
+                "function": frame.f_code.co_name,
+                "line": frame.f_lineno,
+                "event": event,
+                "same_close_owner": closes[0].f_locals["owner"] is saved["owner"],
+                "same_source": sources[0].f_locals["self"] is prepared.source,
+                "same_claim": prepared.authorization._native_preparation[
+                    0
+                ].activity_claims[0]
+                is saved["claim"],
+            }
+            path = frame.f_locals.get("path")
+            row["source_membership"] = [
+                index
+                for index, (_owner, value) in enumerate(prepared.source.sources)
+                if path is not None and path == value
+            ]
+            if frame.f_code is guard_code:
+                row["same_guard"] = (
+                    frame.f_locals.get("self") is agent_activation._guard
+                )
+                state = frame.f_locals.get("active")
+                row["state_id"] = id(state)
+                row["current_identity"] = (
+                    state is not None
+                    and state.identity == admission_runtime.execution_identity()
+                )
+            if event == "exception":
+                error_type, _error, tb = result
+                row["exception_type"] = error_type.__name__
+                stack = []
+                while tb is not None:
+                    stack.append(
+                        (
+                            tb.tb_frame.f_code.co_filename,
+                            tb.tb_frame.f_code.co_name,
+                            tb.tb_lineno,
+                        )
+                    )
+                    tb = tb.tb_next
+                row["traceback"] = stack
+            else:
+                row["bool_result"] = result if type(result) is bool else None
+                row["allowed"] = (
+                    frame.f_locals.get("allowed")
+                    if frame.f_code is scope_code
+                    else None
+                )
+            trace_rows.append(row)
+        except BaseException as error:  # noqa: BLE001 - preserve original admission failure.
+            trace_errors.append(type(error).__name__)
+        return trace
+
+    previous_thread_trace, previous_trace = threading.gettrace(), sys.gettrace()
+    previous_thread_profile, previous_profile = threading.getprofile(), sys.getprofile()
+    try:
+        threading.settrace_all_threads(trace)
+        threading.setprofile_all_threads(observe)
+        with pytest.raises(_WorkflowChildLaunchFailed) as failed:
+            await native_tests._launch_native_for_test(h, prepared)
+    finally:
+        threading.setprofile_all_threads(previous_thread_profile)
+        sys.setprofile(previous_profile)
+        threading.settrace_all_threads(previous_thread_trace)
+        sys.settrace(previous_trace)
+        print(
+            "G_CONSTRUCTOR_EXACT_ADMISSION_TRACE", trace_rows, trace_errors, flush=True
+        )
+    if errors:
+        raise errors[0]
+    assert saved
+    receipt = failed.value.receipt
+    assert auth._native_launch == [receipt] and receipt.failure == "thread_start"
+    assert receipt.owner is saved["owner"] and receipt.activity_claim is saved["claim"]
+    assert h.db.get_run(receipt.run_id)["status"] == "error"
+    with h.db.connection() as conn:
+        reservation = conn.execute(
+            "SELECT state FROM automatic_work_reservations WHERE id=?",
+            (auth.claim.reservation_id,),
+        ).fetchone()
+    assert reservation[0] == "released"
+    drains = []
+    receipt.owner.on_drained(drains.append)
+    assert drains == [True] and not receipt.owner.is_admitted
+    assert saved["launch"] is not None and saved["close"] is not None
+    assert prepared._launch_operation is None and prepared._close_operation is None
+    assert not native.uncertain_start and not native.threads and h.calls == []
+    assert native.fleet.live_count() == 0
+    activity = h.runtime.worktree_activity
+    with activity._lock:
+        state = activity._claims[receipt.activity_claim.id]
+        member = state.members[receipt.activity_claim.id]
+        assert state.custody is saved["claim"]
+        assert activity._members[receipt.activity_claim.id] is member
+        assert member.owner is saved["owner"]
+        assert member.drained is True and member.durable is False
+    await native_tests._settle_native_for_test(h, prepared, receipt, status="failed")
+    checkpoint = h.service._checkpoint(h.workflow.id, receipt.attempt_id)
+    result = h.db.workflow_runs.read_result(h.workflow.id, receipt.attempt_id)
+    assert checkpoint.run_id == result.run_id == receipt.run_id
+    assert result.status == "failed"
+    with activity._lock:
+        assert member.drained is True and member.durable is True
+        assert receipt.activity_claim.id not in activity._claims
+        assert receipt.activity_claim.id not in activity._members
+    assert prepared._closed and prepared._source_scope is None
+    assert h.runtime.execution_capacity.snapshot().executions == ()
+
+
+async def native_return_journey(tmp_path, monkeypatch):
+    import os
+
+    from Tests.Chat.workflow_rig import WorkflowProvider, build_workflow_rig
+    from tldw_chatbook.Agents.agent_service import _WorkflowChildLaunchFailed
+    from tldw_chatbook.Agents.goal_storage_lifetime import owned_goal_storage
+    from tldw_chatbook.Workspaces.change_review_finalization import (
+        ChangeReviewCompletion,
+    )
+
+    mode = sys.argv[2]
+    assert mode in {"unknown-entry", "unknown-return"}
+    rig = await build_workflow_rig(
+        tmp_path, monkeypatch, WorkflowProvider(), change_review=True
+    )
+    saved, errors, target_returns = {}, [], []
+    injected = RuntimeError("original native start boundary test failure")
+    previous_thread_profile, previous_profile = threading.getprofile(), sys.getprofile()
+    original_start = threading.Thread.start.__code__
+    original_core = AgentService._launch_prepared_child_result.__code__
+
+    def observe(frame, event, result):
+        if saved and frame.f_code is saved["target"].__code__:
+            if (
+                event == "return"
+                and dis.opname[frame.f_code.co_code[frame.f_lasti]]
+                in {"RETURN_VALUE", "RETURN_CONST"}
+                and threading.current_thread() is saved["thread"]
+            ):
+                target_returns.append((saved["thread"], frame, result))
+            return
+        if frame.f_code is not original_start or event not in {"call", "return"}:
+            return
+        parent = frame.f_back
+        if parent.f_code is not original_core:
+            return
+        entry = parent.f_locals.get("entry")
+        if entry is None or entry.mode != "W":
+            return
+        should_inject = False
+        try:
+            run = rig.coordinator._runs[rig.workflow.id]
+            assert (
+                entry.wave.phase is run.phase and entry.preparation.phase is run.phase
+            )
+            if event == "call":
+                assert not saved
+                thread = frame.f_locals["self"]
+                target = parent.f_locals["run_child_owned"]
+                child_kwargs = parent.f_locals["child_kwargs"]
+                assert parent.f_locals["thread"] is thread
+                assert thread._target is target
+                assert parent.f_locals["start_entered"] is True
+                assert parent.f_locals["native_thread_started"] is False
+                assert (
+                    child_kwargs["workflow_task_authorization"] is entry.authorization
+                )
+                saved.update(
+                    thread=thread,
+                    target=target,
+                    child_kwargs=child_kwargs,
+                    entry=entry,
+                    prepared=entry.preparation,
+                    native=entry.native,
+                    owner=parent.f_locals["child_owner"],
+                    claim=child_kwargs["workflow_activity_claim"],
+                    launch=entry.preparation._launch_operation,
+                    close=entry.preparation._close_operation,
+                    run=run,
+                    intake=run.intake,
+                    token=run.token,
+                    source=entry.preparation.source,
+                    lifetime=entry.preparation._lifetime,
+                )
+                should_inject = mode == "unknown-entry"
+            elif mode == "unknown-return" and dis.opname[
+                frame.f_code.co_code[frame.f_lasti]
+            ] in {"RETURN_VALUE", "RETURN_CONST"}:
+                assert frame.f_locals["self"] is saved["thread"]
+                assert parent.f_locals["entry"] is saved["entry"]
+                assert (
+                    result is None and parent.f_locals["native_thread_started"] is False
+                )
+                saved["thread"].join(5)
+                assert not saved["thread"].is_alive()
+                assert len(target_returns) == 1 and target_returns[0][2] is None
+                saved["target_return"] = target_returns[0]
+                should_inject = True
+        except BaseException as error:  # noqa: BLE001 - observer error is not native failure evidence.
+            errors.append(error)
+            return
+        if should_inject:
+            threading.setprofile_all_threads(None)
+            saved["injected"] = True
+            raise injected
+
+    primary_error = None
+    try:
+        rig.workflow = await rig.coordinator.start(
+            rig.workflow.request, launch_id=rig.workflow.launch_id
+        )
+        await asyncio.shield(rig.coordinator._runs[rig.workflow.id].driver)
+        await rig.wait_for_status("awaiting_phase_review")
+        decision = await rig.service.call(
+            rig.service.prepare_decision, rig.workflow.id, phase_id="phase-1"
+        )
+        threading.setprofile_all_threads(observe)
+        await rig.coordinator.approve(decision, command_id="strict-original-start")
+        run = rig.coordinator._runs[rig.workflow.id]
+        await asyncio.shield(run.driver)
+        threading.setprofile_all_threads(previous_thread_profile)
+        sys.setprofile(previous_profile)
+        if errors:
+            raise errors[0]
+        assert saved.get("injected") and saved["run"] is run
+        entry, prepared, native = saved["entry"], saved["prepared"], saved["native"]
+        auth, wave, owner = entry.authorization, entry.wave, saved["owner"]
+        assert len(native.uncertain_start) == 1
+        held = native.uncertain_start[0]
+        assert held[0] is saved["thread"] and held[1] is saved["target"]
+        assert held[2] is saved["child_kwargs"] and held[3] is injected
+        returned = entry.caller.f_locals["result"]
+        assert type(returned) is _WorkflowLaunchReturn and returned.entry is entry
+        assert returned.owner is owner and returned.operation is saved["launch"]
+        assert not returned.known and isinstance(
+            returned.error, _WorkflowChildLaunchFailed
+        )
+        receipt = returned.receipt
+        assert auth._native_launch == [receipt] and receipt.failure == "unknown"
+        assert receipt.owner is owner and receipt.activity_claim is saved["claim"]
+        assert wave.driver.done() and wave.driver.exception() is returned.error
+        assert (
+            wave.unproven_launches == {prepared}
+            and not wave.receipts
+            and not wave.unlaunched
+        )
+        assert not wave.closed and not prepared._closed and prepared._wave is wave
+        assert (
+            prepared._launch_operation is saved["launch"]
+            and saved["launch"] is not None
+        )
+        assert (
+            prepared.source is saved["source"]
+            and prepared._lifetime is saved["lifetime"]
+        )
+        assert native.threads == {}
+        assert wave.baseline_return.result() is ChangeReviewCompletion.OBSERVED
+        assert not wave.ending_return.done()
+        assert owner.is_admitted
+        with owner.capacity._lock:
+            assert owner._cleanup_unproven and saved["launch"] in owner._operations
+        with owned_goal_storage(rig.service), rig.service.db.connection() as conn:
+            state = conn.execute(
+                "SELECT state FROM automatic_work_reservations WHERE id=?",
+                (auth.claim.reservation_id,),
+            ).fetchone()[0]
+            row = rig.service.db.get_run(receipt.run_id)
+        snapshot = await rig.coordinator.get(rig.workflow.id)
+        assert snapshot.status == "recovery_required" and snapshot.results == ()
+        assert snapshot.accounting.used["generation"] == 2
+        if mode == "unknown-entry":
+            assert state == "reserved" and row["status"] == "running"
+            assert (
+                prepared._close_operation is saved["close"]
+                and saved["close"] is not None
+            )
+            assert [key for key, _ in rig.provider.calls] == ["planning"]
+            assert snapshot.accounting.used["child_launch"] == 0
+            assert snapshot.accounting.reserved["child_launch"] == 1
+            assert snapshot.accounting.used["model_call"] == 1
+            assert not target_returns
+        else:
+            assert state == "committed" and row["status"] == "done"
+            assert (
+                prepared._close_operation is None
+                and saved["target_return"] is target_returns[0]
+            )
+            assert [key for key, _ in rig.provider.calls] == ["planning", "task-1"]
+            assert snapshot.accounting.used["child_launch"] == 1
+            assert snapshot.accounting.used["model_call"] == 2
+            assert not saved["thread"].is_alive()
+        for _ in range(2):
+            with pytest.raises(
+                RuntimeError, match="workflow_original_shutdown_unresolved"
+            ):
+                await rig.runtime.dispose()
+            assert rig.coordinator._runs[rig.workflow.id] is run
+            assert run.intake is saved["intake"] and run.token is saved["token"]
+            assert (
+                prepared._launch_operation is saved["launch"]
+                and native.uncertain_start[0] is held
+            )
+            assert not rig.runtime.execution_capacity.snapshot().closed
+        print(
+            "G_STRICT_START_REQUIRED_CUSTODY_RETAINED",
+            mode,
+            "; no creator drain",
+            flush=True,
+        )
+        os._exit(17)
+    except BaseException as error:  # Original failure must survive cleanup refusal.
+        primary_error = error
+        raise
+    finally:
+        threading.setprofile_all_threads(previous_thread_profile)
+        sys.setprofile(previous_profile)
+        rig.provider_release()
+        try:
+            await rig.close()
+        except (
+            BaseException
+        ) as cleanup_error:  # Report actual native cleanup separately.
+            if primary_error is None:
+                raise
+            import traceback
+
+            traceback.print_exception(cleanup_error)
+            primary_error.add_note(
+                "Original native cleanup also failed; exact exception printed above"
+            )
+
+
+@pytest.mark.parametrize("mode", ["unknown-entry", "unknown-return"])
+async def test_strict_start_unknown_retains_original_custody(tmp_path, mode):
+    from pathlib import Path
+
+    from Tests.Backup_Recovery.test_home_citation_retirement import _run
+
+    with pytest.raises(
+        AssertionError, match="G_STRICT_START_REQUIRED_CUSTODY_RETAINED"
+    ):
+        await asyncio.to_thread(
+            _run,
+            tmp_path,
+            "native-return",
+            mode,
+            script=Path(__file__)
+            .with_name("workflow_coordinator_probe.py")
+            .read_text(),
+            timeout=60,
+        )
+
+
+async def test_original_finisher_callback_keeps_launch_exclusion_after_removal(
+    native_host,
+):
+    from concurrent.futures import Future
+
+    from tldw_chatbook.Agents import activation
+    from tldw_chatbook.Chat import console_agent_bridge as bridge_module
+
+    h = native_host
+    prepared = await h.bridge._prepare_workflow_reply(
+        phase=h.phase, task_id="task-1", binding=h.binding, resolution=h.selected
+    )
+    auth = prepared.authorization
+    own_entered, own_release = threading.Event(), threading.Event()
+    callback_entered, callback_release = threading.Event(), threading.Event()
+    saved, errors, target_returns, order = {}, [], [], []
+    original_core = AgentService._launch_prepared_child_result.__code__
+    original_result = AgentService._workflow_launch_result.__code__
+    original_finish = AgentService._finish_workflow_launch.__code__
+    original_start = threading.Thread.start.__code__
+    consumer, consumer_errors = {}, []
+    lifeline_start = bridge_module._ModelCallLifeline.start.__code__
+    child_scope = (
+        bridge_module._StreamingModelAdapter.child_lifeline.__wrapped__.__code__
+    )
+    chat_code = bridge_module._StreamingModelAdapter._chat_call_impl.__code__
+    submit_code = asyncio.run_coroutine_threadsafe.__code__
+    decorate_code = next(
+        code
+        for code in activation.async_worker_guard.__code__.co_consts
+        if isinstance(code, type(chat_code)) and code.co_name == "decorate"
+    )
+    guarded_call = next(
+        code
+        for code in decorate_code.co_consts
+        if isinstance(code, type(chat_code)) and code.co_name == "call"
+    )
+    consume_code = next(
+        code
+        for code in chat_code.co_consts
+        if isinstance(code, type(chat_code)) and code.co_name == "_consume"
+    )
+    consumer_codes = {lifeline_start, submit_code, guarded_call}
+
+    def observe_consumer(frame, event, result):
+        # Diagnostic errors never become native callback/control errors.
+        try:
+            thread = saved.get("thread")
+            normal_return = event == "return" and dis.opname[
+                frame.f_code.co_code[frame.f_lasti]
+            ] in {"RETURN_VALUE", "RETURN_CONST"}
+            if frame.f_code is lifeline_start:
+                if not normal_return or threading.current_thread() is not thread:
+                    return
+                parent = frame.f_back
+                if parent is None or parent.f_code is not child_scope:
+                    return
+                lifeline = frame.f_locals["self"]
+                assert lifeline is parent.f_locals["lifeline"]
+                operation = lifeline._operation
+                assert operation is not None and operation.owner is saved["child_owner"]
+                consumer.update(
+                    lifeline=lifeline,
+                    adapter=parent.f_locals["self"],
+                    loop=lifeline.loop,
+                    driver=lifeline._thread,
+                    operation=operation,
+                )
+            elif frame.f_code is submit_code:
+                parent = frame.f_back
+                if (
+                    threading.current_thread() is not thread
+                    or parent is None
+                    or parent.f_code is not chat_code
+                    or parent.f_locals.get("workflow_preparation") is not prepared
+                ):
+                    return
+                assert parent.f_locals["self"] is consumer["adapter"]
+                assert frame.f_locals["loop"] is consumer["loop"]
+                if event == "call":
+                    coroutine = frame.f_locals["coro"]
+                    decorated = parent.f_locals["_consume"]
+                    original = decorated.__wrapped__
+                    assert coroutine.cr_code is decorated.__code__ is guarded_call
+                    assert original.__code__ is consume_code
+                    closure = dict(
+                        zip(
+                            original.__code__.co_freevars,
+                            (cell.cell_contents for cell in original.__closure__ or ()),
+                        )
+                    )
+                    assert closure["workflow_preparation"] is prepared
+                    consumer.update(
+                        coroutine=coroutine,
+                        decorated=decorated,
+                        original=original,
+                    )
+                elif normal_return:
+                    assert frame.f_locals["coro"] is consumer["coroutine"]
+                    assert type(result) is Future
+                    consumer["future"] = result
+            elif event == "call" and frame.f_locals.get("function") is consumer.get(
+                "original"
+            ):
+                assert consumer.get("original") is not None
+                assert frame.f_locals["service"] is consumer["adapter"]
+                task, loop = asyncio.current_task(), asyncio.get_running_loop()
+                assert type(task) is asyncio.Task
+                assert task.get_coro() is consumer["coroutine"]
+                assert loop is consumer["loop"]
+                assert threading.current_thread() is consumer["driver"]
+                if "task" in consumer:
+                    assert consumer["task"] is task
+                consumer["task"] = task
+        except BaseException as diagnostic_error:  # noqa: BLE001 - observations cannot change native outcomes.
+            consumer_errors.append(type(diagnostic_error).__name__)
+
+    def consumer_snapshot():
+        # Non-atomic metadata only. No Future condition lock/result consumption.
+        row = {"diagnostic_error_types": list(consumer_errors)}
+        lifeline = consumer.get("lifeline")
+        if lifeline is None:
+            row["association"] = "unavailable"
+            return row
+        operation, driver, loop = (
+            consumer["operation"],
+            consumer["driver"],
+            consumer["loop"],
+        )
+        same = (
+            lifeline._operation is operation
+            and lifeline._thread is driver
+            and lifeline.loop is loop
+            and operation.owner is saved.get("child_owner")
+        )
+        if not same:
+            row["association"] = "changed/unknown"
+            return row
+        row.update(
+            association="same at sample",
+            loop_running=loop.is_running(),
+            loop_closed=loop.is_closed(),
+            driver_alive=driver.is_alive(),
+            cleanup_returned=lifeline._cleanup_returned,
+            driver_returned=lifeline._driver_returned,
+        )
+        future = consumer.get("future")
+        row["future_state"] = future._state if type(future) is Future else "unavailable"
+        task = consumer.get("task")
+        if type(task) is asyncio.Task and task.get_coro() is consumer.get("coroutine"):
+            row.update(task_done=task.done(), task_cancelled=task.cancelled())
+            stack, current = [], task.get_coro()
+            while current is not None:
+                frame = getattr(current, "cr_frame", None)
+                if frame is not None:
+                    stack.append(
+                        (frame.f_code.co_filename, frame.f_code.co_name, frame.f_lineno)
+                    )
+                current = getattr(current, "cr_await", None)
+            row["consumer_stack"] = stack or "unavailable"
+        else:
+            row["consumer_task"] = "unavailable"
+        identity = driver.ident
+        frame = sys._current_frames().get(identity)
+        stack = []
+        if driver.ident == identity and driver.is_alive():
+            while frame is not None:
+                stack.append(
+                    (frame.f_code.co_filename, frame.f_code.co_name, frame.f_lineno)
+                )
+                frame = frame.f_back
+        row["driver_stack"] = stack or "unavailable"
+        row["association_still_same"] = (
+            lifeline._operation is operation
+            and lifeline._thread is driver
+            and lifeline.loop is loop
+            and operation.owner is saved.get("child_owner")
+        )
+        return row
+
+    def callback(outcome):
+        try:
+            if errors:
+                raise errors[0]
+            assert outcome is True
+            assert threading.current_thread() is saved["worker"]
+            saved["callback_outcome"] = outcome
+            callback_entered.set()
+            if not callback_release.wait(5):
+                errors.append(AssertionError("original drain callback hold exceeded5s"))
+        except BaseException as error:  # noqa: BLE001 - observer errors must not alter native callbacks.
+            errors.append(error)
+            callback_entered.set()
+
+    codes = {
+        original_core,
+        original_result,
+        original_finish,
+        original_start,
+        callback.__code__,
+    }
+
+    def observe(frame, event, result):
+        if frame.f_code in consumer_codes:
+            observe_consumer(frame, event, result)
+            return
+        target = saved.get("target")
+        if target is not None and frame.f_code is target.__code__:
+            if (
+                event == "return"
+                and dis.opname[frame.f_code.co_code[frame.f_lasti]]
+                in {"RETURN_VALUE", "RETURN_CONST"}
+                and threading.current_thread() is saved["thread"]
+            ):
+                target_returns.append((frame, result))
+            return
+        if frame.f_code not in codes:
+            return
+        try:
+            if frame.f_code is original_start and event == "call":
+                parent = frame.f_back
+                if parent.f_code is not original_core:
+                    return
+                entry = parent.f_locals.get("entry")
+                if entry is None or entry.preparation is not prepared:
+                    return
+                assert entry.mode == "D" and entry.authorization is auth
+                thread, target = (
+                    frame.f_locals["self"],
+                    parent.f_locals["run_child_owned"],
+                )
+                assert thread is parent.f_locals["thread"] and thread._target is target
+                saved.update(
+                    thread=thread,
+                    target=target,
+                    entry=entry,
+                    child_owner=parent.f_locals["child_owner"],
+                )
+                return
+            if event != "return" or dis.opname[
+                frame.f_code.co_code[frame.f_lasti]
+            ] not in {"RETURN_VALUE", "RETURN_CONST"}:
+                return
+            if frame.f_code is original_core and saved:
+                if frame.f_locals.get("entry") is not saved["entry"]:
+                    return
+                assert frame.f_locals["thread"] is saved["thread"]
+                assert frame.f_locals["native_thread_started"] is True
+                saved["native_return"] = result
+            elif frame.f_code is original_result:
+                if (
+                    type(result) is not _WorkflowLaunchReturn
+                    or result.entry.preparation is not prepared
+                ):
+                    return
+                if result.duplicate:
+                    assert (
+                        result.operation is None
+                        and result.receipt is saved["result"].receipt
+                    )
+                    saved["duplicate"] = result
+                    return
+                assert (
+                    result.entry is saved["entry"]
+                    and saved["native_return"] is not None
+                )
+                saved.update(result=result, worker=threading.current_thread())
+                saved["thread"].join(5)
+                try:
+                    assert not saved["thread"].is_alive()
+                except AssertionError:
+                    try:
+                        thread = saved["thread"]
+                        identity = thread.ident
+                        frame = sys._current_frames().get(identity)
+                        current = (
+                            thread is saved["thread"]
+                            and thread.ident == identity
+                            and thread.is_alive()
+                        )
+                        stack = []
+                        if current and frame is not None:
+                            while frame is not None:
+                                stack.append(
+                                    (
+                                        frame.f_code.co_filename,
+                                        frame.f_code.co_name,
+                                        frame.f_lineno,
+                                    )
+                                )
+                                frame = frame.f_back
+                        print(
+                            "G_CALLBACK_JOIN_BOUNDARY",
+                            {
+                                "same_live_thread": current,
+                                "stack": stack or "unknown",
+                                "own_entered": own_entered.is_set(),
+                                "own_release": own_release.is_set(),
+                                "launch_done": launch.done(),
+                                "launch_cancelled": launch.cancelled()
+                                if launch.done()
+                                else None,
+                                "target_returns": len(target_returns),
+                                "submitted_consumer": consumer_snapshot(),
+                                "observer_error_types": [
+                                    type(error).__name__ for error in errors
+                                ],
+                            },
+                            flush=True,
+                        )
+                    except BaseException as diagnostic_error:  # noqa: BLE001 - retain original assertion and cleanup.
+                        print(
+                            "G_CALLBACK_DIAGNOSTIC_ERROR",
+                            type(diagnostic_error).__name__,
+                            flush=True,
+                        )
+                    raise
+                assert len(target_returns) == 1 and target_returns[0][1] is None
+                own_entered.set()
+                if not own_release.wait(5):
+                    errors.append(AssertionError("original own result hold exceeded5s"))
+            elif frame.f_code is callback.__code__:
+                assert threading.current_thread() is saved["worker"]
+                order.append("callback-return")
+            elif frame.f_code is original_finish and saved:
+                if frame.f_locals.get("result") is saved["result"]:
+                    order.append("finisher-return")
+        except BaseException as error:  # noqa: BLE001 - preserve native outcome on observer failure.
+            errors.append(error)
+            own_entered.set()
+            callback_entered.set()
+
+    previous_thread_profile, previous_profile = threading.getprofile(), sys.getprofile()
+    threading.setprofile_all_threads(observe)
+    launch = asyncio.create_task(native_tests._launch_native_for_test(h, prepared))
+    receipt = None
+    try:
+        assert await asyncio.to_thread(own_entered.wait, 5)
+        if errors:
+            raise errors[0]
+        returned = saved["result"]
+        owner, operation = returned.owner, returned.operation
+        assert (
+            returned.receipt.owner is owner and prepared._launch_operation is operation
+        )
+        assert prepared._close_operation is None
+        with owner.capacity._lock:
+            assert owner._root_finished and owner._operations == {operation}
+            assert owner.capacity._owners.get(owner.execution_id) is owner
+        if errors:
+            raise errors[0]
+        owner.on_drained(callback)
+        own_release.set()
+        assert await asyncio.to_thread(callback_entered.wait, 5)
+        if errors:
+            raise errors[0]
+        assert saved["callback_outcome"] is True
+        with owner.capacity._lock:
+            assert owner.execution_id not in owner.capacity._owners
+            assert operation not in owner._operations
+        assert prepared._launch_operation is operation and not launch.done()
+        assert (
+            await native_tests._launch_native_for_test(h, prepared) is returned.receipt
+        )
+        assert saved["duplicate"].operation is None
+        with pytest.raises(PermissionError, match="preparation already claimed"):
+            await run_workflow_wave(h.phase, (prepared,))
+        assert prepared._wave is None and h.runtime._workflow_waves == {}
+        with pytest.raises(PermissionError, match="launch return has not completed"):
+            await prepared.close()
+        assert not prepared._closed and not prepared._closing
+        assert prepared._launch_operation is operation and not launch.done()
+    finally:
+        own_release.set()
+        callback_release.set()
+        try:
+            receipt = await launch
+        finally:
+            threading.setprofile_all_threads(previous_thread_profile)
+            sys.setprofile(previous_profile)
+    if errors:
+        raise errors[0]
+    assert receipt is saved["result"].receipt
+    assert order == ["callback-return", "finisher-return"]
+    assert prepared._launch_operation is None and not receipt.owner.is_admitted
+    await native_tests._settle_native_for_test(h, prepared, receipt)
+    assert prepared._closed and h.runtime.execution_capacity.snapshot().executions == ()
+
+
+async def storage_source_journey(tmp_path, _unused):
+    """Retain original storage custody when receiving proof is unavailable."""
+    import os
+    from types import SimpleNamespace
+
+    from tldw_chatbook.Agents import activation
+    from tldw_chatbook.Backup_Recovery.admission_runtime import RecoveryAdmissionGuard
+
+    mode = sys.argv[2]
+    assert mode in {"copy", "method", "guard-exit"}
+    generator = None
+    primary = None
+    competitor = contender_claim = None
+    competitor_drains = []
+    previous_thread_profile, previous_profile = threading.getprofile(), sys.getprofile()
+    with pytest.MonkeyPatch.context() as monkeypatch:
+        try:
+            generator = native_tests.native_host.__wrapped__(
+                tmp_path, monkeypatch, SimpleNamespace(param=None)
+            )
+            h = await anext(generator)
+            prepared = await h.bridge._prepare_workflow_reply(
+                phase=h.phase,
+                task_id="task-1",
+                binding=h.binding,
+                resolution=h.selected,
+            )
+            auth = prepared.authorization
+            native = auth._native_preparation[0]
+            observation = native.source_observation
+            source = prepared.source
+            lifetime, source_scope = prepared._lifetime, prepared._source_scope
+            assert observation is prepared._configured_source_observation
+            assert observation[0] is prepared and observation[1] is source
+            assert observation[2] is source.sources
+            before = h.db.automatic_work.snapshot(auth.claim.chain_id)
+            replacements, errors, saved = [], [], {}
+            if mode == "copy":
+                source.sources = tuple(list(observation[2]))  # noqa: C414 - force equal, distinct tuple.
+                assert source.sources == observation[2]
+                assert source.sources is not observation[2]
+                expected = "original workflow storage observation changed"
+            elif mode == "method":
+
+                def replacement():
+                    replacements.append(True)
+                    raise AssertionError("replacement storage method executed")
+
+                source.check_memory = replacement
+                expected = "original workflow storage source changed"
+            else:
+                competitor = h.runtime.execution_capacity.begin_execution(
+                    origin=WorkOrigin.MANUAL, conversation_id="original-guard-contender"
+                )
+                competitor.on_drained(competitor_drains.append)
+                contender_claim = h.runtime.worktree_activity.try_acquire(
+                    owner=competitor,
+                    footprint=WorktreeFootprint(
+                        writes=(
+                            WorktreeScope(
+                                h.root, True, capture_directory_chain(h.root)
+                            ),
+                        )
+                    ),
+                )
+                assert contender_claim is not None
+                guard_code = RecoveryAdmissionGuard.execution.__wrapped__.__code__
+                result_code = AgentService._workflow_launch_result.__code__
+
+                def observe(frame, event, result):
+                    if (
+                        frame.f_code is not guard_code
+                        or frame.f_locals.get("self") is not activation._guard
+                        or frame.f_locals.get("service") is not prepared.native.service
+                        or event != "return"
+                        or dis.opname[frame.f_code.co_code[frame.f_lasti]]
+                        not in {"RETURN_VALUE", "RETURN_CONST"}
+                    ):
+                        return
+                    parent = frame.f_back
+                    while parent is not None and parent.f_code is not result_code:
+                        parent = parent.f_back
+                    if parent is None or parent.f_locals.get("entry", None) is None:
+                        return
+                    entry = parent.f_locals["entry"]
+                    if entry.preparation is not prepared:
+                        return
+                    try:
+                        value = parent.f_locals["result"]
+                        assert (
+                            type(value) is _WorkflowLaunchReturn
+                            and value.entry is entry
+                        )
+                        assert entry.mode == "D" and entry.authorization is auth
+                        assert entry.native is native and entry.wave is None
+                        assert value.wait and isinstance(
+                            value.error, _WorkflowChildWait
+                        )
+                        assert (
+                            value.owner is None
+                            and value.operation is None
+                            and value.receipt is None
+                        )
+                        assert native.wait_return == [None] and auth._native_launch == [
+                            None
+                        ]
+                        assert frame.f_locals["sources"] is observation[2]
+                        assert not saved
+                        saved.update(
+                            entry=entry, result=value, error=value.error, frame=frame
+                        )
+                    except BaseException as error:  # noqa: BLE001 - fail observation without substituting outcome.
+                        errors.append(error)
+                        return
+                    threading.setprofile_all_threads(None)
+                    raise value.error
+
+                threading.setprofile_all_threads(observe)
+                expected = "workflow worktree activity busy"
+            try:
+                with pytest.raises(
+                    PermissionError if mode != "guard-exit" else _WorkflowChildWait,
+                    match=expected,
+                ) as caught:
+                    await native_tests._launch_native_for_test(h, prepared)
+            finally:
+                threading.setprofile_all_threads(previous_thread_profile)
+                sys.setprofile(previous_profile)
+                if competitor is not None:
+                    competitor.finish_root()
+                    contender_claim.settle(durable=True)
+            if errors:
+                raise errors[0]
+            if mode == "guard-exit":
+                assert saved and caught.value is saved["error"]
+                assert saved["result"].error is caught.value
+                assert saved["entry"].marker is auth._native_launch
+                assert competitor_drains == [True] and not competitor.is_admitted
+                with h.runtime.worktree_activity._lock:
+                    assert contender_claim.id not in h.runtime.worktree_activity._claims
+                assert auth._native_launch == [None] and native.wait_return == [None]
+                close_error = "workflow launch return has not completed"
+            else:
+                assert auth._native_launch == [] and native.wait_return == []
+                close_error = expected
+            assert replacements == []
+            assert native.source_observation is observation
+            assert prepared._configured_source_observation is observation
+            assert (
+                not native.activity_claims
+                and not native.threads
+                and not native.uncertain_start
+            )
+            assert h.db.list_runs(h.conversation_id) == [] and h.calls == []
+            assert (
+                prepared._launch_operation is None and prepared._close_operation is None
+            )
+            assert h.runtime.execution_capacity.snapshot().executions == ()
+            for _ in range(2):
+                with pytest.raises(PermissionError, match=close_error):
+                    await prepared.close()
+                assert prepared in h.runtime._workflow_preparations
+                assert prepared.authorization is auth and prepared.phase is h.phase
+                assert prepared.source is source and prepared._lifetime is lifetime
+                assert prepared._source_scope is source_scope
+                assert not prepared._closed and not prepared._closing
+                assert native.source_observation is observation and replacements == []
+                assert h.db.list_runs(h.conversation_id) == [] and h.calls == []
+                current = h.db.automatic_work.snapshot(auth.claim.chain_id)
+                assert dict(current.used) == dict(before.used)
+                assert dict(current.reserved) == dict(before.reserved)
+            print("G_STORAGE_SOURCE_RETAINED_" + mode, flush=True)
+            os._exit(17)  # Retained original preparation is not creator retirement.
+        except BaseException as error:
+            primary = error
+            raise
+        finally:
+            threading.setprofile_all_threads(previous_thread_profile)
+            sys.setprofile(previous_profile)
+            if generator is not None:
+                try:
+                    await generator.aclose()
+                except BaseException as error:
+                    if primary is None:
+                        raise
+                    primary.add_note("original fixture cleanup: " + repr(error))
+
+
+@pytest.mark.parametrize("mode", ["copy", "method", "guard-exit"])
+async def test_original_storage_observation_and_guard_refuse_unproven_return(
+    tmp_path, mode
+):
+    from pathlib import Path
+
+    from Tests.Backup_Recovery.test_home_citation_retirement import _run
+
+    with pytest.raises(AssertionError, match="G_STORAGE_SOURCE_RETAINED_" + mode):
+        _run(
+            tmp_path,
+            "storage-source",
+            mode,
+            script=Path(__file__)
+            .with_name("workflow_coordinator_probe.py")
+            .read_text(),
+            timeout=60,
+        )
+
+
+async def test_known_constructor_return_keeps_callback_exclusion_until_finish(
+    native_host,
+):
+    from tldw_chatbook.Agents.agent_service import (
+        _NativeWorkflowReturn,
+        _WorkflowChildLaunchFailed,
+    )
+
+    h = native_host
+    prepared = await h.bridge._prepare_workflow_reply(
+        phase=h.phase, task_id="task-1", binding=h.binding, resolution=h.selected
+    )
+    auth = prepared.authorization
+    native = auth._native_preparation[0]
+    source, lifetime, source_scope = (
+        prepared.source,
+        prepared._lifetime,
+        prepared._source_scope,
+    )
+    original_counts = h.db.automatic_work.snapshot(auth.claim.chain_id)
+    own_entered, own_release = threading.Event(), threading.Event()
+    callback_entered, callback_release = threading.Event(), threading.Event()
+    saved, errors, order = {}, [], []
+    injected = RuntimeError("known constructor callback control")
+    native_code = AgentService._launch_prepared_child_result.__code__
+    own_code = AgentService._workflow_launch_result.__code__
+    finish_code = AgentService._finish_workflow_launch.__code__
+    constructor_code = threading.Thread.__init__.__code__
+
+    def inject(frame, event, result):
+        if event != "call" or frame.f_code is not constructor_code:
+            return
+        parent = frame.f_back
+        if parent is None or parent.f_code is not native_code:
+            return
+        entry = parent.f_locals.get("entry")
+        if entry is None or entry.preparation is not prepared:
+            return
+        try:
+            assert (
+                entry.mode == "D"
+                and entry.authorization is auth
+                and entry.native is native
+            )
+            assert (
+                parent.f_locals["thread"] is None
+                and parent.f_locals["start_entered"] is False
+            )
+            assert parent.f_locals["native_thread_started"] is False
+            assert frame.f_locals["target"] is parent.f_locals["run_child_owned"]
+            saved.update(
+                entry=entry,
+                owner=parent.f_locals["child_owner"],
+                claim=parent.f_locals["child_kwargs"]["workflow_activity_claim"],
+                launch=prepared._launch_operation,
+                close=prepared._close_operation,
+                injected=injected,
+            )
+        except BaseException as error:  # noqa: BLE001 - only the exact constructor fault is injected.
+            errors.append(error)
+            return
+        threading.settrace_all_threads(None)
+        sys.settrace(None)
+        raise injected
+
+    def callback(outcome):
+        try:
+            assert outcome is True and threading.current_thread() is saved["worker"]
+            saved["callback_outcome"] = outcome
+            callback_entered.set()
+            if not callback_release.wait(5):
+                errors.append(
+                    AssertionError("original known-error callback hold exceeded5s")
+                )
+        except BaseException as error:  # noqa: BLE001 - native callbacks retain their original outcome.
+            errors.append(error)
+            callback_entered.set()
+
+    codes = {native_code, own_code, finish_code, callback.__code__}
+
+    def observe(frame, event, result):
+        if (
+            frame.f_code not in codes
+            or event != "return"
+            or dis.opname[frame.f_code.co_code[frame.f_lasti]]
+            not in {"RETURN_VALUE", "RETURN_CONST"}
+        ):
+            return
+        try:
+            if frame.f_code is native_code:
+                if frame.f_locals.get("entry") is not saved.get("entry") or not saved:
+                    return
+                assert type(result) is _NativeWorkflowReturn and result.known
+                assert frame.f_locals["thread"] is None
+                assert frame.f_locals["start_entered"] is False
+                assert frame.f_locals["native_thread_started"] is False
+                assert result.receipt.failure == "thread_start"
+                assert result.receipt.owner is saved["owner"]
+                assert result.receipt.activity_claim is saved["claim"]
+                saved["native_return"] = result
+            elif frame.f_code is own_code:
+                if (
+                    type(result) is not _WorkflowLaunchReturn
+                    or result.entry.preparation is not prepared
+                ):
+                    return
+                if result.duplicate:
+                    assert (
+                        result.operation is None
+                        and result.receipt is saved["result"].receipt
+                    )
+                    saved["duplicate"] = result
+                    return
+                actual = saved["native_return"]
+                assert (
+                    result.entry is saved["entry"] and result.known and not result.wait
+                )
+                assert result.receipt is actual.receipt and result.error is actual.error
+                assert result.owner is saved["owner"] and result.claim is saved["claim"]
+                assert (
+                    result.operation is saved["launch"]
+                    and prepared._launch_operation is result.operation
+                )
+                assert prepared._native_closed and prepared._close_operation is None
+                assert not native.threads and not native.uncertain_start
+                saved.update(result=result, worker=threading.current_thread())
+                own_entered.set()
+                if not own_release.wait(5):
+                    errors.append(
+                        AssertionError(
+                            "original known-error own-return hold exceeded5s"
+                        )
+                    )
+            elif frame.f_code is callback.__code__:
+                assert threading.current_thread() is saved["worker"]
+                order.append("callback-return")
+            elif frame.f_locals.get("result") is saved.get("result") and saved:
+                order.append("finisher-return")
+        except BaseException as error:  # noqa: BLE001 - observer assertions cannot escape into native code.
+            errors.append(error)
+            own_entered.set()
+            callback_entered.set()
+
+    previous_thread_trace, previous_trace = threading.gettrace(), sys.gettrace()
+    previous_thread_profile, previous_profile = threading.getprofile(), sys.getprofile()
+    threading.settrace_all_threads(inject)
+    threading.setprofile_all_threads(observe)
+    launch = asyncio.create_task(native_tests._launch_native_for_test(h, prepared))
+    primary = actual_error = None
+    try:
+        assert await asyncio.to_thread(own_entered.wait, 5)
+        if errors:
+            raise errors[0]
+        returned = saved["result"]
+        owner, operation = returned.owner, returned.operation
+        assert (
+            saved["injected"] is injected and returned.error.receipt is returned.receipt
+        )
+        assert operation is not None and prepared._launch_operation is operation
+        with owner.capacity._lock:
+            assert owner._root_finished and owner._operations == {operation}
+            assert owner.capacity._owners.get(owner.execution_id) is owner
+        owner.on_drained(callback)
+        own_release.set()
+        assert await asyncio.to_thread(callback_entered.wait, 5)
+        if errors:
+            raise errors[0]
+        assert saved["callback_outcome"] is True and not launch.done()
+        with owner.capacity._lock:
+            assert owner.execution_id not in owner.capacity._owners
+            assert operation not in owner._operations
+        assert (
+            prepared._launch_operation is operation
+            and prepared._close_operation is None
+        )
+        assert prepared.source is source and prepared._lifetime is lifetime
+        assert prepared._source_scope is source_scope
+        assert h.db.get_run(returned.receipt.run_id)["status"] == "error"
+        with h.db.connection() as conn:
+            reservation = conn.execute(
+                "SELECT state FROM automatic_work_reservations WHERE id=?",
+                (auth.claim.reservation_id,),
+            ).fetchone()
+        assert reservation[0] == "released" and h.calls == []
+        with pytest.raises(_WorkflowChildLaunchFailed) as duplicate:
+            await native_tests._launch_native_for_test(h, prepared)
+        assert duplicate.value.receipt is returned.receipt
+        assert (
+            duplicate.value is saved["duplicate"].error
+            and duplicate.value is not returned.error
+        )
+        assert (
+            saved["duplicate"].operation is None
+            and prepared._launch_operation is operation
+        )
+        with pytest.raises(PermissionError, match="preparation already claimed"):
+            await run_workflow_wave(h.phase, (prepared,))
+        assert prepared._wave is None and h.runtime._workflow_waves == {}
+        with pytest.raises(PermissionError, match="launch return has not completed"):
+            await prepared.close()
+        assert not prepared._closed and not prepared._closing
+        assert prepared._launch_operation is operation and not launch.done()
+    except BaseException as error:
+        primary = error
+        raise
+    finally:
+        own_release.set()
+        callback_release.set()
+        try:
+            try:
+                await launch
+            except _WorkflowChildLaunchFailed as error:
+                actual_error = error
+            except BaseException as error:
+                if primary is None:
+                    raise
+                primary.add_note("original launch finally: " + repr(error))
+        finally:
+            threading.setprofile_all_threads(previous_thread_profile)
+            sys.setprofile(previous_profile)
+            threading.settrace_all_threads(previous_thread_trace)
+            sys.settrace(previous_trace)
+    if errors:
+        raise errors[0]
+    returned = saved["result"]
+    assert actual_error is returned.error is saved["native_return"].error
+    assert order == ["callback-return", "finisher-return"]
+    assert prepared._launch_operation is None and prepared._close_operation is None
+    drains = []
+    returned.owner.on_drained(drains.append)
+    assert drains == [True] and not returned.owner.is_admitted
+    activity = h.runtime.worktree_activity
+    with activity._lock:
+        state = activity._claims[returned.claim.id]
+        member = state.members[returned.claim.id]
+        assert (
+            state.custody is saved["claim"]
+            and activity._members[returned.claim.id] is member
+        )
+        assert (
+            member.owner is saved["owner"]
+            and member.drained is True
+            and member.durable is False
+        )
+    await native_tests._settle_native_for_test(
+        h, prepared, returned.receipt, status="failed"
+    )
+    checkpoint = h.service._checkpoint(h.workflow.id, returned.receipt.attempt_id)
+    result = h.db.workflow_runs.read_result(h.workflow.id, returned.receipt.attempt_id)
+    assert (
+        checkpoint.run_id == result.run_id == returned.receipt.run_id
+        and result.status == "failed"
+    )
+    with activity._lock:
+        assert member.drained is True and member.durable is True
+        assert (
+            returned.claim.id not in activity._claims
+            and returned.claim.id not in activity._members
+        )
+    counts = h.db.automatic_work.snapshot(auth.claim.chain_id)
+    assert dict(counts.used) == dict(original_counts.used)
+    assert (
+        counts.reserved["child_launch"] == 0
+        and original_counts.reserved["child_launch"] == 1
+    )
+    assert not native.threads and not native.uncertain_start and h.calls == []
+    assert prepared._closed and prepared._source_scope is None
+    assert h.runtime.execution_capacity.snapshot().executions == ()
+
+
+async def test_original_initial_close_returns_empty_source_and_its_same_read(
+    native_host,
+):
+    from tldw_chatbook.Chat import console_workflow_preparation as preparation
+
+    h = native_host
+    before = h.db.automatic_work.snapshot(h.phase.attempt.chain_id)
+    contender = h.runtime.execution_capacity.begin_execution(
+        origin=WorkOrigin.MANUAL, conversation_id="original-initial-close-contender"
+    )
+    drains = []
+    contender.on_drained(drains.append)
+    claim = h.runtime.worktree_activity.try_acquire(
+        owner=contender,
+        footprint=WorktreeFootprint(
+            writes=(WorktreeScope(h.root, True, capture_directory_chain(h.root)),)
+        ),
+    )
+    assert claim is not None
+    cls = preparation._PreparedWorkflowReply
+    read_code, close_code = cls._read.__code__, cls.close.__code__
+    finish_code = next(
+        code
+        for code in close_code.co_consts
+        if isinstance(code, type(close_code)) and code.co_name == "finish"
+    )
+    check_code = preparation._storage_source_current.__code__
+    prepare_code = preparation.prepare_workflow_reply.__code__
+    configure_code = cls._configure.__code__
+    release_code = cls._release_configuration.__code__
+    codes = {read_code, close_code, check_code, configure_code, release_code}
+    issuer = asyncio.current_task()
+    saved, errors, checks = {}, [], []
+
+    def observe(frame, event, result):
+        if frame.f_code not in codes:
+            return
+        try:
+            if frame.f_code is read_code and event == "call" and not saved:
+                owner, callback = frame.f_locals["self"], frame.f_locals["callback"]
+                if owner.phase is not h.phase or owner.bridge is not h.bridge:
+                    return
+                parent = frame.f_back
+                if parent.f_code is not preparation._finish_native_preparation.__code__:
+                    return
+                assert parent.f_locals["prepared"] is owner
+                assert (
+                    callback.__self__ is owner and callback.__func__ is cls._configure
+                )
+                assert asyncio.current_task() is issuer
+                saved.update(
+                    prepared=owner,
+                    read_frame=frame,
+                    scope=owner._source_scope,
+                    configure_entries=0,
+                )
+                return
+            owner = saved.get("prepared")
+            if owner is None:
+                return
+            if (
+                frame.f_code is configure_code
+                and frame.f_locals.get("self") is owner
+                and event == "call"
+            ):
+                saved["configure_entries"] += 1
+            if (
+                frame.f_code is close_code
+                and frame.f_locals.get("self") is owner
+                and event == "call"
+                and "close_frame" not in saved
+            ):
+                parent = frame.f_back
+                assert (
+                    parent.f_code is prepare_code
+                    and parent.f_locals["prepared"] is owner
+                )
+                assert (
+                    parent.f_locals["bridge"] is h.bridge
+                    and parent.f_locals["phase"] is h.phase
+                )
+                assert (
+                    parent.f_locals["binding"] is h.binding
+                    and parent.f_locals["resolution"] is h.selected
+                )
+                assert (
+                    asyncio.current_task() is issuer
+                    and owner._loop is asyncio.get_running_loop()
+                )
+                assert (
+                    owner.source
+                    is owner.authorization
+                    is owner.native
+                    is owner._lifetime
+                    is owner._configured_source_observation
+                    is None
+                )
+                assert owner._wave is None and owner in h.runtime._workflow_preparations
+                saved.update(
+                    close_frame=frame,
+                    failed_record=saved["read_frame"].f_locals["record"],
+                )
+            if event != "return" or dis.opname[
+                frame.f_code.co_code[frame.f_lasti]
+            ] not in {"RETURN_VALUE", "RETURN_CONST"}:
+                return
+            if (
+                frame.f_code is check_code
+                and frame.f_locals.get("preparation") is owner
+            ):
+                parent = frame.f_back
+                assert (
+                    parent.f_code in {close_code, finish_code}
+                    and parent.f_locals["self"] is owner
+                )
+                checks.append((parent.f_code, threading.current_thread()))
+            elif (
+                frame.f_code is read_code
+                and frame.f_locals.get("self") is owner
+                and frame.f_locals.get("closing")
+            ):
+                callback = frame.f_locals["callback"]
+                assert callback.__code__ is finish_code
+                cells = dict(
+                    zip(
+                        callback.__code__.co_freevars,
+                        (cell.cell_contents for cell in callback.__closure__ or ()),
+                    )
+                )
+                assert cells["self"] is owner
+                record = frame.f_locals["record"]
+                assert record.prepared is owner and record.issuing is issuer
+                saved["close_record"] = record
+            elif frame.f_code is release_code and frame.f_locals.get("self") is owner:
+                assert frame.f_locals["scope"] is saved["scope"]
+                saved["released"] = True
+            elif frame is saved.get("close_frame"):
+                saved["close_returned"] = True
+        except BaseException as error:  # noqa: BLE001 - observation never changes native cleanup.
+            errors.append(error)
+
+    previous_thread_profile, previous_profile = threading.getprofile(), sys.getprofile()
+    threading.setprofile_all_threads(observe)
+    try:
+        with pytest.raises(_WorkflowChildWait) as caught:
+            await h.bridge._prepare_workflow_reply(
+                phase=h.phase,
+                task_id="task-1",
+                binding=h.binding,
+                resolution=h.selected,
+            )
+        if errors:
+            raise errors[0]
+        first = saved["prepared"]
+        assert (
+            caught.value.reason == "worktree_activity"
+            and saved["configure_entries"] == 0
+        )
+        failed = saved["failed_record"]
+        read, producer, retired, callback = failed.proof
+        assert (
+            read.source is first
+            and read.creator is h.controller
+            and read.task is issuer
+        )
+        assert (
+            read.callback is callback is failed.callback
+            and read._producer is producer
+            and read.retired is retired
+        )
+        assert (
+            producer.done()
+            and not producer.cancelled()
+            and producer.exception() is caught.value
+        )
+        assert retired.done() and not retired.cancelled() and retired.result() is None
+        assert (
+            failed.owner is failed.claim is failed.operation is None
+            and not failed.positive
+        )
+        record = saved["close_record"]
+        read, producer, retired, callback = record.proof
+        assert (
+            read.source is first
+            and read.creator is h.controller
+            and read.task is issuer
+        )
+        assert (
+            read.callback is callback is record.callback
+            and read._producer is producer
+            and read.retired is retired
+        )
+        assert (
+            producer.done()
+            and not producer.cancelled()
+            and producer.exception() is None
+        )
+        assert retired.done() and not retired.cancelled() and retired.result() is None
+        actual = producer.result()
+        expected = (
+            record,
+            first,
+            issuer,
+            callback,
+            record.proof,
+            None,
+            None,
+            None,
+            None,
+            None,
+        )
+        assert (
+            type(actual) is tuple
+            and len(actual) == len(expected)
+            and all(a is b for a, b in zip(actual, expected))
+        )
+        assert record.scopes_returned and record.positive
+        assert [code for code, _thread in checks] == [close_code, finish_code]
+        assert (
+            checks[0][1] is threading.current_thread()
+            and checks[1][1] is not checks[0][1]
+        )
+        assert (
+            saved["close_returned"]
+            and saved["released"]
+            and saved["scope"].gen.gi_frame is None
+        )
+        assert first._closed and not first._closing and first._source_scope is None
+        assert first not in h.runtime._workflow_preparations and first._finite is None
+        assert (
+            not h.phase._task_scopes
+            and not h.calls
+            and h.db.list_runs(h.conversation_id) == []
+        )
+        after = h.db.automatic_work.snapshot(h.phase.attempt.chain_id)
+        assert dict(after.used) == dict(before.used) and dict(after.reserved) == dict(
+            before.reserved
+        )
+        assert contender.is_admitted and drains == []
+    finally:
+        threading.setprofile_all_threads(previous_thread_profile)
+        sys.setprofile(previous_profile)
+        contender.finish_root()
+        claim.settle(durable=True)
+    assert drains == [True] and not contender.is_admitted
+    with h.runtime.worktree_activity._lock:
+        assert (
+            claim.id not in h.runtime.worktree_activity._claims
+            and claim.id not in h.runtime.worktree_activity._members
+        )
+    retry = await h.bridge._prepare_workflow_reply(
+        phase=h.phase, task_id="task-1", binding=h.binding, resolution=h.selected
+    )
+    assert (
+        retry is not saved["prepared"]
+        and retry.source is not None
+        and retry.authorization is not None
+    )
+    await retry.close()
+    assert (
+        retry._closed
+        and retry._source_scope is None
+        and retry._finite_reads[-1].positive
+    )
+    assert h.runtime.execution_capacity.snapshot().executions == ()
+
+
+async def external_core_journey(tmp_path, _unused):
+    import os
+    from types import SimpleNamespace
+
+    from tldw_chatbook.Agents import activation
+    from tldw_chatbook.Agents.goal_storage_lifetime import owned_goal_storage
+    from tldw_chatbook.Backup_Recovery import (
+        admission_runtime,
+    )
+    from tldw_chatbook.Backup_Recovery import (
+        storage_admission as storage,
+    )
+    from tldw_chatbook.Backup_Recovery.bootstrap import RecoveryRequired
+    from tldw_chatbook.DB.base_db import run_owned_db_call
+
+    generator = None
+    native_fixture_returned = False
+    primary = None
+    previous_thread_profile, previous_profile = threading.getprofile(), sys.getprofile()
+    previous_thread_trace, previous_trace = threading.gettrace(), sys.gettrace()
+    with pytest.MonkeyPatch.context() as monkeypatch:
+        try:
+            generator = native_tests.native_host.__wrapped__(
+                tmp_path, monkeypatch, SimpleNamespace(param=None)
+            )
+            h = await anext(generator)
+            prepared = await h.bridge._prepare_workflow_reply(
+                phase=h.phase,
+                task_id="task-1",
+                binding=h.binding,
+                resolution=h.selected,
+            )
+            auth = prepared.authorization
+            native = auth._native_preparation[0]
+            source, observation = (
+                prepared.source,
+                prepared._configured_source_observation,
+            )
+            lifetime, source_scope = prepared._lifetime, prepared._source_scope
+            counts = h.db.automatic_work.snapshot(auth.claim.chain_id)
+            with h.db.connection() as conn:
+                reservation = tuple(
+                    conn.execute(
+                        "SELECT id,chain_id,owner_id,kind,amount,state FROM automatic_work_reservations WHERE id=?",
+                        (auth.claim.reservation_id,),
+                    ).fetchone()
+                )
+            original_marker, original_waits = auth._native_launch, native.wait_return
+            saved, errors, path_errors = {}, [], []
+            diagnostic_guards, diagnostic_paths, diagnostic_errors = [], [], []
+            public_code = AgentService.launch_workflow_task.__code__
+            issuer = asyncio.current_task()
+            repository_code = storage._repository_operation.__wrapped__.__code__
+            core_code = _core_operation.__wrapped__.__code__
+            lease_code = storage.StorageLease.close.__code__
+            guard_code = (
+                admission_runtime.RecoveryAdmissionGuard.execution.__wrapped__.__code__
+            )
+            check_code = storage._Operation.check.__code__
+            result_code = AgentService._workflow_launch_result.__code__
+            native_code = AgentService._launch_prepared_child_result.__code__
+            finisher_code = AgentService._finish_workflow_launch.__code__
+            close_method = type(prepared).close.__code__
+            close_finish_code = next(
+                code
+                for code in close_method.co_consts
+                if isinstance(code, type(core_code)) and code.co_name == "finish"
+            )
+            read_code = type(prepared)._read.__code__
+            invoke_code = next(
+                code
+                for code in run_owned_db_call.__code__.co_consts
+                if isinstance(code, type(core_code)) and code.co_name == "invoke"
+            )
+
+            def callback():
+                outer = saved["outer"]
+                assert threading.current_thread() is saved["worker"]
+                assert storage._operation_local.operation is outer
+                with storage._lock:
+                    assert (
+                        outer in storage._operations
+                        and outer.lease in storage._live_leases
+                    )
+                    assert outer.participant is h.db._maintenance_participant
+                    assert outer.participant.repository() is h.db
+                    assert outer.thread is saved["worker"] and outer.task is None
+                    assert outer.pid == os.getpid() and outer.path == h.db.db_path
+                try:
+                    with owned_goal_storage(h.service), h.phase.context.scope():
+                        prepared.native.service.launch_workflow_task(
+                            auth.task,
+                            authorization=auth,
+                            should_cancel=prepared.should_cancel,
+                        )
+                except activation.AgentActivationRequired as error:
+                    saved["public_error"] = error
+                    outcome = (outer, error)
+                    saved["outcome"] = outcome
+                    return outcome
+                raise AssertionError(
+                    "original narrow core did not refuse native admission"
+                )
+
+            def profile(frame, event, result):
+                code = frame.f_code
+                if code not in {
+                    repository_code,
+                    core_code,
+                    lease_code,
+                    invoke_code,
+                    run_owned_db_call.__code__,
+                    callback.__code__,
+                    _WORKFLOW_LAUNCH_CODE,
+                    native_code,
+                    finisher_code,
+                    close_method,
+                    close_finish_code,
+                    read_code,
+                }:
+                    return
+                try:
+                    if (
+                        code in {_WORKFLOW_LAUNCH_CODE, native_code, finisher_code}
+                        and event == "call"
+                    ):
+                        saved.setdefault("unexpected_bodies", []).append(code)
+                    if (
+                        code is close_finish_code
+                        and event == "call"
+                        and frame.f_locals.get("self") is prepared
+                    ):
+                        parent = frame.f_back
+                        record = parent.f_locals["record"]
+                        assert parent.f_locals["self"] is prepared
+                        assert parent.f_locals["callback"].__code__ is close_finish_code
+                        assert record.prepared is prepared and record.issuing is issuer
+                        assert record.callback is parent.f_locals["invoke"]
+                        assert record is prepared._finite_reads[-1]
+                        saved.update(
+                            close_read=record,
+                            close_callback_frame=frame,
+                            close_worker=threading.current_thread(),
+                        )
+                    if (
+                        code is repository_code
+                        and event == "return"
+                        and dis.opname[code.co_code[frame.f_lasti]] == "YIELD_VALUE"
+                    ):
+                        participant = frame.f_locals["participant"]
+                        if participant.repository() is not h.db or "outer" in saved:
+                            return
+                        ancestors = []
+                        parent = frame.f_back
+                        while parent is not None:
+                            ancestors.append(parent)
+                            parent = parent.f_back
+                        invokes = [
+                            item
+                            for item in ancestors
+                            if item.f_code is invoke_code
+                            and item.f_locals.get("database") is h.db
+                            and item.f_locals.get("operation") is callback
+                        ]
+                        cores = [
+                            item
+                            for item in ancestors
+                            if item.f_code is core_code
+                            and item.f_locals.get("repository") is h.db
+                        ]
+                        if len(invokes) != 1 or len(cores) != 1:
+                            return
+                        assert (
+                            result is frame.f_locals["operation"]
+                            and frame.f_locals["previous"] is None
+                        )
+                        assert result is storage._operation_local.operation
+                        saved.update(
+                            outer=result,
+                            lease=result.lease,
+                            worker=threading.current_thread(),
+                            repository_frame=frame,
+                            core_frame=cores[0],
+                            invoke_frame=invokes[0],
+                        )
+                    elif code is callback.__code__ and event == "call":
+                        assert frame.f_back is saved["invoke_frame"]
+                        assert (
+                            frame.f_back.f_locals["database"] is h.db
+                            and frame.f_back.f_locals["operation"] is callback
+                        )
+                        assert storage._operation_local.operation is saved["outer"]
+                    if event != "return" or dis.opname[
+                        code.co_code[frame.f_lasti]
+                    ] not in {"RETURN_VALUE", "RETURN_CONST"}:
+                        return
+                    if frame is saved.get("close_callback_frame"):
+                        assert threading.current_thread() is saved["close_worker"]
+                        saved["close_callback_returned"] = True
+                    elif (
+                        code is read_code
+                        and frame.f_locals.get("record") is saved.get("close_read")
+                        and "close_read" in saved
+                    ):
+                        assert (
+                            frame.f_locals["self"] is prepared
+                            and saved["close_read"].positive
+                        )
+                        assert asyncio.current_task() is issuer
+                        saved["close_read_returned"] = True
+                    elif (
+                        code is close_method
+                        and "close_coroutine" in saved
+                        and saved["close_coroutine"].cr_frame is frame
+                    ):
+                        assert (
+                            frame.f_locals["self"] is prepared
+                            and asyncio.current_task() is issuer
+                        )
+                        assert (
+                            prepared._source_scope is None
+                            and source_scope.gen.gi_frame is None
+                        )
+                        saved["close_returned"] = True
+                    elif frame is saved.get("repository_frame"):
+                        saved["repository_returned"] = True
+                    elif frame is saved.get("core_frame"):
+                        saved["core_returned"] = True
+                    elif (
+                        code is lease_code
+                        and frame.f_locals.get("self") is saved.get("lease")
+                        and "lease" in saved
+                    ):
+                        saved["lease_returned"] = True
+                    elif frame is saved.get("invoke_frame"):
+                        assert (
+                            storage._operation_local.operation is None
+                            and result is saved["outcome"]
+                        )
+                        saved["invoke_returned"] = True
+                    elif (
+                        code is run_owned_db_call.__code__
+                        and frame.f_locals.get("database") is h.db
+                        and frame.f_locals.get("operation") is callback
+                    ):
+                        assert (
+                            asyncio.current_task() is issuer
+                            and result is saved["outcome"]
+                        )
+                        saved["host_returned"] = True
+                except BaseException as error:  # noqa: BLE001 - observation cannot change native operations.
+                    errors.append(error)
+
+            def trace(frame, event, value):
+                if frame.f_code not in {guard_code, check_code}:
+                    return None
+                try:
+                    if frame.f_code is guard_code and event == "call":
+                        ancestors = []
+                        parent = frame.f_back
+                        while parent is not None:
+                            ancestors.append(parent)
+                            parent = parent.f_back
+                        if (
+                            frame.f_locals.get("self") is activation._guard
+                            and threading.current_thread() is saved.get("worker")
+                            and storage._operation_local.operation is saved.get("outer")
+                            and any(
+                                item.f_code is public_code
+                                and item.f_locals.get("self") is prepared.native.service
+                                and item.f_locals.get("authorization") is auth
+                                for item in ancestors
+                            )
+                            and not any(item[0] is frame for item in diagnostic_guards)
+                        ):
+                            receiver = frame.f_locals.get("service")
+                            kind = (
+                                "original-ledger"
+                                if receiver is h.phase._ledger
+                                else "original-native-service"
+                                if receiver is prepared.native.service
+                                else "other"
+                            )
+                            diagnostic_guards.append((frame, kind, receiver))
+                    elif (
+                        frame.f_code is check_code
+                        and event == "exception"
+                        and "outer" in saved
+                        and frame.f_locals.get("self") is saved["outer"]
+                    ):
+                        ancestors = []
+                        parent = frame.f_back
+                        while parent is not None:
+                            ancestors.append(parent)
+                            parent = parent.f_back
+                        guards = [
+                            item
+                            for item in diagnostic_guards
+                            if any(item[0] is ancestor for ancestor in ancestors)
+                        ]
+                        error_type, error, traceback = value
+                        diagnostic_paths.append(
+                            (
+                                frame,
+                                error,
+                                guards,
+                                {
+                                    "type": error_type.__name__,
+                                    "reason": str(error)
+                                    if str(error)
+                                    in {
+                                        "operation_path_outside_scope",
+                                        "operation_provenance_invalid",
+                                    }
+                                    else "other",
+                                    "guard_kinds": [item[1] for item in guards],
+                                    "same_outer": frame.f_locals.get("self")
+                                    is saved["outer"],
+                                    "same_worker": threading.current_thread()
+                                    is saved["worker"],
+                                    "same_tls": storage._operation_local.operation
+                                    is saved["outer"],
+                                    "same_traceback_frame": traceback.tb_frame is frame,
+                                    "selected_differs": frame.f_locals.get("selected")
+                                    != saved["outer"].path,
+                                    "original_observation_path": any(
+                                        frame.f_locals.get("path") is row[1]
+                                        for row in observation[2]
+                                    ),
+                                    "stack": [
+                                        (
+                                            item.f_code.co_filename,
+                                            item.f_code.co_name,
+                                            item.f_lineno,
+                                        )
+                                        for item in (frame, *ancestors)
+                                    ],
+                                },
+                            )
+                        )
+                except BaseException as error:  # noqa: BLE001 - passive diagnostic cannot affect native calls.
+                    diagnostic_errors.append(error)
+                try:
+                    if frame.f_code is guard_code and event == "call":
+                        if (
+                            frame.f_locals.get("self") is not activation._guard
+                            or frame.f_locals.get("service") is not h.phase._ledger
+                        ):
+                            return trace
+                        ancestors = []
+                        parent = frame.f_back
+                        while parent is not None:
+                            ancestors.append(parent)
+                            parent = parent.f_back
+                        launches = [
+                            item
+                            for item in ancestors
+                            if item.f_code is result_code
+                            and item.f_locals.get("self") is prepared.native.service
+                        ]
+                        assert len(launches) == 1
+                        assert "entry" not in launches[0].f_locals
+                        assert launches[0].f_locals["authorization"] is auth
+                        assert any(
+                            item.f_code is type(h.phase).check.__code__
+                            and item.f_locals.get("self") is h.phase
+                            for item in ancestors
+                        )
+                        assert any(
+                            item.f_code is type(auth).check_preparation.__code__
+                            and item.f_locals.get("self") is auth
+                            for item in ancestors
+                        )
+                        assert any(
+                            item.f_code
+                            is AgentService._check_workflow_launch_authorization.__code__
+                            and item.f_locals.get("self") is prepared.native.service
+                            and item.f_locals.get("authorization") is auth
+                            for item in ancestors
+                        )
+                        assert (
+                            threading.current_thread() is saved["worker"]
+                            and storage._operation_local.operation is saved["outer"]
+                        )
+                        assert auth._native_launch == [] and native.wait_return == []
+                        saved.update(guard_frame=frame, preentry_frame=launches[0])
+                    elif (
+                        frame.f_code is check_code
+                        and event == "exception"
+                        and frame.f_locals.get("self") is saved.get("outer")
+                        and "outer" in saved
+                    ):
+                        error_type, error, traceback = value
+                        guard = saved.get("guard_frame")
+                        if guard is None:
+                            return trace
+                        ancestors = []
+                        parent = frame.f_back
+                        while parent is not None:
+                            ancestors.append(parent)
+                            parent = parent.f_back
+                        assert any(item is guard for item in ancestors)
+                        assert (
+                            error_type is RecoveryRequired
+                            and str(error) == "operation_path_outside_scope"
+                        )
+                        assert traceback.tb_frame is frame
+                        requested = guard.f_locals["path"]
+                        assert any(
+                            requested is row[1] for row in guard.f_locals["observed"]
+                        )
+                        check_operation = frame.f_back
+                        acquisition_check = check_operation.f_back
+                        acquisition = acquisition_check.f_locals["self"]
+                        assert (
+                            check_operation.f_code is storage._check_operation.__code__
+                        )
+                        assert check_operation.f_locals["operation"] is saved["outer"]
+                        assert (
+                            acquisition_check.f_code
+                            is storage._Acquisition.check.__code__
+                        )
+                        assert acquisition.operation is saved["outer"]
+                        original_check = acquisition_check.f_back
+                        acquire = original_check.f_back
+                        wrapper = acquire.f_back
+                        assert original_check.f_locals["attempt"] is acquisition
+                        assert (
+                            acquire.f_code is storage._acquire_storage.__code__
+                            and acquire.f_locals["attempt"] is acquisition
+                        )
+                        assert (
+                            wrapper.f_code is storage.acquire_storage.__code__
+                            and wrapper.f_locals["attempt"] is acquisition
+                        )
+                        assert wrapper.f_back is guard
+                        assert (
+                            dis.opname[frame.f_code.co_code[traceback.tb_lasti]]
+                            == "RAISE_VARARGS"
+                        )
+                        assert frame.f_locals["path"] == requested
+                        assert frame.f_locals["selected"] != saved["outer"].path
+                        assert (
+                            threading.current_thread() is saved["worker"]
+                            and storage._operation_local.operation is saved["outer"]
+                        )
+                        path_errors.append((error, frame, requested, saved["outer"]))
+                except BaseException as error:  # noqa: BLE001 - no guard mutation or exception injection.
+                    errors.append(error)
+                return trace
+
+            threading.setprofile_all_threads(profile)
+            threading.settrace_all_threads(trace)
+            try:
+                outcome = await run_owned_db_call(h.db, callback)
+            finally:
+                threading.setprofile_all_threads(previous_thread_profile)
+                sys.setprofile(previous_profile)
+                threading.settrace_all_threads(previous_thread_trace)
+                sys.settrace(previous_trace)
+            if errors:
+                raise errors[0]
+            assert outcome is saved["outcome"] and outcome == (
+                saved["outer"],
+                saved["public_error"],
+            )
+            public_frames = []
+            traceback = saved["public_error"].__traceback__
+            while traceback is not None:
+                public_frames.append(
+                    (
+                        traceback.tb_frame.f_code.co_filename,
+                        traceback.tb_frame.f_code.co_name,
+                        traceback.tb_lineno,
+                    )
+                )
+                traceback = traceback.tb_next
+            print(
+                "G_EXTERNAL_CORE_DISCRIMINATOR",
+                {
+                    "path_errors": len(path_errors),
+                    "guards": [item[1] for item in diagnostic_guards[:8]],
+                    "paths": [item[3] for item in diagnostic_paths[:8]],
+                    "diagnostic_errors": [
+                        type(item).__name__ for item in diagnostic_errors
+                    ],
+                    "public_error": type(saved["public_error"]).__name__,
+                    "public_stack": public_frames,
+                    "D_entry_observed": "entry" in saved,
+                    "marker_count": len(original_marker),
+                    "wait_count": len(original_waits),
+                    "outer_returns": {
+                        name: saved.get(name)
+                        for name in (
+                            "repository_returned",
+                            "core_returned",
+                            "lease_returned",
+                            "invoke_returned",
+                            "host_returned",
+                        )
+                    },
+                },
+                flush=True,
+            )
+            assert len(path_errors) == 1 and path_errors[0][3] is saved["outer"]
+            assert not saved.get("unexpected_bodies")
+            assert (
+                saved["repository_returned"]
+                and saved["core_returned"]
+                and saved["lease_returned"]
+                and saved["invoke_returned"]
+                and saved["host_returned"]
+            )
+            with storage._lock:
+                assert (
+                    saved["outer"] not in storage._operations
+                    and saved["lease"] not in storage._live_leases
+                )
+            assert auth._native_launch is original_marker and original_marker == []
+            assert native.wait_return is original_waits and original_waits == []
+            assert (
+                native.source_observation is observation
+                and prepared._configured_source_observation is observation
+            )
+            assert source.sources is observation[2] and prepared.source is source
+            assert (
+                not native.activity_claims
+                and not native.threads
+                and not native.uncertain_start
+            )
+            assert prepared._launch_operation is prepared._close_operation is None
+            assert h.calls == [] and h.db.list_runs(h.conversation_id) == []
+            assert h.runtime.execution_capacity.snapshot().executions == ()
+            assert "entry" not in saved["preentry_frame"].f_locals
+            assert public_frames[-1][1] == "execution"
+            actual_public = saved["public_error"].__traceback__
+            while actual_public.tb_next is not None:
+                actual_public = actual_public.tb_next
+            assert actual_public.tb_frame is saved["guard_frame"]
+            assert actual_public.tb_frame.f_code is guard_code
+            before_close = h.db.automatic_work.snapshot(auth.claim.chain_id)
+            assert dict(before_close.used) == dict(counts.used)
+            assert dict(before_close.reserved) == dict(counts.reserved)
+            with h.db.connection() as conn:
+                assert (
+                    tuple(
+                        conn.execute(
+                            "SELECT id,chain_id,owner_id,kind,amount,state FROM automatic_work_reservations WHERE id=?",
+                            (auth.claim.reservation_id,),
+                        ).fetchone()
+                    )
+                    == reservation
+                )
+            assert (
+                prepared._lifetime is lifetime
+                and prepared._source_scope is source_scope
+            )
+            reads = prepared._finite_reads
+            count = len(reads)
+            closing = prepared.close()
+            saved["close_coroutine"] = closing
+            threading.setprofile_all_threads(profile)
+            try:
+                await closing
+            finally:
+                threading.setprofile_all_threads(previous_thread_profile)
+                sys.setprofile(previous_profile)
+            if errors:
+                raise errors[0]
+            record = saved["close_read"]
+            assert prepared._finite_reads is reads and len(reads) == count + 1
+            assert reads[-1] is record and record.positive
+            assert (
+                saved["close_callback_returned"]
+                and saved["close_read_returned"]
+                and saved["close_returned"]
+            )
+            assert closing.cr_frame is None
+            assert prepared._finite_read_return(record)[0] is record
+            assert (
+                prepared._closed and prepared._native_closed and not prepared._closing
+            )
+            assert prepared._source_scope is None and source_scope.gen.gi_frame is None
+            assert lifetime.gen.gi_frame is None
+            assert prepared not in h.runtime._workflow_preparations
+            await prepared.close()
+            assert prepared._finite_reads is reads and len(reads) == count + 1
+            assert prepared.source is source and source.sources is observation[2]
+            assert (
+                prepared._configured_source_observation
+                is native.source_observation
+                is observation
+            )
+            assert auth._native_launch is original_marker and original_marker == []
+            assert native.wait_return is original_waits and original_waits == []
+            after = h.db.automatic_work.snapshot(auth.claim.chain_id)
+            assert dict(after.used) == dict(counts.used) and dict(
+                after.reserved
+            ) == dict(counts.reserved)
+            with h.db.connection() as conn:
+                assert (
+                    tuple(
+                        conn.execute(
+                            "SELECT id,chain_id,owner_id,kind,amount,state FROM automatic_work_reservations WHERE id=?",
+                            (auth.claim.reservation_id,),
+                        ).fetchone()
+                    )
+                    == reservation
+                )
+            assert h.calls == [] and h.db.list_runs(h.conversation_id) == []
+            assert h.runtime.execution_capacity.snapshot().executions == ()
+        except BaseException as error:
+            primary = error
+            raise
+        finally:
+            threading.setprofile_all_threads(previous_thread_profile)
+            sys.setprofile(previous_profile)
+            threading.settrace_all_threads(previous_thread_trace)
+            sys.settrace(previous_trace)
+            if generator is not None:
+                try:
+                    await generator.aclose()
+                    native_fixture_returned = True
+                except BaseException as error:
+                    if primary is None:
+                        raise
+                    primary.add_note("original fixture cleanup: " + repr(error))
+    assert native_fixture_returned and h.runtime._disposed
+    assert h.runtime.execution_capacity.snapshot().closed
+    assert h.runtime.execution_capacity.snapshot().executions == ()
+    assert not h.runtime._workflow_preparations and not h.runtime._preparation_reads
+
+
+async def test_original_external_counted_core_refuses_before_native_entry_and_closes(
+    tmp_path,
+):
+    await external_core_journey(tmp_path, None)
+
+
+def _native_two_independent_tasks(data, root):
+    from copy import deepcopy
+
+    second = deepcopy(data["phases"][0]["tasks"][0])
+    second.update(
+        id="task-2",
+        instructions="Only the second approved task",
+        footprint=[{"path": "second.txt", "access": "write", "subtree": False}],
+    )
+    (root / "second.txt").write_text("second original\n")
+    data["phases"][0]["tasks"].append(second)
+
+
+@pytest.mark.parametrize("native_host", [_native_two_independent_tasks], indirect=True)
+async def test_actual_second_member_refusal_rolls_back_first_before_wave_driver(
+    native_host,
+):
+    from tldw_chatbook.Backup_Recovery import storage_admission as storage
+    from tldw_chatbook.Chat.console_workflow_preparation import _PreparedWorkflowReply
+
+    h = native_host
+    first = await h.bridge._prepare_workflow_reply(
+        phase=h.phase, task_id="task-1", binding=h.binding, resolution=h.selected
+    )
+    second = await h.bridge._prepare_workflow_reply(
+        phase=h.phase, task_id="task-2", binding=h.binding, resolution=h.selected
+    )
+    items = (first, second)
+    originals = tuple(
+        (
+            item,
+            item.authorization,
+            item.authorization._native_preparation[0],
+            item.source,
+            item._configured_source_observation,
+            item._lifetime,
+            item._source_scope,
+        )
+        for item in items
+    )
+    before = h.db.automatic_work.snapshot(h.phase.attempt.chain_id)
+    with h.db.connection() as conn:
+        reservations = tuple(
+            tuple(
+                conn.execute(
+                    "SELECT id,state,amount FROM automatic_work_reservations WHERE id=?",
+                    (item.authorization.claim.reservation_id,),
+                ).fetchone()
+            )
+            for item in items
+        )
+    competitor = h.runtime.execution_capacity.begin_execution(
+        origin=WorkOrigin.MANUAL, conversation_id="partial-wave-contender"
+    )
+    drains = []
+    competitor.on_drained(drains.append)
+    claim = h.runtime.worktree_activity.try_acquire(
+        owner=competitor,
+        footprint=WorktreeFootprint(
+            writes=(WorktreeScope(h.root, True, capture_directory_chain(h.root)),)
+        ),
+    )
+    assert claim is not None
+    entered, release = threading.Event(), threading.Event()
+    saved, errors, close_reads = {}, [], {}
+    auth, native = second.authorization, second.authorization._native_preparation[0]
+    marker, waits = auth._native_launch, native.wait_return
+    own_code = AgentService._workflow_launch_result.__code__
+    finish_code = AgentService._finish_workflow_launch.__code__
+    wave_code = run_workflow_wave.__code__
+    constructor_code = _WorkflowWave.__init__.__code__
+    close_code = next(
+        code
+        for code in _PreparedWorkflowReply.close.__code__.co_consts
+        if isinstance(code, type(own_code)) and code.co_name == "finish"
+    )
+    host = asyncio.current_task()
+    diagnostic_errors = []
+    helper_code = next(
+        code
+        for code in native_tests._launch_native_for_test.__code__.co_consts
+        if isinstance(code, type(own_code)) and code.co_name == "launch"
+    )
+    public_code = AgentService.launch_workflow_task.__code__
+    observed_codes = frozenset(
+        (
+            own_code,
+            finish_code,
+            constructor_code,
+            close_code,
+            _WORKFLOW_LAUNCH_CODE,
+            helper_code,
+            public_code,
+        )
+    )
+
+    def diagnostic(stage):
+        try:
+            worker = saved.get("helper_worker")
+            stack = []
+            if worker is not None and worker.is_alive():
+                frame = sys._current_frames().get(worker.ident)
+                while frame is not None and len(stack) < 30:
+                    stack.append(
+                        (frame.f_code.co_filename, frame.f_code.co_name, frame.f_lineno)
+                    )
+                    frame = frame.f_back
+                if not worker.is_alive():
+                    stack = ["worker-returned-during-observation"]
+            awaiting = launch.get_coro()
+            await_chain = []
+            for _ in range(12):
+                frame = getattr(awaiting, "cr_frame", None)
+                if frame is None:
+                    break
+                await_chain.append(
+                    (frame.f_code.co_filename, frame.f_code.co_name, frame.f_lineno)
+                )
+                awaiting = getattr(awaiting, "cr_await", None)
+            task_error = (
+                launch.exception() if launch.done() and not launch.cancelled() else None
+            )
+            traceback = task_error.__traceback__ if task_error is not None else None
+            error_stack = []
+            while traceback is not None and len(error_stack) < 30:
+                error_stack.append(
+                    (
+                        traceback.tb_frame.f_code.co_filename,
+                        traceback.tb_frame.f_code.co_name,
+                        traceback.tb_lineno,
+                    )
+                )
+                traceback = traceback.tb_next
+            result = saved.get("result")
+            print(
+                "G_PARTIAL_W_READINESS",
+                {
+                    "stage": stage,
+                    "entered": entered.is_set(),
+                    "release": release.is_set(),
+                    "task_done": launch.done(),
+                    "task_cancelled": launch.cancelled(),
+                    "task_error": type(task_error).__name__
+                    if task_error is not None
+                    else None,
+                    "task_error_reason": task_error.reason
+                    if type(task_error) is _WorkflowChildWait
+                    else None,
+                    "same_wait_error": task_error is actual_wait
+                    if actual_wait is not None
+                    else None,
+                    "same_own_error": result.error is task_error
+                    if result is not None
+                    else None,
+                    "helper_worker_observed": worker is not None,
+                    "public_call": saved.get("public_call", False),
+                    "result_call": saved.get("result_call", False),
+                    "body_entry": "body_frame" in saved,
+                    "own_result": result is not None,
+                    "finisher_return": saved.get("finisher_returned", False),
+                    "marker_count": len(marker),
+                    "wait_count": len(waits),
+                    "observer_errors": [type(item).__name__ for item in errors],
+                    "diagnostic_errors": [
+                        type(item).__name__ for item in diagnostic_errors
+                    ],
+                    "worker_stack": stack,
+                    "task_await": await_chain,
+                    "error_stack": error_stack,
+                },
+                flush=True,
+            )
+        except BaseException as error:  # noqa: BLE001 - the original assertion/finally must survive diagnostic failure.
+            diagnostic_errors.append(error)
+            print("G_PARTIAL_W_DIAGNOSTIC_ERROR", type(error).__name__, flush=True)
+
+    def profile(frame, event, result):
+        if frame.f_code not in observed_codes:
+            return
+        try:
+            if event == "call" and frame.f_code in {helper_code, public_code, own_code}:
+                try:
+                    if (
+                        frame.f_code is helper_code
+                        and frame.f_locals.get("h") is h
+                        and frame.f_locals.get("prepared") is second
+                    ):
+                        coroutine = launch.get_coro()
+                        original = coroutine.cr_frame.f_locals["launch"]
+                        assert (
+                            coroutine.cr_code
+                            is native_tests._launch_native_for_test.__code__
+                        )
+                        assert original.__code__ is helper_code
+                        cells = dict(
+                            zip(
+                                original.__code__.co_freevars,
+                                (cell.cell_contents for cell in original.__closure__),
+                            )
+                        )
+                        assert cells["h"] is h and cells["prepared"] is second
+                        saved.update(
+                            helper_worker=threading.current_thread(), helper_frame=frame
+                        )
+                    elif (
+                        frame.f_locals.get("self") is second.native.service
+                        and frame.f_locals.get("authorization") is auth
+                    ):
+                        saved[
+                            "public_call"
+                            if frame.f_code is public_code
+                            else "result_call"
+                        ] = True
+                except BaseException as error:  # noqa: BLE001 - passive associations cannot alter the original call.
+                    diagnostic_errors.append(error)
+            if frame.f_code is _WORKFLOW_LAUNCH_CODE and event == "call":
+                entry = frame.f_locals["entry"]
+                if entry.preparation is not second:
+                    return
+                wrapper = frame.f_back
+                original = wrapper.f_locals["func"]
+                own = wrapper.f_back
+                assert original.__code__ is _WORKFLOW_LAUNCH_CODE
+                cells = dict(
+                    zip(
+                        original.__code__.co_freevars,
+                        (cell.cell_contents for cell in original.__closure__),
+                    )
+                )
+                assert cells["entry"] is entry and own.f_code is own_code
+                assert (
+                    own.f_locals["entry"] is entry
+                    and own.f_locals["self"] is second.native.service
+                )
+                assert (
+                    entry.authorization is auth
+                    and entry.native is native
+                    and entry.mode == "D"
+                )
+                assert (
+                    entry.caller is own.f_back
+                    and entry.caller.f_locals["authorization"] is auth
+                )
+                assert entry.caller.f_code is AgentService.launch_workflow_task.__code__
+                assert auth._native_launch is marker and marker == [None]
+                assert native.wait_return is waits and waits == []
+                assert not auth._lock.locked()
+                assert second._launch_operation is second._close_operation is None
+                outer = storage._operation_local.operation
+                with storage._lock:
+                    assert (
+                        outer in storage._operations
+                        and outer.lease in storage._live_leases
+                    )
+                    assert outer.participant.repository() is second.native.service.db
+                    assert (
+                        outer.thread is threading.current_thread()
+                        and outer.task is None
+                    )
+                saved.update(
+                    entry=entry,
+                    worker=threading.current_thread(),
+                    body_frame=frame,
+                    own_frame=own,
+                    core=outer,
+                )
+                entered.set()
+                if not release.wait(5):
+                    errors.append(AssertionError("original body-entry hold exceeded5s"))
+                return
+            if frame.f_code is close_code and event == "call":
+                item = frame.f_locals.get("self")
+                if not any(item is original for original in items):
+                    return
+                parent = frame.f_back
+                assert parent.f_locals["self"] is item
+                record = parent.f_locals["record"]
+                assert record.prepared is item and record.issuing is host
+                assert frame is not parent and record is item._finite_reads[-1]
+                close_reads[item] = record
+                return
+            if event != "return" or dis.opname[
+                frame.f_code.co_code[frame.f_lasti]
+            ] not in {"RETURN_VALUE", "RETURN_CONST"}:
+                return
+            if frame.f_code is constructor_code:
+                wave = frame.f_locals["self"]
+                if wave.prepared == items and wave.phase is h.phase:
+                    assert "wave" not in saved
+                    saved["wave"] = wave
+            elif frame.f_code is own_code:
+                if (
+                    type(result) is not _WorkflowLaunchReturn
+                    or result.entry.preparation is not second
+                ):
+                    return
+                assert (
+                    result.entry.authorization is auth and result.entry.native is native
+                )
+                assert result.entry.mode == "D" and result.known and result.wait
+                assert (
+                    result.receipt
+                    is result.owner
+                    is result.claim
+                    is result.operation
+                    is None
+                )
+                assert (
+                    type(result.error) is _WorkflowChildWait
+                    and result.error.reason == "worktree_activity"
+                )
+                assert auth._native_launch is marker and marker == [None]
+                assert native.wait_return is waits and waits == [None]
+                assert result.entry is saved["entry"] and frame is saved["own_frame"]
+                assert (
+                    threading.current_thread() is saved["worker"] and release.is_set()
+                )
+                saved["result"] = result
+            elif (
+                frame.f_locals.get("result") is saved.get("result")
+                and "result" in saved
+            ):
+                assert threading.current_thread() is saved["worker"]
+                saved["finisher_returned"] = True
+        except BaseException as error:  # noqa: BLE001 - observations never escape into native callbacks.
+            errors.append(error)
+            entered.set()
+
+    def trace(frame, event, value):
+        if frame.f_code is not wave_code:
+            return None
+        if event == "exception":
+            try:
+                error_type, error, _traceback = value
+                if frame.f_locals.get("item") is second:
+                    wave = saved["wave"]
+                    assert error_type is PermissionError
+                    assert str(error) == "workflow preparation already claimed"
+                    assert (
+                        asyncio.current_task() is host
+                        and frame.f_locals["wave"] is wave
+                    )
+                    assert (
+                        frame.f_locals["auth"] is auth
+                        and frame.f_locals["native"] is native
+                    )
+                    assert frame.f_locals["bound"] == [first] and first._wave is wave
+                    assert (
+                        second._wave is None
+                        and auth._native_launch is marker
+                        and marker == [None]
+                    )
+                    assert (
+                        wave.driver
+                        is wave.source
+                        is wave.fence
+                        is wave.reservation
+                        is None
+                    )
+                    assert (
+                        wave._driver_coroutine is None
+                        and wave not in h.runtime._workflow_waves
+                    )
+                    saved["refusal"] = error
+            except BaseException as error:  # noqa: BLE001 - preserve original native refusal.
+                errors.append(error)
+        return trace
+
+    previous_profile, previous_thread_profile = sys.getprofile(), threading.getprofile()
+    previous_trace = sys.gettrace()
+    threading.setprofile_all_threads(profile)
+    try:
+        launch = asyncio.create_task(native_tests._launch_native_for_test(h, second))
+        primary = actual_wait = None
+        try:
+            ready = await asyncio.to_thread(entered.wait, 30)
+            if not ready:
+                diagnostic("original-failed-setup30")
+            assert ready
+            if errors:
+                raise errors[0]
+            sys.settrace(trace)
+            try:
+                with pytest.raises(
+                    PermissionError, match="workflow preparation already claimed"
+                ) as refused:
+                    await run_workflow_wave(h.phase, items)
+            finally:
+                sys.settrace(previous_trace)
+            if errors:
+                raise errors[0]
+            assert refused.value is saved["refusal"]
+            wave = saved["wave"]
+            assert first._wave is second._wave is None
+            assert (
+                wave.driver
+                is wave._driver_coroutine
+                is wave.source
+                is wave.fence
+                is wave.reservation
+                is wave.publication
+                is None
+            )
+            assert not wave.baseline_return.done() and not wave.ending_return.done()
+            assert not wave.receipts and wave not in h.runtime._workflow_waves
+            assert marker == [None] and waits == [] and not launch.done()
+            assert h.calls == [] and h.db.list_runs(h.conversation_id) == []
+        except BaseException as error:
+            primary = error
+            raise
+        finally:
+            release.set()
+            try:
+                try:
+                    await launch
+                except _WorkflowChildWait as error:
+                    actual_wait = error
+                except BaseException as error:
+                    if primary is None:
+                        raise
+                    primary.add_note("original launch cleanup: " + repr(error))
+            finally:
+                diagnostic("original-launch-finally")
+                sys.settrace(previous_trace)
+                competitor.finish_root()
+                claim.settle(durable=True)
+        try:
+            if errors:
+                raise errors[0]
+            assert actual_wait is saved["result"].error and saved["finisher_returned"]
+            assert marker == [] and waits == [(actual_wait, None, None)]
+            assert drains == [True] and not competitor.is_admitted
+            with h.runtime.worktree_activity._lock:
+                assert claim.id not in h.runtime.worktree_activity._claims
+                assert claim.id not in h.runtime.worktree_activity._members
+            for (
+                item,
+                authorization,
+                actual_native,
+                source,
+                observation,
+                lifetime,
+                scope,
+            ) in originals:
+                assert (
+                    item.authorization is authorization
+                    and authorization._native_preparation[0] is actual_native
+                )
+                assert (
+                    item.source is source
+                    and item._configured_source_observation is observation
+                )
+                assert item._lifetime is lifetime and item._source_scope is scope
+                assert item._launch_operation is item._close_operation is None
+                await item.close()
+                record = close_reads[item]
+                assert record is item._finite_reads[-1] and record.positive
+                assert item._finite_read_return(record)[0] is record
+                assert (
+                    item._closed
+                    and item._source_scope is None
+                    and scope.gen.gi_frame is None
+                )
+                assert item not in h.runtime._workflow_preparations
+            after = h.db.automatic_work.snapshot(h.phase.attempt.chain_id)
+            assert dict(after.used) == dict(before.used) and dict(
+                after.reserved
+            ) == dict(before.reserved)
+            with h.db.connection() as conn:
+                assert (
+                    tuple(
+                        tuple(
+                            conn.execute(
+                                "SELECT id,state,amount FROM automatic_work_reservations WHERE id=?",
+                                (item.authorization.claim.reservation_id,),
+                            ).fetchone()
+                        )
+                        for item in items
+                    )
+                    == reservations
+                )
+            assert h.calls == [] and h.db.list_runs(h.conversation_id) == []
+            assert h.runtime.execution_capacity.snapshot().executions == ()
+            if errors:
+                raise errors[0]
+        finally:
+            threading.setprofile_all_threads(previous_thread_profile)
+            sys.setprofile(previous_profile)
+    finally:
+        threading.setprofile_all_threads(previous_thread_profile)
+        sys.setprofile(previous_profile)
+        sys.settrace(previous_trace)
+
+
+async def wave_capture_close_journey(tmp_path, monkeypatch):
+    import json
+    import os
+    from pathlib import Path
+
+    from Tests.Chat.workflow_rig import WorkflowProvider, build_workflow_rig
+    from tldw_chatbook.Agents.goal_storage_lifetime import owned_goal_storage
+    from tldw_chatbook.Agents.workflow_models import WorkflowPlan
+    from tldw_chatbook.Chat.console_chat_controller import (
+        capture_run_admitted_workspace_roots,
+    )
+    from tldw_chatbook.Chat.console_workflow_preparation import _PreparedWorkflowReply
+    from tldw_chatbook.Chat.console_workflow_runs import _accept_workflow_phase
+
+    mode = sys.argv[2]
+    assert mode in {"unborrowed-close", "capture-exit"}
+    rig = await build_workflow_rig(
+        tmp_path,
+        monkeypatch,
+        WorkflowProvider(),
+        change_review=True,
+        public_coordinator=False,
+    )
+    primary = None
+    entered, release = threading.Event(), threading.Event()
+    saved, errors = {}, []
+    competitor = claim = wave_task = None
+    drains = []
+    previous_profile, previous_thread_profile = sys.getprofile(), threading.getprofile()
+    injected = RuntimeError("original workflow capture callback exit failure")
+    try:
+        (session,) = rig.store.sessions()
+        registry = rig.store.persistence.workspace_registry
+        binding = capture_run_admitted_workspace_roots(
+            session=session, registry=registry
+        )[0]
+        selected = await rig.gateway.resolve_for_send(
+            rig.controller._provider_selection_for_session(session.id)
+        )
+        data = json.loads(json.dumps(rig.provider.plan))
+        data["tools"] = []
+        data["phases"][0]["tasks"][0].update(
+            inputs=[], outputs=[], allowed_tools=[], expected_checks=[]
+        )
+        db, service = rig.service.db, rig.service
+        with owned_goal_storage(service):
+            workflow = db.workflow_runs.create(
+                rig.workflow.request, launch_id="actual-wave-capture"
+            )
+            workflow = db.workflow_runs.save_plan(
+                workflow.id,
+                WorkflowPlan.model_validate_json(json.dumps(data)),
+                expected_control_revision=workflow.control_revision,
+            )
+            attempt = db.automatic_work.prepare_workflow_phase(
+                workflow.id,
+                revision_id=1,
+                phase_id="phase-1",
+                owner_id=rig.controller._fleet_wake.runtime_owner_id,
+                session_id=session.id,
+                command_id="actual-wave-capture-approval",
+            )
+            phase = _accept_workflow_phase(
+                rig.controller, attempt.id, session_id=session.id
+            )
+        prepared = await rig.runtime.agent_bridge._prepare_workflow_reply(
+            phase=phase, task_id="task-1", binding=binding, resolution=selected
+        )
+        auth = prepared.authorization
+        source, lifetime, scope = (
+            prepared.source,
+            prepared._lifetime,
+            prepared._source_scope,
+        )
+        with owned_goal_storage(service), db.connection() as conn:
+            reservation = tuple(
+                conn.execute(
+                    "SELECT id,chain_id,owner_id,kind,amount,state FROM automatic_work_reservations WHERE id=?",
+                    (auth.claim.reservation_id,),
+                ).fetchone()
+            )
+            before = db.automatic_work.snapshot(phase.attempt.chain_id)
+        capture_code = next(
+            code
+            for code in _WorkflowWave._open.__code__.co_consts
+            if isinstance(code, type(_WorkflowWave._open.__code__))
+            and code.co_name == "capture"
+        )
+        read_code = _PreparedWorkflowReply._read.__code__
+        retire_code = next(
+            code
+            for code in read_code.co_consts
+            if isinstance(code, type(read_code)) and code.co_name == "retire"
+        )
+        invoke_code = next(
+            code
+            for code in read_code.co_consts
+            if isinstance(code, type(read_code)) and code.co_name == "invoke"
+        )
+        finish_code = next(
+            code
+            for code in _PreparedWorkflowReply.close.__code__.co_consts
+            if isinstance(code, type(read_code)) and code.co_name == "finish"
+        )
+        open_code = _WorkflowWave._open.__code__
+        constructor_code, release_code = (
+            _WorkflowWave.__init__.__code__,
+            _WorkflowWave._release.__code__,
+        )
+        codes = frozenset(
+            (
+                capture_code,
+                retire_code,
+                invoke_code,
+                finish_code,
+                constructor_code,
+                release_code,
+                open_code,
+            )
+        )
+
+        def observe(frame, event, result):
+            if frame.f_code not in codes:
+                return
+            inject = False
+            try:
+                normal = event == "return" and dis.opname[
+                    frame.f_code.co_code[frame.f_lasti]
+                ] in {"RETURN_VALUE", "RETURN_CONST"}
+                if frame.f_code is constructor_code and normal:
+                    wave = frame.f_locals["self"]
+                    if wave.prepared == (prepared,):
+                        assert wave.phase is phase and wave.capture_enabled
+                        saved["wave"] = wave
+                elif frame.f_code is capture_code and normal:
+                    wave = saved["wave"]
+                    assert (
+                        frame.f_locals["self"] is wave
+                        and frame.f_locals["first"] is prepared
+                    )
+                    record = prepared._finite_reads[-1]
+                    assert record.prepared is prepared and record.issuing is wave.driver
+                    assert type(result) is tuple and result[0] is wave.source
+                    assert result[0].issuer is wave.coordinator._native
+                    assert (
+                        result[0].workflow_wave is wave
+                        and result[0].bridge is prepared.bridge
+                    )
+                    assert (
+                        result[0].ordinary_tree
+                        is result[0].owner
+                        is result[0].claim
+                        is None
+                    )
+                    assert not result[0]._holds and not result[0]._closed.is_set()
+                    saved.update(
+                        captured=result,
+                        capture_read=record,
+                        capture_worker=threading.current_thread(),
+                    )
+                    inject = mode == "capture-exit"
+                elif frame.f_code is retire_code and normal:
+                    record = frame.f_locals["record"]
+                    if (
+                        record is not saved.get("capture_read")
+                        or mode != "unborrowed-close"
+                    ):
+                        return
+                    parent = frame.f_back
+                    assert (
+                        parent.f_code is invoke_code
+                        and parent.f_locals["record"] is record
+                    )
+                    assert (
+                        parent.f_locals["self"] is prepared
+                        and record.callback.__code__ is invoke_code
+                    )
+                    owner, actual_claim, operation = frame.f_locals["retirement"][0]
+                    assert (
+                        record.owner is owner
+                        and record.claim is actual_claim
+                        and record.operation is operation
+                    )
+                    assert record.drains == [True] and not record.scopes_returned
+                    assert threading.current_thread() is saved["capture_worker"]
+                    with owner.capacity._lock:
+                        assert (
+                            owner.capacity._owners.get(owner.execution_id) is not owner
+                        )
+                        assert operation not in owner._operations
+                    with prepared.runtime.worktree_activity._lock:
+                        assert (
+                            actual_claim.id
+                            not in prepared.runtime.worktree_activity._claims
+                        )
+                        assert (
+                            actual_claim.id
+                            not in prepared.runtime.worktree_activity._members
+                        )
+                    saved["capture_retirement"] = (owner, actual_claim, operation)
+                    entered.set()
+                    if not release.wait(5):
+                        errors.append(
+                            AssertionError("original capture retirement hold exceeded5")
+                        )
+                elif (
+                    frame.f_code is finish_code
+                    and event == "call"
+                    and frame.f_locals.get("self") is prepared
+                ):
+                    parent = frame.f_back
+                    assert (
+                        parent.f_code is invoke_code
+                        and parent.f_locals["self"] is prepared
+                    )
+                    record = parent.f_locals["record"]
+                    assert record.issuing is saved["wave"].driver
+                    saved["close_read"] = record
+                elif frame.f_code is invoke_code and normal:
+                    record = frame.f_locals["record"]
+                    if record is saved.get("capture_read"):
+                        assert result[0] is record and result[8] is saved["captured"]
+                        saved["capture_return"] = result
+                    elif record is saved.get("close_read"):
+                        assert result[0] is record
+                        saved["close_return"] = result
+                elif frame.f_code is open_code and normal:
+                    if frame.f_locals["self"] is saved.get("wave"):
+                        assert result.source is saved["captured"][0]
+                        assert result.footprint is saved["captured"][1]
+                        assert not result.retain
+                        saved["opening_return"] = result
+                elif (
+                    frame.f_code is release_code
+                    and normal
+                    and frame.f_locals["self"] is saved.get("wave")
+                ):
+                    wave = saved["wave"]
+                    assert asyncio.current_task() is wave.driver
+                    assert wave.closed and wave not in rig.runtime._workflow_waves
+                    saved["release_return"] = True
+            except BaseException as error:  # noqa: BLE001 - passive observations cannot alter native callbacks.
+                errors.append(error)
+                entered.set()
+                return
+            if inject:
+                threading.setprofile_all_threads(None)
+                saved["injected"] = True
+                raise injected
+
+        threading.setprofile_all_threads(observe)
+        wave_task = asyncio.create_task(run_workflow_wave(phase, (prepared,)))
+        if mode == "unborrowed-close":
+            assert await asyncio.to_thread(entered.wait, 10)
+            if errors:
+                raise errors[0]
+            wave = saved["wave"]
+            record = saved["capture_read"]
+            read_count = len(prepared._finite_reads)
+            assert prepared._wave is wave and rig.runtime._workflow_waves[wave] is wave
+            assert not record.proof[1].done()
+            with pytest.raises(
+                PermissionError, match="original wave close invocation required"
+            ):
+                await prepared.close()
+            assert (
+                len(prepared._finite_reads) == read_count
+                and not prepared._closing
+                and not prepared._closed
+            )
+            assert (
+                prepared.source is source
+                and prepared._lifetime is lifetime
+                and prepared._source_scope is scope
+            )
+            competitor = rig.runtime.execution_capacity.begin_execution(
+                origin=WorkOrigin.MANUAL, conversation_id="actual-capture-contender"
+            )
+            competitor.on_drained(drains.append)
+            root = Path(workflow.request.binding.locator)
+            claim = rig.runtime.worktree_activity.try_acquire(
+                owner=competitor,
+                footprint=WorktreeFootprint(
+                    writes=(WorktreeScope(root, True, capture_directory_chain(root)),)
+                ),
+            )
+            assert claim is not None
+            release.set()
+            with pytest.raises(
+                PermissionError, match="workflow wave activity busy"
+            ) as caught:
+                await wave_task
+            assert wave.driver.done() and wave.driver.exception() is caught.value
+            assert caught.value is saved["opening_return"].error
+            assert prepared._finite_read_return(record) is saved["capture_return"]
+            assert record.positive and record.result is saved["captured"]
+            close_read = saved["close_read"]
+            assert (
+                prepared._finite_read_return(close_read) is saved["close_return"]
+                and close_read.positive
+            )
+            assert (
+                saved["release_return"]
+                and wave.closed
+                and wave not in rig.runtime._workflow_waves
+            )
+            assert (
+                prepared._closed
+                and not prepared._closing
+                and prepared not in rig.runtime._workflow_preparations
+            )
+            assert prepared._source_scope is None and scope.gen.gi_frame is None
+        else:
+            with pytest.raises(
+                RuntimeError, match="original workflow capture callback exit failure"
+            ) as caught:
+                await wave_task
+            assert caught.value is injected and saved["injected"]
+            wave, record = saved["wave"], saved["capture_read"]
+            read, producer, retired, callback = record.proof
+            assert read is record.proof[0] and callback is record.callback
+            assert (
+                read.callback is callback
+                and read.source is prepared
+                and read.task is wave.driver
+            )
+            assert (
+                producer.done()
+                and not producer.cancelled()
+                and producer.exception() is injected
+            )
+            assert (
+                retired.done() and not retired.cancelled() and retired.result() is None
+            )
+            assert record.wrapper_error is injected and not record.positive
+            with pytest.raises(
+                RuntimeError, match="original workflow reader return unproven"
+            ):
+                prepared._finite_read_return(record)
+            assert wave.driver.done() and wave.driver.exception() is injected
+            assert rig.runtime._workflow_waves[wave] is wave and prepared._wave is wave
+            assert not wave.closed and not prepared._closed and not prepared._closing
+            assert (
+                prepared.source is source
+                and prepared._lifetime is lifetime
+                and prepared._source_scope is scope
+            )
+            read_count = len(prepared._finite_reads)
+            for _ in range(2):
+                with pytest.raises(
+                    PermissionError, match="original wave close invocation required"
+                ):
+                    await prepared.close()
+                assert (
+                    len(prepared._finite_reads) == read_count
+                    and prepared._finite_reads[-1] is record
+                )
+                assert prepared._wave is wave and not prepared._closing
+        if errors:
+            raise errors[0]
+        assert wave.source is saved["captured"][0]
+        assert (
+            wave.source.ordinary_tree is wave.source.owner is wave.source.claim is None
+        )
+        with wave.source._holds_lock:
+            assert not wave.source._holds and not wave.source._closed.is_set()
+        assert wave.fence is wave.reservation is wave.publication is wave.anchor is None
+        assert (
+            not wave.baseline_return.done()
+            and not wave.ending_return.done()
+            and not wave.receipts
+        )
+        assert rig.provider.calls == []
+        with owned_goal_storage(service), db.connection() as conn:
+            assert (
+                tuple(
+                    conn.execute(
+                        "SELECT id,chain_id,owner_id,kind,amount,state FROM automatic_work_reservations WHERE id=?",
+                        (auth.claim.reservation_id,),
+                    ).fetchone()
+                )
+                == reservation
+            )
+            after = db.automatic_work.snapshot(phase.attempt.chain_id)
+            assert dict(after.used) == dict(before.used) and dict(
+                after.reserved
+            ) == dict(before.reserved)
+            assert db.list_runs(workflow.request.conversation_id) == []
+        if mode == "capture-exit":
+            print(
+                "G_CAPTURE_SOURCE_RETAINED_WITH_FAILED_PRODUCER; no creator drain",
+                flush=True,
+            )
+            os._exit(17)
+        competitor.finish_root()
+        claim.settle(durable=True)
+        assert drains == [True] and not competitor.is_admitted
+        with rig.runtime.worktree_activity._lock:
+            assert (
+                claim.id not in rig.runtime.worktree_activity._claims
+                and claim.id not in rig.runtime.worktree_activity._members
+            )
+        competitor = claim = None
+    except BaseException as error:
+        primary = error
+        raise
+    finally:
+        release.set()
+        if wave_task is not None and not wave_task.done():
+            try:
+                await wave_task
+            except BaseException as error:
+                if primary is None:
+                    raise
+                else:
+                    primary.add_note("original wave cleanup: " + type(error).__name__)
+        threading.setprofile_all_threads(previous_thread_profile)
+        sys.setprofile(previous_profile)
+        if competitor is not None:
+            competitor.finish_root()
+        if claim is not None:
+            claim.settle(durable=True)
+        try:
+            await rig.close()
+        except BaseException as cleanup:
+            if primary is None:
+                raise
+            primary.add_note("original rig cleanup: " + type(cleanup).__name__)
+
+
+@pytest.mark.parametrize("mode", ["unborrowed-close", "capture-exit"])
+async def test_original_wave_capture_retains_source_until_exact_disposition(
+    tmp_path, mode
+):
+    from pathlib import Path
+
+    from Tests.Backup_Recovery.test_home_citation_retirement import _run
+
+    if mode == "capture-exit":
+        with pytest.raises(
+            AssertionError, match="G_CAPTURE_SOURCE_RETAINED_WITH_FAILED_PRODUCER"
+        ):
+            await asyncio.to_thread(
+                _run,
+                tmp_path,
+                "wave-capture",
+                mode,
+                script=Path(__file__)
+                .with_name("workflow_coordinator_probe.py")
+                .read_text(),
+                timeout=60,
+            )
+    else:
+        await asyncio.to_thread(
+            _run,
+            tmp_path,
+            "wave-capture",
+            mode,
+            script=Path(__file__)
+            .with_name("workflow_coordinator_probe.py")
+            .read_text(),
+            timeout=60,
+        )
+
+
+async def live_bind_source_journey(tmp_path, monkeypatch):
+    from Tests.Chat.workflow_rig import WorkflowProvider, build_workflow_rig
+    from tldw_chatbook.Agents import agent_service as service_module
+    from tldw_chatbook.Agents import workflow_task_scope as task_scope
+    from tldw_chatbook.Agents.automatic_work_budget import AutomaticWorkRefused
+    from tldw_chatbook.Agents.execution_capacity import ExecutionOwner
+    from tldw_chatbook.Agents.goal_storage_lifetime import owned_goal_storage
+    from tldw_chatbook.Agents.workflow_models import WorkflowSnapshot
+    from tldw_chatbook.Chat.console_workflow_preparation import _PreparedWorkflowReply
+    from tldw_chatbook.Chat.console_workflow_wave import _workflow_wave_return
+    from tldw_chatbook.Workspaces.change_review_finalization import (
+        ChangeReviewCompletion,
+    )
+
+    mode = sys.argv[2]
+    assert mode in {"before-lookup", "after-helper"}
+    rig = await build_workflow_rig(
+        tmp_path, monkeypatch, WorkflowProvider(), change_review=True
+    )
+    saved, errors, replacement_calls, binding_calls = {}, [], [], []
+    primary = None
+    native_code = AgentService._launch_prepared_child_result.__code__
+    start_code = threading.Thread.start.__code__
+    run_wrapper = AgentService._run_one
+    run_body = run_wrapper.__wrapped__
+    bind_run_code = ExecutionOwner.bind_run.__code__
+    bind_record, helper_record, checker_record = (
+        task_scope._BIND_METHOD,
+        task_scope._BIND_SOURCE,
+        task_scope._BIND_CHECKER,
+    )
+    close_code = _PreparedWorkflowReply._close_on_native_owner.__code__
+    root_code = AgentService._finish_execution.__code__
+    codes = {
+        start_code,
+        bind_run_code,
+        helper_record[1],
+        bind_record[1],
+        close_code,
+        root_code,
+    }
+    previous_profile, previous_thread_profile = sys.getprofile(), threading.getprofile()
+    previous_trace, previous_thread_trace = sys.gettrace(), threading.gettrace()
+
+    def replacement(self, *, owner, activity_claim):
+        replacement_calls.append((self, owner, activity_claim))
+        raise AssertionError("changed bind receiver executed")
+
+    def original_caller(body):
+        assert (
+            body.f_code is run_body.__code__
+            and body.f_locals["self"] is saved["service"]
+        )
+        wrapper = body.f_back
+        assert (
+            wrapper.f_code is run_wrapper.__code__
+            and wrapper.f_locals["function"] is run_body
+        )
+        outer = wrapper.f_back
+        assert outer.f_code is AgentService._run_owned.__code__
+        assert outer.f_locals["self"] is saved["service"]
+        assert outer.f_locals["workflow_task_authorization"] is saved["auth"]
+        assert outer.f_locals["workflow_activity_claim"] is saved["claim"]
+        assert task_scope._CURRENT.get() is saved["auth"]
+        assert threading.current_thread() is saved["thread"]
+        assert body.f_locals["owner"] is saved["owner"]
+        assert body.f_locals["run_id"] == saved["auth"].claim.launch_run_id
+        assert not saved["auth"]._binding_state
+        assert (
+            not saved["auth"]._lock.locked()
+            and not saved["owner"].capacity._lock.locked()
+        )
+        saved["body"] = body
+
+    def observe(frame, event, result):
+        if frame.f_code not in codes and frame.f_code is not saved.get("target_code"):
+            return
+        try:
+            normal = event == "return" and dis.opname[
+                frame.f_code.co_code[frame.f_lasti]
+            ] in {"RETURN_VALUE", "RETURN_CONST"}
+            if (
+                frame.f_code is start_code
+                and event == "call"
+                and frame.f_back.f_code is native_code
+            ):
+                parent = frame.f_back
+                entry = parent.f_locals["entry"]
+                if entry is None or entry.mode != "W":
+                    return
+                run = rig.coordinator._runs[rig.workflow.id]
+                thread, target = (
+                    frame.f_locals["self"],
+                    parent.f_locals["run_child_owned"],
+                )
+                assert thread._target is target and parent.f_locals["thread"] is thread
+                assert (
+                    entry.wave.phase is run.phase
+                    and entry.preparation.phase is run.phase
+                )
+                kwargs = parent.f_locals["child_kwargs"]
+                assert kwargs["workflow_task_authorization"] is entry.authorization
+                saved.update(
+                    entry=entry,
+                    prepared=entry.preparation,
+                    auth=entry.authorization,
+                    native=entry.native,
+                    service=entry.service,
+                    wave=entry.wave,
+                    run=run,
+                    intake=run.intake,
+                    token=run.token,
+                    thread=thread,
+                    target=target,
+                    target_code=target.__code__,
+                    child_code=parent.f_locals["run_child"].__code__,
+                    owner=parent.f_locals["child_owner"],
+                    claim=kwargs["workflow_activity_claim"],
+                    source=entry.preparation.source,
+                    lifetime=entry.preparation._lifetime,
+                    launch=entry.preparation._launch_operation,
+                )
+            elif (
+                frame.f_code is bind_run_code
+                and normal
+                and frame.f_locals["self"] is saved.get("owner")
+            ):
+                body = frame.f_back
+                if body.f_code is not run_body.__code__:
+                    return
+                original_caller(body)
+                assert saved["owner"].run_id == saved["auth"].claim.launch_run_id
+                saved["bound_owner"] = True
+                if mode == "before-lookup":
+                    assert (
+                        task_scope.WorkflowTaskAuthorization.bind_native
+                        is bind_record[0]
+                    )
+                    task_scope.WorkflowTaskAuthorization.bind_native = replacement
+                    saved["changed"] = True
+            elif (
+                frame.f_code is helper_record[1]
+                and normal
+                and frame.f_back.f_code is run_body.__code__
+            ):
+                body = frame.f_back
+                original_caller(body)
+                assert body.f_locals["checked_helper"] is False
+                assert body.f_locals["task_authorization"] is saved["auth"]
+                assert body.f_locals["bind_native"] is bind_record[0]
+                assert body.f_locals["source"] is helper_record[0]
+                assert body.f_locals["checker"] is checker_record[0]
+                assert (
+                    body.f_locals["method_record"] is bind_record
+                    and body.f_locals["source_record"] is helper_record
+                    and body.f_locals["checker_record"] is checker_record
+                )
+                assert service_module._WORKFLOW_BINDING_SOURCE[0] is task_scope
+                assert (
+                    mode == "after-helper"
+                    and task_scope.WorkflowTaskAuthorization.bind_native
+                    is bind_record[0]
+                )
+                task_scope.WorkflowTaskAuthorization.bind_native = replacement
+                saved["changed"] = True
+            elif (
+                frame.f_code is bind_record[1]
+                and event == "call"
+                and frame.f_locals.get("self") is saved.get("auth")
+            ):
+                binding_calls.append(frame)
+            elif (
+                frame.f_code is close_code
+                and normal
+                and frame.f_locals["self"] is saved.get("prepared")
+            ):
+                assert frame.f_locals["owner"] is saved["owner"]
+                saved["native_close_return"] = True
+            elif (
+                frame.f_code is root_code
+                and normal
+                and frame.f_locals["owner"] is saved.get("owner")
+            ):
+                assert frame.f_locals["self"] is saved["service"]
+                saved["root_return"] = True
+            elif (
+                frame.f_code is saved.get("target_code")
+                and normal
+                and threading.current_thread() is saved["thread"]
+            ):
+                saved["target_return"] = (frame, result)
+        except BaseException as error:  # noqa: BLE001 - observations cannot alter native callbacks.
+            errors.append(error)
+
+    def trace(frame, event, value):
+        if frame.f_code is not run_body.__code__ and frame.f_code is not saved.get(
+            "child_code"
+        ):
+            return None
+        if event == "exception" and saved:
+            try:
+                error_type, error, _tb = value
+                if (
+                    frame.f_code is run_body.__code__
+                    and frame.f_locals.get("self") is saved["service"]
+                ):
+                    assert (
+                        frame is saved["body"]
+                        and threading.current_thread() is saved["thread"]
+                    )
+                    assert frame.f_locals["task_authorization"] is saved["auth"]
+                    assert error_type is AutomaticWorkRefused
+                    assert (
+                        str(error)
+                        == "workflow_task_original_native_binding_source_changed"
+                    )
+                    saved["source_error"] = error
+                elif (
+                    frame.f_code is saved["child_code"]
+                    and threading.current_thread() is saved["thread"]
+                ):
+                    assert error is saved["source_error"]
+                    saved["child_error"] = error
+            except BaseException as error:  # noqa: BLE001 - trace errors remain separate from native outcome.
+                errors.append(error)
+        return trace
+
+    try:
+        rig.workflow = await rig.coordinator.start(
+            rig.workflow.request, launch_id=rig.workflow.launch_id
+        )
+        await asyncio.shield(rig.coordinator._runs[rig.workflow.id].driver)
+        await rig.wait_for_status("awaiting_phase_review")
+        decision = await rig.service.call(
+            rig.service.prepare_decision, rig.workflow.id, phase_id="phase-1"
+        )
+        threading.setprofile_all_threads(observe)
+        threading.settrace(trace)
+        await rig.coordinator.approve(decision, command_id="original-bind-source")
+        run = rig.coordinator._runs[rig.workflow.id]
+        await asyncio.shield(run.driver)
+        if errors:
+            raise errors[0]
+        assert saved["changed"] and saved["bound_owner"] and saved["run"] is run
+        saved["thread"].join(5)
+        assert not saved["thread"].is_alive() and saved["target_return"][1] is None
+        assert saved["native_close_return"] and saved["root_return"]
+        assert (
+            saved["source_error"] is saved["child_error"]
+            and not replacement_calls
+            and not binding_calls
+        )
+        prepared, auth, wave, owner = (
+            saved["prepared"],
+            saved["auth"],
+            saved["wave"],
+            saved["owner"],
+        )
+        assert (
+            not auth._binding_state
+            and prepared._native_closed
+            and prepared._close_operation is None
+        )
+        assert prepared._launch_operation is None and not owner.is_admitted
+        assert (
+            prepared.source is saved["source"]
+            and prepared._lifetime is saved["lifetime"]
+        )
+        assert len(wave.receipts) == 1 and wave.receipts[0][0] is prepared
+        receipt = wave.receipts[0][1]
+        assert (
+            receipt is auth._native_launch[0]
+            and receipt.owner is owner
+            and receipt.activity_claim is saved["claim"]
+        )
+        assert receipt.failure is None and receipt.run_id == auth.claim.launch_run_id
+        tracker = rig.service._tasks[auth.claim.id]
+        assert tracker.receipt is receipt and tracker.drain is True
+        assert wave.driver.done() and not wave.driver.cancelled()
+        assert wave.driver.exception() is None
+        assert wave.driver.result() is wave.reservation
+        assert wave.closed and wave not in rig.runtime._workflow_waves
+        assert run.driver.done() and not run.driver.cancelled()
+        assert run.driver.exception() is None
+        assert len(run.waves) == 1
+        returned_wave = run.waves[0]
+        assert returned_wave[0] is wave and returned_wave[1] is wave.driver
+        assert returned_wave[6][0][0] is prepared and returned_wave[6][0][1] is receipt
+        assert _workflow_wave_return(wave, saved=returned_wave) is returned_wave
+        assert wave.baseline_return.result() is ChangeReviewCompletion.OBSERVED
+        assert wave.anchor is None and not wave.ending_return.done()
+        assert wave.reservation.completion is ChangeReviewCompletion.CANCELLED
+        assert prepared._closed and prepared._source_scope is None
+        close_read = prepared._finite_reads[-1]
+        prepared._finite_read_return(close_read)
+        assert close_read.positive and close_read.wrapper_error is None
+        assert close_read.body_error is None
+        activity = rig.runtime.worktree_activity
+        with activity._lock:
+            assert saved["claim"].id not in activity._claims
+            assert saved["claim"].id not in activity._members
+        with owned_goal_storage(rig.service), rig.service.db.connection() as conn:
+            state = conn.execute(
+                "SELECT state FROM automatic_work_reservations WHERE id=?",
+                (auth.claim.reservation_id,),
+            ).fetchone()[0]
+            task = conn.execute(
+                "SELECT run_id,status,retirement FROM workflow_task_attempts WHERE id=?",
+                (auth.claim.id,),
+            ).fetchone()
+            assert state == "committed" and tuple(task) == (
+                receipt.run_id,
+                "failed",
+                "drained",
+            )
+            result = conn.execute(
+                "SELECT json_extract(payload_json,'$.run_id'),json_extract(payload_json,'$.status') "
+                "FROM workflow_results WHERE attempt_id=?",
+                (auth.claim.id,),
+            ).fetchall()
+            checkpoint = conn.execute(
+                "SELECT json_extract(payload_json,'$.run_id') FROM workflow_checkpoints WHERE attempt_id=?",
+                (auth.claim.id,),
+            ).fetchall()
+            assert [tuple(row) for row in result] == [(receipt.run_id, "failed")]
+            assert [tuple(row) for row in checkpoint] == [(receipt.run_id,)]
+            assert auth.phase is run.phase
+            assert (
+                auth.claim.phase_attempt_id
+                == auth.phase.attempt.id
+                == run.phase.attempt.id
+            )
+            phase = conn.execute(
+                "SELECT status,retirement FROM workflow_phase_attempts WHERE native_attempt_id=?",
+                (auth.claim.phase_attempt_id,),
+            ).fetchone()
+            assert tuple(phase) == ("failed", "drained")
+            window = conn.execute(
+                "SELECT state,baseline,ending,snapshot_count FROM workflow_change_windows WHERE id=?",
+                (wave.reservation.id,),
+            ).fetchone()
+            assert tuple(window) == ("unused", "completed", "unused", 0)
+            assert (
+                conn.execute(
+                    "SELECT COUNT(*) FROM workflow_change_window_refs WHERE window_id=?",
+                    (wave.reservation.id,),
+                ).fetchone()[0]
+                == 0
+            )
+            assert rig.service.db.get_run(receipt.run_id)["status"] == "error"
+        snapshot = await rig.coordinator.get(rig.workflow.id)
+        assert type(snapshot) is WorkflowSnapshot and snapshot.status == "paused"
+        assert [
+            (result.workflow_id, result.attempt_id, result.run_id, result.status)
+            for result in snapshot.results
+        ] == [(rig.workflow.id, auth.claim.id, receipt.run_id, "failed")]
+        durable = await rig.service.call(rig.service.get, rig.workflow.id)
+        assert durable.status == "awaiting_resume"
+        assert snapshot.accounting.used["generation"] == 2
+        assert (
+            snapshot.accounting.used["child_launch"] == 1
+            and snapshot.accounting.used["model_call"] == 1
+        )
+        assert [key for key, _ in rig.provider.calls] == ["planning"]
+        assert rig.workflow.id not in rig.coordinator._runs
+        assert run.intake is saved["intake"] and run.token is saved["token"]
+        with rig.store._preparation_lock:
+            assert (
+                rig.store._preparations_by_session.get(run.session_id)
+                is not saved["intake"]
+            )
+        wake = rig.controller._fleet_wake
+        with wake._registry_lock:
+            assert (
+                wake._automatic_primary_claims.get(run.session_id) is not saved["token"]
+            )
+        assert rig.runtime.execution_capacity.snapshot().executions == ()
+    except BaseException as error:
+        primary = error
+        raise
+    finally:
+        threading.setprofile_all_threads(previous_thread_profile)
+        sys.setprofile(previous_profile)
+        threading.settrace(previous_thread_trace)
+        sys.settrace(previous_trace)
+        rig.provider_release()
+        if "thread" in saved:
+            saved["thread"].join(5)
+        try:
+            await rig.close()
+        except BaseException as cleanup:
+            if primary is None:
+                raise
+            primary.add_note(
+                "original live-bind rig cleanup: " + type(cleanup).__name__
+            )
+
+
+@pytest.mark.parametrize("mode", ["before-lookup", "after-helper"])
+async def test_original_live_bind_receiver_refuses_replacement_before_invocation(
+    tmp_path, mode
+):
+    from pathlib import Path
+
+    from Tests.Backup_Recovery.test_home_citation_retirement import _run
+
+    await asyncio.to_thread(
+        _run,
+        tmp_path,
+        "live-bind",
+        mode,
+        script=Path(__file__).with_name("workflow_coordinator_probe.py").read_text(),
+        timeout=60,
+    )
+
+
+async def callback_baseexception_journey(tmp_path, _unused):
+    import os
+    from types import SimpleNamespace
+
+    from tldw_chatbook.Agents.agent_service import _NativeWorkflowReturn
+    from tldw_chatbook.Agents.execution_capacity import ExecutionOwner
+
+    class CallbackReturnUnproven(BaseException):
+        pass
+
+    generator = launch = None
+    primary = None
+    entered, release = threading.Event(), threading.Event()
+    saved, errors, normal_finishes = {}, [], []
+    constructor_error = RuntimeError("original constructor before callback failure")
+    callback_error = CallbackReturnUnproven("original callback did not return")
+    native_code = AgentService._launch_prepared_child_result.__code__
+    own_code = AgentService._workflow_launch_result.__code__
+    finish_code = AgentService._finish_workflow_launch.__code__
+    constructor_code = threading.Thread.__init__.__code__
+    previous_thread_trace, previous_trace = threading.gettrace(), sys.gettrace()
+    previous_thread_profile, previous_profile = threading.getprofile(), sys.getprofile()
+    with pytest.MonkeyPatch.context() as monkeypatch:
+        try:
+            generator = native_tests.native_host.__wrapped__(
+                tmp_path, monkeypatch, SimpleNamespace(param=None)
+            )
+            h = await anext(generator)
+            prepared = await h.bridge._prepare_workflow_reply(
+                phase=h.phase,
+                task_id="task-1",
+                binding=h.binding,
+                resolution=h.selected,
+            )
+            auth = prepared.authorization
+            native = auth._native_preparation[0]
+            source, lifetime, source_scope = (
+                prepared.source,
+                prepared._lifetime,
+                prepared._source_scope,
+            )
+            before = h.db.automatic_work.snapshot(auth.claim.chain_id)
+
+            def inject(frame, event, value):
+                if event != "call" or frame.f_code is not constructor_code:
+                    return
+                parent = frame.f_back
+                if parent is None or parent.f_code is not native_code:
+                    return
+                entry = parent.f_locals.get("entry")
+                if entry is None or entry.preparation is not prepared:
+                    return
+                try:
+                    assert (
+                        entry.mode == "D"
+                        and entry.authorization is auth
+                        and entry.native is native
+                    )
+                    assert parent.f_locals["thread"] is None
+                    assert parent.f_locals["start_entered"] is False
+                    assert parent.f_locals["native_thread_started"] is False
+                    assert (
+                        frame.f_locals["target"] is parent.f_locals["run_child_owned"]
+                    )
+                    saved.update(
+                        entry=entry,
+                        owner=parent.f_locals["child_owner"],
+                        claim=parent.f_locals["child_kwargs"][
+                            "workflow_activity_claim"
+                        ],
+                        operation=prepared._launch_operation,
+                    )
+                except BaseException as error:  # noqa: BLE001 - observations never supply the deliberate fault.
+                    errors.append(error)
+                    return
+                threading.settrace_all_threads(None)
+                sys.settrace(None)
+                raise constructor_error
+
+            def callback(outcome):
+                try:
+                    owner, operation = saved["owner"], saved["operation"]
+                    assert (
+                        outcome is True
+                        and threading.current_thread() is saved["worker"]
+                    )
+                    with owner.capacity._lock:
+                        assert owner.execution_id not in owner.capacity._owners
+                        assert (
+                            operation not in owner._operations and owner._root_finished
+                        )
+                    assert not auth._lock.locked()
+                    assert prepared._launch_operation is operation
+                    saved["callback"] = (
+                        threading.current_thread(),
+                        owner,
+                        operation,
+                        outcome,
+                    )
+                except BaseException as error:  # noqa: BLE001 - observer errors cannot substitute for native failure.
+                    errors.append(error)
+                    return
+                raise callback_error
+
+            codes = {native_code, own_code, finish_code}
+
+            def observe(frame, event, result):
+                if (
+                    frame.f_code not in codes
+                    or event != "return"
+                    or dis.opname[frame.f_code.co_code[frame.f_lasti]]
+                    not in {"RETURN_VALUE", "RETURN_CONST"}
+                ):
+                    return
+                try:
+                    if frame.f_code is native_code:
+                        if (
+                            not saved
+                            or frame.f_locals.get("entry") is not saved["entry"]
+                        ):
+                            return
+                        assert type(result) is _NativeWorkflowReturn and result.known
+                        assert frame.f_locals["thread"] is None
+                        assert frame.f_locals["start_entered"] is False
+                        assert frame.f_locals["native_thread_started"] is False
+                        assert result.receipt.failure == "thread_start"
+                        assert result.receipt.owner is saved["owner"]
+                        assert result.receipt.activity_claim is saved["claim"]
+                        saved["native_return"] = result
+                    elif frame.f_code is own_code:
+                        if (
+                            type(result) is not _WorkflowLaunchReturn
+                            or result.entry.preparation is not prepared
+                        ):
+                            return
+                        assert (
+                            result.entry is saved["entry"]
+                            and result.known
+                            and not result.wait
+                            and not result.duplicate
+                        )
+                        actual = saved["native_return"]
+                        assert (
+                            result.error is actual.error
+                            and result.receipt is actual.receipt
+                        )
+                        assert (
+                            result.operation
+                            is saved["operation"]
+                            is prepared._launch_operation
+                        )
+                        assert (
+                            result.owner is saved["owner"]
+                            and result.claim is saved["claim"]
+                        )
+                        assert (
+                            prepared._native_closed
+                            and prepared._close_operation is None
+                        )
+                        assert not native.threads and not native.uncertain_start
+                        saved.update(result=result, worker=threading.current_thread())
+                        entered.set()
+                        if not release.wait(5):
+                            errors.append(
+                                AssertionError("original own-return hold exceeded5s")
+                            )
+                    elif saved and frame.f_locals.get("result") is saved.get("result"):
+                        normal_finishes.append(frame)
+                except BaseException as error:  # noqa: BLE001 - native callbacks retain their original outcome.
+                    errors.append(error)
+                    entered.set()
+
+            threading.settrace_all_threads(inject)
+            threading.setprofile_all_threads(observe)
+            launch = asyncio.create_task(
+                native_tests._launch_native_for_test(h, prepared)
+            )
+            assert await asyncio.to_thread(entered.wait, 5)
+            if errors:
+                raise errors[0]
+            result = saved["result"]
+            owner, operation, claim = result.owner, result.operation, result.claim
+            with owner.capacity._lock:
+                assert owner._root_finished and owner._operations == {operation}
+                assert owner.capacity._owners.get(owner.execution_id) is owner
+            owner.on_drained(callback)
+            release.set()
+            with pytest.raises(CallbackReturnUnproven) as caught:
+                await launch
+            assert (
+                caught.value is callback_error and launch.exception() is callback_error
+            )
+            if errors:
+                raise errors[0]
+            assert not normal_finishes
+            assert saved["callback"][0] is saved["worker"]
+            assert saved["callback"][1] is owner and saved["callback"][2] is operation
+            assert saved["callback"][3] is True
+            frames = []
+            tb = caught.value.__traceback__
+            while tb is not None:
+                frames.append(tb.tb_frame)
+                tb = tb.tb_next
+            assert any(
+                frame.f_code is callback.__code__ and frame.f_locals["outcome"] is True
+                for frame in frames
+            )
+            assert any(
+                frame.f_code is ExecutionOwner._invoke_callbacks.__code__
+                for frame in frames
+            )
+            assert any(
+                frame.f_code is OwnedOperation.finish.__code__
+                and frame.f_locals["self"] is operation
+                for frame in frames
+            )
+            assert any(
+                frame.f_code is finish_code and frame.f_locals["result"] is result
+                for frame in frames
+            )
+            threading.setprofile_all_threads(previous_thread_profile)
+            sys.setprofile(previous_profile)
+            threading.settrace_all_threads(previous_thread_trace)
+            sys.settrace(previous_trace)
+            assert (
+                result.error is saved["native_return"].error
+                and result.error is not callback_error
+            )
+            assert result.error.receipt is result.receipt
+            assert result.receipt is auth._native_launch[0]
+            assert (
+                prepared._launch_operation is operation
+                and prepared._close_operation is None
+            )
+            assert (
+                prepared._native_closed
+                and not native.threads
+                and not native.uncertain_start
+            )
+            with owner.capacity._lock:
+                assert (
+                    owner.execution_id not in owner.capacity._owners
+                    and operation not in owner._operations
+                )
+            activity = h.runtime.worktree_activity
+            with activity._lock:
+                state = activity._claims[claim.id]
+                member = activity._members[claim.id]
+                assert state.custody is claim and state.members[claim.id] is member
+                assert (
+                    member.owner is owner
+                    and member.drained is True
+                    and member.durable is False
+                )
+            assert h.db.get_run(result.receipt.run_id)["status"] == "error"
+            with h.db.connection() as conn:
+                assert (
+                    conn.execute(
+                        "SELECT state FROM automatic_work_reservations WHERE id=?",
+                        (auth.claim.reservation_id,),
+                    ).fetchone()[0]
+                    == "released"
+                )
+                assert (
+                    conn.execute(
+                        "SELECT 1 FROM workflow_results WHERE attempt_id=? UNION ALL SELECT 1 FROM workflow_checkpoints WHERE attempt_id=?",
+                        (auth.claim.id, auth.claim.id),
+                    ).fetchall()
+                    == []
+                )
+            current = h.db.automatic_work.snapshot(auth.claim.chain_id)
+            assert dict(current.used) == dict(before.used)
+            assert (
+                current.reserved["child_launch"] == 0
+                and before.reserved["child_launch"] == 1
+            )
+            assert h.calls == []
+            for _ in range(2):
+                count = len(prepared._finite_reads)
+                with pytest.raises(
+                    PermissionError, match="workflow launch return has not completed"
+                ) as closing:
+                    await prepared.close()
+                assert len(prepared._finite_reads) == count + 1
+                record = prepared._finite_reads[-1]
+                assert (
+                    record.prepared is prepared
+                    and record.issuing is asyncio.current_task()
+                )
+                read, producer, retired, original_callback = record.proof
+                assert record.callback is original_callback is read.callback
+                assert (
+                    read.source is prepared
+                    and read.task is record.issuing
+                    and read.creator is h.controller
+                )
+                assert read._producer is producer and read.retired is retired
+                assert (
+                    producer.done()
+                    and not producer.cancelled()
+                    and producer.exception() is closing.value
+                )
+                assert (
+                    record.wrapper_error is closing.value
+                    and not record.positive
+                    and not record.scopes_returned
+                )
+                assert prepared in h.runtime._workflow_preparations
+                assert (
+                    prepared.source is source
+                    and prepared._lifetime is lifetime
+                    and prepared._source_scope is source_scope
+                )
+                assert (
+                    prepared._launch_operation is operation
+                    and not prepared._closed
+                    and not prepared._closing
+                )
+                assert (
+                    len(auth._native_launch) == 1
+                    and auth._native_launch[0] is result.receipt
+                    and not native.threads
+                    and not native.uncertain_start
+                )
+                assert prepared._native_closed and prepared._close_operation is None
+                assert h.calls == []
+                counts = h.db.automatic_work.snapshot(auth.claim.chain_id)
+                assert dict(counts.used) == dict(current.used) and dict(
+                    counts.reserved
+                ) == dict(current.reserved)
+                with activity._lock:
+                    assert (
+                        activity._claims[claim.id] is state
+                        and activity._members[claim.id] is member
+                    )
+                    assert member.drained is True and member.durable is False
+                with h.db.connection() as conn:
+                    assert (
+                        conn.execute(
+                            "SELECT 1 FROM workflow_results WHERE attempt_id=? UNION ALL SELECT 1 FROM workflow_checkpoints WHERE attempt_id=?",
+                            (auth.claim.id, auth.claim.id),
+                        ).fetchall()
+                        == []
+                    )
+            print(
+                "G_POST_REMOVAL_CALLBACK_RETAINED; no fixture or creator return",
+                flush=True,
+            )
+            os._exit(17)
+        except BaseException as error:
+            primary = error
+            raise
+        finally:
+            release.set()
+            try:
+                if launch is not None:
+                    try:
+                        await launch
+                    except BaseException as error:
+                        if primary is None:
+                            raise
+                        primary.add_note(
+                            "original launch cleanup: " + type(error).__name__
+                        )
+            finally:
+                threading.setprofile_all_threads(previous_thread_profile)
+                sys.setprofile(previous_profile)
+                threading.settrace_all_threads(previous_thread_trace)
+                sys.settrace(previous_trace)
+                if generator is not None:
+                    try:
+                        await generator.aclose()
+                    except BaseException as error:
+                        if primary is None:
+                            raise
+                        primary.add_note(
+                            "original fixture cleanup: " + type(error).__name__
+                        )
+
+
+async def test_original_callback_baseexception_retains_removed_operation_custody(
+    tmp_path,
+):
+    import subprocess
+    from pathlib import Path
+
+    from Tests.Backup_Recovery.test_home_citation_retirement import _run
+
+    route, outcome = "callback-baseexception", "retained"
+    script = Path(__file__).with_name("workflow_coordinator_probe.py").read_text()
+    with pytest.raises(
+        AssertionError, match="G_POST_REMOVAL_CALLBACK_RETAINED"
+    ) as caught:
+        await asyncio.to_thread(
+            _run, tmp_path, route, outcome, script=script, timeout=60
+        )
+    frames = []
+    tb = caught.value.__traceback__
+    while tb is not None:
+        if tb.tb_frame.f_code is _run.__code__:
+            frames.append(tb.tb_frame)
+        tb = tb.tb_next
+    assert len(frames) == 1
+    original = frames[0].f_locals
+    assert original["tmp_path"] is tmp_path and original["script"] is script
+    assert original["route"] == route and original["outcome"] == outcome
+    process_result = original["result"]
+    assert type(process_result) is subprocess.CompletedProcess
+    assert process_result.returncode == 17 and process_result.args[-2:] == [
+        route,
+        outcome,
+    ]

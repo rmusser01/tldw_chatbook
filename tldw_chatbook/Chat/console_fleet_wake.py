@@ -11,6 +11,8 @@ Badges never grant delivery or recovery authority (ADR-134/135 and ADR-199).
 from __future__ import annotations
 
 import asyncio
+import contextvars
+import inspect
 import re
 import threading
 import time
@@ -883,7 +885,9 @@ class ConsoleFleetWakeCoordinator:
             self._coalesce_until.pop(conversation_id, None)
         coroutine = self._deliver(conversation_id, session_id, delivery.slot_token)
         try:
-            task = loop.create_task(coroutine)
+            # Child settlement callbacks may carry their worker execution context.
+            # This independent delivery issues its own native wake authority.
+            task = loop.create_task(coroutine, context=contextvars.Context())
         except Exception as exc:  # noqa: BLE001 - failed scheduling grants no authority
             logger.warning(
                 "wake delivery task could not be scheduled; deferring (exception_type={})",
@@ -1823,3 +1827,47 @@ class ConsoleFleetWakeCoordinator:
 
         with self._registry_lock:
             self._delivery_tasks.pop(task, None)
+
+
+def _workflow_wake_source(wake):
+    """Verify the finite native receivers used at workflow return and disposal."""
+    check = _WORKFLOW_WAKE_CHECK
+    if (
+        _wake_function_unchanged is not check[0]
+        or check[0].__code__ is not check[1]
+        or check[0].__defaults__ is not check[2]
+        or check[0].__kwdefaults__ is not check[3]
+        or check[0].__closure__ is not check[5]
+    ):
+        raise PermissionError("original workflow wake source checker changed")
+    if (
+        ConsoleFleetWakeCoordinator is not _WORKFLOW_WAKE_CLASS
+        or type(wake) is not _WORKFLOW_WAKE_CLASS
+        or _workflow_wake_source is not _WORKFLOW_WAKE_SOURCE[0]
+        or not _wake_function_unchanged(_WORKFLOW_WAKE_SOURCE)
+        or any(
+            inspect.getattr_static(_WORKFLOW_WAKE_CLASS, name) is not record[0]
+            or inspect.getattr_static(wake, name) is not record[0]
+            or not _wake_function_unchanged(record)
+            for name, record in _WORKFLOW_WAKE_METHODS
+        )
+    ):
+        raise PermissionError("original workflow wake receiver changed")
+
+
+from .console_ordinary_tree import _function_record as _wake_function_record
+from .console_ordinary_tree import _function_unchanged as _wake_function_unchanged
+
+_WORKFLOW_WAKE_CLASS = ConsoleFleetWakeCoordinator
+_WORKFLOW_WAKE_CHECK = _wake_function_record(_wake_function_unchanged)
+_WORKFLOW_WAKE_SOURCE = _wake_function_record(_workflow_wake_source)
+_WORKFLOW_WAKE_METHODS = tuple(
+    (name, _wake_function_record(getattr(ConsoleFleetWakeCoordinator, name)))
+    for name in (
+        "release_automatic_primary",
+        "retry_soon",
+        "dispose",
+        "_attempt_all",
+        "_attempt",
+    )
+)

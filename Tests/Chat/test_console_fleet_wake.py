@@ -1744,7 +1744,7 @@ def test_a_failed_delivery_task_never_wedges_the_delivering_flag(monkeypatch):
         def is_closed(self):
             return False
 
-        def create_task(self, coro):
+        def create_task(self, coro, *, context=None):
             self.calls += 1
             coro.close()
             raise RuntimeError("Event loop is closed")
@@ -1777,7 +1777,7 @@ def test_a_failed_delivery_task_never_wedges_the_delivering_flag(monkeypatch):
         def is_closed(self):
             return False
 
-        def create_task(self, coro):
+        def create_task(self, coro, *, context=None):
             self.tasks.append(coro)
             coro.close()
             return _FakeTask()

@@ -248,6 +248,7 @@ class WorkflowPhaseAuthorization:
         self._committed_tasks = {}
         self._paused_tasks = {}
         self._retired = False
+        self._quiescence = None
         self.attempt = attempt
         self._ledger, self._session = _live_owner(
             controller, attempt.session_id, attempt
@@ -1226,7 +1227,92 @@ def _metadata_publication_return(coordinator, run, cell):
         raise RuntimeError("original workflow publication discard unproven")
 
 
-@dataclass
+def _execution_release_source(coordinator, binding, *, released=False):
+    """Recheck the original execution's finite, host-owned release receivers."""
+    import asyncio
+
+    from . import console_chat_store as store_source
+    from . import console_fleet_wake as wake_source
+
+    check = _FUNCTION_CHECK
+    if (
+        _function_unchanged is not check[0]
+        or check[0].__code__ is not check[1]
+        or check[0].__defaults__ is not check[2]
+        or check[0].__kwdefaults__ is not check[3]
+        or check[0].__closure__ is not check[5]
+    ):
+        raise PermissionError("original workflow release checker changed")
+    if (
+        type(coordinator) is not _COORDINATOR_CLASS
+        or any(
+            globals().get(name) is not record[0] or not _function_unchanged(record)
+            for name, record in _EXECUTION_RELEASE_FUNCTIONS
+        )
+        or any(
+            inspect.getattr_static(coordinator, name) is not record[0]
+            or inspect.getattr_static(_COORDINATOR_CLASS, name) is not record[0]
+            or not _function_unchanged(record)
+            for name, record in _EXECUTION_RELEASE_METHODS
+        )
+        or wake_source._workflow_wake_source is not _EXECUTION_WAKE_SOURCE[0]
+        or not _function_unchanged(_EXECUTION_WAKE_SOURCE)
+    ):
+        raise PermissionError("original workflow release source changed")
+    (
+        original,
+        run,
+        phase,
+        issuing,
+        loop,
+        runtime,
+        controller,
+        store,
+        wake,
+        intake,
+        token,
+        registry_lock,
+        wake_loop,
+    ) = binding
+    if (
+        original is not coordinator
+        or coordinator.runtime is not runtime
+        or coordinator.controller is not controller
+        or coordinator.loop is not loop
+        or asyncio.get_running_loop() is not loop
+        or asyncio.current_task() is not issuing
+        or run.driver is not issuing
+        or issuing.get_coro().cr_code is not _EXECUTION_RELEASE_METHODS[0][1][1]
+        or run.phase is not phase
+        or phase.attempt.purpose != "execution"
+        or runtime._chat_controller is not controller
+        or runtime._workflow_coordinator is not coordinator
+        or controller.app.console_runtime is not runtime
+        or controller.store is not store
+        or store_source.ConsoleChatStore is not _EXECUTION_STORE_CLASS
+        or type(store) is not _EXECUTION_STORE_CLASS
+        or inspect.getattr_static(store, "release_received_turn")
+        is not _EXECUTION_RECEIVED_RELEASE[0]
+        or inspect.getattr_static(_EXECUTION_STORE_CLASS, "release_received_turn")
+        is not _EXECUTION_RECEIVED_RELEASE[0]
+        or not _function_unchanged(_EXECUTION_RECEIVED_RELEASE)
+        or controller._fleet_wake is not wake
+        or wake._controller is not controller
+        or wake._registry_lock is not registry_lock
+        or wake._loop is not wake_loop
+        or run.intake is not intake
+        or run.token is not token
+        or (
+            run.workflow_id in coordinator._runs
+            if released
+            else coordinator._runs.get(run.workflow_id) is not run
+        )
+    ):
+        raise PermissionError("original workflow release receiver changed")
+    _EXECUTION_WAKE_SOURCE[0](wake)
+
+
+@dataclass(eq=False)
 class _WorkflowRun:
     """Original native producers retained until their actual physical returns."""
 
@@ -1251,6 +1337,16 @@ class _WorkflowRun:
     command_id: str | None = None
     decision: object = None
     final_metadata: object = None
+    planning_input: object = None
+    planning_snapshot: object = None
+    planning_reads: object = None
+    planning_entered: bool = False
+    planning_constructing: bool = False
+    planning_returned: bool = False
+    planning_error: object = None
+    preparation_returns: list = field(default_factory=list)
+    waves: list = field(default_factory=list)
+    accounting_error: object = None
 
 
 @dataclass(eq=False)
@@ -1270,6 +1366,268 @@ class _WorkflowMetadataRead:
     source_error: object = None
 
 
+@dataclass(eq=False)
+class _WorkflowQuiescence:
+    """The same accepted phase's current accounting return, never authority."""
+
+    coordinator: object
+    run: object
+    phase: object
+    issuing: object
+    preparations: tuple
+    waves: tuple
+    mode: str = "quiesce"
+    proof: object = None
+    callback: object = None
+    interval: object = None
+    idle_proof: object = None
+    idle_callback: object = None
+    error: object = None
+    producer_error: object = None
+
+
+def _quiescence_source(cell):
+    """Check only the original retained receiving objects and definitions."""
+    from . import console_workflow_preparation as preparation
+
+    if type(cell) is not _QUIESCENCE_CLASS:
+        raise PermissionError("original workflow accounting record required")
+    coordinator, run, phase = cell.coordinator, cell.run, cell.phase
+    _workflow_read_sources()
+    if (
+        type(cell) is not _QUIESCENCE_CLASS
+        or type(coordinator) is not _COORDINATOR_CLASS
+        or coordinator._runs.get(run.workflow_id) is not run
+        or run.phase is not phase
+        or phase._quiescence is not cell
+        or coordinator.controller.app.console_runtime is not coordinator.runtime
+        or coordinator.runtime._workflow_coordinator is not coordinator
+        or coordinator.runtime._workflow_service is not coordinator.service
+        or coordinator.runtime.chat_controller is not coordinator.controller
+        or phase._controller is not coordinator.controller
+        or phase._ledger is not coordinator.service.db.automatic_work
+        or (phase._ledger._wall_clock, phase._ledger._monotonic_clock) != _CLOCKS
+        or run.driver is not cell.issuing
+        or run.control_unknown
+        or run.status == "recovery_required"
+        or any(
+            globals().get(name) is not record[0] or not _function_unchanged(record)
+            for name, record in _QUIESCENCE_FUNCTIONS
+        )
+        or any(
+            inspect.getattr_static(coordinator, name) is not record[0]
+            or not _function_unchanged(record)
+            for name, record in _QUIESCENCE_COORDINATOR_RECORDS
+        )
+        or len(run.preparation_returns) != len(cell.preparations)
+        or any(a is not b for a, b in zip(run.preparation_returns, cell.preparations))
+        or len(run.waves) != len(cell.waves)
+        or any(a is not b for a, b in zip(run.waves, cell.waves))
+    ):
+        raise AutomaticWorkRefused("workflow_quiescence_source_changed")
+    _native_fence_sources(phase, phase._ledger)
+    if any(
+        getattr(_quiescence_wave, name) is not record[0]
+        or not _function_unchanged(record)
+        for name, record in _QUIESCENCE_WAVE
+    ):
+        raise PermissionError("original workflow wave receiver changed")
+    _quiescence_wave._workflow_wave_sources()
+    for saved in cell.preparations:
+        item, auth, native, frame, configuration, source, lifetime, scope, reads = saved
+        if (
+            type(item) is not preparation._PreparedWorkflowReply
+            or item.phase is not phase
+            or item.authorization is not auth
+            or phase._task_scopes.get(item.task_id) is not auth
+            or auth._bridge_preparation[0] is not item
+            or auth._native_preparation[0] is not native
+            or item.native is not frame
+            or item.configuration is not configuration
+            or item.source is not source
+            or item._lifetime is not lifetime
+            or item._finite_reads is not reads
+            or not item._closed
+            and item._source_scope is not scope
+            or any(
+                inspect.getattr_static(item, name, None) is not descriptor
+                or any(not _function_unchanged(record) for record in records)
+                for name, descriptor, records in preparation._PLANNING_PREPARATION_METHODS
+            )
+        ):
+            raise AutomaticWorkRefused("workflow_quiescence_preparation_changed")
+        item._execution_return_source()
+
+
+def _quiescence_physical(cell):
+    """Consume original acceptance, finite reads, native receipts and B/E returns."""
+    _quiescence_source(cell)
+    run, coordinator = cell.run, cell.coordinator
+    acceptance = run.acceptance
+    if (
+        type(acceptance) is not _RemainingAcceptance
+        or acceptance.phase is not cell.phase
+        or acceptance.issuing is not run.issuing
+        or not acceptance.returned
+        or not acceptance.scopes_returned
+        or not acceptance.worker_returned
+        or acceptance.owner_return != [True]
+        or acceptance.owner.is_admitted
+        or acceptance.claim.id in coordinator.runtime.worktree_activity._claims
+    ):
+        raise RuntimeError("workflow acceptance return unproven")
+    _prove_workflow_read(
+        acceptance.read_return, coordinator.controller, acceptance, run.issuing
+    )
+    acceptance.check_source()
+    for saved in cell.preparations:
+        item, *_rest, records = saved
+        if item._finite is not None or not records:
+            raise RuntimeError("workflow preparation still active")
+        for record in records:
+            item._finite_read_return(record)
+            if (
+                record.prepared is not item
+                or not record.positive
+                or not record.scopes_returned
+                or record.owner is not None
+                and (record.drains != [True] or record.owner.is_admitted)
+                or record.claim is not None
+                and record.claim.id in coordinator.runtime.worktree_activity._claims
+            ):
+                raise RuntimeError("workflow finite return unproven")
+    for saved in cell.waves:
+        wave = saved[0]
+        if wave.phase is not cell.phase:
+            raise RuntimeError("workflow wave phase changed")
+        _quiescence_wave._workflow_wave_return(wave, saved)
+
+
+def _quiescence_receiving(cell, ledger, mode):
+    """Accept the exact original accounting callback in its actual native read."""
+    _quiescence_source(cell)
+    caller = inspect.currentframe().f_back.f_back
+    if (
+        caller is None
+        or caller.f_code is not _QUIESCENCE_CALLBACK_CODE
+        or caller.f_locals.get("cell") is not cell
+        or cell.phase._ledger is not ledger
+        or cell.mode != mode
+        or _capture_workflow_read(
+            cell.coordinator.controller, cell, cell.callback, cell.issuing
+        )
+        != cell.proof
+    ):
+        raise PermissionError("original workflow accounting callback required")
+    _quiescence_physical(cell)
+
+
+def _quiescence_evidence(
+    ledger, conn, row, *, context=None, dispatch=None, native=None
+):
+    """Match one unknown contribution using only already-held native context."""
+    from tldw_chatbook.Agents import automatic_work_runtime as automatic
+    from tldw_chatbook.Agents import workflow_task_scope as tasks
+
+    if (
+        automatic.current_automatic_work is not _QUIESCENCE_CONTEXT[0][0]
+        or not _function_unchanged(_QUIESCENCE_CONTEXT[0])
+        or automatic._CURRENT is not _QUIESCENCE_CONTEXT[1]
+        or automatic.AutomaticWorkContext is not AutomaticWorkContext
+        or any(not _function_unchanged(record) for record in _QUIESCENCE_CONTEXT[2])
+        or tasks.current_task_authorization is not _QUIESCENCE_TASK[0][0]
+        or not _function_unchanged(_QUIESCENCE_TASK[0])
+        or tasks._CURRENT is not _QUIESCENCE_TASK[1]
+        or tasks.WorkflowTaskAuthorization is not _QUIESCENCE_TASK[2]
+    ):
+        return False
+    phase = None
+    if context is not None:
+        if type(context) is not _WorkflowMetadataRead or context.run is None:
+            return False
+        phase = context.phase
+        cell = getattr(phase, "_quiescence", None)
+        if cell is None:
+            return False
+        coordinator = cell.coordinator
+        _metadata_source(coordinator)
+        if (
+            context.run is not cell.run
+            or coordinator._metadata_cells.get(context) is not context.disposed
+            or context.disposed.done()
+            or context.proof
+            != _capture_workflow_read(
+                coordinator.controller, coordinator, context.proof[3], context.issuing
+            )
+        ):
+            return False
+    elif dispatch is not None:
+        phase = _dispatch_identity(dispatch, ledger).phase
+    elif native is not None:
+        _fence_connection(native, ledger)
+        phase = native.phase
+    else:
+        current = automatic.current_automatic_work()
+        if type(current) is not AutomaticWorkContext or current.ledger is not ledger:
+            return False
+        phase = current.workflow
+        if (
+            phase is None
+            or phase.context is not current
+            or current.attempt_id != phase.attempt.id
+            or current.owner_id != phase.attempt.owner_id
+            or current.chain_id != phase.attempt.chain_id
+            or not current._accepted.is_set()
+        ):
+            return False
+        task = tasks.current_task_authorization()
+        if task is not None and (
+            type(task) is not tasks.WorkflowTaskAuthorization
+            or task.phase is not phase
+            or phase._task_scopes.get(task.task.id) is not task
+            or task.claim.owner_id != current.owner_id
+            or task.claim.chain_id != current.chain_id
+        ):
+            return False
+    cell = getattr(phase, "_quiescence", None)
+    if (
+        cell is None
+        or cell.phase is not phase
+        or phase._ledger is not ledger
+        or row["native_attempt_id"] != phase.attempt.id
+        or row["workflow_id"] != phase.attempt.workflow_id
+        or row["native_state"] != "accepted"
+        or row["native_owner_id"] != phase.attempt.owner_id
+        or cell.error is not None
+        or cell.interval is None
+        or cell.mode not in {"idle", "resume", "cleanup"}
+    ):
+        return False
+    try:
+        ledger._check_runtime_owner(conn, phase.attempt.owner_id)
+        _quiescence_physical(cell)
+        _prove_workflow_read(
+            cell.idle_proof, cell.coordinator.controller, cell, cell.issuing
+        )
+        if cell.idle_proof[1].result() != cell.interval:
+            return False
+        if (
+            cell.mode != "idle"
+            and _capture_workflow_read(
+                cell.coordinator.controller, cell, cell.callback, cell.issuing
+            )
+            != cell.proof
+        ):
+            return False
+        actual = conn.execute(
+            "SELECT * FROM workflow_active_intervals WHERE id=? AND workflow_id=? AND ended_at IS NOT NULL",
+            (cell.interval[0], row["workflow_id"]),
+        ).fetchone()
+        return actual is not None and tuple(actual) == cell.interval
+    except (PermissionError, RuntimeError, AutomaticWorkRefused):
+        return False
+
+
 class ConsoleWorkflowCoordinator:
     """Public commands composed from the existing native workflow producers."""
 
@@ -1286,6 +1644,7 @@ class ConsoleWorkflowCoordinator:
         self._metadata_cells = {}
         self._metadata_tail = None
         self._metadata_floor = {}
+        self._pending_planning = set()
 
     def subscribe(
         self, callback: Callable[[WorkflowRuntimeSnapshot], None]
@@ -1405,8 +1764,14 @@ class ConsoleWorkflowCoordinator:
                     conn.execute("BEGIN")
                     try:
                         try:
-                            full = service.get(workflow_id) if history else None
-                            view = service.runtime_snapshot(workflow_id)
+                            full = (
+                                service.get(workflow_id, _accounting=cell)
+                                if history
+                                else None
+                            )
+                            view = service.runtime_snapshot(
+                                workflow_id, _accounting=cell
+                            )
                             result = full, view
                         except Exception as error:  # noqa: BLE001 - carry an ordinary body refusal through positive native scopes.
                             cell.body_error = error
@@ -1615,6 +1980,146 @@ class ConsoleWorkflowCoordinator:
             raise PermissionError("workflow binding unavailable")
         return session, binding
 
+    def _pending_planning_source(self, run, *, issuing=False):
+        """Check the original pending command without granting it admission."""
+        import asyncio
+
+        from . import console_workflow_preparation as native
+
+        if (
+            type(self) is not _COORDINATOR_CLASS
+            or type(run) is not _WorkflowRun
+            or run not in self._pending_planning
+            or self.runtime._workflow_coordinator is not self
+            or self.controller.app.console_runtime is not self.runtime
+            or self.runtime.chat_controller is not self.controller
+            or self.runtime._workflow_service is not self.service
+            or native.prepare_workflow_planning is not native._PLANNING_ENTRY_RECORD[0]
+            or not _function_unchanged(native._PLANNING_ENTRY_RECORD)
+            or any(
+                inspect.getattr_static(self, name) is not record[0]
+                or not _function_unchanged(record)
+                for name, record in _PENDING_PLANNING_RECORDS
+            )
+            or run.issuing is None
+            or run.issuing.get_coro().cr_code not in _PLANNING_COMMAND_CODES
+            or not any(
+                task is run.issuing for _identity, task in self._commands.values()
+            )
+            or issuing
+            and asyncio.current_task() is not run.issuing
+            or run.workflow_id is not None
+            and self._runs.get(run.workflow_id) is not run
+        ):
+            raise PermissionError("original pending planning command changed")
+        if run.prepared is not None and (
+            run.prepared._planning_pending_run is not run
+            or run.prepared._planning_reads is not run.planning_reads
+            or run.prepared.controller is not self.controller
+            or run.prepared.session.id != run.session_id
+            or run.prepared.binding is not run.binding
+        ):
+            raise PermissionError("original pending planning preparation changed")
+
+    async def _planning_identity(self, run, prepared, snapshot):
+        """Receive only the original persistence callback's passive identity."""
+        self._pending_planning_source(run)
+        if (
+            run.prepared is not prepared
+            or run.planning_snapshot is not None
+            or run.workflow_id is not None
+            and run.workflow_id != snapshot.id
+            or snapshot.id in self._runs
+            and self._runs[snapshot.id] is not run
+        ):
+            raise PermissionError("original planning identity handoff changed")
+        run.workflow_id = snapshot.id
+        run.planning_snapshot = snapshot
+        self._runs[snapshot.id] = run
+
+    def _planning_unused_return(self, run):
+        self._pending_planning_source(run)
+        prepared = run.prepared
+        if prepared is None:
+            return run.planning_entered and not run.planning_constructing
+        prepared._planning_reads_returned()
+        return (
+            run.planning_returned
+            and prepared._planning_preparation_returned.is_set()
+            and prepared._closed
+            and prepared._finite is None
+            and prepared.primary_owner is None
+            and prepared._planning_intake is None
+            and prepared._planning_token is None
+            and prepared._source_scope is None
+            and not run.control_unknown
+            and run.status != "recovery_required"
+        )
+
+    def _release_pending_planning(self, run):
+        if not self._planning_unused_return(run):
+            raise RuntimeError("original pending planning return unproven")
+        if run.workflow_id is not None:
+            self._runs.pop(run.workflow_id)
+        self._pending_planning.remove(run)
+
+    async def _pending_planning_control(self, run, revision, action):
+        import asyncio
+
+        self._pending_planning_source(run)
+        snapshot = run.planning_snapshot
+        if (
+            snapshot is None
+            or snapshot.control_revision != revision
+            or run.issuing.done()
+            or run.prepared is None
+        ):
+            raise PermissionError("original pending planning control unavailable")
+        run.control = action
+        if run.status != "recovery_required":
+            run.status = "pausing" if action == "pause" else "stopping"
+        if action == "pause":
+            return
+        returned = run.control_return = asyncio.Event()
+        cancellation = None
+        run.prepared.cancel_event.set()
+        run.issuing.cancel()
+        try:
+            while not run.issuing.done():
+                try:
+                    await asyncio.shield(run.issuing)
+                except asyncio.CancelledError as error:
+                    if asyncio.current_task().cancelling():
+                        cancellation = error
+                except BaseException:  # noqa: BLE001 - retain exact original command failure.
+                    break
+            if not run.issuing.cancelled():
+                run.issuing.exception()
+            if not self._planning_unused_return(run):
+                raise RuntimeError("original pending planning settlement unproven")
+            current = await self.service.call(self.service.get, run.workflow_id)
+            if (
+                current.control_revision != revision
+                or current.request != snapshot.request
+                or current.plans != snapshot.plans
+            ):
+                raise ValueError("revision_conflict")
+            await self.service.call(
+                self.service.set_status,
+                run.workflow_id,
+                expected_control_revision=revision,
+                status="stopped",
+            )
+            self._release_pending_planning(run)
+        except BaseException:
+            run.control_unknown = True
+            run.status = "recovery_required"
+            raise
+        finally:
+            returned.set()
+        if cancellation is not None:
+            raise cancellation
+
     async def start(
         self, request: WorkflowRequest, *, launch_id: str
     ) -> WorkflowSnapshot:
@@ -1630,29 +2135,51 @@ class ConsoleWorkflowCoordinator:
             raise TypeError("WorkflowRequest required")
 
         async def accept():
-            session, binding = self._selection(request)
-            prepared = await prepare_workflow_planning(
-                self.controller,
-                session_id=session.id,
-                binding=binding,
-                command_id=launch_id,
-                objective=request.objective,
-                policy=request.policy,
-                _request=request,
-            )
-            if type(prepared) is WorkflowPhaseAttempt:
-                return await self.get(prepared.workflow_id)
-            run = _WorkflowRun(
-                prepared.phase.attempt.workflow_id,
-                session.id,
-                binding,
-                prepared.phase,
-                prepared=prepared,
-                status="planning",
-            )
-            self._runs[run.workflow_id] = run
             import asyncio
 
+            session, binding = self._selection(request)
+            run = _WorkflowRun(
+                None,
+                session.id,
+                binding,
+                None,
+                issuing=asyncio.current_task(),
+                command_id=launch_id,
+                planning_input=request,
+                status="planning",
+            )
+            self._pending_planning.add(run)
+            try:
+                self._pending_planning_source(run, issuing=True)
+                prepared = await prepare_workflow_planning(
+                    self.controller,
+                    session_id=session.id,
+                    binding=binding,
+                    command_id=launch_id,
+                    objective=request.objective,
+                    policy=request.policy,
+                    _request=request,
+                    _pending_run=run,
+                )
+                run.planning_returned = True
+                self._pending_planning_source(run, issuing=True)
+            except BaseException as error:
+                run.planning_error = error
+                run.planning_returned = True
+                try:
+                    if run.control != "stop":
+                        self._release_pending_planning(run)
+                except BaseException:  # noqa: BLE001 - retain original pending custody on any missing proof.
+                    run.status = "recovery_required"
+                raise
+            if type(prepared) is WorkflowPhaseAttempt:
+                self._release_pending_planning(run)
+                return await self.get(prepared.workflow_id)
+            prepared._planning_reads_returned()
+            if run.prepared is not prepared:
+                raise PermissionError("original planning preparation changed")
+            run.phase = prepared.phase
+            self._pending_planning.remove(run)
             try:
                 driver = _planning_driver_source(self, run)
                 run.driver = asyncio.create_task(
@@ -2074,6 +2601,125 @@ class ConsoleWorkflowCoordinator:
             fleets[fleet] = fleets.get(fleet, 0) + 1
         return selected
 
+    async def _accounting(self, run, mode):
+        """Track the original native clock transaction through actual return."""
+        import asyncio
+
+        from tldw_chatbook.Agents.activation import worker_guard
+        from tldw_chatbook.Agents.goal_storage_lifetime import owned_goal_storage
+
+        from . import console_preparation_reads as native
+
+        caller = inspect.currentframe().f_back
+        if (
+            mode not in {"quiesce", "resume", "cleanup"}
+            or asyncio.current_task() is not run.driver
+            or caller is None
+            or caller.f_code is not _QUIESCENCE_COORDINATOR_RECORDS[1][1][1]
+            or caller.f_locals.get("run") is not run
+            or caller.f_locals.get("self") is not self
+            or any(
+                inspect.getattr_static(self, name) is not record[0]
+                or not _function_unchanged(record)
+                for name, record in _QUIESCENCE_COORDINATOR_RECORDS
+            )
+        ):
+            raise PermissionError("original accounting driver required")
+        phase = run.phase
+        cell = phase._quiescence
+        if mode == "quiesce":
+            if cell is not None:
+                if cell.mode != "idle" or cell.error is not None:
+                    raise RuntimeError("original workflow accounting unresolved")
+                _quiescence_source(cell)
+                return
+            cell = _WorkflowQuiescence(
+                self,
+                run,
+                phase,
+                asyncio.current_task(),
+                tuple(run.preparation_returns),
+                tuple(run.waves),
+            )
+            phase._quiescence = cell
+        elif cell is None:
+            return
+        elif cell.mode != "idle" or cell.error is not None:
+            raise RuntimeError("original workflow accounting unresolved")
+        # Consume idle BEFORE admitting the resume/cleanup read. A failed write
+        # can never restore it or make a later passive observation exact.
+        cell.mode = mode
+        cell.proof = None
+        try:
+            _quiescence_physical(cell)
+        except BaseException as error:
+            cell.error = run.accounting_error = error
+            raise
+        ledger = phase._ledger
+
+        @worker_guard(self.controller._agent_bridge)
+        def operation():
+            with owned_goal_storage(self.service), phase.context.scope():
+                _quiescence_source(cell)
+                if mode == "quiesce":
+                    phase.check()
+                    return ledger.quiesce_workflow_phase(
+                        phase.attempt.id,
+                        owner_id=phase.attempt.owner_id,
+                        drained=True,
+                        _quiescence=cell,
+                    )
+                return ledger.resume_workflow_phase(
+                    phase.attempt.id,
+                    owner_id=phase.attempt.owner_id,
+                    _quiescence=cell,
+                    _cleanup=mode == "cleanup",
+                )
+
+        def invoke():
+            cell.proof = _capture_workflow_read(
+                self.controller, cell, invoke, cell.issuing
+            )
+            with _remaining_storage_return(
+                (
+                    self.service.db,
+                    self.service.persistence.db,
+                    self.service.persistence.workspace_registry.db,
+                )
+            ):
+                return operation()
+
+        cell.callback = invoke
+        try:
+            await native.run_preparation_read(
+                invoke,
+                creator=self.controller,
+                session_id=run.session_id,
+                reads=self.controller._preparation_reads,
+                observers=(self.runtime._preparation_reads,),
+                require_current=lambda: _quiescence_source(cell),
+                source=cell,
+            )
+            _quiescence_source(cell)
+            _prove_workflow_read(cell.proof, self.controller, cell, cell.issuing)
+            if mode == "quiesce":
+                cell.interval = cell.proof[1].result()
+                if not isinstance(cell.interval, tuple):
+                    raise RuntimeError("original workflow interval return missing")
+                cell.idle_proof, cell.idle_callback = cell.proof, invoke
+                cell.mode = "idle"
+            else:
+                cell.mode = "active"
+                phase._quiescence = None
+        except BaseException as error:
+            cell.error = error
+            if cell.proof is not None:
+                producer = cell.proof[1]
+                if producer.done() and not producer.cancelled():
+                    cell.producer_error = producer.exception()
+            run.accounting_error = error
+            raise
+
     async def _execute(self, run):
         import asyncio
 
@@ -2089,7 +2735,35 @@ class ConsoleWorkflowCoordinator:
         pending = []
         failed = False
         cancellation = None
+        released_notification = None
         try:
+            wake = self.controller._fleet_wake
+            release_binding = (
+                self,
+                run,
+                run.phase,
+                asyncio.current_task(),
+                self.loop,
+                self.runtime,
+                self.controller,
+                self.controller.store,
+                wake,
+                run.intake,
+                run.token,
+                wake._registry_lock,
+                wake._loop,
+            )
+            source = _EXECUTION_RELEASE_SOURCE
+            if (
+                _execution_release_source is not source[0]
+                or source[0].__code__ is not source[1]
+                or source[0].__defaults__ is not source[2]
+                or source[0].__kwdefaults__ is not source[3]
+                or tuple((source[0].__kwdefaults__ or {}).items()) != source[4]
+                or source[0].__closure__ is not source[5]
+            ):
+                raise PermissionError("original workflow release source changed")
+            source[0](self, release_binding)
             snapshot = await self.service.call(self.service.get, run.workflow_id)
             definition = next(
                 p
@@ -2098,7 +2772,11 @@ class ConsoleWorkflowCoordinator:
             )
             ids = set(await self.service.call(self.service.phase_task_ids, run.phase))
             pending = [task for task in definition.tasks if task.id in ids]
-            done = {task.id for task in definition.tasks if task.id not in ids}
+            done = set(
+                await self.service.call(
+                    self.service.reviewed_task_ids, run.phase, run.decision
+                )
+            )
             while pending and run.control is None and not failed:
                 run.wake.clear()
                 ready = [task for task in pending if set(task.dependencies) <= done]
@@ -2120,6 +2798,7 @@ class ConsoleWorkflowCoordinator:
                             break
                         if task.id in run.preparations:
                             continue
+                        await self._accounting(run, "resume")
                         resolution = next(
                             r
                             for r in run.phase._execution_resolutions
@@ -2133,6 +2812,20 @@ class ConsoleWorkflowCoordinator:
                             resolution=resolution,
                             confirm_project_instruction_dispatch=self.controller._confirm_project_instruction_dispatch,
                         )
+                        item = run.preparations[task.id]
+                        run.preparation_returns.append(
+                            (
+                                item,
+                                item.authorization,
+                                item.authorization._native_preparation[0],
+                                item.native,
+                                item.configuration,
+                                item.source,
+                                item._lifetime,
+                                item._source_scope,
+                                item._finite_reads,
+                            )
+                        )
                 if run.control is not None:
                     break
                 selected = self._wave_ready(
@@ -2140,9 +2833,32 @@ class ConsoleWorkflowCoordinator:
                     [run.preparations[t.id] for t in ready if t.id in run.preparations],
                 )
                 if not selected:
+                    await self._accounting(run, "quiesce")
+                    if run.control is not None or run.wake.is_set():
+                        continue
+                    if self._wave_ready(
+                        run,
+                        [
+                            run.preparations[t.id]
+                            for t in ready
+                            if t.id in run.preparations
+                        ],
+                    ):
+                        continue
                     await run.wake.wait()
                     continue
+                await self._accounting(run, "resume")
+                if (
+                    any(
+                        getattr(_quiescence_wave, name) is not record[0]
+                        or not _function_unchanged(record)
+                        for name, record in _QUIESCENCE_WAVE
+                    )
+                    or run_workflow_wave is not _quiescence_wave.run_workflow_wave
+                ):
+                    raise PermissionError("original workflow wave receiver changed")
                 wave = await run_workflow_wave(run.phase, selected, _retain_waits=True)
+                run.waves.append(_quiescence_wave._workflow_wave_return(wave))
                 for item in wave.unlaunched:
                     if wave.wait_footprint is not None:
                         run.wait_footprints[item] = wave.wait_footprint
@@ -2157,8 +2873,15 @@ class ConsoleWorkflowCoordinator:
                     run.wait_footprints.pop(item, None)
                 _metadata_source(self)
                 await self._publish(run.workflow_id)
+            cleanup_error = None
+            try:
+                await self._accounting(run, "cleanup")
+            except BaseException as error:  # noqa: BLE001 - accounting refusal cannot prevent already-owned physical cleanup.
+                cleanup_error = error
             for item in run.preparations.values():
                 await item.close()
+            if cleanup_error is not None:
+                raise cleanup_error
             if run.control_return is not None:
                 await run.control_return.wait()
             if run.control_unknown:
@@ -2177,9 +2900,20 @@ class ConsoleWorkflowCoordinator:
             run.status = None
             _metadata_source(self)
             publication = await self._publish(run.workflow_id, _terminal_run=run)
+            source = _EXECUTION_RELEASE_SOURCE
+            if (
+                _execution_release_source is not source[0]
+                or source[0].__code__ is not source[1]
+                or source[0].__defaults__ is not source[2]
+                or source[0].__kwdefaults__ is not source[3]
+                or tuple((source[0].__kwdefaults__ or {}).items()) != source[4]
+                or source[0].__closure__ is not source[5]
+            ):
+                raise PermissionError("original workflow release source changed")
+            source[0](self, release_binding)
             _metadata_publication_return(self, run, publication)
-            self._release(run)
             cancellation = publication.caller_error
+            released_notification = self._release(run, release_binding, publication)
         except BaseException as error:  # noqa: BLE001 - physical failure cannot retry or shed original custody.
             self._retain_final_metadata(run, error)
             if isinstance(error, asyncio.CancelledError):
@@ -2187,20 +2921,110 @@ class ConsoleWorkflowCoordinator:
             logger.exception("Native workflow phase did not retire normally")
         finally:
             unsubscribe()
+            if run.accounting_error is not None:
+                for item in run.preparations.values():
+                    if not item._closed:
+                        try:
+                            await item.close()
+                        except BaseException:  # noqa: BLE001 - original cleanup refusal remains retained with its accounting error.
+                            logger.exception(
+                                "Original workflow cleanup remains unresolved"
+                            )
+        if released_notification is not None:
+            try:
+                source = _EXECUTION_RELEASE_SOURCE
+                if (
+                    _execution_release_source is not source[0]
+                    or source[0].__code__ is not source[1]
+                    or source[0].__defaults__ is not source[2]
+                    or source[0].__kwdefaults__ is not source[3]
+                    or tuple((source[0].__kwdefaults__ or {}).items()) != source[4]
+                    or source[0].__closure__ is not source[5]
+                ):
+                    raise PermissionError("original workflow release source changed")
+                source[0](self, released_notification, released=True)
+                self._notify_execution_release(released_notification)
+            except BaseException as error:
+                logger.exception("Native workflow returned; wake notification failed")
+                if cancellation is not None:
+                    raise cancellation from error
+                raise
         if run.final_metadata is None:
             _metadata_source(self)
             await self._publish(run.workflow_id)
         if cancellation is not None:
             raise cancellation
 
-    def _release(self, run):
-        if self._runs.get(run.workflow_id) is not run:
-            raise PermissionError("workflow original owner changed")
+    def _release(self, run, binding, publication):
+        source = _EXECUTION_RELEASE_SOURCE
+        if (
+            _execution_release_source is not source[0]
+            or source[0].__code__ is not source[1]
+            or source[0].__defaults__ is not source[2]
+            or source[0].__kwdefaults__ is not source[3]
+            or tuple((source[0].__kwdefaults__ or {}).items()) != source[4]
+            or source[0].__closure__ is not source[5]
+        ):
+            raise PermissionError("original workflow release source changed")
+        source[0](self, binding)
+        caller = inspect.currentframe().f_back
+        if (
+            caller.f_code is not _EXECUTION_RELEASE_METHODS[0][1][1]
+            or caller.f_locals.get("self") is not self
+            or caller.f_locals.get("run") is not run
+            or caller.f_locals.get("release_binding") is not binding
+            or caller.f_locals.get("publication") is not publication
+            or binding[1] is not run
+            or not run.phase._retired
+        ):
+            raise PermissionError("original workflow release invocation required")
+        _metadata_publication_return(self, run, publication)
         if run.control_unknown or run.status == "recovery_required":
             raise RuntimeError("workflow original return unproven")
-        self.controller.store.release_received_turn(run.intake)
-        self.controller._fleet_wake.release_automatic_primary(run.session_id, run.token)
-        self._runs.pop(run.workflow_id)
+        store, wake, intake, token, registry_lock = binding[7:12]
+        with store._preparation_lock:
+            if (
+                intake._store_ref() is not store
+                or store._preparations_by_session.get(run.session_id) is not intake
+            ):
+                raise PermissionError("original workflow received claim changed")
+        with registry_lock:
+            if wake._automatic_primary_claims.get(run.session_id) is not token:
+                raise PermissionError("original workflow primary token changed")
+        if store.release_received_turn(intake) is not True:
+            raise PermissionError("original workflow received claim did not return")
+        if wake.release_automatic_primary(run.session_id, token) is not True:
+            raise PermissionError("original workflow primary token did not return")
+        if self._runs.pop(run.workflow_id) is not run:
+            raise PermissionError("original workflow run did not return")
+        return binding
+
+    def _notify_execution_release(self, binding):
+        source = _EXECUTION_RELEASE_SOURCE
+        if (
+            _execution_release_source is not source[0]
+            or source[0].__code__ is not source[1]
+            or source[0].__defaults__ is not source[2]
+            or source[0].__kwdefaults__ is not source[3]
+            or tuple((source[0].__kwdefaults__ or {}).items()) != source[4]
+            or source[0].__closure__ is not source[5]
+        ):
+            raise PermissionError("original workflow release source changed")
+        source[0](self, binding, released=True)
+        caller = inspect.currentframe().f_back
+        if (
+            caller.f_code is not _EXECUTION_RELEASE_METHODS[0][1][1]
+            or caller.f_locals.get("self") is not self
+            or caller.f_locals.get("released_notification") is not binding
+        ):
+            raise PermissionError("original workflow notification invocation required")
+        runtime, wake, registry_lock = binding[5], binding[8], binding[11]
+        with registry_lock:
+            if wake._registry_lock is not registry_lock:
+                raise PermissionError("original workflow wake lock changed")
+            if runtime._workflow_closing and wake._disposed is not True:
+                raise PermissionError("workflow wake shutdown fence unproven")
+        wake.retry_soon()
 
     async def _native_control(self, run, action, decision, expected_control_revision):
         """Track the original control's complete worker and reader return."""
@@ -2381,7 +3205,11 @@ class ConsoleWorkflowCoordinator:
                     and not run.control_return.is_set()
                 ):
                     raise PermissionError("workflow original control pending")
-                if run.phase is None:
+                if run in self._pending_planning:
+                    await self._pending_planning_control(
+                        run, expected_control_revision, action
+                    )
+                elif run.phase is None:
                     await self._pending_control(run, expected_control_revision, action)
                 elif run.phase.attempt.purpose == "planning":
                     if action == "stop":
@@ -2469,26 +3297,49 @@ class ConsoleWorkflowCoordinator:
             if snapshot.control_revision != expected_control_revision:
                 raise ValueError("revision_conflict")
             session, binding = self._selection(snapshot.request)
-            prepared = await prepare_workflow_planning(
-                self.controller,
-                session_id=session.id,
-                binding=binding,
-                command_id=command_id,
-                workflow_id=workflow_id,
-                revision_id=len(snapshot.plans),
-                repair_instruction=instruction,
-            )
-            if type(prepared) is WorkflowPhaseAttempt:
-                return await self.get(workflow_id)
             run = _WorkflowRun(
                 workflow_id,
                 session.id,
                 binding,
-                prepared.phase,
-                prepared=prepared,
+                None,
+                issuing=asyncio.current_task(),
+                command_id=command_id,
+                planning_input=(len(snapshot.plans), instruction),
                 status="planning",
             )
             self._runs[workflow_id] = run
+            self._pending_planning.add(run)
+            try:
+                self._pending_planning_source(run, issuing=True)
+                prepared = await prepare_workflow_planning(
+                    self.controller,
+                    session_id=session.id,
+                    binding=binding,
+                    command_id=command_id,
+                    workflow_id=workflow_id,
+                    revision_id=len(snapshot.plans),
+                    repair_instruction=instruction,
+                    _pending_run=run,
+                )
+                run.planning_returned = True
+                self._pending_planning_source(run, issuing=True)
+            except BaseException as error:
+                run.planning_error = error
+                run.planning_returned = True
+                try:
+                    if run.control != "stop":
+                        self._release_pending_planning(run)
+                except BaseException:  # noqa: BLE001 - retain original pending custody on any missing proof.
+                    run.status = "recovery_required"
+                raise
+            if type(prepared) is WorkflowPhaseAttempt:
+                self._release_pending_planning(run)
+                return await self.get(workflow_id)
+            prepared._planning_reads_returned()
+            if run.prepared is not prepared:
+                raise PermissionError("original planning preparation changed")
+            run.phase = prepared.phase
+            self._pending_planning.remove(run)
             try:
                 driver = _planning_driver_source(self, run)
                 run.driver = asyncio.create_task(
@@ -2523,7 +3374,7 @@ class ConsoleWorkflowCoordinator:
         for _identity, command in tuple(self._commands.values()):
             if not command.done():
                 command.cancel()
-        for run in tuple(self._runs.values()):
+        for run in set(self._runs.values()) | self._pending_planning:
             run.control = "stop"
             if run.wake is not None:
                 run.wake.set()
@@ -2549,8 +3400,15 @@ class ConsoleWorkflowCoordinator:
             if not task.cancelled():
                 task.exception()
         for run in tuple(self._runs.values()):
-            if run.phase is None and self._acceptance_returned(run):
+            if (
+                run not in self._pending_planning
+                and run.phase is None
+                and self._acceptance_returned(run)
+            ):
                 self._release_admission(run)
+        for run in tuple(self._pending_planning):
+            if self._planning_unused_return(run):
+                self._release_pending_planning(run)
         for cell, disposition in tuple(self._metadata_cells.items()):
             if cell.issuing is asyncio.current_task():
                 raise RuntimeError("workflow metadata cannot drain its own host")
@@ -2563,7 +3421,7 @@ class ConsoleWorkflowCoordinator:
                 raise RuntimeError("workflow_original_metadata_shutdown_unresolved")
         if self._metadata_cells:
             raise RuntimeError("workflow_original_metadata_shutdown_unresolved")
-        if self._runs:
+        if self._runs or self._pending_planning:
             raise RuntimeError("workflow_original_shutdown_unresolved")
         if cancellation is not None:
             if _runtime_disposal is self.runtime:
@@ -2571,8 +3429,70 @@ class ConsoleWorkflowCoordinator:
             raise cancellation
 
 
+from . import console_workflow_wave as _quiescence_wave
+
+_QUIESCENCE_WAVE = tuple(
+    (name, _function_record(getattr(_quiescence_wave, name)))
+    for name in ("run_workflow_wave", "_workflow_wave_sources", "_workflow_wave_return")
+)
 _COORDINATOR_CLASS = ConsoleWorkflowCoordinator
+_QUIESCENCE_CLASS = _WorkflowQuiescence
+_QUIESCENCE_FUNCTIONS = tuple(
+    (name, _function_record(globals()[name]))
+    for name in (
+        "_quiescence_source",
+        "_quiescence_physical",
+        "_quiescence_receiving",
+        "_quiescence_evidence",
+    )
+)
+_QUIESCENCE_COORDINATOR_RECORDS = tuple(
+    (name, _function_record(getattr(ConsoleWorkflowCoordinator, name)))
+    for name in ("_accounting", "_execute")
+)
+_QUIESCENCE_CALLBACK_CODE = next(
+    code
+    for code in ConsoleWorkflowCoordinator._accounting.__code__.co_consts
+    if inspect.iscode(code) and code.co_name == "operation"
+)
+from tldw_chatbook.Agents import automatic_work_runtime as _quiescence_context
+from tldw_chatbook.Agents import workflow_task_scope as _quiescence_task
+
+_QUIESCENCE_CONTEXT = (
+    _function_record(_quiescence_context.current_automatic_work),
+    _quiescence_context._CURRENT,
+    tuple(
+        _function_record(method)
+        for method in (
+            AutomaticWorkContext.scope,
+            AutomaticWorkContext.scope.__wrapped__,
+        )
+    ),
+)
+_QUIESCENCE_TASK = (
+    _function_record(_quiescence_task.current_task_authorization),
+    _quiescence_task._CURRENT,
+    _quiescence_task.WorkflowTaskAuthorization,
+)
 _COORDINATOR_PLAN_RECORD = _function_record(ConsoleWorkflowCoordinator._plan)
+_PENDING_PLANNING_RECORDS = tuple(
+    (name, _function_record(getattr(ConsoleWorkflowCoordinator, name)))
+    for name in (
+        "start",
+        "revise",
+        "_pending_planning_source",
+        "_planning_identity",
+        "_planning_unused_return",
+        "_release_pending_planning",
+        "_pending_planning_control",
+    )
+)
+_PLANNING_COMMAND_CODES = tuple(
+    code
+    for name in ("start", "revise")
+    for code in getattr(ConsoleWorkflowCoordinator, name).__code__.co_consts
+    if inspect.iscode(code) and code.co_name in {"accept", "revise"}
+)
 
 # Metadata readers are named original passive service methods, not capabilities.
 from tldw_chatbook.Agents.workflow_run_service import (
@@ -2607,4 +3527,24 @@ _METADATA_COORDINATOR_RECORDS = tuple(
         ),
     )
     for name in ("_metadata", "_publish", "get", "_metadata_lower_bound")
+)
+
+from .console_chat_store import ConsoleChatStore as _EXECUTION_STORE_CLASS
+from .console_fleet_wake import _WORKFLOW_WAKE_SOURCE as _EXECUTION_WAKE_SOURCE
+
+_EXECUTION_RECEIVED_RELEASE = _function_record(
+    _EXECUTION_STORE_CLASS.release_received_turn
+)
+_EXECUTION_RELEASE_SOURCE = _function_record(_execution_release_source)
+_EXECUTION_RELEASE_FUNCTIONS = tuple(
+    (name, _function_record(globals()[name]))
+    for name in (
+        "_execution_release_source",
+        "_metadata_publication_return",
+        "_metadata_source",
+    )
+)
+_EXECUTION_RELEASE_METHODS = tuple(
+    (name, _function_record(getattr(ConsoleWorkflowCoordinator, name)))
+    for name in ("_execute", "_release", "_notify_execution_release")
 )

@@ -4,10 +4,12 @@ from __future__ import annotations
 
 import asyncio
 import inspect
+import sys
 import threading
 import time
 from contextlib import contextmanager, nullcontext
 from contextvars import ContextVar
+from dataclasses import dataclass, field
 
 from tldw_chatbook.Agents.activation import execution
 from tldw_chatbook.Agents.execution_capacity import WorkOrigin
@@ -24,6 +26,25 @@ from .console_workflow_runs import WorkflowPhaseAuthorization
 
 _CURRENT = ContextVar("native_workflow_preparation", default=None)
 _PLANNING_INPUT = object()
+
+
+@dataclass(eq=False)
+class _PlanningPreparationRead:
+    """Return evidence for one original finite callback, never admission."""
+
+    prepared: object
+    issuing: object
+    callback: object = None
+    proof: object = None
+    owner: object = None
+    claim: object = None
+    operation: object = None
+    drains: list = field(default_factory=list)
+    scopes_returned: bool = False
+    positive: bool = False
+    body_error: object = None
+    wrapper_error: object = None
+    result: object = None
 
 
 def current_workflow_preparation(controller=None):
@@ -106,6 +127,11 @@ class _PreparedWorkflowReply:
         self._planning_terminal_returned = False
         self._planning_provider_failure = False
         self._planning_read_return = None
+        self._planning_reads = []
+        self._finite_reads = []
+        self._planning_attempt = None
+        self._planning_prepare_entered = False
+        self._planning_pending_run = None
         self._planning_preparation_returned = asyncio.Event()
         self._planning_token = self._planning_intake = None
         self.assistant_message_id = None
@@ -129,6 +155,7 @@ class _PreparedWorkflowReply:
         self._finite = None
         self._wave = None
         self.source = None
+        self._configured_source_observation = None
         self.configuration = None
         self._source_scope = None
         self._native_closed = False
@@ -172,6 +199,12 @@ class _PreparedWorkflowReply:
             for name, descriptor, records in _PLANNING_PREPARATION_METHODS
         ):
             raise PermissionError("original planning receiver changed")
+        if any(
+            inspect.getattr_static(self.service.db.automatic_work, name) is not method
+            or not _function_unchanged(record)
+            for name, method, record in _PLANNING_LEDGER_METHODS
+        ):
+            raise PermissionError("original planning ledger receiver changed")
         if (
             self.controller.store is not self.store
             or self.bridge._store is not self.store
@@ -661,6 +694,11 @@ class _PreparedWorkflowReply:
         if _unpublished is not None and not closing:
             raise PermissionError("unpublished storage proof is close-only")
         retirement = []
+        from .console_workflow_runs import _capture_workflow_read
+
+        record = _PlanningPreparationRead(self, asyncio.current_task())
+        self._finite_reads.append(record)
+        issuing = record.issuing
 
         def invoke_owned():
             with self.phase.context.scope():
@@ -688,12 +726,14 @@ class _PreparedWorkflowReply:
                         origin=WorkOrigin.AUTOMATIC,
                         conversation_id=self.phase.attempt.conversation_id,
                     )
+                    record.owner, record.claim = owner, claim
                     operation = None
                     proven = False
                     try:
                         if claim is not None:
                             claim.bind_owner(owner)
                         operation = owner.reserve_tool()
+                        record.operation = operation
                         self._finite = (owner, claim)
                         with owner.activate(), self.activate_source():
                             self.check()
@@ -729,15 +769,19 @@ class _PreparedWorkflowReply:
                                 proven = True
                         self._finite = None
                         if proven:
-                            retirement.append((owner, claim))
+                            retirement.append((owner, claim, operation))
 
         def retire():
-            for owner, claim in retirement:
+            for owner, claim, _operation in retirement:
+                owner.on_drained(record.drains.append)
                 owner.finish_root()
                 if claim is not None:
                     claim.settle(durable=True)
 
         def invoke():
+            proof = record.proof = _capture_workflow_read(
+                self.controller, self, invoke, issuing
+            )
             body_error = None
             try:
                 with (
@@ -760,27 +804,150 @@ class _PreparedWorkflowReply:
                 raise
             else:
                 retire()
-                return result
+                record.scopes_returned = True
+                record.result = result
+                owner, claim, operation = (
+                    retirement[0] if retirement else (None, None, None)
+                )
+                return (
+                    record,
+                    self,
+                    issuing,
+                    invoke,
+                    proof,
+                    owner,
+                    claim,
+                    operation,
+                    result,
+                    None,
+                )
 
-        return await run_preparation_read(
-            invoke,
-            creator=self.controller,
-            session_id=self.session.id,
-            reads=self.controller._preparation_reads,
-            observers=(self.runtime._preparation_reads,),
-            require_current=(lambda: None) if closing else self.require_current,
-            source=self,
+        record.callback = invoke
+        try:
+            await run_preparation_read(
+                invoke,
+                creator=self.controller,
+                session_id=self.session.id,
+                reads=self.controller._preparation_reads,
+                observers=(self.runtime._preparation_reads,),
+                require_current=(lambda: None) if closing else self.require_current,
+                source=self,
+            )
+        except BaseException as error:
+            record.wrapper_error = error
+            raise
+        self._execution_return_source()
+        self._finite_read_return(record)
+        record.positive = True
+        return record.result
+
+    def _finite_read_return(self, record):
+        """Consume identities carried by the same native producer's result."""
+        from .console_ordinary_tree import _function_unchanged
+        from .console_workflow_runs import _prove_workflow_read
+
+        if _finite_owner_return is not _FINITE_OWNER_CHECK[
+            0
+        ] or not _function_unchanged(_FINITE_OWNER_CHECK):
+            raise PermissionError("original workflow finite owner source changed")
+        _prove_workflow_read(record.proof, self.controller, self, record.issuing)
+        actual = asyncio.Future.result(record.proof[1])
+        expected = (
+            record,
+            self,
+            record.issuing,
+            record.callback,
+            record.proof,
+            record.owner,
+            record.claim,
+            record.operation,
+            record.result,
+            record.body_error,
         )
+        if (
+            type(actual) is not tuple
+            or len(actual) != len(expected)
+            or any(first is not second for first, second in zip(actual, expected))
+            or not record.scopes_returned
+        ):
+            raise RuntimeError("original workflow finite result changed")
+        owner, claim, operation = actual[5:8]
+        if owner is not None:
+            _finite_owner_return(owner, self.capacity, operation)
+            if record.drains != [True]:
+                raise RuntimeError("original workflow finite drain unproven")
+        if claim is not None:
+            activity = self.runtime.worktree_activity
+            with activity._lock:
+                if claim.id in activity._claims or claim.id in activity._members:
+                    raise RuntimeError("original workflow finite claim unreturned")
+        return actual
+
+    def _execution_return_source(self):
+        """Inspect retained execution sources without renewing a revoked phase."""
+        from .console_ordinary_tree import _function_unchanged
+
+        if any(
+            inspect.getattr_static(self, name, None) is not descriptor
+            or any(not _function_unchanged(record) for record in records)
+            for name, descriptor, records in _PLANNING_PREPARATION_METHODS
+        ) or (
+            self.controller.store is not self.store
+            or self.runtime.agent_bridge is not self.bridge
+            or self.runtime.chat_controller is not self.controller
+            or self.controller._agent_bridge is not self.bridge
+            or self.bridge._store is not self.store
+            or self.service is not self.runtime._workflow_service
+            or self.store._sessions.get(self.session.id) is not self.session
+        ):
+            raise PermissionError("original workflow finite source changed")
+        self.check_local_sources()
+        if self.source is not None:
+            self._configured_storage_sources()
+
+    def _configured_storage_sources(self):
+        """Return only the observation issued by this original configuration."""
+        if (
+            _storage_source_current is not _STORAGE_SOURCE_CHECK[0]
+            or _storage_source_current.__code__ is not _STORAGE_SOURCE_CHECK[1]
+            or _storage_source_current.__defaults__ is not _STORAGE_SOURCE_CHECK[2]
+            or _storage_source_current.__kwdefaults__ is not _STORAGE_SOURCE_CHECK[3]
+            or _storage_source_current.__closure__ is not _STORAGE_SOURCE_CHECK[5]
+        ):
+            raise PermissionError("original workflow storage source changed")
+        _storage_source_current(self.source)
+        observation = self._configured_source_observation
+        if (
+            type(observation) is not tuple
+            or len(observation) != 3
+            or observation[0] is not self
+            or observation[1] is not self.source
+            or observation[2] is not self.source.sources
+            or self.source.workflow_preparation is not self
+        ):
+            raise PermissionError("original workflow storage observation changed")
+        self.source.check_memory()
+        return observation
 
     async def _read_planning(self, callback, *, roots=True, closing=False):
         """The existing tracked reader owns planning's finite native return."""
         from tldw_chatbook.Agents.activation import async_worker_guard
         from tldw_chatbook.Workspaces.worktree_activity import WorktreeFootprint
 
+        from .console_workflow_runs import _capture_workflow_read
+
+        record = _PlanningPreparationRead(self, asyncio.current_task())
+        self._planning_reads.append(record)
+        issuing = record.issuing
+
         def invoke():
             from tldw_chatbook.Agents.execution_capacity import CapacityRefused
 
-            failure = None
+            self._planning_read_sources()
+            proof = record.proof = _capture_workflow_read(
+                self.controller, self, invoke, issuing
+            )
+            failure = result = None
             owner = operation = None
             with (
                 self._planning_storage_return(),
@@ -799,11 +966,13 @@ class _PreparedWorkflowReply:
                     conversation_id=self.session.persisted_conversation_id
                     or self.session.id,
                 )
+                record.owner, record.claim = owner, claim
                 if claim is not None:
                     claim.bind_owner(owner)
                 self._finite = (owner, claim)
                 try:
                     operation = owner.reserve_tool()
+                    record.operation = operation
                 except CapacityRefused as error:
                     failure = error
                 if operation is not None:
@@ -839,27 +1008,128 @@ class _PreparedWorkflowReply:
             # An unknown entry/unwind keeps _finite, its source, claim and slot.
             if operation is not None:
                 operation.finish()
-            drain = []
-            owner.on_drained(drain.append)
+            owner.on_drained(record.drains.append)
             owner.finish_root()
-            if drain != [True]:
+            if record.drains != [True]:
                 raise RuntimeError("planning preparation retirement unproven")
             if claim is not None:
                 claim.settle(durable=True)
             self._finite = None
-            if failure is not None:
-                raise failure
-            return result
+            record.scopes_returned = True
+            record.body_error, record.result = failure, result
+            return (
+                record,
+                self,
+                issuing,
+                invoke,
+                proof,
+                owner,
+                claim,
+                operation,
+                result,
+                failure,
+            )
 
-        return await run_preparation_read(
-            invoke,
-            creator=self.controller,
-            session_id=self.session.id,
-            reads=self.controller._preparation_reads,
-            observers=(self.runtime._preparation_reads,),
-            require_current=self.require_current if not closing else lambda: None,
-            source=self,
+        record.callback = invoke
+        try:
+            await run_preparation_read(
+                invoke,
+                creator=self.controller,
+                session_id=self.session.id,
+                reads=self.controller._preparation_reads,
+                observers=(self.runtime._preparation_reads,),
+                require_current=self._planning_return_source,
+                source=self,
+            )
+        except BaseException as error:  # noqa: BLE001 - preserve caller and original producer outcomes separately.
+            record.wrapper_error = error
+        self._planning_return_source()
+        self._finite_read_return(record)
+        if (
+            record.prepared is not self
+            or record.callback is not invoke
+            or not record.scopes_returned
+            or record.drains != [True]
+            or record.owner is None
+            or record.owner.is_admitted
+            or record.wrapper_error is not None
+            and not isinstance(record.wrapper_error, asyncio.CancelledError)
+        ):
+            raise RuntimeError("original planning preparation return unproven")
+        record.positive = True
+        if record.wrapper_error is not None:
+            raise record.wrapper_error
+        if record.body_error is not None:
+            raise record.body_error
+        if not closing:
+            self.require_current()
+        return record.result
+
+    def _planning_abort_source(self, ledger, attempt):
+        """Validate the original unused-close callback, not a supplied receipt."""
+        from tldw_chatbook.Agents.execution_capacity import current_execution_owner
+
+        from .console_workflow_runs import _capture_workflow_read
+
+        self._planning_return_source()
+        caller = inspect.currentframe().f_back.f_back
+        record = self._planning_reads[-1] if self._planning_reads else None
+        if (
+            caller is None
+            or caller.f_code is not _PLANNING_ABORT_CALLER
+            or caller.f_locals.get("self") is not self
+            or ledger is not self.service.db.automatic_work
+            or attempt is not self._planning_attempt
+            or not self._planning_prepare_entered
+            or self.phase is not None
+            or current_workflow_preparation() is not self
+            or record is None
+            or record.prepared is not self
+            or record.owner is not current_execution_owner()
+            or record.positive
+            or self._finite != (record.owner, record.claim)
+        ):
+            raise PermissionError("original prepared planning abort required")
+        actual = _capture_workflow_read(
+            self.controller, self, record.callback, record.issuing
         )
+        if record.proof != actual:
+            raise PermissionError("original planning abort reader changed")
+        for previous in self._planning_reads[:-1]:
+            self._finite_read_return(previous)
+            if not previous.positive or not previous.scopes_returned:
+                raise PermissionError("original planning preparation return required")
+        self.runtime.worktree_activity.validate_opaque_claim(
+            record.claim, owner=record.owner
+        )
+
+    def _planning_reads_returned(self):
+        """Re-prove each exact issued finite reader before unused release."""
+
+        self._planning_return_source()
+        run = self._planning_pending_run
+        if run is not None and (
+            run.prepared is not self or run.planning_reads is not self._planning_reads
+        ):
+            raise PermissionError("original pending planning readers changed")
+        for record in self._planning_reads:
+            self._finite_read_return(record)
+            if (
+                type(record) is not _PlanningPreparationRead
+                or record.prepared is not self
+                or not record.positive
+                or not record.scopes_returned
+                or record.drains != [True]
+                or record.owner is None
+                or record.owner.is_admitted
+                or record.claim is not None
+                and record.claim.id in self.runtime.worktree_activity._claims
+                or run is not None
+                and record.issuing is not run.issuing
+            ):
+                raise RuntimeError("original planning reader return unproven")
+        if self._planning_prepare_entered and self._planning_attempt is None:
+            raise RuntimeError("original planning preparation receipt missing")
 
     def bind_catalog(self, catalog):
         """Consume the one real composition before building the task-only plan."""
@@ -1052,11 +1322,43 @@ class _PreparedWorkflowReply:
             prepared_skills=skills,
         )
         self.configuration = configuration
+        if (
+            _storage_source_current is not _STORAGE_SOURCE_CHECK[0]
+            or _storage_source_current.__code__ is not _STORAGE_SOURCE_CHECK[1]
+            or _storage_source_current.__defaults__ is not _STORAGE_SOURCE_CHECK[2]
+            or _storage_source_current.__kwdefaults__ is not _STORAGE_SOURCE_CHECK[3]
+            or _storage_source_current.__closure__ is not _STORAGE_SOURCE_CHECK[5]
+        ):
+            raise PermissionError("original workflow storage source changed")
+        _storage_source_current()
         self.source = _AgentSources(
             self.controller, self.runtime, self.bridge, self.session, configuration
         )
         self.source.workflow_preparation = self
+        if (
+            _storage_source_current is not _STORAGE_SOURCE_CHECK[0]
+            or _storage_source_current.__code__ is not _STORAGE_SOURCE_CHECK[1]
+            or _storage_source_current.__defaults__ is not _STORAGE_SOURCE_CHECK[2]
+            or _storage_source_current.__kwdefaults__ is not _STORAGE_SOURCE_CHECK[3]
+            or _storage_source_current.__closure__ is not _STORAGE_SOURCE_CHECK[5]
+        ):
+            raise PermissionError("original workflow storage source changed")
+        _storage_source_current(self.source)
         self.source.prepare()
+        if (
+            _storage_source_current is not _STORAGE_SOURCE_CHECK[0]
+            or _storage_source_current.__code__ is not _STORAGE_SOURCE_CHECK[1]
+            or _storage_source_current.__defaults__ is not _STORAGE_SOURCE_CHECK[2]
+            or _storage_source_current.__kwdefaults__ is not _STORAGE_SOURCE_CHECK[3]
+            or _storage_source_current.__closure__ is not _STORAGE_SOURCE_CHECK[5]
+        ):
+            raise PermissionError("original workflow storage source changed")
+        _storage_source_current(self.source)
+        if self._configured_source_observation is not None:
+            raise PermissionError(
+                "original workflow storage observation already issued"
+            )
+        self._configured_source_observation = (self, self.source, self.source.sources)
         with self.activate_source():
             if self.phase.attempt.purpose == "planning" and self.source.mcp is not None:
                 from tldw_chatbook.MCP.console_snapshot import _CapturedSources
@@ -1321,6 +1623,11 @@ class _PreparedWorkflowReply:
     async def close(self, *, _unpublished=None):
         """Retire once after actual child drain and required durable publication."""
         if self.phase is None or self.phase.attempt.purpose == "planning":
+            try:
+                self._planning_reads_returned()
+            except BaseException:  # noqa: BLE001 - retain all ambiguous original readers.
+                self.cancel_event.set()
+                return  # Original ambiguous read/prepare retains intake and source.
             if self._finite is not None:
                 self.cancel_event.set()
                 return  # Unknown finite return retains its original source/claim.
@@ -1345,24 +1652,106 @@ class _PreparedWorkflowReply:
                             plan=None,
                             outcome="cancelled",
                         )
+                    elif (
+                        self._planning_attempt is not None
+                        and self._planning_attempt.state == "prepared"
+                    ):
+                        self.service.db.automatic_work.abort_workflow_planning(
+                            self._planning_attempt, _prepared=self
+                        )
 
-                await self._read(close_unused, closing=True)
+                cancellation = None
+                try:
+                    await self._read(close_unused, closing=True)
+                except asyncio.CancelledError as error:
+                    self._planning_reads_returned()
+                    cancellation = error
                 self._closed = True
                 self._release_configuration()
                 self._release_planning_slots()
+                if cancellation is not None:
+                    raise cancellation
             return
+        if (
+            _storage_source_current is not _STORAGE_SOURCE_CHECK[0]
+            or _storage_source_current.__code__ is not _STORAGE_SOURCE_CHECK[1]
+            or _storage_source_current.__defaults__ is not _STORAGE_SOURCE_CHECK[2]
+            or _storage_source_current.__kwdefaults__ is not _STORAGE_SOURCE_CHECK[3]
+            or _storage_source_current.__closure__ is not _STORAGE_SOURCE_CHECK[5]
+        ):
+            raise PermissionError("original workflow storage source changed")
+        _storage_source_current(self.source, preparation=self)
         if self._closed:
             if _unpublished is not None:
                 raise PermissionError("unpublished frame close cannot be replayed")
             return
 
+        from .console_workflow_wave import (
+            _WAVE_CLOSE_CURRENT_SOURCE,
+            _WAVE_CLOSE_SOURCE,
+            _workflow_close_association,
+            _workflow_close_current,
+        )
+
+        close_frame = sys._getframe()
+        closing_wave = self._wave
+        if (
+            _workflow_close_association is not _WAVE_CLOSE_SOURCE[0]
+            or _workflow_close_association.__code__ is not _WAVE_CLOSE_SOURCE[1]
+            or _workflow_close_association.__defaults__ is not _WAVE_CLOSE_SOURCE[2]
+            or _workflow_close_association.__kwdefaults__ is not _WAVE_CLOSE_SOURCE[3]
+            or _workflow_close_association.__closure__ is not _WAVE_CLOSE_SOURCE[5]
+        ):
+            raise PermissionError("original workflow helper source changed")
+        association = _workflow_close_association(self, close_frame, close_frame.f_back)
+
         def finish():
+            if (
+                _storage_source_current is not _STORAGE_SOURCE_CHECK[0]
+                or _storage_source_current.__code__ is not _STORAGE_SOURCE_CHECK[1]
+                or _storage_source_current.__defaults__ is not _STORAGE_SOURCE_CHECK[2]
+                or _storage_source_current.__kwdefaults__
+                is not _STORAGE_SOURCE_CHECK[3]
+                or _storage_source_current.__closure__ is not _STORAGE_SOURCE_CHECK[5]
+            ):
+                raise PermissionError("original workflow storage source changed")
+            _storage_source_current(self.source, preparation=self)
+            if (
+                _workflow_close_current is not _WAVE_CLOSE_CURRENT_SOURCE[0]
+                or _workflow_close_current.__code__ is not _WAVE_CLOSE_CURRENT_SOURCE[1]
+                or _workflow_close_current.__defaults__
+                is not _WAVE_CLOSE_CURRENT_SOURCE[2]
+                or _workflow_close_current.__kwdefaults__
+                is not _WAVE_CLOSE_CURRENT_SOURCE[3]
+                or _workflow_close_current.__closure__
+                is not _WAVE_CLOSE_CURRENT_SOURCE[5]
+            ):
+                raise PermissionError("original workflow helper source changed")
+            _workflow_close_current(association)
             auth = self.authorization
             with auth._lock if auth is not None else nullcontext():
                 if self._closed:
                     return
                 if self._closing:
                     raise PermissionError("workflow native retirement already selected")
+                native = (
+                    auth._native_preparation[0]
+                    if auth is not None and auth._native_preparation
+                    else None
+                )
+                if (
+                    self._wave is not closing_wave
+                    or self._launch_operation is not None
+                    or auth is not None
+                    and auth._native_launch == [None]
+                    or native is not None
+                    and (
+                        native.uncertain_start
+                        or native.wait_return
+                        and native.wait_return[0] is None
+                    )
+                ):
+                    raise PermissionError("workflow launch return has not completed")
                 if auth is not None and auth._native_launch:
                     tracker = self.service._tasks.get(auth.claim.id)
                     if (
@@ -1384,17 +1773,56 @@ class _PreparedWorkflowReply:
                 self._native_closed = True
             elif self.turn_lifeline is not None:
                 self.turn_lifeline.shutdown()
+            if (
+                _workflow_close_current is not _WAVE_CLOSE_CURRENT_SOURCE[0]
+                or _workflow_close_current.__code__ is not _WAVE_CLOSE_CURRENT_SOURCE[1]
+                or _workflow_close_current.__defaults__
+                is not _WAVE_CLOSE_CURRENT_SOURCE[2]
+                or _workflow_close_current.__kwdefaults__
+                is not _WAVE_CLOSE_CURRENT_SOURCE[3]
+                or _workflow_close_current.__closure__
+                is not _WAVE_CLOSE_CURRENT_SOURCE[5]
+            ):
+                raise PermissionError("original workflow helper source changed")
+            _workflow_close_current(association)
             with auth._lock if auth is not None else nullcontext():
+                if self._wave is not closing_wave or self._launch_operation is not None:
+                    raise PermissionError("original workflow close association changed")
                 self._closed = True
                 self._closing = False
 
         await self._read(finish, roots=False, closing=True, _unpublished=_unpublished)
+        if (
+            _workflow_close_current is not _WAVE_CLOSE_CURRENT_SOURCE[0]
+            or _workflow_close_current.__code__ is not _WAVE_CLOSE_CURRENT_SOURCE[1]
+            or _workflow_close_current.__defaults__ is not _WAVE_CLOSE_CURRENT_SOURCE[2]
+            or _workflow_close_current.__kwdefaults__
+            is not _WAVE_CLOSE_CURRENT_SOURCE[3]
+            or _workflow_close_current.__closure__ is not _WAVE_CLOSE_CURRENT_SOURCE[5]
+        ):
+            raise PermissionError("original workflow helper source changed")
+        _workflow_close_current(association)
         if self._wave is None:
             self._release_configuration()
 
     def _close_on_native_owner(self, owner):
         """Return the original frame inside its pre-held native child operation."""
-        operation = self._close_operation
+        from tldw_chatbook.Agents.agent_service import (
+            _WF_OPERATION_SOURCE,
+            _workflow_operation_sources,
+        )
+
+        if (
+            _storage_source_current is not _STORAGE_SOURCE_CHECK[0]
+            or _storage_source_current.__code__ is not _STORAGE_SOURCE_CHECK[1]
+            or _storage_source_current.__defaults__ is not _STORAGE_SOURCE_CHECK[2]
+            or _storage_source_current.__kwdefaults__ is not _STORAGE_SOURCE_CHECK[3]
+            or _storage_source_current.__closure__ is not _STORAGE_SOURCE_CHECK[5]
+        ):
+            raise PermissionError("original workflow storage source changed")
+        _storage_source_current(self.source, preparation=self)
+        with self.authorization._lock:
+            operation = self._close_operation
         if operation is None or operation.owner is not owner or not owner.is_admitted:
             raise PermissionError("original workflow close obligation required")
         # A tool may outlive its logical timeout. Its actual native thread
@@ -1402,6 +1830,15 @@ class _PreparedWorkflowReply:
         # provider while that original effectful frame can still resume.
         for worker in self._tool_workers:
             worker.join()
+        if (
+            _storage_source_current is not _STORAGE_SOURCE_CHECK[0]
+            or _storage_source_current.__code__ is not _STORAGE_SOURCE_CHECK[1]
+            or _storage_source_current.__defaults__ is not _STORAGE_SOURCE_CHECK[2]
+            or _storage_source_current.__kwdefaults__ is not _STORAGE_SOURCE_CHECK[3]
+            or _storage_source_current.__closure__ is not _STORAGE_SOURCE_CHECK[5]
+        ):
+            raise PermissionError("original workflow storage source changed")
+        _storage_source_current(self.source, preparation=self)
         with (
             owner.activate(),
             self.activate_source(),
@@ -1412,8 +1849,32 @@ class _PreparedWorkflowReply:
                 self.check_local_sources()
                 self._lifetime.__exit__(None, None, None)
                 self._native_closed = True
+            if (
+                _workflow_operation_sources is not _WF_OPERATION_SOURCE[0]
+                or _workflow_operation_sources.__code__ is not _WF_OPERATION_SOURCE[1]
+                or _workflow_operation_sources.__defaults__
+                is not _WF_OPERATION_SOURCE[2]
+                or _workflow_operation_sources.__kwdefaults__
+                is not _WF_OPERATION_SOURCE[3]
+                or _workflow_operation_sources.__closure__
+                is not _WF_OPERATION_SOURCE[5]
+            ):
+                raise PermissionError("original workflow helper source changed")
+            _workflow_operation_sources(operation)
             operation.finish()
-        self._close_operation = None
+        if (
+            _workflow_operation_sources is not _WF_OPERATION_SOURCE[0]
+            or _workflow_operation_sources.__code__ is not _WF_OPERATION_SOURCE[1]
+            or _workflow_operation_sources.__defaults__ is not _WF_OPERATION_SOURCE[2]
+            or _workflow_operation_sources.__kwdefaults__ is not _WF_OPERATION_SOURCE[3]
+            or _workflow_operation_sources.__closure__ is not _WF_OPERATION_SOURCE[5]
+        ):
+            raise PermissionError("original workflow helper source changed")
+        _workflow_operation_sources(operation)
+        with self.authorization._lock:
+            if self._close_operation is not operation:
+                raise PermissionError("original workflow close operation changed")
+            self._close_operation = None
 
     def _release_planning_slots(self):
         if (
@@ -2094,6 +2555,7 @@ async def prepare_workflow_planning(
     revision_id=None,
     repair_instruction=None,
     _request=None,
+    _pending_run=None,
 ):
     """Prepare an explicit native Chat, persisting initial identity before request.
 
@@ -2116,6 +2578,28 @@ async def prepare_workflow_planning(
     from .console_workflow_runs import _accept_workflow_phase, native_workflow_qualified
 
     runtime = controller._hooks_v2_runtime
+    from .console_workflow_runs import _PLANNING_COMMAND_CODES
+
+    coordinator = getattr(runtime, "_workflow_coordinator", None)
+    issuing = asyncio.current_task()
+    if _pending_run is None:
+        if issuing.get_coro().cr_code in _PLANNING_COMMAND_CODES or (
+            coordinator is not None
+            and any(run.issuing is issuing for run in coordinator._pending_planning)
+        ):
+            raise PermissionError("original pending G planning association required")
+    else:
+        coordinator._pending_planning_source(_pending_run, issuing=True)
+        if (
+            _pending_run.session_id != session_id
+            or _pending_run.binding is not binding
+            or _pending_run.command_id != command_id
+            or _pending_run.workflow_id != workflow_id
+            or _pending_run.planning_input
+            != (_request if workflow_id is None else (revision_id, repair_instruction))
+        ):
+            raise PermissionError("original pending planning inputs changed")
+        _pending_run.planning_entered = True
     session = next((s for s in controller.store.sessions() if s.id == session_id), None)
     if (
         not native_workflow_qualified()
@@ -2165,6 +2649,8 @@ async def prepare_workflow_planning(
         or revision_id is None
     ):
         raise ValueError("repair requires an explicit bounded instruction and revision")
+    if _pending_run is not None:
+        _pending_run.planning_constructing = True
     prepared = _PreparedWorkflowReply(
         runtime.agent_bridge,
         None,
@@ -2176,6 +2662,10 @@ async def prepare_workflow_planning(
         session=session,
         _key=_PLANNING_INPUT,
     )
+    if _pending_run is not None:
+        prepared._planning_pending_run = _pending_run
+        _pending_run.prepared = prepared
+        _pending_run.planning_reads = prepared._planning_reads
     prepared._planning_repair_source = (
         command_id,
         workflow_id,
@@ -2300,6 +2790,14 @@ async def prepare_workflow_planning(
                     or snapshot.request.binding != reference
                 ):
                     raise PermissionError("saved workflow selection changed")
+            if _pending_run is not None:
+                coordinator._pending_planning_source(_pending_run)
+                asyncio.run_coroutine_threadsafe(
+                    coordinator._planning_identity(_pending_run, prepared, snapshot),
+                    prepared._loop,
+                ).result()
+            prepared.require_current()
+            prepared._planning_prepare_entered = True
             attempt = prepared.service.db.automatic_work.prepare_workflow_planning(
                 snapshot.id,
                 owner_id=controller._fleet_wake.runtime_owner_id,
@@ -2308,6 +2806,8 @@ async def prepare_workflow_planning(
                 revision_id=revision_id,
                 repair_instruction=repair_instruction,
             )
+            prepared._planning_attempt = attempt
+            prepared.require_current()
             prepared.phase = _accept_workflow_phase(
                 controller, attempt.id, session_id=session_id
             )
@@ -2326,7 +2826,85 @@ async def prepare_workflow_planning(
 
 
 # Definition-time originals for planning's exact receiver, not a durable capability.
+from tldw_chatbook.Agents import execution_capacity as _finite_capacity
+
 from .console_ordinary_tree import _function_record as _planning_function_record
+
+
+def _finite_owner_return(owner, capacity, operation=None):
+    """Observe native positive retirement without accepting replacement methods."""
+    from .console_ordinary_tree import _function_unchanged
+
+    if (
+        type(owner) is not _FINITE_OWNER_CLASS
+        or _finite_capacity.ExecutionOwner is not _FINITE_OWNER_CLASS
+        or _finite_capacity.OwnedOperation is not _FINITE_OPERATION_CLASS
+        or owner.capacity is not capacity
+        or any(
+            inspect.getattr_static(target, name, None) is not descriptor
+            or any(not _function_unchanged(record) for record in records)
+            for target, name, descriptor, records in _FINITE_OWNER_METHODS
+        )
+        or any(
+            inspect.getattr_static(owner, name, None) is not descriptor
+            for target, name, descriptor, _records in _FINITE_OWNER_METHODS
+            if target is _FINITE_OWNER_CLASS
+        )
+    ):
+        raise PermissionError("original workflow finite owner source changed")
+    drained = []
+    owner.on_drained(drained.append)
+    if drained != [True] or owner.is_admitted:
+        raise RuntimeError("original workflow finite owner unreturned")
+    if operation is not None:
+        if (
+            type(operation) is not _FINITE_OPERATION_CLASS
+            or operation.owner is not owner
+            or any(
+                inspect.getattr_static(operation, name, None) is not descriptor
+                for target, name, descriptor, _records in _FINITE_OWNER_METHODS
+                if target is _FINITE_OPERATION_CLASS
+            )
+        ):
+            raise RuntimeError("original workflow finite operation changed")
+        with capacity._lock:
+            if operation in owner._operations:
+                raise RuntimeError("original workflow finite operation unreturned")
+
+
+_FINITE_OWNER_CLASS = _finite_capacity.ExecutionOwner
+_FINITE_OPERATION_CLASS = _finite_capacity.OwnedOperation
+_FINITE_OWNER_METHODS = tuple(
+    (
+        target,
+        name,
+        descriptor,
+        tuple(
+            _planning_function_record(function)
+            for function in (
+                (descriptor.fget,)
+                if isinstance(descriptor, property)
+                else (descriptor.__func__,)
+                if isinstance(descriptor, (staticmethod, classmethod))
+                else (
+                    descriptor,
+                    *(
+                        [descriptor.__wrapped__]
+                        if hasattr(descriptor, "__wrapped__")
+                        else []
+                    ),
+                )
+            )
+        ),
+    )
+    for target in (_FINITE_OWNER_CLASS, _FINITE_OPERATION_CLASS)
+    for name, descriptor in vars(target).items()
+    if inspect.isfunction(descriptor)
+    or isinstance(descriptor, (property, staticmethod, classmethod))
+)
+_FINITE_OWNER_CHECK = _planning_function_record(_finite_owner_return)
+
+_PLANNING_ENTRY_RECORD = _planning_function_record(prepare_workflow_planning)
 
 _PLANNING_PREPARATION_METHODS = tuple(
     (
@@ -2355,3 +2933,193 @@ _PLANNING_TERMINAL_CALLERS = (
         if inspect.iscode(code) and code.co_name == "invoke"
     ),
 )
+_PLANNING_ABORT_CALLER = next(
+    code
+    for code in _PreparedWorkflowReply.close.__code__.co_consts
+    if inspect.iscode(code) and code.co_name == "close_unused"
+)
+from tldw_chatbook.DB.automatic_work import AutomaticWorkLedger as _PlanningLedger
+
+_PLANNING_LEDGER_METHODS = tuple(
+    (name, method, _planning_function_record(method))
+    for name in (
+        "prepare_workflow_planning",
+        "abort_workflow_planning",
+        "read_workflow_attempt",
+        "accept_workflow_phase",
+    )
+    for method in (getattr(_PlanningLedger, name),)
+)
+
+
+from pathlib import Path as _StoragePath
+
+from tldw_chatbook.Agents import activation as _storage_activation
+from tldw_chatbook.Agents import agent_service as _storage_agent_service
+from tldw_chatbook.Agents import workflow_task_scope as _storage_task_scope
+from tldw_chatbook.Backup_Recovery.admission_runtime import (
+    RecoveryAdmissionGuard as _StorageGuard,
+)
+
+from . import console_agent_sources as _storage_agent_sources
+from .console_ordinary_tree import _function_unchanged as _storage_unchanged
+
+
+def _storage_source_current(source=None, *, preparation=None):
+    checker = _storage_unchanged
+    if (
+        checker is not _STORAGE_CHECKER[0]
+        or checker.__code__ is not _STORAGE_CHECKER[1]
+        or checker.__defaults__ is not _STORAGE_CHECKER[2]
+        or checker.__kwdefaults__ is not _STORAGE_CHECKER[3]
+        or checker.__closure__ is not _STORAGE_CHECKER[5]
+        or _storage_agent_sources._AgentSources is not _STORAGE_SOURCE_CLASS
+        or _storage_agent_sources._guard is not _STORAGE_GUARD
+        or _storage_activation._guard is not _STORAGE_GUARD
+        or type(_STORAGE_GUARD) is not _StorageGuard
+        or inspect.getattr_static(_STORAGE_SOURCE_CLASS, "__getattribute__")
+        is not object.__getattribute__
+        or inspect.getattr_static(_STORAGE_SOURCE_CLASS, "__getattr__", None)
+        is not None
+        or any(
+            vars(module).get(name) is not record[0] or not checker(record)
+            for module, name, record in _STORAGE_SOURCE_FUNCTIONS
+        )
+        or any(
+            inspect.getattr_static(target, name, None) is not descriptor
+            or any(not checker(record) for record in records)
+            or source is not None
+            and target is _STORAGE_SOURCE_CLASS
+            and inspect.getattr_static(source, name, None) is not descriptor
+            or target is _StorageGuard
+            and inspect.getattr_static(_STORAGE_GUARD, name, None) is not descriptor
+            for target, name, descriptor, records in _STORAGE_SOURCE_METHODS
+        )
+    ):
+        raise PermissionError("original workflow storage source changed")
+    if preparation is not None and (
+        _PreparedWorkflowReply is not _STORAGE_PREPARATION_CLASS
+        or _storage_agent_service._PreparedWorkflowChild is not _STORAGE_NATIVE_CLASS
+        or _storage_task_scope.WorkflowTaskAuthorization is not _STORAGE_AUTH_CLASS
+        or type(preparation) is not _STORAGE_PREPARATION_CLASS
+        or source is not preparation.source
+        or any(
+            inspect.getattr_static(preparation, name, None) is not descriptor
+            or any(not checker(record) for record in records)
+            for name, descriptor, records in _PLANNING_PREPARATION_METHODS
+        )
+    ):
+        raise PermissionError("original workflow storage receiver changed")
+    if source is not None and (
+        type(source) is not _STORAGE_SOURCE_CLASS
+        or type(source.sources) is not tuple
+        or any(
+            type(row) is not tuple
+            or len(row) != 2
+            or type(row[0]) is not str
+            or type(row[1]) is not _STORAGE_PATH_CLASS
+            for row in source.sources
+        )
+    ):
+        raise PermissionError("original workflow storage observations required")
+    if preparation is None:
+        return
+    observation = preparation._configured_source_observation
+    if source is None:
+        if (
+            observation is not None
+            or preparation.native is not None
+            or preparation._lifetime is not None
+            or preparation.authorization is not None
+        ):
+            raise PermissionError("original workflow initial storage source changed")
+        return
+    if (
+        type(observation) is not tuple
+        or len(observation) != 3
+        or observation[0] is not preparation
+        or observation[1] is not source
+        or observation[2] is not source.sources
+        or source.workflow_preparation is not preparation
+    ):
+        raise PermissionError("original workflow storage observation changed")
+    auth = preparation.authorization
+    if auth is not None:
+        if type(auth) is not _STORAGE_AUTH_CLASS:
+            raise PermissionError("original workflow storage authorization changed")
+        with auth._lock:
+            if (
+                auth.phase is not preparation.phase
+                or not auth._bridge_preparation
+                or auth._bridge_preparation[0] is not preparation
+            ):
+                raise PermissionError("original workflow storage authorization changed")
+            if auth._native_preparation:
+                native = auth._native_preparation[0]
+                if (
+                    len(auth._native_preparation) != 1
+                    or type(native) is not _STORAGE_NATIVE_CLASS
+                    or preparation.native is None
+                    or native.service is not preparation.native.service
+                    or native.phase is not preparation.phase
+                    or native.source_observation is not observation
+                    or native.service._workflow_authorization is not auth
+                ):
+                    raise PermissionError(
+                        "original workflow storage observation changed"
+                    )
+
+
+_STORAGE_PREPARATION_CLASS = _PreparedWorkflowReply
+_STORAGE_NATIVE_CLASS = _storage_agent_service._PreparedWorkflowChild
+_STORAGE_AUTH_CLASS = _storage_task_scope.WorkflowTaskAuthorization
+_STORAGE_SOURCE_CLASS = _storage_agent_sources._AgentSources
+_STORAGE_GUARD = _storage_activation._guard
+_STORAGE_PATH_CLASS = type(_StoragePath())
+_STORAGE_CHECKER = _planning_function_record(_storage_unchanged)
+_STORAGE_SOURCE_METHODS = tuple(
+    (
+        target,
+        name,
+        descriptor,
+        tuple(
+            _planning_function_record(function)
+            for function in (
+                descriptor,
+                *(
+                    [descriptor.__wrapped__]
+                    if hasattr(descriptor, "__wrapped__")
+                    else []
+                ),
+            )
+        ),
+    )
+    for target, names in (
+        (
+            _STORAGE_SOURCE_CLASS,
+            (
+                "__init__",
+                "prepare",
+                "check_memory",
+                "_check_original_sources",
+                "_check_original_bindings",
+                "_allowed_roots",
+                "_check_writer",
+                "activate",
+                "check_storage",
+            ),
+        ),
+        (_StorageGuard, ("captured_sources", "execution")),
+    )
+    for name in names
+    for descriptor in (vars(target)[name],)
+)
+_STORAGE_SOURCE_FUNCTIONS = tuple(
+    (module, name, _planning_function_record(vars(module)[name]))
+    for module, names in (
+        (_storage_activation, ("execution", "_sources")),
+        (_storage_agent_sources, ("execution", "_sources")),
+    )
+    for name in names
+)
+_STORAGE_SOURCE_CHECK = _planning_function_record(_storage_source_current)

@@ -848,6 +848,7 @@ def test_live_cap_refuses_beyond_max_live_subagents(db):
     assert len(coordinator.snapshot()) == 1
 
 
+@pytest.mark.bootstrap_profile
 def test_live_cap_refusal_does_not_burn_the_per_turn_spawn_budget(db):
     """A cap refusal is retryable, so it must not consume a spawn slot.
 
@@ -3091,6 +3092,7 @@ class _SpyRunLogWriter:
         self.closed += 1
 
 
+@pytest.mark.bootstrap_profile
 def test_thread_start_failure_is_contained_and_the_turn_still_finalizes(
     db, monkeypatch
 ):
@@ -3198,6 +3200,7 @@ def test_thread_start_failure_is_contained_and_the_turn_still_finalizes(
     assert waits and "answer two" in waits[0]
 
 
+@pytest.mark.bootstrap_profile
 def test_thread_start_and_transient_terminal_status_failure_are_both_contained(
     db, monkeypatch
 ):
@@ -3250,6 +3253,7 @@ def test_thread_start_and_transient_terminal_status_failure_are_both_contained(
     assert any(step["kind"] == "agent_run_failed" for step in child["steps"])
 
 
+@pytest.mark.bootstrap_profile
 def test_thread_start_and_persistent_terminal_failure_reconciles_on_reopen(
     db, monkeypatch
 ):
@@ -3261,11 +3265,11 @@ def test_thread_start_and_persistent_terminal_failure_reconciles_on_reopen(
             raise RuntimeError("can't start new thread")
         return real_start(self)
 
-    def fail_child_terminal(run_id, status, result, terminal_step):
+    def fail_child_terminal(run_id, status, result, terminal_step, **kwargs):
         row = db.get_run(run_id)
         if row and row["agent_kind"] == "subagent" and status == RUN_ERROR:
             raise RuntimeError("persistent terminal write failure")
-        return real_terminal(run_id, status, result, terminal_step)
+        return real_terminal(run_id, status, result, terminal_step, **kwargs)
 
     monkeypatch.setattr(threading.Thread, "start", fail_fleet_start)
     monkeypatch.setattr(db, "set_terminal_with_step", fail_child_terminal)
@@ -3306,6 +3310,7 @@ def test_thread_start_and_persistent_terminal_failure_reconciles_on_reopen(
     reopened.close()
 
 
+@pytest.mark.bootstrap_profile
 def test_thread_start_refusal_survives_atomic_and_status_fallback_failure(
     db, monkeypatch
 ):
@@ -3318,17 +3323,17 @@ def test_thread_start_refusal_survives_atomic_and_status_fallback_failure(
             raise RuntimeError("can't start new thread")
         return real_start(self)
 
-    def fail_child_terminal(run_id, status, result, terminal_step):
+    def fail_child_terminal(run_id, status, result, terminal_step, **kwargs):
         row = db.get_run(run_id)
         if row and row["agent_kind"] == "subagent" and status == RUN_ERROR:
             raise RuntimeError("persistent atomic failure")
-        return real_terminal(run_id, status, result, terminal_step)
+        return real_terminal(run_id, status, result, terminal_step, **kwargs)
 
-    def fail_child_status(run_id, status, result=None):
+    def fail_child_status(run_id, status, result=None, **kwargs):
         row = db.get_run(run_id)
         if row and row["agent_kind"] == "subagent" and status == RUN_ERROR:
             raise RuntimeError("persistent status fallback failure")
-        return real_status(run_id, status, result)
+        return real_status(run_id, status, result, **kwargs)
 
     monkeypatch.setattr(threading.Thread, "start", fail_fleet_start)
     monkeypatch.setattr(db, "set_terminal_with_step", fail_child_terminal)

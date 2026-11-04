@@ -764,6 +764,44 @@ class _WorkflowChildLaunchFailed(PermissionError):
 
 
 @dataclasses.dataclass(frozen=True, slots=True)
+class _NativeWorkflowReturn:
+    receipt: WorkflowChildReceipt
+    error: BaseException = dataclasses.field(repr=False)
+    known: bool
+
+
+@dataclasses.dataclass(frozen=True, slots=True)
+class _WorkflowLaunchEntry:
+    service: Any = dataclasses.field(repr=False)
+    authorization: Any = dataclasses.field(repr=False)
+    native: Any = dataclasses.field(repr=False)
+    preparation: Any = dataclasses.field(repr=False)
+    wave: Any = dataclasses.field(repr=False)
+    caller: Any = dataclasses.field(repr=False)
+    mode: str
+    association: Any = dataclasses.field(repr=False)
+    lock: Any = dataclasses.field(repr=False)
+    marker: list = dataclasses.field(repr=False)
+    native_list: list = dataclasses.field(repr=False)
+    bridge_list: list = dataclasses.field(repr=False)
+    waits: list = dataclasses.field(repr=False)
+    capacity_lock: Any = dataclasses.field(repr=False)
+
+
+@dataclasses.dataclass(frozen=True, slots=True)
+class _WorkflowLaunchReturn:
+    entry: _WorkflowLaunchEntry = dataclasses.field(repr=False)
+    owner: Any = dataclasses.field(default=None, repr=False)
+    claim: Any = dataclasses.field(default=None, repr=False)
+    operation: Any = dataclasses.field(default=None, repr=False)
+    receipt: WorkflowChildReceipt | None = None
+    error: BaseException | None = dataclasses.field(default=None, repr=False)
+    wait: bool = False
+    known: bool = True
+    duplicate: bool = False
+
+
+@dataclasses.dataclass(frozen=True, slots=True)
 class _PreparedWorkflowChild:
     service: Any = dataclasses.field(repr=False)
     phase: Any = dataclasses.field(repr=False)
@@ -780,6 +818,8 @@ class _PreparedWorkflowChild:
     activity_claims: list = dataclasses.field(default_factory=list, repr=False)
     log_finalized: list = dataclasses.field(default_factory=list, repr=False)
     wait_return: list = dataclasses.field(default_factory=list, repr=False)
+    uncertain_start: list = dataclasses.field(default_factory=list, repr=False)
+    source_observation: tuple | None = dataclasses.field(default=None, repr=False)
 
 
 @dataclasses.dataclass(frozen=True, slots=True)
@@ -4804,6 +4844,37 @@ class AgentService:
                 or parent["work_chain_id"] != authorization.claim.chain_id
             ):
                 raise PermissionError("native workflow parent lineage mismatch")
+        bridge_preparations = authorization._bridge_preparation
+        preparation = bridge_preparations[0] if bridge_preparations else None
+        source_observation = None
+        if preparation is not None:
+            from tldw_chatbook.Chat.console_workflow_preparation import (
+                _PLANNING_PREPARATION_METHODS,
+            )
+
+            if (
+                _workflow_launch_sources is not _WF_LAUNCH_SOURCE[0]
+                or _workflow_launch_sources.__code__ is not _WF_LAUNCH_SOURCE[1]
+                or _workflow_launch_sources.__defaults__ is not _WF_LAUNCH_SOURCE[2]
+                or _workflow_launch_sources.__kwdefaults__ is not _WF_LAUNCH_SOURCE[3]
+                or _workflow_launch_sources.__closure__ is not _WF_LAUNCH_SOURCE[5]
+            ):
+                raise PermissionError("original workflow helper source changed")
+            _workflow_launch_sources(self)
+            if (
+                len(bridge_preparations) != 1
+                or preparation.authorization is not authorization
+                or preparation.phase is not authorization.phase
+                or any(
+                    _wf_inspect.getattr_static(preparation, name, None)
+                    is not descriptor
+                    or any(not _WF_CHECKER[0](record) for record in records)
+                    for name, descriptor, records in _PLANNING_PREPARATION_METHODS
+                )
+            ):
+                raise PermissionError("original workflow preparation source changed")
+            preparation._execution_return_source()
+            source_observation = preparation._configured_storage_sources()
         with self._workflow_preparation_lock, authorization._lock:
             if (
                 authorization._native_preparation
@@ -4863,6 +4934,22 @@ class AgentService:
                 f"agent-run:{parent_run_id}" if parent_run_id is not None else None
             )
             kwargs.pop("messages")
+            if (
+                authorization._bridge_preparation is not bridge_preparations
+                or (preparation is None and bridge_preparations)
+                or preparation is not None
+                and (
+                    len(bridge_preparations) != 1
+                    or bridge_preparations[0] is not preparation
+                    or preparation.authorization is not authorization
+                    or preparation.phase is not authorization.phase
+                    or preparation._configured_source_observation
+                    is not source_observation
+                    or preparation.source is not source_observation[1]
+                    or preparation.source.sources is not source_observation[2]
+                )
+            ):
+                raise PermissionError("original workflow storage observation changed")
             authorization._native_preparation.append(
                 _PreparedWorkflowChild(
                     service=self,
@@ -4875,6 +4962,7 @@ class AgentService:
                     target_ref=target_ref,
                     cancels=self._fleet_cancels,
                     threads=self._fleet_threads,
+                    source_observation=source_observation,
                 )
             )
             self._workflow_authorization = authorization
@@ -4886,200 +4974,736 @@ class AgentService:
         authorization: WorkflowTaskAuthorization,
         should_cancel: Callable[[], bool],
     ) -> WorkflowChildReceipt:
-        """Launch original prepared custody through the existing native child tail.
+        """Return native custody after this call's own core and guard scopes.
 
-        Args:
-            task: The exact task retained by its original authorization.
-            authorization: Private preparation owned by the accepted phase.
-            should_cancel: Native phase cancellation probe, retained by the child.
-
-        Returns:
-            The original native receipt, including on a completed duplicate call.
-
-        Raises:
-            _WorkflowChildWait: No-dispatch activity or fleet admission wait.
-            CapacityRefused: Native runtime capacity wait before child admission.
-            PermissionError: Missing custody, mismatched preparation or claimed launch.
+        Caller-owned outer storage, phase and worker scopes remain independent.
         """
-        self._check_workflow_launch_authorization(authorization)
-        if task is not authorization.task:
-            raise PermissionError("original prepared workflow task required")
-        with authorization._lock:
-            prepared = authorization._native_preparation
-            if (
-                not prepared
-                or prepared[0].service is not self
-                or prepared[0].phase is not authorization.phase
-            ):
-                raise PermissionError("native workflow child preparation required")
-            prepared = prepared[0]
-            authorization.check_preparation()
-            # Publish the existing launch marker before retirement can call a task
-            # unused. This grants no continuation; only native allowance COMMIT does.
-            with authorization.phase._control_lock:
-                if authorization.phase._retired:
-                    raise PermissionError("workflow phase retired")
-                if authorization._native_launch:
-                    result = authorization._native_launch[0]
-                    duplicate = True
-                else:
-                    authorization._native_launch.append(None)
-                    duplicate = False
-        if duplicate:
-            if isinstance(result, WorkflowChildReceipt):
-                if result.failure is not None:
-                    raise _WorkflowChildLaunchFailed(result)
-                return result
-            raise PermissionError("workflow child launch already claimed")
-        with authorization._lock:
-            prepared.wait_return.clear()
+        if (
+            _workflow_launch_sources is not _WF_LAUNCH_SOURCE[0]
+            or _workflow_launch_sources.__code__ is not _WF_LAUNCH_SOURCE[1]
+            or _workflow_launch_sources.__defaults__ is not _WF_LAUNCH_SOURCE[2]
+            or _workflow_launch_sources.__kwdefaults__ is not _WF_LAUNCH_SOURCE[3]
+            or _workflow_launch_sources.__closure__ is not _WF_LAUNCH_SOURCE[5]
+        ):
+            raise PermissionError("original workflow helper source changed")
+        _workflow_launch_sources(self)
+        result = self._workflow_launch_result(
+            task, authorization=authorization, should_cancel=should_cancel
+        )
+        self._finish_workflow_launch(result)
+        if result.error is not None:
+            raise result.error
+        return result.receipt
+
+    def _workflow_launch_result(self, task, *, authorization, should_cancel):
+        """Produce only this invocation's local value after normal own return."""
         from tldw_chatbook.Backup_Recovery.participants import _core_operation
 
         from .activation import execution
         from .execution_capacity import CapacityRefused
 
-        @_core_operation(self.db)
-        def launch():
-            activity = authorization._runtime.worktree_activity
-            owner = claim = None
-            bound = False
-            dispatched = False
-            bridge_preparation = (
-                authorization._bridge_preparation[0]
-                if authorization._bridge_preparation
-                else None
+        if (
+            _workflow_launch_sources is not _WF_LAUNCH_SOURCE[0]
+            or _workflow_launch_sources.__code__ is not _WF_LAUNCH_SOURCE[1]
+            or _workflow_launch_sources.__defaults__ is not _WF_LAUNCH_SOURCE[2]
+            or _workflow_launch_sources.__kwdefaults__ is not _WF_LAUNCH_SOURCE[3]
+            or _workflow_launch_sources.__closure__ is not _WF_LAUNCH_SOURCE[5]
+        ):
+            raise PermissionError("original workflow helper source changed")
+        _workflow_launch_sources(self)
+        self._check_workflow_launch_authorization(authorization)
+        if task is not authorization.task:
+            raise PermissionError("original prepared workflow task required")
+        caller = sys._getframe(1)
+        public = (
+            caller.f_code is _WORKFLOW_PUBLIC_CODE
+            and caller.f_locals.get("self") is self
+        )
+        with authorization._lock:
+            native_list = authorization._native_preparation
+            bridge_list = authorization._bridge_preparation
+            if (
+                not native_list
+                or native_list[0].service is not self
+                or native_list[0].phase is not authorization.phase
+            ):
+                raise PermissionError("native workflow child preparation required")
+            native = native_list[0]
+            preparation = bridge_list[0] if bridge_list else None
+            wave = preparation._wave if preparation is not None else None
+        association = None
+        if not public:
+            from tldw_chatbook.Chat.console_workflow_wave import (
+                _WAVE_ASSOCIATION_SOURCE,
+                _workflow_launch_association,
             )
-            try:
-                if (
-                    bridge_preparation is not None
-                    and bridge_preparation._wave is None
-                    and bridge_preparation.bridge.change_tracking_enabled
+
+            if (
+                _workflow_launch_association is not _WAVE_ASSOCIATION_SOURCE[0]
+                or _workflow_launch_association.__code__
+                is not _WAVE_ASSOCIATION_SOURCE[1]
+                or _workflow_launch_association.__defaults__
+                is not _WAVE_ASSOCIATION_SOURCE[2]
+                or _workflow_launch_association.__kwdefaults__
+                is not _WAVE_ASSOCIATION_SOURCE[3]
+                or _workflow_launch_association.__closure__
+                is not _WAVE_ASSOCIATION_SOURCE[5]
+            ):
+                raise PermissionError("original workflow helper source changed")
+            association = _workflow_launch_association(preparation, caller)
+        mode = "N" if preparation is None else "W" if wave is not None else "D"
+        entry = _WorkflowLaunchEntry(
+            self,
+            authorization,
+            native,
+            preparation,
+            wave,
+            caller,
+            mode,
+            association,
+            authorization._lock,
+            authorization._native_launch,
+            native_list,
+            bridge_list,
+            native.wait_return,
+            self.runtime_capacity._lock,
+        )
+        if (
+            _workflow_launch_current is not _WF_CURRENT_SOURCE[0]
+            or _workflow_launch_current.__code__ is not _WF_CURRENT_SOURCE[1]
+            or _workflow_launch_current.__defaults__ is not _WF_CURRENT_SOURCE[2]
+            or _workflow_launch_current.__kwdefaults__ is not _WF_CURRENT_SOURCE[3]
+            or _workflow_launch_current.__closure__ is not _WF_CURRENT_SOURCE[5]
+        ):
+            raise PermissionError("original workflow helper source changed")
+        _workflow_launch_current(entry)
+        with authorization._lock:
+            if (
+                _workflow_launch_locked is not _WF_LOCKED_SOURCE[0]
+                or _workflow_launch_locked.__code__ is not _WF_LOCKED_SOURCE[1]
+                or _workflow_launch_locked.__defaults__ is not _WF_LOCKED_SOURCE[2]
+                or _workflow_launch_locked.__kwdefaults__ is not _WF_LOCKED_SOURCE[3]
+                or _workflow_launch_locked.__closure__ is not _WF_LOCKED_SOURCE[5]
+            ):
+                raise PermissionError("original workflow helper source changed")
+            _workflow_launch_locked(entry)
+            with authorization.phase._control_lock:
+                if authorization.phase._retired:
+                    raise PermissionError("workflow phase retired")
+                if entry.marker:
+                    receipt = entry.marker[0]
+                    if not isinstance(receipt, WorkflowChildReceipt):
+                        raise PermissionError("workflow child launch already claimed")
+                    error = (
+                        _WorkflowChildLaunchFailed(receipt)
+                        if receipt.failure is not None
+                        else None
+                    )
+                    return _WorkflowLaunchReturn(
+                        entry, receipt=receipt, error=error, duplicate=True
+                    )
+                if not public and mode != "W" or public and mode == "W":
+                    raise PermissionError("original wave launch invocation required")
+                if preparation is not None and (
+                    preparation._launch_operation is not None
+                    or preparation._close_operation is not None
+                    or preparation._closed
+                    or preparation._closing
+                    or mode == "D"
+                    and preparation.bridge.change_tracking_enabled
                 ):
                     raise PermissionError("original capture wave required")
-                with activity.prelaunch(
-                    footprint=authorization.physical_footprint,
-                    _wave_member=authorization,
-                ) as claim:
-                    if claim is None:
-                        raise _WorkflowChildWait(
-                            "worktree_activity", "workflow worktree activity busy"
-                        )
-                    owner = self.runtime_capacity.begin_execution(
-                        origin=self.work_origin,
-                        conversation_id=authorization.claim.conversation_id,
-                        child=True,
-                    )
-                    claim.bind_owner(owner)
-                    prepared.activity_claims.append(claim)
-                    bound = True
-                    with owner.activate():
-                        for tracker in authorization._required_evidence:
-                            tracker.service.validate_task_inputs(
-                                authorization, json.loads(prepared.messages_json)
-                            )
-                        if bridge_preparation is not None:
-                            bridge_preparation._close_operation = owner.reserve_tool()
-                            bridge_preparation._launch_operation = owner.reserve_tool()
-                    kwargs = dict(prepared.kwargs)
-                    kwargs["messages"] = json.loads(prepared.messages_json)
-                    kwargs["workflow_task_authorization"] = authorization
-                    kwargs["workflow_activity_claim"] = claim
-                    dispatched = True
-                    handle, failure = self._launch_prepared_child(
-                        task.instructions,
-                        None,
-                        kwargs,
-                        fleet=prepared.fleet,
-                        run_id=prepared.parent_run_id,
-                        message_chain_id=authorization.claim.chain_id,
-                        hook_run=None,
-                        should_cancel=should_cancel,
-                        my_handle_ids=prepared.handle_ids,
-                        durable_handle_ids=prepared.durable_ids,
-                        fleet_cancels=prepared.cancels,
-                        fleet_threads=prepared.threads,
-                        child_owner=owner,
-                        child_reservation=authorization.claim.reservation_id,
-                        child_outlives_turn=False,
-                    )
-                    if isinstance(failure, _FleetAdmissionWait):
-                        dispatched = False
-                        raise _WorkflowChildWait("fleet_capacity", failure.error)
-                    if failure is not None:
-                        # Only known pre-dispatch failure may retire without a result.
-                        if owner.run_id is None:
-                            claim.settle(durable=True)
-                        return failure
-                    receipt = WorkflowChildReceipt(
-                        attempt_id=authorization.claim.id,
-                        run_id=authorization.claim.launch_run_id,
-                        handle_id=handle.handle_id,
-                        owner=owner,
-                        activity_claim=claim,
-                    )
-                    with authorization._lock:
-                        authorization._native_launch[0] = receipt
-                    return receipt
+                if native.uncertain_start or entry.waits and entry.waits[0] is None:
+                    raise PermissionError("original workflow launch return unproven")
+                entry.waits.clear()
+                entry.marker.append(None)
 
-            except BaseException as error:
-                if not dispatched:
-                    if (
-                        bridge_preparation is not None
-                        and bridge_preparation._close_operation is not None
-                    ):
-                        bridge_preparation._close_operation.finish()
-                        bridge_preparation._close_operation = None
-                    if owner is not None:
-                        owner.finish_root()
-                    if bound:
-                        claim.settle(durable=True)
-                        prepared.activity_claims.clear()
-                    with authorization._lock:
-                        authorization._native_launch.clear()
-                    transient = (
-                        type(error) is CapacityRefused
-                        and error.args
-                        in {
-                            (name,)
-                            for name in (
-                                "child_capacity",
-                                "automatic_child_capacity",
-                                "tool_capacity",
-                                "automatic_tool_capacity",
-                            )
-                        }
-                    ) or (
-                        type(error) is _WorkflowChildWait
-                        and error.reason in {"fleet_capacity", "worktree_activity"}
+        @_core_operation(self.db)
+        def launch():
+            owner = close_operation = operation = operations = None
+            error = receipt = None
+            wait = False
+            known = True
+            bound = False
+            with authorization._runtime.worktree_activity.prelaunch(
+                footprint=authorization.physical_footprint,
+                _wave_member=authorization,
+            ) as claim:
+                if claim is None:
+                    error = _WorkflowChildWait(
+                        "worktree_activity", "workflow worktree activity busy"
                     )
+                    wait = True
+                else:
+                    try:
+                        owner = self.runtime_capacity.begin_execution(
+                            origin=self.work_origin,
+                            conversation_id=authorization.claim.conversation_id,
+                            child=True,
+                        )
+                    except CapacityRefused as refused:
+                        if (
+                            _workflow_capacity_wait is not _WF_WAIT_SOURCE[0]
+                            or _workflow_capacity_wait.__code__
+                            is not _WF_WAIT_SOURCE[1]
+                            or _workflow_capacity_wait.__defaults__
+                            is not _WF_WAIT_SOURCE[2]
+                            or _workflow_capacity_wait.__kwdefaults__
+                            is not _WF_WAIT_SOURCE[3]
+                            or _workflow_capacity_wait.__closure__
+                            is not _WF_WAIT_SOURCE[5]
+                        ):
+                            raise PermissionError(
+                                "original workflow helper source changed"
+                            )
+                        if not _workflow_capacity_wait(entry, refused, None, ()):
+                            raise
+                        error, wait = refused, True
+                    if owner is not None:
+                        claim.bind_owner(owner)
+                        native.activity_claims.append(claim)
+                        bound = True
+                        if (
+                            _workflow_capacity_sources is not _WF_CAPACITY_SOURCE[0]
+                            or _workflow_capacity_sources.__code__
+                            is not _WF_CAPACITY_SOURCE[1]
+                            or _workflow_capacity_sources.__defaults__
+                            is not _WF_CAPACITY_SOURCE[2]
+                            or _workflow_capacity_sources.__kwdefaults__
+                            is not _WF_CAPACITY_SOURCE[3]
+                            or _workflow_capacity_sources.__closure__
+                            is not _WF_CAPACITY_SOURCE[5]
+                        ):
+                            raise PermissionError(
+                                "original workflow helper source changed"
+                            )
+                        _workflow_capacity_sources(self.runtime_capacity, owner)
+                        with self.runtime_capacity._lock:
+                            operations = owner._operations
+                        with owner.activate():
+                            for tracker in authorization._required_evidence:
+                                from .workflow_run_service import (
+                                    _INPUT_SOURCE,
+                                    _workflow_input_sources,
+                                )
+
+                                if (
+                                    _workflow_input_sources is not _INPUT_SOURCE[0]
+                                    or _workflow_input_sources.__code__
+                                    is not _INPUT_SOURCE[1]
+                                    or _workflow_input_sources.__defaults__
+                                    is not _INPUT_SOURCE[2]
+                                    or _workflow_input_sources.__kwdefaults__
+                                    is not _INPUT_SOURCE[3]
+                                    or _workflow_input_sources.__closure__
+                                    is not _INPUT_SOURCE[5]
+                                ):
+                                    raise PermissionError(
+                                        "original workflow helper source changed"
+                                    )
+
+                                _workflow_input_sources(tracker.service)
+                                validation = tracker.service._task_input_result(
+                                    authorization, json.loads(native.messages_json)
+                                )
+                                if (
+                                    _workflow_input_sources is not _INPUT_SOURCE[0]
+                                    or _workflow_input_sources.__code__
+                                    is not _INPUT_SOURCE[1]
+                                    or _workflow_input_sources.__defaults__
+                                    is not _INPUT_SOURCE[2]
+                                    or _workflow_input_sources.__kwdefaults__
+                                    is not _INPUT_SOURCE[3]
+                                    or _workflow_input_sources.__closure__
+                                    is not _INPUT_SOURCE[5]
+                                ):
+                                    raise PermissionError(
+                                        "original workflow helper source changed"
+                                    )
+                                _workflow_input_sources(tracker.service)
+                                if validation.error is not None:
+                                    if not validation.conclusive:
+                                        raise validation.error
+                                    error = validation.error
+                                    break
+                            if error is None and preparation is not None:
+                                try:
+                                    if (
+                                        _workflow_capacity_sources
+                                        is not _WF_CAPACITY_SOURCE[0]
+                                        or _workflow_capacity_sources.__code__
+                                        is not _WF_CAPACITY_SOURCE[1]
+                                        or _workflow_capacity_sources.__defaults__
+                                        is not _WF_CAPACITY_SOURCE[2]
+                                        or _workflow_capacity_sources.__kwdefaults__
+                                        is not _WF_CAPACITY_SOURCE[3]
+                                        or _workflow_capacity_sources.__closure__
+                                        is not _WF_CAPACITY_SOURCE[5]
+                                    ):
+                                        raise PermissionError(
+                                            "original workflow helper source changed"
+                                        )
+                                    _workflow_capacity_sources(
+                                        self.runtime_capacity, owner
+                                    )
+                                    close_operation = owner.reserve_tool()
+                                    with authorization._lock:
+                                        if (
+                                            _workflow_launch_locked
+                                            is not _WF_LOCKED_SOURCE[0]
+                                            or _workflow_launch_locked.__code__
+                                            is not _WF_LOCKED_SOURCE[1]
+                                            or _workflow_launch_locked.__defaults__
+                                            is not _WF_LOCKED_SOURCE[2]
+                                            or _workflow_launch_locked.__kwdefaults__
+                                            is not _WF_LOCKED_SOURCE[3]
+                                            or _workflow_launch_locked.__closure__
+                                            is not _WF_LOCKED_SOURCE[5]
+                                        ):
+                                            raise PermissionError(
+                                                "original workflow helper source changed"
+                                            )
+                                        _workflow_launch_locked(entry)
+                                        preparation._close_operation = close_operation
+                                    if (
+                                        _workflow_capacity_sources
+                                        is not _WF_CAPACITY_SOURCE[0]
+                                        or _workflow_capacity_sources.__code__
+                                        is not _WF_CAPACITY_SOURCE[1]
+                                        or _workflow_capacity_sources.__defaults__
+                                        is not _WF_CAPACITY_SOURCE[2]
+                                        or _workflow_capacity_sources.__kwdefaults__
+                                        is not _WF_CAPACITY_SOURCE[3]
+                                        or _workflow_capacity_sources.__closure__
+                                        is not _WF_CAPACITY_SOURCE[5]
+                                    ):
+                                        raise PermissionError(
+                                            "original workflow helper source changed"
+                                        )
+                                    _workflow_capacity_sources(
+                                        self.runtime_capacity, owner
+                                    )
+                                    operation = owner.reserve_tool()
+                                    with authorization._lock:
+                                        if (
+                                            _workflow_launch_locked
+                                            is not _WF_LOCKED_SOURCE[0]
+                                            or _workflow_launch_locked.__code__
+                                            is not _WF_LOCKED_SOURCE[1]
+                                            or _workflow_launch_locked.__defaults__
+                                            is not _WF_LOCKED_SOURCE[2]
+                                            or _workflow_launch_locked.__kwdefaults__
+                                            is not _WF_LOCKED_SOURCE[3]
+                                            or _workflow_launch_locked.__closure__
+                                            is not _WF_LOCKED_SOURCE[5]
+                                        ):
+                                            raise PermissionError(
+                                                "original workflow helper source changed"
+                                            )
+                                        _workflow_launch_locked(entry)
+                                        preparation._launch_operation = operation
+                                except CapacityRefused as refused:
+                                    if (
+                                        _workflow_capacity_wait
+                                        is not _WF_WAIT_SOURCE[0]
+                                        or _workflow_capacity_wait.__code__
+                                        is not _WF_WAIT_SOURCE[1]
+                                        or _workflow_capacity_wait.__defaults__
+                                        is not _WF_WAIT_SOURCE[2]
+                                        or _workflow_capacity_wait.__kwdefaults__
+                                        is not _WF_WAIT_SOURCE[3]
+                                        or _workflow_capacity_wait.__closure__
+                                        is not _WF_WAIT_SOURCE[5]
+                                    ):
+                                        raise PermissionError(
+                                            "original workflow helper source changed"
+                                        )
+                                    if not _workflow_capacity_wait(
+                                        entry,
+                                        refused,
+                                        owner,
+                                        (close_operation, operation),
+                                        operations,
+                                    ):
+                                        raise
+                                    error, wait = refused, True
+                        if error is None:
+                            kwargs = dict(native.kwargs)
+                            kwargs["messages"] = json.loads(native.messages_json)
+                            kwargs["workflow_task_authorization"] = authorization
+                            kwargs["workflow_activity_claim"] = claim
+                            try:
+                                result = (
+                                    self._launch_prepared_child_result
+                                    if preparation is not None
+                                    else self._launch_prepared_child
+                                )(
+                                    task.instructions,
+                                    None,
+                                    kwargs,
+                                    fleet=native.fleet,
+                                    run_id=native.parent_run_id,
+                                    message_chain_id=authorization.claim.chain_id,
+                                    hook_run=None,
+                                    should_cancel=should_cancel,
+                                    my_handle_ids=native.handle_ids,
+                                    durable_handle_ids=native.durable_ids,
+                                    fleet_cancels=native.cancels,
+                                    fleet_threads=native.threads,
+                                    child_owner=owner,
+                                    child_reservation=authorization.claim.reservation_id,
+                                    child_outlives_turn=False,
+                                )
+                            except _WorkflowChildLaunchFailed as failed:
+                                if preparation is not None:
+                                    raise
+                                receipt, error = failed.receipt, failed
+                                known = receipt.failure != "unknown"
+                            else:
+                                if type(result) is _NativeWorkflowReturn:
+                                    receipt, error, known = (
+                                        result.receipt,
+                                        result.error,
+                                        result.known,
+                                    )
+                                else:
+                                    handle, failure = result
+                                    if isinstance(failure, _FleetAdmissionWait):
+                                        error = _WorkflowChildWait(
+                                            "fleet_capacity", failure.error
+                                        )
+                                        wait = True
+                                    elif failure is not None:
+                                        error = PermissionError(failure.error)
+                                    else:
+                                        receipt = WorkflowChildReceipt(
+                                            authorization.claim.id,
+                                            authorization.claim.launch_run_id,
+                                            handle.handle_id,
+                                            owner,
+                                            claim,
+                                        )
+                                        with authorization._lock:
+                                            if (
+                                                _workflow_launch_locked
+                                                is not _WF_LOCKED_SOURCE[0]
+                                                or _workflow_launch_locked.__code__
+                                                is not _WF_LOCKED_SOURCE[1]
+                                                or _workflow_launch_locked.__defaults__
+                                                is not _WF_LOCKED_SOURCE[2]
+                                                or _workflow_launch_locked.__kwdefaults__
+                                                is not _WF_LOCKED_SOURCE[3]
+                                                or _workflow_launch_locked.__closure__
+                                                is not _WF_LOCKED_SOURCE[5]
+                                            ):
+                                                raise PermissionError(
+                                                    "original workflow helper source changed"
+                                                )
+                                            _workflow_launch_locked(entry)
+                                            entry.marker[0] = receipt
+            # Original owner/activity scopes return before undispatched cleanup.
+            if receipt is None:
+                if close_operation is not None:
+                    if (
+                        _workflow_launch_current is not _WF_CURRENT_SOURCE[0]
+                        or _workflow_launch_current.__code__
+                        is not _WF_CURRENT_SOURCE[1]
+                        or _workflow_launch_current.__defaults__
+                        is not _WF_CURRENT_SOURCE[2]
+                        or _workflow_launch_current.__kwdefaults__
+                        is not _WF_CURRENT_SOURCE[3]
+                        or _workflow_launch_current.__closure__
+                        is not _WF_CURRENT_SOURCE[5]
+                    ):
+                        raise PermissionError("original workflow helper source changed")
+                    _workflow_launch_current(entry)
+                    if (
+                        _workflow_operation_sources is not _WF_OPERATION_SOURCE[0]
+                        or _workflow_operation_sources.__code__
+                        is not _WF_OPERATION_SOURCE[1]
+                        or _workflow_operation_sources.__defaults__
+                        is not _WF_OPERATION_SOURCE[2]
+                        or _workflow_operation_sources.__kwdefaults__
+                        is not _WF_OPERATION_SOURCE[3]
+                        or _workflow_operation_sources.__closure__
+                        is not _WF_OPERATION_SOURCE[5]
+                    ):
+                        raise PermissionError("original workflow helper source changed")
+                    _workflow_operation_sources(close_operation)
+                    close_operation.finish()
+                    if (
+                        _workflow_operation_sources is not _WF_OPERATION_SOURCE[0]
+                        or _workflow_operation_sources.__code__
+                        is not _WF_OPERATION_SOURCE[1]
+                        or _workflow_operation_sources.__defaults__
+                        is not _WF_OPERATION_SOURCE[2]
+                        or _workflow_operation_sources.__kwdefaults__
+                        is not _WF_OPERATION_SOURCE[3]
+                        or _workflow_operation_sources.__closure__
+                        is not _WF_OPERATION_SOURCE[5]
+                    ):
+                        raise PermissionError("original workflow helper source changed")
+                    _workflow_operation_sources(close_operation)
+                    with authorization._lock:
+                        if (
+                            _workflow_launch_locked is not _WF_LOCKED_SOURCE[0]
+                            or _workflow_launch_locked.__code__
+                            is not _WF_LOCKED_SOURCE[1]
+                            or _workflow_launch_locked.__defaults__
+                            is not _WF_LOCKED_SOURCE[2]
+                            or _workflow_launch_locked.__kwdefaults__
+                            is not _WF_LOCKED_SOURCE[3]
+                            or _workflow_launch_locked.__closure__
+                            is not _WF_LOCKED_SOURCE[5]
+                        ):
+                            raise PermissionError(
+                                "original workflow helper source changed"
+                            )
+                        _workflow_launch_locked(entry)
+                        if preparation._close_operation is not close_operation:
+                            raise PermissionError(
+                                "original workflow close operation changed"
+                            )
+                        preparation._close_operation = None
+                if owner is not None:
+                    if (
+                        _workflow_capacity_sources is not _WF_CAPACITY_SOURCE[0]
+                        or _workflow_capacity_sources.__code__
+                        is not _WF_CAPACITY_SOURCE[1]
+                        or _workflow_capacity_sources.__defaults__
+                        is not _WF_CAPACITY_SOURCE[2]
+                        or _workflow_capacity_sources.__kwdefaults__
+                        is not _WF_CAPACITY_SOURCE[3]
+                        or _workflow_capacity_sources.__closure__
+                        is not _WF_CAPACITY_SOURCE[5]
+                    ):
+                        raise PermissionError("original workflow helper source changed")
+                    _workflow_capacity_sources(self.runtime_capacity, owner)
+                    owner.finish_root()
+                if bound:
+                    claim.settle(durable=True)
+                    native.activity_claims.clear()
+                if wait:
                     with self.runtime_capacity._lock:
                         live = not self.runtime_capacity._closed
-                    with prepared.fleet._lock:
-                        live = live and not prepared.fleet._fenced
-                    if transient and live:
-                        # Hold metadata as a RETURN VALUE. A same-object exception
-                        # from either inner exit must never publish a retry receipt.
+                    with native.fleet._lock:
+                        live = live and not native.fleet._fenced
+                    if not live:
+                        wait = False
+                    else:
                         with authorization._lock:
-                            prepared.wait_return[:] = [None]
-                        return (error, owner, claim)
-                raise
+                            if (
+                                _workflow_launch_locked is not _WF_LOCKED_SOURCE[0]
+                                or _workflow_launch_locked.__code__
+                                is not _WF_LOCKED_SOURCE[1]
+                                or _workflow_launch_locked.__defaults__
+                                is not _WF_LOCKED_SOURCE[2]
+                                or _workflow_launch_locked.__kwdefaults__
+                                is not _WF_LOCKED_SOURCE[3]
+                                or _workflow_launch_locked.__closure__
+                                is not _WF_LOCKED_SOURCE[5]
+                            ):
+                                raise PermissionError(
+                                    "original workflow helper source changed"
+                                )
+                            _workflow_launch_locked(entry)
+                            entry.waits[:] = [None]
+            return _WorkflowLaunchReturn(
+                entry, owner, claim, operation, receipt, error, wait, known
+            )
 
-        with execution(self):
-            try:
-                result = launch()
-            except _WorkflowChildLaunchFailed:
+        if (
+            _workflow_launch_current is not _WF_CURRENT_SOURCE[0]
+            or _workflow_launch_current.__code__ is not _WF_CURRENT_SOURCE[1]
+            or _workflow_launch_current.__defaults__ is not _WF_CURRENT_SOURCE[2]
+            or _workflow_launch_current.__kwdefaults__ is not _WF_CURRENT_SOURCE[3]
+            or _workflow_launch_current.__closure__ is not _WF_CURRENT_SOURCE[5]
+        ):
+            raise PermissionError("original workflow helper source changed")
+        _workflow_launch_current(entry)
+        observations = entry.native.source_observation[2] if entry.mode == "D" else ()
+        with execution(self, sources=observations):
+            result = launch()
+            if result.error is not None and result.receipt is not None:
                 self._finalize_workflow_child_log(authorization, status=RUN_ERROR)
-                raise
-            if isinstance(result, SpawnAdmissionRefusal):
-                # File authority is separate from the DB-only launch operation.
-                self._finalize_workflow_child_log(authorization, status=RUN_ERROR)
-                raise PermissionError(result.error)
-        if type(result) is tuple:
-            # Both original _core_operation and execution(self) exited normally.
-            with authorization._lock:
-                prepared.wait_return[:] = [result]
-            raise result[0]
+        # Same-object scope errors cannot reach this actual normal return.
+        if (
+            _workflow_launch_current is not _WF_CURRENT_SOURCE[0]
+            or _workflow_launch_current.__code__ is not _WF_CURRENT_SOURCE[1]
+            or _workflow_launch_current.__defaults__ is not _WF_CURRENT_SOURCE[2]
+            or _workflow_launch_current.__kwdefaults__ is not _WF_CURRENT_SOURCE[3]
+            or _workflow_launch_current.__closure__ is not _WF_CURRENT_SOURCE[5]
+        ):
+            raise PermissionError("original workflow helper source changed")
+        _workflow_launch_current(entry)
         return result
+
+    def _finish_workflow_launch(self, result):
+        """Consume only the original invocation's actual own/wider return."""
+        if (
+            type(result) is not _WorkflowLaunchReturn
+            or result.entry.service is not self
+        ):
+            raise PermissionError("original workflow launch result required")
+        entry = result.entry
+        caller = sys._getframe(1)
+        if entry.mode == "W" and not result.duplicate:
+            from tldw_chatbook.Chat.console_workflow_wave import (
+                _WAVE_RECEIVED_SOURCE,
+                _workflow_launch_received,
+            )
+
+            if (
+                _workflow_launch_received is not _WAVE_RECEIVED_SOURCE[0]
+                or _workflow_launch_received.__code__ is not _WAVE_RECEIVED_SOURCE[1]
+                or _workflow_launch_received.__defaults__
+                is not _WAVE_RECEIVED_SOURCE[2]
+                or _workflow_launch_received.__kwdefaults__
+                is not _WAVE_RECEIVED_SOURCE[3]
+                or _workflow_launch_received.__closure__ is not _WAVE_RECEIVED_SOURCE[5]
+            ):
+                raise PermissionError("original workflow helper source changed")
+
+            _workflow_launch_received(entry.association, result, caller)
+        elif caller is not entry.caller or caller.f_locals.get("result") is not result:
+            raise PermissionError("original workflow launch receiver required")
+        if (
+            _workflow_launch_current is not _WF_CURRENT_SOURCE[0]
+            or _workflow_launch_current.__code__ is not _WF_CURRENT_SOURCE[1]
+            or _workflow_launch_current.__defaults__ is not _WF_CURRENT_SOURCE[2]
+            or _workflow_launch_current.__kwdefaults__ is not _WF_CURRENT_SOURCE[3]
+            or _workflow_launch_current.__closure__ is not _WF_CURRENT_SOURCE[5]
+        ):
+            raise PermissionError("original workflow helper source changed")
+        _workflow_launch_current(entry)
+        if result.duplicate:
+            return
+        if not result.known or entry.native.uncertain_start:
+            if result.error is not None:
+                raise result.error
+            raise PermissionError("original workflow launch return unproven")
+        operation = result.operation
+        if operation is not None:
+            if (
+                _workflow_operation_sources is not _WF_OPERATION_SOURCE[0]
+                or _workflow_operation_sources.__code__ is not _WF_OPERATION_SOURCE[1]
+                or _workflow_operation_sources.__defaults__
+                is not _WF_OPERATION_SOURCE[2]
+                or _workflow_operation_sources.__kwdefaults__
+                is not _WF_OPERATION_SOURCE[3]
+                or _workflow_operation_sources.__closure__
+                is not _WF_OPERATION_SOURCE[5]
+            ):
+                raise PermissionError("original workflow helper source changed")
+            _workflow_operation_sources(operation)
+            with entry.lock:
+                if (
+                    _workflow_launch_locked is not _WF_LOCKED_SOURCE[0]
+                    or _workflow_launch_locked.__code__ is not _WF_LOCKED_SOURCE[1]
+                    or _workflow_launch_locked.__defaults__ is not _WF_LOCKED_SOURCE[2]
+                    or _workflow_launch_locked.__kwdefaults__
+                    is not _WF_LOCKED_SOURCE[3]
+                    or _workflow_launch_locked.__closure__ is not _WF_LOCKED_SOURCE[5]
+                ):
+                    raise PermissionError("original workflow helper source changed")
+                _workflow_launch_locked(entry)
+                if entry.preparation._launch_operation is not operation:
+                    raise PermissionError("original workflow launch operation changed")
+            owner = result.owner
+            with owner.capacity._lock:
+                if (
+                    operation.owner is not owner
+                    or owner.capacity is not self.runtime_capacity
+                    or owner.capacity._owners.get(owner.execution_id) is not owner
+                    or operation not in owner._operations
+                ):
+                    raise PermissionError("original workflow launch membership changed")
+            operation.finish()
+            if (
+                _workflow_operation_sources is not _WF_OPERATION_SOURCE[0]
+                or _workflow_operation_sources.__code__ is not _WF_OPERATION_SOURCE[1]
+                or _workflow_operation_sources.__defaults__
+                is not _WF_OPERATION_SOURCE[2]
+                or _workflow_operation_sources.__kwdefaults__
+                is not _WF_OPERATION_SOURCE[3]
+                or _workflow_operation_sources.__closure__
+                is not _WF_OPERATION_SOURCE[5]
+            ):
+                raise PermissionError("original workflow helper source changed")
+            _workflow_operation_sources(operation)
+            if (
+                _workflow_launch_current is not _WF_CURRENT_SOURCE[0]
+                or _workflow_launch_current.__code__ is not _WF_CURRENT_SOURCE[1]
+                or _workflow_launch_current.__defaults__ is not _WF_CURRENT_SOURCE[2]
+                or _workflow_launch_current.__kwdefaults__ is not _WF_CURRENT_SOURCE[3]
+                or _workflow_launch_current.__closure__ is not _WF_CURRENT_SOURCE[5]
+            ):
+                raise PermissionError("original workflow helper source changed")
+            _workflow_launch_current(entry)
+            with entry.lock:
+                if (
+                    _workflow_launch_locked is not _WF_LOCKED_SOURCE[0]
+                    or _workflow_launch_locked.__code__ is not _WF_LOCKED_SOURCE[1]
+                    or _workflow_launch_locked.__defaults__ is not _WF_LOCKED_SOURCE[2]
+                    or _workflow_launch_locked.__kwdefaults__
+                    is not _WF_LOCKED_SOURCE[3]
+                    or _workflow_launch_locked.__closure__ is not _WF_LOCKED_SOURCE[5]
+                ):
+                    raise PermissionError("original workflow helper source changed")
+                _workflow_launch_locked(entry)
+                if entry.preparation._launch_operation is not operation:
+                    raise PermissionError("original workflow launch operation changed")
+                entry.preparation._launch_operation = None
+        if result.receipt is None:
+            if result.owner is not None:
+                if (
+                    _workflow_capacity_sources is not _WF_CAPACITY_SOURCE[0]
+                    or _workflow_capacity_sources.__code__ is not _WF_CAPACITY_SOURCE[1]
+                    or _workflow_capacity_sources.__defaults__
+                    is not _WF_CAPACITY_SOURCE[2]
+                    or _workflow_capacity_sources.__kwdefaults__
+                    is not _WF_CAPACITY_SOURCE[3]
+                    or _workflow_capacity_sources.__closure__
+                    is not _WF_CAPACITY_SOURCE[5]
+                ):
+                    raise PermissionError("original workflow helper source changed")
+                _workflow_capacity_sources(self.runtime_capacity, result.owner)
+                drains = []
+                result.owner.on_drained(drains.append)
+                if drains != [True]:
+                    raise PermissionError("workflow launch cleanup return unproven")
+            activity = entry.authorization._runtime.worktree_activity
+            with activity._lock:
+                claim = result.claim
+                if claim is not None and (
+                    claim.id in activity._claims or claim.id in activity._members
+                ):
+                    raise PermissionError("workflow launch activity return unproven")
+            if (
+                _workflow_launch_current is not _WF_CURRENT_SOURCE[0]
+                or _workflow_launch_current.__code__ is not _WF_CURRENT_SOURCE[1]
+                or _workflow_launch_current.__defaults__ is not _WF_CURRENT_SOURCE[2]
+                or _workflow_launch_current.__kwdefaults__ is not _WF_CURRENT_SOURCE[3]
+                or _workflow_launch_current.__closure__ is not _WF_CURRENT_SOURCE[5]
+            ):
+                raise PermissionError("original workflow helper source changed")
+            _workflow_launch_current(entry)
+            with entry.lock:
+                if (
+                    _workflow_launch_locked is not _WF_LOCKED_SOURCE[0]
+                    or _workflow_launch_locked.__code__ is not _WF_LOCKED_SOURCE[1]
+                    or _workflow_launch_locked.__defaults__ is not _WF_LOCKED_SOURCE[2]
+                    or _workflow_launch_locked.__kwdefaults__
+                    is not _WF_LOCKED_SOURCE[3]
+                    or _workflow_launch_locked.__closure__ is not _WF_LOCKED_SOURCE[5]
+                ):
+                    raise PermissionError("original workflow helper source changed")
+                _workflow_launch_locked(entry)
+                if entry.marker != [None] or entry.authorization._native_dispatch:
+                    raise PermissionError("workflow undispatched launch changed")
+                if result.wait:
+                    entry.waits[:] = [(result.error, result.owner, result.claim)]
+                entry.marker.clear()
 
     def _finalize_workflow_child_log(
         self, authorization, *, status: str, total_tokens: int = 0
@@ -5435,15 +6059,108 @@ class AgentService:
         managed_resume_ceiling=None,
         child_outlives_turn=None,
     ):
+        """Preserve the ordinary/no-bridge native tuple and raising contract."""
+        if (
+            _workflow_native_sources is not _WF_NATIVE_SOURCE[0]
+            or _workflow_native_sources.__code__ is not _WF_NATIVE_SOURCE[1]
+            or _workflow_native_sources.__defaults__ is not _WF_NATIVE_SOURCE[2]
+            or _workflow_native_sources.__kwdefaults__ is not _WF_NATIVE_SOURCE[3]
+            or _workflow_native_sources.__closure__ is not _WF_NATIVE_SOURCE[5]
+        ):
+            raise PermissionError("original workflow helper source changed")
+        _workflow_native_sources(self)
+        result = self._launch_prepared_child_result(
+            spawn_task,
+            agent_name,
+            child_kwargs,
+            isolation,
+            fleet=fleet,
+            run_id=run_id,
+            message_chain_id=message_chain_id,
+            hook_run=hook_run,
+            should_cancel=should_cancel,
+            my_handle_ids=my_handle_ids,
+            durable_handle_ids=durable_handle_ids,
+            fleet_cancels=fleet_cancels,
+            fleet_threads=fleet_threads,
+            child_owner=child_owner,
+            child_reservation=child_reservation,
+            definition_wall_seconds=definition_wall_seconds,
+            resumed_managed=resumed_managed,
+            managed_resume_ceiling=managed_resume_ceiling,
+            child_outlives_turn=child_outlives_turn,
+        )
+        if type(result) is _NativeWorkflowReturn:
+            raise result.error
+        return result
+
+    def _launch_prepared_child_result(
+        self,
+        spawn_task,
+        agent_name,
+        child_kwargs,
+        isolation=None,
+        *,
+        fleet,
+        run_id,
+        message_chain_id,
+        hook_run,
+        should_cancel,
+        my_handle_ids,
+        durable_handle_ids,
+        fleet_cancels,
+        fleet_threads,
+        child_owner,
+        child_reservation,
+        definition_wall_seconds=None,
+        resumed_managed=None,
+        managed_resume_ceiling=None,
+        child_outlives_turn=None,
+    ):
         """The native fleet launch/settlement tail, with captured parent inputs."""
+        if (
+            _workflow_native_sources is not _WF_NATIVE_SOURCE[0]
+            or _workflow_native_sources.__code__ is not _WF_NATIVE_SOURCE[1]
+            or _workflow_native_sources.__defaults__ is not _WF_NATIVE_SOURCE[2]
+            or _workflow_native_sources.__kwdefaults__ is not _WF_NATIVE_SOURCE[3]
+            or _workflow_native_sources.__closure__ is not _WF_NATIVE_SOURCE[5]
+        ):
+            raise PermissionError("original workflow helper source changed")
+        _workflow_native_sources(self)
+        caller = sys._getframe(1)
+        authorization = child_kwargs.get("workflow_task_authorization")
+        entry = None
+        if authorization is not None and authorization._bridge_preparation:
+            entry = caller.f_locals.get("entry")
+            if (
+                caller.f_code is not _WORKFLOW_LAUNCH_CODE
+                or type(entry) is not _WorkflowLaunchEntry
+                or entry.service is not self
+                or entry.authorization is not authorization
+                or entry.mode not in {"D", "W"}
+            ):
+                raise PermissionError("original bridge launch invocation required")
+            if (
+                _workflow_launch_current is not _WF_CURRENT_SOURCE[0]
+                or _workflow_launch_current.__code__ is not _WF_CURRENT_SOURCE[1]
+                or _workflow_launch_current.__defaults__ is not _WF_CURRENT_SOURCE[2]
+                or _workflow_launch_current.__kwdefaults__ is not _WF_CURRENT_SOURCE[3]
+                or _workflow_launch_current.__closure__ is not _WF_CURRENT_SOURCE[5]
+            ):
+                raise PermissionError("original workflow helper source changed")
+            _workflow_launch_current(entry)
         launched = False
         native_thread_started = False
+        thread = None
+        start_entered = False
+        failure_started = False
         handle = None
         child_run_id = None
         preserve_workflow_reservation = False
 
         def failed_workflow_launch(handle, child_run_id, reason, message):
-            nonlocal preserve_workflow_reservation
+            nonlocal preserve_workflow_reservation, failure_started
+            failure_started = True
             authorization = child_kwargs.get("workflow_task_authorization")
             if authorization is None:
                 return
@@ -5489,7 +6206,10 @@ class AgentService:
                 authorization._native_launch[0] = receipt
             if reason == "no_run":
                 claim.settle(durable=True)
-            raise _WorkflowChildLaunchFailed(receipt, message)
+            error = _WorkflowChildLaunchFailed(receipt, message)
+            if entry is not None:
+                return _NativeWorkflowReturn(receipt, error, reason != "unknown")
+            raise error
 
         try:
             # -- FLEET path: register, launch, return a handle.
@@ -5571,12 +6291,14 @@ class AgentService:
                     "could not precreate sub-agent run error_type={}",
                     _safe_exception_type(exc),
                 )
-                failed_workflow_launch(
+                terminal = failed_workflow_launch(
                     handle,
                     child_run_id,
                     "setup",
                     "could not create durable sub-agent run",
                 )
+                if terminal is not None:
+                    return terminal
                 return None, SpawnAdmissionRefusal(
                     ok=False, error="could not create durable sub-agent run"
                 )
@@ -5982,9 +6704,43 @@ class AgentService:
                     name=f"fleet-{handle.handle_id[:8]}",
                     daemon=True,
                 )
-                thread.start()
+                start_entered = True
+                try:
+                    thread.start()
+                except BaseException as start_error:
+                    if entry is not None:
+                        # start can enter the target before an error reaches this caller.
+                        preserve_workflow_reservation = True
+                        child_owner.mark_cleanup_unproven()
+                        with authorization._lock:
+                            if (
+                                _workflow_launch_locked is not _WF_LOCKED_SOURCE[0]
+                                or _workflow_launch_locked.__code__
+                                is not _WF_LOCKED_SOURCE[1]
+                                or _workflow_launch_locked.__defaults__
+                                is not _WF_LOCKED_SOURCE[2]
+                                or _workflow_launch_locked.__kwdefaults__
+                                is not _WF_LOCKED_SOURCE[3]
+                                or _workflow_launch_locked.__closure__
+                                is not _WF_LOCKED_SOURCE[5]
+                            ):
+                                raise PermissionError(
+                                    "original workflow helper source changed"
+                                )
+                            _workflow_launch_locked(entry)
+                            entry.native.uncertain_start[:] = [
+                                (thread, run_child_owned, child_kwargs, start_error)
+                            ]
+                    raise
                 native_thread_started = True
             except Exception as exc:  # noqa: BLE001 — thread exhaustion
+                if entry is not None and start_entered:
+                    return failed_workflow_launch(
+                        handle,
+                        child_run_id,
+                        "unknown",
+                        "native child start return unproven",
+                    )
                 if (
                     child_kwargs.get("review_launch") is not None
                     and thread is not None
@@ -5992,6 +6748,7 @@ class AgentService:
                 ):
                     # An exception after native start is not a non-start proof.
                     # Keep its charge/association and use normal worker settlement.
+                    native_thread_started = True
                     logger.warning(
                         "review child start raised after worker admission"
                     )
@@ -6036,12 +6793,14 @@ class AgentService:
                                 child_kwargs["review_launch"], child_run_id
                             )
                     logger.warning("could not start sub-agent thread")
-                    failed_workflow_launch(
+                    terminal = failed_workflow_launch(
                         handle,
                         child_run_id,
                         "thread_start",
                         f"could not start sub-agent: {exc}",
                     )
+                    if terminal is not None:
+                        return terminal
                     return None, SpawnAdmissionRefusal(
                         ok=False,
                         error=f"could not start sub-agent: {exc}",
@@ -6061,21 +6820,26 @@ class AgentService:
             if (
                 authorization is not None
                 and not isinstance(exc, _WorkflowChildLaunchFailed)
+                and (entry is None or not failure_started)
                 and handle is not None
                 and child_run_id is not None
             ):
-                if not native_thread_started:
+                if not native_thread_started and not (entry is not None and start_entered):
                     fleet.finish(
                         handle.handle_id,
                         RUN_ERROR,
                         error="workflow native setup failed",
                     )
-                failed_workflow_launch(
+                terminal = failed_workflow_launch(
                     handle,
                     child_run_id,
-                    "unknown" if native_thread_started else "setup",
+                    "unknown"
+                    if native_thread_started or entry is not None and start_entered
+                    else "setup",
                     "workflow native setup failed",
                 )
+                if terminal is not None:
+                    return terminal
             raise
         finally:
             if not launched:
@@ -6541,8 +7305,71 @@ class AgentService:
 
         task_authorization = current_task_authorization()
         if task_authorization is not None:
-            task_authorization.bind_native(
-                owner=owner, activity_claim=workflow_activity_claim
+            from inspect import getattr_static
+            from types import FunctionType
+
+            from . import workflow_task_scope as binding_scope
+            from .automatic_work_budget import AutomaticWorkRefused
+
+            (
+                original_scope,
+                authorization_class,
+                method_record,
+                source_record,
+                checker_record,
+            ) = _WORKFLOW_BINDING_SOURCE
+            bind_native, source, checker = (
+                method_record[0],
+                source_record[0],
+                checker_record[0],
+            )
+            # The reservation and row already exist. A changed binding receiver
+            # is a native source error, never a pre-dispatch wait or refund.
+            for checked_helper in (False, True):
+                if (
+                    binding_scope is not original_scope
+                    or binding_scope.WorkflowTaskAuthorization
+                    is not authorization_class
+                    or type(task_authorization) is not authorization_class
+                    or binding_scope._BIND_METHOD is not method_record
+                    or binding_scope._BIND_SOURCE is not source_record
+                    or binding_scope._BIND_CHECKER is not checker_record
+                    or binding_scope._bind_unchanged is not checker
+                    or type(checker) is not FunctionType
+                    or checker.__code__ is not checker_record[1]
+                    or checker.__defaults__ is not checker_record[2]
+                    or checker.__kwdefaults__ is not checker_record[3]
+                    or checker_record[3] is not None
+                    and (
+                        len(checker_record[3]) != len(checker_record[4])
+                        or any(
+                            key not in checker_record[3]
+                            or checker_record[3][key] is not value
+                            for key, value in checker_record[4]
+                        )
+                    )
+                    or checker.__closure__ is not checker_record[5]
+                    or any(
+                        cell.cell_contents is not value
+                        for cell, value in checker_record[6]
+                    )
+                    or getattr_static(task_authorization, "bind_native", None)
+                    is not bind_native
+                    or getattr_static(authorization_class, "bind_native", None)
+                    is not bind_native
+                    or binding_scope._workflow_bind_sources is not source
+                    or not checker(method_record)
+                    or not checker(source_record)
+                ):
+                    raise AutomaticWorkRefused(
+                        "workflow_task_original_native_binding_source_changed"
+                    )
+                if not checked_helper:
+                    source(task_authorization)
+            # Reuse exactly the checked function, without another descriptor
+            # lookup. Its own receiving checks still precede durable binding.
+            bind_native(
+                task_authorization, owner=owner, activity_claim=workflow_activity_claim
             )
             config = dataclasses.replace(
                 config,
@@ -7222,6 +8049,16 @@ class AgentService:
                 return None, failure
             launched = False
             try:
+                if (
+                    _workflow_native_sources is not _WF_NATIVE_SOURCE[0]
+                    or _workflow_native_sources.__code__ is not _WF_NATIVE_SOURCE[1]
+                    or _workflow_native_sources.__defaults__ is not _WF_NATIVE_SOURCE[2]
+                    or _workflow_native_sources.__kwdefaults__
+                    is not _WF_NATIVE_SOURCE[3]
+                    or _workflow_native_sources.__closure__ is not _WF_NATIVE_SOURCE[5]
+                ):
+                    raise PermissionError("original workflow helper source changed")
+                _workflow_native_sources(self)
                 handle, failure = self._launch_prepared_child(
                     spawn_task,
                     agent_name,
@@ -10821,6 +11658,18 @@ class AgentService:
         return True
 
 
+# These are the existing task-scope records, captured before live dispatch.
+from . import workflow_task_scope as _workflow_binding_scope
+
+_WORKFLOW_BINDING_SOURCE = (
+    _workflow_binding_scope,
+    _workflow_binding_scope.WorkflowTaskAuthorization,
+    _workflow_binding_scope._BIND_METHOD,
+    _workflow_binding_scope._BIND_SOURCE,
+    _workflow_binding_scope._BIND_CHECKER,
+)
+
+
 # Finite original workflow fence receivers; captured when these definitions load.
 _WORKFLOW_NATIVE_RECORDS = tuple(
     (
@@ -10874,3 +11723,587 @@ _NATIVE_PLANNING_SERVICE = tuple(
     )
     for method in (vars(AgentService)[name],)
 )
+
+
+# Finite launch sources are definition-time records, never admitted work records.
+from ..Backup_Recovery import admission_runtime as _wf_admission
+from ..Backup_Recovery import participants as _wf_participants
+from ..Chat.console_ordinary_tree import _function_unchanged as _wf_unchanged
+from . import activation as _wf_activation
+from . import execution_capacity as _wf_capacity
+
+
+def _workflow_native_sources(service):
+    import inspect
+
+    checker = _WF_CHECKER[0]
+    if (
+        _wf_unchanged is not checker
+        or checker.__code__ is not _WF_CHECKER[1]
+        or checker.__defaults__ is not _WF_CHECKER[2]
+        or checker.__kwdefaults__ is not _WF_CHECKER[3]
+        or checker.__closure__ is not _WF_CHECKER[5]
+        or type(service) is not AgentService
+        or any(
+            inspect.getattr_static(service, name, None) is not method
+            or inspect.getattr_static(AgentService, name, None) is not method
+            or any(not checker(record) for record in records)
+            for name, method, records in _WF_NATIVE_METHODS
+        )
+        or globals().get("_workflow_native_sources") is not _WF_NATIVE_SOURCE[0]
+        or not checker(_WF_NATIVE_SOURCE)
+    ):
+        raise PermissionError("original workflow native launch source changed")
+
+
+def _workflow_launch_sources(service):
+    import inspect
+
+    checker = _WF_CHECKER[0]
+    if (
+        _wf_unchanged is not checker
+        or checker.__code__ is not _WF_CHECKER[1]
+        or checker.__defaults__ is not _WF_CHECKER[2]
+        or checker.__kwdefaults__ is not _WF_CHECKER[3]
+        or checker.__closure__ is not _WF_CHECKER[5]
+        or type(service) is not AgentService
+        or _wf_activation._guard is not _WF_GUARD
+        or any(
+            globals().get(name) is not value
+            or any(not checker(record) for record in records)
+            for name, value, records in _WF_VALUE_CLASSES
+        )
+        or any(not checker(record) for record in _WF_EXTERNAL_BODIES)
+        or any(
+            inspect.getattr_static(_WF_GUARD, name, None) is not method
+            for target, name, method, _records in _WF_EXTERNAL_METHODS
+            if target is _wf_admission.RecoveryAdmissionGuard
+        )
+        or any(
+            globals().get(name) is not record[0] or not checker(record)
+            for name, record in _WF_HELPERS
+        )
+        or any(
+            inspect.getattr_static(service, name, None) is not method
+            or inspect.getattr_static(AgentService, name, None) is not method
+            or any(not checker(record) for record in records)
+            for name, method, records in _WF_LAUNCH_METHODS
+        )
+        or any(
+            inspect.getattr_static(target, name, None) is not method
+            or any(not checker(record) for record in records)
+            for target, name, method, records in _WF_EXTERNAL_METHODS
+        )
+        or any(
+            vars(module).get(name) is not record[0] or not checker(record)
+            for module, name, record in _WF_EXTERNAL_FUNCTIONS
+        )
+    ):
+        raise PermissionError("original workflow launch source changed")
+    if (
+        _workflow_native_sources is not _WF_NATIVE_SOURCE[0]
+        or _workflow_native_sources.__code__ is not _WF_NATIVE_SOURCE[1]
+        or _workflow_native_sources.__defaults__ is not _WF_NATIVE_SOURCE[2]
+        or _workflow_native_sources.__kwdefaults__ is not _WF_NATIVE_SOURCE[3]
+        or _workflow_native_sources.__closure__ is not _WF_NATIVE_SOURCE[5]
+    ):
+        raise PermissionError("original workflow helper source changed")
+    _workflow_native_sources(service)
+    if (
+        _workflow_capacity_sources is not _WF_CAPACITY_SOURCE[0]
+        or _workflow_capacity_sources.__code__ is not _WF_CAPACITY_SOURCE[1]
+        or _workflow_capacity_sources.__defaults__ is not _WF_CAPACITY_SOURCE[2]
+        or _workflow_capacity_sources.__kwdefaults__ is not _WF_CAPACITY_SOURCE[3]
+        or _workflow_capacity_sources.__closure__ is not _WF_CAPACITY_SOURCE[5]
+    ):
+        raise PermissionError("original workflow helper source changed")
+    _workflow_capacity_sources(service.runtime_capacity)
+
+
+def _workflow_launch_locked(entry):
+    """Primitive same-original associations; caller holds the original auth lock."""
+    auth, native, prepared = entry.authorization, entry.native, entry.preparation
+    if (
+        type(entry) is not _WorkflowLaunchEntry
+        or auth._lock is not entry.lock
+        or entry.service.runtime_capacity._lock is not entry.capacity_lock
+        or auth._native_launch is not entry.marker
+        or auth._native_preparation is not entry.native_list
+        or len(entry.native_list) != 1
+        or entry.native_list[0] is not native
+        or auth._bridge_preparation is not entry.bridge_list
+        or native.wait_return is not entry.waits
+        or native.service is not entry.service
+        or native.phase is not auth.phase
+        or prepared is None
+        and entry.bridge_list
+        or prepared is not None
+        and (
+            len(entry.bridge_list) != 1
+            or entry.bridge_list[0] is not prepared
+            or prepared.authorization is not auth
+            or prepared.phase is not auth.phase
+            or prepared.runtime is not auth._runtime
+            or prepared.native.service is not entry.service
+            or prepared._wave is not entry.wave
+            or prepared._closed
+            or prepared._closing
+        )
+    ):
+        raise PermissionError("original workflow launch association changed")
+
+
+def _workflow_launch_current(entry):
+    if (
+        _workflow_launch_sources is not _WF_LAUNCH_SOURCE[0]
+        or _workflow_launch_sources.__code__ is not _WF_LAUNCH_SOURCE[1]
+        or _workflow_launch_sources.__defaults__ is not _WF_LAUNCH_SOURCE[2]
+        or _workflow_launch_sources.__kwdefaults__ is not _WF_LAUNCH_SOURCE[3]
+        or _workflow_launch_sources.__closure__ is not _WF_LAUNCH_SOURCE[5]
+    ):
+        raise PermissionError("original workflow helper source changed")
+    _workflow_launch_sources(entry.service)
+    with entry.lock:
+        if (
+            _workflow_launch_locked is not _WF_LOCKED_SOURCE[0]
+            or _workflow_launch_locked.__code__ is not _WF_LOCKED_SOURCE[1]
+            or _workflow_launch_locked.__defaults__ is not _WF_LOCKED_SOURCE[2]
+            or _workflow_launch_locked.__kwdefaults__ is not _WF_LOCKED_SOURCE[3]
+            or _workflow_launch_locked.__closure__ is not _WF_LOCKED_SOURCE[5]
+        ):
+            raise PermissionError("original workflow helper source changed")
+        _workflow_launch_locked(entry)
+    prepared = entry.preparation
+    if prepared is not None:
+        from ..Chat.console_workflow_preparation import _PLANNING_PREPARATION_METHODS
+
+        if any(
+            _wf_inspect.getattr_static(prepared, name, None) is not descriptor
+            or any(not _WF_CHECKER[0](record) for record in records)
+            for name, descriptor, records in _PLANNING_PREPARATION_METHODS
+        ):
+            raise PermissionError("original workflow preparation source changed")
+        prepared._execution_return_source()
+        if (
+            entry.native.source_observation
+            is not prepared._configured_storage_sources()
+        ):
+            raise PermissionError("original workflow storage observation changed")
+    elif entry.native.source_observation is not None:
+        raise PermissionError("original no-bridge storage observation changed")
+    if entry.mode == "W" and entry.association is not None:
+        from ..Chat.console_workflow_wave import (
+            _WAVE_ASSOCIATION_CURRENT_SOURCE,
+            _workflow_launch_association_current,
+        )
+
+        if (
+            _workflow_launch_association_current
+            is not _WAVE_ASSOCIATION_CURRENT_SOURCE[0]
+            or _workflow_launch_association_current.__code__
+            is not _WAVE_ASSOCIATION_CURRENT_SOURCE[1]
+            or _workflow_launch_association_current.__defaults__
+            is not _WAVE_ASSOCIATION_CURRENT_SOURCE[2]
+            or _workflow_launch_association_current.__kwdefaults__
+            is not _WAVE_ASSOCIATION_CURRENT_SOURCE[3]
+            or _workflow_launch_association_current.__closure__
+            is not _WAVE_ASSOCIATION_CURRENT_SOURCE[5]
+        ):
+            raise PermissionError("original workflow helper source changed")
+
+        _workflow_launch_association_current(entry.association)
+    elif entry.mode == "D" and (
+        prepared.bridge.change_tracking_enabled
+        or any(
+            any(member is prepared for member in wave.prepared)
+            for wave in prepared.runtime._workflow_waves
+        )
+    ):
+        raise PermissionError("original direct workflow launch changed")
+    elif entry.mode not in {"N", "D", "W"}:
+        raise PermissionError("original workflow launch kind required")
+
+
+def _workflow_operation_sources(operation):
+    import inspect
+
+    if (
+        _wf_unchanged is not _WF_CHECKER[0]
+        or _wf_unchanged.__code__ is not _WF_CHECKER[1]
+        or _wf_unchanged.__defaults__ is not _WF_CHECKER[2]
+        or _wf_unchanged.__kwdefaults__ is not _WF_CHECKER[3]
+        or _wf_unchanged.__closure__ is not _WF_CHECKER[5]
+    ):
+        raise PermissionError("original workflow helper source changed")
+    if (
+        type(operation) is not _WF_OPERATION_CLASS
+        or _wf_capacity.OwnedOperation is not _WF_OPERATION_CLASS
+    ):
+        raise PermissionError("original workflow operation required")
+    for target, name, method, records in _WF_EXTERNAL_METHODS:
+        instance = (
+            operation
+            if target is _WF_OPERATION_CLASS
+            else operation.owner
+            if target is _WF_OWNER_CLASS
+            else None
+        )
+        if (
+            inspect.getattr_static(target, name, None) is not method
+            or instance is not None
+            and inspect.getattr_static(instance, name, None) is not method
+            or any(not _WF_CHECKER[0](record) for record in records)
+        ):
+            raise PermissionError("original workflow operation source changed")
+
+
+def _workflow_capacity_sources(capacity, owner=None):
+    """Check actual native receivers; this neither admits nor releases work."""
+    import inspect
+
+    if (
+        _wf_unchanged is not _WF_CHECKER[0]
+        or _wf_unchanged.__code__ is not _WF_CHECKER[1]
+        or _wf_unchanged.__defaults__ is not _WF_CHECKER[2]
+        or _wf_unchanged.__kwdefaults__ is not _WF_CHECKER[3]
+        or _wf_unchanged.__closure__ is not _WF_CHECKER[5]
+    ):
+        raise PermissionError("original workflow helper source changed")
+    if (
+        type(capacity) is not _WF_CAPACITY_CLASS
+        or _wf_capacity.RuntimeCapacity is not _WF_CAPACITY_CLASS
+        or _wf_capacity.ExecutionOwner is not _WF_OWNER_CLASS
+        or _wf_capacity.CapacityRefused is not _WF_REFUSED_CLASS
+        or _WF_REFUSED_CLASS.__bases__ is not _WF_REFUSED_BASES
+        or any(
+            inspect.getattr_static(_WF_REFUSED_CLASS, name) is not method
+            for name, method in _WF_REFUSED_CONSTRUCTORS
+        )
+        or type(capacity._lock) is not _WF_LOCK_CLASS
+        or _wf_thread.LockType is not _WF_LOCK_CLASS
+        or owner is not None
+        and (type(owner) is not _WF_OWNER_CLASS or owner.capacity is not capacity)
+    ):
+        raise PermissionError("original workflow capacity source changed")
+    for target, name, method, records in _WF_EXTERNAL_METHODS:
+        instance = (
+            capacity
+            if target is _WF_CAPACITY_CLASS
+            else owner
+            if target is _WF_OWNER_CLASS
+            else None
+        )
+        if instance is not None and (
+            inspect.getattr_static(instance, name, None) is not method
+            or inspect.getattr_static(target, name, None) is not method
+            or any(not _WF_CHECKER[0](record) for record in records)
+        ):
+            raise PermissionError("original workflow capacity receiver changed")
+
+
+def _workflow_capacity_wait(entry, error, owner, returned, operations=None):
+    """Identify only the current BODY refusal, before surrounding scope exits."""
+    launch_frame = sys._getframe(1)
+    if (
+        _workflow_launch_current is not _WF_CURRENT_SOURCE[0]
+        or _workflow_launch_current.__code__ is not _WF_CURRENT_SOURCE[1]
+        or _workflow_launch_current.__defaults__ is not _WF_CURRENT_SOURCE[2]
+        or _workflow_launch_current.__kwdefaults__ is not _WF_CURRENT_SOURCE[3]
+        or _workflow_launch_current.__closure__ is not _WF_CURRENT_SOURCE[5]
+    ):
+        raise PermissionError("original workflow helper source changed")
+    _workflow_launch_current(entry)
+    capacity = entry.service.runtime_capacity
+    if (
+        _workflow_capacity_sources is not _WF_CAPACITY_SOURCE[0]
+        or _workflow_capacity_sources.__code__ is not _WF_CAPACITY_SOURCE[1]
+        or _workflow_capacity_sources.__defaults__ is not _WF_CAPACITY_SOURCE[2]
+        or _workflow_capacity_sources.__kwdefaults__ is not _WF_CAPACITY_SOURCE[3]
+        or _workflow_capacity_sources.__closure__ is not _WF_CAPACITY_SOURCE[5]
+    ):
+        raise PermissionError("original workflow helper source changed")
+    _workflow_capacity_sources(capacity, owner)
+    if (
+        sys.implementation.name != "cpython"
+        or sys.version_info[:2] != (3, 12)
+        or launch_frame.f_code is not _WORKFLOW_LAUNCH_CODE
+        or launch_frame.f_locals.get("entry") is not entry
+        or capacity._lock is not entry.capacity_lock
+        or type(error) is not _WF_REFUSED_CLASS
+        or len(error.args) != 1
+    ):
+        return False
+    reason = error.args[0]
+    trace = error.__traceback__
+    kind = "begin_execution" if owner is None else "reserve_tool"
+    if (
+        trace is None
+        or trace.tb_frame is not launch_frame
+        or trace.tb_lasti not in _WF_CAPACITY_CALLS.get(kind, ())
+    ):
+        return False
+    trace = trace.tb_next
+    if trace is None or trace.tb_frame.f_back is not launch_frame:
+        return False
+    if owner is None:
+        frame = trace.tb_frame
+        if (
+            frame.f_code is not _WF_BEGIN_CODE
+            or frame.f_locals.get("self") is not capacity
+            or frame.f_locals.get("origin") is not entry.service.work_origin
+            or frame.f_locals.get("conversation_id")
+            != entry.authorization.claim.conversation_id
+            or frame.f_locals.get("child") is not True
+        ):
+            return False
+    else:
+        forwarded = trace.tb_frame
+        if (
+            forwarded.f_code is not _WF_TOOL_CODE
+            or forwarded.f_locals.get("self") is not owner
+        ):
+            return False
+        trace = trace.tb_next
+        if trace is None:
+            return False
+        frame = trace.tb_frame
+        if (
+            frame.f_back is not forwarded
+            or frame.f_code is not _WF_RESERVE_CODE
+            or frame.f_locals.get("self") is not owner
+            or frame.f_locals.get("capacity") is not capacity
+            or frame.f_locals.get("kind") != "tool"
+        ):
+            return False
+    if (
+        trace.tb_next is not None
+        or (frame.f_code, trace.tb_lasti, reason) not in _WF_CAPACITY_RAISES
+    ):
+        return False
+    if (
+        _workflow_capacity_sources is not _WF_CAPACITY_SOURCE[0]
+        or _workflow_capacity_sources.__code__ is not _WF_CAPACITY_SOURCE[1]
+        or _workflow_capacity_sources.__defaults__ is not _WF_CAPACITY_SOURCE[2]
+        or _workflow_capacity_sources.__kwdefaults__ is not _WF_CAPACITY_SOURCE[3]
+        or _workflow_capacity_sources.__closure__ is not _WF_CAPACITY_SOURCE[5]
+    ):
+        raise PermissionError("original workflow helper source changed")
+    _workflow_capacity_sources(capacity, owner)
+    with entry.capacity_lock:
+        if capacity._lock is not entry.capacity_lock:
+            return False
+        if owner is not None and (
+            capacity._owners.get(owner.execution_id) is not owner
+            or owner._operations is not operations
+            or len(operations) != sum(op is not None for op in returned)
+            or any(not any(op is value for value in returned) for op in operations)
+        ):
+            return False
+    return True
+
+
+_WF_CHECKER = _planning_function_record(_wf_unchanged)
+_WF_GUARD = _wf_activation._guard
+_WF_OPERATION_CLASS = _wf_capacity.OwnedOperation
+_WF_OWNER_CLASS = _wf_capacity.ExecutionOwner
+_WORKFLOW_PUBLIC_CODE = AgentService.launch_workflow_task.__code__
+_WORKFLOW_LAUNCH_CODE = next(
+    code
+    for code in AgentService._workflow_launch_result.__code__.co_consts
+    if isinstance(code, type(_WORKFLOW_PUBLIC_CODE)) and code.co_name == "launch"
+)
+_WF_NATIVE_METHODS = tuple(
+    (
+        name,
+        method,
+        tuple(
+            _planning_function_record(fn)
+            for fn in (
+                method,
+                *([method.__wrapped__] if hasattr(method, "__wrapped__") else []),
+            )
+        ),
+    )
+    for name in ("_launch_prepared_child", "_launch_prepared_child_result")
+    for method in (vars(AgentService)[name],)
+)
+_WF_LAUNCH_METHODS = tuple(
+    (
+        name,
+        method,
+        tuple(
+            _planning_function_record(fn)
+            for fn in (
+                method,
+                *([method.__wrapped__] if hasattr(method, "__wrapped__") else []),
+            )
+        ),
+    )
+    for name in (
+        "launch_workflow_task",
+        "_workflow_launch_result",
+        "_finish_workflow_launch",
+        "_check_workflow_launch_authorization",
+        "_finalize_workflow_child_log",
+        "_finish_execution",
+        "_prepare_workflow_child",
+    )
+    for method in (vars(AgentService)[name],)
+)
+_WF_EXTERNAL_METHODS = tuple(
+    (
+        target,
+        name,
+        method,
+        tuple(
+            _planning_function_record(fn)
+            for fn in (
+                method,
+                *([method.__wrapped__] if hasattr(method, "__wrapped__") else []),
+            )
+        ),
+    )
+    for target, names in (
+        (_WF_OPERATION_CLASS, ("finish",)),
+        (
+            _WF_OWNER_CLASS,
+            (
+                "activate",
+                "reserve_tool",
+                "_reserve",
+                "finish_root",
+                "on_drained",
+                "mark_cleanup_unproven",
+            ),
+        ),
+        (
+            _wf_capacity.RuntimeCapacity,
+            (
+                "begin_execution",
+                "_refresh_limits",
+                "set_tool_limits",
+                "set_child_limits",
+                "_notify_tool_available",
+            ),
+        ),
+        (_wf_admission.RecoveryAdmissionGuard, ("execution",)),
+    )
+    for name in names
+    for method in (vars(target)[name],)
+)
+_WF_EXTERNAL_FUNCTIONS = tuple(
+    (module, name, _planning_function_record(function))
+    for module, names in (
+        (_wf_activation, ("execution",)),
+        (_wf_participants, ("_core_operation",)),
+    )
+    for name in names
+    for function in (vars(module)[name],)
+)
+_WF_HELPERS = tuple(
+    (name, _planning_function_record(globals()[name]))
+    for name in (
+        "_workflow_native_sources",
+        "_workflow_launch_sources",
+        "_workflow_launch_locked",
+        "_workflow_launch_current",
+        "_workflow_operation_sources",
+        "_workflow_capacity_sources",
+        "_workflow_capacity_wait",
+    )
+)
+_WF_NATIVE_SOURCE = dict(_WF_HELPERS)["_workflow_native_sources"]
+
+import _thread as _wf_thread
+import dis as _wf_dis
+import inspect as _wf_inspect
+
+_WF_CAPACITY_CLASS = _wf_capacity.RuntimeCapacity
+_WF_LOCK_CLASS = _wf_thread.LockType
+_WF_REFUSED_CLASS = _wf_capacity.CapacityRefused
+_WF_REFUSED_BASES = _WF_REFUSED_CLASS.__bases__
+_WF_REFUSED_CONSTRUCTORS = tuple(
+    (name, _wf_inspect.getattr_static(_WF_REFUSED_CLASS, name))
+    for name in ("__new__", "__init__")
+)
+_WF_BEGIN_CODE = _WF_CAPACITY_CLASS.begin_execution.__code__
+_WF_TOOL_CODE = _WF_OWNER_CLASS.reserve_tool.__code__
+_WF_RESERVE_CODE = _WF_OWNER_CLASS._reserve.__code__
+# Exactly these original four branches; unknown bytecode yields no positive wait.
+_WF_CAPACITY_RAISES = frozenset(
+    (code, ops[index].offset, reason)
+    for code, reasons in (
+        (_WF_BEGIN_CODE, ("child_capacity", "automatic_child_capacity")),
+        (_WF_RESERVE_CODE, ("tool_capacity", "automatic_tool_capacity")),
+    )
+    for ops in (tuple(_wf_dis.get_instructions(code)),)
+    for index in range(3, len(ops))
+    for reason in reasons
+    if ops[index].opname == "RAISE_VARARGS"
+    and ops[index].arg == 1
+    and ops[index - 1].opname == "CALL"
+    and ops[index - 1].arg == 1
+    and ops[index - 2].opname == "LOAD_CONST"
+    and ops[index - 2].argval == reason
+    and ops[index - 3].opname == "LOAD_GLOBAL"
+    and ops[index - 3].argval == "CapacityRefused"
+)
+_WF_CAPACITY_CALLS = {}
+_wf_call_ops = tuple(_wf_dis.get_instructions(_WORKFLOW_LAUNCH_CODE, show_caches=True))
+for _wf_index, _wf_op in enumerate(_wf_call_ops):
+    if _wf_op.opname == "LOAD_ATTR" and _wf_op.argval in {
+        "begin_execution",
+        "reserve_tool",
+    }:
+        _wf_next = next(
+            (
+                i
+                for i in range(_wf_index + 1, len(_wf_call_ops))
+                if _wf_call_ops[i].opname == "CALL"
+            ),
+            None,
+        )
+        if _wf_next is not None:
+            _wf_positions = [_wf_call_ops[_wf_next].offset]
+            for _wf_cache in _wf_call_ops[_wf_next + 1 :]:
+                if _wf_cache.opname != "CACHE":
+                    break
+                _wf_positions.append(_wf_cache.offset)
+            _WF_CAPACITY_CALLS.setdefault(_wf_op.argval, set()).update(_wf_positions)
+_WF_CAPACITY_CALLS = {
+    name: frozenset(offsets) for name, offsets in _WF_CAPACITY_CALLS.items()
+}
+
+_WF_EXTERNAL_BODIES = tuple(
+    _planning_function_record(record[0].__wrapped__)
+    for _module, _name, record in _WF_EXTERNAL_FUNCTIONS
+    if hasattr(record[0], "__wrapped__")
+)
+_WF_VALUE_CLASSES = tuple(
+    (
+        name,
+        cls,
+        tuple(
+            _planning_function_record(method)
+            for method in vars(cls).values()
+            if _wf_inspect.isfunction(method)
+        ),
+    )
+    for name in (
+        "_WorkflowLaunchEntry",
+        "_WorkflowLaunchReturn",
+        "_NativeWorkflowReturn",
+        "WorkflowChildReceipt",
+        "_WorkflowChildLaunchFailed",
+    )
+    for cls in (globals()[name],)
+)
+_WF_CAPACITY_CALLS = MappingProxyType(_WF_CAPACITY_CALLS)
+
+_WF_LAUNCH_SOURCE = dict(_WF_HELPERS)["_workflow_launch_sources"]
+_WF_CURRENT_SOURCE = dict(_WF_HELPERS)["_workflow_launch_current"]
+_WF_OPERATION_SOURCE = dict(_WF_HELPERS)["_workflow_operation_sources"]
+_WF_CAPACITY_SOURCE = dict(_WF_HELPERS)["_workflow_capacity_sources"]
+
+_WF_LOCKED_SOURCE = dict(_WF_HELPERS)["_workflow_launch_locked"]
+_WF_WAIT_SOURCE = dict(_WF_HELPERS)["_workflow_capacity_wait"]
