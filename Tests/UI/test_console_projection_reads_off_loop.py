@@ -840,7 +840,7 @@ async def test_the_fleet_survivor_tick_does_not_cut_a_warm_up_backoff(
             console, _composer = await ready_console(host, pilot, gateway)
             await pilot.pause(1.0)
             loop = asyncio.get_running_loop()
-            refusing, warms, armed, _fulls, _during, _delays = _refused_warm_up(
+            refusing, warms, armed, fulls, _during, _delays = _refused_warm_up(
                 monkeypatch, console
             )
             console.run_worker(
@@ -850,9 +850,12 @@ async def test_the_fleet_survivor_tick_does_not_cut_a_warm_up_backoff(
             )
             armed_at, delay, _timer = await _fresh_backoff(armed, 1.6)
             seen = len(warms)
+            synced = len(fulls)
             await console._fleet._console_fleet_survivor_tick()
             await pilot.pause(0.3)
             assert loop.time() < armed_at + delay, "the check ran after the backoff"
+            # The tick must reach the full sync, or the next check passes vacuously.
+            assert len(fulls) > synced, "the survivor tick never ran a full sync"
             assert len(warms) == seen, (
                 f"the survivor tick ran the replay {len(warms) - seen} time(s) "
                 f"inside its pending {delay} s backoff"
