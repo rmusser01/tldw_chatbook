@@ -94,7 +94,7 @@ PRE_EXISTING_DROPS: dict[str, str] = {
     # ``canvas`` left this register in fix round 1, but it IS read from
     # the loaded settings: settings_screen.py:6393 feeds app_config to
     # build_canvas_config_policy -> _normalize_canvas_execution, which
-    # reads it at config.py:210. That is a two-level helper read, outside
+    # reads it at Canvas/config_policy.py. That is a two-level helper read, outside
     # this derivation's one-level boundary, so the guard cannot see it.
     # Its direct accesses (settings_screen.py:31700-31703) are a
     # setdefault and a store. TASK-34000.53 still lists it.
@@ -118,7 +118,7 @@ PRE_EXISTING_DROPS: dict[str, str] = {
     # (UI/Screens/settings_screen.py:6393 -> build_canvas_config_policy),
     # whose ``values.get("web_server")`` therefore misses the user's table;
     # the runtime policy (get_canvas_config_policy) reads the raw TOML.
-    "web_server": "config.py:374 via UI/Screens/settings_screen.py:6393",
+    "web_server": "Canvas/config_policy.py:274 via UI/Screens/settings_screen.py:6393",
     # Helper-parameter read reached by call-site propagation (fix round 1):
     # webhook_config_from_settings(load_settings()) at Agents/agent_service.py
     # :3882. A configured [webhooks] url never fires today.

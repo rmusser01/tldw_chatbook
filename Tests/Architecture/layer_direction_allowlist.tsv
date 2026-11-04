@@ -153,15 +153,10 @@ tldw_chatbook.config	tldw_chatbook.Backup_Recovery.profile_paths	top
 tldw_chatbook.config	tldw_chatbook.Backup_Recovery.raw_participants	lazy
 tldw_chatbook.config	tldw_chatbook.Backup_Recovery.storage_admission	lazy
 tldw_chatbook.config	tldw_chatbook.Backup_Recovery.storage_admission	top
-tldw_chatbook.config	tldw_chatbook.Canvas.limits	top
-tldw_chatbook.config	tldw_chatbook.Canvas.web_auth	lazy
 tldw_chatbook.config	tldw_chatbook.Character_Chat.builtin_pixel_migu	lazy
 tldw_chatbook.config	tldw_chatbook.Character_Chat.visual_identity	lazy
-tldw_chatbook.config	tldw_chatbook.Chat.console_exchange_capture	lazy
 tldw_chatbook.config	tldw_chatbook.Chat.console_library_policy	lazy
 tldw_chatbook.config	tldw_chatbook.Chat.console_roleplay_identity	lazy
-tldw_chatbook.config	tldw_chatbook.Chat.console_trace_custom_pii	lazy
-tldw_chatbook.config	tldw_chatbook.Chat.console_trace_maintenance	lazy
 tldw_chatbook.config	tldw_chatbook.DB.ChaChaNotes_DB	top
 tldw_chatbook.config	tldw_chatbook.DB.Client_Media_DB_v2	top
 tldw_chatbook.config	tldw_chatbook.DB.Prompts_DB	top

@@ -503,10 +503,10 @@ from tldw_chatbook.config import (
     coerce_bool_setting,
     coerce_int_setting,
     get_cli_setting,
-    apply_console_capture_settings,
-    runtime_capture_policy,
     get_runtime_config_snapshot,
 )
+from tldw_chatbook.Chat.console_capture_policy import apply_console_capture_settings
+from tldw_chatbook.Chat.console_capture_policy import runtime_capture_policy
 from tldw_chatbook.Library.library_rag_service import LibraryRagSearchRequest
 from tldw_chatbook.UI.Views.RAGSearch.search_handoff import (
     build_library_rag_evidence_bundle,
@@ -3781,7 +3781,7 @@ class ConsoleChatController:
         self._frozen_rag_capture = frozen_rag_capture
         self._cancel_raw_cli_session = cancel_raw_cli_session
         if canvas_enabled_reader is None:
-            from tldw_chatbook.config import get_canvas_execution_enabled
+            from tldw_chatbook.Canvas.config_policy import get_canvas_execution_enabled
 
             canvas_enabled_reader = get_canvas_execution_enabled
         self._canvas_enabled_reader = canvas_enabled_reader

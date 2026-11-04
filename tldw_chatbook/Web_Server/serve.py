@@ -65,11 +65,11 @@ from ..Canvas.web_auth import (
     build_web_auth_policy,
     resolve_web_access_token,
 )
-from ..config import (
+from ..config import get_cli_setting
+from tldw_chatbook.Canvas.config_policy import (
     CanvasConfigPolicy,
     get_canvas_config_policy,
     get_canvas_execution_enabled,
-    get_cli_setting,
 )
 from ..Utils.input_validation import validate_number_range
 from ..Utils.optional_deps import (
@@ -725,7 +725,7 @@ def _build_production_mobile_provider_gateway() -> Any:
     without one.
     """
     from tldw_chatbook.Chat.console_provider_gateway import ConsoleProviderGateway
-    from tldw_chatbook.config import runtime_capture_policy
+    from tldw_chatbook.Chat.console_capture_policy import runtime_capture_policy
 
     def _config_provider() -> Mapping[str, object]:
         try:

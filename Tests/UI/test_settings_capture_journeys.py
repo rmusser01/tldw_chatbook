@@ -16,6 +16,7 @@ from Tests.UI.test_settings_overview_search_journeys import _category, _painted
 from Tests.UI.test_settings_provider_keyboard_journeys import _settle
 from Tests.UI.test_settings_speech_tts_panel import _StyledDestinationHarness
 from tldw_chatbook.Widgets.confirmation_dialog import ConfirmationDialog
+from tldw_chatbook.Chat import console_capture_policy as capture_policy_module
 
 
 def _setup():
@@ -98,7 +99,7 @@ async def test_full_trace_view_requires_real_keyboard_confirmation(
         assert console["trace_viewer_profile"] == expected
         assert console["exchange_capture"] is False
         assert console["exchange_capture_pii_redaction"] is False
-        assert config.runtime_capture_policy().viewer_profile == expected
+        assert capture_policy_module.runtime_capture_policy().viewer_profile == expected
         await host.switch_screen(Screen())
         await host.switch_screen(SettingsScreen(host.app_instance))
         await _category(host, pilot, "Console Behavior")
@@ -206,7 +207,7 @@ async def test_full_view_save_failure_or_stale_consent_is_retriable(
         assert tomllib.loads(path.read_text())["console"]["trace_viewer_profile"] == (
             "full" if saved else "safe"
         )
-        assert config.runtime_capture_policy().viewer_profile == (
+        assert capture_policy_module.runtime_capture_policy().viewer_profile == (
             "full" if saved else "safe"
         )
         monkeypatch.setattr(
@@ -278,7 +279,7 @@ async def test_diagnostics_keyboard_reload_rebases_capture_controls_and_consent(
         console = tomllib.loads(path.read_text())["console"]
         assert console["trace_viewer_profile"] == "full"
         assert console["exchange_capture_pii_redaction"] is True
-        assert config.runtime_capture_policy().viewer_profile == "full"
+        assert capture_policy_module.runtime_capture_policy().viewer_profile == "full"
 
 
 @pytest.mark.asyncio

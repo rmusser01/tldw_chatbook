@@ -27,7 +27,7 @@ from tldw_chatbook.Canvas.gateway import (
 )
 from tldw_chatbook.Canvas.profiles import load_profile_snapshot, runtime_snapshot_id
 from tldw_chatbook.Canvas.web_auth import SESSION_COOKIE_NAME, WEBSOCKET_PROTOCOL
-from tldw_chatbook.config import build_canvas_config_policy
+from tldw_chatbook.Canvas.config_policy import build_canvas_config_policy
 from tldw_chatbook.Web_Server import serve
 
 pytestmark = [

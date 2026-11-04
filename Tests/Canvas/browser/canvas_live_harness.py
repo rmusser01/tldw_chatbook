@@ -27,6 +27,7 @@ from aiohttp import ClientSession, WSMsgType, web
 from tldw_chatbook import config as config_module
 from tldw_chatbook.Terminal.screen_model import TerminalScreenModel
 from tldw_chatbook.Web_Server import serve
+from tldw_chatbook.Canvas import config_policy as canvas_config_policy_module
 
 FIXTURES = Path(__file__).with_name("fixtures")
 
@@ -947,7 +948,7 @@ async def _construct_live_served_stack(
     monkeypatch.setattr(
         serve,
         "get_canvas_config_policy",
-        lambda **kwargs: config_module.build_canvas_config_policy(
+        lambda **kwargs: canvas_config_policy_module.build_canvas_config_policy(
             {}, web_auth_policy=kwargs.get("web_auth_policy")
         ),
     )

@@ -477,7 +477,7 @@ class CanvasToolProvider:
         self._scope = scope
         self._enabled = enabled
         if enabled_reader is None:
-            from tldw_chatbook.config import get_canvas_execution_enabled
+            from tldw_chatbook.Canvas.config_policy import get_canvas_execution_enabled
 
             enabled_reader = get_canvas_execution_enabled
         if not callable(enabled_reader):

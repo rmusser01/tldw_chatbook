@@ -22,7 +22,7 @@ from aiohttp import WSMsgType, WSServerHandshakeError
 from aiohttp.test_utils import TestClient, TestServer
 
 from tldw_chatbook.Canvas.web_auth import CSRF_HEADER_NAME, build_web_auth_policy
-from tldw_chatbook.config import build_canvas_config_policy
+from tldw_chatbook.Canvas.config_policy import build_canvas_config_policy
 from tldw_chatbook.Web_Server import mobile_api, serve
 from tldw_chatbook.Web_Server.session_store import WebSessionStore
 

@@ -234,12 +234,9 @@ from ...config import (
     MIN_CONSOLE_PASTE_COLLAPSE_THRESHOLD,
     MIN_CONSOLE_TOOL_RESULT_DISPLAY_CHARS,
     ProviderSettingsError,
-    CanvasConfigPolicy,
     RuntimeConfigSnapshot,
     _selected_default_base_data_dir,
     apply_settings_mutation_to_cli_config,
-    apply_console_capture_settings,
-    build_canvas_config_policy,
     coerce_bool_setting,
     coerce_float_setting,
     coerce_int_setting,
@@ -250,9 +247,16 @@ from ...config import (
     get_runtime_config_snapshot,
     load_settings,
     provider_settings_for_key,
-    runtime_capture_policy,
     run_if_runtime_config_generation_current,
     save_settings_to_cli_config,
+)
+from tldw_chatbook.Chat.console_capture_policy import (
+    apply_console_capture_settings,
+    runtime_capture_policy,
+)
+from tldw_chatbook.Canvas.config_policy import (
+    CanvasConfigPolicy,
+    build_canvas_config_policy,
 )
 from ...LLM_Provider_Catalog.model_catalog_settings import (
     AUTO_REFRESH_PROVIDER_LIST_KEYS,
