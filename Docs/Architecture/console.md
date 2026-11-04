@@ -1065,6 +1065,15 @@ revision changes reset continuation. System/automatic instruction bodies, hidden
 thinking, quarantined generation text, provider credentials and full DB rows are
 excluded. Recovery and unfaithful reviews expose only pending/Open terminal state.
 
+The mobile stream handler in `Web_Server/static/mobile/app.js` treats an ordinary,
+flag-free `console.changed` as a refresh hint. It preserves the last confirmed
+controls during that refresh so a physical pointer gesture is not lost. It never
+confirms a target or clears uncertainty from a hint. A `reset`, including
+`console.changed` with `payload.reset_required === true`, and disconnect/errors
+still invalidate confirmation immediately. Native target/ticket checks and the
+five-revision Send fence remain authoritative when dispatching commands; no
+command is queued for later dispatch or automatically replayed.
+
 `InterruptRoundHost.remote_rounds` snapshots native ownership under its lock and
 formats outside that lock. Ordinary tool approval summaries share the native
 pure `Chat/approval_review.py` destination-first, bounded redaction policy with
@@ -1118,3 +1127,10 @@ five revisions, then uses the unchanged cold source-capsule checks. The loader
 imports the original widget module without mounting a widget or opening a trust
 service. A command owner without this presentation dependency refuses Send;
 projection, Stop and other non-Send controls do not need it.
+
+Library outcome display reads include the native session incarnation in their
+cache/request identity. Saved chats retain stable canonical session IDs across
+close and reopen, so the ID alone cannot identify a restored owner. A new
+incarnation rereads trajectory records; unchanged incarnations keep the existing
+read coalescing and worker retirement. During a fresh off-loop read the prior
+projection may remain visible until the new read lands.

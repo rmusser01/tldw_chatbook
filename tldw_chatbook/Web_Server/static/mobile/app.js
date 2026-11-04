@@ -863,7 +863,10 @@
       if (state.ws !== socket) return;
       let event; try { event = JSON.parse(frame.data); } catch (_) { return; }
       if (event.type === "ping") { socket.send(JSON.stringify({type: "pong"})); return; }
-      if (["console.changed", "reset"].includes(event.type)) { setConnection("uncertain"); refresh(); }
+      if (["console.changed", "reset"].includes(event.type)) {
+        if (event.type === "reset" || event.payload?.reset_required === true) setConnection("uncertain");
+        refresh();
+      }
     });
     socket.addEventListener("close", event => {
       if (state.ws !== socket) return;

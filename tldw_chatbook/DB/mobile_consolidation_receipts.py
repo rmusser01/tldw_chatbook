@@ -6,10 +6,9 @@ import hashlib
 import json
 import sqlite3
 import struct
+from functools import cache
 
 from tldw_chatbook.Backup_Recovery.models import _TraceReadBudget
-
-from .mobile_import_authority import _COMPOSITES, _DOMAINS, _TABLES
 
 _OWNERS = {
     "chat": "db.chachanotes.primary",
@@ -25,29 +24,59 @@ _KINDS = (
     "history_publication",
 )
 _MAX_BYTES = 16 * 1024 * 1024
-_SPECS = {spec.table: spec for spec in _TABLES}
-_DOMAINS_BY_NAME = {
-    domain.name: (domain.family, (domain.scalar,)) for domain in _DOMAINS
-}
-for _name, _family, _table, _columns in _COMPOSITES:
-    _DOMAINS_BY_NAME[_name] = (
-        _family,
-        tuple(
-            _DOMAINS_BY_NAME[t][1][0] if isinstance(t, str) else t for _, t in _columns
-        ),
-    )
-_DOMAINS_BY_NAME.update(
-    {
-        name: ("runs", (str,))
-        for name in ("goal_launch", "goal_iteration_launch", "work_submission")
+
+
+@cache
+def _receipt_schema():
+    """Cache canonical schema views only when a historical payload needs them."""
+    from .mobile_import_authority import _COMPOSITES, _DOMAINS, _TABLES
+
+    _SPECS = {spec.table: spec for spec in _TABLES}
+    _DOMAINS_BY_NAME = {
+        domain.name: (domain.family, (domain.scalar,)) for domain in _DOMAINS
     }
-)
-# Fixed _ordered reservations in mobile_identity_plan: both are native Chat
-# sequence integers, separate from opaque fleet_message and memory identities.
-_DOMAINS_BY_NAME.update(
-    {"memory_sequence": ("chat", (int,)), "fleet_sequence": ("chat", (int,))}
-)
-_COMPOSITE_NAMES = frozenset(row[0] for row in _COMPOSITES)
+    for _name, _family, _table, _columns in _COMPOSITES:
+        _DOMAINS_BY_NAME[_name] = (
+            _family,
+            tuple(
+                _DOMAINS_BY_NAME[t][1][0] if isinstance(t, str) else t for _, t in _columns
+            ),
+        )
+    _DOMAINS_BY_NAME.update(
+        {
+            name: ("runs", (str,))
+            for name in ("goal_launch", "goal_iteration_launch", "work_submission")
+        }
+    )
+    # Fixed _ordered reservations in mobile_identity_plan: both are native Chat
+    # sequence integers, separate from opaque fleet_message and memory identities.
+    _DOMAINS_BY_NAME.update(
+        {"memory_sequence": ("chat", (int,)), "fleet_sequence": ("chat", (int,))}
+    )
+    _COMPOSITE_NAMES = frozenset(row[0] for row in _COMPOSITES)
+
+    return {
+        "_SPECS": _SPECS,
+        "_DOMAINS_BY_NAME": _DOMAINS_BY_NAME,
+        "_COMPOSITE_NAMES": _COMPOSITE_NAMES,
+        "_TABLES": _TABLES,
+        "_DOMAINS": _DOMAINS,
+        "_COMPOSITES": _COMPOSITES,
+    }
+
+
+def __getattr__(name: str) -> object:
+    """Keep existing schema ports lazy, including canonical tuple identities."""
+    if name not in {
+        "_SPECS",
+        "_DOMAINS_BY_NAME",
+        "_COMPOSITE_NAMES",
+        "_TABLES",
+        "_DOMAINS",
+        "_COMPOSITES",
+    }:
+        raise AttributeError(name)
+    return _receipt_schema()[name]
 
 
 def _invalid():
@@ -120,8 +149,10 @@ _ENTITIES = (
     "world_books",
     "world_book_entries",
 )
-_TABLE = lambda value: type(value) is str and value in _SPECS
-_DOMAIN = lambda value: type(value) is str and value in _DOMAINS_BY_NAME
+_TABLE = lambda value: type(value) is str and value in _receipt_schema()["_SPECS"]
+_DOMAIN = lambda value: (
+    type(value) is str and value in _receipt_schema()["_DOMAINS_BY_NAME"]
+)
 _SEMANTIC_RULES = {
     "handoff_run": (("C2b",), ("conversations",), str),
     "run": (("A-runs",), ("conversations", "messages", "fleet_progress_messages"), str),
@@ -334,11 +365,15 @@ def _validate_child(value, owner):
             data,
             {"domain": _DOMAIN, "original": lambda v: True, "mapped": lambda v: True},
         )
-        family, types = _DOMAINS_BY_NAME[data["domain"]]
+        family, types = _receipt_schema()["_DOMAINS_BY_NAME"][data["domain"]]
         if family != owner:
             _invalid()
         for key in ("original", "mapped"):
-            parts = data[key] if data["domain"] in _COMPOSITE_NAMES else [data[key]]
+            parts = (
+                data[key]
+                if data["domain"] in _receipt_schema()["_COMPOSITE_NAMES"]
+                else [data[key]]
+            )
             if (
                 type(parts) is not list
                 or len(parts) != len(types)
@@ -360,7 +395,7 @@ def _validate_child(value, owner):
                 "mapped_sha256": _hash,
             },
         )
-        spec = _SPECS[data["table"]]
+        spec = _receipt_schema()["_SPECS"][data["table"]]
         if (
             spec.family != owner
             or len(data["original"]) != len(spec.identity_columns)
@@ -380,9 +415,9 @@ def _validate_child(value, owner):
             else "chat"
         )
         if family == "operational":
-            expected = _SPECS[record["table"]].family
+            expected = _receipt_schema()["_SPECS"][record["table"]].family
         if family == "semantic":
-            expected = _SPECS[record["table"]].family
+            expected = _receipt_schema()["_SPECS"][record["table"]].family
             handlers, tables, scalar = _SEMANTIC_RULES[record["domain"]]
             if (
                 record["handler"] not in handlers
@@ -802,7 +837,7 @@ def _imported_definition_ids(connection, budget):
 
 def _row_digest(table, values, budget):
     """Hash exact manifest SQL scalars without serializing retained bodies to JSON."""
-    spec = _SPECS.get(table)
+    spec = _receipt_schema()["_SPECS"].get(table)
     if (
         spec is None
         or len(values) != len(spec.columns)

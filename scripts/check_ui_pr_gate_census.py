@@ -999,6 +999,8 @@ MINIMUM_FILES = 2029
 # Dev includes the native sync-admission file before these five entries.
 MINIMUM_FILES = 2034
 
+# TASK-36769: the roster also includes both conversation-row P0 selectors.
+
 
 def read_census(path: Path) -> list[str]:
     """Read the census, dropping comments and blank lines.

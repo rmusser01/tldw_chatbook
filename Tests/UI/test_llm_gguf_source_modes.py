@@ -428,6 +428,7 @@ async def test_windows_settles_share_one_deadline_per_test(
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_source_matrix_and_legacy_compatibility(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -463,6 +464,7 @@ async def test_source_matrix_and_legacy_compatibility(
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_external_mode_requires_a_path_before_start(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -493,6 +495,7 @@ async def test_external_mode_requires_a_path_before_start(
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_switching_modes_preserves_inactive_exact_selections(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -527,6 +530,7 @@ async def test_switching_modes_preserves_inactive_exact_selections(
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_managed_selector_uses_exact_refs_and_path_free_labels(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -1206,6 +1210,7 @@ async def test_inventory_failure_after_selection_blocks_stale_managed_launch(
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_accepted_start_immediately_fences_every_source_control(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
@@ -1310,6 +1315,7 @@ async def test_claim_authority_survives_screen_recompose_and_not_window_selectio
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_status_updates_preserve_stop_identity_and_restore_focus_on_death(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -1343,6 +1349,7 @@ async def test_status_updates_preserve_stop_identity_and_restore_focus_on_death(
     ("provider", "view_name", "focus_id"),
     (("mlx", "mlx-lm", "mlx-model-path"),),
 )
+@pytest.mark.bootstrap_profile
 async def test_non_gguf_lifecycle_sync_preserves_existing_focus(
     monkeypatch: pytest.MonkeyPatch,
     provider: str,
@@ -1387,6 +1394,7 @@ async def test_non_gguf_lifecycle_sync_preserves_existing_focus(
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_physical_stop_cancels_only_current_claim(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -1410,6 +1418,7 @@ async def test_physical_stop_cancels_only_current_claim(
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("theme", ("textual-dark", "high_contrast_yellow_black"))
+@pytest.mark.bootstrap_profile
 async def test_disabled_gguf_controls_keep_live_compositor_contrast(
     monkeypatch: pytest.MonkeyPatch,
     theme: str,

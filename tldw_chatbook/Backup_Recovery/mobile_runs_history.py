@@ -96,13 +96,19 @@ def _frame_runs(raw, runs, primary, budget):
 
 
 def _qualify_history_census(reads, runs, identities, *, _read_budget):
+    from .archive_models import ArchiveManifest, EncryptedSource, SealedArchive
+    from .mobile_captured_sqlite import _row_data
     from .mobile_consolidation_apply import _MobileCapturePartition
     from .mobile_trace_inputs import _check_trace_members
 
     reads.check()
     budget = _read_budget
-    partition, document, sealed = reads._source_archive
+    capture = reads._source_archive
+    partition, document, sealed = capture
     source = reads.captured.source
+    owner = _row_data(reads, budget)
+    encrypted = sealed.encrypted_source
+    cancel, custody = reads.cancel, reads.custody
     if (
         type(partition) is not _MobileCapturePartition
         or partition not in reads.session._scopes
@@ -121,6 +127,40 @@ def _qualify_history_census(reads, runs, identities, *, _read_budget):
     checked = archive_reader.verify_sealed(sealed, reads.cancel, _custody=reads.custody)
     if checked != document:
         raise ValueError("mobile_runs_history_capture_changed")
+    if owner is not None:
+        def require_native_history():
+            archive_reader._check(cancel)
+            if (
+                type(capture) is not tuple
+                or _row_data(reads, budget) is not owner
+                or reads._source_archive is not capture
+                or reads.captured.source is not source
+                or reads.cancel is not cancel
+                or reads.custody is not custody
+                or type(document) is not ArchiveManifest
+                or type(sealed) is not SealedArchive
+                or type(encrypted) is not EncryptedSource
+                or sealed.encrypted_source is not encrypted
+            ):
+                raise ValueError("mobile_runs_history_capture_changed")
+            partition._check_binding()
+            if (
+                partition.session is not reads.session
+                or partition.claim is not reads.captured.claim
+                or partition.journal is not reads.journal
+                or partition.review_only
+                or partition.purpose != "legacy"
+                or partition.destination != source.path
+                or encrypted.digest != source.digest
+                or encrypted.plaintext_digest != sealed.digest
+                or sealed.manifest_bytes != source.manifest_bytes
+            ):
+                raise ValueError("mobile_runs_history_capture_changed")
+            budget.reserve(1024)  # This invocation's proof references and digest text.
+            if encrypted.manifest_digest != hashlib.sha256(sealed.manifest_bytes).hexdigest():
+                raise ValueError("mobile_runs_history_capture_changed")
+
+        require_native_history()
     members, names = _members(
         reads.captured, document, _read_budget=budget, _scope=reads
     )
@@ -331,8 +371,20 @@ def _qualify_history_census(reads, runs, identities, *, _read_budget):
         else:
             retained.append(proof)
     proofs = retained
-    budget.json(sealed.manifest_bytes)
-    archive_reader.verify_sealed(sealed, reads.cancel, _custody=reads.custody)
+    if owner is None:
+        budget.json(sealed.manifest_bytes)
+        archive_reader.verify_sealed(sealed, reads.cancel, _custody=reads.custody)
+    else:
+        require_native_history()
+        for _ in range(2):
+            if (
+                archive_reader._hash(
+                    sealed.path, cancel, _custody=custody, _read_budget=budget
+                )
+                != sealed.digest
+            ):
+                raise ValueError("sealed_changed")
+            require_native_history()
     reads.check()
     _check_trace_members(reads)
     budget.container(len(proofs) + len(blockers))

@@ -174,6 +174,14 @@ STEP_JOBS = {
 }
 
 
+# ADR-103, 2026-11-04: retain the inherited roster while the bounded UI lane
+# owns this sweep; the census and P0 contracts enforce exactly-once coverage.
+UI_ROUTED_SWEEP = (
+    "Tests/UI/test_console_row_menu_action_sweep.py::test_the_sweep_covers_every_declared_action_constant",
+    "Tests/UI/test_console_row_menu_action_sweep.py::test_conversation_row_action_never_ends_the_app",
+)
+
+
 def validate(document):
     jobs = document["jobs"]
     commands = {}
@@ -205,7 +213,9 @@ def validate(document):
         added = SELECTION[label] if label else []
         for target in added:
             assert tokens.count(target) == 1, target
-        assert [token for token in tokens if token not in added] == inherited
+        assert [token for token in tokens if token not in added] == [
+            token for token in inherited if token not in UI_ROUTED_SWEEP
+        ]
         assert not {
             "-k",
             "-m",
@@ -284,6 +294,7 @@ UI_PHASE_SELECTION = (
     "Tests/UI/test_response_rules_end_to_end.py::test_learn_repair_reopen_and_exclude_through_console",
     "Tests/UI/test_console_response_rules.py::test_mapped_learning_phase_and_stop_follow_live_helper",
     "Tests/UI/test_console_response_rules.py::test_rule_phase_events_project_only_the_mounted_current_session",
+    *UI_ROUTED_SWEEP,
 )
 
 
@@ -307,12 +318,17 @@ def test_native_phase_controls_are_executable_in_required_ui_census():
 
 
 @pytest.mark.parametrize("target", UI_PHASE_SELECTION)
-@pytest.mark.parametrize("damage", ["remove", "comment"])
-def test_missing_or_comment_only_native_phase_control_is_rejected(
+@pytest.mark.parametrize("damage", ["remove", "comment", "duplicate"])
+def test_missing_comment_only_or_duplicate_native_phase_control_is_rejected(
     tmp_path, target, damage
 ):
     original = (ROOT / "scripts/ui_pr_gate_census.txt").read_text()
-    damaged = original.replace(target, "# " + target if damage == "comment" else "")
+    replacement = {
+        "remove": "",
+        "comment": "# " + target,
+        "duplicate": target + "\n" + target,
+    }[damage]
+    damaged = original.replace(target, replacement)
     path = tmp_path / "census.txt"
     path.write_text(damaged)
     with pytest.raises(AssertionError):
