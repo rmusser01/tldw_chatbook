@@ -128,6 +128,7 @@ INHERITED = {
         "Tests/Library/test_library_artifacts_dreams.py",
         "Tests/Watchlists/test_runtime_name_literals.py",
         "Tests/Notifications/test_notification_toast_markup.py",
+        "Tests/Chat/test_local_server_discovery.py",  # TASK-36532
         "--timeout=180",
         "--tb=short",
     ],

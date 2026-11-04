@@ -355,6 +355,11 @@ DREAMS_BOUNDARY_TARGETS = (
     "Tests/Library/test_library_artifacts_dreams.py",
     "Tests/Watchlists/test_runtime_name_literals.py",
     "Tests/Notifications/test_notification_toast_markup.py",
+    # TASK-36532: the local-server probe and discovery suite ran in no PR lane.
+    # Pure httpx.MockTransport tests, sandboxed; ~13 s serial. Here, not in
+    # pr-fast-lane: that job ran median 31.4 / max 34.7 min of its 35 over 37
+    # PR runs (2026-11-03), this one median 6.2 / max 7.2 of its 20.
+    "Tests/Chat/test_local_server_discovery.py",
 )
 #: TASK-34929: the Dreams tracking tests, gated whole in their own job.
 DREAMS_TRACKING_TARGET = "Tests/Dreams/test_track_service.py"
