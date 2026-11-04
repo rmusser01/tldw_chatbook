@@ -1542,3 +1542,106 @@ async def test_stts_handler_initializes_on_first_use(monkeypatch) -> None:
 
     assert initialized.is_set()
     assert handler is app._stts_handler
+
+
+@pytest.mark.asyncio
+async def test_windows_timer_delivery_and_stop_do_not_wait_for_default_workers(
+    monkeypatch,
+):
+    from threading import Event as ThreadEvent
+    from types import SimpleNamespace
+
+    from textual import timer as timer_module
+    from textual.app import App
+    from textual.timer import Timer
+
+    from tldw_chatbook.Utils import text_selection_crash_guard as guard
+
+    loop = asyncio.get_running_loop()
+    executor = guard.FreshContextExecutor(max_workers=8, thread_name_prefix="asyncio")
+    previous = getattr(loop, "_default_executor", None)
+    loop.set_default_executor(executor)
+    if previous is not None:
+        previous.shutdown(wait=False)
+    release = ThreadEvent()
+    entered = [ThreadEvent() for _ in range(8)]
+    native_jobs = []
+    proxy_wakes = []
+    timers = []
+
+    def hold_worker(started):
+        started.set()
+        release.wait()
+
+    async def windows_executor_sleep(seconds):
+        wake = ThreadEvent()
+        proxy_wakes.append(wake)
+        job = executor.submit(wake.wait, seconds)
+        native_jobs.append(job)
+        try:
+            await asyncio.wrap_future(job)
+        except asyncio.CancelledError:
+            cancellation = executor.submit(wake.set)
+            native_jobs.append(cancellation)
+            await asyncio.wrap_future(cancellation)
+            raise
+
+    try:
+        held_jobs = []
+        for started in entered:
+            job = executor.submit(hold_worker, started)
+            held_jobs.append(job)
+            native_jobs.append(job)
+        await _wait_until(
+            lambda: all(started.is_set() for started in entered), pause=asyncio.sleep
+        )
+        monkeypatch.setattr(timer_module, "sleep", windows_executor_sleep)
+        monkeypatch.setattr(guard, "sys", SimpleNamespace(platform="win32"))
+        guard.ThreadWorkerContextGuard().on_load()
+        assert getattr(loop, "_default_executor", None) is executor
+        assert executor._max_workers == 8
+        delivered = asyncio.Event()
+        long_delivered = asyncio.Event()
+        app = App()
+        with app._context():
+            short = Timer(app, 0.1, callback=delivered.set, repeat=0)
+            timers.append(short)
+            short._start()
+            await _wait_until(delivered.is_set, pause=asyncio.sleep)
+            assert not release.is_set()
+            assert all(not job.done() for job in held_jobs)
+            long = Timer(app, 86400, callback=long_delivered.set, repeat=0)
+            timers.append(long)
+            long._start()
+            await asyncio.sleep(0)
+            await asyncio.wait_for(Timer._stop_all([long]), timeout=3.0)
+            assert not long_delivered.is_set()
+            assert long._task is None
+            assert all(not job.done() for job in held_jobs)
+    finally:
+        for wake in proxy_wakes:
+            wake.set()
+        release.set()
+        await Timer._stop_all(timers)
+        await asyncio.gather(
+            *(asyncio.wrap_future(job) for job in native_jobs), return_exceptions=True
+        )
+        assert all(job.done() for job in native_jobs)
+        assert all(job.cancelled() or job.exception() is None for job in native_jobs)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("platform", ["darwin", "linux"])
+async def test_non_windows_load_preserves_the_existing_timer_sleep(
+    monkeypatch, platform
+):
+    from types import SimpleNamespace
+
+    from textual import timer as timer_module
+
+    from tldw_chatbook.Utils import text_selection_crash_guard as guard
+
+    existing_sleep = timer_module.sleep
+    monkeypatch.setattr(guard, "sys", SimpleNamespace(platform=platform))
+    guard.ThreadWorkerContextGuard().on_load()
+    assert timer_module.sleep is existing_sleep
