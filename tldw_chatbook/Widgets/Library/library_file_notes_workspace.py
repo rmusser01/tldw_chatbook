@@ -3084,6 +3084,26 @@ class LibraryFileNotesWorkspace(Vertical):
             return f"Retention cleanup failed: {result.message or result.status}"
         return None
 
+    async def _read_replica(self, read: Callable[..., Any], *args: object) -> Any:
+        """Run one direct replica read that quit can close behind (TASK-38711).
+
+        These reads skip the service lock. ``_core_closing`` silently refuses
+        to close a file-backed replica while one is in flight, and a closed one
+        reopens on its next use. So an owned replica's reads share its owner
+        thread, where the close queues behind them, and a read that starts once
+        quit has begun returns None without touching the replica.
+        """
+
+        def run() -> Any:
+            return None if self._shutdown else read(*args)
+
+        owner = self._replica_thread
+        if self._shutdown:
+            return None
+        if owner is None:
+            return await asyncio.to_thread(run)
+        return await asyncio.get_running_loop().run_in_executor(owner, run)
+
     async def _load_deleted_paths(
         self,
         *,
@@ -3095,14 +3115,11 @@ class LibraryFileNotesWorkspace(Vertical):
         if replica is None or service is None:
             return ()
         try:
-            paths = await asyncio.to_thread(
-                replica.list_deleted,
-                service.root_key,
-            )
+            paths = await self._read_replica(replica.list_deleted, service.root_key)
         except Exception as error:
             self._runtime_warning = f"Recovery unavailable: {error}"
             return ()
-        return tuple(paths)
+        return tuple(paths or ())
 
     def _apply_scan(
         self,
@@ -7085,13 +7102,12 @@ class LibraryFileNotesWorkspace(Vertical):
     async def _run_search(self, query: str, generation: int) -> None:
         if self._replica is not None and self._service is not None:
             try:
-                paths = await asyncio.to_thread(
-                    self._replica.search,
-                    self._service.root_key,
-                    query,
+                paths = await self._read_replica(
+                    self._replica.search, self._service.root_key, query
                 )
             except Exception:
                 paths = []
+            paths = paths or []
         else:
             # TASK-34938: match against the pre-folded path list -- no
             # per-keystroke casefold over every entry.

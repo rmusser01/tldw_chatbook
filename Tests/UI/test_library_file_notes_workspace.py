@@ -8,7 +8,7 @@ import sqlite3
 import threading
 from collections.abc import Callable
 from concurrent.futures import Future, ThreadPoolExecutor
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager, contextmanager
 from dataclasses import replace
 from itertools import product
 from pathlib import Path
@@ -7723,6 +7723,155 @@ async def test_library_database_files_switch_retains_workspace_and_database_canv
     assert owned_replica._connection is None
     with pytest.raises(sqlite3.ProgrammingError):
         owned_connection.execute("SELECT 1")
+
+
+@pytest.mark.asyncio
+async def test_quit_closes_owned_replica_behind_a_search_in_flight(
+    tmp_path: Path,
+) -> None:
+    """TASK-38711: a direct replica read in flight at quit cannot leak it.
+
+    ``_core_closing`` refuses, silently, to close a file-backed replica while
+    any core operation on it is in flight. The search is submitted before
+    quit and enters its replica operation once quit's retention pass is done
+    (that pass needs the replica's lock), and quit waits for it to be inside.
+    It is released once the close has run (and was refused, on the base
+    build) or is queued behind it on the replica's one owner thread.
+    """
+    asyncio.get_running_loop().set_default_executor(_ThreadPerCallExecutor())
+    root = tmp_path / "notes"
+    root.mkdir()
+    (root / "note.md").write_text("findable body", encoding="utf-8")
+    workspace = LibraryFileNotesWorkspace(
+        root=root,
+        replica_path=tmp_path / "owned.sqlite",
+        poll_interval=3600,
+    )
+    retention_done = threading.Event()
+    read_held = threading.Event()
+    release_read = threading.Event()
+    close_submitted = threading.Event()
+    close_returned = threading.Event()
+    holding = threading.local()
+    held_on_owner_thread = False
+
+    async with _WorkspaceHarness(workspace).run_test(size=(120, 40)) as pilot:
+        await _wait_until(
+            pilot,
+            lambda: workspace.initialized and workspace._replica is not None,
+            "owned-replica workspace did not initialize",
+        )
+        owned_replica = workspace._replica
+        service = workspace._service
+        owner = workspace._replica_thread
+        assert owned_replica is not None and service is not None
+        assert owner is not None
+        owned_connection = owned_replica._connection
+        assert owned_connection is not None
+        locked_connection = owned_replica._locked_connection
+        search = owned_replica.search
+        close = owned_replica.close
+        retention = service.enforce_retention
+        submit = owner.submit
+
+        @contextmanager
+        def held_connection():
+            nonlocal held_on_owner_thread
+            with locked_connection():
+                if getattr(holding, "search", False):
+                    held_on_owner_thread = threading.current_thread().name.startswith(
+                        "file-notes-replica"
+                    )
+                    read_held.set()
+                    assert release_read.wait(5)
+                yield
+
+        def held_search(*args, **kwargs):
+            assert retention_done.wait(5)
+            holding.search = True
+            try:
+                return search(*args, **kwargs)
+            finally:
+                holding.search = False
+
+        def observed_retention():
+            try:
+                return retention()
+            finally:
+                retention_done.set()
+                assert read_held.wait(5)
+
+        def observed_close():
+            try:
+                close()
+            finally:
+                close_returned.set()
+
+        def observed_submit(fn, /, *args, **kwargs):
+            if fn == workspace._close_owned_replica:
+                close_submitted.set()
+            return submit(fn, *args, **kwargs)
+
+        owned_replica._locked_connection = held_connection
+        owned_replica.search = held_search
+        owned_replica.close = observed_close
+        service.enforce_retention = observed_retention
+        owner.submit = observed_submit
+
+        workspace._start_search("findable")
+        await pilot.pause()
+        shutdown_task = asyncio.create_task(workspace.shutdown())
+        await _wait_until(pilot, read_held.is_set, "the search never held")
+        await _wait_until(
+            pilot,
+            lambda: close_returned.is_set()
+            or (close_submitted.is_set() and held_on_owner_thread),
+            "quit neither closed nor queued its close",
+        )
+        release_read.set()
+        await shutdown_task
+
+    assert owned_replica._connection is None
+    with pytest.raises(sqlite3.ProgrammingError):
+        owned_connection.execute("SELECT 1")
+
+
+@pytest.mark.asyncio
+async def test_read_started_after_quit_cannot_reopen_owned_replica(
+    tmp_path: Path,
+) -> None:
+    """TASK-38711: a closed file-backed replica reopens on its next use.
+
+    A deleted-files read that captured the replica before quit (as
+    ``_initialize`` does across its scan) must not be the one that reopens it.
+    """
+    root = tmp_path / "notes"
+    root.mkdir()
+    (root / "note.md").write_text("body", encoding="utf-8")
+    workspace = LibraryFileNotesWorkspace(
+        root=root,
+        replica_path=tmp_path / "owned.sqlite",
+        poll_interval=3600,
+    )
+
+    async with _WorkspaceHarness(workspace).run_test(size=(120, 40)) as pilot:
+        await _wait_until(
+            pilot,
+            lambda: workspace.initialized and workspace._replica is not None,
+            "owned-replica workspace did not initialize",
+        )
+        owned_replica = workspace._replica
+        service = workspace._service
+        assert owned_replica is not None and service is not None
+        await workspace.shutdown()
+        assert owned_replica._connection is None
+
+        deleted = await workspace._load_deleted_paths(
+            replica=owned_replica, service=service
+        )
+
+    assert deleted == ()
+    assert owned_replica._connection is None
 
 
 @pytest.mark.asyncio
