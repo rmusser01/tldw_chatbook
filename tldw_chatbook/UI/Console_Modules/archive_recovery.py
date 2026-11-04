@@ -140,7 +140,8 @@ class ConsoleArchiveRecoveryView:
                 return
             runtime = self.runtime()
             session_id = store.active_session_id
-            if not session_id:
+            # A Console runtime disposed before any recovery ran builds none.
+            if runtime is None or not session_id:
                 return
 
             def current() -> bool:

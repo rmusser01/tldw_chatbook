@@ -855,3 +855,50 @@ async def test_sync_answers_imported_recovery_without_copying_the_transcript(
         f"{len(copies) - copies.count('messages_for_session')} message snapshots"
     )
     assert shown is (imported in {"saved", "streamed"})
+
+
+@pytest.mark.asyncio
+async def test_sync_whose_runtime_is_disposed_in_flight_stops_without_crashing():
+    """A sync that reaches a disposed Console runtime renders nothing and survives.
+
+    Perf Guard (2026-11-03): a compact-setup gate's dispose case crashed the
+    app in this sync. A disposed runtime builds nothing new, so when no
+    recovery ran before quit, ``ensure_archive_recovery()`` answers ``None``.
+    The sync read it after its first await (mounting its surface) and called
+    ``presentations()`` on ``None``. Here the runtime is disposed during that
+    very await.
+    """
+    from types import SimpleNamespace
+
+    from textual.containers import Vertical
+
+    from tldw_chatbook.Chat.console_runtime import ConsoleRuntime
+    from tldw_chatbook.UI.Console_Modules.archive_recovery import (
+        ConsoleArchiveRecoveryView,
+    )
+
+    store = _empty_source_store()
+    runtime = ConsoleRuntime(SimpleNamespace())
+
+    class DisposingRoot(Vertical):
+        async def mount(self, *widgets, **kwargs):
+            await runtime.dispose()  # Quit lands during the sync's first await.
+            return await super().mount(*widgets, **kwargs)
+
+    class DisposeApp(App):
+        def compose(self):
+            self.screen._console_chat_store = store
+            self.screen._console_runtime = lambda: runtime
+            self.view = ConsoleArchiveRecoveryView(self.screen)
+            yield DisposingRoot(id="console-archive-recovery")
+
+    app = DisposeApp()
+    crashes = []
+    async with app.run_test(size=(80, 30)):
+        try:
+            await app.view.sync()
+        except Exception as exc:  # noqa: BLE001 - the crash is what is measured.
+            crashes.append(exc)
+        assert runtime._disposed and runtime.ensure_archive_recovery() is None
+        assert not crashes, f"the sync crashed after the runtime was disposed: {crashes!r}"
+        assert not app.query(ArchiveRecoveryConfirmCard)
