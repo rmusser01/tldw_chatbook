@@ -2632,31 +2632,34 @@ async def test_prepare_session_fixed_regions_remain_visible_at_40_by_20() -> Non
 
 
 @pytest.mark.parametrize(
-    ("state", "narrow", "recovery"),
+    "state",
     (
-        (
-            "conflict",
-            "Conflict: use Git; Refresh",
-            "; resolve the Git conflict outside Chatbook, then Refresh",
-        ),
-        ("unavailable", "Restore Git first; Refresh", "; restore Git, then Refresh"),
+        "external_staged",
+        "external_partial",
+        "ignored",
+        "conflict",
+        "unsupported",
+        "nested_repository",
+        "unsafe_closure",
+        "ambiguous_lineage",
+        "unavailable",
+        "error",
     ),
 )
-def test_blocked_row_copy_never_runs_an_empty_reason_into_its_recovery(
+def test_row_copy_never_runs_an_empty_or_dot_only_reason_into_its_recovery(
     state: SessionGitRowState,
-    narrow: str,
-    recovery: str,
 ) -> None:
     """TASK-38693: at 40x20 the row is 37 cells, which once read
-    "BLOCKED · .Conflict: use Git; Refresh"; pin every row width."""
+    "BLOCKED · .Conflict: use Git; Refresh" and "BLOCKED · ; fix ignore, then
+    Refresh". After the state word comes a visible reason or the recovery
+    itself, never "." or ";", at every width the short recovery fits."""
     row = _row(state, disabled_reason="index diagnostic " * 18)
-    for width in range(36, 120):
+    prefix, _detail, _recovery, narrow = git_panel_module._row_secondary_parts(row)
+    for width in range(cell_len(prefix + narrow.removeprefix("; ")), 120):
         copy = git_panel_module._row_secondary_copy(row, width)
-        reason = copy.removeprefix("BLOCKED · ").removesuffix(recovery)
-        assert cell_len(copy) <= width
-        assert copy == f"BLOCKED · {narrow}" or (
-            copy.endswith(recovery) and reason.strip(".")
-        ), (width, copy)
+        assert cell_len(copy) <= width, (width, copy)
+        assert copy.startswith(prefix), (width, copy)
+        assert copy[len(prefix) : len(prefix) + 1].isalnum(), (width, copy)
 
 
 @pytest.mark.asyncio
@@ -5881,9 +5884,10 @@ async def test_guarded_commit_success_renders_and_focuses_fresh_owner_status(
         )
         assert success_summary.display
         assert _is_effectively_displayed(success_summary)
-        # The fit runs before the rows' scrollbar takes a cell; at 40x20 the
-        # copy is re-fitted to 27 cells soon after. Read the settled fit, not
-        # the earlier 28-cell one (TASK-38693).
+        # Wait until the copy matches its fit for the current width (28 or 27
+        # cells at 40x20, both middle-elided): the rows' scrollbar can take a
+        # cell after the first fit, and the copy is re-fitted soon after
+        # (TASK-38693).
         await _wait_until(
             pilot,
             lambda: (
@@ -5897,7 +5901,7 @@ async def test_guarded_commit_success_renders_and_focuses_fresh_owner_status(
         )
         rendered_summary = _flat_text(success_summary)
         if size == (40, 20):
-            # 55 cells cannot fit two 27-cell lines, so the middle is elided.
+            # Both fits keep the copy's head and tail and elide its middle.
             assert rendered_summary.startswith("Committed 2 session note")
             assert rendered_summary.endswith("changes untouched.")
         else:

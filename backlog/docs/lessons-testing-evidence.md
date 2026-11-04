@@ -4,7 +4,7 @@
 
 **Incident.** `test_guarded_commit_success_renders_and_focuses_fresh_owner_status[40x20]` failed about 1 run in 10 with the success summary reading "Committed 2 session note\n...lated changes untouched." The obvious reading was a re-fit landing at a wrong, transient width. A 48-run repeat that also logged the summary's width and text after a further 0.5 s pause showed the opposite: in all 48 runs the settled width was 27 cells and the settled text was the elided one. The summary is first fitted while it is 28 cells wide; the rows' scrollbar then takes a cell without resizing the panel, and a later panel fit re-fits it to 27. The test read the summary straight after its wait, so it passed only when it read the stale 28-cell fit. The failing runs had read the correct, settled state. Base: 5 of 48 red; the test now waits until the summary equals the fitter's output for its current width, and passed 120 of 120.
 
-**What to do.** Before fixing a flake, log the asserted value both at the assertion and after the app has gone quiet, across many runs. If the settled value is the "failing" one, the test is pinning a transient. Wait for the state the product converges to, and assert that.
+**What to do.** Before fixing a flake, log the asserted value both at the assertion and after the app has gone quiet, across many runs. If the settled value is the "failing" one, the test is pinning a transient. Wait until the copy matches its fit for the current width (here 28 or 27 cells at 40x20, both middle-elided), and assert what holds for either.
 
 ## A harness that reassigns an owner the product keeps rebinding gets turns refused only under load (TASK-38701, 2026-11-03)
 

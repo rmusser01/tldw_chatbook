@@ -541,14 +541,14 @@ def _row_secondary_copy(row: SessionGitRow, width: int | None = None) -> str:
         return _middle_elide_cells(full, width)
 
     suffix = recovery
-    # Narrow once the full recovery leaves the reason no cell beside its "...";
-    # a standalone narrow recovery replaces the reason (TASK-38693).
-    if narrow_recovery and cell_len(prefix) + cell_len(suffix) + 4 > width:
+    room = width - cell_len(prefix) - 4  # a reason needs one cell beside "..."
+    # Narrow; then drop a reason that has no room or a standalone recovery replaces.
+    if narrow_recovery and cell_len(suffix) > room:
         suffix = narrow_recovery
-        detail = detail if suffix.startswith(";") else ""
-    detail_width = max(0, width - cell_len(prefix) - cell_len(suffix))
-    fitted_detail = _middle_elide_cells(detail, detail_width)
-    fitted = f"{prefix}{fitted_detail}{suffix}"
+        if not suffix.startswith(";") or cell_len(suffix) > room:
+            detail, suffix = "", suffix.removeprefix("; ")
+    detail = _middle_elide_cells(detail, room + 4 - cell_len(suffix))
+    fitted = f"{prefix}{detail}{suffix}"
     return fitted if cell_len(fitted) <= width else _middle_elide_cells(fitted, width)
 
 
