@@ -5,35 +5,14 @@ These tools allow LLMs to create, search, update, and manage notes.
 """
 
 import threading
-from typing import Dict, Any, Optional, Tuple
+from pathlib import Path
+from typing import Any, Callable, Dict, Optional, Tuple
 
 from loguru import logger
 
 from . import Tool
 from ..Notes.Notes_Library import NotesInteropService
-from ..config import get_chachanotes_db_path, load_settings
-
-
-def _notes_db_base_dir():
-    """Return the base directory for the notes DB.
-
-    Mirrors the app's own ``NotesInteropService`` wiring in ``app.py``
-    (``get_chachanotes_db_path().parent``). Replaces an earlier
-    ``from ..config import USER_DB_BASE_DIR``, which named a symbol that
-    exists only inside ``config.py``'s ``CONFIG_TOML_CONTENT`` string
-    literal -- never as a module-level binding -- so this module could
-    not be imported at all.
-
-    Deferred to call time rather than computed at module scope, matching
-    ``file_operation_tools._tool_sandbox_root``. `get_chachanotes_db_path`
-    reaches `get_user_data_dir`, which **mkdirs**; at import scope that
-    made merely importing this module create a directory, and made an
-    unwritable ``$HOME``/``[paths] data_dir`` raise during import. The
-    registration loop in `tool_catalog` catches that and skips the tool,
-    so the failure would surface as "create_note is missing" rather than
-    as a normal error from an actual call.
-    """
-    return get_chachanotes_db_path().parent
+from ..config import load_settings
 
 
 #: Cached ``NotesInteropService`` for the tool path (task-692).
@@ -47,50 +26,61 @@ def _notes_db_base_dir():
 #: put these tools on the agent worker thread, where one run can invoke
 #: them many times.
 #:
-#: Keyed on the resolved DB path so a config change (or a test that
+#: Keyed on the supplied DB (path and identity) so a config change (or a test that
 #: repoints the data dir) still rebuilds rather than serving a service
 #: bound to the previous database.
 _SERVICE_LOCK = threading.Lock()
-_SERVICE_CACHE: Optional[Tuple[str, NotesInteropService]] = None
+# ponytail: holds (db, service) strongly -- at most ONE DB, the last one
+# supplied, stays alive until a different DB is supplied. CharactersRAGDB has
+# no cheap closed check, so a closed DB is not detected. Upgrade path: an
+# is_closed flag on the DB (then rebuild on it), or a per-DB cache.
+_SERVICE_CACHE: Optional[Tuple[Any, NotesInteropService]] = None
 
 
-def _notes_service() -> NotesInteropService:
+def _default_db_provider() -> Any:
+    """Self-initializing ChaChaNotes getter, resolved at call time."""
+    from ..config import get_chachanotes_db_lazy
+
+    return get_chachanotes_db_lazy()
+
+
+def _notes_service(db_provider: Callable[[], Any]) -> NotesInteropService:
     """Return the shared notes service for the tool path.
 
     Built lazily on first use and reused afterwards, so the service's own
     per-user ``CharactersRAGDB`` cache survives across tool calls instead
-    of being rebuilt for each one.
+    of being rebuilt for each one. The database comes from ``db_provider``
+    (supplied by whoever registered the tool), never from a config global.
+
+    Args:
+        db_provider: Zero-argument callable returning the ChaChaNotes DB.
 
     Returns:
-        A ``NotesInteropService`` bound to the current chachanotes DB.
+        A ``NotesInteropService`` bound to that DB.
     """
     global _SERVICE_CACHE
 
-    from ..config import chachanotes_db
+    db = db_provider()
+    if db is None:
+        raise RuntimeError("The notes database is unavailable.")
 
-    # Resolved ONCE and derived from that single value (Qodo #5): calling
-    # `get_chachanotes_db_path()` twice -- once inside `_notes_db_base_dir()`
-    # and once for the key -- lets a profile switch or config rewrite between
-    # them cache a service under a key that does not describe the database it
-    # was actually bound to.
-    db_path = get_chachanotes_db_path()
-    base_dir = db_path.parent
-    key = str(db_path)
+    def _fresh(cached) -> bool:
+        return cached is not None and cached[0] is db
 
     cached = _SERVICE_CACHE
-    if cached is not None and cached[0] == key:
+    if _fresh(cached):
         return cached[1]
 
     with _SERVICE_LOCK:
         cached = _SERVICE_CACHE
-        if cached is not None and cached[0] == key:
+        if _fresh(cached):
             return cached[1]
         service = NotesInteropService(
-            base_db_directory=base_dir,
+            base_db_directory=Path(db.db_path_str).parent,
             api_client_id="tool_executor",
-            global_db_to_use=chachanotes_db,
+            global_db_to_use=db,
         )
-        _SERVICE_CACHE = (key, service)
+        _SERVICE_CACHE = (db, service)
         return service
 
 
@@ -140,7 +130,23 @@ def _resolve_user_id() -> str:
         return _DEFAULT_USER_ID
 
 
-class CreateNoteTool(Tool):
+class _NoteTool(Tool):
+    """Base for the note tools: holds the host-supplied database provider."""
+
+    #: Read by ``build_gateable_tool`` to decide whether to pass a provider.
+    accepts_notes_db_provider = True
+
+    def __init__(self, db_provider: Optional[Callable[[], Any]] = None) -> None:
+        """Bind the tool to a database source.
+
+        Args:
+            db_provider: Zero-argument callable returning the ChaChaNotes DB.
+                Defaults to the self-initializing config getter.
+        """
+        self._db_provider = db_provider or _default_db_provider
+
+
+class CreateNoteTool(_NoteTool):
     """Tool for creating new notes."""
 
     @property
@@ -187,7 +193,7 @@ class CreateNoteTool(Tool):
             return {"error": "No content provided"}
 
         try:
-            notes_service = _notes_service()
+            notes_service = _notes_service(self._db_provider)
 
             note_id = notes_service.add_note(
                 user_id=_resolve_user_id(),
@@ -208,7 +214,7 @@ class CreateNoteTool(Tool):
             return {"error": f"Failed to create note: {str(e)}"}
 
 
-class SearchNotesTool(Tool):
+class SearchNotesTool(_NoteTool):
     """Tool for searching notes."""
 
     @property
@@ -257,7 +263,7 @@ class SearchNotesTool(Tool):
 
         try:
             # Get the notes service
-            notes_service = _notes_service()
+            notes_service = _notes_service(self._db_provider)
 
             # Search notes
             results = notes_service.search_notes(
@@ -294,7 +300,7 @@ class SearchNotesTool(Tool):
             return {"query": query, "error": f"Search failed: {str(e)}"}
 
 
-class UpdateNoteTool(Tool):
+class UpdateNoteTool(_NoteTool):
     """Tool for updating existing notes."""
 
     @property
@@ -355,7 +361,7 @@ class UpdateNoteTool(Tool):
             return {"error": "No updates provided (need title or content)"}
 
         try:
-            notes_service = _notes_service()
+            notes_service = _notes_service(self._db_provider)
 
             user_id = _resolve_user_id()
 

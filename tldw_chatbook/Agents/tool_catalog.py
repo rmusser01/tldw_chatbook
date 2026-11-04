@@ -1236,7 +1236,9 @@ def gateable_builtin_tools() -> tuple[GateableTool, ...]:
     return _GATEABLE_BUILTINS
 
 
-def build_gateable_tool(entry: GateableTool) -> Any:
+def build_gateable_tool(
+    entry: GateableTool, db_provider: Callable[[], Any] | None = None
+) -> Any:
     """Instantiate ``entry``'s tool class.
 
     Raises rather than returning ``None`` so callers can report *why* a tool
@@ -1245,6 +1247,9 @@ def build_gateable_tool(entry: GateableTool) -> Any:
 
     Args:
         entry: The table entry to construct.
+        db_provider: ChaChaNotes DB getter handed to tool classes that
+            declare ``accepts_notes_db_provider``; others ignore it.
+            ``None`` leaves the tool's own lazy default.
 
     Returns:
         The instantiated ``Tool``.
@@ -1257,7 +1262,12 @@ def build_gateable_tool(entry: GateableTool) -> Any:
     module = importlib.import_module(
         f"..Tools.{entry.module_name}", package=__package__
     )
-    return getattr(module, entry.factory_name)()
+    factory = getattr(module, entry.factory_name)
+    if db_provider is not None and getattr(
+        factory, "accepts_notes_db_provider", False
+    ):
+        return factory(db_provider=db_provider)
+    return factory()
 
 
 _FILE_AUTHORITY_BUILTIN_NAMES = frozenset(
@@ -1363,7 +1373,18 @@ class BuiltinToolProvider:
         instruction_root: Path | None = None,
         sandbox_root: Path | None = None,
         sandbox_lease: Callable[[], ContextManager[Path]] | None = None,
+        chachanotes_db_provider: Callable[[], Any] | None = None,
     ) -> None:
+        # The note tools get their database from this registrar. Default is
+        # the self-initializing getter, so a fresh process works unaided.
+        if chachanotes_db_provider is None:
+
+            def chachanotes_db_provider() -> Any:
+                from .. import config
+
+                return config.get_chachanotes_db_lazy()
+
+        self._chachanotes_db_provider = chachanotes_db_provider
         # settings-workspaces-folder-roots spec §3: the run's workspace,
         # bound around every tool execution (see `invoke`) so file tools
         # resolve THIS run's folder roots -- never whatever workspace the
@@ -1419,7 +1440,7 @@ class BuiltinToolProvider:
                     get_cli_setting("tools", entry.gate_key, False), False
                 ):
                     continue
-                tool = build_gateable_tool(entry)
+                tool = build_gateable_tool(entry, self._chachanotes_db_provider)
             except Exception as exc:  # noqa: BLE001 — an unavailable tool is just absent
                 # Log rather than vanish silently. The gate-off path `continue`s
                 # ABOVE this handler, so reaching here means the user asked for
