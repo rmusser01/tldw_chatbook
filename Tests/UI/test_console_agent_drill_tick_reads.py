@@ -20,6 +20,7 @@ from contextlib import contextmanager
 
 import pytest
 
+from Tests.agent_runs_owner import owned_agent_runs_db
 from Tests.UI.test_console_fleet_budget_history import _bridge, _seed
 from Tests.UI.test_console_fleet_panel import _AGENT_SECTION_SIZE, _setup_console
 from Tests.UI.test_console_internals_decomposition import (
@@ -32,7 +33,6 @@ from Tests.UI.test_product_maturity_gate1_core_loop_screen_adaptation import (
 )
 from tldw_chatbook.Chat.console_agent_bridge import ConsoleAgentBridge
 from tldw_chatbook.Chat.console_runtime import ensure_console_runtime
-from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
 from tldw_chatbook.UI.Console_Modules import config_sync
 from tldw_chatbook.UI.Console_Modules.agent import ConsoleAgentController
 
@@ -78,7 +78,7 @@ async def test_drilled_run_is_read_once_per_poll_tick(tmp_path, monkeypatch, res
     """
     now = [1000.0]
     monkeypatch.setattr(config_sync, "_clock", lambda: now[0])
-    db = AgentRunsDB(tmp_path / "runs.db", client_id="test")
+    db = owned_agent_runs_db(tmp_path / "runs.db", client_id="test")
     try:
         parent = db.create_run(conversation_id="conv-A", agent_kind="primary")
         ancestor = _seed(db, 100, parent=parent) if resumed else None

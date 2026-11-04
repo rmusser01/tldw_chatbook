@@ -38,6 +38,7 @@ from tldw_chatbook.Chat.chat_conversation_scope_service import (
     ChatConversationScopeService,
 )
 from tldw_chatbook.Chat.chat_conversation_service import ChatConversationService
+from tldw_chatbook.Chat.console_chat_models import ConsoleRunStatus
 from tldw_chatbook.Chat.library_preparation import LIBRARY_PREPARATION_EVENT_KIND
 from tldw_chatbook.Library.library_rag_state import LibraryRagResultRow
 
@@ -134,11 +135,25 @@ async def test_a_zero_match_send_shows_its_line_and_keeps_it_after_a_reload():
                     server_service=None,
                 )
             )
+            await until(
+                lambda: (
+                    controller.run_state_for(sent_session_id).status
+                    is ConsoleRunStatus.COMPLETED
+                    and store.dispatch_recovery_for_session(sent_session_id) is None
+                )
+            )
+            await console._session._close_console_session_tab(sent_session_id)
+            assert all(item is not session for item in store.sessions())
             reopened = await console._workspace._resume_console_workspace_conversation(
                 conversation_id, reuse_existing=False
             )
             assert reopened is True
-            assert store.active_session_id != sent_session_id
+            restored = next(
+                item for item in store.sessions() if item.id == store.active_session_id
+            )
+            assert restored is not session
+            assert restored.incarnation_id != session.incarnation_id
+            assert restored.persisted_conversation_id == conversation_id
             await pilot.pause()
             await until(lambda: _line_sits_under_the_user_turn(host, ZERO_LINE))
 
@@ -155,20 +170,24 @@ async def test_a_zero_match_send_shows_its_line_and_keeps_it_after_a_reload():
                     "WHERE conversation_id = ? AND event_kind = ?",
                     (conversation_id, LIBRARY_PREPARATION_EVENT_KIND),
                 )
-            reloaded_session_id = store.active_session_id
+            await console._session._close_console_session_tab(restored.id)
+            assert all(item is not restored for item in store.sessions())
             assert (
                 await console._workspace._resume_console_workspace_conversation(
                     conversation_id, reuse_existing=False
                 )
                 is True
             )
-            assert store.active_session_id not in {
-                sent_session_id,
-                reloaded_session_id,
-            }
+            without_record = next(
+                item for item in store.sessions() if item.id == store.active_session_id
+            )
+            assert without_record is not restored
+            assert without_record.incarnation_id != restored.incarnation_id
+            assert without_record.persisted_conversation_id == conversation_id
             await console._sync_native_console_transcript(force=True)
             await pilot.pause()
             await until(lambda: FIRST in _text(host) and REPLY in _text(host))
+            await until(lambda: ZERO_LINE not in _text(host))
             assert ZERO_LINE not in _text(host)
 
 
