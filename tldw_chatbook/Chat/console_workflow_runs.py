@@ -2203,13 +2203,35 @@ class ConsoleWorkflowCoordinator:
 
         from tldw_chatbook.Agents.workflow_models import WorkflowSnapshot
 
+        from . import console_workflow_preparation as planning_source
+
         planning_returned = False
         ready_to_release = False
         cancellation = None
+        prepared = None
+        release_return = None
+        released_notification = None
+
+        def release_source():
+            record = planning_source._PLANNING_RELEASE_SOURCE
+            if (
+                planning_source._planning_release_source is not record[0]
+                or record[0].__code__ is not record[1]
+                or record[0].__defaults__ is not record[2]
+                or record[0].__kwdefaults__ is not record[3]
+                or tuple((record[0].__kwdefaults__ or {}).items()) != record[4]
+                or record[0].__closure__ is not record[5]
+            ):
+                raise PermissionError("original planning release helper changed")
+            record[0](prepared, prepared._planning_release_binding)
+
         try:
             _planning_driver_source(self, run, entered=True)
-            result = await run.prepared.run_planning(_coordinator_run=run)
+            prepared = run.prepared
+            result = await prepared.run_planning(_coordinator_run=run)
             planning_returned = True
+            release_source()
+            release_return = prepared._planning_release_received()
             if run.control_return is not None:
                 await run.control_return.wait()
             if run.control_unknown or run.status == "recovery_required":
@@ -2264,6 +2286,10 @@ class ConsoleWorkflowCoordinator:
                     or prepared._planning_token is not None
                 ):
                     raise RuntimeError("workflow cancellation retirement unproven")
+                release_source()
+                release_return = prepared._planning_release_received(
+                    _cancellation=error
+                )
                 run.status = None
                 ready_to_release = True
             except BaseException:  # noqa: BLE001 - uncertain original return retains custody.
@@ -2285,13 +2311,32 @@ class ConsoleWorkflowCoordinator:
                     or run.status == "recovery_required"
                 ):
                     raise RuntimeError("workflow original publication return unproven")
-                self._runs.pop(run.workflow_id)
                 cancellation = publication.caller_error or cancellation
+                popped_run = self._runs.pop(run.workflow_id)
+                if popped_run is not run:
+                    raise RuntimeError("original planning run did not return")
+                released_notification = (
+                    prepared,
+                    release_return,
+                    publication,
+                    popped_run,
+                )
         except BaseException as error:  # noqa: BLE001 - retain original metadata failure separately from cancellation.
             self._retain_final_metadata(run, error)
             if isinstance(error, asyncio.CancelledError):
                 cancellation = error
             logger.exception("Native workflow final publication did not return")
+        if released_notification is not None:
+            try:
+                release_source()
+                prepared._notify_planning_release(
+                    release_return, _publication=publication, _popped_run=popped_run
+                )
+            except BaseException as error:
+                logger.exception("Native planning returned; wake notification failed")
+                if cancellation is not None:
+                    raise cancellation from error
+                raise
         if cancellation is not None:
             raise cancellation
 

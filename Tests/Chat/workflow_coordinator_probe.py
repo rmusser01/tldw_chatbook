@@ -11,7 +11,9 @@ from Tests.windows_private_fixture_runner import user_fixture_default_owner
 
 os.environ["TLDW_AGENTS_WORKFLOW_RUNS_ENABLED"] = "true"
 os.environ["TLDW_AGENTS_AUTOWAKE_ENABLED"] = (
-    "true" if sys.argv[1] == "mixed-wake" else "false"
+    "true"
+    if sys.argv[1] in {"mixed-wake", "planning-wake", "planning-integrity"}
+    else "false"
 )
 os.environ["OPENAI_API_KEY"] = "private-native-workflow-test"
 network_guard.install()
@@ -37,6 +39,8 @@ routes = {
     "scheduling": "test_console_workflow_scheduling",
     "fleet-setup": "test_console_workflow_scheduling",
     "mixed-wake": "test_console_workflow_scheduling",
+    "planning-wake": "test_console_workflow_scheduling",
+    "planning-integrity": "test_console_workflow_scheduling",
     "q1-release": "test_workflow_settlement_delivery",
     "activity": "test_workflow_activity_admission",
     **dict.fromkeys(
@@ -123,6 +127,8 @@ with user_fixture_default_owner():
         "hook-retained": "retained_hook_journey",
         "fleet-setup": "foreign_survivor_setup_journey",
         "mixed-wake": "mixed_wake_journey",
+        "planning-wake": "planning_wake_journey",
+        "planning-integrity": "planning_release_integrity_journey",
         "q1-release": "execution_release_retention_journey",
         "pending-acceptance": "pending_acceptance_journey",
         "pending-wrapper": "pending_wrapper_failure_journey",

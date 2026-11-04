@@ -79,6 +79,227 @@ def current_planning_preparation(controller=None):
     return None
 
 
+def _planning_release_source(prepared, binding, *, scope_live=False, slots_live=False):
+    """Check one original planning release without reopening admission."""
+    checker = _storage_unchanged
+    if (
+        checker is not _STORAGE_CHECKER[0]
+        or checker.__code__ is not _STORAGE_CHECKER[1]
+        or checker.__defaults__ is not _STORAGE_CHECKER[2]
+        or checker.__kwdefaults__ is not _STORAGE_CHECKER[3]
+        or tuple((checker.__kwdefaults__ or {}).items()) != _STORAGE_CHECKER[4]
+        or checker.__closure__ is not _STORAGE_CHECKER[5]
+    ):
+        raise PermissionError("original planning release checker changed")
+    if (
+        _planning_release_source is not _PLANNING_RELEASE_SOURCE[0]
+        or not checker(_PLANNING_RELEASE_SOURCE)
+        or _PreparedWorkflowReply is not _STORAGE_PREPARATION_CLASS
+        or type(prepared) is not _STORAGE_PREPARATION_CLASS
+        or any(
+            inspect.getattr_static(prepared, name, None) is not descriptor
+            or inspect.getattr_static(_PreparedWorkflowReply, name, None)
+            is not descriptor
+            or any(not checker(record) for record in records)
+            for name, descriptor, records in _PLANNING_PREPARATION_METHODS
+        )
+        or type(binding) is not tuple
+        or len(binding) != 21
+        or prepared._planning_release_binding is not binding
+    ):
+        raise PermissionError("original planning release source changed")
+    (
+        original,
+        phase,
+        source,
+        issuing,
+        loop,
+        frame,
+        coordinator,
+        run,
+        runtime,
+        controller,
+        store,
+        session,
+        wake,
+        intake,
+        token,
+        wake_lock,
+        wake_loop,
+        scope,
+        registry,
+        received_lock,
+        activity,
+    ) = binding
+    if (
+        original is not prepared
+        or prepared.phase is not phase
+        or phase.attempt.purpose != "planning"
+        or prepared.source is not source
+        or prepared._planning_driver is not issuing
+        or asyncio.current_task() is not issuing
+        or asyncio.get_running_loop() is not loop
+        or prepared._loop is not loop
+        or frame.f_code is not _PLANNING_TERMINAL_CALLERS[0]
+        or frame.f_locals.get("self") is not prepared
+        or frame.f_locals.get("phase") is not phase
+        or frame.f_locals.get("source") is not source
+        or frame.f_locals.get("driver") is not issuing
+        or frame.f_locals.get("coordinator") is not coordinator
+        or frame.f_locals.get("_coordinator_run") is not run
+        or frame.f_locals.get("release_binding") is not binding
+        or "owner" in frame.f_locals
+        and prepared.primary_owner is not frame.f_locals["owner"]
+        or "claim" in frame.f_locals
+        and prepared.primary_claim is not frame.f_locals["claim"]
+        or prepared.runtime is not runtime
+        or prepared.controller is not controller
+        or prepared.store is not store
+        or prepared.session is not session
+        or runtime._chat_controller is not controller
+        or runtime._chat_store is not store
+        or controller._hooks_v2_runtime is not runtime
+        or controller.app.console_runtime is not runtime
+        or controller.store is not store
+        or controller._fleet_wake is not wake
+        or wake._controller is not controller
+        or wake._loop is not wake_loop
+        or wake._registry_lock is not wake_lock
+        or store._preparation_lock is not received_lock
+        or runtime._workflow_preparations is not registry
+        or type(registry) is not set
+        or runtime._worktree_activity is not activity
+    ):
+        raise PermissionError("original planning release receiver changed")
+    if (
+        _planning_store.ConsoleChatStore is not _PLANNING_STORE_CLASS
+        or type(store) is not _PLANNING_STORE_CLASS
+        or _planning_received.ConsoleReceivedTurnClaim is not _PLANNING_RECEIVED_CLASS
+        or type(intake) is not _PLANNING_RECEIVED_CLASS
+        or intake._store_ref() is not store
+        or intake.session_id != session.id
+        or inspect.getattr_static(store, "release_received_turn")
+        is not _PLANNING_RECEIVED_RELEASE[0]
+        or inspect.getattr_static(_PLANNING_STORE_CLASS, "release_received_turn")
+        is not _PLANNING_RECEIVED_RELEASE[0]
+        or not checker(_PLANNING_RECEIVED_RELEASE)
+        or _planning_wake._workflow_wake_source is not _PLANNING_WAKE_SOURCE[0]
+        or not checker(_PLANNING_WAKE_SOURCE)
+    ):
+        raise PermissionError("original planning slot receiver changed")
+    _PLANNING_WAKE_SOURCE[0](wake)
+    prepared._planning_read_sources()
+    if (
+        type(runtime) is not _CONFIGURATION_RUNTIME
+        or _configuration_runtime.ConsoleRuntime is not _CONFIGURATION_RUNTIME
+        or any(
+            inspect.getattr_static(runtime, name, None) is not descriptor
+            or inspect.getattr_static(_CONFIGURATION_RUNTIME, name, None)
+            is not descriptor
+            or any(not checker(record) for record in records)
+            for name, descriptor, records in _CONFIGURATION_RUNTIME_METHODS
+        )
+        or any(
+            vars(module).get(name) is not record[0] or not checker(record)
+            for module, name, record in _CONFIGURATION_FUNCTIONS
+        )
+        or contextlib._GeneratorContextManager is not _CONFIGURATION_SCOPE
+        or type(scope) is not _CONFIGURATION_SCOPE
+        or not inspect.isgenerator(scope.gen)
+        or scope.gen.gi_code is not _CONFIGURATION_BODY
+        or any(
+            inspect.getattr_static(_CONFIGURATION_SCOPE, name, None) is not record[0]
+            or inspect.getattr_static(scope, name, None) is not record[0]
+            or not checker(record)
+            for name, record in _CONFIGURATION_SCOPE_METHODS
+        )
+        or type(activity) is not _PLANNING_ACTIVITY_CLASS
+        or _planning_activity.WorktreeActivity is not _PLANNING_ACTIVITY_CLASS
+        or _planning_activity.WorktreeActivityClaim is not _PLANNING_CLAIM_CLASS
+        or _finite_capacity.ExecutionOwner is not _FINITE_OWNER_CLASS
+        or prepared.primary_owner is not None
+        and (
+            type(prepared.primary_owner) is not _FINITE_OWNER_CLASS
+            or prepared.primary_owner.capacity is not prepared.capacity
+            or any(
+                inspect.getattr_static(prepared.primary_owner, name, None)
+                is not descriptor
+                for cls, name, descriptor, _records in _FINITE_OWNER_METHODS
+                if cls is _FINITE_OWNER_CLASS
+            )
+        )
+        or prepared.primary_claim is not None
+        and (
+            type(prepared.primary_claim) is not _PLANNING_CLAIM_CLASS
+            or prepared.primary_claim._activity is not activity
+            or inspect.getattr_static(prepared.primary_claim, "settle")
+            is not _PLANNING_ACTIVITY_METHODS[0][2][0]
+        )
+        or any(
+            inspect.getattr_static(cls, name, None) is not record[0]
+            or cls is _PLANNING_ACTIVITY_CLASS
+            and inspect.getattr_static(activity, name, None) is not record[0]
+            or not checker(record)
+            for cls, name, record in _PLANNING_ACTIVITY_METHODS
+        )
+        or any(
+            inspect.getattr_static(cls, name, None) is not descriptor
+            or any(not checker(record) for record in records)
+            for cls, name, descriptor, records in _FINITE_OWNER_METHODS
+        )
+    ):
+        raise PermissionError("original planning scope or settlement source changed")
+    if run is not None:
+        coroutine = issuing.get_coro()
+        g_frame = getattr(coroutine, "cr_frame", None)
+        if (
+            _planning_runs.ConsoleWorkflowCoordinator is not _PLANNING_G_CLASS
+            or _planning_runs._WorkflowRun is not _PLANNING_RUN_CLASS
+            or type(coordinator) is not _PLANNING_G_CLASS
+            or type(run) is not _PLANNING_RUN_CLASS
+            or runtime._workflow_coordinator is not coordinator
+            or coordinator.runtime is not runtime
+            or coordinator.controller is not controller
+            or coordinator.service is not prepared.service
+            or coordinator.loop is not loop
+            or run.driver is not issuing
+            or run.prepared is not prepared
+            or run.phase is not phase
+            or getattr(coroutine, "cr_code", None) is not _PLANNING_G_RECORD[1]
+            or g_frame is None
+            or g_frame.f_locals.get("self") is not coordinator
+            or g_frame.f_locals.get("run") is not run
+            or inspect.getattr_static(coordinator, "_plan") is not _PLANNING_G_RECORD[0]
+            or not checker(_PLANNING_G_RECORD)
+            or any(
+                vars(_planning_runs).get(name) is not record[0] or not checker(record)
+                for name, record in _PLANNING_G_FUNCTIONS
+            )
+        ):
+            raise PermissionError("original planning coordinator association changed")
+    if scope_live and (
+        prepared._source_scope is not scope
+        or prepared not in registry
+        or scope.gen.gi_frame is None
+        or scope.gen.gi_frame.f_locals.get("self") is not runtime
+        or store._sessions.get(session.id) is not session
+    ):
+        raise PermissionError("original planning configuration association changed")
+    if slots_live:
+        if (
+            prepared._planning_intake is not intake
+            or prepared._planning_token is not token
+            or token is None
+        ):
+            raise PermissionError("original planning slot association changed")
+        with received_lock:
+            if store._preparations_by_session.get(session.id) is not intake:
+                raise PermissionError("original planning received claim changed")
+        with wake_lock:
+            if wake._automatic_primary_claims.get(session.id) is not token:
+                raise PermissionError("original planning primary token changed")
+
+
 class _PreparedWorkflowReply:
     """Original source and retained native frame, never restored from saved IDs."""
 
@@ -134,6 +355,8 @@ class _PreparedWorkflowReply:
         self._planning_terminal_returned = False
         self._planning_provider_failure = False
         self._planning_read_return = None
+        self._planning_release_binding = None
+        self._planning_release_return = None
         self._planning_reads = []
         self._finite_reads = []
         self._planning_attempt = None
@@ -2510,7 +2733,200 @@ class _PreparedWorkflowReply:
                 raise PermissionError("original workflow close operation changed")
             self._close_operation = None
 
-    def _release_planning_slots(self):
+    def _planning_release_proof(self, returned):
+        """Read the actual original run's complete return, never its absence."""
+        if (
+            type(returned) is not tuple
+            or len(returned) != 6
+            or returned is not self._planning_release_return
+        ):
+            raise RuntimeError("original planning release return required")
+        binding, proof, owner, claim, configuration, cancellation = returned
+        frame, scope, registry, activity = (
+            binding[5],
+            binding[17],
+            binding[18],
+            binding[20],
+        )
+        if type(proof) is not tuple or len(proof) != 4:
+            raise RuntimeError("original planning read return required")
+        read, producer, retired, callback = proof
+        read_class, _binding_class, _binding_slot = self._planning_read_sources()
+        if (
+            binding is not self._planning_release_binding
+            or frame.f_locals.get("release_return") is not returned
+            or frame.f_locals.get("slots_return") is not binding
+            or frame.f_locals.get("configuration_return") is not configuration
+            or frame.f_locals.get("cancellation") is not cancellation
+            or frame.f_locals.get("owner") is not owner
+            or frame.f_locals.get("claim") is not claim
+            or frame.f_locals.get("drain") != [True]
+            or proof is not self._planning_read_return
+            or type(read) is not read_class
+            or frame.f_locals.get("invoke") is not callback
+            or getattr(callback, "__code__", None) is not _PLANNING_TERMINAL_CALLERS[1]
+            or read.creator is not self.controller
+            or read.source is not self
+            or read.task is not binding[3]
+            or read.callback is not callback
+            or read._producer is not producer
+            or read.retired is not retired
+            or type(producer) is not asyncio.Future
+            or type(retired) is not asyncio.Future
+            or not asyncio.Future.done(producer)
+            or asyncio.Future.cancelled(producer)
+            or asyncio.Future.exception(producer) is not None
+            or not asyncio.Future.done(retired)
+            or asyncio.Future.cancelled(retired)
+            or asyncio.Future.result(retired) is not None
+            or owner is not self.primary_owner
+            or type(owner) is not _FINITE_OWNER_CLASS
+            or owner.is_admitted
+            or claim is not self.primary_claim
+            or type(claim) is not _PLANNING_CLAIM_CLASS
+            or claim._activity is not activity
+            or claim.id in activity._claims
+            or not self._planning_settled
+            or not self._closed
+            or self._planning_intake is not None
+            or self._planning_token is not None
+            or type(configuration) is not tuple
+            or len(configuration) != 3
+            or configuration[0] is not self
+            or configuration[1] is not scope
+            or configuration[2] is not registry
+            or self._source_scope is not None
+            or self in registry
+        ):
+            raise RuntimeError("original planning release return unproven")
+        return asyncio.Future.result(producer)
+
+    def _planning_release_received(self, *, _cancellation=None):
+        """Receive F only at its original G await or saved-cancellation handler."""
+        from tldw_chatbook.Agents.workflow_models import WorkflowSnapshot
+
+        returned = self._planning_release_return
+        terminal = self._planning_release_proof(returned)
+        binding = returned[0]
+        coordinator, run = binding[6:8]
+        caller = sys._getframe(1)
+        if (
+            run is None
+            or caller.f_code is not _PLANNING_G_RECORD[1]
+            or caller.f_locals.get("self") is not coordinator
+            or caller.f_locals.get("run") is not run
+            or caller.f_locals.get("prepared") is not self
+            or coordinator._runs.get(run.workflow_id) is not run
+            or type(terminal) is not WorkflowSnapshot
+            or terminal.id != run.workflow_id
+            or (
+                caller.f_locals.get("planning_returned") is not True
+                or caller.f_locals.get("result") is not terminal
+                or returned[5] is not None
+                if _cancellation is None
+                else caller.f_locals.get("planning_returned") is not False
+                or caller.f_locals.get("error") is not _cancellation
+                or returned[5] is not _cancellation
+            )
+        ):
+            raise PermissionError("original planning return receiver required")
+        return returned
+
+    def _notify_planning_release(
+        self, returned, *, _publication=None, _popped_run=None
+    ):
+        """Request availability only from the actual direct or G return receiver."""
+        self._planning_release_proof(returned)
+        binding = returned[0]
+        caller = sys._getframe(1)
+        coordinator, run, runtime = binding[6:9]
+        if run is None:
+            if (
+                caller is not binding[5]
+                or caller.f_locals.get("release_return") is not returned
+                or caller.f_locals.get("_coordinator_run") is not None
+                or _publication is not None
+                or _popped_run is not None
+            ):
+                raise PermissionError("original direct planning notification required")
+        else:
+            notification = caller.f_locals.get("released_notification")
+            if (
+                caller.f_code is not _PLANNING_G_RECORD[1]
+                or caller.f_locals.get("self") is not coordinator
+                or caller.f_locals.get("run") is not run
+                or caller.f_locals.get("prepared") is not self
+                or caller.f_locals.get("release_return") is not returned
+                or caller.f_locals.get("publication") is not _publication
+                or caller.f_locals.get("popped_run") is not run
+                or _popped_run is not run
+                or type(notification) is not tuple
+                or len(notification) != 4
+                or any(
+                    a is not b
+                    for a, b in zip(notification, (self, returned, _publication, run))
+                )
+                or run.workflow_id in coordinator._runs
+            ):
+                raise PermissionError("original G planning notification required")
+            _planning_runs._metadata_publication_return(coordinator, run, _publication)
+        wake, lock = binding[12], binding[15]
+        with lock:
+            if wake._registry_lock is not lock:
+                raise PermissionError("original planning wake lock changed")
+            if runtime._workflow_closing and wake._disposed is not True:
+                raise PermissionError("planning wake shutdown fence unproven")
+        wake.retry_soon()
+
+    def _release_planning_slots(self, *, _completion=None, _configuration_return=None):
+        if _completion is not None:
+            binding = _completion
+            caller = sys._getframe(1)
+            if (
+                binding is not self._planning_release_binding
+                or caller is not binding[5]
+                or caller.f_code is not _PLANNING_TERMINAL_CALLERS[0]
+                or caller.f_locals.get("release_binding") is not binding
+                or caller.f_locals.get("configuration_return")
+                is not _configuration_return
+                or caller.f_locals.get("owner") is not self.primary_owner
+                or caller.f_locals.get("claim") is not self.primary_claim
+                or caller.f_locals.get("drain") != [True]
+                or self.primary_owner.is_admitted
+                or type(self.primary_claim) is not _PLANNING_CLAIM_CLASS
+                or self.primary_claim._activity is not binding[20]
+                or self.primary_claim.id in binding[20]._claims
+                or type(_configuration_return) is not tuple
+                or len(_configuration_return) != 3
+                or any(
+                    a is not b
+                    for a, b in zip(
+                        _configuration_return, (self, binding[17], binding[18])
+                    )
+                )
+                or self._source_scope is not None
+                or self in binding[18]
+            ):
+                raise PermissionError("original planning slots receiver required")
+            if (
+                self.controller._active_cancel_events.get(self.session.id)
+                is self.cancel_event
+            ):
+                self.controller._active_cancel_events.pop(self.session.id)
+            store, session, wake, intake, token = binding[10:15]
+            with binding[19]:
+                if store._preparations_by_session.get(session.id) is not intake:
+                    raise PermissionError("original planning received claim changed")
+            with binding[15]:
+                if wake._automatic_primary_claims.get(session.id) is not token:
+                    raise PermissionError("original planning primary token changed")
+            if store.release_received_turn(intake) is not True:
+                raise PermissionError("original planning received claim did not return")
+            self._planning_intake = None
+            if wake.release_automatic_primary(session.id, token) is not True:
+                raise PermissionError("original planning primary token did not return")
+            self._planning_token = None
+            return binding
         if (
             self.controller._active_cancel_events.get(self.session.id)
             is self.cancel_event
@@ -2853,9 +3269,55 @@ class _PreparedWorkflowReply:
             raise PermissionError("unused original planning preparation required")
         self.require_current()
         self._planning_driver = asyncio.current_task()
-        with self.runtime.worktree_activity.prelaunch(
-            footprint=WorktreeFootprint(opaque=True)
-        ) as claim:
+        if (
+            self._planning_release_binding is not None
+            or self._planning_release_return is not None
+        ):
+            raise PermissionError("unused original planning release required")
+        activity = self.runtime.worktree_activity
+        wake = self.controller._fleet_wake
+        release_binding = (
+            self,
+            phase,
+            source,
+            driver,
+            self._loop,
+            sys._getframe(),
+            coordinator,
+            _coordinator_run,
+            self.runtime,
+            self.controller,
+            self.store,
+            self.session,
+            wake,
+            self._planning_intake,
+            self._planning_token,
+            wake._registry_lock,
+            wake._loop,
+            self._source_scope,
+            self.runtime._workflow_preparations,
+            self.store._preparation_lock,
+            activity,
+        )
+        self._planning_release_binding = release_binding
+
+        def release_source(*, scope_live=False, slots_live=False):
+            record = _PLANNING_RELEASE_SOURCE
+            if (
+                _planning_release_source is not record[0]
+                or record[0].__code__ is not record[1]
+                or record[0].__defaults__ is not record[2]
+                or record[0].__kwdefaults__ is not record[3]
+                or tuple((record[0].__kwdefaults__ or {}).items()) != record[4]
+                or record[0].__closure__ is not record[5]
+            ):
+                raise PermissionError("original planning release helper changed")
+            record[0](
+                self, release_binding, scope_live=scope_live, slots_live=slots_live
+            )
+
+        release_source(scope_live=True, slots_live=True)
+        with activity.prelaunch(footprint=WorktreeFootprint(opaque=True)) as claim:
             if claim is None:
                 raise PermissionError("planning worktree busy")
             owner = self.capacity.begin_execution(
@@ -3019,16 +3481,44 @@ class _PreparedWorkflowReply:
                 raise RuntimeError("original workflow control return unproven")
             self._planning_return_source()
             self._planning_physical_proof()
+        release_source(scope_live=True, slots_live=True)
         drain = []
         owner.on_drained(drain.append)
         owner.finish_root()
         if drain != [True]:
             raise RuntimeError("planning root retirement unproven")
+        release_source(scope_live=True, slots_live=True)
         self.source.check_memory()
-        self.primary_claim.settle(durable=True)
+        claim.settle(durable=True)
         self._planning_settled = self._closed = True
-        self._release_configuration()
-        self._release_planning_slots()
+        release_source(scope_live=True, slots_live=True)
+        configuration_return = self._release_configuration()
+        release_source(slots_live=True)
+        slots_return = self._release_planning_slots(
+            _completion=release_binding, _configuration_return=configuration_return
+        )
+        if slots_return is not release_binding:
+            raise RuntimeError("original planning slots return unproven")
+        release_return = (
+            release_binding,
+            self._planning_read_return,
+            owner,
+            self.primary_claim,
+            configuration_return,
+            cancellation,
+        )
+        self._planning_release_return = release_return
+        if _coordinator_run is None:
+            from loguru import logger
+
+            try:
+                release_source()
+                self._notify_planning_release(release_return)
+            except BaseException as error:
+                logger.exception("Native planning returned; wake notification failed")
+                if cancellation is not None:
+                    raise cancellation from error
+                raise
         if cancellation is not None:
             raise cancellation
         return result
@@ -3788,6 +4278,51 @@ _STORAGE_SOURCE_CLASS = _storage_agent_sources._AgentSources
 _STORAGE_GUARD = _storage_activation._guard
 _STORAGE_PATH_CLASS = type(_StoragePath())
 _STORAGE_CHECKER = _planning_function_record(_storage_unchanged)
+
+from tldw_chatbook.Workspaces import worktree_activity as _planning_activity
+
+from . import console_chat_store as _planning_store
+from . import console_fleet_wake as _planning_wake
+from . import console_received_turn as _planning_received
+from . import console_workflow_runs as _planning_runs
+
+_PLANNING_RELEASE_SOURCE = _planning_function_record(_planning_release_source)
+_PLANNING_STORE_CLASS = _planning_store.ConsoleChatStore
+_PLANNING_RECEIVED_CLASS = _planning_received.ConsoleReceivedTurnClaim
+_PLANNING_RECEIVED_RELEASE = _planning_function_record(
+    _PLANNING_STORE_CLASS.release_received_turn
+)
+_PLANNING_WAKE_SOURCE = _planning_wake._WORKFLOW_WAKE_SOURCE
+_PLANNING_ACTIVITY_CLASS = _planning_activity.WorktreeActivity
+_PLANNING_CLAIM_CLASS = _planning_activity.WorktreeActivityClaim
+_PLANNING_ACTIVITY_METHODS = tuple(
+    (cls, name, _planning_function_record(inspect.getattr_static(cls, name)))
+    for cls, names in (
+        (_PLANNING_CLAIM_CLASS, ("settle",)),
+        (
+            _PLANNING_ACTIVITY_CLASS,
+            (
+                "record_drain",
+                "_settle",
+                "_retire_if_settled",
+                "_notify_released",
+            ),
+        ),
+    )
+    for name in names
+)
+_PLANNING_G_CLASS = _planning_runs.ConsoleWorkflowCoordinator
+_PLANNING_RUN_CLASS = _planning_runs._WorkflowRun
+_PLANNING_G_RECORD = _planning_runs._COORDINATOR_PLAN_RECORD
+_PLANNING_G_FUNCTIONS = tuple(
+    (name, _planning_function_record(getattr(_planning_runs, name)))
+    for name in (
+        "_planning_driver_source",
+        "_metadata_source",
+        "_metadata_publication_return",
+    )
+)
+
 _STORAGE_SOURCE_METHODS = tuple(
     (
         target,

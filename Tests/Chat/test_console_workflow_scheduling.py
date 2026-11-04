@@ -4122,3 +4122,3206 @@ def test_original_mixed_failure_boundary_identifies_native_owner(tmp_path):
         script=Path(__file__).with_name("workflow_coordinator_probe.py").read_text(),
         timeout=60,
     )
+
+
+async def planning_wake_journey(tmp_path, monkeypatch):
+    """An actual pending survivor wake crosses the original F/G release."""
+    import asyncio
+    import concurrent.futures
+    import contextvars
+    import dis
+    import json
+    import os
+    import sys
+    import threading
+    import time
+    import traceback
+    import types
+
+    from Tests.Chat.test_console_agent_bridge import _run as original_parent
+    from Tests.Chat.workflow_rig import WorkflowFleetProvider
+    from tldw_chatbook.Agents.activation import _guard
+    from tldw_chatbook.Agents.agent_service import AgentService
+    from tldw_chatbook.Agents.automatic_work_runtime import (
+        _CURRENT as automatic_context,
+    )
+    from tldw_chatbook.Agents.automatic_work_runtime import (
+        current_automatic_work,
+    )
+    from tldw_chatbook.Agents.execution_capacity import (
+        ExecutionOwner,
+        OwnedOperation,
+        WorkOrigin,
+        current_execution_owner,
+    )
+    from tldw_chatbook.Agents.goal_storage_lifetime import owned_goal_storage
+    from tldw_chatbook.Agents.workflow_task_scope import current_task_authorization
+    from tldw_chatbook.Backup_Recovery import participants, storage_admission
+    from tldw_chatbook.Chat import console_preparation_reads as planning_reads
+    from tldw_chatbook.Chat import console_workflow_runs as workflow_runs
+    from tldw_chatbook.Chat.console_agent_sources import _AgentSources
+    from tldw_chatbook.Chat.console_chat_controller import (
+        capture_run_admitted_workspace_roots,
+    )
+    from tldw_chatbook.Chat.console_chat_store import ConsoleMessageRole
+    from tldw_chatbook.Chat.console_ordinary_tree import _OrdinaryTurn
+    from tldw_chatbook.Chat.console_workflow_preparation import (
+        _PreparedWorkflowReply,
+        current_workflow_preparation,
+        prepare_workflow_planning,
+    )
+    from tldw_chatbook.Workspaces.change_review_ownership import (
+        _SnapshotSource,
+        _SnapshotTicket,
+    )
+    from tldw_chatbook.Workspaces.worktree_activity import WorktreeActivitySettlement
+
+    os.environ["TLDW_AGENTS_MAX_LIVE_SUBAGENTS"] = "2"
+    os.environ["TLDW_AGENTS_RESERVED_MANUAL_SUBAGENTS"] = "0"
+    os.environ["TLDW_AGENTS_SUBAGENTS_OUTLIVE_TURN"] = "true"
+    mode = sys.argv[2]
+    direct = mode == "direct"
+    notify_failure = mode in {"notify-error", "notify-cancel"}
+    cancel_failure = mode == "notify-cancel"
+    metadata_failure = mode == "metadata-unknown"
+    metadata_error = ValueError("original final planning metadata outer reader failed")
+    schedule_error = ValueError("original planning notification scheduling failed")
+    metadata_gate = threading.Event()
+    shutdown = mode in {"shutdown-fence", "shutdown-before-fence"}
+    before_fence = mode == "shutdown-before-fence"
+    fence_error = ValueError("original planning wake disposal failed before the fence")
+    close_task = None
+    direct_prepared = direct_driver = None
+    g_code = workflow_runs.ConsoleWorkflowCoordinator._plan.__code__
+    provider = WorkflowFleetProvider()
+    rig = await build_workflow_rig(
+        tmp_path,
+        monkeypatch,
+        provider,
+        public_coordinator=not direct,
+        native_fleet_consumers=True,
+    )
+    session = rig.store.sessions()[0]
+    conversation = session.persisted_conversation_id
+    wake, bridge = rig.controller.fleet_wake, rig.controller._agent_bridge
+    loop = asyncio.get_running_loop()
+    resolution = await rig.gateway.resolve_for_send(
+        rig.controller._provider_selection_for_session(session.id)
+    )
+    state, original, children = {}, {}, []
+    events, errors, retries, handles, attempts = [], [], [], [], []
+    physical, child_returns, deliveries = [], [], []
+    priorities, send_refusals, state_results = [], [], []
+    task_calls, wake_tasks, submissions, custody_returns = {}, [], [], []
+    source_reads, trees, tree_returns, claim_returns = [], {}, [], []
+    tickets, ticket_returns, operation_returns = {}, [], []
+    held, release = threading.Event(), threading.Event()
+    changed = asyncio.Event()
+    parent = None
+    primary_error = None
+    run_code = _PreparedWorkflowReply.run_planning.__code__
+    invoke_code = next(
+        code
+        for code in run_code.co_consts
+        if isinstance(code, types.CodeType) and code.co_name == "invoke"
+    )
+    finalize_code = next(
+        code
+        for code in invoke_code.co_consts
+        if isinstance(code, types.CodeType) and code.co_name == "finalize"
+    )
+    reader_code = next(
+        code
+        for code in planning_reads.run_preparation_read.__code__.co_consts
+        if isinstance(code, types.CodeType) and code.co_name == "invoke"
+    )
+    codes = {
+        run_code,
+        invoke_code,
+        concurrent.futures.Future.result.__code__,
+        AgentService.__init__.__code__,
+        AgentService._run_owned.__code__,
+        threading.Thread.start.__code__,
+        type(wake).retry_soon.__code__,
+        type(wake)._attempt_all.__code__,
+        type(wake)._attempt.__code__,
+        type(wake)._priority_allows.__code__,
+        type(rig.controller).send_refusal_copy.__code__,
+        type(rig.controller).run_state_for.__code__,
+        type(wake).try_claim_automatic_primary.__code__,
+        type(wake).release_automatic_primary.__code__,
+        type(wake)._deliver.__code__,
+        type(loop).call_soon_threadsafe.__code__,
+        type(loop).create_task.__code__,
+        type(rig.runtime)._submit_fleet_wake.__code__,
+        type(rig.runtime)._release_custody.__code__,
+        _AgentSources.prepare.__code__,
+        _OrdinaryTurn.admit.__code__,
+        _OrdinaryTurn._retire_scratch.__code__,
+        _SnapshotSource.prepare_ordinary.__code__,
+        _SnapshotSource.prepare_survivor.__code__,
+        _SnapshotTicket.returned.__code__,
+        OwnedOperation.finish.__code__,
+        type(rig.store).release_received_turn.__code__,
+        ExecutionOwner.finish_root.__code__,
+        WorktreeActivitySettlement.settle.__code__,
+        _PreparedWorkflowReply._release_configuration.__code__,
+        _PreparedWorkflowReply._release_planning_slots.__code__,
+        workflow_runs._metadata_publication_return.__code__,
+        g_code,
+    }
+
+    if notify_failure or metadata_failure:
+        from tldw_chatbook.Agents.workflow_run_service import WorkflowRunService
+
+        snapshot_body = WorkflowRunService.runtime_snapshot.__wrapped__.__code__
+        received_code = _PreparedWorkflowReply._planning_release_received.__code__
+        codes.update((snapshot_body, received_code))
+        if metadata_failure:
+            codes.update(
+                (reader_code, _PreparedWorkflowReply._notify_planning_release.__code__)
+            )
+    if shutdown:
+        codes.update(
+            (
+                type(wake).dispose.__code__,
+                _PreparedWorkflowReply._notify_planning_release.__code__,
+            )
+        )
+    monitor = sys.monitoring
+    event_types = monitor.events
+    post_codes = frozenset(codes)
+    post_code_ids = frozenset(map(id, post_codes))
+    tool_id = 3
+    monitor_owned = local_mode = profile_attempted = global_attempted = False
+    saved_callbacks, armed_codes = {}, []
+
+    def returned(frame, event):
+        return event == "return" and dis.opname[
+            frame.f_code.co_code[frame.f_lasti]
+        ] in {"RETURN_VALUE", "RETURN_CONST"}
+
+    def check():
+        if errors:
+            raise errors[0]
+
+    def notify_change():
+        if threading.current_thread() is threading.main_thread():
+            changed.set()
+        else:
+            loop.call_soon_threadsafe(changed.set)
+
+    def driver_returned(task):
+        assert task is state["driver"]
+        changed.set()
+
+    def original_custody():
+        captured = state.get("invocation")
+        if captured is None:
+            return {"captured": False}
+        prepared = state["prepared"]
+        (
+            frame,
+            caller,
+            worker,
+            binding,
+            read,
+            callback,
+            producer,
+            retired,
+            owner,
+            claim,
+        ) = captured
+        returned_read = prepared._planning_read_return
+        return {
+            "captured": True,
+            "same_frames": frame.f_back is caller
+            and frame.f_locals.get("self") is prepared
+            and caller.f_code is reader_code,
+            "same_binding": caller.f_locals.get("binding") is binding
+            and binding.read is read,
+            "same_worker": binding.thread is worker
+            and binding.process == os.getpid()
+            and binding.task is None,
+            "active_binding": binding.active,
+            "same_read": caller.f_locals.get("read") is read
+            and caller.f_locals.get("callback") is callback
+            and read.callback is callback
+            and read.source is prepared
+            and read.creator is rig.controller
+            and read.task is state["driver"]
+            and read._producer is producer
+            and read.retired is retired,
+            "same_return_tuple": type(returned_read) is tuple
+            and len(returned_read) == 4
+            and all(
+                left is right
+                for left, right in zip(
+                    returned_read, (read, producer, retired, callback)
+                )
+            ),
+            "producer_pending": not producer.done() and not producer.cancelled(),
+            "retired_pending": not retired.done() and not retired.cancelled(),
+            "same_owner": prepared.primary_owner is owner,
+            "same_claim": prepared.primary_claim is claim,
+            "physical_not_returned": not prepared._planning_physical_returned,
+            "invoke_not_returned": not state.get("invocation_returned", False),
+        }
+
+    def refusal_kind(attempt):
+        if attempt in state.get("same_token_refusals", []):
+            return "same_f_token"
+        finalizer_state = state.get("finalizer_run_state")
+        for priority, caller, result, _position in priorities:
+            if caller is not attempt or result is not False:
+                continue
+            for refusal, priority_caller, copy, _return_position in send_refusals:
+                if (
+                    priority_caller is priority
+                    and copy == "A run is already running in this tab."
+                    and finalizer_state is not None
+                    and any(
+                        source is refusal and native_state is finalizer_state
+                        for source, native_state in state_results
+                    )
+                ):
+                    return "same_f_finalizer_run_state"
+        return None
+
+    def ordinary_failure():
+        release_handle = state.get("release_handle")
+        # Independent, non-atomic observations of existing native references.
+        created, issued = tuple(wake_tasks), tuple(submissions)
+        observed_reads, known_trees = tuple(source_reads), tuple(trees.items())
+        known_tickets = tuple(tickets.items())
+        active = wake._active.get(conversation)
+        result = {
+            "local_mode": local_mode,
+            "release_handle_seen": release_handle is not None,
+            "release_handle_entered": release_handle is not None
+            and any(item is release_handle for item in state.get("handle_entries", [])),
+            "release_attempts": len(state.get("release_attempts", ())),
+            "release_retry_normal": state.get("release_retry_return") is not None,
+            "pending": sorted(wake._pending.get(conversation, {})),
+            "provider_wake_calls": len(provider.wake_calls),
+            "observed_code_unwinds": list(state.get("post_unwinds", ())),
+            "deliveries": [],
+            "submissions": [],
+        }
+
+        def status(future):
+            if type(future) is concurrent.futures.Future:
+                return {"concurrent_state": future._state}
+            if type(future) in (asyncio.Future, asyncio.Task):
+                return {"done": future.done(), "cancelled": future.cancelled()}
+            return None
+
+        def task_state(task, authorization, custody_task, follow_provider=True):
+            issuer_sources = tuple(
+                source
+                for source, read, producer, retired, original_task in observed_reads
+                if original_task is custody_task
+                and read.task is custody_task
+                and read.creator is rig.controller
+                and read.callback.__self__ is source
+                and read.callback.__func__ is _AgentSources.prepare
+                and read._producer is producer
+                and read.retired is retired
+            )
+            rows, coro = [], task.get_coro()
+            for _ in range(32):
+                if type(coro) is not types.CoroutineType:
+                    break
+                frame, code = coro.cr_frame, coro.cr_code
+                row = {
+                    "code": code.co_name,
+                    "file": code.co_filename,
+                    "line": frame.f_lineno if frame is not None else None,
+                }
+                if frame is not None:
+                    local = frame.f_locals
+                    if (
+                        code is type(wake)._deliver.__code__
+                        and local.get("self") is wake
+                    ):
+                        row.update(
+                            same_session=local.get("session_id") == session.id,
+                            same_conversation=local.get("conversation_id")
+                            == conversation,
+                            active_slot=active is not None
+                            and active.slot_token is local.get("slot_token"),
+                            same_authorization=authorization is not None
+                            and local.get("authorization") is authorization,
+                            terminal=status(local.get("terminal")),
+                        )
+                    if (
+                        follow_provider
+                        and code
+                        is type(rig.controller._chat_start).run_provider_worker.__code__
+                        and local.get("self") is rig.controller._chat_start
+                    ):
+                        item, op = local.get("item"), local.get("operation")
+                        worker = getattr(item, "provider_worker", None)
+                        if (
+                            local.get("session_id") == session.id
+                            and item is not None
+                            and item.accepted
+                            and rig.controller._chat_start._active.get(session.id)
+                            is item
+                            and type(worker) is asyncio.Task
+                            and worker.get_coro() is op
+                            and worker is not task
+                        ):
+                            row["original_provider_task"] = task_state(
+                                worker, authorization, custody_task, False
+                            )
+                    if (
+                        code
+                        is type(rig.controller)._run_maintenance_agent_call.__code__
+                        and local.get("self") is rig.controller
+                    ):
+                        row.update(
+                            original_bridge=getattr(
+                                local.get("function"), "__self__", None
+                            )
+                            is bridge
+                            and getattr(local.get("function"), "__func__", None)
+                            is type(bridge).run_reply,
+                            known_source=any(
+                                local.get("sources") is source
+                                for source in issuer_sources
+                            ),
+                            known_tree=any(
+                                local.get("tree") is tree
+                                and local.get("sources") is tree_data[0]
+                                and tree.source is tree_data[0]
+                                and tree_data[0].ordinary_tree is tree
+                                and any(
+                                    tree_data[0] is source for source in issuer_sources
+                                )
+                                for tree, tree_data in known_trees
+                            ),
+                            has_native_host=local.get("native_host") is not None,
+                            registered_native_host=local.get("native_host") is not None
+                            and any(
+                                local.get("tree") is tree
+                                and local["native_host"] in tree.primary_hosts
+                                and any(
+                                    tree_data[0] is source for source in issuer_sources
+                                )
+                                for tree, tree_data in known_trees
+                            ),
+                            retained_worker=status(local.get("task")),
+                            same_session=local.get("kwargs", {}).get("session_id")
+                            == session.id,
+                            same_chain=authorization is not None
+                            and local.get("kwargs", {}).get("work_chain_id")
+                            == authorization.work_chain_id,
+                        )
+                        worker, owned = local.get("worker"), local.get("owned_call")
+                        retained = local.get("task")
+                        if (
+                            row["original_bridge"]
+                            and row["known_tree"]
+                            and row["known_source"]
+                            and row["same_session"]
+                            and row["same_chain"]
+                            and row["has_native_host"]
+                            and type(retained) is asyncio.Task
+                            and retained in rig.controller._maintenance_background
+                            and type(worker) is types.FunctionType
+                            and getattr(worker, "__wrapped__", None) is owned
+                        ):
+                            row["bound_worker_stacks"] = []
+                            for tid, worker_frame in sys._current_frames().items():
+                                labels, matched = [], False
+                                for _ in range(64):
+                                    if worker_frame is None:
+                                        break
+                                    labels.append(
+                                        (
+                                            worker_frame.f_code.co_name,
+                                            worker_frame.f_lineno,
+                                        )
+                                    )
+                                    if (
+                                        worker_frame.f_code is worker.__code__
+                                        and worker_frame.f_locals.get("function")
+                                        is owned
+                                        and worker_frame.f_locals.get("service")
+                                        is bridge
+                                    ):
+                                        matched = True
+                                    worker_frame = worker_frame.f_back
+                                if matched:
+                                    row["bound_worker_stacks"].append((tid, labels))
+                rows.append(row)
+                coro = coro.cr_await
+            return {"state": status(task), "chain": rows}
+
+        for task, context, handle in created:
+            matches = [row for row in issued if row[1] is task]
+            auth = matches[0][0] if len(matches) == 1 else None
+            result["deliveries"].append(
+                {
+                    "original_release_handle": release_handle is not None
+                    and handle is release_handle,
+                    "entered": any(item is task for item in deliveries),
+                    "registered": wake._delivery_tasks.get(task) == conversation,
+                    "created_context": task.get_context() is context,
+                    "task": task_state(
+                        task, auth, matches[0][3] if len(matches) == 1 else None
+                    ),
+                }
+            )
+        for auth, delivery, custody, task, store, claim in issued:
+            ordinary = {
+                "attempt_id": auth.attempt_id,
+                "accepted": auth.accepted,
+                "release_delivery": any(
+                    t is delivery and h is release_handle and h is not None
+                    for t, _, h in created
+                ),
+                "active_authorization": active is not None
+                and active.authorization is auth,
+                "registered_custody": rig.runtime._turn_custody.get(custody.turn_id)
+                is custody,
+                "same_task": custody.task is task,
+                "same_context": task.get_context().get(automatic_context)
+                is auth.context,
+                "same_store": custody.store is store,
+                "same_claim": claim is not None and custody.received_claim is claim,
+                "custody_return": any(
+                    c is custody and t is task for c, t in tuple(custody_returns)
+                ),
+                "task": task_state(task, auth, task),
+                "reads": [],
+            }
+            for source, read, producer, retired, owner_task in observed_reads:
+                if owner_task is not task:
+                    continue
+                source_state = {
+                    "same_read_task": read.task is task,
+                    "same_callback": read.creator is rig.controller
+                    and read.callback.__self__ is source
+                    and read.callback.__func__ is _AgentSources.prepare,
+                    "same_producer_retired": read._producer is producer
+                    and read.retired is retired,
+                    "producer": status(producer),
+                    "retired": status(retired),
+                    "trees": [],
+                    "bound_workers": [],
+                }
+                for tid, frame in sys._current_frames().items():
+                    labels, matched = [], False
+                    for _ in range(64):
+                        if frame is None:
+                            break
+                        labels.append((frame.f_code.co_name, frame.f_lineno))
+                        if frame.f_code is reader_code:
+                            loc = frame.f_locals
+                            binding = loc.get("binding")
+                            if (
+                                loc.get("read") is read
+                                and loc.get("callback") is read.callback
+                                and type(binding) is planning_reads._HookSourceBinding
+                                and binding.read is read
+                                and binding.thread.ident == tid
+                                and binding.task is None
+                                and binding.active
+                            ):
+                                matched = True
+                        frame = frame.f_back
+                    if matched:
+                        source_state["bound_workers"].append((tid, labels))
+                for tree, (
+                    original_source,
+                    owner,
+                    settlement,
+                    tree_retired,
+                ) in known_trees:
+                    if original_source is source:
+                        source_state["trees"].append(
+                            {
+                                "same_owner_claim": tree.owner is owner
+                                and tree.claim is settlement,
+                                "same_activity": tree.activity
+                                is rig.runtime._worktree_activity,
+                                "owner_registered": owner.capacity._owners.get(
+                                    owner.execution_id
+                                )
+                                is owner,
+                                "claim_installed": getattr(
+                                    tree.activity._claims.get(settlement.id),
+                                    "custody",
+                                    None,
+                                )
+                                is settlement,
+                                "claim_return": any(
+                                    c is settlement and durable is True
+                                    for c, durable in tuple(claim_returns)
+                                ),
+                                "tree_registered": tree in rig.runtime._ordinary_turns,
+                                "tree_retired": status(tree_retired),
+                                "tree_return": any(
+                                    t is tree and fut is tree_retired
+                                    for t, fut in tuple(tree_returns)
+                                ),
+                                "tickets": [
+                                    {
+                                        "kind": operation.kind,
+                                        "same_owner": ticket.owner is owner,
+                                        "same_operation": ticket.operation is operation,
+                                        "retired": ticket.retired.is_set(),
+                                        "failed_write": ticket._failed_write,
+                                        "ticket_return": any(
+                                            t is ticket for t in tuple(ticket_returns)
+                                        ),
+                                        "operation_return": any(
+                                            op is operation
+                                            for op in tuple(operation_returns)
+                                        ),
+                                    }
+                                    for ticket, (snapshot, operation) in known_tickets
+                                    if snapshot.ordinary_tree is tree
+                                ],
+                            }
+                        )
+                ordinary["reads"].append(source_state)
+            result["submissions"].append(ordinary)
+        return result
+
+    def failure_snapshot():
+        prepared, run, driver = (
+            state.get("prepared"),
+            state.get("run"),
+            state.get("driver"),
+        )
+        report = {
+            "same_run_prepared": run is not None and run.prepared is prepared,
+            "direct": direct,
+            "same_driver": (driver is not None and driver is direct_driver)
+            if direct
+            else (run is not None and run.driver is driver),
+            "same_registry": run is not None
+            and rig.coordinator._runs.get(run.workflow_id) is run,
+            "task_done": driver.done() if driver is not None else None,
+            "task_cancelled": driver.cancelled() if driver is not None else None,
+            "coroutines": [],
+            "workers": [],
+        }
+        report["finalizer_retry_seen"] = "finalizer_retry" in state
+        finalizer_handle = state.get("finalizer_handle")
+        report["finalizer_handle_seen"] = finalizer_handle is not None
+        report["finalizer_handle_entered"] = finalizer_handle is not None and any(
+            item is finalizer_handle for item in state.get("handle_entries", [])
+        )
+        report["later_hold_reached"] = held.is_set()
+        report["retries"] = [
+            {"caller": caller.co_name, "held": was_held, "released": was_released}
+            for _frame, caller, was_held, was_released in retries
+        ]
+        report["handles"] = [
+            {
+                "finalizer": handle is finalizer_handle,
+                "entered": any(
+                    item is handle for item in state.get("handle_entries", [])
+                ),
+                "released": was_released,
+            }
+            for handle, _caller, was_released in handles
+        ]
+        report["attempts"] = [
+            {
+                "same_children": row[1] == {child[3] for child in children},
+                "same_token": row[2] is state.get("token"),
+                "same_intake": row[3] is state.get("intake"),
+                "timer": row[4] is not None,
+                "active": row[5],
+                "held": row[6],
+                "released": row[7],
+                "remaining": row[8],
+                "custody": row[9],
+                "position": row[10],
+                "finalizer_attempt": row[0] in state.get("finalizer_attempts", []),
+                "same_token_refusal": row[0] in state.get("same_token_refusals", []),
+                "qualified_refusal": refusal_kind(row[0]),
+                "priorities": [
+                    {
+                        "result": result,
+                        "position": position,
+                        "send_refusals": [
+                            {"copy": copy, "position": return_position}
+                            for _refusal, priority_caller, copy, return_position in send_refusals
+                            if priority_caller is priority
+                        ],
+                    }
+                    for priority, caller, result, position in priorities
+                    if caller is row[0]
+                ],
+            }
+            for row in attempts
+        ]
+        read = callback = None
+        coroutine = driver.get_coro() if driver is not None else None
+        for _ in range(32):
+            if type(coroutine) is not types.CoroutineType:
+                break
+            frame = coroutine.cr_frame
+            row = {
+                "code": coroutine.cr_code.co_name,
+                "file": coroutine.cr_code.co_filename,
+                "line": frame.f_lineno if frame is not None else None,
+            }
+            if frame is not None and coroutine.cr_code is run_code:
+                row["original_planning"] = (
+                    frame.f_locals.get("self") is prepared
+                    and frame.f_locals.get("_coordinator_run") is run
+                    and frame.f_locals.get("driver") is driver
+                )
+            if (
+                frame is not None
+                and coroutine.cr_code is planning_reads.run_preparation_read.__code__
+            ):
+                local = frame.f_locals
+                candidate, candidate_callback = local.get("read"), local.get("callback")
+                if (
+                    type(candidate) is planning_reads.ConsolePreparationRead
+                    and type(candidate_callback) is types.FunctionType
+                    and candidate_callback.__code__ is invoke_code
+                    and local.get("creator") is rig.controller
+                    and local.get("source") is prepared
+                    and candidate.source is prepared
+                    and candidate.creator is rig.controller
+                    and candidate.task is driver
+                    and candidate.callback is candidate_callback
+                ):
+                    read, callback = candidate, candidate_callback
+                    row["original_read"] = True
+            report["coroutines"].append(row)
+            coroutine = coroutine.cr_await
+        returned_read = prepared._planning_read_return if prepared is not None else None
+        report["planning_read_captured"] = (
+            type(returned_read) is tuple and len(returned_read) == 4
+        )
+        report["original_read_found"] = read is not None
+        if read is not None:
+            report["captured_read_matches"] = (
+                type(returned_read) is tuple
+                and len(returned_read) == 4
+                and returned_read[0] is read
+                and returned_read[1] is read._producer
+                and returned_read[2] is read.retired
+                and returned_read[3] is callback
+            )
+            for label, future in (
+                ("producer", read._producer),
+                ("retired", read.retired),
+            ):
+                report[label] = (
+                    {"done": future.done(), "cancelled": future.cancelled()}
+                    if type(future) is asyncio.Future
+                    else "unknown"
+                )
+            reader_code = next(
+                code
+                for code in planning_reads.run_preparation_read.__code__.co_consts
+                if isinstance(code, types.CodeType) and code.co_name == "invoke"
+            )
+            for thread_id, top in sys._current_frames().items():
+                frame, labels, matches = top, [], []
+                for _ in range(32):
+                    if frame is None:
+                        break
+                    labels.append(
+                        (frame.f_code.co_filename, frame.f_code.co_name, frame.f_lineno)
+                    )
+                    if (
+                        frame.f_code is reader_code
+                        and frame.f_locals.get("read") is read
+                        and frame.f_locals.get("callback") is callback
+                    ):
+                        binding = frame.f_locals.get("binding")
+                        matches.append(
+                            {
+                                "same_read": True,
+                                "same_binding": type(binding)
+                                is planning_reads._HookSourceBinding
+                                and binding.read is read,
+                                "same_thread": type(binding)
+                                is planning_reads._HookSourceBinding
+                                and binding.thread.ident == thread_id,
+                                "task_none": type(binding)
+                                is planning_reads._HookSourceBinding
+                                and binding.task is None,
+                                "active": binding.active
+                                if type(binding) is planning_reads._HookSourceBinding
+                                else None,
+                            }
+                        )
+                    frame = frame.f_back
+                if matches:
+                    report["workers"].append(
+                        {"thread": thread_id, "matches": matches, "stack": labels}
+                    )
+        print("PLANNING_WAKE_FAILURE_BOUNDARY", json.dumps(report), flush=True)
+        print(
+            "PLANNING_WAKE_ORDINARY_FAILURE_BOUNDARY",
+            json.dumps(ordinary_failure()),
+            flush=True,
+        )
+
+    def settled(event):
+        events.append(event)
+
+    def parent_body():
+        try:
+            original["outcome"] = participants.run_finite_local_worker(
+                original_parent,
+                bridge,
+                rig.store,
+                session,
+                original["assistant"].id,
+                conversation_id=conversation,
+                resolution=resolution,
+                expected_progress_owner_id=state["prepared"].native.progress_owner_id,
+                agent_messages=[
+                    {"role": "user", "content": provider.parent_instruction}
+                ],
+            )
+        except BaseException as error:  # noqa: BLE001 - preserve genuine setup refusal.
+            original["error"] = error
+
+    def pre_root(frame):
+        nonlocal parent
+        prepared, run = frame.f_locals["self"], frame.f_locals["_coordinator_run"]
+        driver = asyncio.current_task()
+        if direct:
+            assert run is None and prepared is direct_prepared
+            assert driver is direct_driver and driver.get_coro().cr_frame is frame
+            assert (
+                not hasattr(rig.runtime, "_workflow_coordinator")
+                and rig.coordinator is None
+            )
+        else:
+            assert run.prepared is prepared and run.driver is driver
+            assert rig.coordinator._runs.get(run.workflow_id) is run
+        assert prepared.primary_owner is None
+        token, intake = prepared._planning_token, prepared._planning_intake
+        assert token is wake._automatic_primary_claims[session.id]
+        assert intake is rig.store.received_turn_for_session(session.id)
+        native_service = prepared.native.service
+        fleet = native_service._injected_fleet_coordinator
+        assert fleet is not None and bridge._fleet_coordinators[conversation] is fleet
+        inbox = fleet.message_inbox
+        assert native_service._message_inbox is inbox
+        state.update(
+            prepared=prepared,
+            run=run,
+            token=token,
+            intake=intake,
+            driver=driver,
+            native_service=native_service,
+            fleet=fleet,
+            inbox=inbox,
+        )
+        driver.add_done_callback(driver_returned)
+        original["assistant"] = rig.store.append_message(
+            session.id, role=ConsoleMessageRole.ASSISTANT, content=""
+        )
+        deadline = time.monotonic() + 10
+        parent = threading.Thread(target=parent_body, name="planning-wake-parent")
+        parent.start()
+        parent.join(max(0, deadline - time.monotonic()))
+        assert not parent.is_alive(), "original parent did not return in setup10"
+        if "error" in original:
+            raise original["error"]
+        assert original["outcome"].status == "done"
+        service, owner = original["service"], original["owner"]
+        assert (
+            service._automatic_work is None and service.work_origin is WorkOrigin.MANUAL
+        )
+        assert service._work_chain_id != prepared.phase.attempt.chain_id
+        assert service._fleet is service._injected_fleet_coordinator is fleet
+        assert service._message_inbox is fleet.message_inbox is inbox
+        assert bridge._fleet_coordinators[conversation] is fleet
+        assert prepared.native.service is native_service
+        assert native_service._injected_fleet_coordinator is fleet
+        assert native_service._message_inbox is inbox
+        drained = []
+        owner.on_drained(drained.append)
+        assert drained == [True] and not owner.is_admitted
+        assert len(children) == 2
+        for event in provider.child_entered.values():
+            assert event.wait(max(0, deadline - time.monotonic())), (
+                "original child provider did not enter within shared setup10"
+            )
+        for gate in provider.child_release.values():
+            gate.set()
+        for thread, target, child_owner, run_id in children:
+            thread.join(max(0, deadline - time.monotonic()))
+            assert not thread.is_alive(), "original child did not return in setup10"
+            assert any(row[0] is thread and row[1] is target for row in child_returns)
+            drained = []
+            child_owner.on_drained(drained.append)
+            assert drained == [True] and not child_owner.is_admitted
+            assert child_owner.run_id == run_id
+        with storage_admission._lock:
+            assert not any(
+                lease.resource_thread is parent
+                or any(lease.resource_thread is row[0] for row in children)
+                for lease in storage_admission._live_leases
+            )
+        child_ids = {row[3] for row in children}
+        assert {event.child.run_id for event in events} == child_ids
+        assert all(
+            event.child.settled_after_turn and event.child.workflow_task is None
+            for event in events
+        )
+        assert set(wake._pending[conversation]) == child_ids
+        assert not provider.wake_calls and conversation not in wake._active
+        state["setup_returned"] = True
+        print("PLANNING_WAKE_ORIGINAL_PRE_ROOT_SETUP", sorted(child_ids), flush=True)
+
+    def observe_delivery(frame, event, result):
+        if "release_retry" not in state:
+            return
+        code, local = frame.f_code, frame.f_locals
+        instance = local.get("self")
+        if code is type(loop).create_task.__code__ and instance is loop:
+            caller = frame.f_back
+            if (
+                caller.f_code is type(wake)._attempt.__code__
+                and caller.f_locals.get("self") is wake
+                and caller.f_locals.get("conversation_id") == conversation
+                and getattr(local.get("coro"), "cr_code", None)
+                is type(wake)._deliver.__code__
+            ):
+                if event == "call":
+                    context = local["context"]
+                    assert type(context) is contextvars.Context and not tuple(
+                        context.items()
+                    )
+                    ancestor = caller
+                    while (
+                        ancestor is not None
+                        and ancestor.f_code is not asyncio.Handle._run.__code__
+                    ):
+                        ancestor = ancestor.f_back
+                    assert ancestor is not None
+                    task_calls[frame] = (
+                        local["coro"],
+                        context,
+                        ancestor.f_locals["self"],
+                    )
+                else:
+                    coroutine, context, handle = task_calls.pop(frame)
+                    assert returned(frame, event)
+                    assert (
+                        result.get_coro() is coroutine
+                        and result.get_context() is context
+                    )
+                    wake_tasks.append((result, context, handle))
+        elif code is type(rig.runtime)._submit_fleet_wake.__code__ and returned(
+            frame, event
+        ):
+            if instance is rig.runtime and isinstance(result, str):
+                authorization = local["wake_authorization"]
+                delivery = asyncio.current_task()
+                custody = rig.runtime._turn_custody[result]
+                assert wake._delivery_tasks[delivery] == conversation
+                assert wake._active[conversation].authorization is authorization
+                assert current_automatic_work() is authorization.context
+                assert (
+                    custody.task.get_context().get(automatic_context)
+                    is authorization.context
+                )
+                submissions.append(
+                    (
+                        authorization,
+                        delivery,
+                        custody,
+                        custody.task,
+                        custody.store,
+                        custody.received_claim,
+                    )
+                )
+        elif code is type(rig.runtime)._release_custody.__code__ and returned(
+            frame, event
+        ):
+            if instance is rig.runtime:
+                for _auth, _delivery, custody, task, store, claim in submissions:
+                    if local.get("record") is custody:
+                        assert local["turn_id"] == custody.turn_id
+                        assert custody.turn_id not in rig.runtime._turn_custody
+                        assert (
+                            custody.task
+                            is custody.store
+                            is custody.received_claim
+                            is None
+                        )
+                        assert (
+                            claim is not None
+                            and store.received_turn_for_session(custody.session_id)
+                            is not claim
+                        )
+                        custody_returns.append((custody, task))
+        elif (
+            code is _AgentSources.prepare.__code__
+            and event == "call"
+            and instance.controller is rig.controller
+        ):
+            binding = planning_reads._source_binding.get()
+            if binding is not None:
+                read = binding.read
+                for (
+                    authorization,
+                    _delivery,
+                    _custody,
+                    task,
+                    _store,
+                    _claim,
+                ) in submissions:
+                    if read.task is task:
+                        assert (
+                            binding.active
+                            and binding.thread is threading.current_thread()
+                        )
+                        assert (
+                            read.creator is rig.controller
+                            and read.callback.__self__ is instance
+                        )
+                        assert read.callback.__func__ is _AgentSources.prepare
+                        assert frame.f_back.f_locals.get("callback") is read.callback
+                        assert _guard.context.get() is None
+                        assert current_automatic_work() is authorization.context
+                        source_reads.append(
+                            (instance, read, read._producer, read.retired, task)
+                        )
+        elif returned(frame, event):
+            if code is _OrdinaryTurn.admit.__code__ and any(
+                row[0] is instance.source for row in source_reads
+            ):
+                trees[instance] = (
+                    instance.source,
+                    instance.owner,
+                    instance.claim,
+                    instance.retired,
+                )
+            elif (
+                code
+                in {
+                    _SnapshotSource.prepare_ordinary.__code__,
+                    _SnapshotSource.prepare_survivor.__code__,
+                }
+                and instance.ordinary_tree in trees
+            ):
+                with instance._holds_lock:
+                    for ticket in instance._holds.values():
+                        tickets[ticket] = (instance, ticket.operation)
+            elif (
+                code is _SnapshotTicket.returned.__code__
+                and instance in tickets
+                and instance.retired.is_set()
+            ):
+                ticket_returns.append(instance)
+            elif code is OwnedOperation.finish.__code__ and any(
+                instance.owner is item[1] for item in trees.values()
+            ):
+                operation_returns.append(instance)
+            elif code is WorktreeActivitySettlement.settle.__code__ and any(
+                instance is item[2] for item in trees.values()
+            ):
+                claim_returns.append((instance, local["durable"]))
+            elif (
+                code is _OrdinaryTurn._retire_scratch.__code__
+                and instance in trees
+                and local.get("elected") is True
+            ):
+                tree_returns.append((instance, instance.retired))
+
+    def adverse_receipts(frame, event, result):
+        if (
+            not (notify_failure or metadata_failure)
+            or not returned(frame, event)
+            or "prepared" not in state
+        ):
+            return
+        code, run, prepared = frame.f_code, state["run"], state["prepared"]
+        if code is received_code and frame.f_locals.get("self") is prepared:
+            caller = frame.f_back
+            assert caller.f_code is g_code and caller.f_locals["run"] is run
+            assert (
+                asyncio.current_task() is run.driver
+                and result is prepared._planning_release_return
+            )
+            caught = frame.f_locals["_cancellation"]
+            assert result[5] is caught and "g_received" not in state
+            if cancel_failure:
+                assert (
+                    type(caught) is asyncio.CancelledError
+                    and caller.f_locals["error"] is caught
+                )
+                assert caller.f_locals["planning_returned"] is False
+            else:
+                assert caught is None and caller.f_locals["planning_returned"] is True
+            state["g_received"] = result, caught
+        elif (
+            code is snapshot_body
+            and (mode == "notify-error" or metadata_failure)
+            and frame.f_locals.get("self") is rig.service
+        ):
+            cell = run.final_metadata
+            if cell is None or frame.f_locals.get("_accounting") is not cell:
+                return
+            assert (
+                cell.run is run
+                and cell.issuing is run.driver
+                and not cell.disposed.done()
+            )
+            read, producer, retired, callback = cell.proof
+            ancestor = frame.f_back
+            while ancestor is not None and not (
+                ancestor.f_code is reader_code
+                and ancestor.f_locals.get("read") is read
+                and ancestor.f_locals.get("callback") is callback
+            ):
+                ancestor = ancestor.f_back
+            assert (
+                ancestor is not None
+                and read.creator is rig.controller
+                and read.source is rig.coordinator
+            )
+            assert (
+                read.task is run.driver
+                and read.callback is callback
+                and read._producer is producer
+            )
+            assert (
+                not producer.done() and not retired.done() and read.retired is retired
+            )
+            assert prepared._planning_release_return is state["g_received"][0]
+            assert rig.coordinator._runs.get(run.workflow_id) is run and not state.get(
+                "release_retry"
+            )
+            assert (
+                not provider.wake_calls
+                and not deliveries
+                and "metadata_hold" not in state
+            )
+            state["metadata_hold"] = cell, read, producer, retired
+            if metadata_failure:
+                state["metadata_reader"] = ancestor
+            notify_change()
+            if not metadata_gate.wait(max(0, state["driver_until"] - loop.time())):
+                raise TimeoutError(
+                    "original planning metadata hold exceeded shared driver10"
+                )
+
+    def shutdown_host_ledger():
+        assert threading.current_thread() is threading.main_thread()
+        assert (
+            asyncio.current_task() is not state["run"].driver
+            and asyncio.current_task() is not close_task
+        )
+        assert (
+            not rig.runtime._disposed
+            and not rig.runtime.execution_capacity.snapshot().closed
+        )
+        with owned_goal_storage(rig.service), rig.service.db.connection() as conn:
+            chain = original["service"]._work_chain_id
+            return (
+                tuple(
+                    conn.execute(
+                        "SELECT id FROM automatic_wake_attempts WHERE chain_id=?",
+                        (chain,),
+                    )
+                ),
+                tuple(
+                    conn.execute(
+                        "SELECT id FROM automatic_work_reservations WHERE chain_id=? AND kind IN ('generation','model_call')",
+                        (chain,),
+                    )
+                ),
+            )
+
+    def shutdown_receipts(frame, event, result):
+        if not shutdown or close_task is None:
+            return
+        prepared, run = state["prepared"], state["run"]
+        code, loc, caller = frame.f_code, frame.f_locals, frame.f_back
+        if (
+            code is type(wake).dispose.__code__
+            and returned(frame, event)
+            and loc.get("self") is wake
+            and caller is close_task.get_coro().cr_frame
+        ):
+            assert (
+                asyncio.current_task() is close_task
+                and caller.f_code is type(rig.runtime).dispose.__code__
+            )
+            assert (
+                caller.f_locals["recovery_owner"] is wake
+                and wake._disposed
+                and rig.runtime._workflow_closing
+            )
+            assert (
+                not wake._pending
+                and prepared._planning_token
+                is wake._automatic_primary_claims[session.id]
+                is state["token"]
+            )
+            assert (
+                not prepared.primary_owner._root_finished
+                and prepared._planning_release_return is None
+            )
+            state["fence_return"] = frame
+        if (
+            code is _PreparedWorkflowReply._notify_planning_release.__code__
+            and event == "call"
+            and loc.get("self") is prepared
+        ):
+            assert (
+                caller.f_code is g_code
+                and caller is run.driver.get_coro().cr_frame
+                and asyncio.current_task() is run.driver
+            )
+            assert (
+                loc["returned"] is prepared._planning_release_return
+                and len(loc["returned"]) == 6
+            )
+            assert (
+                loc["returned"][0] is prepared._planning_release_binding
+                and loc["returned"][1] is prepared._planning_read_return
+            )
+            assert (
+                loc["_publication"] is run.final_metadata
+                and loc["_popped_run"] is caller.f_locals["popped_run"] is run
+            )
+            assert (
+                run.final_metadata.disposed.result() is True
+                and run.final_metadata not in rig.coordinator._metadata_cells
+            )
+            assert (
+                run.workflow_id not in rig.coordinator._runs
+                and prepared not in rig.runtime._workflow_preparations
+            )
+            assert (
+                prepared._planning_token
+                is prepared._planning_intake
+                is prepared._source_scope
+                is None
+            )
+            assert (
+                prepared.primary_claim.id not in rig.runtime._worktree_activity._claims
+                and prepared.primary_owner._root_finished
+            )
+            assert rig.runtime._workflow_closing and wake._disposed is (
+                not before_fence
+            )
+            assert set(wake._pending.get(conversation, {})) == (
+                {row[3] for row in children} if before_fence else set()
+            )
+            assert (
+                not provider.wake_calls
+                and not deliveries
+                and not submissions
+                and not wake._delivery_tasks
+            )
+            assert "shutdown_notify" not in state
+            state["shutdown_notify"] = frame
+        elif code is type(wake).retry_soon.__code__ and caller is state.get(
+            "shutdown_notify"
+        ):
+            assert not before_fence and wake._disposed and loc["self"] is wake
+            if event == "call":
+                assert "inert_call" not in state
+                state["inert_call"] = frame
+            elif returned(frame, event):
+                assert frame is state["inert_call"] and result is None
+                state["inert_return"] = frame
+
+    def record(frame, event, result):
+        nonlocal local_mode, global_attempted
+        code, local = frame.f_code, frame.f_locals
+        shutdown_receipts(frame, event, result)
+        if (
+            metadata_failure
+            and code is _PreparedWorkflowReply._notify_planning_release.__code__
+            and event == "call"
+        ):
+            state.setdefault("notifier_entries", []).append(frame)
+        adverse_receipts(frame, event, result)
+        observe_delivery(frame, event, result)
+        current = threading.current_thread()
+        if event == "call" and code is run_code and not state:
+            pre_root(frame)
+            return
+        if current is parent:
+            if event == "call" and code is threading.Thread.start.__code__:
+                caller = frame.f_back
+                if (
+                    caller.f_code is AgentService._launch_prepared_child_result.__code__
+                    and caller.f_locals.get("self") is original.get("service")
+                    and caller.f_locals.get("fleet") is state["fleet"]
+                    and "child_owner" in caller.f_locals
+                ):
+                    thread = local["self"]
+                    target = thread._target
+                    children.append(
+                        (
+                            thread,
+                            target,
+                            caller.f_locals["child_owner"],
+                            caller.f_locals["child_run_id"],
+                        )
+                    )
+                    codes.add(target.__code__)
+            if returned(frame, event):
+                if code is AgentService.__init__.__code__:
+                    original["service"] = local["self"]
+                elif code is AgentService._run_owned.__code__ and (
+                    local["self"] is original.get("service")
+                ):
+                    original["owner"] = local["owner"]
+        if returned(frame, event):
+            for thread, target, _owner, _run_id in children:
+                if current is thread and code is target.__code__:
+                    child_returns.append((thread, target))
+        if "prepared" not in state:
+            return
+        prepared = state["prepared"]
+        if code is invoke_code and local.get("self") is prepared:
+            if event == "call":
+                assert "invocation" not in state
+                caller = frame.f_back
+                assert caller is not None and caller.f_code is reader_code
+                binding, read, callback = (
+                    caller.f_locals["binding"],
+                    caller.f_locals["read"],
+                    caller.f_locals["callback"],
+                )
+                assert type(binding) is planning_reads._HookSourceBinding
+                assert type(read) is planning_reads.ConsolePreparationRead
+                assert binding.read is read and binding.thread is current
+                assert binding.process == os.getpid() and binding.task is None
+                assert binding.active and read.callback is callback
+                assert callback.__code__ is invoke_code
+                assert read.source is prepared and read.creator is rig.controller
+                assert read.task is state["driver"]
+                assert type(read._producer) is asyncio.Future
+                assert type(read.retired) is asyncio.Future
+                state["invocation"] = (
+                    frame,
+                    caller,
+                    current,
+                    binding,
+                    read,
+                    callback,
+                    read._producer,
+                    read.retired,
+                    prepared.primary_owner,
+                    prepared.primary_claim,
+                )
+            else:
+                assert state["invocation"][0] is frame
+                state["invocation_returned"] = True
+            return
+        if (
+            code is concurrent.futures.Future.result.__code__
+            and frame.f_back is not None
+            and frame.f_back.f_code is invoke_code
+            and frame.f_back.f_locals.get("self") is prepared
+        ):
+            if event == "call":
+                assert "finalizer_result_call" not in state
+                state["finalizer_result_call"] = frame, frame.f_back, local["self"]
+                return
+            result_frame, invoke, future = state.pop("finalizer_result_call")
+            assert result_frame is frame and invoke is frame.f_back
+            if not returned(frame, event):
+                return
+            read, producer, retired, callback = prepared._planning_read_return
+            assert callback.__code__ is invoke_code and read.callback is callback
+            assert read.task is state["driver"] and read.source is prepared
+            assert read.creator is rig.controller
+            assert read._producer is producer and read.retired is retired
+            assert not producer.done() and not retired.done()
+            assert invoke.f_locals["owner"] is prepared.primary_owner
+            assert future.done()
+            native_service = state["native_service"]
+            assert prepared.native.service is native_service
+            assert (
+                native_service._fleet
+                is native_service._injected_fleet_coordinator
+                is state["fleet"]
+            )
+            assert (
+                native_service._message_inbox
+                is state["fleet"].message_inbox
+                is state["inbox"]
+            )
+            assert bridge._fleet_coordinators[conversation] is state["fleet"]
+            finalizer = state["finalizer_retry"]
+            assert finalizer[1] is invoke.f_locals["outcome"]
+            assert finalizer[2] == invoke.f_locals["run_id"]
+            assert invoke is state["invocation"][0]
+            assert all(original_custody().values())
+            state.update(finalizer_future=future, held_invoke=invoke)
+            held.set()
+            hold_deadline = time.monotonic() + 5
+            notify_change()
+            if not release.wait(max(0, hold_deadline - time.monotonic())):
+                errors.append(TimeoutError("original planning finalizer hold5 expired"))
+                notify_change()
+            return
+        if (
+            code is type(wake).retry_soon.__code__
+            and event == "call"
+            and (local.get("self") is wake)
+        ):
+            caller = frame.f_back
+            retries.append((frame, caller.f_code, held.is_set(), release.is_set()))
+            if (
+                caller.f_code
+                is _PreparedWorkflowReply._notify_planning_release.__code__
+            ):
+                if shutdown:
+                    assert (
+                        caller is state["shutdown_notify"]
+                        and frame is state["inert_call"]
+                    )
+                    return
+                run = state["run"]
+                notification_caller = caller.f_back
+                returned_release = caller.f_locals["returned"]
+                assert (
+                    "release_retry" not in state and held.is_set() and release.is_set()
+                )
+                assert caller.f_locals["self"] is prepared
+                assert returned_release is prepared._planning_release_return
+                assert (
+                    caller.f_locals["binding"]
+                    is returned_release[0]
+                    is prepared._planning_release_binding
+                )
+                assert returned_release[1] is prepared._planning_read_return
+                if direct:
+                    assert run is None and caller.f_locals["_publication"] is None
+                    assert caller.f_locals["_popped_run"] is None
+                    assert notification_caller is returned_release[0][5]
+                    assert notification_caller.f_code is run_code
+                    assert (
+                        notification_caller.f_locals["release_return"]
+                        is returned_release
+                    )
+                    assert notification_caller.f_locals["_coordinator_run"] is None
+                    assert returned_release[0][6] is returned_release[0][7] is None
+                    assert (
+                        asyncio.current_task()
+                        is direct_driver
+                        is returned_release[0][3]
+                    )
+                    assert (
+                        not hasattr(rig.runtime, "_workflow_coordinator")
+                        and rig.coordinator is None
+                    )
+                else:
+                    assert caller.f_locals["_publication"] is run.final_metadata
+                    assert caller.f_locals["_popped_run"] is run
+                    assert notification_caller.f_code is g_code
+                    assert notification_caller.f_locals["popped_run"] is run
+                    assert asyncio.current_task() is run.driver
+                    assert run.workflow_id not in rig.coordinator._runs
+                    assert (
+                        run.final_metadata.disposed.done()
+                        and run.final_metadata.disposed.result() is True
+                    )
+                assert (
+                    prepared._source_scope
+                    is prepared._planning_intake
+                    is prepared._planning_token
+                    is None
+                )
+                assert not prepared.primary_owner.is_admitted
+                assert (
+                    prepared.primary_claim.id
+                    not in rig.runtime.worktree_activity._claims
+                )
+                pending = set(wake._pending.get(conversation, {}))
+                assert pending == {row[3] for row in children}
+                assert conversation not in wake._active and wake._retry_timer is None
+                assert not deliveries and not provider.wake_calls
+                assert monitor_owned and not local_mode
+                assert not (
+                    task_calls
+                    or wake_tasks
+                    or submissions
+                    or source_reads
+                    or trees
+                    or tickets
+                )
+                state["release_retry"] = frame, returned_release, pending
+                global_attempted = True
+                monitor.set_events(
+                    tool_id, event_types.PY_THROW | event_types.PY_UNWIND
+                )
+                local_mode = True
+                assert (
+                    profile_attempted
+                    and sys.getprofile() is observe
+                    and threading.getprofile() is observe
+                )
+                threading.setprofile_all_threads(None)
+                assert sys.getprofile() is None and threading.getprofile() is None
+                print(
+                    "PLANNING_WAKE_ORIGINAL_RELEASE_NOTIFICATION",
+                    sorted(pending),
+                    flush=True,
+                )
+            if (
+                caller.f_code is type(rig.controller)._set_run_state.__code__
+                and caller.f_locals.get("self") is rig.controller
+                and caller.f_locals.get("target") == session.id
+            ):
+                ancestor = caller.f_back
+                native_finalizer = None
+                while ancestor is not None:
+                    if (
+                        ancestor.f_code
+                        is type(rig.controller)._finalize_agent_reply.__code__
+                        and ancestor.f_locals.get("self") is rig.controller
+                        and ancestor.f_locals.get("session_id") == session.id
+                    ):
+                        native_finalizer = ancestor
+                    if (
+                        ancestor.f_code is finalize_code
+                        and ancestor.f_locals.get("self") is prepared
+                    ):
+                        assert native_finalizer is not None
+                        assert "finalizer_retry" not in state
+                        state["finalizer_run_state"] = caller.f_locals["run_state"]
+                        assert (
+                            rig.controller._run_states.get(session.id)
+                            is state["finalizer_run_state"]
+                        )
+                        state["finalizer_retry"] = (
+                            frame,
+                            native_finalizer.f_locals["outcome"],
+                            native_finalizer.f_locals["run_id"],
+                        )
+                        break
+                    ancestor = ancestor.f_back
+        elif code is type(loop).call_soon_threadsafe.__code__ and returned(
+            frame, event
+        ):
+            callback = local.get("callback")
+            if getattr(callback, "__self__", None) is wake and (
+                getattr(callback, "__func__", None) is type(wake)._attempt_all
+            ):
+                handles.append((result, frame.f_back, release.is_set()))
+                if frame.f_back is state.get("finalizer_retry", (None,))[0]:
+                    state["finalizer_handle"] = result
+                if frame.f_back is state.get("release_retry", (None,))[0]:
+                    assert "release_handle" not in state
+                    state["release_handle"] = result
+        elif code is type(wake)._attempt_all.__code__ and event == "call":
+            caller = frame.f_back
+            if (
+                local.get("self") is wake
+                and caller.f_code is asyncio.Handle._run.__code__
+            ):
+                state.setdefault("handle_entries", []).append(caller.f_locals["self"])
+        elif code is type(wake)._attempt.__code__ and returned(frame, event):
+            if (
+                local.get("self") is wake
+                and local.get("conversation_id") == conversation
+            ):
+                attempts.append(
+                    (
+                        frame,
+                        set(wake._pending.get(conversation, {})),
+                        wake._automatic_primary_claims.get(session.id),
+                        rig.store.received_turn_for_session(session.id),
+                        wake._retry_timer,
+                        conversation in wake._active,
+                        held.is_set(),
+                        release.is_set(),
+                        local.get("remaining"),
+                        original_custody(),
+                        (frame.f_lasti, frame.f_lineno),
+                    )
+                )
+                ancestor = frame.f_back
+                while (
+                    ancestor is not None
+                    and ancestor.f_code is not asyncio.Handle._run.__code__
+                ):
+                    ancestor = ancestor.f_back
+                if ancestor is not None and ancestor.f_locals["self"] is state.get(
+                    "finalizer_handle"
+                ):
+                    state.setdefault("finalizer_attempts", []).append(frame)
+                if ancestor is not None and ancestor.f_locals["self"] is state.get(
+                    "release_handle"
+                ):
+                    state.setdefault("release_attempts", []).append(frame)
+                notify_change()
+        elif code is type(wake)._priority_allows.__code__ and returned(frame, event):
+            caller = frame.f_back
+            if (
+                local.get("self") is wake
+                and local.get("session_id") == session.id
+                and caller.f_code is type(wake)._attempt.__code__
+                and caller.f_locals.get("self") is wake
+                and caller.f_locals.get("conversation_id") == conversation
+            ):
+                priorities.append(
+                    (frame, caller, result, (frame.f_lasti, frame.f_lineno))
+                )
+        elif code is type(rig.controller).send_refusal_copy.__code__ and returned(
+            frame, event
+        ):
+            caller = frame.f_back
+            if (
+                local.get("self") is rig.controller
+                and local.get("session_id") == session.id
+                and caller.f_code is type(wake)._priority_allows.__code__
+                and caller.f_locals.get("self") is wake
+                and caller.f_locals.get("session_id") == session.id
+            ):
+                send_refusals.append(
+                    (frame, caller, result, (frame.f_lasti, frame.f_lineno))
+                )
+        elif code is type(rig.controller).run_state_for.__code__ and returned(
+            frame, event
+        ):
+            caller = frame.f_back
+            if (
+                local.get("self") is rig.controller
+                and local.get("session_id") == session.id
+                and caller.f_code is type(rig.controller).send_refusal_copy.__code__
+                and caller.f_locals.get("self") is rig.controller
+                and caller.f_locals.get("session_id") == session.id
+            ):
+                state_results.append((caller, result))
+        elif code is type(wake).try_claim_automatic_primary.__code__ and returned(
+            frame, event
+        ):
+            if (
+                local.get("self") is wake
+                and result is False
+                and (local.get("existing") is state["token"])
+            ):
+                state.setdefault("same_token_refusals", []).append(frame.f_back)
+        elif code is type(wake)._deliver.__code__ and event == "call":
+            task = asyncio.current_task()
+            if local.get("self") is wake and task not in deliveries:
+                assert _guard.context.get() is None and current_automatic_work() is None
+                assert (
+                    current_execution_owner() is None
+                    and current_task_authorization() is None
+                )
+                assert current_workflow_preparation() is None
+                deliveries.append(task)
+        elif returned(frame, event):
+            if (
+                code is ExecutionOwner.finish_root.__code__
+                and local.get("self") is prepared.primary_owner
+                or code is WorktreeActivitySettlement.settle.__code__
+                and local.get("self") is prepared.primary_claim
+                or code
+                in {
+                    _PreparedWorkflowReply._release_configuration.__code__,
+                    _PreparedWorkflowReply._release_planning_slots.__code__,
+                    run_code,
+                }
+                and local.get("self") is prepared
+                or code is type(wake).release_automatic_primary.__code__
+                and local.get("self") is wake
+                and local.get("token") is state["token"]
+                or code is type(rig.store).release_received_turn.__code__
+                and local.get("self") is rig.store
+                and local.get("claim") is state["intake"]
+                or code is workflow_runs._metadata_publication_return.__code__
+                and local.get("run") is state["run"]
+                or code is g_code
+                and local.get("run") is state["run"]
+            ):
+                physical.append((code, result, dict(local)))
+
+    def record_checked(frame, event, result):
+        if frame.f_code not in codes or event not in {"call", "return", "yield"}:
+            return
+        try:
+            record(frame, event, result)
+        except BaseException as error:  # noqa: BLE001 - observers cannot change native return.
+            errors.append(error)
+            try:
+                notify_change()
+            except BaseException as notification_error:  # noqa: BLE001 - observer notifications cannot alter native return.
+                errors.append(notification_error)
+
+    def observe(frame, event, result):
+        if not local_mode:
+            record_checked(frame, event, result)
+            if (
+                metadata_failure
+                and frame is state.get("metadata_reader")
+                and returned(frame, event)
+            ):
+                try:
+                    cell, read, producer, retired = state["metadata_hold"]
+                    callback = cell.proof[3]
+                    assert (
+                        frame.f_code is reader_code
+                        and frame.f_locals["read"] is read
+                        and frame.f_locals["callback"] is callback
+                    )
+                    assert (
+                        read.source is rig.coordinator
+                        and read.task is state["run"].driver
+                    )
+                    assert (
+                        read._producer is producer
+                        and not producer.done()
+                        and read.retired is retired
+                        and not retired.done()
+                    )
+                    assert (
+                        not frame.f_locals["binding"].active and metadata_gate.is_set()
+                    )
+                    assert (
+                        state["run"].final_metadata is cell and not cell.disposed.done()
+                    )
+                    assert "metadata_fault" not in state and not errors
+                    state["metadata_fault"] = frame
+                except BaseException as observer_error:  # noqa: BLE001 - keep diagnostic failure distinct.
+                    errors.append(observer_error)
+                    notify_change()
+                else:
+                    # Deliberate only for the exact original reader normal return.
+                    raise metadata_error
+
+    def adapter(callback):
+        def observed(code, offset, arg=None):
+            if (
+                before_fence
+                and not local_mode
+                and callback is post_call
+                and code is type(wake).dispose.__code__
+                and close_task is not None
+                and "fence_fault" not in state
+            ):
+                try:
+                    frame = sys._getframe(1)
+                    caller = frame.f_back
+                    if (
+                        caller is not close_task.get_coro().cr_frame
+                        or caller.f_code is not type(rig.runtime).dispose.__code__
+                    ):
+                        return
+                    assert (
+                        frame.f_code is code
+                        and frame.f_locals["self"] is wake
+                        and asyncio.current_task() is close_task
+                    )
+                    assert (
+                        caller.f_locals["self"] is rig.runtime
+                        and caller.f_locals["recovery_owner"] is wake
+                    )
+                    assert (
+                        rig.runtime._workflow_closing
+                        and not wake._disposed
+                        and not rig.runtime._disposed
+                    )
+                    assert (
+                        held.is_set()
+                        and not release.is_set()
+                        and state["prepared"]._planning_release_return is None
+                    )
+                    assert set(wake._pending[conversation]) == {
+                        row[3] for row in children
+                    }
+                    state["fence_fault"] = frame, caller
+                except BaseException as observation_error:  # noqa: BLE001 - observation errors cannot become the intended fault.
+                    errors.append(observation_error)
+                    notify_change()
+                    return
+                # Deliberate PY_START fault before original wake.dispose can latch.
+                raise fence_error
+            if not local_mode or id(code) not in post_code_ids:
+                return
+            try:
+                frame = sys._getframe(1)
+                assert frame.f_code is code
+                deliberate = callback(frame, code, offset, arg) is schedule_error
+            except BaseException as observer_error:  # noqa: BLE001 - no monitoring error may affect native return.
+                errors.append(observer_error)
+                try:
+                    notify_change()
+                except BaseException as signal_error:  # noqa: BLE001 - retain diagnostic error separately.
+                    errors.append(signal_error)
+                return
+            if deliberate:
+                # Sole explicit test fault; original call did not post a Handle.
+                raise schedule_error
+
+        return observed
+
+    def post_call(frame, code, offset, arg):
+        if (
+            notify_failure
+            and code is type(loop).call_soon_threadsafe.__code__
+            and frame.f_back is state["release_retry"][0]
+        ):
+            caller = frame.f_back
+            notify = caller.f_back
+            run, prepared = state["run"], state["prepared"]
+            callback = frame.f_locals["callback"]
+            assert frame.f_locals["self"] is loop and caller.f_locals["self"] is wake
+            assert (
+                callback.__self__ is wake
+                and callback.__func__ is type(wake)._attempt_all
+            )
+            assert (
+                notify.f_code
+                is _PreparedWorkflowReply._notify_planning_release.__code__
+            )
+            assert (
+                notify.f_locals["self"] is prepared
+                and notify.f_locals["returned"] is state["g_received"][0]
+            )
+            assert (
+                asyncio.current_task() is run.driver
+                and notify.f_locals["_popped_run"] is run
+            )
+            assert (
+                notify.f_locals["_publication"] is run.final_metadata
+                and run.final_metadata.disposed.result() is True
+            )
+            assert (
+                run.workflow_id not in rig.coordinator._runs
+                and "scheduling_fault" not in state
+            )
+            assert set(wake._pending[conversation]) == {row[3] for row in children}
+            state["scheduling_fault"] = frame, caller, notify
+            return schedule_error
+        if frame is not state["release_retry"][0]:
+            record_checked(frame, "call", arg)
+
+    def post_return(frame, code, offset, arg):
+        assert frame.f_lasti == offset
+        assert dis.opname[code.co_code[offset]] in {"RETURN_CONST", "RETURN_VALUE"}
+        if frame is state["release_retry"][0]:
+            assert code is type(wake).retry_soon.__code__ and arg is None
+            state["release_retry_return"] = frame
+        record_checked(frame, "return", arg)
+
+    def post_yield(frame, code, offset, arg):
+        record_checked(frame, "yield", arg)
+
+    def post_unwind(frame, code, offset, exc):
+        if (
+            notify_failure
+            and code is g_code
+            and frame.f_locals.get("run") is state["run"]
+        ):
+            assert asyncio.current_task() is state["run"].driver
+            assert state["run"].driver.get_coro().cr_frame is frame
+            assert frame.f_locals["release_return"] is state["g_received"][0]
+            state["inner_unwind"] = exc, frame.f_locals["cancellation"], exc.__cause__
+        observations = state.setdefault("post_unwinds", [])
+        if len(observations) < 32:
+            observations.append((code.co_name, offset, type(exc).__name__))
+        if frame in task_calls:
+            task_calls.pop(frame)
+            raise AssertionError("original wake create_task unwound") from exc
+
+    callbacks = {
+        event_types.PY_START: adapter(post_call),
+        event_types.PY_RESUME: adapter(post_call),
+        event_types.PY_THROW: adapter(post_call),
+        event_types.PY_RETURN: adapter(post_return),
+        event_types.PY_YIELD: adapter(post_yield),
+        event_types.PY_UNWIND: adapter(post_unwind),
+    }
+    local_events = (
+        event_types.PY_START
+        | event_types.PY_RESUME
+        | event_types.PY_RETURN
+        | event_types.PY_YIELD
+    )
+    bridge.on_fleet_child_settled("planning-wake-original-observer", settled)
+    try:
+        assert sys.getprofile() is None and threading.getprofile() is None
+        monitor.use_tool_id(tool_id, "planning-wake-native-delivery")
+        monitor_owned = True
+        assert monitor.get_events(tool_id) == 0
+        assert all(monitor.get_local_events(tool_id, code) == 0 for code in post_codes)
+        for event, callback in callbacks.items():
+            previous = monitor.register_callback(tool_id, event, callback)
+            saved_callbacks[event] = previous
+            assert previous is None
+        for code in post_codes:
+            armed_codes.append(code)
+            monitor.set_local_events(tool_id, code, local_events)
+        profile_attempted = True
+        threading.setprofile_all_threads(observe)
+        if direct:
+            assert rig.coordinator is None and not hasattr(
+                rig.runtime, "_workflow_coordinator"
+            )
+            binding = capture_run_admitted_workspace_roots(
+                session=session, registry=rig.service.persistence.workspace_registry
+            )[0]
+            request = rig.workflow.request
+            direct_prepared = await prepare_workflow_planning(
+                rig.controller,
+                session_id=session.id,
+                binding=binding,
+                command_id="direct-planning-wake",
+                objective=request.objective,
+                policy=request.policy,
+                _request=request,
+            )
+            assert loop.get_task_factory() is None
+            direct_driver = loop.create_task(direct_prepared.run_planning())
+            # The direct issuer first enters its own synchronous setup10. Start
+            # arrival10 only after this actual pre-root setup has returned.
+            await asyncio.sleep(0)
+            check()
+            if not state.get("setup_returned"):
+                if direct_driver.done():
+                    direct_driver.result()
+                raise AssertionError(
+                    "direct driver did not return its original setup on first step"
+                )
+            assert (
+                state["driver"] is direct_driver
+                and state["prepared"] is direct_prepared
+            )
+            assert state["run"] is None and not hasattr(
+                rig.runtime, "_workflow_coordinator"
+            )
+        else:
+            rig.workflow = await rig.coordinator.start(
+                rig.workflow.request, launch_id=rig.workflow.launch_id
+            )
+        async with asyncio.timeout(10):
+            while True:
+                changed.clear()
+                check()
+                if held.is_set():
+                    break
+                if state.get("driver") is not None and state["driver"].done():
+                    await asyncio.shield(state["driver"])
+                    raise AssertionError("original planning finalizer hold not reached")
+                await changed.wait()
+        check()
+        prepared, run = state["prepared"], state["run"]
+        child_ids = {row[3] for row in children}
+        assert state["setup_returned"]
+        async with asyncio.timeout(4):
+            while True:
+                changed.clear()
+                check()
+                if any(
+                    row[1] == child_ids
+                    and row[2] is state["token"]
+                    and row[3] is state["intake"]
+                    and row[4] is None
+                    and not row[5]
+                    and not row[7]
+                    and row[8] is not None
+                    and row[8] <= 0
+                    and all(row[9].values())
+                    and row[0] in state.get("finalizer_attempts", [])
+                    and refusal_kind(row[0]) is not None
+                    for row in attempts
+                ):
+                    break
+                await changed.wait()
+        assert any(
+            caller is type(rig.controller)._set_run_state.__code__
+            for _frame, caller, _held, _released in retries
+        )
+        assert handles and all(
+            handle in state.get("handle_entries", [])
+            for handle, _caller, _after in handles
+        )
+        assert wake._retry_timer is None and not provider.wake_calls
+        assert state["finalizer_handle"] in state["handle_entries"]
+        assert state["finalizer_attempts"]
+        assert prepared.primary_owner.is_admitted
+        assert not prepared._planning_read_return[1].done()
+        print(
+            "PLANNING_WAKE_ORIGINAL_FINALIZER_RETRY_CONSUMED_AND_NATIVE_REFUSED",
+            len(retries),
+            len(handles),
+            flush=True,
+        )
+        if shutdown:
+            assert loop.get_task_factory() is None
+            assert (
+                not rig.runtime._workflow_closing
+                and not wake._disposed
+                and set(wake._pending[conversation]) == child_ids
+            )
+            close_task = loop.create_task(rig.runtime.dispose())
+            state["close_task"] = close_task
+            await asyncio.sleep(0)
+            check()
+            assert (
+                not close_task.done() and not run.driver.done() and not release.is_set()
+            )
+            assert (
+                rig.runtime._workflow_closing
+                and rig.coordinator._closing
+                and run.control == "stop"
+                and prepared.cancel_event.is_set()
+            )
+            assert (
+                not rig.runtime._disposed
+                and not rig.runtime.execution_capacity.snapshot().closed
+            )
+            assert (
+                prepared.primary_owner.is_admitted
+                and prepared._planning_release_return is None
+            )
+            assert (
+                prepared._planning_token
+                is wake._automatic_primary_claims[session.id]
+                is state["token"]
+            )
+            assert (
+                prepared._planning_intake
+                is rig.store.received_turn_for_session(session.id)
+                is state["intake"]
+            )
+            if before_fence:
+                assert (
+                    "fence_fault" in state
+                    and "fence_return" not in state
+                    and not wake._disposed
+                )
+                assert set(wake._pending[conversation]) == child_ids
+            else:
+                assert (
+                    "fence_return" in state
+                    and "fence_fault" not in state
+                    and wake._disposed
+                    and not wake._pending
+                )
+            assert shutdown_host_ledger() == ((), ())
+            print("PLANNING_SHUTDOWN_ORIGINAL_F_HELD", mode, flush=True)
+            release.set()
+            async with asyncio.timeout(10):
+                if before_fence:
+                    with pytest.raises(ValueError) as disposal:
+                        await asyncio.shield(close_task)
+                    assert disposal.value is close_task.exception() is fence_error
+                    state["first_fence_error_returned"] = True
+                else:
+                    assert await asyncio.shield(close_task) is None
+            check()
+            assert (
+                run.driver.done()
+                and not run.driver.cancelled()
+                and "shutdown_notify" in state
+            )
+            assert "release_handle" not in state and not any(
+                caller is state.get("inert_call")
+                for _handle, caller, _released in handles
+            )
+            assert (
+                run.workflow_id not in rig.coordinator._runs
+                and run.final_metadata.disposed.result() is True
+            )
+            read, producer, retired, callback = prepared._planning_release_return[1]
+            assert (
+                read.task is run.driver
+                and read.source is prepared
+                and read.callback is callback
+            )
+            assert (
+                read._producer is producer
+                and producer.done()
+                and not producer.cancelled()
+                and producer.exception() is None
+            )
+            assert (
+                read.retired is retired and retired.done() and retired.result() is None
+            )
+            drained = []
+            prepared.primary_owner.on_drained(drained.append)
+            assert (
+                drained == [True]
+                and prepared.primary_claim.id
+                not in rig.runtime._worktree_activity._claims
+            )
+            assert (
+                prepared._planning_token
+                is prepared._planning_intake
+                is prepared._source_scope
+                is None
+            )
+            assert (
+                prepared not in rig.runtime._workflow_preparations
+                and wake._automatic_primary_claims.get(session.id) is not state["token"]
+            )
+            assert (
+                not deliveries
+                and not wake_tasks
+                and not submissions
+                and not provider.wake_calls
+                and not wake._delivery_tasks
+            )
+            if before_fence:
+                failure = run.driver.exception()
+                assert (
+                    type(failure) is PermissionError
+                    and str(failure) == "planning wake shutdown fence unproven"
+                )
+                tb = failure.__traceback__
+                while tb.tb_next is not None:
+                    tb = tb.tb_next
+                assert (
+                    tb.tb_frame is state["shutdown_notify"]
+                    and "inert_call" not in state
+                )
+                assert (
+                    not wake._disposed and set(wake._pending[conversation]) == child_ids
+                )
+                assert (
+                    not rig.runtime._disposed
+                    and not rig.runtime.execution_capacity.snapshot().closed
+                )
+                assert shutdown_host_ledger() == ((), ())
+                print(
+                    "PLANNING_SHUTDOWN_ORIGINAL_FENCE_ERROR_AND_POST_POP_REFUSAL",
+                    flush=True,
+                )
+            else:
+                assert (
+                    run.driver.exception() is None
+                    and state["inert_call"] is state["inert_return"]
+                )
+                assert (
+                    wake._disposed
+                    and not wake._pending
+                    and rig.runtime._disposed
+                    and rig.runtime.execution_capacity.snapshot().closed
+                )
+                print(
+                    "PLANNING_SHUTDOWN_ORIGINAL_DISPOSED_RETRY_INERT_NO_ADMISSION",
+                    flush=True,
+                )
+            check()
+            return
+        if notify_failure or metadata_failure:
+            # Calling the live G-associated P as if it were direct cannot acquire another root.
+            original_binding = prepared._planning_release_binding
+            with pytest.raises(
+                PermissionError, match="original G planning association required"
+            ):
+                await prepared.run_planning()
+            assert (
+                prepared._planning_release_binding is original_binding
+                and prepared._planning_release_return is None
+            )
+            assert (
+                run.prepared is prepared
+                and rig.coordinator._runs.get(run.workflow_id) is run
+            )
+            assert (
+                prepared.primary_owner.is_admitted
+                and prepared._planning_token is state["token"]
+            )
+            assert (
+                prepared._planning_intake is state["intake"] and not provider.wake_calls
+            )
+            state["driver_until"] = loop.time() + 10
+            if cancel_failure:
+                assert run.driver.cancel("original planning caller cancellation")
+            release.set()
+            async with asyncio.timeout_at(state["driver_until"]):
+                if not cancel_failure:
+                    while True:
+                        changed.clear()
+                        check()
+                        if "metadata_hold" in state:
+                            break
+                        if run.driver.done():
+                            run.driver.result()
+                            raise AssertionError(
+                                "original final metadata hold not reached"
+                            )
+                        await changed.wait()
+                    cell, meta_read, meta_producer, meta_retired = state[
+                        "metadata_hold"
+                    ]
+                    assert (
+                        run.final_metadata is cell
+                        and rig.coordinator._metadata_cells.get(cell) is cell.disposed
+                    )
+                    assert (
+                        not cell.disposed.done()
+                        and not meta_producer.done()
+                        and not meta_retired.done()
+                    )
+                    assert meta_read.task is run.driver and not run.driver.done()
+                    assert rig.coordinator._runs.get(run.workflow_id) is run
+                    assert (
+                        not prepared.primary_owner.is_admitted
+                        and prepared._source_scope is None
+                    )
+                    assert prepared._planning_release_return is state["g_received"][0]
+                    assert (
+                        "release_retry" not in state
+                        and not deliveries
+                        and set(wake._pending[conversation]) == child_ids
+                    )
+                    print(
+                        "PLANNING_WAKE_ORIGINAL_METADATA_HELD_WITHOUT_NOTIFICATION",
+                        flush=True,
+                    )
+                    metadata_gate.set()
+                if metadata_failure:
+                    assert await asyncio.shield(run.driver) is None
+                    check()
+                    assert (
+                        run.driver.exception() is None
+                        and state["metadata_fault"] is state["metadata_reader"]
+                    )
+                    assert cell is run.final_metadata and cell.proof[0] is meta_read
+                    assert (
+                        meta_producer.done()
+                        and meta_producer.exception()
+                        is cell.producer_error
+                        is metadata_error
+                    )
+                    assert meta_retired.done() and meta_retired.result() is None
+                    assert (
+                        cell.disposed.result() is False
+                        and rig.coordinator._metadata_cells[cell] is cell.disposed
+                    )
+                    assert (
+                        cell.caller_error is None
+                        and cell.source_error is not None
+                        and cell.body_error is None
+                    )
+                    assert (
+                        run.status == "recovery_required"
+                        and rig.coordinator._runs.get(run.workflow_id) is run
+                    )
+                    assert (
+                        prepared._planning_release_return is state["g_received"][0]
+                        and prepared._planning_settled
+                        and prepared._closed
+                    )
+                    drained = []
+                    prepared.primary_owner.on_drained(drained.append)
+                    assert drained == [True] and not prepared.primary_owner.is_admitted
+                    assert (
+                        prepared.primary_claim.id
+                        not in rig.runtime._worktree_activity._claims
+                    )
+                    assert (
+                        prepared._planning_token
+                        is prepared._planning_intake
+                        is prepared._source_scope
+                        is None
+                    )
+                    assert (
+                        prepared not in rig.runtime._workflow_preparations
+                        and set(wake._pending[conversation]) == child_ids
+                    )
+                    assert (
+                        not state.get("notifier_entries")
+                        and "release_retry" not in state
+                        and not deliveries
+                        and not provider.wake_calls
+                    )
+                    assert (
+                        not wake_tasks
+                        and not submissions
+                        and wake._retry_timer is None
+                        and not wake._delivery_tasks
+                    )
+                    with (
+                        owned_goal_storage(rig.service),
+                        rig.service.db.connection() as conn,
+                    ):
+                        chain = original["service"]._work_chain_id
+                        assert not conn.execute(
+                            "SELECT id FROM automatic_wake_attempts WHERE chain_id=?",
+                            (chain,),
+                        ).fetchall()
+                        assert not conn.execute(
+                            "SELECT id FROM automatic_work_reservations WHERE chain_id=? AND kind IN ('generation','model_call')",
+                            (chain,),
+                        ).fetchall()
+                    state["metadata_retained"] = cell
+                    print(
+                        "PLANNING_METADATA_UNKNOWN_F_RETURNED_G_RETAINED_NO_NOTIFY",
+                        flush=True,
+                    )
+                    return
+                with pytest.raises(
+                    asyncio.CancelledError if cancel_failure else ValueError
+                ) as external:
+                    await asyncio.shield(run.driver)
+            check()
+            assert (
+                "scheduling_fault" in state
+                and "release_retry_return" not in state
+                and "release_handle" not in state
+            )
+            inner, saved, cause = state["inner_unwind"]
+            returned_release, caught = state["g_received"]
+            assert returned_release is prepared._planning_release_return
+            assert (
+                returned_release[1] is prepared._planning_read_return
+                and returned_release[5] is caught
+            )
+            assert (
+                run.final_metadata.disposed.result() is True
+                and run.final_metadata.caller_error is None
+            )
+            assert run.final_metadata not in rig.coordinator._metadata_cells
+            assert (
+                run.status != "recovery_required"
+                and run.workflow_id not in rig.coordinator._runs
+            )
+            if cancel_failure:
+                assert (
+                    inner is caught is saved and type(inner) is asyncio.CancelledError
+                )
+                assert cause is schedule_error and run.driver.cancelled()
+                print(
+                    "PLANNING_WAKE_ORIGINAL_CANCEL_WITH_SCHEDULING_CAUSE",
+                    "outer_same",
+                    external.value is inner,
+                    flush=True,
+                )
+            else:
+                assert (
+                    caught is saved is None
+                    and inner is external.value is schedule_error
+                )
+                assert run.driver.exception() is schedule_error
+            read, producer, retired, callback = prepared._planning_read_return
+            assert (
+                read.callback is callback
+                and read.task is run.driver
+                and read.source is prepared
+            )
+            assert (
+                producer.done()
+                and not producer.cancelled()
+                and producer.exception() is None
+            )
+            assert (
+                retired.done() and not retired.cancelled() and retired.result() is None
+            )
+            assert producer.result().id == run.workflow_id
+            drained = []
+            prepared.primary_owner.on_drained(drained.append)
+            assert drained == [True] and not prepared.primary_owner.is_admitted
+            assert (
+                prepared.primary_claim.id not in rig.runtime._worktree_activity._claims
+            )
+            assert (
+                prepared._planning_intake
+                is prepared._planning_token
+                is prepared._source_scope
+                is None
+            )
+            assert prepared not in rig.runtime._workflow_preparations
+            assert (
+                not provider.wake_calls
+                and not deliveries
+                and not wake_tasks
+                and not submissions
+            )
+            assert (
+                set(wake._pending[conversation]) == child_ids
+                and conversation not in wake._active
+            )
+            assert wake._retry_timer is None and not wake._delivery_tasks
+            with owned_goal_storage(rig.service), rig.service.db.connection() as conn:
+                chain = original["service"]._work_chain_id
+                assert not conn.execute(
+                    "SELECT id FROM automatic_wake_attempts WHERE chain_id=?", (chain,)
+                ).fetchall()
+                assert not conn.execute(
+                    "SELECT id FROM automatic_work_reservations WHERE chain_id=? AND kind IN ('generation','model_call')",
+                    (chain,),
+                ).fetchall()
+            print(
+                "PLANNING_WAKE_SCHEDULING_ERROR_AFTER_ORIGINAL_POP",
+                mode,
+                sorted(child_ids),
+                flush=True,
+            )
+            return
+        release.set()
+        result = await asyncio.wait_for(asyncio.shield(state["driver"]), 10)
+        check()
+        assert local_mode and state["release_retry_return"] is state["release_retry"][0]
+        if direct:
+            assert state["driver"] is direct_driver and direct_driver.result() is result
+            assert run is None and rig.coordinator is None
+            assert not hasattr(rig.runtime, "_workflow_coordinator")
+            assert any(
+                code is run_code and value is result and local["self"] is prepared
+                for code, value, local in physical
+            )
+        else:
+            assert any(
+                code is g_code and local.get("run") is run
+                for code, _, local in physical
+            )
+            assert run.workflow_id not in rig.coordinator._runs
+        read, producer, retired, callback = prepared._planning_read_return
+        assert read.callback is callback and read._producer is producer
+        assert (
+            producer.done()
+            and not producer.cancelled()
+            and producer.exception() is None
+        )
+        assert retired.done() and not retired.cancelled() and retired.result() is None
+        drained = []
+        prepared.primary_owner.on_drained(drained.append)
+        assert drained == [True] and not prepared.primary_owner.is_admitted
+        assert prepared.primary_claim.id not in rig.runtime.worktree_activity._claims
+        assert prepared._planning_token is prepared._planning_intake is None
+        assert (
+            prepared._source_scope is None
+            and prepared not in rig.runtime._workflow_preparations
+        )
+        assert any(
+            code is type(wake).release_automatic_primary.__code__ and result is True
+            for code, result, _ in physical
+        )
+        assert any(
+            code is type(rig.store).release_received_turn.__code__ and result is True
+            for code, result, _ in physical
+        )
+        assert any(
+            code is _PreparedWorkflowReply._release_configuration.__code__
+            and result[0] is prepared
+            for code, result, _ in physical
+        )
+        if direct:
+            assert result is producer.result() and result.status == "awaiting_approval"
+            assert result.plans[-1].request == request
+            assert not any(
+                code is g_code
+                or code is workflow_runs._metadata_publication_return.__code__
+                for code, _, _ in physical
+            )
+        else:
+            assert any(
+                code is workflow_runs._metadata_publication_return.__code__
+                and local["cell"] is run.final_metadata
+                for code, _, local in physical
+            )
+            assert (
+                run.final_metadata.disposed.done()
+                and run.final_metadata.disposed.result() is True
+            )
+            snapshot = await rig.coordinator.get(run.workflow_id)
+            assert snapshot.status == "awaiting_phase_review"
+        assert [key for key, _ in provider.calls] == ["planning"]
+        print(
+            "PLANNING_WAKE_ORIGINAL_RELEASE_PROVEN",
+            {
+                "pending": sorted(wake._pending.get(conversation, {})),
+                "retries": len(retries),
+                "timer": wake._retry_timer is not None,
+                "deliveries": len(deliveries),
+            },
+            flush=True,
+        )
+        deadline = loop.time() + 5
+        while wake.has_pending(conversation) or not provider.wake_calls:
+            check()
+            if loop.time() >= deadline:
+                raise AssertionError(
+                    "Original planning physically returned but unrelated native completion remained pending: "
+                    + repr(
+                        {
+                            "pending": sorted(wake._pending.get(conversation, {})),
+                            "timer": wake._retry_timer is not None,
+                            "retries": len(retries),
+                            "deliveries": len(deliveries),
+                        }
+                    )
+                )
+            await asyncio.sleep(0.01)
+        for task in deliveries:
+            await asyncio.wait_for(
+                asyncio.shield(task), max(0.001, deadline - loop.time())
+            )
+        check()
+        assert 1 <= len(provider.wake_calls) <= 2
+        assert state["release_handle"] in state["handle_entries"]
+        assert state["release_attempts"]
+        assert any(
+            handle is state["release_handle"] for _task, _context, handle in wake_tasks
+        )
+        assert len(wake_tasks) == len(submissions) == len(provider.wake_calls)
+        for authorization, delivery, custody, task, _store, _claim in submissions:
+            assert any(created is delivery for created, _context, _handle in wake_tasks)
+            assert (
+                delivery in deliveries
+                and delivery.done()
+                and delivery.exception() is None
+            )
+            assert (
+                authorization.accepted
+                and authorization.work_chain_id == original["service"]._work_chain_id
+            )
+            (source_row,) = [row for row in source_reads if row[4] is task]
+            source, read, producer, retired, _task = source_row
+            assert read._producer is producer and read.retired is retired
+            assert (
+                producer.done()
+                and not producer.cancelled()
+                and producer.exception() is None
+            )
+            assert (
+                retired.done() and not retired.cancelled() and retired.result() is None
+            )
+            (tree,) = [tree for tree, item in trees.items() if item[0] is source]
+            _source, owner, claim, tree_retired = trees[tree]
+            observed_tickets = [
+                ticket
+                for ticket, item in tickets.items()
+                if item[0].ordinary_tree is tree
+            ]
+            while (
+                (custody, task) not in custody_returns
+                or not task.done()
+                or (tree, tree_retired) not in tree_returns
+                or any(ticket not in ticket_returns for ticket in observed_tickets)
+            ):
+                check()
+                if loop.time() >= deadline:
+                    raise AssertionError(
+                        "original wake custody/tree/ticket did not return within delivery5"
+                    )
+                await asyncio.sleep(0.01)
+            assert (
+                not task.cancelled()
+                and task.exception() is None
+                and task.result().accepted
+            )
+            assert (
+                tree_retired.done()
+                and not tree_retired.cancelled()
+                and tree_retired.exception() is None
+            )
+            assert (
+                tree not in rig.runtime._ordinary_turns
+                and (claim, True) in claim_returns
+            )
+            drained = []
+            owner.on_drained(drained.append)
+            assert drained == [True] and not owner.is_admitted
+            for ticket in observed_tickets:
+                snapshot, operation = tickets[ticket]
+                assert ticket.source is snapshot and ticket.owner is owner
+                assert ticket.operation is operation and operation in operation_returns
+                assert ticket.retired.is_set() and not ticket._failed_write
+            print(
+                "PLANNING_WAKE_ORIGINAL_ORDINARY_RETURN",
+                authorization.attempt_id,
+                len(observed_tickets),
+                flush=True,
+            )
+        with owned_goal_storage(rig.service), rig.service.db.connection() as conn:
+            rows = conn.execute(
+                "SELECT run_ids_json,state,id FROM automatic_wake_attempts WHERE chain_id=?",
+                (original["service"]._work_chain_id,),
+            ).fetchall()
+            delivered = [run_id for row in rows for run_id in json.loads(row[0])]
+            assert len(delivered) == 2 and set(delivered) == child_ids
+            assert all(row[1] == "completed" for row in rows)
+            assert {row[2] for row in rows} == {
+                item[0].attempt_id for item in submissions
+            }
+            charges = rig.service.db.automatic_work.snapshot(
+                original["service"]._work_chain_id
+            )
+            assert charges.used["generation"] == charges.used["model_call"] == len(rows)
+            assert not charges.uncertain
+    except BaseException as error:
+        primary_error = error
+        print(
+            "PLANNING_WAKE_PRIMARY_FAILURE",
+            type(error).__name__,
+            str(error),
+            flush=True,
+        )
+        try:
+            failure_snapshot()
+        except BaseException as diagnostic_error:  # noqa: BLE001 - diagnostics cannot replace the original failure.
+            print(
+                "PLANNING_WAKE_DIAGNOSTIC_ERROR",
+                type(diagnostic_error).__name__,
+                str(diagnostic_error),
+                flush=True,
+            )
+        raise
+    finally:
+        cleanup_observer_start = len(errors)
+        metadata_gate.set()
+        release.set()
+        for gate in provider.child_release.values():
+            gate.set()
+        cleanup_errors = []
+        for thread in ([parent] if parent is not None else []) + [
+            row[0] for row in children
+        ]:
+            try:
+                await asyncio.to_thread(thread.join, 5)
+                assert not thread.is_alive(), (
+                    "original planning-wake fixture thread retained"
+                )
+            except BaseException as error:  # noqa: BLE001 - still attempt actual native disposal.
+                cleanup_errors.append(error)
+        if direct_driver is not None:
+            # The direct caller owns this original Task, including failed setup.
+            while not direct_driver.done():
+                try:
+                    await asyncio.shield(direct_driver)
+                except asyncio.CancelledError as waiter_error:
+                    if waiter_error is not primary_error:
+                        cleanup_errors.append(waiter_error)
+                except BaseException as waiter_error:  # noqa: BLE001 - consume the actual Task outcome below.
+                    if not direct_driver.done() and waiter_error is not primary_error:
+                        cleanup_errors.append(waiter_error)
+            try:
+                outcome = direct_driver.result()
+            except BaseException as driver_error:  # noqa: BLE001 - retain separate actual cleanup outcome.
+                print(
+                    "PLANNING_WAKE_DIRECT_DRIVER_RETURNED",
+                    type(driver_error).__name__,
+                    flush=True,
+                )
+                if driver_error is not primary_error:
+                    cleanup_errors.append(driver_error)
+            else:
+                print(
+                    "PLANNING_WAKE_DIRECT_DRIVER_RETURNED",
+                    type(outcome).__name__,
+                    getattr(outcome, "status", None),
+                    flush=True,
+                )
+        if close_task is not None:
+            while not close_task.done():
+                try:
+                    await asyncio.shield(close_task)
+                except BaseException as waiter_error:  # noqa: BLE001 - original result is consumed below.
+                    if not close_task.done() and waiter_error is not primary_error:
+                        cleanup_errors.append(waiter_error)
+            try:
+                close_task.result()
+            except BaseException as original_shutdown_error:  # noqa: BLE001 - preserve the original independent shutdown outcome.
+                if original_shutdown_error is not primary_error and not (
+                    before_fence
+                    and original_shutdown_error is fence_error
+                    and state.get("first_fence_error_returned")
+                ):
+                    cleanup_errors.append(original_shutdown_error)
+        if before_fence and "fence_fault" in state:
+            print("PLANNING_SHUTDOWN_SEPARATE_NATIVE_RIG_CLOSE_ATTEMPT", flush=True)
+        try:
+            await rig.close()
+            if metadata_failure:
+                raise AssertionError(
+                    "unresolved original metadata unexpectedly returned creators"
+                )
+            if direct:
+                assert rig.coordinator is None and not hasattr(
+                    rig.runtime, "_workflow_coordinator"
+                )
+            print("PLANNING_WAKE_ORIGINAL_CREATORS_RETURNED", flush=True)
+        except BaseException as error:  # noqa: BLE001 - do not erase the original failure.
+            if (
+                metadata_failure
+                and primary_error is None
+                and type(error) is RuntimeError
+                and str(error) == "workflow_original_metadata_shutdown_unresolved"
+            ):
+                cell = state["metadata_retained"]
+                tb = error.__traceback__
+                while tb.tb_next is not None:
+                    tb = tb.tb_next
+                assert tb.tb_frame.f_code is type(rig.coordinator).close.__code__
+                assert tb.tb_frame.f_locals["self"] is rig.coordinator
+                assert (
+                    rig.coordinator._metadata_cells[cell] is cell.disposed
+                    and cell.disposed.result() is False
+                )
+                assert (
+                    rig.coordinator._runs.get(run.workflow_id) is run
+                    and not rig.runtime._disposed
+                    and not rig.runtime.execution_capacity.snapshot().closed
+                )
+                traceback.print_exception(error)
+                print(
+                    "PLANNING_METADATA_REAL_CLOSE_REFUSED_NO_CREATOR_RETURN", flush=True
+                )
+            else:
+                cleanup_errors.append(error)
+        finally:
+
+            def remove(call, *args):
+                try:
+                    call(*args)
+                except BaseException as cleanup_error:  # noqa: BLE001 - attempt every owned removal.
+                    cleanup_errors.append(cleanup_error)
+
+            if profile_attempted:
+                current_profile, future_profile = (
+                    sys.getprofile(),
+                    threading.getprofile(),
+                )
+                if current_profile is observe or future_profile is observe:
+                    if (current_profile is None or current_profile is observe) and (
+                        future_profile is None or future_profile is observe
+                    ):
+                        remove(threading.setprofile_all_threads, None)
+                    else:
+                        if current_profile is observe:
+                            remove(sys.setprofile, None)
+                        if future_profile is observe:
+                            remove(threading.setprofile, None)
+                        cleanup_errors.append(
+                            AssertionError(
+                                "original all-thread observer displaced; other threads unknown"
+                            )
+                        )
+            if monitor_owned:
+                local_mode = False
+                before_monitor_removal = len(cleanup_errors)
+                if global_attempted:
+                    remove(monitor.set_events, tool_id, 0)
+                for code in armed_codes:
+                    remove(monitor.set_local_events, tool_id, code, 0)
+                for event, previous in saved_callbacks.items():
+                    remove(monitor.register_callback, tool_id, event, previous)
+                if len(cleanup_errors) == before_monitor_removal:
+                    remove(monitor.free_tool_id, tool_id)
+                    if monitor.get_tool(tool_id) is not None:
+                        cleanup_errors.append(
+                            AssertionError("original monitoring tool not freed")
+                        )
+                    else:
+                        print("PLANNING_WAKE_ORIGINAL_OBSERVER_RETURNED", flush=True)
+                else:
+                    cleanup_errors.append(
+                        AssertionError(
+                            "monitor removal unresolved; owned tool id retained"
+                        )
+                    )
+        cleanup_errors.extend(errors[cleanup_observer_start:])
+        for error in cleanup_errors:
+            traceback.print_exception(error)
+        if cleanup_errors:
+            if primary_error is not None:
+                primary_error.add_note(
+                    "Original native cleanup also failed; exact errors printed"
+                )
+            else:
+                raise cleanup_errors[0]
+
+
+def test_original_ordinary_wake_queued_before_planning_release(tmp_path):
+    _run(
+        tmp_path,
+        "planning-wake",
+        "native",
+        script=Path(__file__).with_name("workflow_coordinator_probe.py").read_text(),
+        timeout=60,
+    )
+
+
+def test_direct_planning_release_drives_ordinary_wake_without_coordinator(tmp_path):
+    _run(
+        tmp_path,
+        "planning-wake",
+        "direct",
+        script=Path(__file__).with_name("workflow_coordinator_probe.py").read_text(),
+        timeout=60,
+    )
+
+
+async def planning_release_integrity_journey(tmp_path, monkeypatch):
+    """Refuse a changed original slot source and retain an actual partial return."""
+    import asyncio
+    import dis
+    import sys
+
+    from tldw_chatbook.Chat.console_chat_controller import (
+        capture_run_admitted_workspace_roots,
+    )
+    from tldw_chatbook.Chat.console_workflow_preparation import (
+        _planning_release_source,
+        _PreparedWorkflowReply,
+        prepare_workflow_planning,
+    )
+
+    mode = sys.argv[2]
+    assert mode in {"source", "partial", "membership"}
+    rig = await build_workflow_rig(
+        tmp_path,
+        monkeypatch,
+        WorkflowProvider(),
+        public_coordinator=False,
+        native_fleet_consumers=True,
+    )
+    session = rig.store.sessions()[0]
+    store, wake = rig.store, rig.controller.fleet_wake
+    received_code = type(store).release_received_turn.__code__
+    token_code = type(wake).release_automatic_primary.__code__
+    slots_code = _PreparedWorkflowReply._release_planning_slots.__code__
+    notify_code = _PreparedWorkflowReply._notify_planning_release.__code__
+    sentinel = ValueError("original planning token release entry failed")
+    replacement_calls, notifications, received, attempted, errors = [], [], [], [], []
+    prepared = token = intake = scope = None
+    primary = None
+    membership = []
+
+    def retained():
+        release_binding = prepared._planning_release_binding
+        owner, claim = prepared.primary_owner, prepared.primary_claim
+        read, producer, retired, callback = prepared._planning_read_return
+        assert read.creator is rig.controller and read.source is prepared
+        assert (
+            read.task
+            is release_binding[3]
+            is prepared._planning_driver
+            is asyncio.current_task()
+        )
+        assert (
+            read.callback is callback
+            and read._producer is producer
+            and read.retired is retired
+        )
+        assert (
+            producer.done()
+            and not producer.cancelled()
+            and producer.exception() is None
+        )
+        assert retired.done() and not retired.cancelled() and retired.result() is None
+        assert (
+            prepared._planning_terminal_returned
+            and prepared._planning_physical_returned
+        )
+        assert owner.is_admitted and not owner._root_finished
+        assert rig.runtime._worktree_activity._claims[claim.id].custody is claim
+        assert prepared._source_scope is scope and scope.gen.gi_frame is not None
+        assert (
+            prepared in rig.runtime._workflow_preparations
+            and not prepared._planning_settled
+            and not prepared._closed
+        )
+        assert (
+            prepared._planning_intake is intake
+            and prepared._planning_token
+            is wake._automatic_primary_claims[session.id]
+            is token
+        )
+        assert prepared._planning_release_return is None
+
+    def replacement(*args):
+        replacement_calls.append(args)
+        raise AssertionError("replaced planning received release was called")
+
+    def observe(frame, event, value):
+        code = frame.f_code
+        if code not in (
+            received_code,
+            token_code,
+            notify_code,
+            _planning_release_source.__code__,
+        ):
+            return
+        inject = False
+        try:
+            local, caller = frame.f_locals, frame.f_back
+            if (
+                mode == "membership"
+                and code is _planning_release_source.__code__
+                and event == "call"
+                and local.get("prepared") is prepared
+                and prepared._planning_terminal_returned
+                and not membership
+            ):
+                release_binding = prepared._planning_release_binding
+                assert local["binding"] is release_binding
+                assert local["scope_live"] is local["slots_live"] is True
+                assert (
+                    caller.f_back is release_binding[5]
+                    and release_binding[5].f_code
+                    is _PreparedWorkflowReply.run_planning.__code__
+                )
+                assert (
+                    release_binding[13] is intake
+                    and release_binding[14] is token
+                    and release_binding[17] is scope
+                )
+                assert release_binding[6] is release_binding[7] is None
+                retained()
+                assert (
+                    store.received_turn_for_session(session.id) is intake
+                    and not intake.sealed
+                )
+                assert store.release_received_turn(intake) is True
+                assert (
+                    intake.sealed
+                    and store.received_turn_for_session(session.id) is None
+                )
+                membership.append((frame, release_binding))
+            elif (
+                code is notify_code
+                and event == "call"
+                and local.get("self") is prepared
+            ):
+                notifications.append(frame)
+            elif (
+                caller is not None
+                and caller.f_code is slots_code
+                and caller.f_locals.get("self") is prepared
+            ):
+                if (
+                    code is received_code
+                    and local.get("self") is store
+                    and local.get("claim") is intake
+                ):
+                    if event == "return" and dis.opname[
+                        code.co_code[frame.f_lasti]
+                    ] in {"RETURN_VALUE", "RETURN_CONST"}:
+                        received.append((value, caller.f_locals.get("_completion")))
+                elif (
+                    mode == "partial"
+                    and code is token_code
+                    and event == "call"
+                    and local.get("self") is wake
+                    and local.get("session_id") == session.id
+                    and local.get("token") is token
+                ):
+                    release_binding = prepared._planning_release_binding
+                    assert caller.f_locals["_completion"] is release_binding
+                    assert frame.f_back.f_back is release_binding[5]
+                    assert asyncio.current_task() is release_binding[3]
+                    assert (
+                        len(received) == 1
+                        and received[0][0] is True
+                        and received[0][1] is release_binding
+                    )
+                    assert (
+                        prepared._planning_intake is None
+                        and prepared._planning_token is token
+                    )
+                    assert store.received_turn_for_session(session.id) is not intake
+                    assert wake._automatic_primary_claims.get(session.id) is token
+                    assert (
+                        caller.f_locals["_configuration_return"][1] is scope
+                        and prepared._source_scope is None
+                    )
+                    assert (
+                        prepared not in rig.runtime._workflow_preparations
+                        and scope.gen.gi_frame is None
+                    )
+                    assert (
+                        prepared._closed
+                        and prepared._planning_settled
+                        and not prepared.primary_owner.is_admitted
+                    )
+                    assert (
+                        prepared.primary_claim.id
+                        not in rig.runtime._worktree_activity._claims
+                    )
+                    assert prepared._planning_release_return is None and not attempted
+                    attempted.append((frame, caller, release_binding))
+                    inject = True
+        except BaseException as error:  # noqa: BLE001 - observation errors do not change native behavior.
+            errors.append(error)
+        if inject:
+            # Single intentional fault at the native release entry; no replacement return.
+            raise sentinel
+
+    try:
+        assert rig.coordinator is None and not hasattr(
+            rig.runtime, "_workflow_coordinator"
+        )
+        request = rig.workflow.request
+        binding = capture_run_admitted_workspace_roots(
+            session=session, registry=rig.service.persistence.workspace_registry
+        )[0]
+        prepared = await prepare_workflow_planning(
+            rig.controller,
+            session_id=session.id,
+            binding=binding,
+            command_id="direct-planning-integrity",
+            objective=request.objective,
+            policy=request.policy,
+            _request=request,
+        )
+        token, intake, scope = (
+            prepared._planning_token,
+            prepared._planning_intake,
+            prepared._source_scope,
+        )
+        assert (
+            token is not None
+            and wake._automatic_primary_claims.get(session.id) is token
+        )
+        assert (
+            intake is not None and store.received_turn_for_session(session.id) is intake
+        )
+        assert scope is not None and prepared in rig.runtime._workflow_preparations
+        assert (
+            prepared.primary_owner is None and prepared._planning_release_return is None
+        )
+        assert sys.getprofile() is None
+        sys.setprofile(observe)
+        if mode == "source":
+            assert "release_received_turn" not in vars(store)
+            store.release_received_turn = replacement
+            with pytest.raises(
+                PermissionError, match="original planning slot receiver changed"
+            ):
+                await prepared.run_planning()
+            assert (
+                not replacement_calls
+                and not notifications
+                and not received
+                and not attempted
+            )
+            assert (
+                prepared.primary_owner is prepared.primary_claim is None
+                and not rig.provider.calls
+            )
+            assert prepared._planning_release_return is None and not prepared._closed
+            assert (
+                prepared._source_scope is scope
+                and prepared in rig.runtime._workflow_preparations
+            )
+            assert (
+                prepared._planning_token
+                is wake._automatic_primary_claims[session.id]
+                is token
+            )
+            assert (
+                prepared._planning_intake
+                is store.received_turn_for_session(session.id)
+                is intake
+            )
+            assert vars(store)["release_received_turn"] is replacement
+            del store.release_received_turn
+            # Only the actual unused close is now run; never retry planning on restored source.
+            await prepared.close()
+            assert (
+                len(received) == 1 and received[0][0] is True and received[0][1] is None
+            )
+            assert (
+                prepared._planning_intake
+                is prepared._planning_token
+                is prepared._source_scope
+                is None
+            )
+            assert prepared not in rig.runtime._workflow_preparations
+            assert wake._automatic_primary_claims.get(session.id) is not token
+            assert store.received_turn_for_session(session.id) is not intake
+            print(
+                "PLANNING_RELEASE_SOURCE_REFUSED_AND_UNUSED_CLOSE_RETURNED", flush=True
+            )
+        elif mode == "membership":
+            with pytest.raises(
+                PermissionError, match="^original planning received claim changed$"
+            ) as raised:
+                await prepared.run_planning()
+            assert not errors and len(membership) == 1
+            tb = raised.value.__traceback__
+            while tb.tb_next is not None:
+                tb = tb.tb_next
+            assert (
+                tb.tb_frame is membership[0][0]
+                and membership[0][1] is prepared._planning_release_binding
+            )
+            retained()
+            assert intake.sealed and store.received_turn_for_session(session.id) is None
+            assert not received and not attempted and not notifications
+            print("PLANNING_TERMINAL_ORIGINAL_RECEIVED_MEMBERSHIP_REFUSED", flush=True)
+        else:
+            with pytest.raises(ValueError) as raised:
+                await prepared.run_planning()
+            assert raised.value is sentinel and len(attempted) == 1
+            assert prepared._source_scope is prepared._planning_intake is None
+            assert (
+                prepared._planning_token
+                is wake._automatic_primary_claims[session.id]
+                is token
+            )
+            read, producer, retired, callback = prepared._planning_read_return
+            assert (
+                read.callback is callback
+                and read._producer is producer
+                and read.retired is retired
+            )
+            assert (
+                producer.done()
+                and not producer.cancelled()
+                and producer.exception() is None
+            )
+            assert (
+                retired.done() and not retired.cancelled() and retired.result() is None
+            )
+            drained = []
+            prepared.primary_owner.on_drained(drained.append)
+            assert drained == [True] and not prepared.primary_owner.is_admitted
+            assert (
+                prepared.primary_claim.id not in rig.runtime._worktree_activity._claims
+            )
+            print("PLANNING_PARTIAL_NATIVE_RECEIVED_RETURN_TOKEN_RETAINED", flush=True)
+        assert not errors and not notifications and not replacement_calls
+        assert prepared._planning_release_return is None
+        assert rig.coordinator is None and not hasattr(
+            rig.runtime, "_workflow_coordinator"
+        )
+    except BaseException as error:
+        primary = error
+        raise
+    finally:
+        if vars(store).get("release_received_turn") is replacement:
+            del store.release_received_turn
+        if sys.getprofile() is observe:
+            sys.setprofile(None)
+        try:
+            await rig.close()
+            if mode == "membership":
+                raise AssertionError(
+                    "retained planning root unexpectedly passed creator cleanup"
+                )
+            print(
+                "PLANNING_INTEGRITY_CREATORS_RETURNED",
+                mode,
+                "token_still_original",
+                token is not None
+                and wake._automatic_primary_claims.get(session.id) is token,
+                flush=True,
+            )
+        except BaseException as cleanup_error:
+            import traceback
+
+            if mode == "membership" and primary is None:
+                tb = cleanup_error.__traceback__
+                while tb.tb_next is not None:
+                    tb = tb.tb_next
+                if (
+                    type(cleanup_error) is not AssertionError
+                    or tb.tb_frame.f_code is not type(rig).close.__code__
+                ):
+                    raise
+                assert rig.runtime._disposed and tb.tb_frame.f_locals["self"] is rig
+                retained()
+                (execution,) = rig.runtime.execution_capacity.snapshot().executions
+                assert (
+                    execution.execution_id == prepared.primary_owner.execution_id
+                    and not execution.root_finished
+                )
+                assert (
+                    intake.sealed
+                    and store.received_turn_for_session(session.id) is None
+                )
+                traceback.print_exception(cleanup_error)
+                print(
+                    "PLANNING_MEMBERSHIP_RIG_CLOSE_REFUSED_RETAINED_ORIGINAL_ROOT_NO_CREATOR_RETURN",
+                    flush=True,
+                )
+            elif primary is None:
+                raise
+            else:
+                traceback.print_exception(cleanup_error)
+                primary.add_note("Original integrity cleanup failed separately")
+
+
+def _expect_retained_planning_child(args, kwargs, *markers):
+    """The exact original process succeeded, but its required creator did not return."""
+    with pytest.raises(AssertionError) as missing:
+        _run(*args, **kwargs)
+    tb = missing.value.__traceback__
+    while tb.tb_next is not None:
+        tb = tb.tb_next
+    assert tb.tb_frame.f_code is _run.__code__
+    original = tb.tb_frame.f_locals
+    assert original["result"].returncode == 0
+    rows = original["stdout"].splitlines()
+    assert "retired and reopened" not in original["stdout"]
+    assert all(rows.count(marker) == 1 for marker in markers)
+
+
+@pytest.mark.parametrize("mode", ["source", "partial", "membership"])
+def test_planning_release_refuses_changed_source_and_incomplete_slots(tmp_path, mode):
+    args = tmp_path, "planning-integrity", mode
+    kwargs = {
+        "script": Path(__file__).with_name("workflow_coordinator_probe.py").read_text(),
+        "timeout": 60,
+    }
+    if mode == "membership":
+        _expect_retained_planning_child(
+            args,
+            kwargs,
+            "PLANNING_TERMINAL_ORIGINAL_RECEIVED_MEMBERSHIP_REFUSED",
+            "PLANNING_MEMBERSHIP_RIG_CLOSE_REFUSED_RETAINED_ORIGINAL_ROOT_NO_CREATOR_RETURN",
+        )
+    else:
+        _run(*args, **kwargs)
+
+
+@pytest.mark.parametrize("mode", ["notify-error", "notify-cancel"])
+def test_original_planning_notification_error_after_return_preserves_disposition(
+    tmp_path, mode
+):
+    _run(
+        tmp_path,
+        "planning-wake",
+        mode,
+        script=Path(__file__).with_name("workflow_coordinator_probe.py").read_text(),
+        timeout=60,
+    )
+
+
+def test_planning_metadata_unknown_keeps_original_run_and_skips_notification(tmp_path):
+    _expect_retained_planning_child(
+        (tmp_path, "planning-wake", "metadata-unknown"),
+        {
+            "script": Path(__file__)
+            .with_name("workflow_coordinator_probe.py")
+            .read_text(),
+            "timeout": 60,
+        },
+        "PLANNING_METADATA_UNKNOWN_F_RETURNED_G_RETAINED_NO_NOTIFY",
+        "PLANNING_METADATA_REAL_CLOSE_REFUSED_NO_CREATOR_RETURN",
+        "PLANNING_WAKE_ORIGINAL_OBSERVER_RETURNED",
+    )
+
+
+@pytest.mark.parametrize("mode", ["shutdown-fence", "shutdown-before-fence"])
+def test_planning_permanent_shutdown_fences_original_ordinary_notification(
+    tmp_path, mode
+):
+    _run(
+        tmp_path,
+        "planning-wake",
+        mode,
+        script=Path(__file__).with_name("workflow_coordinator_probe.py").read_text(),
+        timeout=60,
+    )

@@ -599,6 +599,16 @@ their original contracts.
 After exact execution return and release of its original intake and primary
 token, G notifies the existing pending-wake receiver. Notification failure stays
 separate from physical-return failure and cannot restore released custody.
+
+Planning also retries pending fleet results after its worker, root, worktree
+claim, configuration, received turn and primary token have all returned. A direct
+`_PreparedWorkflowReply.run_planning` calls the existing wake receiver itself.
+For a coordinated plan, `ConsoleWorkflowCoordinator._plan` first receives that
+same return, completes final metadata publication and removes the original run.
+An uncertain return leaves the run in recovery without notifying. A notification
+error after release stays visible; if the caller was already cancelled, the
+original cancellation carries the notification error as its cause.
+
 Runtime disposal permanently fences the original native wake receiver before
 closing G, including callbacks already posted on the host loop; fence failures
 and caller cancellation retain their separate error and cleanup semantics.
