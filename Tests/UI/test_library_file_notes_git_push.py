@@ -2406,6 +2406,76 @@ async def test_workspace_rehydrate_keeps_observer_failure_attention(
 
 
 @pytest.mark.asyncio
+async def test_workspace_rehydrate_after_failure_back_observes_the_settlement(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """TASK-38700 review: Back, then a rehydrate, must attach a new observer.
+
+    The failed observer is done. Putting the same unsettled operation back to
+    checking with nobody observing it meant its settlement never showed.
+    """
+    owner, binding, replica, service, workspace = _push_workspace_fixture(tmp_path)
+    _publish_candidate_on_owner(
+        owner,
+        binding,
+        service.repository,
+        parent_oid="a" * 40,
+        candidate_oid="d" * 40,
+    )
+    release = asyncio.Event()
+    result = _push_destination_policy_result("blocked")
+    operation = service.retain_push_operation(binding, "local_proof", result, release)
+    wait = RetainedPushOperation.wait
+    failed = False
+
+    async def fails_once(current: RetainedPushOperation):
+        nonlocal failed
+        if current is operation and not failed:
+            failed = True
+            raise RuntimeError("observer could not observe")
+        return await wait(current)
+
+    monkeypatch.setattr(RetainedPushOperation, "wait", fails_once)
+
+    async with _WorkspaceHarness(workspace).run_test() as pilot:
+        await _until(
+            pilot,
+            lambda: workspace.initialized,
+            "workspace initialization did not settle",
+        )
+        workspace._navigator_mode = "git"
+        workspace._sync_navigator_mode()
+        workspace._rehydrate_git_presentation()
+        observer = workspace._push_observer_task
+        assert observer is not None
+        await observer
+        _assert_attention_kept(workspace, "Push check needs attention")
+
+        workspace._git_panel_widget._post_push_result_intent("back_to_session")
+        await _until(
+            pilot,
+            lambda: workspace._git_panel_widget.push_phase == "list",
+            "Back did not return to the push list",
+        )
+        await _poll_rehydrate(workspace, owner, binding, monkeypatch)
+        assert not operation.settled
+        release.set()
+        await _until(
+            pilot,
+            lambda: workspace._push_result is result,
+            "the operation settled but its result never showed",
+        )
+
+        assert workspace._git_panel_widget.push_phase == "result"
+        assert workspace._push_phase == "needs_attention"
+
+    await workspace.shutdown()
+    owner.shutdown()
+    replica.close()
+
+
+@pytest.mark.asyncio
 async def test_workspace_push_observer_cancellation_publishes_nothing(
     tmp_path: Path,
 ) -> None:

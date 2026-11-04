@@ -4905,13 +4905,19 @@ class LibraryFileNotesWorkspace(Vertical):
                 and not operation.settled
                 and not self._push_attention_shown()
             ):
-                self._push_key = operation_key
-                self._push_phase = (
-                    "pushing"
-                    if operation.kind == "push" and operation.child_started
-                    else "checking"
-                )
-                self._push_view_phase = self._push_view_for_operation(operation)
+                observer = self._push_observer_task
+                if observer is None or observer.done():
+                    # TASK-38700 review: after Back from a failed observer,
+                    # nothing would ever show this operation's settlement.
+                    self._start_push_observer(operation, operation_key)
+                else:
+                    self._push_key = operation_key
+                    self._push_phase = (
+                        "pushing"
+                        if operation.kind == "push" and operation.child_started
+                        else "checking"
+                    )
+                    self._push_view_phase = self._push_view_for_operation(operation)
             refreshed = self._refresh_push_recovery_readiness(snapshot)
             if (
                 not refreshed

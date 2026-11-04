@@ -5,7 +5,7 @@ status: Done
 assignee:
 - '@claude'
 created_date: 2026-11-03 11:40
-updated_date: 2026-11-04 01:35
+updated_date: 2026-11-04 03:24
 labels:
 - follow-up
 - library
@@ -76,3 +76,7 @@ Depends on TASK-38648 (in PR #3367).
 **Docs.** None. `Docs/User_Guide/library/file-notes.md` already says the header reports **Push needs attention** "as appropriate", and this makes the code match it.
 
 **Files.** `tldw_chatbook/Widgets/Library/library_file_notes_workspace.py`, `Tests/UI/test_library_file_notes_git_push.py`, `Tests/Architecture/test_module_size_ratchet.py` (9615 -> 9640, dated).
+
+**Review fold (2026-11-04).** Pressing Back on "Push check needs attention" ended the mark. The next rehydrate then put the same unsettled operation back to checking, with no observer alive, so its settlement never showed. In that branch, when `_push_observer_task` is None or done, the rehydrate now calls `_start_push_observer(operation, operation_key)`; a live observer keeps the old reset.
+- New test `test_workspace_rehydrate_after_failure_back_observes_the_settlement` (the observer fails once, then Back, a poll rehydrate, and the operation settles). Red before the fix: "the operation settled but its result never showed". Green after.
+- `test_workspace_rehydrate_hidden_settlement_without_duplicate_work[size0|size1]` fails with identical output with and without this change (a focus/Session Git open step that already fails on base).
