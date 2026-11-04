@@ -18,8 +18,10 @@ class HeldPreparation:
         self.thread = None
         self.current = True
         self.success = True
+        self.calls = 0
 
     def __call__(self):
+        self.calls += 1
         self.thread = threading.get_ident()
         self.entered.set()
         assert self.release.wait(5)
@@ -236,6 +238,64 @@ async def test_tokenizer_slots_stay_bounded(monkeypatch):
             projection.tokenizer_ready(f"model-{index}", "provider")
         assert [model for model, _provider in projection._tokenizers] == [
             f"model-{index}" for index in range(3, spend.TOKENIZER_SLOTS + 3)
+        ]
+    finally:
+        for request in requests:
+            request.release.set()
+        await asyncio.gather(*tasks, return_exceptions=True)
+
+
+@pytest.mark.asyncio
+async def test_slot_nobody_asks_for_is_not_prepared_again(monkeypatch):
+    """Re-review 2026-11-03: a failed slot stayed in the dict after its screen
+    moved to another model, so every refresh (and ``warm()`` on settings open)
+    re-ran its preparation serially before the display published. A probe saw
+    A's request run 5 times across 4 refreshes while only B was asked."""
+    projection, requests, _owner, _identity, tasks, _published = setup_projection(
+        monkeypatch
+    )
+    projection.max_age = 0.0  # every run refreshes, as a long-lived screen would
+    try:
+        assert not projection.tokenizer_ready("A", "provider")
+        first = requests[0]
+        first.success = False
+        first.release.set()
+        await asyncio.gather(*tasks)
+        assert first.calls == 1 and prepared(projection) == {("A", "provider"): False}
+        for _ in range(4):
+            projection.tokenizer_ready("B", "provider")
+            for request in requests:
+                request.release.set()
+            await asyncio.gather(*tasks)
+            await projection.warm()
+            await asyncio.gather(*tasks)
+        assert projection.tokenizer_ready("B", "provider")
+        assert len(tasks) > 4, "the probe needs repeated refreshes"
+        assert first.calls == 1
+    finally:
+        for request in requests:
+            request.release.set()
+        await asyncio.gather(*tasks, return_exceptions=True)
+
+
+@pytest.mark.asyncio
+async def test_tokenizer_slots_evict_the_least_recently_asked(monkeypatch):
+    """Re-review 2026-11-03: re-assigning an existing key kept its insertion
+    position, so a hit, or a just-recaptured slot, was evicted next."""
+    projection, requests, _owner, _identity, tasks, _published = setup_projection(
+        monkeypatch
+    )
+    size = spend.TOKENIZER_SLOTS
+    try:
+        for index in range(size):
+            projection.tokenizer_ready(f"model-{index}", "provider")
+        projection.tokenizer_ready("model-0", "provider")  # a hit
+        projection.tokenizer_ready(f"model-{size}", "provider")
+        requests[2].current = False
+        projection.tokenizer_ready("model-2", "provider")  # a recapture
+        projection.tokenizer_ready(f"model-{size + 1}", "provider")
+        assert [model for model, _provider in projection._tokenizers] == [
+            f"model-{index}" for index in (*range(4, size), 0, size, 2, size + 1)
         ]
     finally:
         for request in requests:

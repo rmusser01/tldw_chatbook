@@ -209,8 +209,8 @@ RETRY_MAX_DELAY = 5.0
 #: provider config key). The cost chip asks for the selected model and the
 #: context estimates for the session's; with a single slot each ask recaptured
 #: the other's request, and every recapture refreshed and synced again.
-# ponytail: oldest-first eviction; a sync asking for more pairs than this
-# would recapture again, so raise it if a surface ever shows more models.
+# ponytail: least-recently-asked eviction; a sync asking for more pairs than
+# this would recapture again, so raise it if a surface ever shows more models.
 TOKENIZER_SLOTS = 8
 
 
@@ -221,6 +221,11 @@ class _TokenizerSlot:
     request: Callable[[], bool]
     prepared: bool = False
     retry_at: float = 0.0
+    #: Asked for since the last refresh began. Only asked slots make a
+    #: refresh due or are read by one, so a slot left behind when its screen
+    #: moved to another model stops costing every refresh (re-review
+    #: 2026-11-03).
+    asked: bool = True
 
 
 class ConsoleReadinessConfigProjection:
@@ -422,7 +427,7 @@ class ConsoleReadinessConfigProjection:
             life *= REFRESH_AHEAD_SHARE
         now = time.monotonic()
         tokenizer_due = any(
-            not slot.prepared and now >= slot.retry_at
+            slot.asked and not slot.prepared and now >= slot.retry_at
             for slot in self._tokenizers.values()
         )
         if (
@@ -467,16 +472,18 @@ class ConsoleReadinessConfigProjection:
         # for different models; one slot per pair, or each recapture
         # re-refreshes (``TOKENIZER_SLOTS``).
         key = (model, _tldw_config.normalize_provider_config_key(provider))
-        slot = self._tokenizers.get(key)
+        # Pop and re-insert so the dict's order is least recently asked first.
+        slot = self._tokenizers.pop(key, None)
         if slot is None or not _tokenizer_display.preparation_current(slot.request):
             request = _tokenizer_display.capture_tokenizer_preparation(model, provider)
             # Unqualified/custom backends retain their original synchronous route.
             if request is None:
-                self._tokenizers.pop(key, None)
                 return True
-            slot = self._tokenizers[key] = _TokenizerSlot(request)
-            while len(self._tokenizers) > TOKENIZER_SLOTS:
-                del self._tokenizers[next(iter(self._tokenizers))]
+            slot = _TokenizerSlot(request)
+        slot.asked = True
+        self._tokenizers[key] = slot
+        while len(self._tokenizers) > TOKENIZER_SLOTS:
+            del self._tokenizers[next(iter(self._tokenizers))]
         self.run(lambda: None)
         return (
             slot.prepared
@@ -521,8 +528,11 @@ class ConsoleReadinessConfigProjection:
         retry = True
         try:
             reader = self.read_current
-            # Only slots captured before this read may be marked by it.
-            tokenizers = list(self._tokenizers.items())
+            # Only slots asked for before this read may be marked by it; an
+            # ask that arrives while it runs is kept for the next refresh.
+            tokenizers = [item for item in self._tokenizers.items() if item[1].asked]
+            for _slot_key, slot in tokenizers:
+                slot.asked = False
             tokenizers_prepared = set()
             store = getattr(self.screen, "_console_chat_store", None)
             settings_reader = getattr(store, "session_settings", None)
