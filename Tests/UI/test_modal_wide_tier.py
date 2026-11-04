@@ -21,9 +21,11 @@ model popover in PR #2672):
 from __future__ import annotations
 
 import ast
+import json
 import re
 import tempfile
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -35,6 +37,12 @@ from Tests.UI.modal_wide_tier_registry import (
     WIDE_TIER_CAPS,
     WIDE_TIER_WIDTH_PERCENT,
     WIDE_VIEWPORT_COLUMNS,
+)
+from tldw_chatbook.Agents.goal_models import (
+    GoalBindingRef,
+    GoalProviderRef,
+    GoalRequest,
+    GoalToolScope,
 )
 from tldw_chatbook.Library.library_prompts_state import (
     begin_prompt_collection_catalog,
@@ -51,12 +59,30 @@ from tldw_chatbook.UI.Library_Modules.prompt_collection_manager_modal import (
 from tldw_chatbook.UI.Library_Modules.skills_trust_modals import (
     SkillRecoveryReviewModal,
 )
+from tldw_chatbook.UI.MCP_Modules.mcp_recovery_review import MCPRecoveryReviewDialog
+from tldw_chatbook.UI.Screens.artifacts_dreams_goals_modal import DreamsGoalsModal
+from tldw_chatbook.UI.Screens.artifacts_dreams_modal import DreamsStoryModal
+from tldw_chatbook.UI.Screens.settings_screen import GuardianRuleEditModal
+from tldw_chatbook.UI.Workflows_Modules.run_controls import (
+    WorkflowRunConfirmation,
+    WorkflowRunSetup,
+)
+from tldw_chatbook.Widgets.Console.console_goal_setup_modal import (
+    ConsoleGoalSetupModal,
+)
+from tldw_chatbook.Widgets.Console.console_goal_status import (
+    ConsoleGoalHistory,
+    ConsoleGoalStatus,
+)
 from tldw_chatbook.Widgets.Console.console_prompts_modal import ConsolePromptsModal
 from tldw_chatbook.Widgets.Console.console_reaction_picker_modal import (
     ConsoleReactionPickerModal,
 )
 from tldw_chatbook.Widgets.Console.console_system_prompt_modal import (
     ConsoleSystemPromptModal,
+)
+from tldw_chatbook.Widgets.Library.library_file_notes_workspace import (
+    FileNotesHistoryDialog,
 )
 from tldw_chatbook.Widgets.Library.notes_recovery_dialog import NotesRecoveryDialog
 from tldw_chatbook.Widgets.Persona_Widgets.buddy_management_modal import (
@@ -69,6 +95,8 @@ from tldw_chatbook.Widgets.Persona_Widgets.portrait_region_editor import (
     PortraitRegionEditor,
 )
 from tldw_chatbook.Widgets.template_selector import TemplateSelectorDialog
+from tldw_chatbook.Workflows.models import Revision
+from tldw_chatbook.Workflows.session import ModelSelection
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 CSS_ROOT = REPO_ROOT / "tldw_chatbook/css"
@@ -487,6 +515,101 @@ def _build_portrait_regions_modal(_app: object) -> PortraitRegionEditor:
     )
 
 
+# TASK-36522: the ten modals added after wave 2. Each is built idle: no
+# database, goal store, notes service or provider behind it (the goal view's
+# one read fails closed), because geometry needs none of them.
+def _build_goal_setup_modal(_app: object) -> ConsoleGoalSetupModal:
+    async def start(_request: object, _launch_id: str) -> object:
+        raise AssertionError("the geometry harness never starts a goal")
+
+    request = GoalRequest(
+        objective="Fixture objective",
+        criteria="Fixture criteria",
+        provider=GoalProviderRef(
+            provider="fixture",
+            model="fixture",
+            config_ref="fixture",
+            authority_ref="fixture",
+            endpoint_ref="fixture",
+        ),
+        binding=GoalBindingRef(
+            workspace_id="fixture", binding_id="fixture", locator="/tmp", access="rw"
+        ),
+        tool_scope=GoalToolScope(),
+    )
+    return ConsoleGoalSetupModal(request, start=start)
+
+
+def _build_goal_status_modal(app: object) -> ConsoleGoalStatus:
+    async def no_goal_store(*_args: object) -> object:
+        raise LookupError("no goal store in the geometry harness")
+
+    coordinator = SimpleNamespace(
+        subscribe=lambda _changed: lambda: None,
+        service=SimpleNamespace(get=None, call=no_goal_store),
+    )
+    return ConsoleGoalStatus(coordinator, "fixture", app_instance=app)
+
+
+def _build_goal_history_modal(_app: object) -> ConsoleGoalHistory:
+    return ConsoleGoalHistory(
+        (), open_goal=lambda *_args: None, new_goal=lambda *_args: None
+    )
+
+
+def _build_dreams_goals_modal(_app: object) -> DreamsGoalsModal:
+    return DreamsGoalsModal(dreams_db_getter=lambda: None, on_changed=lambda: None)
+
+
+def _build_dreams_story_modal(_app: object) -> DreamsStoryModal:
+    # A synthetic failed-cycle row: the Close-only view, which reads no DB.
+    return DreamsStoryModal(
+        {"synthetic": True},
+        dreams_db_getter=lambda: None,
+        capture_backend_getter=lambda: None,
+        on_changed=lambda: None,
+    )
+
+
+def _build_guardian_rule_modal(_app: object) -> GuardianRuleEditModal:
+    return GuardianRuleEditModal(db_getter=lambda: None, on_changed=lambda: None)
+
+
+def _build_mcp_recovery_modal(_app: object) -> MCPRecoveryReviewDialog:
+    return MCPRecoveryReviewDialog(
+        title="Review restored MCP roots",
+        message="Workspace: fixture\n/tmp/fixture-root",
+        confirm_label="Use fresh MCP defaults",
+    )
+
+
+def _build_file_notes_history_modal(_app: object) -> FileNotesHistoryDialog:
+    return FileNotesHistoryDialog("note.md", (), "note-restored.md", None, 0)  # type: ignore[arg-type]
+
+
+_WORKFLOW_REVISION = Revision(
+    "fixture-workflow",
+    "fixture-revision",
+    (),
+    json.dumps({"metadata": {"tldw_workflow": {}}, "inputs": {}}),
+)
+_WORKFLOW_MODEL = ModelSelection("llama_cpp", "http://127.0.0.1:9", "fixture")
+
+
+def _build_workflow_run_setup_modal(_app: object) -> WorkflowRunSetup:
+    return WorkflowRunSetup(_WORKFLOW_REVISION, (_WORKFLOW_MODEL,), "fixture", ())
+
+
+def _build_workflow_run_confirmation_modal(_app: object) -> WorkflowRunConfirmation:
+    binding = SimpleNamespace(
+        source=Path("/tmp/fixture.txt"),
+        model=_WORKFLOW_MODEL,
+        dispatch_url="http://127.0.0.1:9/v1/chat/completions",
+        notes=SimpleNamespace(db_path="/tmp/fixture.db", user_id="fixture"),
+    )
+    return WorkflowRunConfirmation(_WORKFLOW_REVISION, binding, "Fixture note")  # type: ignore[arg-type]
+
+
 #: One representative per cap tier: anchor -> (cap, base width rule).
 #: Base geometry is pinned here so the tier provably leaves it untouched:
 #: prompts ``90% / 104``, system prompt ``84 / 95%``, reaction ``76 / 100%``.
@@ -501,6 +624,12 @@ def _build_portrait_regions_modal(_app: object) -> PortraitRegionEditor:
 #: ``TemplateSelectorDialog .template-selector-dialog`` (base rule shipped
 #: with wave 2) ``95% / 76``, 120.
 #: TASK-38641: the two portrait dialogs, base ``120 / 100%``, cap 170.
+#: TASK-36522: the ten modals added after wave 2. Goal setup and history
+#: ``76 / 100%``, 120; goal status ``90 / 100%``, 150; Dreams goals, Dreams
+#: story and the Guardian rule editor ``76 / 96%``, 120; MCP recovery review
+#: ``80 / 96%``, 120; File Notes history ``90 / 95%``, 150; both workflow run
+#: modals ``90% / 100``, 170. The two workflow modals share one anchor, so the
+#: setup modal is keyed by a type-scoped query of it.
 SPOT_REPRESENTATIVES: dict[str, tuple[int, tuple[int, int | None]]] = {
     WIDE_TIER_CAPS[170]: (170, (104, 90)),  # base max-width, base percent
     WIDE_TIER_CAPS[150]: (150, (84, 95)),
@@ -514,6 +643,16 @@ SPOT_REPRESENTATIVES: dict[str, tuple[int, tuple[int, int | None]]] = {
     "TemplateSelectorDialog .template-selector-dialog": (120, (76, 95)),
     ".portrait-pairs-dialog": (170, (120, 100)),
     ".portrait-regions-dialog": (170, (120, 100)),
+    "ConsoleGoalSetupModal > .goal-dialog-panel": (120, (76, 100)),
+    "ConsoleGoalHistory > .goal-dialog-panel": (120, (76, 100)),
+    "ConsoleGoalStatus > .goal-dialog-panel": (150, (90, 100)),
+    "#dgm-dialog": (120, (76, 96)),
+    "#dsm-dialog": (120, (76, 96)),
+    "#grm-dialog": (120, (76, 96)),
+    "MCPRecoveryReviewDialog #confirmation-dialog": (120, (80, 96)),
+    "#file-notes-history-dialog": (150, (90, 95)),
+    ".workflow-run-dialog": (170, (100, 90)),
+    "WorkflowRunSetup .workflow-run-dialog": (170, (100, 90)),
 }
 SPOT_BUILDERS = {
     WIDE_TIER_CAPS[170]: _build_prompts_modal,
@@ -528,12 +667,25 @@ SPOT_BUILDERS = {
     "TemplateSelectorDialog .template-selector-dialog": _build_template_selector_modal,
     ".portrait-pairs-dialog": _build_portrait_pairs_modal,
     ".portrait-regions-dialog": _build_portrait_regions_modal,
+    "ConsoleGoalSetupModal > .goal-dialog-panel": _build_goal_setup_modal,
+    "ConsoleGoalHistory > .goal-dialog-panel": _build_goal_history_modal,
+    "ConsoleGoalStatus > .goal-dialog-panel": _build_goal_status_modal,
+    "#dgm-dialog": _build_dreams_goals_modal,
+    "#dsm-dialog": _build_dreams_story_modal,
+    "#grm-dialog": _build_guardian_rule_modal,
+    "MCPRecoveryReviewDialog #confirmation-dialog": _build_mcp_recovery_modal,
+    "#file-notes-history-dialog": _build_file_notes_history_modal,
+    ".workflow-run-dialog": _build_workflow_run_confirmation_modal,
+    "WorkflowRunSetup .workflow-run-dialog": _build_workflow_run_setup_modal,
 }
 
-#: TASK-38641: the portrait dialogs are also measured at the full-screen sizes
-#: the app runs at, and one column under the breakpoint, where their 120-column
-#: base rule (not the viewport) sets the width.
-PORTRAIT_SPOT_SIZES = ((211, 44), (235, 52), (149, 44))
+#: TASK-38641 / TASK-36522: every spot entry from the portrait dialogs on is
+#: also measured at the full-screen sizes the app runs at, and one column
+#: under the breakpoint, where its base rule (not the tier) sets the width.
+FULL_SCREEN_SPOT_ANCHORS = tuple(SPOT_REPRESENTATIVES)[
+    tuple(SPOT_REPRESENTATIVES).index(".portrait-pairs-dialog") :
+]
+FULL_SCREEN_SPOT_SIZES = ((211, 44), (235, 52), (149, 44))
 
 
 def _expected_base_width(
@@ -551,8 +703,8 @@ def _expected_base_width(
         *[(anchor, (120, 40)) for anchor in SPOT_REPRESENTATIVES],
         *[
             (anchor, size)
-            for anchor in (".portrait-pairs-dialog", ".portrait-regions-dialog")
-            for size in PORTRAIT_SPOT_SIZES
+            for anchor in FULL_SCREEN_SPOT_ANCHORS
+            for size in FULL_SCREEN_SPOT_SIZES
         ],
     ),
     ids=lambda value: value[1:] if isinstance(value, str) else f"{value[0]}x{value[1]}",
