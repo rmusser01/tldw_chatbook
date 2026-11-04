@@ -934,7 +934,9 @@ _BUDGETS: dict[str, int] = {
     # waiver: each workspace-reachable entry point and call_after_refresh
     # target opens with the two-line `_going_away()` guard: 4207 -> 4253.
     # Round 4, same waiver: each guard records its phase first: 4253 -> 4259.
-    "tldw_chatbook/Widgets/Library/library_file_notes_git_panel.py": 4259,
+    # TASK-38710 review fold, 2026-11-04 (same waiver): 4259 -> 4265 (+6).
+    # One-row Session Git buttons truncate instead of wrapping at width 0.
+    "tldw_chatbook/Widgets/Library/library_file_notes_git_panel.py": 4265,
     "tldw_chatbook/UI/MCP_Modules/mcp_inspector.py": 4174,
     "tldw_chatbook/Dreams/track_service.py": 4061,
     "tldw_chatbook/DB/private_sqlite.py": 4030,

@@ -2524,6 +2524,79 @@ async def test_workspace_push_observer_cancellation_publishes_nothing(
     replica.close()
 
 
+@pytest.mark.parametrize("height", (24, 30, 44))
+@pytest.mark.parametrize("view", ("list", "result"))
+@pytest.mark.asyncio
+async def test_session_git_views_lay_out_at_every_width_40_to_61(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    view: str,
+    height: int,
+) -> None:
+    """TASK-38710: Session Git's one-row buttons cannot raise at any width.
+
+    Open file -> Manage -> Review session changes -> Back to the navigator,
+    then sweep 61 to 40 and back. The 1fr button columns measured a label at
+    width 0 (``ValueError: range() arg 3 must not be zero``) at 47-49 in the
+    list ("Refresh") and 51-53 in the result ("Back to session"), and the app
+    exited.
+    """
+    owner, binding, replica, service, workspace = _push_workspace_fixture(tmp_path)
+    _publish_candidate_on_owner(
+        owner,
+        binding,
+        service.repository,
+        parent_oid="a" * 40,
+        candidate_oid="d" * 40,
+    )
+
+    def reject_review(current_binding: SessionBinding) -> None:
+        raise GitMutationAdmissionError("mutation_active", "review refused")
+
+    monkeypatch.setattr(service, "start_push_review", reject_review)
+
+    async with _WorkspaceHarness(workspace).run_test(size=(120, height)) as pilot:
+        await _until(
+            pilot,
+            lambda: workspace.initialized,
+            "workspace initialization did not settle",
+        )
+        assert await workspace.open_path("two.md")
+        workspace.query_one("#file-notes-manage", Button).press()
+        await pilot.pause()
+        workspace.query_one("#file-notes-session-changes", Button).press()
+        review = workspace.query_one("#file-notes-git-push-review", Button)
+        await _until(pilot, lambda: review.display, "push availability did not render")
+        if view == "result":
+            review.press()
+            await _until(
+                pilot,
+                lambda: workspace._git_panel_widget.push_phase == "result",
+                "the admission failure did not show its result",
+            )
+        await pilot.resize_terminal(61, height)
+        await pilot.pause()
+        back = workspace.query_one("#file-notes-back", Button)
+        await _until(pilot, lambda: back.display, "the narrow editor had no Back")
+        back.press()
+        await _until(
+            pilot,
+            lambda: workspace._narrow_view == "navigator",
+            "Back did not return to the navigator",
+        )
+        assert workspace._navigator_mode == "git"
+        for width in (*range(61, 39, -1), *range(40, 62)):
+            await pilot.resize_terminal(width, height)
+            await pilot.pause()
+            await pilot.pause()
+            assert pilot.app._exception is None, (width, pilot.app._exception)
+        assert workspace._git_panel_widget.push_phase == view
+
+    await workspace.shutdown()
+    owner.shutdown()
+    replica.close()
+
+
 @pytest.mark.asyncio
 async def test_workspace_push_review_admission_failure_has_safe_back(
     tmp_path: Path,

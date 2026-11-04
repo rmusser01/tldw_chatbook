@@ -5,7 +5,7 @@ status: Done
 assignee:
 - '@claude'
 created_date: 2026-11-04 00:43
-updated_date: 2026-11-04 03:20
+updated_date: 2026-11-04 03:39
 labels:
 - library
 - file-notes
@@ -30,6 +30,7 @@ Textual reports an exception raised during layout as an app error, and the app e
 - [x] #1 At 20 rows, no layout pass raises at any width from 40 to 235 columns (every column from 40 to 61, then a sample that includes the 79/80 narrow boundary and 235), in each folder-row state: linked, offline, offline with a warning, and pairing pending; both with no file open and with a file open in Manage
 - [x] #2 With a file open in Manage, "More file actions" stays reachable at every swept width: shown, enabled, in the focus chain, focusable, on screen once focused, with its label painted
 - [x] #3 A regression test sweeps those widths and states and is red on the base build
+- [x] #4 No File Notes view, Session Git included, raises at any width 40-235 or height 12-52
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -66,3 +67,11 @@ Textual reports an exception raised during layout as an app error, and the app e
 - Forcing that sequence in `test_file_notes_root_row_refits_when_its_deferred_fit_beats_layout` exposed a second, pre-existing bug. "Change…", written over "Choose folder…", kept the old 18-cell box (`Button.label` does not re-lay out; lessons-textual TASK-34000.22), so the relinked status was 2 cells ("..").
 - `_show_root_row_button` now lays out a relabelled button and its row, and both "Choose folder…"/"Change…" writes go through it.
 - **Red evidence.** With only the old `on_resize` order restored (label fix kept), the relink step was red in both params, 2 of 2 runs. Before the label fix, the new order was red in 4 of 4 runs (the status stuck at 2 cells). With both fixes: 4 of 4 runs green, and 70 root/folder/wait tests in the workspace and riders files pass.
+
+**Review fold 4 (2026-11-04), AC #4.** The same width-0 crash still ended the app from Session Git. The path is: open a file, then Manage, then Review session changes, then Back to the navigator at a narrow width.
+- The shape was the same as the toolbar's. `LibraryFileNotesGitPanel Button` has `min-width: 0` and `padding: 0 1`, sits in `-stack-actions` `1fr` columns and the `1fr` footer grids, and inherits Button's `line-pad: 1`. That rule now adds `text-wrap: nowrap; text-overflow: ellipsis`.
+- The push-auth dialog's `#file-notes-push-auth-actions Button` cannot reach 0 in range, so it was left alone. A probe over widths 40-235 and heights 12-52 found its smallest button content width was 8.
+- New `test_session_git_views_lay_out_at_every_width_40_to_61[list|result × 24|30|44]` (in `Tests/UI/test_library_file_notes_git_push.py`, next to its fixtures) sweeps 61 down to 40 and back up.
+  - Red on the base CSS in all 6 cases: list at 47-49 ("Refresh"), result at 51-53 ("Back to session").
+  - Green: 6 passed.
+- An uncommitted probe also passed (16 passed): Session Git list/result at heights 12/16/20/52 over widths 40-81 and 90-235, and the four folder-row states at heights 12 and 52 over widths 40-235, in both views. With the committed sweeps (height 20, and 24/30/44) and the earlier height probe, that covers AC #4.
