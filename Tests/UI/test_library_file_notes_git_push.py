@@ -1343,8 +1343,15 @@ async def test_push_focus_repair_and_buffered_enter_cannot_cross_operation() -> 
         await pilot.press("enter")
         await pilot.pause()
 
+        # The safety property, not an event order: Enter may reach Back, but
+        # it never pushes, and nothing acts for the stale operation 61.
+        assert not [
+            message
+            for message in app.messages
+            if getattr(message, "action", None) == "push_reviewed_commit"
+            or getattr(message, "operation_id", None) == 61
+        ], app.messages
         assert panel.query_one("#file-notes-git-push-back", Button).has_focus
-        assert not app.messages
 
 
 @pytest.mark.asyncio
