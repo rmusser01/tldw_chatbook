@@ -1378,6 +1378,10 @@ class LibraryFileNotesWorkspace(Vertical):
         display: none;
     }
 
+    /* TASK-38710: one row, so never wrap. A stacked toolbar's grid measures
+       a label at its column width minus padding and Button's line-pad, and
+       a 4-cell column made that 0: Rich's fold raised and the app exited.
+       Truncation is defined at every width. */
     .file-notes-toolbar Button,
     #file-notes-back,
     #file-notes-session-changes {
@@ -1388,6 +1392,8 @@ class LibraryFileNotesWorkspace(Vertical):
         padding: 0 1;
         border: none;
         background: transparent;
+        text-wrap: nowrap;
+        text-overflow: ellipsis;
     }
 
     #file-notes-session-changes {

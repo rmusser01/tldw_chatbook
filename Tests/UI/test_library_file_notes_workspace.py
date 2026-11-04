@@ -3452,6 +3452,99 @@ async def test_file_notes_root_row_keeps_state_word_beside_pairing_review_at_40_
     replica.close()
 
 
+# TASK-38710: every column from 40 to 61 (the crash sat at 48 and 50), then
+# the narrow/wide boundary and a sample up to a full-screen MacBook.
+_ROW_STATE_SWEEP_WIDTHS = (
+    *range(40, 62),
+    64,
+    70,
+    76,
+    79,
+    80,
+    81,
+    90,
+    100,
+    120,
+    150,
+    170,
+    211,
+    235,
+)
+
+
+@pytest.mark.parametrize(
+    ("result", "pairing"),
+    (
+        (ReconcileResult(status="ok"), False),
+        (ReconcileResult(status="offline", offline=True), False),
+        (
+            ReconcileResult(
+                status="offline",
+                offline=True,
+                replica_warning="Recovery unavailable: replica locked",
+            ),
+            False,
+        ),
+        (ReconcileResult(status="ok", replica_warning=ACTIVATION_WARNING), True),
+    ),
+    ids=("linked", "offline", "offline-warning", "pairing-pending"),
+)
+@pytest.mark.asyncio
+async def test_file_notes_folder_row_states_lay_out_at_every_width_40_to_235(
+    tmp_path: Path,
+    result: ReconcileResult,
+    pairing: bool,
+) -> None:
+    """TASK-38710: no folder-row state can make a layout pass raise.
+
+    At 50x20 Offline, the narrow navigator left the work pane 8 cells, two
+    nested scrollbars left the stacked toolbar a 4-cell grid column, and
+    "More file actions" asked Rich to wrap its label at width 0
+    (``ValueError: range() arg 3 must not be zero``), which ends the app.
+    The first sweep is that navigator view; the second opens a file in
+    Manage, where the control is used, and checks it is still reachable.
+    """
+    root = tmp_path / "deep" / "nested" / "Research Notes"
+    root.mkdir(parents=True)
+    (root / "note.md").write_text("body", encoding="utf-8")
+    replica = FileNotesReplica(":memory:")
+    workspace = LibraryFileNotesWorkspace(
+        root=root, replica=replica, poll_interval=3600
+    )
+
+    async with _CssTrueWorkspaceHarness(workspace).run_test(size=(120, 20)) as pilot:
+        await _wait_until(pilot, lambda: workspace.initialized, "scan did not finish")
+        workspace._apply_reconcile(result, ())
+        review = workspace.query_one("#file-notes-recovery-review", Button)
+        toggle = workspace.query_one("#file-notes-maintenance-toggle", Button)
+        for opened in (False, True):
+            if opened:
+                assert await workspace.open_path("note.md")
+                workspace.query_one("#file-notes-manage", Button).press()
+            for width in _ROW_STATE_SWEEP_WIDTHS:
+                await pilot.resize_terminal(width, 20)
+                await pilot.pause()
+                await pilot.pause()
+                assert pilot.app._exception is None, (width, pilot.app._exception)
+                assert review.display is pairing, width
+                if not opened:
+                    continue
+                assert toggle.display and not toggle.disabled, width
+                assert toggle in pilot.app.screen.focus_chain, width
+                toggle.focus()
+                await pilot.pause()
+                assert pilot.app.focused is toggle, width
+                assert 0 <= toggle.region.x and toggle.region.right <= width, (
+                    width,
+                    toggle.region,
+                )
+                assert "More" in _painted_text_in_region(pilot.app, toggle.region), (
+                    width
+                )
+
+    replica.close()
+
+
 @pytest.mark.asyncio
 async def test_file_notes_root_details_preserve_exact_path_and_warning(
     tmp_path: Path,
