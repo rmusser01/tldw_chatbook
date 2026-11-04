@@ -3442,3 +3442,93 @@ source/count candidates are unsupported pending owner review; removed rows remai
 explicitly retired history. Recording these facts grants neither permission nor
 backup coverage/exclusion. The existing exact census and native unknown/unsupported
 refusals remain enforced.
+
+
+### Captured authority accounting and existing manifest data (2026-11-03)
+
+R122's roles remain authoritative: public held discovery uses its original
+coordinator, and direct CapturedSQLite authority reads and semantic proof use
+the original native 16 MiB child. Public child reservations debit the original
+coupled aggregate atomically. Private generic inventory, installed-owner
+discovery and partition projection preserve their original metadata accounting
+role (`None`), consistent with R95's exclusion of retroactive R/I/C accounting.
+That result requires the actual registered native reader, its original non-None
+16 MiB counter/admission, exact child and four-resource binding, current marker
+and native custody. It is never an ordinary fallback for a missing or changed
+reader/counter/ledger. The reader's counter is neither cleared nor delayed.
+Direct raw reads, selector/TOML proof, payload/four hashes/buffers, JSON and
+native persona/permission semantics, document/member/provenance/result indices
+and ledger bookkeeping retain explicit original native accounting. Complete
+fresh inventory/projection/namespace/source checks, independent Archive/SQLite
+limits and physical retirement remain mandatory. No counter is reset, renewed,
+refunded, replaced or loaned to another role; no phase flag selects a larger role.
+
+The live native reader already retains the immutable manifest reconstructed
+from its authenticated canonical archive. Authority proof may reuse that data
+without reconstructing the same full manifest for each reference. It must
+derive the association from the actual native reader, require its exact
+canonical sealed archive and manifest member, and requalify the partition,
+original capture, encrypted/plaintext and manifest bindings. Preserve all four
+fresh whole-archive hash checks around the actual payload read, cancellation,
+native descriptor/name custody, payload size/digest and final source checks.
+Persona and permission semantics are recomputed for every reference. No caller
+supplies a trusted document, readiness flag or cached approval verdict. Generic
+archive verification retains its existing contract.
+
+Preprice every remaining representation before allocation. Budgeted hashing
+uses unbuffered FileIO and one local bytearray/view, avoiding an implicit stream
+buffer and a new view for each full read. The same original counter admits the
+1024-unit context and actual workspace width, then 512 before each read. Full
+reads reuse the prepaid view. Partial reads admit a 256-unit view before slicing;
+EOF retains its additional 256-unit charge. Partial reads and EOF therefore keep
+the original 768-unit total. Ordinary unbudgeted hashing keeps its original
+buffered stream and call shape. All four fresh hashes, cancellation, identity
+checks and native custody remain. Only actual removed full-view allocations earn
+the 256-unit credit; no allowance is raised, renewed, refunded or loaned.
+Concrete source review and original-limit native qualification are required;
+failed epochs remain retained failure evidence.
+
+The original complete private authority sequence is retained for both selector
+configurations, including its warm-valid, malformed/inactive/missing reference,
+raw-policy mutation, redaction, no-write and retirement assertions. It also checks
+the actual original 16 MiB counter and absent aggregate parent. The provisional
+split fixtures and custom seeder were removed after both complete sequences
+passed with the original limits. Source-level parsed data reuse does not reuse
+an authority verdict or replace fresh verification.
+
+
+### One held private-copy scope for a member proof (2026-11-03)
+
+The measured native authority case exceeded the original SQLite deadline while
+two full member-discovery/projection pairs took 25.224 seconds. Preserve the
+original 30-second/5-million-step guards and both complete fresh installed-owner
+discovery passes. Within one member proof, retain one actual native-issued
+DiscoveryScope and its existing private SQLite image data across inventory
+discovery and partition projection. Retire it physically before the member
+proof returns. No Inventory result, membership or authority verdict is reused.
+
+An existing child may be borrowed by capture inventory only after the exact
+active captured reader, admission, selected partition, current child, four
+resource identities, original accounting role and native custody are checked.
+The general nested-discovery refusal remains unchanged. Existing private-image
+reuse must recheck original main/WAL/journal identities; retain source
+verification immediately after discovery and final verification/cleanup after
+projection. Every owner, namespace, selection, raw policy, seal and final source
+check remains fresh. Missing or changed child/counter/ledger/custody, uncertain
+retirement and cancellation retain their original refusal and holds. No
+connection deadline, accounting coefficient, limit or permission changes.
+
+### History census composition with the original held-discovery role (2026-11-03)
+
+Epoch287's actual public history census refused mobile_preview_budget_changed because the retained-name proof's native16MiB argument was forwarded into a generic inventory held by the original public coordinator. Preserve the generic preview's exact counter-equality refusal. The scoped history member producer authenticates its actual current reader/admission/pair/custody before document debit; only when that authenticated original public coordinator is present must its incoming native proof argument equal the reader's original issued counter. Existing private pure diagnostic calls retain their separate bounded16MiB argument/default behavior; no budget is constructed, replaced, reset, renewed, refunded or loaned by this correction.
+
+Selector/TOML proof, the once-selected immutable RunLog-name data, document/member/provenance and Run framing retain their original explicit native proof allowance. Only the complete generic inventory inside the actual issuer-created DiscoveryScope receives that child's original coordinator accounting. A legitimate private metadataNone result preserves its existing explicit native data argument; it requires a present actual child and the native helper's full exact reader, admission, canonical pair, four resource identities, active registry membership and custody/uncertain-close checks. A missing child marker is never passed as the helper's optional childNone role lookup and never selects an unaccounted fallback.
+
+The fixed RunLogs consumer may compose the already selected frozenset data with this same authenticated child. Scoped input retains its explicit non-None counter requirement: a missing counter refuses before ambient accounting lookup, without charging either original counter or manufacturing a default. Only ordinary non-scoped metadata retains ambient default inheritance. It must bind the supplied exact current native reader, source-selector context and actual child through the existing native checks, including when metadata is legitimately None. Ordinary preview/no-scope/scoped-name refusals remain; wrong or missing scope/child/counter/resource/custody and uncertain retirement still refuse before generic adapter work. Names remain derived data under their existing type/flow contract, not a permission or a newly authenticated value ledger; no reselection, registry, ready flag or caller authority is added.
+
+Every fresh inventory, namespace, source/selector, native row and archive/frame check, original counter coupling, cancellation, physical retirement and before-effect fence remains. The original16MiB native and public aggregate allowances and all SQLite/time/resource limits are unchanged. Real public and private native guards, original pure-budget compatibility and exact-source qualification are required; retained failed epochs are not completion evidence.
+
+
+Qualification clarification, 2026-11-03: captured authority's local source and member consumers must authenticate the actual non-None issued discovery child before work, retain its original reader and coordinator role through generic discovery/projection, and refuse marker loss before I/O or allocation. Late retirement refusal does not authorize earlier unpriced work. This corrects an omitted precondition within the existing boundary; it creates no issuer, permission, counter or fallback role.
+
+Installed schema comparison may retain a per-invocation ordered tuple of integer catalog row IDs as data. The original 10,000-entry/8 MiB catalog bounds precede a prepaid, count+1-limited projection with exact cardinality. Every original ordered SQL literal and alternative is freshly compared by row ID, with the same candidate filtering, native restrictions and cursor closure. No SQL text or validation verdict is cached; no allowance, deadline or VM-step limit changes. The real-SQLite regression exercises the original native 5-million-step/30-second guard.

@@ -25,7 +25,7 @@ from tldw_chatbook.Utils.platform_files import os
 from . import bootstrap, control_records
 from .admission import Admission, AdmissionCancelled, _local
 from .control_records import UNBOUND_NAMESPACE, admission_authority
-from .limits import _RAW_RECOVERY_LIMITS
+from .limits import _RAW_RECOVERY_LIMITS, ArchiveLimits, _read_limits
 from .profile_paths import effective_config_path, lexical_path
 from .qualification import qualified_for
 
@@ -2104,14 +2104,7 @@ def _preview_sqlite_target(source):
 @contextmanager
 def _preview_reads(*, limits=None, byte_budget=None, _read_budget=None):
     """Keep installed read-only discovery from bootstrapping ordinary services."""
-    from .limits import ArchiveLimits
-
-    limits = ArchiveLimits() if limits is None else limits
-    if type(limits) is not ArchiveLimits:
-        raise TypeError("invalid_preview_limits")
-    byte_budget = limits.expanded_bytes if byte_budget is None else byte_budget
-    if type(byte_budget) is not int or not 0 < byte_budget <= limits.expanded_bytes:
-        raise ValueError("invalid_preview_budget")
+    limits, byte_budget = _read_limits(limits, byte_budget)
     if (
         getattr(_local, "preview_scope", None) is not None
         or getattr(_local, "maintenance_session", None) is not None
@@ -2687,6 +2680,7 @@ class MaintenanceSession:
         session-local authority. A caller-supplied Inventory grants nothing.
         """
         from .inventory import discover
+        from .mobile_preview_budget import path_cost
         from .models import DiscoverySelections
 
         self._check()
@@ -2698,6 +2692,23 @@ class MaintenanceSession:
             raise ValueError("invalid_capture_selection")
         if UNBOUND_NAMESPACE not in self._names:
             raise bootstrap.RecoveryRequired("capture_unbound_admission_required")
+        reader = getattr(_local, "mobile_sqlite_scope", None)
+        coordinator = None
+        if reader is not None:
+            from .mobile_captured_sqlite import (
+                _borrowed_capture_discovery,
+                _captured_discovery_budget,
+            )
+
+            coordinator = _captured_discovery_budget(self)
+            if coordinator is not None:
+                coordinator.container(len(config_paths))
+                for path in config_paths:
+                    coordinator.reserve(path_cost(path, copies=2))
+        elif _mobile_admission(self)[4] is not None and (
+            private_sqlite or _mobile_partition is not None
+        ):
+            coordinator = _mobile_coordinator_budget(self)
         selectors = tuple(lexical_path(path) for path in config_paths)
         root = self._control.parent
         if _mobile_partition is not None:
@@ -2713,26 +2724,33 @@ class MaintenanceSession:
             root,
             selectors,
             _mobile_session=self if _mobile_partition is not None else None,
+            _read_budget=coordinator if reader is not None else None,
+            _custody=reader.custody if reader is not None else None,
         )
         if (config_bindings is not None and bindings != config_bindings) or any(
             not set(row["namespaces"]) <= set(self._names) for row, _ in bindings
         ):
             raise bootstrap.RecoveryRequired("capture_config_scope_changed")
         self._config_capture_sources = _config_capture_sources(
-            root, selectors, bindings
+            root,
+            selectors,
+            bindings,
+            _read_budget=coordinator if reader is not None else None,
+            _custody=reader.custody if reader is not None else None,
         )
         if any(not _contains_capture_path(self._roots, path) for path in selectors):
             raise bootstrap.RecoveryRequired("capture_source_outside_scope")
-        coordinator = (
-            _mobile_coordinator_budget(self)
-            if _mobile_admission(self)[4] is not None
-            and getattr(_local, "mobile_sqlite_scope", None) is None
-            and (private_sqlite or _mobile_partition is not None)
-            else None
-        )
-        with self._discovery_reads(
-            private_sqlite=private_sqlite or _mobile_partition is not None,
-            _read_budget=coordinator,
+        with (
+            _borrowed_capture_discovery(self, _mobile_partition, coordinator)
+            if reader is not None
+            and reader._canonical_archive is not None
+            and _mobile_partition is not None
+            and _mobile_partition is reader._canonical_archive[0]
+            and getattr(_local, "discovery_scope", None) is not None
+            else self._discovery_reads(
+                private_sqlite=private_sqlite or _mobile_partition is not None,
+                _read_budget=coordinator,
+            )
         ):
             current = discover(
                 selectors, selections=selections, _read_budget=coordinator
@@ -2745,6 +2763,8 @@ class MaintenanceSession:
             )
         if current.scope_digest != approved_scope:
             raise ValueError("scope_changed")
+        if reader is not None and coordinator is not None:
+            coordinator.container(2 * len(current.items))
         sources = []
         for item in current.items:
             if item.status != "included" or item.path is None:
@@ -2757,6 +2777,8 @@ class MaintenanceSession:
             info = os.stat(path)
             if not stat.S_ISREG(info.st_mode):
                 raise bootstrap.RecoveryRequired("capture_file_not_regular")
+            if reader is not None and coordinator is not None:
+                coordinator.reserve(path_cost(path, copies=2) + 128)
             sources.append((path.resolve(strict=True), info.st_dev, info.st_ino))
         self._discovered_sources = tuple(sources)
         return current
@@ -2766,48 +2788,30 @@ class MaintenanceSession:
         self, *, private_sqlite=False, limits=None, byte_budget=None, _read_budget=None
     ):
         """Allow installed reads, optionally using bounded private SQLite copies."""
-        from .limits import ArchiveLimits
-
         self._check()
-        if (_read_budget is not None) and (
-            not private_sqlite or _mobile_coordinator_budget(self) is not _read_budget
-        ):
-            raise ValueError("mobile_preview_budget_changed")
         if getattr(_local, "discovery_scope", None) is not None:
             raise bootstrap.RecoveryRequired("nested_discovery_scope")
         if type(private_sqlite) is not bool:
             raise TypeError("invalid_discovery_copy_options")
         if private_sqlite:
-            limits = ArchiveLimits() if limits is None else limits
-            if type(limits) is not ArchiveLimits:
-                raise TypeError("invalid_preview_limits")
-            byte_budget = limits.expanded_bytes if byte_budget is None else byte_budget
-            if (
-                type(byte_budget) is not int
-                or not 0 < byte_budget <= limits.expanded_bytes
-            ):
-                raise ValueError("invalid_preview_budget")
+            limits, byte_budget = _read_limits(limits, byte_budget)
         elif limits is not None or byte_budget is not None:
             raise ValueError("invalid_discovery_copy_options")
-        # Only this native issuer can bind its own private-copy child to the
-        # current captured reader. Matching fields on a copied scope grant nothing.
+        # Only this issuer installs the captured reader's exact child binding.
         reader = getattr(_local, "mobile_sqlite_scope", None)
         binding_map = None
         if reader is not None and private_sqlite:
-            from .mobile_captured_sqlite import _CapturedSQLite
+            from .mobile_captured_sqlite import _captured_discovery_budget
 
-            if type(reader) is not _CapturedSQLite or reader.session is not self:
-                raise ValueError("mobile_native_reader_changed")
-            reader.check()
-            admission = _mobile_admission(self)
-            if reader.read_budget is not None:
-                if (
-                    admission[2] is not reader.read_budget
-                    or admission[3] is not reader.discovery_bindings
-                ):
-                    raise ValueError("mobile_sqlite_admission_changed")
-                reader.read_budget.container(12)
-                binding_map = reader.discovery_bindings
+            _read_budget = _captured_discovery_budget(self, _read_budget=_read_budget)
+            reader.read_budget.container(12)
+            if _read_budget is None:
+                reader.read_budget.reserve(2 * 512)
+            binding_map = reader.discovery_bindings
+        elif _read_budget is not None and (
+            not private_sqlite or _mobile_coordinator_budget(self) is not _read_budget
+        ):
+            raise ValueError("mobile_preview_budget_changed")
         scope = _DiscoveryScope(
             self,
             private_sqlite=private_sqlite,
@@ -2815,6 +2819,9 @@ class MaintenanceSession:
             byte_budget=byte_budget,
             read_budget=_read_budget,
         )
+        if binding_map is not None and _read_budget is None:
+            scope.custody = _CaptureFileDescriptors(scope)
+            scope.sqlite_copies.custody = _CaptureFileDescriptors(scope.sqlite_copies)
         self._scopes.append(scope)
         if binding_map is not None:
             binding_map[scope] = (
@@ -2836,14 +2843,7 @@ class MaintenanceSession:
     def capture_scope(
         self, sources: tuple[Path, ...], staging: Path, *, limits=None, byte_budget=None
     ):
-        from .limits import ArchiveLimits
-
-        limits = ArchiveLimits() if limits is None else limits
-        if type(limits) is not ArchiveLimits:
-            raise TypeError("invalid_capture_limits")
-        byte_budget = limits.expanded_bytes if byte_budget is None else byte_budget
-        if type(byte_budget) is not int or not 0 < byte_budget <= limits.expanded_bytes:
-            raise ValueError("invalid_capture_budget")
+        limits, byte_budget = _read_limits(limits, byte_budget, kind="capture")
         self._check()
         if getattr(_local, "capture_scope", None) is not None:
             raise bootstrap.RecoveryRequired("nested_capture_scope")
@@ -2920,7 +2920,6 @@ class MaintenanceSession:
         cancel=None,
     ):
         """Bind only rechecked prepared local originals, including damaged config."""
-        from .limits import ArchiveLimits
         from .replacement import _checked_originals
 
         self._check()
