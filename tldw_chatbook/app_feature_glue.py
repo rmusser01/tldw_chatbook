@@ -287,7 +287,7 @@ class FeatureGlueMixin:
             worker = None  # direct calls in tests/harnesses run un-cancellable
         should_abort = (lambda: worker.is_cancelled) if worker is not None else None
 
-        from tldw_chatbook import config as app_config
+        from tldw_chatbook import config as config_module
 
         try:
             # TASK-38462: a profile with no database has no messages to index.
@@ -296,8 +296,8 @@ class FeatureGlueMixin:
             # the app's exit and its 3 s worker join.
             db = (
                 get_chachanotes_db_lazy()
-                if app_config.chachanotes_db is not None
-                or app_config.get_chachanotes_db_path().exists()
+                if config_module.chachanotes_db is not None
+                or config_module.get_chachanotes_db_path().exists()
                 else None
             )
             if db is None:
