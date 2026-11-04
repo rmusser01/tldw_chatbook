@@ -15,8 +15,10 @@ on:
     branches: [dev]
     types: [opened, synchronize, reopened, ready_for_review]
     paths:
-      - 'tldw_chatbook/**.py'
-      - 'tldw_chatbook/css/**'
+      # TASK-38684: the whole package, not only its .py and css. The job
+      # installs editable, so the app reads its migrations, Config_Files
+      # and assets straight from this checkout.
+      - 'tldw_chatbook/**'
       - 'Tests/Performance/**'
       - 'Tests/Packaging/test_console_rename_import_closure.py'
       # The stall-persistence tests run in this workflow too, and the job
@@ -53,8 +55,7 @@ on:
   push:
     branches: [dev, main]
     paths:
-      - 'tldw_chatbook/**.py'
-      - 'tldw_chatbook/css/**'
+      - 'tldw_chatbook/**'
       - 'Tests/Performance/**'
       - 'Tests/Packaging/test_console_rename_import_closure.py'
       # The stall-persistence tests run in this workflow too, and the job

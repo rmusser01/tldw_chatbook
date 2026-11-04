@@ -1521,8 +1521,9 @@ def _in_tree_package_modules() -> set[str]:
 
 #: Files Perf Guard's steps read as data rather than import, kept by hand:
 #: test_app_import_weight.py copies this plugin fixture and checks its
-#: plugin.json.
-PERF_GUARD_DATA_DEPENDENCIES = ("Tests/Plugins/fixtures/native",)
+#: plugin.json. TASK-38684: the job installs the app editable, so it reads its
+#: package data (DB migrations, Config_Files, assets) from the checkout.
+PERF_GUARD_DATA_DEPENDENCIES = ("Tests/Plugins/fixtures/native", "tldw_chatbook")
 
 
 def _github_paths_match(pattern: str, path: str) -> bool:
@@ -1556,9 +1557,14 @@ def test_perf_guard_runs_when_a_file_its_steps_load_changes() -> None:
     } <= packages, packages
     loaded |= packages
     for data in PERF_GUARD_DATA_DEPENDENCIES:
-        files = [p for p in (PROJECT_ROOT / data).rglob("*") if p.is_file()]
+        files = [
+            p
+            for p in (PROJECT_ROOT / data).rglob("*")
+            if p.is_file() and "__pycache__" not in p.parts
+        ]
         assert files, f"data dependency {data} holds no files"
         loaded |= {p.relative_to(PROJECT_ROOT).as_posix() for p in files}
+    assert "tldw_chatbook/Config_Files/default_config.toml" in loaded
     triggers = _triggers(_workflow("perf-guard.yml"))
     for event in ("pull_request", "push"):
         unmodelled = [
