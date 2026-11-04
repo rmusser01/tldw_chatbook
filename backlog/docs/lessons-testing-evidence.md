@@ -378,6 +378,19 @@ runs the test. Do not set them in an xdist controller: on the first try here
 every worker then died at startup with `Error importing plugin`, and the run
 reported "no tests ran".
 
+**Second update (TASK-38462, 2026-11-04): a faster body moves late work into
+teardown.** The first Windows run with the timer fix ERRORed three GGUF nodes in
+teardown with "Native app workers remain uncertain". The 3 s default-executor
+join timed out, but no timer job was involved. The bodies had dropped from 33-40 s
+to 17-24 s. The staggered FTS backfill, which on the test factory's fresh profile
+CREATES ChaChaNotes (v0 to v86 plus seeding, seconds on Windows, and impossible to
+cancel), used to finish inside the starved body and now straddled the app's exit.
+Each failing node's captured teardown log showed it ("Current version: 0"). The
+race never shows on macOS, because creation there takes 0.5 s. A 5 s sleep put
+into the suspect step reproduced the CI error exactly. So when a speed fix turns
+into teardown errors, read the captured teardown log for work that started in
+the body. Reproduce it by slowing that one step, not by emulating the platform.
+
 ## A child kept across its parent's rebuild defeats an "every child is unlaid" guard (TASK-33622.6, 2026-10-29)
 
 **Incident.** To stop the Console rail's filter input being replaced under
