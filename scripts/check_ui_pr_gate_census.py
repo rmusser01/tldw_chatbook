@@ -772,6 +772,9 @@ MINIMUM_FILES = 1364
 # TASK-36525 (2026-11-03): append the Settings category sweep's six
 # (group, size) nodes and its coverage check at the tail.
 MINIMUM_FILES = 1371
+# TASK-38697 (2026-11-04): append the two widget-CSS base-before-subclass
+# nodes at the tail. The floor is the measured entry count.
+MINIMUM_FILES = 1373
 
 
 def read_census(path: Path) -> list[str]:

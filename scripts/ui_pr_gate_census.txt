@@ -2035,3 +2035,9 @@ Tests/UI/test_settings_category_sweep.py::test_every_settings_category_renders_a
 Tests/UI/test_settings_category_sweep.py::test_every_settings_category_renders_and_restores_focus[1-80x24]
 Tests/UI/test_settings_category_sweep.py::test_every_settings_category_renders_and_restores_focus[2-120x35]
 Tests/UI/test_settings_category_sweep.py::test_every_settings_category_renders_and_restores_focus[2-80x24]
+# TASK-38697 (2026-11-04): widget CSS emits every base class's block before its
+# subclasses' -- the generated sheets' order and the build's iter_blocks order,
+# one private-profile node each (about 5 s and 2 s). Appended at the tail, so
+# no slot moves.
+Tests/UI/test_widget_css_consolidation.py::test_base_class_blocks_precede_their_subclasses
+Tests/UI/test_widget_css_consolidation.py::test_iter_blocks_emits_every_base_before_its_subclasses
