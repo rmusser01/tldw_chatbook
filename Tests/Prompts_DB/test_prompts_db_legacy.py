@@ -6,6 +6,7 @@ import os
 import shutil
 import tempfile
 import threading
+import time
 import zipfile
 from pathlib import Path
 
@@ -984,6 +985,62 @@ class TestConcurrencyAndDataIntegrity(BaseTestCase):
             worker.start()
             worker.join()
 
+        self.assertEqual(results, {1: "success", 2: "conflict"})
+        final_prompt = file_db.get_prompt_by_id(pid)
+        self.assertEqual(final_prompt["version"], opened + 1)
+        self.assertEqual(final_prompt["details"], "Updated by 1")
+
+    def test_overlapping_saves_of_one_opened_version_end_in_one_conflict(self):
+        """
+        Of two overlapping saves of one opened version, the later one conflicts.
+
+        Worker 1 holds its write transaction open, after its UPDATE, while
+        worker 2 starts the same save. update_prompt_by_id begins IMMEDIATE, so
+        worker 2 waits for the write lock and then fails the version check.
+        With a deferred BEGIN, worker 2 read version 1 inside its own
+        transaction, and its write failed on SQLite's lock ("database is
+        locked") rather than as a version conflict (TASK-38686).
+        """
+        file_db = self._get_file_db()
+        pid, _, _ = file_db.add_prompt("Overlap", "Initial", "Data")
+        opened = file_db.get_prompt_by_id(pid)["version"]
+        holding, second_started = threading.Event(), threading.Event()
+        results = {}
+
+        def save(user_id):
+            db_instance = PromptsDatabase(self.db_path, client_id=f"worker_{user_id}")
+            if user_id == 1:
+                log_sync_event = db_instance._log_sync_event
+
+                def hold_then_log(*args, **kwargs):
+                    holding.set()
+                    second_started.wait(5)
+                    time.sleep(0.3)  # worker 2 reaches its BEGIN meanwhile
+                    return log_sync_event(*args, **kwargs)
+
+                db_instance._log_sync_event = hold_then_log
+            else:
+                holding.wait(5)
+                second_started.set()
+            try:
+                db_instance.update_prompt_by_id(
+                    pid, {"details": f"Updated by {user_id}"}, expected_version=opened
+                )
+                results[user_id] = "success"
+            except ExpectedVersionConflictError:
+                results[user_id] = "conflict"
+            except Exception as error:  # kept, so a wrong outcome names itself
+                results[user_id] = error
+            finally:
+                db_instance.close_connection()
+
+        workers = [threading.Thread(target=save, args=(user_id,)) for user_id in (1, 2)]
+        for worker in workers:
+            worker.start()
+        for worker in workers:
+            worker.join(30)
+
+        self.assertTrue(holding.is_set(), "worker 1 never held its write open")
         self.assertEqual(results, {1: "success", 2: "conflict"})
         final_prompt = file_db.get_prompt_by_id(pid)
         self.assertEqual(final_prompt["version"], opened + 1)

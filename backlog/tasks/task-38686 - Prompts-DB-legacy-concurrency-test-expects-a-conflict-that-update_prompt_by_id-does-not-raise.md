@@ -1,11 +1,11 @@
 ---
 id: TASK-38686
 title: "Prompts DB legacy concurrency test expects a conflict that update_prompt_by_id does not raise"
-status: In Progress
+status: Done
 assignee:
 - '@claude'
 created_date: 2026-11-03 11:40
-updated_date: '2026-11-04 01:19'
+updated_date: '2026-11-04 01:41'
 labels:
 - follow-up
 - tests
@@ -31,7 +31,7 @@ Found in the round-5 wave of the 2026-10-23 burn-down, where it was reported fai
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 Two concurrent updates of one prompt that pass the same expected_version produce exactly one success and one conflict, and the rewritten test pins that, passing 10 of 10 runs alone on dev
+- [x] #1 Two concurrent updates of one prompt that pass the same expected_version produce exactly one success and one conflict, and the rewritten test pins that, passing 10 of 10 runs alone on dev
 - [x] #2 The test fails when update_prompt_by_id's version comparison is removed (shown under a temporary source edit)
 - [x] #3 The test runs on a PR lane, or the task notes record why it does not
 <!-- AC:END -->
@@ -43,27 +43,47 @@ Found in the round-5 wave of the 2026-10-23 burn-down, where it was reported fai
 3. AC#1 asks for concurrent saves. Probe how overlapping transactions resolve before choosing how the test orders them.
 4. AC#2: remove the `expected_version` comparison under a temporary source edit and show the test red. AC#3: record the lane outcome. This brief allows workflow edits only for TASK-38699.
 
+5. Owner decision (coordinator, 2026-11-04): option (b). `update_prompt_by_id` begins its transaction IMMEDIATE, so an overlapping save waits for the write lock and then fails the version check. Add an overlapping-saves test for AC#1, and show it red with the BEGIN deferred again.
+
 ## Implementation Notes
 
-**The test was wrong, not the product.** `update_prompt_by_id` has compared versions only when the caller passes `expected_version`, added 2026-08 for the Library prompt editors (`prompt_save_ack.py`, `prompt_history.py`, `library_prompts_controller.py`). Without one, an update is last-writer-wins by design. The test dates from 2025-06 (7ebdcc0731) and never passed `expected_version`. Its "conflict" could only come from SQLite lock errors, which it counted as conflicts (`"locked" in str(e)`).
+Two commits. The first rewrote the test. The second, after the owner chose option (b), makes `update_prompt_by_id` begin IMMEDIATE.
 
-**Rewrite (committed).** Two editors open version 1. Each saves on its own connection and thread, passing `expected_version=opened`, and the saves run one after the other. Only `ExpectedVersionConflictError` counts as the conflict. The test pins `{1: "success", 2: "conflict"}`, version 2, and the first writer's details.
-- 10 of 10 runs alone, each its own process through run.sh at load 15-19, about 1 s each.
-- AC#2: with the `expected_version != current_version` check deleted (temporary edit, reverted), the test is red with `{1: 'success', 2: 'success'} != {1: 'success', 2: 'conflict'}`.
-- The whole file gives 70 passed (`-n 4`).
+**The test was wrong.** `update_prompt_by_id` has compared versions only when the caller passes `expected_version`. That parameter was added in 2026-08 for the Library prompt editors (`prompt_save_ack.py`, `prompt_history.py`, `library_prompts_controller.py`). Without it, an update is last-writer-wins by design. The test dates from 2025-06 (7ebdcc0731) and never passed `expected_version`. Its "conflict" could only come from SQLite lock errors, which it counted as conflicts.
 
-**AC#1 left open: overlapping saves do not end in a conflict.** A scratch probe ran two threads behind a barrier, each passing the same `expected_version`, on a fresh file DB per round. The loser got one of three errors:
-- `ExpectedVersionConflictError`: 106 of 300 rounds at load 34, 31 of 100 at load 28.
-- `ConflictError("Prompt update lost a version race")`, from SQLITE_BUSY_SNAPSHOT 517: 8 and 2 rounds.
-- `DatabaseError("Failed to update prompt ID 1: database is locked")`: 186 and 67 rounds. Its cause is a plain SQLITE_BUSY (5) on the deferred transaction's read-to-write upgrade, while the winner holds the write lock. `_is_busy_snapshot_error` maps only 517 to `ConflictError`.
+**Rewrite.** `test_concurrent_updates_to_same_prompt`: two editors open version 1 and save it one after the other, each on its own connection and thread. Only `ExpectedVersionConflictError` counts as the conflict. The test pins `{1: "success", 2: "conflict"}`, version 2, and the first writer's details. It passed 10 of 10 runs alone. With the `expected_version != current_version` check deleted (a temporary edit), it is red with `{1: 'success', 2: 'success'} != ...` (AC#2).
 
-The winner was the only success in every round, so no update was lost. But with overlapping transactions, AC#1's "one success and one conflict" holds in only about a third of the rounds under load. A test that pins it with truly overlapping threads cannot pass 10 of 10 without a product change, either of:
-- (a) map SQLITE_BUSY on this update's write to `ConflictError`, as 517 already is, so a racing save reads as "changed elsewhere" rather than "database is locked";
-- (b) begin this update with `BEGIN IMMEDIATE`, so the later writer waits for the lock and then fails the version comparison.
+**Overlapping saves were refused by SQLite's lock, not the version check.** A scratch probe raced two threads behind a barrier, both passing the same `expected_version`, on a fresh file DB per round. With the deferred BEGIN, the loser got:
 
-Both change what a user sees on a racing save, so the choice is left to the owner. The committed test pins sequential saves of one opened version, which is the expected_version contract. AC#1 stays unticked until the owner decides whether that meets it.
+| Loser's error | 300 rounds, load 34 | 100 rounds, load 28 |
+|---|---|---|
+| `ExpectedVersionConflictError` | 106 | 31 |
+| `ConflictError("... lost a version race")` (SQLITE_BUSY_SNAPSHOT 517) | 8 | 2 |
+| `DatabaseError("... database is locked")` (plain SQLITE_BUSY 5) | 186 | 67 |
 
-**AC#3: not on a PR lane, by this brief's rule.** The only Prompts_DB lane target is `test_prompt_export_mixins.py` in `derived-artifacts.yml`, and this burn-down allowed workflow edits only for TASK-38699. The whole legacy file is now green (70 tests, about 6 s), so it could be gated whole. That is listed as a proposed follow-up.
+The SQLITE_BUSY case happens when the loser's read-to-write upgrade meets the winner's write lock.
 
-Files: `Tests/Prompts_DB/test_prompts_db_legacy.py`, `backlog/docs/lessons-testing-evidence.md` (new entry on overlapping SQLite writers).
+**Fix (owner decision: option b).** `update_prompt_by_id` now opens `self.transaction(immediate=True)` (`BEGIN IMMEDIATE`). This is the same mode the file's delete, restore and history-restore writers already use.
+- The busy timeout is 10 s (`PRAGMA busy_timeout` reads 10000; `timeout=10` at connect). So a racing save waits for the lock, reads the committed version, and raises the `ExpectedVersionConflictError` the Library prompt UI already handles.
+- The probe rerun at load 20-26 gave `('conflict', 'success')` in 300 of 300 rounds, with zero SQLITE_BUSY and zero 517.
 
+**Nested callers.** `transaction()` issues no BEGIN when the connection is already in a transaction. So the one in-file nested caller, `restore_prompt_history_entry` (inside its own IMMEDIATE transaction), is unchanged, and no caller can be deadlocked by a second BEGIN.
+- Every other caller (`update_prompt`, `Prompts_Interop.apply_server_prompt_version`, `local_prompt_service.update_prompt`, `prompt_scope_service.update_prompt`) calls it with no outer transaction.
+- A same-thread writer on a second connection already waited at the deferred UPDATE for that same lock. IMMEDIATE moves the wait to BEGIN; it adds no new one.
+- The 517 to `ConflictError` mapping is still reachable inside a caller's own deferred transaction.
+
+**`test_busy_snapshot_from_a_second_writer_is_reported_as_conflict`** (`test_prompts_db_pytest.py`) ran the second writer's whole save from a trace callback at the first writer's UPDATE. Under IMMEDIATE, the first writer holds the lock by then, so that same-thread injection can only wait. The test now runs the update inside a caller's deferred transaction, where the race and its "version race" `ConflictError` still exist.
+
+**New AC#1 test.** `test_overlapping_saves_of_one_opened_version_end_in_one_conflict`. Worker 1 holds its write transaction open after its UPDATE (a wrapped `_log_sync_event` waits for worker 2 to start, plus 0.3 s), while worker 2 saves the same opened version.
+- 10 of 10 runs alone at load 13-28.
+- Red 3 of 3 with the BEGIN deferred again (temporary edit): `{2: DatabaseError('Failed to update prompt ID 1: database is locked'), 1: 'success'} != {1: 'success', 2: 'conflict'}`.
+- The ordering only decides whether the deferred control fails: under IMMEDIATE, worker 2 waits for worker 1's commit however the threads are scheduled.
+
+**Runs** (`-n 4`, run.sh):
+- `Tests/Prompts_DB`, `Tests/Prompt_Management`, `Tests/Library/test_library_prompts_seam.py`, `Tests/Console/test_prompt_draft_save.py` and `Tests/Chatbooks/test_chatbook_prompt_round_trip.py`: 53 failed, 1163 passed, 3 errors. With dev's `Prompts_DB.py` swapped in: 54 failed, 1162 passed, 3 errors. The node sets are identical apart from the new test, which is red on dev's source by design.
+- The shared reds are on dev: `test_prompt_improvement_service.py` (50), `test_prompt_batch_models.py::test_prompt_management_lazy_public_exports_preserve_class_identities`, and two `test_prompts_db_batch_mutations.py` privacy-log nodes.
+- Architecture ratchets (serial): 256 passed. `Prompts_DB.py`'s module-size row is re-pinned 4670 -> 4671 for the one-line comment (owner size waiver 2026-10-31).
+
+**AC#3: not on a PR lane, by this brief's rule.** The only Prompts_DB lane target is `test_prompt_export_mixins.py` in `derived-artifacts.yml`, and this burn-down allowed workflow edits only for TASK-38699. The legacy file is green (71 tests, about 5 s), so it could be gated whole (proposed follow-up).
+
+Files: `tldw_chatbook/DB/Prompts_DB.py`, `Tests/Prompts_DB/test_prompts_db_legacy.py`, `Tests/Prompts_DB/test_prompts_db_pytest.py`, `Tests/Architecture/test_module_size_ratchet.py`, `backlog/docs/lessons-testing-evidence.md`.

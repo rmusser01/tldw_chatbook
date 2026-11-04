@@ -2,9 +2,19 @@
 
 ## Two overlapping SQLite writers get a lock error before any version check runs (TASK-38686, 2026-11-04)
 
-**Incident.** `test_concurrent_updates_to_same_prompt` started two threads behind a barrier and expected one of them to hit a version conflict. The rewrite passed both writers the same `expected_version`. A 300-round probe at load 34 still gave a version conflict in only 106 rounds. In 186 the loser got `DatabaseError: ... database is locked`: Prompts_DB's deferred `BEGIN` takes a read snapshot at the SELECT, and the upgrade to write while the winner holds the lock returns plain SQLITE_BUSY (5) without calling the busy handler. The product maps only SQLITE_BUSY_SNAPSHOT (517, 8 rounds) to `ConflictError`. The 2025 test had passed only because it counted "locked" as a conflict.
+**Incident.** `test_concurrent_updates_to_same_prompt` started two threads behind a barrier and expected one of them to hit a version conflict. Its rewrite passed both writers the same `expected_version`. Even so, a 300-round probe at load 34 gave a version conflict in only 106 rounds. In 186 rounds the loser got `DatabaseError: ... database is locked` instead.
+- `update_prompt_by_id` used a deferred `BEGIN`, which takes its read snapshot at the SELECT.
+- The upgrade to write while the winner held the lock then returned plain SQLITE_BUSY (5).
+- The product mapped only SQLITE_BUSY_SNAPSHOT (517, 8 rounds) to `ConflictError`.
 
-**What to do.** In a race test against a WAL database with deferred transactions, the barrier decides which mechanism refuses the loser, the lock or the version check, so it pins neither. To pin a version check, run the second save after the first commits. To pin how truly overlapping writers are refused, assert the lock outcome explicitly, and probe a few hundred rounds under load before trusting 10 green runs.
+The 2025 test had passed only because it counted "locked" as a conflict. The fix made the update `BEGIN IMMEDIATE`, so the loser waits on the 10 s busy timeout and then fails the version check: 300 of 300 rounds gave one success and one `ExpectedVersionConflictError`.
+
+**What to do.**
+- In a race test against a WAL database with deferred transactions, the barrier decides which mechanism refuses the loser, the lock or the version check, so the test pins neither.
+- A version-checked read-modify-write needs an IMMEDIATE transaction for its check to decide the race.
+- To pin that, hold the first writer inside its transaction after its write while the second starts. `test_overlapping_saves_of_one_opened_version_end_in_one_conflict` wraps `_log_sync_event` to do this. It is red every time with a deferred BEGIN.
+- Probe a few hundred rounds under load before trusting 10 green runs.
+- Expect a test that injects a second writer from a trace callback inside the first writer's transaction to deadlock once the first holds the lock from BEGIN.
 
 ## A real key during an armed unknown-command send disarms it, so the send never reaches the checks after the skill await (TASK-38689, 2026-11-03)
 

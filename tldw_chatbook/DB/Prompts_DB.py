@@ -1870,7 +1870,8 @@ class PromptsDatabase:
             )
 
         try:
-            with self.transaction() as conn:
+            # Racing saves wait for the lock, then fail the version check (TASK-38686).
+            with self.transaction(immediate=True) as conn:
                 cursor = conn.cursor()
                 # Get current state of the prompt being updated
                 cursor.execute(
