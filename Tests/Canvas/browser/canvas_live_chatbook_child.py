@@ -1054,6 +1054,84 @@ def main() -> None:
             app._post_mount_setup = observed_setup
 
         if canonical_mode and os.environ.get("TLDW_SECURITY_FIXTURE") == "1":
+            from Tests.Backup_Recovery.thread_diagnostics import _error_metadata
+            from tldw_chatbook.Canvas.control_protocol import ControlProtocolError
+
+            client = app.served_canvas_control
+            if client is not None:
+                native_control_start = client.start
+
+                async def observed_control_start():
+                    try:
+                        return await native_control_start()
+                    except BaseException as error:
+                        try:
+                            record = _error_metadata(error)
+                            record["truncated"] = len(record["frames"]) > 8
+                            record["frames"] = record["frames"][:8]
+                            native_codes = {
+                                "authentication_failed",
+                                "authentication_required",
+                                "authority_unavailable",
+                                "backpressure",
+                                "broker_not_started",
+                                "child_not_connected",
+                                "child_revoked",
+                                "client_not_connected",
+                                "connection_closed",
+                                "connection_deadline_exceeded",
+                                "console_payload_too_large",
+                                "deadline_exceeded",
+                                "frame_too_large",
+                                "invalid_deadline",
+                                "invalid_envelope",
+                                "invalid_handler_response",
+                                "invalid_host_identity",
+                                "invalid_json",
+                                "invalid_payload",
+                                "invalid_payload_field",
+                                "invalid_payload_key",
+                                "invalid_payload_value",
+                                "invalid_runtime_snapshot_id",
+                                "invalid_spawn_environment",
+                                "missing_field",
+                                "missing_payload_field",
+                                "non_loopback_endpoint",
+                                "non_loopback_listener",
+                                "non_loopback_peer",
+                                "out_of_order_reply",
+                                "payload_collection_too_large",
+                                "payload_too_deep",
+                                "payload_value_too_large",
+                                "runtime_snapshot_mismatch",
+                                "unexpected_child_message",
+                                "unexpected_parent_message",
+                                "unknown_child",
+                                "unknown_field",
+                                "unknown_payload_field",
+                                "unsupported_relay_type",
+                                "unsupported_request_type",
+                                "unsupported_type",
+                                "unsupported_version",
+                            }
+                            record["code"] = (
+                                error.code
+                                if type(error) is ControlProtocolError
+                                and error.code in native_codes
+                                else "unknown"
+                            )
+                            while len(json.dumps(record).encode("ascii")) > 4096:
+                                record["frames"].pop()
+                                record["truncated"] = True
+                            _publish_owner_receipt(
+                                data_root / "console-control-start-error.json", record
+                            )
+                        except Exception:  # noqa: BLE001, S110 - optional evidence must preserve native failure.
+                            pass
+                        raise
+
+                client.start = observed_control_start
+
             runtime = app.console_runtime
             native_receipts = runtime.ensure_remote_receipts
 

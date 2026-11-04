@@ -101,19 +101,21 @@ class _RunLogs(_RawDeclaration):
         from tldw_chatbook.DB.recovery_operations import recovery_adapters
         from tldw_chatbook.Skills_Interop.recovery import default_script_output_root
 
+        if _runs_scope is not None and _read_budget is None:
+            raise ValueError("mobile_runs_selector_scope_required")
         context = discovery_context(config)
         native = current()
         if native is not None:
             if (
-                _runs_scope is not None
-                or _run_names is not None
+                _runs_scope is None
+                and _run_names is not None
                 or _read_budget not in (None, native.read_budget)
             ):
                 raise ValueError("mobile_runs_selector_scope_required")
             _read_budget = native.read_budget
-            reserve(4096)
         if _runs_scope is not None:
             from tldw_chatbook.Backup_Recovery.mobile_captured_sqlite import (
+                _captured_discovery_budget,
                 _CapturedSQLite,
             )
 
@@ -124,9 +126,19 @@ class _RunLogs(_RawDeclaration):
                 or context.config_path != _runs_scope.captured.preview.source_selector
             ):
                 raise ValueError("mobile_runs_selector_scope_required")
+            from tldw_chatbook.Backup_Recovery.storage_admission import _local
+
+            child = getattr(_local, "discovery_scope", None)
+            if child is None:
+                raise ValueError("mobile_runs_selector_scope_required")
             _runs_scope.check()
+            metadata = _captured_discovery_budget(_runs_scope.session, child)
+            if native is not None and metadata is not _read_budget:
+                raise ValueError("mobile_runs_selector_scope_required")
         elif _run_names is not None or _read_budget is not None and native is None:
             raise ValueError("mobile_runs_selector_scope_required")
+        if native is not None:
+            reserve(4096)
         script_output = default_script_output_root(config)
         configured = setting(config, "tools", "file_sandbox_root")
         default_root = (
