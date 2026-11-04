@@ -869,6 +869,13 @@
       "reason": "high-risk Chat/provider/summarization/tool/MCP diagnostic owner"
     },
     {
+      "call_count": 12,
+      "diagnostic_digest": "1fa0254f098f74f8a88e",
+      "owner": "TASK-492",
+      "path": "tldw_chatbook/Chat/custom_tokenizers.py",
+      "reason": "high-risk Chat/provider/summarization/tool/MCP diagnostic owner"
+    },
+    {
       "call_count": 9,
       "diagnostic_digest": "61a82444288751f0757d",
       "owner": "TASK-492",
@@ -4264,13 +4271,6 @@
       "reason": "remaining Chatbook production diagnostic owner"
     },
     {
-      "call_count": 12,
-      "diagnostic_digest": "1fa0254f098f74f8a88e",
-      "owner": "TASK-494",
-      "path": "tldw_chatbook/Utils/custom_tokenizers.py",
-      "reason": "remaining Chatbook production diagnostic owner"
-    },
-    {
       "call_count": 6,
       "diagnostic_digest": "3540424b35856f30621a",
       "owner": "TASK-494",
@@ -5463,6 +5463,29 @@
         }
       ],
       "path": "tldw_chatbook/Chat/console_chat_controller.py"
+    },
+    {
+      "candidates": [
+        {
+          "call_digest": "8753c0d4bd81cd39",
+          "method": "error",
+          "path_expressions": [
+            "source_path"
+          ],
+          "scope": "CustomTokenizerManager.install_tokenizer",
+          "status": "legacy_unreviewed"
+        },
+        {
+          "call_digest": "f86be1bac620dda2",
+          "method": "info",
+          "path_expressions": [
+            "name"
+          ],
+          "scope": "CustomTokenizerManager.install_tokenizer",
+          "status": "legacy_unreviewed"
+        }
+      ],
+      "path": "tldw_chatbook/Chat/custom_tokenizers.py"
     },
     {
       "candidates": [
@@ -10966,29 +10989,6 @@
         }
       ],
       "path": "tldw_chatbook/Utils/atomic_file_ops.py"
-    },
-    {
-      "candidates": [
-        {
-          "call_digest": "8753c0d4bd81cd39",
-          "method": "error",
-          "path_expressions": [
-            "source_path"
-          ],
-          "scope": "CustomTokenizerManager.install_tokenizer",
-          "status": "legacy_unreviewed"
-        },
-        {
-          "call_digest": "f86be1bac620dda2",
-          "method": "info",
-          "path_expressions": [
-            "name"
-          ],
-          "scope": "CustomTokenizerManager.install_tokenizer",
-          "status": "legacy_unreviewed"
-        }
-      ],
-      "path": "tldw_chatbook/Utils/custom_tokenizers.py"
     },
     {
       "candidates": [

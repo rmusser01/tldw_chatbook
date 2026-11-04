@@ -123,6 +123,19 @@ def _prepare_profile(tmp_path, *, mobile_surface=True, full_agent_tools=False):
     ):
         environment.pop(name, None)
     for name, script in (("startup", _START_CANONICAL), ("cutover", _NO_DATA)):
+        if name == "cutover":
+            from textwrap import indent
+
+            script = (
+                "from pathlib import Path\n"
+                "from Tests.Backup_Recovery.thread_diagnostics import "
+                "observe_threads, stop_observer\n"
+                "_stop_stacks = observe_threads(Path("
+                + repr(str(root / "cutover-stacks.json"))
+                + "), interval=30)\ntry:\n"
+                + indent(script, "    ")
+                + "\nfinally:\n    stop_observer(_stop_stacks)\n"
+            )
         with (root / f"{name}.log").open("w") as output:
             result = subprocess.run(
                 [
@@ -1838,16 +1851,19 @@ async def _run_transport(root):
         import traceback
 
         (root / "transport-error.txt").write_text(traceback.format_exc())
-        if case.phone is not None and not case.phone.is_closed():
-            result["failed_dom"] = await case.phone.evaluate("""() => ({
-                inputs:window.__task11TransportInput,
-                connection:document.querySelector('#connection-state')?.textContent,
-                status:document.querySelector('#status-line')?.textContent,
-                target:document.querySelector('#target-label')?.textContent,
-                draftDisabled:document.querySelector('#chat-draft')?.disabled,
-                newDisabled:document.querySelector('#new-chat-button')?.disabled
-            })""")
-            await case.phone.screenshot(path=str(root / "transport-failed.png"))
+        try:
+            if case.phone is not None and not case.phone.is_closed():
+                result["failed_dom"] = await case.phone.evaluate("""() => ({
+                    inputs:window.__task11TransportInput,
+                    connection:document.querySelector('#connection-state')?.textContent,
+                    status:document.querySelector('#status-line')?.textContent,
+                    target:document.querySelector('#target-label')?.textContent,
+                    draftDisabled:document.querySelector('#chat-draft')?.disabled,
+                    newDisabled:document.querySelector('#new-chat-button')?.disabled
+                })""")
+                await case.phone.screenshot(path=str(root / "transport-failed.png"))
+        except Exception as diagnostic_error:  # noqa: BLE001 - optional capture must preserve the primary.
+            result["failed_dom_error"] = type(diagnostic_error).__name__[:80]
         raise
     finally:
         for path in data.glob("console-entry-*.json"):

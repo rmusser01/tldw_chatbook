@@ -54,7 +54,7 @@ def _space(root: Path, required: int) -> None:
 
 
 @contextmanager
-def _regular(path: Path, *, _custody=None):
+def _regular(path: Path, *, _custody=None, _buffering=-1):
     pinned = (
         pinned_directory(path.parent)
         if _custody is None
@@ -69,7 +69,7 @@ def _regular(path: Path, *, _custody=None):
         try:
             if not stat.S_ISREG(os.fstat(fd).st_mode):
                 raise ValueError("invalid_source")
-            with os.fdopen(fd, "rb", closefd=False) as stream:
+            with os.fdopen(fd, "rb", buffering=_buffering, closefd=False) as stream:
                 yield stream
         finally:
             _close_owned(fd, _custody)
@@ -79,13 +79,37 @@ def _identity(info):
     return info.st_dev, info.st_ino, info.st_size, info.st_mtime_ns, info.st_ctime_ns
 
 
-def _hash(path: Path, cancel: Event, *, _custody=None) -> str:
+def _hash(path: Path, cancel: Event, *, _custody=None, _read_budget=None) -> str:
+    if _read_budget is not None:
+        _read_budget.reserve(1024)
     digest = hashlib.sha256()
-    with _regular(path, _custody=_custody) as stream:
+    with (
+        _regular(path, _custody=_custody)
+        if _read_budget is None
+        else _regular(path, _custody=_custody, _buffering=0)
+    ) as stream:
         before = _identity(os.fstat(stream.fileno()))
-        while chunk := stream.read(_BUFFER):
-            _check(cancel)
-            digest.update(chunk)
+        if _read_budget is None:
+            while chunk := stream.read(_BUFFER):
+                _check(cancel)
+                digest.update(chunk)
+        else:
+            width = min(_BUFFER, max(1, before[2] + 1))
+            _read_budget.reserve(width)
+            buffer = bytearray(width)
+            view = memoryview(buffer)
+            while True:
+                _read_budget.reserve(512)
+                count = stream.readinto(buffer)
+                if not count:
+                    _read_budget.reserve(256)  # Retain the original complete EOF fee.
+                    break
+                _check(cancel)
+                if count == width:
+                    digest.update(view)
+                else:
+                    _read_budget.reserve(256)
+                    digest.update(view[:count])
         if before != _identity(os.fstat(stream.fileno())):
             raise ValueError("sealed_changed")
     return digest.hexdigest()

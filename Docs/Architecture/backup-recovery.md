@@ -1330,6 +1330,28 @@ allowance and custody. Installed schema references and the prepaid reusable
 64 KiB digest workspace consume that allowance. Actual registered ordinary
 connections close through the native admitted wrapper; uncertain physical close
 retains the lease and accounting. This context grants no preview or capture
-storage authority. Live concurrent-write, authenticated restored-generation,
+storage authority.
+
+Captured authority proof uses the existing native 16 MiB child for raw data and
+semantics. Its held generic discovery uses the original public coordinator, or
+private metadata accounting without an allowance, only after actual reader,
+child, admission, resource identities and custody authenticate that role. Missing
+or changed bindings refuse. One member proof retains its native private image
+data across two complete fresh owner-discovery passes, verifies sources between
+them and on retirement, then physically closes the child. Manifest data may be
+shared from the authenticated capture; membership and policy verdicts stay fresh.
+Budgeted archive hashes use unbuffered FileIO and a prepaid full view, preserving
+four complete hashes, partial/EOF charges, source checks and the original limits.
+See ADR-244's captured-authority and held-copy clauses and the implementations in
+`mobile_captured_authority.py`, `mobile_captured_sqlite.py` and `archive_reader.py`.
+
+The local authority consumers authenticate the actual issued child before selector,
+adapter or inventory work and retain that exact child through projection. Losing
+the marker cannot select an unpriced ordinary path. Installed schema matching
+reads one bounded, prepaid tuple of ordered integer row IDs per invocation, then
+freshly compares every SQL literal by row ID. It retains the original catalog,
+SQL-step and deadline limits; neither schema verdicts nor SQL text are cached.
+
+Live concurrent-write, authenticated restored-generation,
 strict-copy and physical-retirement evidence are recorded separately in the
 [Task11 qualification packet](../superpowers/qa/2026-10-25-shared-console-mobile-supervision/README.md).

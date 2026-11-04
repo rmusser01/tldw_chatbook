@@ -50,6 +50,49 @@ def test_native_toml_expansion_refuses_before_decoder(raw, monkeypatch):
         inventory._parse_profile_config(raw, _read_budget=_TraceReadBudget())
 
 
+def _assert_missing_history_child_refuses(reads, budget, monkeypatch):
+    from contextlib import contextmanager
+
+    from tldw_chatbook.Backup_Recovery import mobile_consolidation, mobile_history_files
+    from tldw_chatbook.Backup_Recovery import storage_admission as storage
+
+    discovery = storage.MaintenanceSession._discovery_reads
+    children = []
+
+    @contextmanager
+    def missing(session, *args, **kwargs):
+        with discovery(session, *args, **kwargs):
+            child = storage._local.discovery_scope
+            assert child is not None and child.active and session is reads.session
+            children.append(child)
+            with monkeypatch.context() as fault:
+                fault.setattr(storage._local, "discovery_scope", None)
+                yield
+
+    def forbidden(*args, **kwargs):
+        pytest.fail("missing actual history child reached generic inventory")
+
+    with monkeypatch.context() as observe:
+        observe.setattr(storage.MaintenanceSession, "_discovery_reads", missing)
+        observe.setattr(mobile_consolidation, "mobile_inventory", forbidden)
+        with pytest.raises(ValueError, match="mobile_native_discovery_child_changed"):
+            mobile_history_files._members(
+                reads.captured,
+                reads._source_archive[1],
+                _read_budget=budget,
+                _scope=reads,
+            )
+    assert len(children) == 1
+    child = children[0]
+    assert not child.active and not child.sqlite_copies.active
+    assert child.resources == child.sqlite_copies.resources == []
+    assert not child.custody.fds and not child.sqlite_copies.custody.fds
+    assert (
+        not child.custody.close_failed and not child.sqlite_copies.custody.close_failed
+    )
+    assert child.sqlite_copies.directory is None
+
+
 @pytest.mark.parametrize("fault", ["ordinary", "short", "cancel", "expansion"])
 def test_actual_history_selector_parses_once_with_native_ordinary_mode(
     tmp_path, monkeypatch, fault
@@ -77,15 +120,22 @@ def test_actual_history_selector_parses_once_with_native_ordinary_mode(
     with content_reads(
         tmp_path, monkeypatch, lambda c, p: None, native_seed=native
     ) as reads:
-        original = mobile_runs_history._qualify_history
+        original = mobile_runs_history._qualify_history_census
         parse = inventory._parse_profile_config
         seen = []
         hits = []
         name_budgets = []
+        reached, checked_child = [], []
         native_names = native_recovery._run_log_names
+        native_logs = native_recovery._RunLogs.discover_for_stores
 
         def names(config, *, _read_budget=None):
             assert _read_budget is not None
+            # The existing pure runs_preflight owns its separate bounded16 budget.
+            assert _read_budget is not reads.read_budget
+            assert type(_read_budget) is type(reads.read_budget)
+            assert _read_budget._parent is reads.read_budget._parent is None
+            assert 0 < _read_budget._remaining < 16 * 1024**2
             name_budgets.append(_read_budget)
             assert len(name_budgets) == 1
             return native_names(config, _read_budget=_read_budget)
@@ -115,11 +165,45 @@ def test_actual_history_selector_parses_once_with_native_ordinary_mode(
         def forbidden(*args, **kwargs):
             raise AssertionError("pure history must not reread config unbounded")
 
+        def logs(owner, config, stores=None, **options):
+            from tldw_chatbook.Backup_Recovery import mobile_preview_budget
+            from tldw_chatbook.Backup_Recovery import storage_admission as storage
+            from tldw_chatbook.Backup_Recovery.mobile_captured_sqlite import (
+                _captured_discovery_budget,
+            )
+            from tldw_chatbook.Skills_Interop import recovery as script_recovery
+
+            if options.get("_runs_scope") is reads and not checked_child:
+                child = storage._local.discovery_scope
+                assert child is not None and mobile_preview_budget.current() is None
+                assert _captured_discovery_budget(reads.session, child) is None
+                assert options["_read_budget"] is name_budgets[0]
+
+                def forbidden(*args, **kwargs):
+                    pytest.fail("private missing child reached generic RunLogs")
+
+                with monkeypatch.context() as observe:
+                    observe.setattr(storage._local, "discovery_scope", None)
+                    observe.setattr(
+                        script_recovery, "default_script_output_root", forbidden
+                    )
+                    with pytest.raises(ValueError, match="selector_scope_required"):
+                        native_logs(owner, config, stores, **options)
+                assert storage._local.discovery_scope is child
+                checked_child.append(True)
+            return native_logs(owner, config, stores, **options)
+
         def qualify(*args, **kwargs):
+            reached.append(True)
+            if fault == "ordinary":
+                _assert_missing_history_child_refuses(
+                    reads, kwargs["_read_budget"], monkeypatch
+                )
             with monkeypatch.context() as patch:
                 patch.setattr(inventory, "read_profile_config", forbidden)
                 patch.setattr(inventory, "_parse_profile_config", parsed)
                 patch.setattr(native_recovery, "_run_log_names", names)
+                patch.setattr(native_recovery._RunLogs, "discover_for_stores", logs)
                 if fault in {"short", "cancel"}:
                     patch.setattr(mobile_runs_selector.os, "read", read)
                 if fault == "expansion":
@@ -127,9 +211,11 @@ def test_actual_history_selector_parses_once_with_native_ordinary_mode(
                 result = original(*args, **kwargs)
                 assert seen == [kwargs["_read_budget"]]
                 assert name_budgets == seen
+                if fault == "ordinary":
+                    assert checked_child == [True]
                 return result
 
-        monkeypatch.setattr(mobile_runs_history, "_qualify_history", qualify)
+        monkeypatch.setattr(mobile_runs_history, "_qualify_history_census", qualify)
         if fault == "ordinary":
             reads.runs_preflight()
         else:
@@ -142,6 +228,7 @@ def test_actual_history_selector_parses_once_with_native_ordinary_mode(
                 reads.runs_preflight()
             if fault in {"short", "cancel"}:
                 assert hits == [selector_identity.st_size + 1]
+        assert reached == [True]
         assert (
             stat.S_IMODE(reads.captured.preview.source_selector.stat().st_mode) == 0o644
         )

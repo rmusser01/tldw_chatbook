@@ -46,7 +46,12 @@ class _Object(_Evidence):
     @field_validator("path")
     @classmethod
     def absolute_path(cls, value):
-        if not Path(value).is_absolute() or ".." in Path(value).parts or "\0" in value:
+        path = Path(value)
+        if (
+            not path.is_absolute()
+            or (".." in value and ".." in path.parts)
+            or "\0" in value
+        ):
             raise ValueError("artifact_path_invalid")
         return value
 
