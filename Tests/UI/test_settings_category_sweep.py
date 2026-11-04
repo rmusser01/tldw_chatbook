@@ -11,23 +11,51 @@ task-1343: the eight read-only domain stub categories collapsed into the
 single "Domain Ownership" category, so the sweep derives its list from the
 sidebar summaries (12 categories) instead of the enum (which keeps the
 retired stub ids as contract keys and legacy deep-link targets).
+
+TASK-36525: the test builds app config in its body (``_build_test_app()``
+runs ``load_settings()``), so it runs under ``@private_profile_test``; under
+the per-test config redirect it raises ``RecoveryRequired`` (TASK-36381).
+Each size's sweep is split across nodes over contiguous thirds of
+``ALL_CATEGORY_IDS`` (the summary order the unsplit sweep used), and a pure
+test checks that the thirds together are all of it.
 """
 
 import pytest
 from textual.widgets import Button
 
+from Tests.private_profile import private_profile_test
 from Tests.UI.test_destination_shells import (
     DestinationHarness,
     _active_destination_screen,
     _visible_text,
 )
 from Tests.UI.test_screen_navigation import _build_test_app
-from tldw_chatbook.UI.Screens.settings_screen import SettingsScreen
+from tldw_chatbook.UI.Screens.settings_screen import SettingsCategoryId, SettingsScreen
 
 ALL_CATEGORY_IDS = tuple(
     summary.category.value
     for summary in SettingsScreen(_build_test_app())._category_summaries()
 )
+
+#: Categories whose rail press lands focus somewhere other than their own
+#: rail button. Theme lands in its list, where its c/t/e and j/k keys act
+#: (TASK-33072, pinned by test_settings_theme_picker_screen.py's
+#: test_rail_click_and_open_theme_focus_the_theme_list).
+_FOCUS_AFTER_SELECT = {SettingsCategoryId.THEME.value: "settings-theme-list"}
+
+#: One sweep node per (size, group), each over a contiguous third of
+#: ``ALL_CATEGORY_IDS`` (the summary order the unsplit sweep used), so a
+#: census node stays well under the UI lane's 30 s per-entry budget: the
+#: unsplit sweep took 28-53 s per size under local load (TASK-36525).
+#: Contiguous, so every category-to-category switch but the group boundaries
+#: is one the unsplit sweep made.
+_GROUPS = (0, 1, 2)
+
+
+def _category_group(group: int) -> tuple[str, ...]:
+    """The categories sweep node ``group`` visits, in ``ALL_CATEGORY_IDS`` order."""
+    share = -(-len(ALL_CATEGORY_IDS) // len(_GROUPS))
+    return ALL_CATEGORY_IDS[group * share : (group + 1) * share]
 
 
 async def _settle_settings(pilot) -> None:
@@ -43,28 +71,56 @@ async def _settle_settings(pilot) -> None:
         await pilot.pause()
 
 
+async def _wait_for(pilot, predicate, timeout: float = 10.0) -> bool:
+    """Poll ``predicate`` until it holds or ``timeout`` seconds pass."""
+    for _ in range(int(timeout / 0.05)):
+        if predicate():
+            return True
+        await pilot.pause(0.05)
+    return bool(predicate())
+
+
 async def _click_settings_category(pilot, category_value: str) -> None:
-    selector = f"#settings-category-{category_value}"
+    """Press the category's real rail button, wait for the switch, settle.
+
+    The name is kept for its many importers; since TASK-36525 this presses
+    rather than clicks. ``Button.press()`` is the call a click and Enter both
+    end in, and the coordinate click it replaces depended on where the row
+    sat on screen. Textual drops a press on a hidden or disabled row
+    silently, so a press that switches nothing fails here, naming the
+    category.
+    """
     screen = pilot.app.screen
-    try:
-        button = screen.query_one(selector)
-        screen.query_one("#settings-category-list").scroll_to_widget(
-            button, animate=False
-        )
-        await pilot.pause()
-    except Exception:
-        pass
-    await pilot.click(selector)
+    screen.query_one(f"#settings-category-{category_value}", Button).press()
+    switched = await _wait_for(
+        pilot,
+        lambda: (
+            screen.active_category == category_value
+            and not screen._category_pane_swap_pending
+        ),
+    )
+    assert switched, f"Pressing the {category_value} rail row did not open it"
     await _settle_settings(pilot)
 
 
-@pytest.mark.asyncio
-@pytest.mark.parametrize("size", [(120, 35), (80, 24)])
-async def test_every_settings_category_renders_and_restores_focus(size):
+def test_the_sweep_groups_cover_every_category_once():
+    """Splitting the sweep loses no category: the groups, in order, are
+    exactly ``ALL_CATEGORY_IDS`` (the summary order the unsplit sweep used),
+    and none is empty."""
     # Upstream keeps the per-domain rail slots (our task-1343 collapse was
     # superseded by the collapsible Domain Defaults rail), so pin a floor,
     # not an exact count.
     assert len(ALL_CATEGORY_IDS) >= 12
+    assert all(_category_group(group) for group in _GROUPS)
+    swept = [value for group in _GROUPS for value in _category_group(group)]
+    assert swept == list(ALL_CATEGORY_IDS)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("size", [(120, 35), (80, 24)], ids=["120x35", "80x24"])
+@pytest.mark.parametrize("group", _GROUPS)
+@private_profile_test
+async def test_every_settings_category_renders_and_restores_focus(size, group, request):
     app = _build_test_app()
     host = DestinationHarness(app, "settings")
 
@@ -72,9 +128,18 @@ async def test_every_settings_category_renders_and_restores_focus(size):
         await _settle_settings(pilot)
         screen = _active_destination_screen(host)
 
-        for category_value in ALL_CATEGORY_IDS:
+        for category_value in _category_group(group):
             await _click_settings_category(pilot, category_value)
             screen = _active_destination_screen(host)
+            expected = _FOCUS_AFTER_SELECT.get(
+                category_value, f"settings-category-{category_value}"
+            )
+            await _wait_for(
+                pilot,
+                lambda expected=expected: (
+                    getattr(pilot.app.focused, "id", None) == expected
+                ),
+            )
 
             # No crash / no blank screen: the shell still renders content.
             assert screen.query("#settings-title"), (
@@ -90,9 +155,6 @@ async def test_every_settings_category_renders_and_restores_focus(size):
             assert focused is not None, (
                 f"Focus lost after selecting {category_value} at {size}"
             )
-            assert isinstance(focused, Button) and focused.id == (
-                f"settings-category-{category_value}"
-            ), (
-                f"Expected focus on settings-category-{category_value}, "
-                f"got {focused!r} at {size}"
+            assert focused.id == expected, (
+                f"Expected focus on {expected}, got {focused!r} at {size}"
             )
