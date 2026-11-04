@@ -27,6 +27,1572 @@ from tldw_chatbook.Workspaces.worktree_activity import WorktreeFootprint, Worktr
 pytestmark = [pytest.mark.bootstrap_profile, pytest.mark.asyncio]
 
 
+async def consent_unknown_return_journey(tmp_path, _unused):
+    import inspect
+    import os
+    from types import SimpleNamespace
+
+    from tldw_chatbook.Chat.console_project_instructions import (
+        ProjectInstructionControlState,
+    )
+    from tldw_chatbook.Chat.console_workflow_preparation import (
+        _finish_native_preparation,
+        _PreparedWorkflowReply,
+    )
+
+    mode = sys.argv[2]
+    assert mode in {"release-return", "source-shadow", "owning-exit"}
+    generator = primary = None
+    saved, errors, confirmations, replacements, finishes = {}, [], [], [], []
+    sentinel = RuntimeError("original consent boundary failed")
+    previous_profile, previous_thread_profile = sys.getprofile(), threading.getprofile()
+    previous_trace, previous_thread_trace = sys.gettrace(), threading.gettrace()
+    release_code = _PreparedWorkflowReply._release_configuration.__code__
+    source_code = _PreparedWorkflowReply.activate_source.__wrapped__.__code__
+    own_code = next(
+        code
+        for code in _PreparedWorkflowReply._read.__code__.co_consts
+        if inspect.iscode(code) and code.co_name == "invoke_owned"
+    )
+    with pytest.MonkeyPatch.context() as monkeypatch:
+        try:
+            generator = native_tests.native_host.__wrapped__(
+                tmp_path, monkeypatch, SimpleNamespace(param=None)
+            )
+            h = await anext(generator)
+            (h.root / "AGENTS.md").write_text("Original retained consent source\n")
+            h.session.project_instruction_state = ProjectInstructionControlState(
+                project_instructions_enabled=True,
+                working_folder_binding_id=h.binding.binding_id,
+                working_folder_locator_fingerprint=h.binding.locator_fingerprint,
+            )
+            before = h.db.automatic_work.snapshot(h.phase.attempt.chain_id)
+            issuer, host = asyncio.current_task(), threading.current_thread()
+
+            def replacement(*_args):
+                replacements.append(True)
+                raise AssertionError("replacement scope exit must not execute")
+
+            def confirmation(snapshot):
+                p = saved["prepared"]
+                assert snapshot is p._snapshot and mode == "owning-exit"
+                confirmations.append(snapshot)
+                record = p._finite_reads[-1]
+                assert record.prepared is p and record.issuing is issuer
+                assert record.configuration_return is p._consent_configuration_return
+                assert (
+                    record.owner is not None
+                    and record.operation is not None
+                    and record.claim is None
+                )
+                saved.update(
+                    record=record, owner=record.owner, operation=record.operation
+                )
+                raise sentinel
+
+            def profile(frame, event, result):
+                if event == "call" and frame.f_code is OwnedOperation.finish.__code__:
+                    if (
+                        saved.get("operation") is frame.f_locals.get("self")
+                        and "operation" in saved
+                    ):
+                        finishes.append(frame)
+                    return
+                if frame.f_code is not release_code or event not in {"call", "return"}:
+                    return
+                parent = frame.f_back
+                if (
+                    parent is None
+                    or parent.f_code is not _finish_native_preparation.__code__
+                ):
+                    return
+                inject = shadow = False
+                try:
+                    p = frame.f_locals["self"]
+                    assert p.phase is h.phase and parent.f_locals["prepared"] is p
+                    assert (
+                        threading.current_thread() is host
+                        and asyncio.current_task() is issuer
+                    )
+                    if event == "call":
+                        assert not saved
+                        scope = p._source_scope
+                        assert scope is not None and scope.gen.gi_frame is not None
+                        assert p in h.runtime._workflow_preparations
+                        assert h.phase._task_scopes["task-1"] is p.authorization
+                        assert p.authorization._bridge_preparation[0] is p
+                        for record in p._finite_reads:
+                            p._finite_read_return(record)
+                            assert record.positive
+                        saved.update(
+                            prepared=p,
+                            scope=scope,
+                            auth=p.authorization,
+                            source=p.source,
+                            native=p.native,
+                            lifetime=p._lifetime,
+                            prefix=tuple(p._finite_reads),
+                        )
+                        shadow = mode == "source-shadow"
+                    elif dis.opname[frame.f_code.co_code[frame.f_lasti]] in {
+                        "RETURN_VALUE",
+                        "RETURN_CONST",
+                    }:
+                        assert p is saved["prepared"]
+                        scope, registry = (
+                            saved["scope"],
+                            h.runtime._workflow_preparations,
+                        )
+                        assert type(result) is tuple and len(result) == 3
+                        assert all(a is b for a, b in zip(result, (p, scope, registry)))
+                        assert (
+                            scope.gen.gi_frame is None
+                            and p._source_scope is None
+                            and p not in registry
+                        )
+                        assert p._configuration_transition[:3] == (p, scope, registry)
+                        saved.update(
+                            returned=result, transition=p._configuration_transition
+                        )
+                        inject = mode == "release-return"
+                except BaseException as error:  # noqa: BLE001 - observation cannot change native disposition.
+                    errors.append(error)
+                if shadow:
+                    saved["scope"].__exit__ = replacement
+                    saved["shadowed"] = True
+                if inject:
+                    sys.setprofile(previous_profile)
+                    raise sentinel
+
+            def trace(frame, event, _value):
+                if frame.f_code is not source_code:
+                    return None
+                if event != "return" or dis.opname[
+                    frame.f_code.co_code[frame.f_lasti]
+                ] not in {"RETURN_VALUE", "RETURN_CONST"}:
+                    return trace
+                inject = False
+                try:
+                    record = saved.get("record")
+                    if (
+                        record is None
+                        or frame.f_locals.get("self") is not saved["prepared"]
+                    ):
+                        return trace
+                    parent = frame.f_back
+                    while parent is not None and parent.f_code is not own_code:
+                        parent = parent.f_back
+                    assert parent is not None and parent.f_locals["record"] is record
+                    assert parent.f_locals["self"] is saved["prepared"]
+                    assert (
+                        record.body_error is sentinel and record.owner is saved["owner"]
+                    )
+                    assert (
+                        record.operation is saved["operation"]
+                        and not record.scopes_returned
+                    )
+                    saved["source_exit"] = frame
+                    inject = True
+                except BaseException as error:  # noqa: BLE001 - native source fault occurs only after exact associations.
+                    errors.append(error)
+                if inject:
+                    threading.settrace_all_threads(previous_thread_trace)
+                    sys.settrace(previous_trace)
+                    raise sentinel
+                return trace
+
+            threading.setprofile_all_threads(profile)
+            if mode == "owning-exit":
+                threading.settrace_all_threads(trace)
+            with pytest.raises(RuntimeError) as caught:
+                await h.bridge._prepare_workflow_reply(
+                    phase=h.phase,
+                    task_id="task-1",
+                    binding=h.binding,
+                    resolution=h.selected,
+                    confirm_project_instruction_dispatch=confirmation,
+                )
+            threading.setprofile_all_threads(previous_thread_profile)
+            sys.setprofile(previous_profile)
+            threading.settrace_all_threads(previous_thread_trace)
+            sys.settrace(previous_trace)
+            assert errors == [] and replacements == [] and finishes == []
+            p, scope, auth = saved["prepared"], saved["scope"], saved["auth"]
+            records = tuple(p._finite_reads)
+            assert p.authorization is auth and auth._bridge_preparation[0] is p
+            assert h.phase._task_scopes["task-1"] is auth
+            assert (
+                p.source is saved["source"]
+                and p.native is saved["native"]
+                and p._lifetime is saved["lifetime"]
+            )
+            assert p._terminal_configuration_return is None and not p._closed
+            if mode == "owning-exit":
+                assert len(confirmations) == 1 and saved.get("source_exit") is not None
+                record = saved["record"]
+                assert record is records[-1] and record.before_issue is None
+                assert record.body_error is record.wrapper_error is sentinel
+                assert (
+                    record.proof[1].done() and record.proof[1].exception() is sentinel
+                )
+                assert record.proof[2].done() and record.proof[2].result() is None
+                assert not record.scopes_returned and not record.positive
+                assert p._finite == (saved["owner"], None)
+                assert (
+                    saved["operation"] in saved["owner"]._operations
+                    and saved["owner"].is_admitted
+                )
+                assert p._consent_configuration_return[0] is saved["returned"]
+                assert str(caught.value) == "original workflow reader return unproven"
+            else:
+                assert confirmations == [] and records == saved["prefix"]
+                assert p._consent_configuration_return is None
+                if mode == "release-return":
+                    assert p._configuration_transition is saved["transition"]
+                    assert (
+                        p._configuration_transition_error is sentinel
+                        and caught.value.__cause__ is sentinel
+                    )
+                else:
+                    assert saved["shadowed"] and p._configuration_transition is None
+                    assert isinstance(
+                        p._configuration_transition_error, PermissionError
+                    )
+                    assert (
+                        str(p._configuration_transition_error)
+                        == "original configuration source changed"
+                    )
+            assert (
+                (p._source_scope is scope and p in h.runtime._workflow_preparations)
+                if mode == "source-shadow"
+                else (
+                    p._source_scope is None
+                    and p not in h.runtime._workflow_preparations
+                )
+            )
+            claim = auth.claim
+
+            def reservation():
+                with h.db.connection() as conn:
+                    return tuple(
+                        conn.execute(
+                            "SELECT id,chain_id,owner_id,kind,amount,state FROM automatic_work_reservations WHERE id=?",
+                            (claim.reservation_id,),
+                        ).fetchone()
+                    )
+
+            row = reservation()
+            assert row == (
+                claim.reservation_id,
+                claim.chain_id,
+                claim.owner_id,
+                "child_launch",
+                1,
+                "reserved",
+            )
+            after = h.db.automatic_work.snapshot(claim.chain_id)
+            expected = dict(before.reserved)
+            expected["child_launch"] += 1
+            assert after.used == before.used and after.reserved == expected
+            for _ in range(2):
+                with pytest.raises((RuntimeError, PermissionError)):
+                    await p.close()
+                assert (
+                    tuple(p._finite_reads) == records
+                    and p._terminal_configuration_return is None
+                )
+                assert p.authorization is auth and auth._bridge_preparation[0] is p
+                assert replacements == [] and finishes == []
+                if mode == "owning-exit":
+                    assert p._finite == (saved["owner"], None)
+                    assert saved["operation"] in saved["owner"]._operations
+                    assert saved["owner"].is_admitted
+                    assert record.wrapper_error is record.body_error is sentinel
+                assert reservation() == row
+                current = h.db.automatic_work.snapshot(claim.chain_id)
+                assert current.used == after.used and current.reserved == after.reserved
+            assert h.calls == [] and h.db.list_runs(h.conversation_id) == []
+            print("G_CONSENT_UNKNOWN_RETAINED; no fixture/creator drain", flush=True)
+            os._exit(17)
+        except BaseException as error:
+            primary = error
+            raise
+        finally:
+            threading.setprofile_all_threads(previous_thread_profile)
+            sys.setprofile(previous_profile)
+            threading.settrace_all_threads(previous_thread_trace)
+            sys.settrace(previous_trace)
+            if generator is not None:
+                try:
+                    await generator.aclose()
+                except BaseException as error:
+                    if primary is None:
+                        raise
+                    primary.add_note(
+                        "Original fixture cleanup also failed: " + type(error).__name__
+                    )
+                    primary.cleanup_error = error
+
+
+@pytest.mark.parametrize("mode", ["release-return", "source-shadow", "owning-exit"])
+async def test_original_consent_unknown_return_retains_same_custody(tmp_path, mode):
+    import subprocess
+    from pathlib import Path
+
+    from Tests.Backup_Recovery.test_home_citation_retirement import _run
+
+    route = "consent-unknown"
+    script = Path(__file__).with_name("workflow_coordinator_probe.py").read_text()
+    with pytest.raises(AssertionError, match="G_CONSENT_UNKNOWN_RETAINED") as caught:
+        await asyncio.to_thread(_run, tmp_path, route, mode, script=script, timeout=60)
+    frames, tb = [], caught.value.__traceback__
+    while tb is not None:
+        if tb.tb_frame.f_code is _run.__code__:
+            frames.append(tb.tb_frame)
+        tb = tb.tb_next
+    assert len(frames) == 1
+    actual = frames[0].f_locals["result"]
+    assert type(actual) is subprocess.CompletedProcess and actual.returncode == 17
+    assert actual.args[-2:] == [route, mode]
+
+
+async def _original_wave_release_receiver_control(h, fail_return):
+    from tldw_chatbook.Chat.console_workflow_wave import _workflow_wave_return
+
+    prepared = await h.bridge._prepare_workflow_reply(
+        phase=h.phase, task_id="task-1", binding=h.binding, resolution=h.selected
+    )
+    scope, auth, source = (
+        prepared._source_scope,
+        prepared.authorization,
+        prepared.source,
+    )
+    native = auth._native_preparation[0]
+    capacity = h.runtime.execution_capacity
+    capacity._refresh_limits()
+    allowance = capacity.max_child_executions - capacity.reserved_manual_children
+    assert 0 < allowance <= capacity.max_child_executions
+    before = h.db.automatic_work.snapshot(auth.claim.chain_id)
+
+    def reservation():
+        with h.db.connection() as conn:
+            return tuple(
+                conn.execute(
+                    "SELECT id,chain_id,owner_id,kind,amount,state FROM automatic_work_reservations WHERE id=?",
+                    (auth.claim.reservation_id,),
+                ).fetchone()
+            )
+
+    original_reservation = reservation()
+    saved, errors, competitors, returns = {}, [], [], []
+    primary = None
+    failure = RuntimeError("original final wave release return failed")
+    previous = sys.getprofile()
+    host = threading.current_thread()
+    codes = (
+        _WorkflowWave.__init__.__code__,
+        _WorkflowWave._open.__code__,
+        _WorkflowWave._release.__code__,
+    )
+
+    def observe(frame, event, result):
+        if event != "return" or frame.f_code not in codes:
+            return
+        if dis.opname[frame.f_code.co_code[frame.f_lasti]] not in {
+            "RETURN_VALUE",
+            "RETURN_CONST",
+        }:
+            return
+        wave = frame.f_locals["self"]
+        if wave.prepared != (prepared,):
+            return
+        inject = False
+        try:
+            assert threading.current_thread() is host and wave.phase is h.phase
+            if frame.f_code is codes[0]:
+                assert not saved
+                saved["wave"] = wave
+            elif frame.f_code is codes[1]:
+                assert wave is saved["wave"] and asyncio.current_task() is wave.driver
+                assert type(result.error) is _WorkflowChildWait and not result.retain
+                assert result.source is result.footprint is None
+                saved["opening"] = result
+            else:
+                assert wave is saved["wave"] and asyncio.current_task() is wave.driver
+                assert wave.driver.get_coro() is wave._driver_coroutine
+                assert wave.closed and wave not in h.runtime._workflow_waves
+                assert wave._release_return is None
+                terminal = prepared._terminal_configuration_return
+                returned, closing, records = terminal
+                assert returned[0] is prepared and returned[1] is scope
+                assert returned[2] is h.runtime._workflow_preparations
+                assert records[-1] is closing and closing.positive
+                assert closing.wrapper_error is closing.body_error is None
+                proof = prepared._finite_read_return(closing)
+                assert proof is closing.proof[1].result()
+                assert closing.proof[2].done() and closing.proof[2].result() is None
+                assert scope.gen.gi_frame is None and prepared._source_scope is None
+                assert (
+                    prepared._closed
+                    and prepared not in h.runtime._workflow_preparations
+                )
+                expected = (
+                    wave,
+                    wave.driver,
+                    wave._driver_coroutine,
+                    wave.source,
+                    wave.reservation,
+                    wave.fence,
+                    wave.baseline_return,
+                    wave.ending_return,
+                    wave.prepared,
+                )
+                assert type(result) is tuple and len(result) == 12
+                assert all(a is b for a, b in zip(result[:9], expected))
+                assert result[9:11] == ((), ()) and len(result[11]) == 1
+                assert result[11][0][0] is prepared and result[11][0][1] is terminal
+                saved.update(
+                    returned=result,
+                    terminal=terminal,
+                    closing=closing,
+                    proof=proof,
+                    records=records,
+                )
+                inject = fail_return
+        except BaseException as error:  # noqa: BLE001 - passive observations preserve native errors.
+            errors.append(error)
+        if inject:
+            sys.setprofile(previous)
+            raise failure
+
+    try:
+        for _ in range(allowance):
+            owner = capacity.begin_execution(
+                origin=WorkOrigin.AUTOMATIC,
+                child=True,
+                conversation_id="original-release-contender",
+            )
+            competitors.append(owner)
+            owner.on_drained(
+                lambda proven, owner=owner: returns.append((owner, proven))
+            )
+        sys.setprofile(observe)
+        with pytest.raises(BaseException) as caught:
+            await run_workflow_wave(h.phase, (prepared,))
+        sys.setprofile(previous)
+        assert errors == []
+        wave = saved["wave"]
+        assert wave.driver.done() and not wave.driver.cancelled()
+        assert wave.driver.exception() is caught.value
+        assert wave._driver_coroutine.cr_frame is None
+        assert caught.value is (failure if fail_return else saved["opening"].error)
+        assert prepared._wave is wave and prepared.authorization is auth
+        assert (
+            auth._bridge_preparation[0] is prepared
+            and h.phase._task_scopes["task-1"] is auth
+        )
+        assert prepared.source is source and auth._native_preparation[0] is native
+        assert wave.source is wave.reservation is wave.fence is wave.publication is None
+        assert not wave.baseline_return.done() and not wave.ending_return.done()
+        assert not wave.receipts and not wave.unproven_launches
+        assert auth._native_launch == [] and not native.threads
+        for _ in range(2):
+            if fail_return:
+                assert wave._release_return is None
+                with pytest.raises(
+                    RuntimeError, match="original workflow release return unproven"
+                ):
+                    await prepared.close()
+            else:
+                assert wave._release_return is saved["returned"]
+                await prepared.close()
+            assert prepared._terminal_configuration_return is saved["terminal"]
+            assert tuple(prepared._finite_reads) == saved["records"]
+            assert prepared._finite_read_return(saved["closing"]) is saved["proof"]
+        with pytest.raises(
+            RuntimeError, match="original workflow wave return unproven"
+        ):
+            _workflow_wave_return(wave)
+        after = h.db.automatic_work.snapshot(auth.claim.chain_id)
+        assert after.used == before.used and after.reserved == before.reserved
+        assert reservation() == original_reservation
+        assert h.calls == [] and h.db.list_runs(h.conversation_id) == []
+    except BaseException as error:
+        primary = error
+        raise
+    finally:
+        sys.setprofile(previous)
+        cleanup_errors = []
+        for owner in competitors:
+            try:
+                owner.finish_root()
+            except BaseException as error:  # noqa: BLE001 - preserve actual original cleanup failures.
+                cleanup_errors.append(error)
+        try:
+            assert len(returns) == len(competitors)
+            assert all(
+                proven is True and not owner.is_admitted for owner, proven in returns
+            )
+        except BaseException as error:  # noqa: BLE001 - preserve primary and return failures separately.
+            cleanup_errors.append(error)
+        if cleanup_errors:
+            if primary is None:
+                raise cleanup_errors[0]
+            primary.cleanup_errors = tuple(cleanup_errors)
+            for error in cleanup_errors:
+                primary.add_note(
+                    "Original competitor cleanup also failed: " + type(error).__name__
+                )
+    assert capacity.snapshot().executions == ()
+
+
+async def test_original_wave_refusal_keeps_returned_member_close_inert(native_host):
+    await _original_wave_release_receiver_control(native_host, False)
+
+
+async def wave_release_receiver_failure_journey(tmp_path, _unused):
+    import os
+    from types import SimpleNamespace
+
+    generator = primary = None
+    with pytest.MonkeyPatch.context() as monkeypatch:
+        try:
+            generator = native_tests.native_host.__wrapped__(
+                tmp_path, monkeypatch, SimpleNamespace(param=None)
+            )
+            h = await anext(generator)
+            await _original_wave_release_receiver_control(h, True)
+            print(
+                "G_WAVE_RELEASE_RECEIVER_RETAINED; no fixture/creator drain", flush=True
+            )
+            os._exit(17)
+        except BaseException as error:
+            primary = error
+            raise
+        finally:
+            if generator is not None:
+                try:
+                    await generator.aclose()
+                except BaseException as error:
+                    if primary is None:
+                        raise
+                    primary.add_note(
+                        "Original fixture cleanup also failed: " + type(error).__name__
+                    )
+                    primary.cleanup_error = error
+
+
+async def test_original_wave_release_receiver_failure_refuses_member_noop(tmp_path):
+    import subprocess
+    from pathlib import Path
+
+    from Tests.Backup_Recovery.test_home_citation_retirement import _run
+
+    route = "wave-release-receiver"
+    script = Path(__file__).with_name("workflow_coordinator_probe.py").read_text()
+    with pytest.raises(
+        AssertionError, match="G_WAVE_RELEASE_RECEIVER_RETAINED"
+    ) as caught:
+        await asyncio.to_thread(
+            _run, tmp_path, route, "retained", script=script, timeout=60
+        )
+    frames, tb = [], caught.value.__traceback__
+    while tb is not None:
+        if tb.tb_frame.f_code is _run.__code__:
+            frames.append(tb.tb_frame)
+        tb = tb.tb_next
+    assert len(frames) == 1
+    actual = frames[0].f_locals["result"]
+    assert type(actual) is subprocess.CompletedProcess and actual.returncode == 17
+    assert actual.args[-2:] == [route, "retained"]
+
+
+@pytest.mark.parametrize("consent", ["none", "proceed", "cancel", "error"])
+async def test_original_configuration_consent_and_terminal_returns(
+    native_host, consent
+):
+    from tldw_chatbook.Chat.console_project_instructions import (
+        ProjectInstructionControlState,
+    )
+    from tldw_chatbook.Chat.console_workflow_preparation import _PreparedWorkflowReply
+
+    h = native_host
+    if consent != "none":
+        (h.root / "AGENTS.md").write_text("Original consent lifecycle instruction\n")
+        h.session.project_instruction_state = ProjectInstructionControlState(
+            project_instructions_enabled=True,
+            working_folder_binding_id=h.binding.binding_id,
+            working_folder_locator_fingerprint=h.binding.locator_fingerprint,
+        )
+    saved, errors, entries, releases, confirmations = {}, [], [], [], []
+    returned_prepared = primary = None
+    close_attempted = False
+    sentinel = RuntimeError("original consent callback body refused")
+    issuer, host = asyncio.current_task(), threading.current_thread()
+    previous = sys.getprofile()
+    initial = h.db.automatic_work.snapshot(h.phase.attempt.chain_id)
+
+    def reservation(claim):
+        with h.db.connection() as conn:
+            row = conn.execute(
+                "SELECT id,chain_id,owner_id,kind,amount,state FROM automatic_work_reservations WHERE id=?",
+                (claim.reservation_id,),
+            ).fetchone()
+        return tuple(row)
+
+    def confirmation(snapshot):
+        p = saved["prepared"]
+        assert snapshot is p._snapshot and p._source_scope is None
+        assert p.authorization._bridge_preparation[0] is p
+        confirmations.append(snapshot)
+        claim = p.authorization.claim
+        saved.update(
+            claim=claim,
+            baseline=h.db.automatic_work.snapshot(claim.chain_id),
+            reservation=reservation(claim),
+        )
+        if consent == "error":
+            raise sentinel
+        return consent
+
+    def observe(frame, event, result):
+        if (
+            frame.f_code
+            not in {
+                _PreparedWorkflowReply._retain_configuration.__code__,
+                _PreparedWorkflowReply._release_configuration.__code__,
+            }
+            or event != "return"
+            or dis.opname[frame.f_code.co_code[frame.f_lasti]]
+            not in {"RETURN_VALUE", "RETURN_CONST"}
+        ):
+            return
+        p = frame.f_locals["self"]
+        if p.phase is not h.phase:
+            return
+        try:
+            assert (
+                threading.current_thread() is host and asyncio.current_task() is issuer
+            )
+            assert saved.get("prepared", p) is p
+            saved["prepared"] = p
+            scope = frame.f_locals["scope"]
+            if frame.f_code is _PreparedWorkflowReply._retain_configuration.__code__:
+                assert (
+                    p._source_scope is scope and p in h.runtime._workflow_preparations
+                )
+                assert scope.gen.gi_frame is not None
+                entries.append(scope)
+            else:
+                assert type(result) is tuple and len(result) == 3
+                assert (
+                    result[0] is p
+                    and result[1] is scope
+                    and result[2] is h.runtime._workflow_preparations
+                )
+                assert scope.gen.gi_frame is None and p._source_scope is None
+                assert p not in h.runtime._workflow_preparations
+                releases.append(result)
+        except BaseException as error:  # noqa: BLE001 - observation never changes native entry/exit.
+            errors.append(error)
+
+    sys.setprofile(observe)
+    try:
+        kwargs = (
+            {}
+            if consent == "none"
+            else {"confirm_project_instruction_dispatch": confirmation}
+        )
+        if consent in {"none", "proceed"}:
+            prepared = await h.bridge._prepare_workflow_reply(
+                phase=h.phase,
+                task_id="task-1",
+                binding=h.binding,
+                resolution=h.selected,
+                **kwargs,
+            )
+            returned_prepared = prepared
+            assert prepared is saved["prepared"] and not prepared._closed
+            if consent == "none":
+                claim = prepared.authorization.claim
+                saved.update(
+                    claim=claim,
+                    baseline=h.db.automatic_work.snapshot(claim.chain_id),
+                    reservation=reservation(claim),
+                )
+            else:
+                assert len(entries) == 2 and entries[0] is not entries[1]
+                assert prepared._source_scope is entries[1]
+                assert prepared._consent_configuration_return is None
+            close_attempted = True
+            await prepared.close()
+        else:
+            with pytest.raises(BaseException) as caught:
+                await h.bridge._prepare_workflow_reply(
+                    phase=h.phase,
+                    task_id="task-1",
+                    binding=h.binding,
+                    resolution=h.selected,
+                    **kwargs,
+                )
+            prepared = saved["prepared"]
+            if consent == "error":
+                assert caught.value is sentinel
+            else:
+                assert type(caught.value) is PermissionError
+                assert str(caught.value) == "workflow project instructions declined"
+        assert errors == []
+        assert len(confirmations) == (0 if consent == "none" else 1)
+        assert len(entries) == len(releases) == (2 if consent == "proceed" else 1)
+        assert all(read.before_issue is None for read in prepared._finite_reads)
+        for read in prepared._finite_reads:
+            prepared._finite_read_return(read)
+        assert prepared._closed and prepared._source_scope is None
+        returned, closing, records = prepared._terminal_configuration_return
+        assert returned is releases[-1] and returned[1] is entries[-1]
+        assert records[-1] is closing and closing.positive
+        assert closing.wrapper_error is closing.body_error is None
+        assert closing.proof[1].done() and closing.proof[1].exception() is None
+        assert closing.proof[2].done() and closing.proof[2].result() is None
+        assert prepared not in h.runtime._workflow_preparations
+        claim = saved["claim"]
+        assert prepared.authorization.claim is claim
+        assert saved["reservation"] == (
+            claim.reservation_id,
+            claim.chain_id,
+            claim.owner_id,
+            "child_launch",
+            1,
+            "reserved",
+        )
+        after_first = h.db.automatic_work.snapshot(claim.chain_id)
+        assert after_first.used == saved["baseline"].used == initial.used
+        assert after_first.reserved == saved["baseline"].reserved
+        assert reservation(claim) == saved["reservation"]
+        await prepared.close()
+        assert tuple(prepared._finite_reads) == records
+        assert len(releases) == len(entries)
+        after_second = h.db.automatic_work.snapshot(claim.chain_id)
+        assert (
+            after_second.used == after_first.used
+            and after_second.reserved == after_first.reserved
+        )
+        assert reservation(claim) == saved["reservation"]
+        assert h.calls == [] and h.db.list_runs(h.conversation_id) == []
+    except BaseException as error:
+        primary = error
+        raise
+    finally:
+        sys.setprofile(previous)
+        if returned_prepared is not None and not close_attempted:
+            try:
+                await returned_prepared.close()
+            except BaseException as error:
+                if primary is None:
+                    raise
+                primary.add_note(
+                    "Original returned preparation cleanup also failed: "
+                    + type(error).__name__
+                )
+                primary.cleanup_error = error
+
+
+async def configuration_entry_failure_journey(tmp_path, _unused):
+    import os
+    from types import SimpleNamespace
+
+    from tldw_chatbook.Chat.console_workflow_preparation import _PreparedWorkflowReply
+
+    generator = primary = None
+    saved, errors = {}, []
+    sentinel = RuntimeError("original initial configuration entry return failed")
+    previous = sys.getprofile()
+    with pytest.MonkeyPatch.context() as monkeypatch:
+        try:
+            generator = native_tests.native_host.__wrapped__(
+                tmp_path, monkeypatch, SimpleNamespace(param=None)
+            )
+            h = await anext(generator)
+            registry = h.runtime._workflow_preparations
+            before = h.db.automatic_work.snapshot(h.phase.attempt.chain_id)
+            count = h.runtime._first_send_sources
+            issuer, host = asyncio.current_task(), threading.current_thread()
+
+            def observe(frame, event, _result):
+                if (
+                    frame.f_code
+                    is not contextlib._GeneratorContextManager.__enter__.__code__
+                    or event != "return"
+                ):
+                    return
+                parent = frame.f_back
+                if (
+                    parent is None
+                    or parent.f_code
+                    is not _PreparedWorkflowReply._retain_configuration.__code__
+                ):
+                    return
+                if dis.opname[frame.f_code.co_code[frame.f_lasti]] not in {
+                    "RETURN_VALUE",
+                    "RETURN_CONST",
+                }:
+                    return
+                inject = False
+                try:
+                    p, scope = parent.f_locals["self"], frame.f_locals["self"]
+                    assert p.phase is h.phase and p.runtime is h.runtime
+                    assert (
+                        threading.current_thread() is host
+                        and asyncio.current_task() is issuer
+                    )
+                    assert p._configuration_transition[:3] == (p, scope, registry)
+                    assert p._source_scope is None and p not in registry
+                    assert scope.gen.gi_frame.f_locals["self"] is h.runtime
+                    assert h.runtime._first_send_sources == count + 1
+                    saved.update(
+                        prepared=p, scope=scope, transition=p._configuration_transition
+                    )
+                    inject = True
+                except BaseException as error:  # noqa: BLE001 - passive observation failures do not enter native code.
+                    errors.append(error)
+                if inject:
+                    sys.setprofile(previous)
+                    raise sentinel
+
+            sys.setprofile(observe)
+            with pytest.raises(RuntimeError) as caught:
+                await h.bridge._prepare_workflow_reply(
+                    phase=h.phase,
+                    task_id="task-1",
+                    binding=h.binding,
+                    resolution=h.selected,
+                )
+            sys.setprofile(previous)
+            assert errors == [] and saved
+            prepared, scope = saved["prepared"], saved["scope"]
+            assert caught.value.__cause__ is sentinel
+            assert prepared._configuration_transition_error is sentinel
+            assert prepared._configuration_transition is saved["transition"]
+            assert prepared in registry and h.runtime._workflow_preparations is registry
+            assert prepared._source_scope is None and prepared._finite_reads == []
+            assert (
+                prepared.source
+                is prepared.authorization
+                is prepared.native
+                is prepared._finite
+                is None
+            )
+            assert not prepared._closed and not h.phase._task_scopes
+            for _ in range(2):
+                with pytest.raises(RuntimeError) as repeated:
+                    await prepared.close()
+                assert repeated.value.__cause__ is sentinel
+                assert prepared._finite_reads == [] and prepared in registry
+                assert prepared._configuration_transition is saved["transition"]
+                assert scope.gen.gi_frame is not None
+            after = h.db.automatic_work.snapshot(before.chain_id)
+            assert after.used == before.used and after.reserved == before.reserved
+            assert h.calls == [] and h.db.list_runs(h.conversation_id) == []
+            print(
+                "G_INITIAL_CONFIGURATION_ENTRY_RETAINED; no fixture/creator drain",
+                flush=True,
+            )
+            os._exit(17)
+        except BaseException as error:
+            primary = error
+            raise
+        finally:
+            sys.setprofile(previous)
+            if generator is not None:
+                try:
+                    await generator.aclose()
+                except BaseException as error:
+                    if primary is None:
+                        raise
+                    primary.add_note(
+                        "Original fixture cleanup also failed: " + type(error).__name__
+                    )
+                    primary.cleanup_error = error
+
+
+async def test_original_unreturned_initial_configuration_entry_keeps_existing_root(
+    tmp_path,
+):
+    import subprocess
+    from pathlib import Path
+
+    from Tests.Backup_Recovery.test_home_citation_retirement import _run
+
+    route = "configuration-entry"
+    script = Path(__file__).with_name("workflow_coordinator_probe.py").read_text()
+    with pytest.raises(
+        AssertionError, match="G_INITIAL_CONFIGURATION_ENTRY_RETAINED"
+    ) as caught:
+        await asyncio.to_thread(
+            _run, tmp_path, route, "retained", script=script, timeout=60
+        )
+    frames = []
+    tb = caught.value.__traceback__
+    while tb is not None:
+        if tb.tb_frame.f_code is _run.__code__:
+            frames.append(tb.tb_frame)
+        tb = tb.tb_next
+    assert len(frames) == 1
+    result = frames[0].f_locals["result"]
+    assert type(result) is subprocess.CompletedProcess and result.returncode == 17
+    assert result.args[-2:] == [route, "retained"]
+
+
+async def normal_terminal_configuration_exit_journey(tmp_path, _unused):
+    """Normal earlier reads cannot certify a failed terminal configuration exit."""
+    import os
+    from types import SimpleNamespace
+
+    from tldw_chatbook.Chat.console_runtime import ConsoleRuntime
+    from tldw_chatbook.Chat.console_workflow_preparation import _PreparedWorkflowReply
+
+    generator = primary = None
+    old_trace = sys.gettrace()
+    saved, errors = {}, []
+    with pytest.MonkeyPatch.context() as monkeypatch:
+        try:
+            generator = native_tests.native_host.__wrapped__(
+                tmp_path, monkeypatch, SimpleNamespace(param=None)
+            )
+            h = await anext(generator)
+            prepared = await h.bridge._prepare_workflow_reply(
+                phase=h.phase,
+                task_id="task-1",
+                binding=h.binding,
+                resolution=h.selected,
+            )
+            scope, registry = prepared._source_scope, h.runtime._workflow_preparations
+            auth, source, native = (
+                prepared.authorization,
+                prepared.source,
+                prepared.native,
+            )
+            scope_frame = scope.gen.gi_frame
+            assert (
+                scope_frame.f_code
+                is ConsoleRuntime._first_send_source_scope.__wrapped__.__code__
+            )
+            assert all(read.before_issue is None for read in prepared._finite_reads)
+            before = h.db.automatic_work.snapshot(auth.claim.chain_id)
+            sentinel = RuntimeError("original normal-P terminal scope exit failed")
+            issuer, host = asyncio.current_task(), threading.current_thread()
+
+            def trace(frame, event, _arg):
+                if (
+                    frame is not scope_frame
+                    or event != "return"
+                    or dis.opname[frame.f_code.co_code[frame.f_lasti]]
+                    not in {"RETURN_VALUE", "RETURN_CONST"}
+                ):
+                    return trace
+                inject = False
+                try:
+                    assert (
+                        threading.current_thread() is host
+                        and asyncio.current_task() is issuer
+                    )
+                    context_exit = frame.f_back
+                    assert (
+                        context_exit.f_code
+                        is contextlib._GeneratorContextManager.__exit__.__code__
+                    )
+                    assert context_exit.f_locals["self"] is scope
+                    release_frame = context_exit.f_back
+                    assert (
+                        release_frame.f_code
+                        is _PreparedWorkflowReply._release_configuration.__code__
+                    )
+                    assert release_frame.f_locals["self"] is prepared
+                    assert release_frame.f_locals["scope"] is scope
+                    assert release_frame.f_locals["registry"] is registry
+                    assert (
+                        release_frame.f_back.f_code
+                        is _PreparedWorkflowReply.close.__code__
+                    )
+                    closing = prepared._finite_reads[-1]
+                    assert (
+                        closing.positive
+                        and closing.wrapper_error is closing.body_error is None
+                    )
+                    actual = prepared._finite_read_return(closing)
+                    assert actual is closing.proof[1].result()
+                    assert closing.proof[2].done() and closing.proof[2].result() is None
+                    saved.update(closing=closing, actual=actual, injected=True)
+                    inject = True
+                except BaseException as error:  # noqa: BLE001 - passive facts do not alter native cleanup.
+                    errors.append(error)
+                if inject:
+                    sys.settrace(old_trace)
+                    raise sentinel
+                return trace
+
+            sys.settrace(trace)
+            with pytest.raises(RuntimeError) as first:
+                await prepared.close()
+            sys.settrace(old_trace)
+            assert first.value is sentinel and saved.get("injected") and errors == []
+            records = tuple(prepared._finite_reads)
+            assert prepared._closed and prepared._source_scope is None
+            assert (
+                prepared in registry and prepared._terminal_configuration_return is None
+            )
+            assert all(read.before_issue is None for read in records)
+            for _ in range(2):
+                with pytest.raises(RuntimeError):
+                    await prepared.close()
+                assert tuple(prepared._finite_reads) == records
+                assert prepared._finite_read_return(saved["closing"]) is saved["actual"]
+                assert prepared.source is source and prepared.native is native
+                assert (
+                    prepared.authorization is auth
+                    and auth._bridge_preparation[0] is prepared
+                )
+                assert (
+                    prepared in registry
+                    and prepared._terminal_configuration_return is None
+                )
+            after = h.db.automatic_work.snapshot(before.chain_id)
+            assert after.used == before.used and after.reserved == before.reserved
+            assert h.calls == [] and h.db.list_runs(h.conversation_id) == []
+            print(
+                "G_NORMAL_TERMINAL_EXIT_RETAINED; no fixture/creator drain", flush=True
+            )
+            os._exit(17)
+        except BaseException as error:
+            primary = error
+            raise
+        finally:
+            sys.settrace(old_trace)
+            if generator is not None:
+                try:
+                    await generator.aclose()
+                except BaseException as error:
+                    if primary is None:
+                        raise
+                    primary.add_note(
+                        "Original fixture cleanup also failed: " + type(error).__name__
+                    )
+                    primary.cleanup_error = error
+
+
+async def test_normal_preparation_terminal_exit_failure_never_becomes_inert(tmp_path):
+    import subprocess
+    from pathlib import Path
+
+    from Tests.Backup_Recovery.test_home_citation_retirement import _run
+
+    route = "normal-terminal-config-exit"
+    script = Path(__file__).with_name("workflow_coordinator_probe.py").read_text()
+    with pytest.raises(
+        AssertionError, match="G_NORMAL_TERMINAL_EXIT_RETAINED"
+    ) as caught:
+        await asyncio.to_thread(
+            _run, tmp_path, route, "retained", script=script, timeout=60
+        )
+    frames = []
+    tb = caught.value.__traceback__
+    while tb is not None:
+        if tb.tb_frame.f_code is _run.__code__:
+            frames.append(tb.tb_frame)
+        tb = tb.tb_next
+    assert len(frames) == 1
+    result = frames[0].f_locals["result"]
+    assert type(result) is subprocess.CompletedProcess
+    assert result.returncode == 17 and result.args[-2:] == [route, "retained"]
+
+
+async def test_consent_first_validator_preserves_original_error_and_unused_close(
+    native_host,
+):
+    import inspect
+    from types import CoroutineType, FunctionType, MethodType
+
+    from tldw_chatbook.Chat.console_preparation_reads import (
+        ConsolePreparationRead,
+        _HookSourceBinding,
+        run_preparation_read,
+    )
+    from tldw_chatbook.Chat.console_project_instructions import (
+        ProjectInstructionControlState,
+    )
+    from tldw_chatbook.Chat.console_workflow_preparation import (
+        _finish_native_preparation,
+        _PlanningPreparationRead,
+        _PreparedWorkflowReply,
+    )
+
+    h = native_host
+    (h.root / "AGENTS.md").write_text("Original native consent instruction sentinel\n")
+    h.session.project_instruction_state = ProjectInstructionControlState(
+        project_instructions_enabled=True,
+        working_folder_binding_id=h.binding.binding_id,
+        working_folder_locator_fingerprint=h.binding.locator_fingerprint,
+    )
+    cancel, release = threading.Event(), threading.Event()
+    ready = asyncio.Event()
+    confirmation_calls, errors, saved = [], [], {}
+    host, loop = threading.current_thread(), asyncio.get_running_loop()
+    previous, previous_thread = sys.getprofile(), threading.getprofile()
+    before = h.db.automatic_work.snapshot(h.phase.attempt.chain_id)
+    invoke_code = next(
+        code
+        for code in _PreparedWorkflowReply._read.__code__.co_consts
+        if inspect.iscode(code) and code.co_name == "invoke"
+    )
+    release_code = _PreparedWorkflowReply._release_configuration.__code__
+    worker_invoke_code = next(
+        code
+        for code in run_preparation_read.__code__.co_consts
+        if inspect.iscode(code) and code.co_name == "invoke"
+    )
+    preparation_task = primary = None
+
+    def diagnostic_error(label, error):
+        try:
+            locations, traceback = [], error.__traceback__
+            for _ in range(32):
+                if traceback is None:
+                    break
+                code = traceback.tb_frame.f_code
+                locations.append((code.co_filename, code.co_name, traceback.tb_lineno))
+                traceback = traceback.tb_next
+            print(label, type(error).__name__, locations, error is primary, flush=True)
+        except BaseException:  # noqa: BLE001,S110 - diagnostics cannot replace the original failure.
+            pass
+
+    def confirmation(snapshot):
+        confirmation_calls.append(snapshot)
+        return "proceed"
+
+    def rows(claim):
+        with h.db.connection() as conn:
+            task = conn.execute(
+                "SELECT t.id,t.run_id,t.status,c.child_reservation_id,p.native_attempt_id,c.launch_run_id "
+                "FROM workflow_task_attempts t JOIN workflow_task_claims c ON c.task_attempt_id=t.id "
+                "JOIN workflow_phase_attempts p ON p.id=c.phase_attempt_id WHERE t.id=?",
+                (claim.id,),
+            ).fetchone()
+            reservation = conn.execute(
+                "SELECT id,chain_id,owner_id,kind,amount,state FROM automatic_work_reservations WHERE id=?",
+                (claim.reservation_id,),
+            ).fetchone()
+        return tuple(task), tuple(reservation)
+
+    def observe(frame, event, result):
+        if event != "return" or (
+            frame.f_code is not invoke_code and frame.f_code is not release_code
+        ):
+            return
+        if dis.opname[frame.f_code.co_code[frame.f_lasti]] not in {
+            "RETURN_VALUE",
+            "RETURN_CONST",
+        }:
+            return
+        if frame.f_code is invoke_code:
+            prepared, callback = frame.f_locals["self"], frame.f_locals["callback"]
+            if (
+                prepared.phase is not h.phase
+                or not inspect.ismethod(callback)
+                or callback.__self__ is not prepared
+                or callback.__func__ is not _PreparedWorkflowReply._enter
+            ):
+                return
+            try:
+                record = frame.f_locals["record"]
+                assert record.issuing is preparation_task and record.scopes_returned
+                assert type(result) is tuple and len(result) == 10
+                assert all(
+                    a is b
+                    for a, b in zip(
+                        result[:8],
+                        (
+                            record,
+                            prepared,
+                            preparation_task,
+                            record.callback,
+                            record.proof,
+                            record.owner,
+                            record.claim,
+                            record.operation,
+                        ),
+                    )
+                )
+                assert result[9] is None and prepared._finite is None
+                assert (
+                    not saved
+                    and prepared.authorization is h.phase._task_scopes["task-1"]
+                )
+                saved.update(
+                    prepared=prepared,
+                    auth=prepared.authorization,
+                    claim=prepared.authorization.claim,
+                    entry_record=record,
+                    entry_return=result,
+                )
+                loop.call_soon_threadsafe(ready.set)
+                if not release.wait(5):
+                    errors.append(
+                        TimeoutError("original pre-consent receiving hold expired")
+                    )
+            except BaseException as error:  # noqa: BLE001 - observer errors never enter native callbacks.
+                errors.append(error)
+            return
+        parent = frame.f_back
+        if parent is None or parent.f_code is not _finish_native_preparation.__code__:
+            return
+        try:
+            prepared = frame.f_locals["self"]
+            assert (
+                prepared is saved["prepared"]
+                and parent.f_locals["prepared"] is prepared
+            )
+            assert (
+                threading.current_thread() is host
+                and asyncio.current_task() is preparation_task
+            )
+            scope, registry = frame.f_locals["scope"], frame.f_locals["registry"]
+            assert type(result) is tuple and all(
+                a is b for a, b in zip(result, (prepared, scope, registry))
+            )
+            assert scope.gen.gi_frame is None and prepared._source_scope is None
+            assert (
+                prepared not in registry
+                and prepared.authorization._bridge_preparation[0] is prepared
+            )
+            saved.update(returned=result, prefix=tuple(prepared._finite_reads))
+            threading.setprofile_all_threads(previous_thread)
+            sys.setprofile(previous)
+            cancel.set()
+        except BaseException as error:  # noqa: BLE001 - native callback records observation only.
+            errors.append(error)
+
+    threading.setprofile_all_threads(observe)
+    try:
+        preparation_task = asyncio.create_task(
+            h.bridge._prepare_workflow_reply(
+                phase=h.phase,
+                task_id="task-1",
+                binding=h.binding,
+                resolution=h.selected,
+                should_cancel=cancel.is_set,
+                confirm_project_instruction_dispatch=confirmation,
+            )
+        )
+        await asyncio.wait_for(ready.wait(), 10)
+        assert errors == []
+        claim, auth, prepared = saved["claim"], saved["auth"], saved["prepared"]
+        assert auth.claim is claim and auth.phase is h.phase
+        assert (
+            auth._bridge_preparation[0] is prepared and prepared.authorization is auth
+        )
+        original_rows = rows(claim)
+        assert original_rows == (
+            (
+                claim.id,
+                None,
+                "accepted",
+                claim.reservation_id,
+                claim.phase_attempt_id,
+                claim.launch_run_id,
+            ),
+            (
+                claim.reservation_id,
+                claim.chain_id,
+                claim.owner_id,
+                "child_launch",
+                1,
+                "reserved",
+            ),
+        )
+        preconsent = h.db.automatic_work.snapshot(claim.chain_id)
+        expected_reserved = dict(before.reserved)
+        assert expected_reserved["child_launch"] == 0
+        expected_reserved["child_launch"] += 1
+        assert (
+            preconsent.used == before.used and preconsent.reserved == expected_reserved
+        )
+        release.set()
+        with pytest.raises(BaseException) as caught:
+            await preparation_task
+        assert errors == [] and confirmation_calls == []
+        failed = prepared._finite_reads[len(saved["prefix"])]
+        assert failed.before_issue is not None and failed.issue[12] is None
+        assert isinstance(failed.wrapper_error, PermissionError)
+        assert caught.value is failed.wrapper_error
+        assert failed.proof is failed.owner is failed.claim is failed.operation is None
+        assert failed.issue[0].cr_frame is None and not failed.issue[0].cr_running
+        assert prepared._closed and prepared._source_scope is None
+        terminal, closing, records = prepared._terminal_configuration_return
+        assert terminal is saved["returned"] and records[-1] is closing
+        assert closing.positive and closing.wrapper_error is closing.body_error is None
+        actual = prepared._finite_read_return(closing)
+        assert actual is closing.proof[1].result()
+        assert closing.proof[2].done() and closing.proof[2].result() is None
+        assert prepared not in h.runtime._workflow_preparations
+        after_first = h.db.automatic_work.snapshot(claim.chain_id)
+        assert rows(claim) == original_rows
+        assert (
+            after_first.used == preconsent.used
+            and after_first.reserved == preconsent.reserved
+        )
+        await prepared.close()
+        assert tuple(prepared._finite_reads) == records
+        assert h.calls == [] and h.db.list_runs(h.conversation_id) == []
+        after = h.db.automatic_work.snapshot(claim.chain_id)
+        assert after.used == after_first.used and after.reserved == after_first.reserved
+        assert rows(claim) == original_rows
+    except BaseException as error:
+        primary = error
+        try:
+            task = preparation_task
+            if type(task) is asyncio.Task:
+                print(
+                    "G_CONSENT_TASK_BOUNDARY",
+                    task.done(),
+                    task.cancelled(),
+                    "entry_record" in saved,
+                    "entry_return" in saved,
+                    "returned" in saved,
+                    len(errors),
+                    flush=True,
+                )
+                chain = []
+                current = task.get_coro() if not task.done() else None
+                for _ in range(16):
+                    if type(current) is not CoroutineType or any(
+                        current is item for item in chain
+                    ):
+                        break
+                    chain.append(current)
+                    frame, code = current.cr_frame, current.cr_code
+                    print(
+                        "G_CONSENT_TASK_AWAIT",
+                        code.co_filename,
+                        code.co_name,
+                        frame.f_lineno if frame is not None else None,
+                        frame is None,
+                        current.cr_running,
+                        flush=True,
+                    )
+                    current = current.cr_await
+                worker_snapshot_taken = False
+                for coroutine in chain:
+                    frame = coroutine.cr_frame
+                    if (
+                        frame is None
+                        or frame.f_code is not _PreparedWorkflowReply._read.__code__
+                    ):
+                        continue
+                    p, record = frame.f_locals.get("self"), frame.f_locals.get("record")
+                    if (
+                        type(p) is not _PreparedWorkflowReply
+                        or type(record) is not _PlanningPreparationRead
+                        or record.prepared is not p
+                        or record.issuing is not task
+                        or p.phase is not h.phase
+                        or p.runtime is not h.runtime
+                        or not any(record is item for item in p._finite_reads)
+                    ):
+                        continue
+                    callback = frame.f_locals.get("callback")
+                    function = (
+                        callback.__func__ if type(callback) is MethodType else callback
+                    )
+                    callback_name = (
+                        function.__code__.co_name
+                        if type(function) is FunctionType
+                        else "unavailable"
+                    )
+                    print(
+                        "G_CONSENT_ORIGINAL_READ_STAGE",
+                        callback_name,
+                        record.scopes_returned,
+                        record.positive,
+                        type(record.body_error).__name__,
+                        type(record.wrapper_error).__name__,
+                        record.issue is not None,
+                        record.proof is not None,
+                        flush=True,
+                    )
+                    issue = record.issue
+                    child = coroutine.cr_await
+                    if (
+                        type(issue) is not tuple
+                        or len(issue) != 15
+                        or type(child) is not CoroutineType
+                        or issue[0] is not child
+                        or child.cr_code is not run_preparation_read.__code__
+                        or child.cr_frame is None
+                        or issue[1] is not child.cr_frame
+                    ):
+                        continue
+                    read = child.cr_frame.f_locals.get("read")
+                    if (
+                        type(read) is not ConsolePreparationRead
+                        or read.source is not p
+                        or read.task is not task
+                        or read.callback is not record.callback
+                        or read.creator is not p.controller
+                    ):
+                        continue
+                    for label, future in (
+                        ("producer", read._producer),
+                        ("retired", read.retired),
+                    ):
+                        facts = (
+                            (future.done(), future.cancelled())
+                            if type(future) is asyncio.Future
+                            else "unavailable"
+                        )
+                        print(
+                            "G_CONSENT_ORIGINAL_READ_FUTURE", label, facts, flush=True
+                        )
+                    proof = record.proof
+                    worker = child.cr_frame.f_locals.get("invoke")
+                    if (
+                        worker_snapshot_taken
+                        or type(proof) is not tuple
+                        or len(proof) != 4
+                        or any(
+                            a is not b
+                            for a, b in zip(
+                                proof,
+                                (read, read._producer, read.retired, record.callback),
+                            )
+                        )
+                        or type(worker) is not FunctionType
+                        or worker.__code__ is not worker_invoke_code
+                    ):
+                        print("G_CONSENT_WORKER_SNAPSHOT", "unavailable", flush=True)
+                        continue
+                    closed = dict(
+                        zip(
+                            worker.__code__.co_freevars,
+                            (cell.cell_contents for cell in worker.__closure__ or ()),
+                        )
+                    )
+                    if (
+                        closed.get("read") is not read
+                        or closed.get("callback") is not record.callback
+                    ):
+                        print("G_CONSENT_WORKER_SNAPSHOT", "unavailable", flush=True)
+                        continue
+                    worker_snapshot_taken = True
+                    matches = []
+                    for ident, top in sys._current_frames().items():
+                        frames, cursor = [], top
+                        for _ in range(64):
+                            if cursor is None:
+                                break
+                            frames.append(cursor)
+                            if (
+                                cursor.f_code is worker_invoke_code
+                                and cursor.f_locals.get("read") is read
+                                and cursor.f_locals.get("callback") is record.callback
+                            ):
+                                binding = cursor.f_locals.get("binding")
+                                if (
+                                    type(binding) is _HookSourceBinding
+                                    and binding.read is read
+                                    and type(binding.thread) is threading.Thread
+                                    and binding.thread.ident == ident
+                                    and binding.task is None
+                                ):
+                                    matches.append((tuple(frames), binding.active))
+                                break
+                            cursor = cursor.f_back
+                    print("G_CONSENT_WORKER_SNAPSHOT_MATCHES", len(matches), flush=True)
+                    for frames, active in matches:
+                        print(
+                            "G_CONSENT_WORKER_STAGE",
+                            active,
+                            any(
+                                item.f_code is invoke_code
+                                and item.f_locals.get("self") is p
+                                and item.f_locals.get("record") is record
+                                and item.f_locals.get("issuing") is task
+                                for item in frames
+                            ),
+                            any(
+                                item.f_code is _PreparedWorkflowReply._enter.__code__
+                                and item.f_locals.get("self") is p
+                                for item in frames
+                            ),
+                            [
+                                (
+                                    item.f_code.co_filename,
+                                    item.f_code.co_name,
+                                    item.f_lineno,
+                                )
+                                for item in frames[:32]
+                            ],
+                            flush=True,
+                        )
+            else:
+                print("G_CONSENT_TASK_BOUNDARY", "unavailable", flush=True)
+        except BaseException as diagnostic:  # noqa: BLE001 - diagnostic failure remains separate.
+            diagnostic_error("G_CONSENT_DIAGNOSTIC_ERROR", diagnostic)
+        for observed in errors:
+            locations = []
+            traceback = observed.__traceback__
+            while traceback is not None:
+                locations.append(
+                    (
+                        traceback.tb_frame.f_code.co_filename,
+                        traceback.tb_frame.f_code.co_name,
+                        traceback.tb_lineno,
+                    )
+                )
+                traceback = traceback.tb_next
+            print(
+                "G_CONSENT_OBSERVER_ERROR",
+                type(observed).__name__,
+                locations,
+                flush=True,
+            )
+        raise
+    finally:
+        release.set()
+        threading.setprofile_all_threads(previous_thread)
+        sys.setprofile(previous)
+        if preparation_task is not None and (
+            primary is not None or not preparation_task.done()
+        ):
+            cleanup_stage = "original-task-await"
+            try:
+                pending = await preparation_task
+                try:
+                    print(
+                        "G_CONSENT_CLEANUP_TASK_RETURN",
+                        type(pending) is _PreparedWorkflowReply,
+                        pending is saved["prepared"]
+                        if "prepared" in saved
+                        else "unavailable",
+                        flush=True,
+                    )
+                except BaseException as diagnostic:  # noqa: BLE001 - diagnostic failure remains separate.
+                    diagnostic_error("G_CONSENT_DIAGNOSTIC_ERROR", diagnostic)
+                cleanup_stage = "original-returned-preparation-close"
+                await pending.close()
+                try:
+                    print("G_CONSENT_CLEANUP_CLOSE_RETURN", flush=True)
+                except BaseException as diagnostic:  # noqa: BLE001 - diagnostic failure remains separate.
+                    diagnostic_error("G_CONSENT_DIAGNOSTIC_ERROR", diagnostic)
+            except BaseException as error:
+                diagnostic_error("G_CONSENT_CLEANUP_ERROR " + cleanup_stage, error)
+                if primary is None:
+                    raise
+                primary.add_note(
+                    "Original preparation cleanup also failed: " + type(error).__name__
+                )
+                primary.cleanup_error = error
+
+
 @pytest.mark.parametrize("contention", [False, True])
 async def test_original_direct_scope_excludes_wave_close_and_duplicate_finish(
     native_host, contention
@@ -239,7 +1805,25 @@ async def test_cancelled_caller_receives_original_positive_wait_unlink(native_ho
         if wave.prepared != (prepared,):
             return
         try:
-            assert result is None and wave.closed
+            assert type(result) is tuple and len(result) == 12 and wave.closed
+            assert all(
+                first is second
+                for first, second in zip(
+                    result[:9],
+                    (
+                        wave,
+                        wave.driver,
+                        wave._driver_coroutine,
+                        wave.source,
+                        wave.reservation,
+                        wave.fence,
+                        wave.baseline_return,
+                        wave.ending_return,
+                        wave.prepared,
+                    ),
+                )
+            )
+            assert result[9:] == ((), (), ())
             assert wave not in h.runtime._workflow_waves and prepared._wave is wave
             assert wave.driver is asyncio.current_task()
             assert (
@@ -249,7 +1833,7 @@ async def test_cancelled_caller_receives_original_positive_wait_unlink(native_ho
             )
             assert tuple(wave.unlaunched) == (prepared,)
             assert not wave.receipts and not wave.unproven_launches
-            saved.update(wave=wave, driver=wave.driver)
+            saved.update(wave=wave, driver=wave.driver, release_return=result)
             assert issuing.cancel(message)
         except BaseException as error:  # noqa: BLE001 - preserve original native return.
             errors.append(error)
@@ -280,6 +1864,7 @@ async def test_cancelled_caller_receives_original_positive_wait_unlink(native_ho
         if errors:
             raise errors[0]
         wave, driver = saved["wave"], saved["driver"]
+        assert wave._release_return is saved["release_return"]
         assert driver is wave.driver and driver.done() and not driver.cancelled()
         assert driver.exception() is None and driver.result() is None
         assert prepared._wave is None and not prepared._closed and not prepared._closing

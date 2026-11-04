@@ -18,6 +18,10 @@ network_guard.install()
 real_profile_guard.install()
 
 routes = {
+    "consent-unknown": "test_workflow_native_return",
+    "wave-release-receiver": "test_workflow_native_return",
+    "configuration-entry": "test_workflow_native_return",
+    "normal-terminal-config-exit": "test_workflow_native_return",
     "terminal-config-exit": "test_workflow_native_return",
     "finite-preentry": "test_workflow_native_return",
     "finite-planning": "test_workflow_native_return",
@@ -97,6 +101,10 @@ with user_fixture_default_owner():
         else "Tests.Chat." + routes[sys.argv[1]]
     )
     method = {
+        "consent-unknown": "consent_unknown_return_journey",
+        "wave-release-receiver": "wave_release_receiver_failure_journey",
+        "configuration-entry": "configuration_entry_failure_journey",
+        "normal-terminal-config-exit": "normal_terminal_configuration_exit_journey",
         "terminal-config-exit": "terminal_configuration_exit_journey",
         "finite-preentry": "finite_preentry_failure_journey",
         "finite-planning": "finite_planning_scope_journey",

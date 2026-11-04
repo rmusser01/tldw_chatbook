@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import inspect
 import sys
 import threading
@@ -50,6 +51,7 @@ class _PlanningPreparationRead:
     completion_future: object = field(default=None, repr=False)
     issue: object = field(default=None, repr=False)
     before_issue: object = field(default=None, repr=False)
+    configuration_return: object = field(default=None, repr=False)
 
 
 def current_workflow_preparation(controller=None):
@@ -164,6 +166,9 @@ class _PreparedWorkflowReply:
         self.configuration = None
         self._source_scope = None
         self._terminal_configuration_return = None
+        self._configuration_transition = None
+        self._configuration_transition_error = None
+        self._consent_configuration_return = None
         self._native_closed = False
         self._close_operation = None
         self._launch_operation = None
@@ -607,6 +612,43 @@ class _PreparedWorkflowReply:
         )
 
     def _retain_configuration(self):
+        if self.phase is not None and self.phase.attempt.purpose != "planning":
+            self._configuration_sources()
+            if self._configuration_transition is not None:
+                raise RuntimeError("original configuration entry unproven")
+            if self._source_scope is not None:
+                return
+            registry = self.runtime._workflow_preparations
+            self._consent_configuration_return = None
+            self._configuration_transition = (
+                self,
+                None,
+                registry,
+                _CONFIGURATION_RETAIN_CODE,
+            )
+            try:
+                scope = _CONFIGURATION_RUNTIME_METHODS[0][1](self.runtime)
+                self._configuration_transition = (
+                    self,
+                    scope,
+                    registry,
+                    _CONFIGURATION_RETAIN_CODE,
+                )
+                self._configuration_sources(scope)
+                _CONFIGURATION_ENTER[0](scope)
+                self._configuration_sources(scope)
+                self._source_scope = scope
+                set.add(registry, self)
+            except BaseException as error:
+                self._configuration_transition_error = error
+                if self.runtime._workflow_preparations is not registry:
+                    raise PermissionError(
+                        "original configuration registry changed"
+                    ) from error
+                set.add(registry, self)
+                raise
+            self._configuration_transition = None
+            return
         if self._source_scope is None:
             scope = self.runtime._first_send_source_scope()
             scope.__enter__()
@@ -614,12 +656,288 @@ class _PreparedWorkflowReply:
             self.runtime._workflow_preparations.add(self)
 
     def _release_configuration(self):
+        execution_phase = (
+            self.phase is not None and self.phase.attempt.purpose != "planning"
+        )
+        if execution_phase:
+            self._configuration_sources(self._source_scope)
+            if self._configuration_transition is not None:
+                raise RuntimeError("original configuration release unproven")
         if self._source_scope is not None:
             registry = self.runtime._workflow_preparations
-            scope, self._source_scope = self._source_scope, None
-            scope.__exit__(None, None, None)
-            registry.discard(self)
-            return self, scope, registry
+            scope = self._source_scope
+            returned = self, scope, registry
+            if execution_phase:
+                self._configuration_transition = (
+                    self,
+                    scope,
+                    registry,
+                    _CONFIGURATION_RELEASE_CODE,
+                )
+            self._source_scope = None
+            try:
+                if execution_phase:
+                    _CONFIGURATION_EXIT[0](scope, None, None, None)
+                else:
+                    scope.__exit__(None, None, None)
+                registry.discard(self)
+            except BaseException as error:
+                if execution_phase:
+                    self._configuration_transition_error = error
+                raise
+            return returned
+
+    def _configuration_sources(self, scope=None):
+        """Check only the original configuration producer, without admission."""
+        self._execution_reads_source()
+        if (
+            type(self.runtime) is not _CONFIGURATION_RUNTIME
+            or _configuration_runtime.ConsoleRuntime is not _CONFIGURATION_RUNTIME
+            or type(self.runtime._workflow_preparations) is not set
+            or any(
+                inspect.getattr_static(self.runtime, name, None) is not descriptor
+                or any(not _storage_unchanged(record) for record in records)
+                for name, descriptor, records in _CONFIGURATION_RUNTIME_METHODS
+            )
+            or any(
+                vars(module).get(name) is not record[0]
+                or not _storage_unchanged(record)
+                for module, name, record in _CONFIGURATION_FUNCTIONS
+            )
+            or contextlib._GeneratorContextManager is not _CONFIGURATION_SCOPE
+            or any(
+                inspect.getattr_static(_CONFIGURATION_SCOPE, name, None)
+                is not record[0]
+                or not _storage_unchanged(record)
+                or scope is not None
+                and inspect.getattr_static(scope, name, None) is not record[0]
+                for name, record in _CONFIGURATION_SCOPE_METHODS
+            )
+        ):
+            raise PermissionError("original configuration source changed")
+        if scope is not None and (
+            type(scope) is not _CONFIGURATION_SCOPE
+            or not inspect.isgenerator(scope.gen)
+            or scope.gen.gi_code is not _CONFIGURATION_BODY
+            or scope.gen.gi_frame is not None
+            and scope.gen.gi_frame.f_locals.get("self") is not self.runtime
+        ):
+            raise PermissionError("original configuration scope changed")
+
+    def _configuration_received(self, returned):
+        """Consume the value at one actual original release receiving frame."""
+        from .console_workflow_wave import _WAVE_RELEASE_METHOD
+
+        self._configuration_sources()
+        caller = sys._getframe(1)
+        direct = (
+            caller.f_code is _CONFIGURATION_CLOSE_CODE
+            and caller.f_locals.get("self") is self
+        )
+        consent = (
+            caller.f_code is _CONFIGURATION_FINISH[1]
+            and caller.f_locals.get("prepared") is self
+        )
+        wave = (
+            caller.f_code is _WAVE_RELEASE_METHOD[1]
+            and caller.f_locals.get("item") is self
+            and caller.f_locals.get("self") is self._wave
+        )
+        transition = self._configuration_transition
+        if (
+            not (direct or consent or wave)
+            or caller.f_locals.get("returned") is not returned
+            or type(returned) is not tuple
+            or len(returned) != 3
+            or type(transition) is not tuple
+            or len(transition) != 4
+            or any(a is not b for a, b in zip(returned, transition[:3]))
+            or returned[0] is not self
+            or returned[1] is None
+            or returned[2] is not self.runtime._workflow_preparations
+            or transition[3] is not _CONFIGURATION_RELEASE_CODE
+            or self._configuration_transition_error is not None
+            or self._source_scope is not None
+            or self in returned[2]
+        ):
+            raise RuntimeError("original configuration return unproven")
+        self._configuration_sources(returned[1])
+        self._configuration_transition = None
+        return returned
+
+    def _consent_configuration_source(self, record):
+        """Bind a None-scope read to its original, positively received release."""
+        self._configuration_sources()
+        saved = self._consent_configuration_return
+        if type(saved) is not tuple or len(saved) != 11:
+            raise RuntimeError("original consent configuration return unproven")
+        (
+            returned,
+            phase,
+            auth,
+            source,
+            native,
+            lifetime,
+            snapshot,
+            prefix,
+            issuer,
+            callback,
+            observation,
+        ) = saved
+        invoke = record.callback
+        cells = (
+            dict(
+                zip(
+                    invoke.__code__.co_freevars,
+                    (c.cell_contents for c in invoke.__closure__ or ()),
+                )
+            )
+            if inspect.isfunction(invoke)
+            else {}
+        )
+        callback_cells = (
+            dict(
+                zip(
+                    callback.__code__.co_freevars,
+                    (c.cell_contents for c in callback.__closure__ or ()),
+                )
+            )
+            if inspect.isfunction(callback)
+            else {}
+        )
+        if (
+            record.configuration_return is not saved
+            or type(returned) is not tuple
+            or len(returned) != 3
+            or returned[0] is not self
+            or returned[1] is None
+            or returned[2] is not self.runtime._workflow_preparations
+            or self._source_scope is not None
+            or self in returned[2]
+            or self._configuration_transition is not None
+            or self._configuration_transition_error is not None
+            or phase is not self.phase
+            or auth is not self.authorization
+            or auth is None
+            or source is not self.source
+            or native is not self.native
+            or lifetime is not self._lifetime
+            or snapshot is not self._snapshot
+            or observation is not self._configured_source_observation
+            or type(prefix) is not tuple
+            or len(self._finite_reads) <= len(prefix)
+            or any(a is not b for a, b in zip(prefix, self._finite_reads))
+            or self._finite_reads[len(prefix)] is not record
+            or record.prepared is not self
+            or record.issuing is not issuer
+            or not inspect.isfunction(invoke)
+            or invoke.__code__ is not _CONFIGURATION_INVOKE_CODE
+            or cells.get("self") is not self
+            or cells.get("record") is not record
+            or cells.get("callback") is not callback
+            or not inspect.isfunction(callback)
+            or callback.__code__ is not _CONFIGURATION_CONSENT_CODE
+            or callback.__defaults__ is not None
+            or callback.__kwdefaults__ is not None
+            or callback_cells != {"prepared": self}
+        ):
+            raise RuntimeError("original consent configuration return unproven")
+        with auth._lock:
+            if (
+                phase._task_scopes.get(self.task_id) is not auth
+                or not auth._bridge_preparation
+                or auth._bridge_preparation[0] is not self
+                or auth.phase is not phase
+            ):
+                raise RuntimeError("original consent preparation changed")
+        self._configuration_sources(returned[1])
+        return returned
+
+    def _execution_configuration_return(self):
+        """Prove this preparation's own terminal read and configuration return."""
+        self._configuration_sources()
+        terminal = self._terminal_configuration_return
+        if type(terminal) is not tuple or len(terminal) != 3:
+            raise RuntimeError("original configuration return unproven")
+        returned, closing_read, records = terminal
+        if (
+            type(returned) is not tuple
+            or len(returned) != 3
+            or returned[0] is not self
+            or returned[1] is None
+            or returned[2] is not self.runtime._workflow_preparations
+            or self in returned[2]
+            or self._source_scope is not None
+            or self._configuration_transition is not None
+            or self._configuration_transition_error is not None
+            or not self._closed
+            or self._closing
+            or self._finite is not None
+            or self._launch_operation is not None
+            or self._close_operation is not None
+            or type(records) is not tuple
+            or not records
+            or len(records) != len(self._finite_reads)
+            or any(a is not b for a, b in zip(records, self._finite_reads))
+            or records[-1] is not closing_read
+            or not closing_read.positive
+            or closing_read.wrapper_error is not None
+            or closing_read.body_error is not None
+            or type(closing_read.issue) is not tuple
+            or len(closing_read.issue) != 15
+            or closing_read.issue[-1] is not True
+        ):
+            raise RuntimeError("original configuration return unproven")
+        self._configuration_sources(returned[1])
+        self._finite_read_return(closing_read)
+        invoke = closing_read.callback
+        cells = (
+            dict(
+                zip(
+                    invoke.__code__.co_freevars,
+                    (c.cell_contents for c in invoke.__closure__ or ()),
+                )
+            )
+            if inspect.isfunction(invoke)
+            else {}
+        )
+        finish = cells.get("callback")
+        finish_cells = (
+            dict(
+                zip(
+                    finish.__code__.co_freevars,
+                    (c.cell_contents for c in finish.__closure__ or ()),
+                )
+            )
+            if inspect.isfunction(finish)
+            else {}
+        )
+        if (
+            not inspect.isfunction(invoke)
+            or invoke.__code__ is not _CONFIGURATION_INVOKE_CODE
+            or cells.get("self") is not self
+            or cells.get("record") is not closing_read
+            or cells.get("closing") is not True
+            or not inspect.isfunction(finish)
+            or finish.__code__ is not _CONFIGURATION_CLOSE_BODY
+            or finish_cells.get("self") is not self
+        ):
+            raise RuntimeError("original configuration closing read changed")
+        return terminal
+
+    def _execution_terminal_return(self):
+        self._execution_configuration_return()
+        if self._wave is not None:
+            from .console_workflow_wave import (
+                _WAVE_RELEASE_RETURN_SOURCE,
+                _workflow_wave_release_return,
+            )
+
+            if _workflow_wave_release_return is not _WAVE_RELEASE_RETURN_SOURCE[
+                0
+            ] or not _storage_unchanged(_WAVE_RELEASE_RETURN_SOURCE):
+                raise PermissionError("original workflow release receiver changed")
+            _workflow_wave_release_return(self._wave, self)
 
     def check(self):
         self.require_current()
@@ -703,6 +1021,8 @@ class _PreparedWorkflowReply:
         from .console_workflow_runs import _capture_workflow_read
 
         record = _PlanningPreparationRead(self, asyncio.current_task())
+        if self._source_scope is None:
+            record.configuration_return = self._consent_configuration_return
         self._finite_reads.append(record)
         issuing = record.issuing
 
@@ -1017,81 +1337,20 @@ class _PreparedWorkflowReply:
             and registry is self.runtime._workflow_preparations
             and self in registry
         )
-        if not configuration_current:
-            terminal = self._terminal_configuration_return
-            if type(terminal) is tuple and len(terminal) == 3:
-                returned, closing_read, records = terminal
-                if (
-                    scope is not None
-                    and self._closed
-                    and self._source_scope is None
-                    and registry is self.runtime._workflow_preparations
-                    and self not in registry
-                    and type(returned) is tuple
-                    and len(returned) == 3
-                    and all(a is b for a, b in zip(returned, (self, scope, registry)))
-                    and type(records) is tuple
-                    and len(records) == len(self._finite_reads)
-                    and all(a is b for a, b in zip(records, self._finite_reads))
-                    and any(item is record for item in records)
-                    and records[-1] is closing_read
-                    and closing_read is not record
-                    and closing_read.positive
-                    and closing_read.wrapper_error is None
-                    and closing_read.body_error is None
-                    and type(closing_read.issue) is tuple
-                    and len(closing_read.issue) == 15
-                    and closing_read.issue[-1] is True
-                ):
-                    self._finite_read_return(closing_read)
-                    invoke = closing_read.callback
-                    invoke_code = next(
-                        code
-                        for code in _PreparedWorkflowReply._read.__code__.co_consts
-                        if inspect.iscode(code) and code.co_name == "invoke"
-                    )
-                    finish_code = next(
-                        code
-                        for code in _PreparedWorkflowReply.close.__code__.co_consts
-                        if inspect.iscode(code) and code.co_name == "finish"
-                    )
-                    cells = (
-                        dict(
-                            zip(
-                                invoke.__code__.co_freevars,
-                                (
-                                    cell.cell_contents
-                                    for cell in invoke.__closure__ or ()
-                                ),
-                            )
-                        )
-                        if inspect.isfunction(invoke)
-                        else {}
-                    )
-                    finish = cells.get("callback")
-                    finish_cells = (
-                        dict(
-                            zip(
-                                finish.__code__.co_freevars,
-                                (
-                                    cell.cell_contents
-                                    for cell in finish.__closure__ or ()
-                                ),
-                            )
-                        )
-                        if inspect.isfunction(finish)
-                        else {}
-                    )
-                    configuration_current = (
-                        inspect.isfunction(invoke)
-                        and invoke.__code__ is invoke_code
-                        and cells.get("self") is self
-                        and cells.get("record") is closing_read
-                        and cells.get("closing") is True
-                        and inspect.isfunction(finish)
-                        and finish.__code__ is finish_code
-                        and finish_cells.get("self") is self
-                    )
+        if scope is None and record.configuration_return is not None:
+            self._consent_configuration_source(record)
+            configuration_current = True
+        elif (
+            not configuration_current
+            and self._terminal_configuration_return is not None
+        ):
+            returned, closing_read, records = self._execution_configuration_return()
+            configuration_current = (
+                scope is not None
+                and returned[1] is scope
+                and any(item is record for item in records)
+                and closing_read is not record
+            )
         if (
             len(before) != len(expected)
             or any(a is not b for a, b in zip(before, expected))
@@ -1161,6 +1420,13 @@ class _PreparedWorkflowReply:
     def _execution_reads_returned(self):
         """Keep unknown original finite reads from shedding their source custody."""
         self._execution_reads_source()
+        if (
+            self._configuration_transition is not None
+            or self._configuration_transition_error is not None
+        ):
+            raise RuntimeError(
+                "original workflow read issue unproven"
+            ) from self._configuration_transition_error
         for record in self._finite_reads:
             if record.before_issue is not None:
                 self._execution_no_issue_return(record)
@@ -2030,6 +2296,7 @@ class _PreparedWorkflowReply:
         if self._closed:
             if _unpublished is not None:
                 raise PermissionError("unpublished frame close cannot be replayed")
+            self._execution_terminal_return()
             return
 
         from .console_workflow_wave import (
@@ -2149,24 +2416,28 @@ class _PreparedWorkflowReply:
             raise PermissionError("original workflow helper source changed")
         _workflow_close_current(association)
         if self._wave is None:
-            scope, registry = self._source_scope, self.runtime._workflow_preparations
             records = tuple(self._finite_reads)
             closing_read = records[-1]
             self._finite_read_return(closing_read)
-            returned = self._release_configuration()
-            if returned is not None:
-                if (
-                    type(returned) is not tuple
-                    or len(returned) != 3
-                    or any(
-                        a is not b for a, b in zip(returned, (self, scope, registry))
-                    )
-                    or self.runtime._workflow_preparations is not registry
-                    or self._source_scope is not None
-                    or self in registry
-                ):
-                    raise RuntimeError("original configuration return changed")
-                self._terminal_configuration_return = returned, closing_read, records
+            if self._source_scope is not None:
+                try:
+                    returned = self._release_configuration()
+                    self._configuration_received(returned)
+                except BaseException as error:
+                    self._configuration_transition_error = error
+                    raise
+            else:
+                saved = self._consent_configuration_return
+                if type(saved) is not tuple or len(saved) != 11:
+                    raise RuntimeError("original configuration return unproven")
+                prefix = saved[7]
+                if type(prefix) is not tuple or len(self._finite_reads) <= len(prefix):
+                    raise RuntimeError("original consent read unproven")
+                returned = self._consent_configuration_source(
+                    self._finite_reads[len(prefix)]
+                )
+            self._terminal_configuration_return = returned, closing_read, records
+            self._execution_configuration_return()
 
     def _close_on_native_owner(self, owner):
         """Return the original frame inside its pre-held native child operation."""
@@ -2843,14 +3114,35 @@ async def _finish_native_preparation(prepared):
     elif prepared._snapshot is not None:
         if prepared.native.service.confirm_project_instruction_dispatch is None:
             raise PermissionError("workflow project instruction consent unavailable")
-        if prepared.phase.attempt.purpose != "planning":
-            prepared._release_configuration()
-        decision = await prepared._read(
-            lambda: prepared.native.service.confirm_project_instruction_dispatch(
+
+        def consent():
+            return prepared.native.service.confirm_project_instruction_dispatch(
                 prepared._snapshot
-            ),
-            roots=False,
-        )
+            )
+
+        if prepared.phase.attempt.purpose != "planning":
+            prefix = tuple(prepared._finite_reads)
+            issuing = asyncio.current_task()
+            try:
+                returned = prepared._release_configuration()
+                prepared._configuration_received(returned)
+            except BaseException as error:
+                prepared._configuration_transition_error = error
+                raise
+            prepared._consent_configuration_return = (
+                returned,
+                prepared.phase,
+                prepared.authorization,
+                prepared.source,
+                prepared.native,
+                prepared._lifetime,
+                prepared._snapshot,
+                prefix,
+                issuing,
+                consent,
+                prepared._configured_source_observation,
+            )
+        decision = await prepared._read(consent, roots=False)
         if decision != "proceed":
             raise PermissionError("workflow project instructions declined")
         prepared._retain_configuration()
@@ -3325,7 +3617,63 @@ from tldw_chatbook.Backup_Recovery.admission_runtime import (
 )
 
 from . import console_agent_sources as _storage_agent_sources
+from . import console_runtime as _configuration_runtime
 from .console_ordinary_tree import _function_unchanged as _storage_unchanged
+
+_CONFIGURATION_RUNTIME = _configuration_runtime.ConsoleRuntime
+_CONFIGURATION_SCOPE = contextlib._GeneratorContextManager
+_CONFIGURATION_RUNTIME_METHODS = tuple(
+    (
+        name,
+        method,
+        tuple(
+            _planning_function_record(fn)
+            for fn in (
+                method,
+                *([method.__wrapped__] if hasattr(method, "__wrapped__") else []),
+            )
+        ),
+    )
+    for name in ("_first_send_source_scope", "_wake_first_send")
+    for method in (inspect.getattr_static(_CONFIGURATION_RUNTIME, name),)
+)
+_CONFIGURATION_SCOPE_METHODS = tuple(
+    (
+        name,
+        _planning_function_record(inspect.getattr_static(_CONFIGURATION_SCOPE, name)),
+    )
+    for name in ("__init__", "__enter__", "__exit__")
+)
+_CONFIGURATION_ENTER = dict(_CONFIGURATION_SCOPE_METHODS)["__enter__"]
+_CONFIGURATION_EXIT = dict(_CONFIGURATION_SCOPE_METHODS)["__exit__"]
+_CONFIGURATION_FINISH = _planning_function_record(_finish_native_preparation)
+_CONFIGURATION_FUNCTIONS = (
+    (sys.modules[__name__], "_finish_native_preparation", _CONFIGURATION_FINISH),
+    (
+        contextlib,
+        "contextmanager",
+        _planning_function_record(contextlib.contextmanager),
+    ),
+)
+_CONFIGURATION_BODY = _CONFIGURATION_RUNTIME_METHODS[0][1].__wrapped__.__code__
+_CONFIGURATION_RETAIN_CODE = _PreparedWorkflowReply._retain_configuration.__code__
+_CONFIGURATION_RELEASE_CODE = _PreparedWorkflowReply._release_configuration.__code__
+_CONFIGURATION_CLOSE_CODE = _PreparedWorkflowReply.close.__code__
+_CONFIGURATION_CONSENT_CODE = next(
+    code
+    for code in _finish_native_preparation.__code__.co_consts
+    if inspect.iscode(code) and code.co_name == "consent"
+)
+_CONFIGURATION_INVOKE_CODE = next(
+    code
+    for code in _PreparedWorkflowReply._read.__code__.co_consts
+    if inspect.iscode(code) and code.co_name == "invoke"
+)
+_CONFIGURATION_CLOSE_BODY = next(
+    code
+    for code in _PreparedWorkflowReply.close.__code__.co_consts
+    if inspect.iscode(code) and code.co_name == "finish"
+)
 
 
 def _storage_source_current(source=None, *, preparation=None):
