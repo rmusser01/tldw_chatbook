@@ -541,12 +541,12 @@ def _row_secondary_copy(row: SessionGitRow, width: int | None = None) -> str:
         return _middle_elide_cells(full, width)
 
     suffix = recovery
-    if narrow_recovery and cell_len(prefix) + cell_len(suffix) > width:
+    # Narrow once the full recovery leaves the reason no cell beside its "...";
+    # a standalone narrow recovery replaces the reason (TASK-38693).
+    if narrow_recovery and cell_len(prefix) + cell_len(suffix) + 4 > width:
         suffix = narrow_recovery
-    detail_width = max(
-        0,
-        width - cell_len(prefix) - cell_len(suffix),
-    )
+        detail = detail if suffix.startswith(";") else ""
+    detail_width = max(0, width - cell_len(prefix) - cell_len(suffix))
     fitted_detail = _middle_elide_cells(detail, detail_width)
     fitted = f"{prefix}{fitted_detail}{suffix}"
     return fitted if cell_len(fitted) <= width else _middle_elide_cells(fitted, width)

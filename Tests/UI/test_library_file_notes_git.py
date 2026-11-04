@@ -1076,9 +1076,14 @@ async def _open_guarded_commit_form(
             "guarded commit entry did not receive focus",
         )
     commit.press()
+    # The panel shows the form before the workspace adopts the draft from its
+    # CommitStagedRequested message; callers read the key next (TASK-38693).
     await _wait_until(
         pilot,
-        lambda: workspace._git_panel_widget.commit_phase == "form",
+        lambda: (
+            workspace._git_panel_widget.commit_phase == "form"
+            and workspace._active_commit_key() is not None
+        ),
         "guarded commit form did not open",
     )
 
@@ -1817,16 +1822,22 @@ async def test_commit_review_enter_escape_cancel_and_execution_are_state_aware()
     app = _PanelHarness(panel)
     async with app.run_test() as pilot:
         panel.render_commit_availability(draft)
+        # The form opens when the panel handles the press and focuses its
+        # subject after a refresh. A key sent before that lands misses the
+        # form, and Review focused before it loses focus to it (TASK-38693).
+        subject = panel.query_one("#file-notes-git-commit-subject", Input)
+        review = panel.query_one("#file-notes-git-commit-review", Button)
         panel.query_one("#file-notes-git-commit-staged", Button).press()
-        await pilot.pause()
+        await _wait_until(pilot, lambda: subject.has_focus, "form did not focus")
         await pilot.press("escape")
         await pilot.pause()
         assert panel.commit_phase == "list"
         assert app.messages[-1].__class__.__name__ == "CancelCommitRequested"
         assert app.messages[-1].from_phase == "form"
         panel.query_one("#file-notes-git-commit-staged", Button).press()
-        await pilot.pause()
-        panel.query_one("#file-notes-git-commit-review", Button).focus()
+        await _wait_until(pilot, lambda: subject.has_focus, "form did not focus")
+        review.focus()
+        await _wait_until(pilot, lambda: review.has_focus, "Review not focused")
         await pilot.press("enter")
         await pilot.pause()
         assert panel.commit_phase == "checking"
@@ -2618,6 +2629,34 @@ async def test_prepare_session_fixed_regions_remain_visible_at_40_by_20() -> Non
         assert len(multiline_action.splitlines()) >= 3
 
         await _assert_visible_panel_buttons_fit(panel, pilot)
+
+
+@pytest.mark.parametrize(
+    ("state", "narrow", "recovery"),
+    (
+        (
+            "conflict",
+            "Conflict: use Git; Refresh",
+            "; resolve the Git conflict outside Chatbook, then Refresh",
+        ),
+        ("unavailable", "Restore Git first; Refresh", "; restore Git, then Refresh"),
+    ),
+)
+def test_blocked_row_copy_never_runs_an_empty_reason_into_its_recovery(
+    state: SessionGitRowState,
+    narrow: str,
+    recovery: str,
+) -> None:
+    """TASK-38693: at 40x20 the row is 37 cells, which once read
+    "BLOCKED · .Conflict: use Git; Refresh"; pin every row width."""
+    row = _row(state, disabled_reason="index diagnostic " * 18)
+    for width in range(36, 120):
+        copy = git_panel_module._row_secondary_copy(row, width)
+        reason = copy.removeprefix("BLOCKED · ").removesuffix(recovery)
+        assert cell_len(copy) <= width
+        assert copy == f"BLOCKED · {narrow}" or (
+            copy.endswith(recovery) and reason.strip(".")
+        ), (width, copy)
 
 
 @pytest.mark.asyncio
@@ -5842,9 +5881,25 @@ async def test_guarded_commit_success_renders_and_focuses_fresh_owner_status(
         )
         assert success_summary.display
         assert _is_effectively_displayed(success_summary)
+        # The fit runs before the rows' scrollbar takes a cell; at 40x20 the
+        # copy is re-fitted to 27 cells soon after. Read the settled fit, not
+        # the earlier 28-cell one (TASK-38693).
+        await _wait_until(
+            pilot,
+            lambda: (
+                _text(success_summary)
+                == git_panel_module._fit_two_line_copy(
+                    workspace._git_panel_widget._last_action_text,
+                    success_summary.content_region.width,
+                )
+            ),
+            "success summary was not fitted to its width",
+        )
         rendered_summary = _flat_text(success_summary)
         if size == (40, 20):
-            assert rendered_summary.startswith("Committed 2 session notes")
+            # 55 cells cannot fit two 27-cell lines, so the middle is elided.
+            assert rendered_summary.startswith("Committed 2 session note")
+            assert rendered_summary.endswith("changes untouched.")
         else:
             assert rendered_summary == (
                 "Committed 2 session notes; unrelated changes untouched."
