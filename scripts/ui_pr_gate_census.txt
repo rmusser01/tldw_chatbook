@@ -2089,6 +2089,8 @@ Tests/UI/test_console_archive_recovery_flow.py::test_native_result_refresh_remai
 # with scripts/ui_lane_shard_replay.py's model: four green PR runs' shard
 # logs, plus these entries' local times scaled by the measured CI/local
 # ratio. Appended at the tail, so no earlier slot moves.
+# test_file_notes_root_row_keeps_state_word_beside_pairing_review_at_40_columns
+# relies on TASK-38710's root-row refit on resize (fu/r6-fnprod), which merges first.
 Tests/UI/test_library_file_notes_git_push.py::test_push_authorization_dialog_is_safe_explicit_and_has_endpoint_details
 Tests/UI/test_library_file_notes_git.py::test_review_session_entry_explains_scope_and_keeps_recovery_copy_complete
 Tests/UI/test_library_file_notes_workspace.py::test_scan_and_reconcile_clear_stale_replica_warning
