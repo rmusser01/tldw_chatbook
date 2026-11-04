@@ -10,80 +10,53 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 
-from tldw_chatbook.config import normalize_provider_config_key
+from tldw_chatbook.provider_registry import ALL_RECORDS, normalize_provider_config_key
 
 # task-180: single source of human display names for provider keys rendered
 # in Settings and Console. Labels are display-only; the underlying
 # config/readiness keys are unchanged so existing config files keep working.
-PROVIDER_DISPLAY_NAMES: dict[str, str] = {
-    "anthropic": "Anthropic",
+#: Execution-only spellings of records whose readiness spelling is overridden
+#: below (custom / custom_2 / local_mlx_lm); the record key is never a label key.
+_EXECUTION_SPELLING_RECORD_KEYS = frozenset(
+    {"custom-openai-api", "custom-openai-api-2", "mlx_lm"}
+)
+#: Labels that differ from ``ProviderRecord.display_name`` (an error-copy prefix),
+#: or whose key has no record (TASK-36946.1). A parity test fails when an
+#: override equals the record value, so this list cannot go stale.
+_DISPLAY_NAME_OVERRIDES: dict[str, str] = {
+    # UI label is longer than the error-copy name.
     "aphrodite": "Aphrodite Engine",
-    "arcee": "Arcee AI",
-    "azure": "Azure OpenAI",
-    "baseten": "Baseten",
-    "byteplus": "ByteDance Seed (BytePlus)",
-    "cerebras": "Cerebras",
-    "cloudflare": "Cloudflare Workers AI",
-    "cohere": "Cohere",
-    "commandcode": "Command Code",
+    "google": "Google Gemini",
+    "koboldcpp": "KoboldCpp",
+    "local_llm": "Local LLM (legacy generic)",
+    "mistral": "Mistral AI (legacy alias)",
+    "moonshot": "Moonshot AI",
+    "oobabooga": "Text Generation WebUI (Oobabooga)",
+    "tabbyapi": "TabbyAPI",
+    # No record under this readiness spelling.
     "custom": "Custom OpenAI-compatible",
     "custom_2": "Custom OpenAI-compatible #2",
-    # ADR-179's execution-only engine key. Setup cannot own it, so neither the
-    # Settings picker nor first-run setup lists it (TASK-33621.14).
-    "custom_hosted": "Custom Hosted",
-    "databricks": "Databricks",
-    "deepinfra": "DeepInfra",
-    "deepseek": "DeepSeek",
-    "fireworks": "Fireworks",
-    "gmi": "GMI Cloud",
-    "google": "Google Gemini",
-    "groq": "Groq",
-    "huggingface": "Hugging Face",
-    "kilo": "Kilo Gateway",
-    "koboldcpp": "KoboldCpp",
-    "llama_cpp": "llama.cpp",
-    "strata": "Strata",
-    "polystrata": "PolyStrata",
     "local_llamacpp": "llama.cpp (legacy alias)",
     "local_llamafile": "Llamafile",
-    "local_llm": "Local LLM (legacy generic)",
     "local_mlx_lm": "MLX-LM (Apple silicon)",
     "local_ollama": "Ollama (legacy alias)",
     "local_onnx": "ONNX Runtime (local)",
     "local_transformers": "Transformers (local)",
     "local_vllm": "vLLM (legacy alias)",
-    "meta": "Meta (Muse Spark)",
-    "mimo": "Xiaomi MiMo",
-    "minimax": "MiniMax",
-    "mistral": "Mistral AI (legacy alias)",
     "mistralai": "Mistral AI",
-    "moonshot": "Moonshot AI",
-    "nebius": "Nebius Token Factory",
-    "nous": "Nous Research",
-    "novita": "Novita AI",
-    "nvidia": "NVIDIA NIM",
-    "ollama": "Ollama",
-    "ollama_cloud": "Ollama Cloud",
-    "oobabooga": "Text Generation WebUI (Oobabooga)",
-    "openai": "OpenAI",
-    "opencode_zen": "OpenCode Zen",
-    "openrouter": "OpenRouter",
-    "qianfan": "Baidu Qianfan",
-    "qwencloud": "QwenCloud",
-    "sambanova": "SambaNova",
-    "siliconflow": "SiliconFlow",
-    "stepfun": "StepFun",
-    "tabbyapi": "TabbyAPI",
-    "together": "Together",
-    "tokenhub": "Tencent TokenHub",
-    "upstage": "Upstage",
-    "venice": "Venice",
-    "vercel": "Vercel AI Gateway",
-    "vllm": "vLLM",
-    "wandb": "W&B Inference (CoreWeave)",
-    "zai": "Z.ai",
-    "zenmux": "ZenMux",
 }
+PROVIDER_DISPLAY_NAMES: dict[str, str] = dict(
+    sorted(
+        {
+            **{
+                normalize_provider_config_key(record.key): record.display_name
+                for record in ALL_RECORDS
+                if record.key not in _EXECUTION_SPELLING_RECORD_KEYS
+            },
+            **_DISPLAY_NAME_OVERRIDES,
+        }.items()
+    )
+)
 
 PROVIDER_GROUP_CLOUD = "Cloud"
 PROVIDER_GROUP_LOCAL = "Local"
@@ -98,21 +71,25 @@ PROVIDER_GROUP_ORDER = (
 # compatibility but sort last, so new users pick the canonical entry
 # (llama_cpp over local_llamacpp, ollama over local_ollama, mistralai over
 # mistral, vllm over local_vllm).
-PROVIDER_CUSTOM_GROUP_KEYS = frozenset(
-    {
-        "custom",
-        "custom_2",
-        "local_llamacpp",
-        "local_llm",
-        "local_ollama",
-        "local_vllm",
-        "mistral",
-    }
+#: The built-in custom slots (``[api_settings.custom]``/``custom_2``), derived
+#: from the custom-openai-api records' config keys (TASK-36946.1).
+PROVIDER_CUSTOM_SLOT_KEYS = frozenset(
+    normalize_provider_config_key(record.config_key)
+    for record in ALL_RECORDS
+    if record.key.startswith("custom-openai-api")
 )
+#: Which spelling is the legacy alias is UI taxonomy, not a record fact: this
+#: list calls ``mistral`` legacy where the registry's canonical key is
+#: ``mistral`` and ``mistralai`` its alias, and keeps ``local_llamafile`` /
+#: ``local_mlx_lm`` (registry aliases) canonical, so it stays listed here.
+_PROVIDER_LEGACY_ALIAS_KEYS = frozenset(
+    {"local_llamacpp", "local_llm", "local_ollama", "local_vllm", "mistral"}
+)
+PROVIDER_CUSTOM_GROUP_KEYS = PROVIDER_CUSTOM_SLOT_KEYS | _PROVIDER_LEGACY_ALIAS_KEYS
 #: The legacy aliases alone: the custom group minus the built-in custom slots,
 #: which stay listable (ADR-146) while Console hides an alias unless it is
 #: configured or current (ADR-066).
-PROVIDER_LEGACY_ALIAS_KEYS = PROVIDER_CUSTOM_GROUP_KEYS - {"custom", "custom_2"}
+PROVIDER_LEGACY_ALIAS_KEYS = PROVIDER_CUSTOM_GROUP_KEYS - PROVIDER_CUSTOM_SLOT_KEYS
 #: TASK-35578: said under a server's listing in Chat settings and the first-run
 #: wizard's model step, whose picks never join a model list: a provider's
 #: saved list (``[providers]``) or, for a named custom endpoint, its own list

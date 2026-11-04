@@ -273,6 +273,13 @@ class ProviderRecord:
     # under the legacy handler's exact key spellings. Explicit request
     # kwargs still win; ``settings_defaults`` is the last resort.
     defaults_settings_section: str | None = None
+    # ADR-179: the host is per-account (no default URL can ship), so a resolved
+    # key alone does not make the provider ready -- a base URL must be set.
+    base_url_required: bool = False
+    # Hand-written (non-engine) providers that nonetheless checkpoint tool
+    # continuations (moonshot, zai, deepseek); engine records qualify by
+    # ``continuation_protocol`` alone.
+    checkpoints_continuations: bool = False
 
 
 # --- Databricks (first engine-driven preset; AI Gateway external models) ---
@@ -284,6 +291,7 @@ DATABRICKS = ProviderRecord(
     api_key_env_var="DATABRICKS_TOKEN",
     api_key_env_candidates=("DATABRICKS_TOKEN",),
     default_base_url=None,  # workspace host is per-account; user-configured
+    base_url_required=True,
     native_tools=True,      # confirmed (or honestly disabled) at live gate (Task 14)
     reasoning_effort=False, # gateway model support varies; enable per-model later
     auto_refresh=True,
@@ -1302,6 +1310,7 @@ AZURE = ProviderRecord(
     api_key_env_var="AZURE_OPENAI_API_KEY",
     api_key_env_candidates=("AZURE_OPENAI_API_KEY",),
     default_base_url=None,  # resource host is per-account; user-configured
+    base_url_required=True,
     native_tools=True,
     reasoning_effort=False,
     auto_refresh=False,
@@ -1382,6 +1391,7 @@ CLOUDFLARE = ProviderRecord(
     api_key_env_var="CLOUDFLARE_API_TOKEN",
     api_key_env_candidates=("CLOUDFLARE_API_TOKEN",),
     default_base_url=None,  # the account id is in the path; user-configured
+    base_url_required=True,
     native_tools=True,
     reasoning_effort=False,
     auto_refresh=False,
@@ -1593,6 +1603,7 @@ DEEPSEEK = ProviderRecord(
     default_base_url="https://api.deepseek.com",
     native_tools=True, reasoning_effort=True, auto_refresh=False,
     reasoning_effort_values=frozenset({"none", "low", "high", "max"}),
+    checkpoints_continuations=True,
 )
 MISTRAL = ProviderRecord(
     key="mistral", config_key="MistralAI", display_name="Mistral", classification=_CLOUD,
@@ -1621,6 +1632,7 @@ MOONSHOT = ProviderRecord(
     api_key_env_candidates=("MOONSHOT_API_KEY",),
     default_base_url="https://api.moonshot.ai/v1",  # [api_settings.moonshot].api_base_url
     native_tools=True, reasoning_effort=True, auto_refresh=True,
+    checkpoints_continuations=True,
 )
 ZAI = ProviderRecord(
     key="zai", config_key="ZAI", display_name="Z.ai", classification=_CLOUD,
@@ -1628,6 +1640,7 @@ ZAI = ProviderRecord(
     api_key_env_candidates=("ZAI_API_KEY",),
     default_base_url="https://api.z.ai/api/paas/v4",  # [api_settings.zai].api_base_url
     native_tools=True, reasoning_effort=True, auto_refresh=True,
+    checkpoints_continuations=True,
 )
 QWENCLOUD = ProviderRecord(
     key="qwencloud", config_key="QwenCloud", display_name="QwenCloud", classification=_CLOUD,
@@ -1775,3 +1788,94 @@ NATIVE_TOOLS_KEYS: frozenset[str] = frozenset(
 )
 #: Every dispatch key (canonical + aliases) — the sensitive-audit universe.
 AUDITED_ENDPOINT_KEYS: frozenset[str] = frozenset(RECORDS_BY_KEY) | frozenset(ALIASES)
+
+
+# --- Lookup tables derived from the records (TASK-36946.1) -------------------
+#: Engine presets whose config-table spelling is not their registry key
+#: ("OllamaCloud" lowers to "ollamacloud", not "ollama_cloud", TASK-33511).
+_ENGINE_CONFIG_KEY_ALIASES: dict[str, str] = {
+    record.config_key.lower(): record.key
+    for record in ALL_RECORDS
+    if record.engine_driven and record.key != "custom-hosted"
+}
+
+
+def normalize_provider_config_key(provider: object) -> str:
+    """Return the canonical lookup form used for provider config tables.
+
+    Args:
+        provider: Provider label or key to normalize.
+
+    Returns:
+        A stripped, lowercase provider key with spaces and hyphens replaced by
+        underscores.
+    """
+    normalized = str(provider or "").strip().lower().replace(" ", "_").replace("-", "_")
+    if normalized == "z.ai":
+        return "zai"
+    return _ENGINE_CONFIG_KEY_ALIASES.get(normalized, normalized)
+
+
+def _readiness_keys(local: bool) -> frozenset[str]:
+    """Readiness spellings (normalized key, config table, alias) of a classification.
+
+    ``custom-hosted`` is execution-only (never a readiness identity), so it is
+    left out of the local set.
+    """
+    wanted = _LOCAL if local else _CLOUD
+    keys: set[str] = set()
+    for record in ALL_RECORDS:
+        if record.classification == wanted and record.key != "custom-hosted":
+            keys.add(normalize_provider_config_key(record.key))
+            keys.add(normalize_provider_config_key(record.config_key))
+    for alias, canonical in ALIASES.items():
+        if RECORDS_BY_KEY[canonical].classification == wanted:
+            keys.add(normalize_provider_config_key(alias))
+    return frozenset(keys)
+
+
+#: Providers that dispatch without a credential, in readiness spelling.
+#: ``local_onnx`` / ``local_transformers`` have config tables but no dispatch
+#: handler and no record (see the local-records note above), so they are the
+#: one explicit exception to the derivation.
+KEYLESS_PROVIDER_KEYS: frozenset[str] = _readiness_keys(local=True) | {
+    "local_onnx",
+    "local_transformers",
+}
+#: Providers that need an API key, in readiness spelling.
+PROVIDERS_REQUIRING_API_KEY_KEYS: frozenset[str] = _readiness_keys(local=False)
+#: Per-account hosts: no default URL ships, so readiness needs one configured.
+PROVIDERS_REQUIRING_BASE_URL_KEYS: frozenset[str] = frozenset(
+    normalize_provider_config_key(record.key)
+    for record in ALL_RECORDS
+    if record.base_url_required
+)
+#: Providers that checkpoint tool continuations: engine presets that speak a
+#: continuation protocol, plus records flagged ``checkpoints_continuations``.
+CONTINUATION_PROVIDER_KEYS: frozenset[str] = frozenset(
+    record.key
+    for record in ALL_RECORDS
+    if record.checkpoints_continuations
+    or (record.engine_driven and record.continuation_protocol is not None)
+)
+#: Console-settings identities: every dispatch key and alias except the
+#: execution-only ``custom-hosted`` (it is never a user-selectable identity).
+CONSOLE_EXECUTION_PROVIDER_KEYS: frozenset[str] = frozenset(RECORDS_BY_KEY) - {
+    "custom-hosted"
+}
+
+
+def default_api_key_env_var(provider_key: str) -> str | None:
+    """Return the conventional credential env var of a keyed provider.
+
+    Args:
+        provider_key: A readiness key (``"openai"``, ``"mistralai"``).
+
+    Returns:
+        The record's ``api_key_env_var``, or ``None`` for a keyless or
+        unknown provider.
+    """
+    if provider_key not in PROVIDERS_REQUIRING_API_KEY_KEYS:
+        return None
+    record = RECORDS_BY_KEY.get(provider_key)
+    return record.api_key_env_var if record is not None else None

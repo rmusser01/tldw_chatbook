@@ -15,7 +15,7 @@ A provider earns a place in ``NATIVE_TOOLS_PROVIDERS`` only when ALL of:
    migration), and
 3. the provider accepts OpenAI-shape ``role: "tool"`` history messages.
 
-Pure module: no I/O, no provider imports.
+Pure module: no I/O; the only provider import is the stdlib-only registry leaf.
 """
 
 from __future__ import annotations
@@ -27,6 +27,8 @@ from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from tldw_chatbook.Chat.local_reasoning import ReasoningReplayPolicy
+
+from tldw_chatbook.provider_registry import NATIVE_TOOLS_KEYS
 
 from .agent_models import ToolCall, ToolSchema
 
@@ -46,91 +48,9 @@ PROVIDER_FORBIDDEN_TOP_LEVEL_SCHEMA_KEYS = (
     "not",
 )
 
-NATIVE_TOOLS_PROVIDERS = frozenset(
-    {
-        "openai",
-        "groq",
-        "openrouter",
-        "mistral",
-        "deepseek",
-        "moonshot",
-        "zai",
-        # TASK-3771: both QwenCloud wire modes normalize function calls to
-        # OpenAI shape and translate canonical assistant/tool continuation.
-        # Joined Console tests exercise the real dispatcher and HTTP boundary.
-        "qwencloud",
-        # ADR-179 Phase 2 Task 6: the whole custom execution family (the
-        # legacy slots and the swapped engine key) forwards OpenAI tools
-        # and returns the raw OpenAI-compatible response shape. Kept as
-        # literals (not the shared custom-keys constant) because this
-        # module is deliberately pure -- no provider imports; membership
-        # is guarded by the registry parity test
-        # (NATIVE_TOOLS_PROVIDERS == provider_registry.NATIVE_TOOLS_KEYS).
-        "custom-openai-api",
-        "custom-openai-api-2",
-        "custom-hosted",
-        # task-263: chat_with_anthropic converts OpenAI tools/tool-history to
-        # Anthropic blocks and normalizes tool_use (non-streaming + streaming)
-        # back to OpenAI shape — live-gated against the real API 2026-07-17
-        # (Docs/superpowers/qa/anthropic-native-2026-07/).
-        "anthropic",
-        # task-266: chat_with_google wraps functionDeclarations, converts
-        # functionCall/functionResponse history (incl. Gemini 3 thought-
-        # signature round-trip), and emits streamed functionCall parts as
-        # OpenAI fragments — live-gated 2026-07-17
-        # (Docs/superpowers/qa/google-native-2026-07/).
-        "google",
-        # task-267: chat_with_cohere migrated to the v2 /chat API (OpenAI-
-        # shaped messages/tools end-to-end), parses message.tool_calls on both
-        # response paths, and round-trips tool_plan as the cohere_tool_plan
-        # extra — live-gated 2026-07-17
-        # (Docs/superpowers/qa/cohere-native-2026-07/).
-        "cohere",
-        # ADR-179 Task 12: the hosted engine preset forwards ``tools`` and
-        # returns the raw OpenAI-compatible response shape (Databricks AI
-        # Gateway external models); confirmed (or honestly disabled) at the
-        # Task 14 live gate.
-        "databricks",
-        # ADR-179 Phase 2 Task 5: the inference-cloud engine presets
-        # (together/fireworks/cerebras) advertise OpenAI-shaped tools and
-        # tool-history through the same strict engine closure; confirmed (or
-        # honestly disabled) at the Task 7 live probes.
-        "together",
-        "fireworks",
-        "cerebras",
-        # TASK-33201: the doc-derived presets; each provider documents
-        # OpenAI-shaped tools/tool_choice on Chat Completions.
-        "sambanova",
-        "nvidia",
-        "deepinfra",
-        "nebius",
-        "novita",
-        "minimax",
-        # TASK-33350: StepFun ships tools OFF (finish "stop" alongside tool_calls).
-        "mimo",
-        "tokenhub",
-        "byteplus",
-        # TASK-33351 gateway/host presets (Nous ships tools off: schema unread).
-        "vercel",
-        "zenmux",
-        "kilo",
-        "siliconflow",
-        "baseten",
-        "gmi",
-        "ollama_cloud",
-        "upstage",
-        "arcee",
-        "qianfan",
-        "venice",
-        "meta",
-        # TASK-33505..33509 follow-up presets.
-        "azure",
-        "wandb",
-        "cloudflare",
-        "opencode_zen",
-        "commandcode",
-    }
-)
+#: Derived from each record's ``native_tools`` flag (TASK-36946.1); the
+#: per-provider rationale (task-263/266/267, ADR-179) lives on the records.
+NATIVE_TOOLS_PROVIDERS = NATIVE_TOOLS_KEYS
 
 
 def provider_supports_native_tools(

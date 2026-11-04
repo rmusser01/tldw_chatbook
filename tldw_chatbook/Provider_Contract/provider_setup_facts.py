@@ -86,7 +86,7 @@ KEY_URL_UNCONFIRMED: frozenset[str] = frozenset(
     }
 )
 
-#: Per-account base URLs (``provider_readiness.PROVIDERS_REQUIRING_BASE_URL_KEYS``):
+#: Per-account base URLs (``provider_registry.PROVIDERS_REQUIRING_BASE_URL_KEYS``):
 #: the field's label and an example, shown above the key (review provider-05).
 #: Cloudflare's is the full Workers AI base, not the account URL: its record
 #: has no suffix to append (pre-merge review 2026-10-29; the endpoint contract
@@ -220,12 +220,12 @@ def provider_setup_facts(provider_key: str) -> ProviderSetupFacts:
         The provider's facts; an unknown key gets conservative defaults
         (cloud, model-list check, nothing required).
     """
-    from tldw_chatbook.Chat.provider_readiness import (
+    from tldw_chatbook.provider_registry import (
         KEYLESS_PROVIDER_KEYS,
         PROVIDERS_REQUIRING_BASE_URL_KEYS,
+        RECORDS_BY_KEY,
         default_api_key_env_var,
     )
-    from tldw_chatbook.provider_registry import RECORDS_BY_KEY
 
     key = (provider_key or "").strip()
     record = RECORDS_BY_KEY.get(key)

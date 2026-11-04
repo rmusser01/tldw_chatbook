@@ -212,15 +212,14 @@ def test_production_code_imports_provider_types_from_the_package():
 # Every import that leaves the package, top-level or inside a function (a call-time
 # import still couples the layers; the fresh-interpreter test above sees import time
 # only). Pinned exactly: a new edge fails, and a removed one must be deleted here.
-# The Chat.provider_readiness edges go with TASK-36946.1 (readiness tables derived from
-# the registry). Plugins.continuation stays lazy so V1 restores skip the plugin stack.
+# Provider facts come from the registry records (TASK-36946.1), not Chat.provider_readiness.
+# Plugins.continuation stays lazy so V1 restores skip the plugin stack.
 PROVIDER_CONTRACT_OUTBOUND_IMPORTS = {
-    ("provider_continuation", "tldw_chatbook.Chat.provider_readiness"),
     ("provider_continuation", "tldw_chatbook.Plugins.continuation"),
     ("provider_continuation", "tldw_chatbook.Utils.input_validation"),
     ("provider_continuation", "tldw_chatbook.model_capabilities"),
+    ("provider_continuation", "tldw_chatbook.provider_registry"),
     ("provider_endpoint_contract", "tldw_chatbook.provider_registry"),
-    ("provider_setup_facts", "tldw_chatbook.Chat.provider_readiness"),
     ("provider_setup_facts", "tldw_chatbook.provider_registry"),
     ("thinking_blocks", "tldw_chatbook.Utils.input_validation"),
 }

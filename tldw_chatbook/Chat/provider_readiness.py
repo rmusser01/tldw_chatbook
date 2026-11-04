@@ -37,7 +37,12 @@ from ..config import (
 from ..config import (
     resolve_provider_api_key as _valid_api_key,
 )
-from ..provider_registry import RECORDS_BY_KEY
+from ..provider_registry import (  # noqa: F401 - names re-exported for readiness callers
+    KEYLESS_PROVIDER_KEYS,
+    PROVIDERS_REQUIRING_API_KEY_KEYS,
+    PROVIDERS_REQUIRING_BASE_URL_KEYS,
+    default_api_key_env_var,
+)
 from ..Utils.input_validation import (
     sanitize_string,
     validate_navigation_context_text,
@@ -60,55 +65,7 @@ from .provider_test_evidence import (
 # it); the source string is the AC#5 "which credential is in use" signal.
 SUBSCRIPTION_SOURCE = "subscription:claude_code"
 
-PROVIDERS_REQUIRING_API_KEY_KEYS = frozenset(
-    {
-        "anthropic",
-        "arcee",
-        "azure",
-        "baseten",
-        "byteplus",
-        "cerebras",
-        "cloudflare",
-        "cohere",
-        "commandcode",
-        "databricks",
-        "deepinfra",
-        "deepseek",
-        "fireworks",
-        "gmi",
-        "google",
-        "groq",
-        "huggingface",
-        "kilo",
-        "meta",
-        "mimo",
-        "minimax",
-        "mistral",
-        "mistralai",
-        "moonshot",
-        "nebius",
-        "nous",
-        "novita",
-        "nvidia",
-        "ollama_cloud",
-        "openai",
-        "opencode_zen",
-        "openrouter",
-        "qianfan",
-        "qwencloud",
-        "sambanova",
-        "siliconflow",
-        "stepfun",
-        "together",
-        "tokenhub",
-        "upstage",
-        "venice",
-        "vercel",
-        "wandb",
-        "zai",
-        "zenmux",
-    }
-)
+# Derived from the registry records (TASK-36946.1); see provider_registry.
 #: Providers that dispatch without a credential. Membership is what makes a
 #: provider dispatchable at all through the readiness gate (`KNOWN_PROVIDER_
 #: KEYS` below), so it must be kept in terms of what `Chat/Chat_Functions.
@@ -126,32 +83,6 @@ PROVIDERS_REQUIRING_API_KEY_KEYS = frozenset(
 #: out, all three fell to the "Unknown provider" branch below and a
 #: previously-working Run button went permanently disabled with copy that
 #: named no remedy.
-KEYLESS_PROVIDER_KEYS = frozenset(
-    {
-        "aphrodite",
-        "custom",
-        "custom_2",
-        "custom_openai_api",
-        "custom_openai_api_2",
-        "koboldcpp",
-        "mlx_lm",
-        "llama_cpp",
-        "strata",
-        "polystrata",
-        "local_llm",
-        "local_llamacpp",
-        "local_llamafile",
-        "local_mlx_lm",
-        "local_ollama",
-        "local_onnx",
-        "local_transformers",
-        "local_vllm",
-        "ollama",
-        "oobabooga",
-        "tabbyapi",
-        "vllm",
-    }
-)
 KNOWN_PROVIDER_KEYS = PROVIDERS_REQUIRING_API_KEY_KEYS | KEYLESS_PROVIDER_KEYS
 
 
@@ -172,16 +103,6 @@ def is_self_hosted_provider(provider: str | None) -> bool:
     key = provider_config_key(provider)
     return key in KEYLESS_PROVIDER_KEYS or key.startswith("custom")
 
-_DEFAULT_API_KEY_ENV_VAR_ALIASES = {
-    # Registry parity (ADR-179): Databricks's conventional token env var is
-    # DATABRICKS_TOKEN, not the DATABRICKS_API_KEY convention the generic
-    # naming rule would derive -- this alias keeps readiness, the first-run
-    # wizard's "found in your environment" detection, and the engine's
-    # env candidates (provider_registry.DATABRICKS) looking for one name.
-    "databricks": "DATABRICKS_TOKEN",
-    "mistralai": "MISTRAL_API_KEY",
-    "qwencloud": "DASHSCOPE_API_KEY",
-}
 _STRICT_HOSTED_PROVIDER_KEYS = frozenset({"moonshot", "zai"})
 #: ADR-179: engine-driven providers whose workspace host is per-account, so
 #: no default base URL can ship (``provider_registry`` records carry
@@ -189,7 +110,8 @@ _STRICT_HOSTED_PROVIDER_KEYS = frozenset({"moonshot", "zai"})
 #: mark them ready -- the send path (``LLM_Calls/hosted_provider_engine``)
 #: raises on a missing base URL -- so readiness blocks with copy naming the
 #: workspace URL until one of ``_BASE_URL_SETTING_KEYS`` is configured.
-PROVIDERS_REQUIRING_BASE_URL_KEYS = frozenset({"databricks", "azure", "cloudflare"})
+#: ``PROVIDERS_REQUIRING_BASE_URL_KEYS`` (imported above) derives from the
+#: records' ``base_url_required`` field.
 #: Blocking copy per :data:`PROVIDERS_REQUIRING_BASE_URL_KEYS` entry:
 #: (reason, what to set, example value, how the path is handled).
 _BASE_URL_RECOVERY = {
@@ -529,37 +451,6 @@ def required_base_url_target(provider: str | None) -> str | None:
 def _requires_api_key(provider_key: str) -> bool:
     """Return True unless the provider is known to work without credentials."""
     return provider_key not in KEYLESS_PROVIDER_KEYS
-
-
-def default_api_key_env_var(provider_key: str) -> str | None:
-    """Return the conventional environment variable for known keyed providers.
-
-    Single source of truth for the ``<PROVIDER>_API_KEY`` naming convention
-    (plus known aliases such as ``mistralai`` -> ``MISTRAL_API_KEY``); also
-    consumed by ``first_run_setup_state.read_provider_secret_presence`` so the
-    wizard's "found in your environment" detection agrees with Chat's own
-    readiness resolution even before ``api_key_env_var`` is explicitly
-    persisted to config.
-
-    Args:
-        provider_key: The normalized provider key (e.g. via
-            ``provider_config_key``), such as "openai" or "mistralai".
-
-    Returns:
-        The conventional environment variable name (e.g. "OPENAI_API_KEY"),
-        or None when the provider is not one of the known keyed providers.
-    """
-    if provider_key not in PROVIDERS_REQUIRING_API_KEY_KEYS:
-        return None
-    # An engine preset documents its own variable (Vercel AI_GATEWAY_API_KEY,
-    # BytePlus ARK_API_KEY, ...), which is what the engine reads; derive it
-    # from the registry so readiness never looks elsewhere (TASK-33511).
-    record = RECORDS_BY_KEY.get(provider_key)
-    if record is not None and record.engine_driven and record.api_key_env_var:
-        return record.api_key_env_var
-    return _DEFAULT_API_KEY_ENV_VAR_ALIASES.get(
-        provider_key, f"{provider_key.upper()}_API_KEY"
-    )
 
 
 def _resolved_hosted_api_key(

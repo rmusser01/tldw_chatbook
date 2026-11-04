@@ -18,6 +18,10 @@ from urllib.parse import urlsplit
 from tldw_chatbook.Provider_Contract.provider_endpoint_contract import (
     canonical_connection_identity,
 )
+from tldw_chatbook.provider_registry import (
+    CONTINUATION_PROVIDER_KEYS,
+    normalize_provider_config_key,
+)
 from tldw_chatbook.model_capabilities import (
     moonshot_model_returns_reasoning_content,
 )
@@ -27,6 +31,8 @@ from tldw_chatbook.Utils.input_validation import (
 )
 
 
+# Typing only: a Literal cannot be computed. A parity test pins it to
+# provider_registry.CONTINUATION_PROVIDER_KEYS, which the runtime checks use.
 ContinuationProvider = Literal[
     "moonshot",
     "zai",
@@ -115,52 +121,11 @@ _TOP_LEVEL_KEYS = frozenset(
 _ROUND_KEYS = frozenset({"assistant_content", "reasoning_blocks", "calls"})
 _CALL_KEYS = frozenset({"call_id", "name", "arguments", "state"})
 _CALL_RESULT_KEYS = _CALL_KEYS | {"result"}
+# Every continuation provider speaks chat-completions (registry-derived,
+# TASK-36946.1); DeepSeek alone also checkpoints the responses protocol.
 _PAIRINGS = frozenset(
-    {
-        ("moonshot", "chat_completions"),
-        ("zai", "chat_completions"),
-        ("deepseek", "chat_completions"),
-        ("deepseek", "responses"),
-        # ADR-179 Task 7: the first engine-driven preset joins the canonical
-        # format (chat-completions continuation only; the engine's candidate
-        # builder skips records whose continuation_protocol is None).
-        ("databricks", "chat_completions"),
-        # ADR-179 Phase 2 Task 6: the swapped custom-endpoint execution key
-        # and the Task 5 inference-cloud presets (all chat-completions
-        # continuation; engine candidate builders all speak the one protocol).
-        ("custom-hosted", "chat_completions"),
-        ("together", "chat_completions"),
-        ("fireworks", "chat_completions"),
-        ("cerebras", "chat_completions"),
-        ("sambanova", "chat_completions"),
-        ("nvidia", "chat_completions"),
-        ("deepinfra", "chat_completions"),
-        ("nebius", "chat_completions"),
-        ("novita", "chat_completions"),
-        ("minimax", "chat_completions"),
-        ("mimo", "chat_completions"),
-        ("tokenhub", "chat_completions"),
-        ("byteplus", "chat_completions"),
-        ("stepfun", "chat_completions"),
-        ("vercel", "chat_completions"),
-        ("zenmux", "chat_completions"),
-        ("kilo", "chat_completions"),
-        ("siliconflow", "chat_completions"),
-        ("baseten", "chat_completions"),
-        ("gmi", "chat_completions"),
-        ("ollama_cloud", "chat_completions"),
-        ("upstage", "chat_completions"),
-        ("arcee", "chat_completions"),
-        ("qianfan", "chat_completions"),
-        ("nous", "chat_completions"),
-        ("venice", "chat_completions"),
-        ("meta", "chat_completions"),
-        ("azure", "chat_completions"),
-        ("wandb", "chat_completions"),
-        ("cloudflare", "chat_completions"),
-        ("opencode_zen", "chat_completions"),
-        ("commandcode", "chat_completions"),
-    }
+    {(provider, "chat_completions") for provider in CONTINUATION_PROVIDER_KEYS}
+    | {("deepseek", "responses")}
 )
 _CALL_STATES = frozenset({"pending", "executing", "completed", "failed"})
 _TERMINAL_CALL_STATES = frozenset({"completed", "failed"})
@@ -843,11 +808,9 @@ def validate_continuation_restore(
         matches = checkpoint.selected_provider == target.selected_provider
     else:
         # Pinless virtual state cannot prove the original selected destination.
-        from tldw_chatbook.Chat.provider_readiness import provider_config_key
-
         matches = checkpoint.provider != "custom-hosted" and (
             target.selected_provider is None
-            or provider_config_key(target.selected_provider) == checkpoint.provider
+            or normalize_provider_config_key(target.selected_provider) == checkpoint.provider
         )
     if not matches:
         raise ContinuationConflictError(
