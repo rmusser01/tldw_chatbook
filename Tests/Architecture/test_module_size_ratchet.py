@@ -186,7 +186,10 @@ _BUDGETS: dict[str, int] = {
     "tldw_chatbook/app_command_providers.py": 1121,
     # TASK-33011: TldwCli's per-feature glue moved verbatim out of app.py
     # (FeatureGlueMixin); governed there, so governed here.
-    "tldw_chatbook/app_feature_glue.py": 742,
+    # 2026-11-04 (TASK-38462 regression fix): 742 -> 753 (+11) -- the
+    # ChaChaNotes FTS backfill skips a profile with no database instead of
+    # creating one in an uncancellable boot worker.
+    "tldw_chatbook/app_feature_glue.py": 753,
     # TASK-35190: the rebaser's endpoint choice moved to
     # console_settings_apply.rebased_endpoint: 29,182 -> 29,150.
     # Rebased onto dev 0fef489ece, whose TASK-35444 Console refresh deferral is +1: 29,151.

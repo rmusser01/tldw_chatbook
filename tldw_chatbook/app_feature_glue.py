@@ -287,8 +287,19 @@ class FeatureGlueMixin:
             worker = None  # direct calls in tests/harnesses run un-cancellable
         should_abort = (lambda: worker.is_cancelled) if worker is not None else None
 
+        from tldw_chatbook import config as app_config
+
         try:
-            db = get_chachanotes_db_lazy()
+            # TASK-38462: a profile with no database has no messages to index.
+            # Opening it here would CREATE it (every schema step plus seeding,
+            # seconds on Windows) in a run no cancel can stop, which outlived
+            # the app's exit and its 3 s worker join.
+            db = (
+                get_chachanotes_db_lazy()
+                if app_config.chachanotes_db is not None
+                or app_config.get_chachanotes_db_path().exists()
+                else None
+            )
             if db is None:
                 logger.debug(
                     "ChaChaNotes messages FTS backfill skipped: no database instance."
