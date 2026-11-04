@@ -14,7 +14,7 @@ priority: high
 documentation:
 - Docs/Architecture/backup-recovery.md
 - Docs/Architecture/evals.md
-updated_date: 2026-11-04 23:03
+updated_date: 2026-11-04 23:38
 ---
 
 ## Description
@@ -48,7 +48,9 @@ Reason: retain current admission, validation, namespace, source, durability and 
 ## Implementation Notes
 
 <!-- SECTION:IMPLEMENTATION_NOTES:BEGIN -->
-
+Actual diagnostic head fc259bed Windows run41930900157/job126927201861 failed before restore: native capture rediscovery refused scope_changed after primary ChaChaNotes became unavailable; seven changed identities included two transient sidecar declarations. No restore phase profile was emitted, so no Windows cost conclusion or production fix is selected. Retained original child log and artifact13370879221. Next bounded diagnostic reuses existing tested observe_capture_review around original public child, preserving every native result/cleanup/assertion and emitting only its existing bounded metadata to captured restart-output.log. This identifies exact snapshot refusal/member fields without workflow changes or an unchanged-head rerun. Original restore45 and all source graph/validation/ownership/durability remain unchanged; instrumented success is not qualification.
+Source review identified a concrete queued constructor read: app_service_wiring requests Console attention; its retained task runs AttentionMarksRead via run_preparation_read, opens a native DB transaction, then closes/checkpoints its worker connection. Both shared _PUBLIC and _REOPEN fixtures preview synchronously before their first event-loop yield, allowing this accepted initialization read to overlap capture rediscovery. Before fixing fixture ordering, add an actual-stock-App lifecycle regression requiring successful retained task/native tuple return and no preparation reads/offthread native participant leases before unchanged preview/capture. Observe RED, then await the actual retained task before each shared preview (no sleeps/disabling/cancel/retry); retain native concurrent-snapshot refusal controls. This corrects a proven fixture scheduling hazard, not a claim of exact Windows thread attribution or the unmeasured original restore45 cause. Existing ADR125/126; no new production boundary.
+Final fixture regression evidence: corrected native stock read observation uses only off-thread/successful-tuple booleans, preserving all three actual fixture marks. The initial empty-projection/empty-return assumptions were wrong and their failures remain retained (epochs387–390); they are not production regressions or counted passes. Final exact regression391 failed on original pending-task ordering in3.56s; exact reviewed wait restored, epoch392 passed all10 original retained/rejection/native-lifetime/startup controls in74.60s (original retained journey47.22s; regression16.37s). Both runs physically reaped with source_changes[]. Epoch385 also passed95 original diagnostic/observer controls. Ruff check/format and diff checks pass on allthree changed Python files. Independent review accepted fixture/diagnostic correctness after both cleanup findings were fixed; Windows restore45 performance and final head review/CI remain open.
 <!-- SECTION:IMPLEMENTATION_NOTES:END -->
 
 ## Final Summary
