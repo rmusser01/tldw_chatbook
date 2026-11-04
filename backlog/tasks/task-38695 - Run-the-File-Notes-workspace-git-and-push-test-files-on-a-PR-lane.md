@@ -1,11 +1,11 @@
 ---
 id: TASK-38695
 title: "Run the File Notes workspace, git and push test files on a PR lane"
-status: In Progress
+status: Done
 assignee:
 - '@claude'
 created_date: 2026-11-03 11:40
-updated_date: 2026-11-04 01:52
+updated_date: 2026-11-04 02:01
 labels:
 - follow-up
 - tests
@@ -47,8 +47,9 @@ Their reds on dev (2026-11-03, whole-file runs with `-n 4`) are filed separately
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 The three files run on a PR lane (whole-file entries, or every node through split entries), with their measured time recorded in the task notes
-- [ ] #2 Each file passes 3 of 3 runs in that lane's configuration before it is added
+- [x] #1 The three files run on a PR lane (whole-file entries, or every node through split entries), with their measured time recorded in the task notes. Excluded: TASK-32185's six red workspace cases (`test_notes_authority_switch_restores_visible_focus_and_typing_owner[task-return-size0]`, `[source-button-size1]` and `[escape-size2]`, `test_notes_authority_round_trip_resets_only_transient_work_session`, `test_notes_authority_round_trip_retains_both_workspaces`, `test_wide_files_task_return_restores_database_browse_receipt`) and the over-budget `test_library_notes_source_choices_render_and_switch_by_keyboard[size0]`
+- [x] #2 Each file passes 3 of 3 runs in that lane's configuration before it is added, excluding the same nodes
+- [x] #3 The excluded nodes are named in the notes with their owner (TASK-32185) or a follow-up
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -60,7 +61,7 @@ Their reds on dev (2026-11-03, whole-file runs with `-n 4`) are filed separately
 
 ## Implementation Notes
 
-Branch fu/r6-fntests, on top of TASK-38693 and TASK-38694; base c2cdb6b82e. The task stays In Progress: AC#1 and AC#2 are met for the git and push files, but not for the workspace file. See "Not met" below.
+Branch fu/r6-fntests, on top of TASK-38693 and TASK-38694; base c2cdb6b82e. On 2026-11-04 the coordinator, who filed this task, amended AC#1 and AC#2 to exclude the seven nodes named below, and added AC#3.
 
 - **Lane and entry form.** The files run on the UI Fast Lane, through `scripts/ui_pr_gate_census.txt`. That lane runs serially with `--timeout=180`, and the census holds each entry to 30 s. A whole file runs for minutes, so every test function is its own node id, appended at the tail; no existing slot moves. The census has no exclude or deselect syntax (an entry is a file or a node id). The floor is the new entry count; every new id resolves in `check_ui_pr_gate_census.py`.
 - **Entries added:**
@@ -84,9 +85,14 @@ Branch fu/r6-fntests, on top of TASK-38693 and TASK-38694; base c2cdb6b82e. The 
   - push: 64 passed each time;
   - workspace: 165 passed each time, with the final split.
 - **Not verified:** the lane installs a minimal dependency set (`pip install -e . pytest pytest-asyncio pytest-timeout packaging aiohttp-jinja2`) on Linux. These runs used the local macOS venv, so the first CI run of the lane is the check on that.
-- **Not met: the workspace file.**
-  - Its four TASK-32185 functions stay off the lane, because they are red at base. They are `test_notes_authority_switch_restores_visible_focus_and_typing_owner` (all 3 cases), `test_notes_authority_round_trip_resets_only_transient_work_session`, `test_notes_authority_round_trip_retains_both_workspaces` and `test_wide_files_task_return_restores_database_browse_receipt`. A base whole-file run gave 6 failed, 159 passed.
-  - `test_library_notes_source_choices_render_and_switch_by_keyboard[size0]` (40x20) passes, but takes 31-34 s: 31.5 s after a warm-up case, 33.4 s alone. That is over the 30 s per-entry budget; it presses Tab up to 240 times to reach the source buttons.
-  - So the workspace file is not "every node" on the lane, and the whole file does not pass 3 of 3. Both need TASK-32185 and a decision on that one slow node.
+- **Excluded nodes (AC#3).**
+  - Owner TASK-32185: six cases red at base, from a whole-file run that gave 6 failed and 159 passed. They are `test_notes_authority_switch_restores_visible_focus_and_typing_owner[task-return-size0]`, `[source-button-size1]` and `[escape-size2]` (the function has no other cases), `test_notes_authority_round_trip_resets_only_transient_work_session`, `test_notes_authority_round_trip_retains_both_workspaces` and `test_wide_files_task_return_restores_database_browse_receipt`.
+  - Follow-up: `test_library_notes_source_choices_render_and_switch_by_keyboard[size0]` (40x20) passes but takes 31-34 s, over the 30 s per-entry budget. It took 31.5 s after a warm-up case and 33.4 s alone; it presses Tab up to 240 times to reach the source buttons. The coordinator files its speed-up, and it stays off the lane until then.
+- **Lane capacity.** The workflow's rule is to replay `scripts/ui_lane_shard_replay.py`, not to raise minutes. The replay used four green PR runs' shard logs (41662181993, 41662163055, 41662149478, 41620639540; 32 jobs each), taking each entry at its worst run.
+  - The new entries have no CI timings yet. Each was given its worst local time (setup, call and teardown, across the three serial runs) times a CI/local ratio of 2.6. That ratio came from the eight git-panel quit and removal nodes already on the lane: 82.9 s in CI against 32.2 s locally, per node 1.4-2.9. The Library navigation file-notes nodes ran at 1.2. Scaled, the new entries total about 38 CI min.
+  - The tail is ordered by a greedy fill: the heaviest entry goes to the lightest shard with a free slot, given each tail position's round-robin shard.
+  - Replayed pytest minutes per shard, maximum: base census 12.1; with the tail in file order, 14.1; ordered, 12.2 (all shards 11.1-12.2).
+  - Collecting the three new modules adds about 3 s per shard locally.
+  - Job wall time in those runs was pytest time plus 1.0-2.9 min (median per run), with outliers up to 7 min on light shards. So the projected heaviest shard is about 15 min against the 20-min cap, under the 17-min target. All 264 entries fit, so none waits on TASK-38716.
 - Files: `scripts/ui_pr_gate_census.txt`, `scripts/check_ui_pr_gate_census.py`, `Tests/UI/test_library_file_notes_workspace.py`.
 
