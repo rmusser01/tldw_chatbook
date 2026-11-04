@@ -827,7 +827,7 @@ system prompt** modal: "Applies to this session.", the prompt editor, a
 in Library, and the buttons **Clear**, **Cancel**, and **Apply**.
 While a save runs, its status reads "Saving…", and pressing **Save to
 Library** again does not start a second save. If you edit **Name** before
-the save finishes, the outcome names the prompt that was saved, for example
+the save finishes, the outcome names the prompt that save was for, for example
 `Prompt "Formal Tone": Saved.`
 
 `/system <name>` applies a saved prompt's system part directly (exact
