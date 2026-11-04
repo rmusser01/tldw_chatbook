@@ -58,6 +58,7 @@ from tldw_chatbook.Backup_Recovery.profile_paths import lexical_path
 
 from tldw_chatbook.DB.sql_validation import validate_identifier
 from tldw_chatbook.Utils.fts5_match_forms import build_phrase_match_query
+from tldw_chatbook.DB.store_errors import StoreConflictError, StoreInputError, StoreSchemaError
 
 # Database Schema Version
 #
@@ -122,25 +123,27 @@ _VERSION_COLUMN_TABLES: Tuple[str, str, str, str, str] = (
 )
 
 
+
+
 class EvalsDBError(Exception):
     """Base exception for EvalsDB related errors."""
 
     pass
 
 
-class SchemaError(EvalsDBError):
+class SchemaError(EvalsDBError, StoreSchemaError):
     """Exception for schema version mismatches or migration failures."""
 
     pass
 
 
-class InputError(ValueError):
+class InputError(StoreInputError, ValueError):
     """Custom exception for input validation errors."""
 
     pass
 
 
-class ConflictError(EvalsDBError):
+class ConflictError(EvalsDBError, StoreConflictError):
     """Indicates a conflict due to concurrent modification or unique constraint violation."""
 
     def __init__(

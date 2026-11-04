@@ -95,6 +95,7 @@ tldw_chatbook.DB.sql_identifier_core
 tldw_chatbook.DB.sql_logging
 tldw_chatbook.DB.sql_validation
 tldw_chatbook.DB.sqlite_datetime_fix
+tldw_chatbook.DB.store_errors
 tldw_chatbook.DB.store_kernel
 tldw_chatbook.DB.transaction_observer
 tldw_chatbook.LLM_Calls

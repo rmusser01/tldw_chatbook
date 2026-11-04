@@ -144,6 +144,7 @@ from tldw_chatbook.Utils.fts5_match_forms import (
     quote_fts5_prefix,
     quote_fts5_token,
 )
+from tldw_chatbook.DB.store_errors import StoreConflictError, StoreInputError, StoreSchemaError
 #
 ########################################################################################################################
 #
@@ -435,25 +436,27 @@ def _validate_continuation_owner_content(checkpoint: Any, content: str) -> None:
 
 
 # --- Custom Exceptions ---
+
+
 class CharactersRAGDBError(Exception):
     """Base exception for CharactersRAGDB related errors."""
 
     pass
 
 
-class SchemaError(CharactersRAGDBError):
+class SchemaError(CharactersRAGDBError, StoreSchemaError):
     """Exception for schema version mismatches or migration failures."""
 
     pass
 
 
-class InputError(ValueError):
+class InputError(StoreInputError, ValueError):
     """Custom exception for input validation errors."""
 
     pass
 
 
-class ConflictError(CharactersRAGDBError):
+class ConflictError(CharactersRAGDBError, StoreConflictError):
     """
     Indicates a conflict due to concurrent modification or unique constraint violation.
 
