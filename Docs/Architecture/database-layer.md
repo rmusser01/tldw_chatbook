@@ -135,6 +135,13 @@ custom/in-memory owners and uncertain retirement keep their existing custody.
 
 ### Review-boundary wake linkage (ADR281)
 
+Exact AgentRuns recovery catalogs preserve SQL comments as stored data. The
+ADR renumbering from ADR-147 to ADR-344 changed native fresh v21/v23 table strings;
+`DB/recovery_operations.py` retains both complete native pairs, both fresh v22
+chain layouts and their qualified descendants. Validation compares exact SQL;
+mixed pairs, changed comments and unknown schemas remain refused. The native
+constructor keeps the current ADR-344 form; older databases require no rewrite.
+
 AgentRuns schema25 extends existing `automatic_wake_attempts` with a nullable opaque
 `review_boundary_id` and `automatic_review_boundary_claims`. `AutomaticWorkLedger`
 validates an in-process host receipt at claim and acceptance; persisted identities

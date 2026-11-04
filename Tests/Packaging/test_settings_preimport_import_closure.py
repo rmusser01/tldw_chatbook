@@ -29,10 +29,13 @@ def test_preimport_defers_settings_category_services(
             if key in os.environ
         },
         "TLDW_TEST_MODE": "1",
+        "HF_HUB_OFFLINE": "1",
+        "TRANSFORMERS_OFFLINE": "1",
         "HOME": str(tmp_path / "home"),
         "USERPROFILE": str(tmp_path / "home"),
         "XDG_DATA_HOME": str(tmp_path / "data"),
         "XDG_CONFIG_HOME": str(tmp_path / "config"),
+        "PYTHON_KEYRING_BACKEND": "keyring.backends.null.Keyring",
         "PYTHONPATH": str(repo_root),
     }
     env.pop("PYTEST_CURRENT_TEST", None)
@@ -42,6 +45,7 @@ def test_preimport_defers_settings_category_services(
             sys.executable,
             "-c",
             """
+import Tests.conftest  # private profile/null keyring/network guard before product
 import sys
 from pathlib import Path
 from types import SimpleNamespace
@@ -84,6 +88,8 @@ def test_category_first_use_preserves_original_exports_and_assigned_patch_points
             if key in os.environ
         },
         "TLDW_TEST_MODE": "1",
+        "HF_HUB_OFFLINE": "1",
+        "TRANSFORMERS_OFFLINE": "1",
         "HOME": str(tmp_path / "home"),
         "USERPROFILE": str(tmp_path / "home"),
         "XDG_DATA_HOME": str(tmp_path / "data"),
@@ -99,6 +105,7 @@ def test_category_first_use_preserves_original_exports_and_assigned_patch_points
             sys.executable,
             "-c",
             """
+import Tests.conftest  # private profile/null keyring/network guard before product
 import sys
 from importlib import import_module
 from types import SimpleNamespace
@@ -164,6 +171,8 @@ def test_cold_overview_defers_categories_until_actual_use_and_restores_drafts(tm
             if key in os.environ
         },
         "TLDW_TEST_MODE": "1",
+        "HF_HUB_OFFLINE": "1",
+        "TRANSFORMERS_OFFLINE": "1",
         "TLDW_SCREEN_PREIMPORT": "0",
         "HOME": str(tmp_path / "home"),
         "USERPROFILE": str(tmp_path / "home"),
@@ -179,6 +188,7 @@ def test_cold_overview_defers_categories_until_actual_use_and_restores_drafts(tm
             sys.executable,
             "-c",
             """
+import Tests.conftest  # private profile/null keyring/network guard before product
 import asyncio, sys
 from types import SimpleNamespace
 from Tests import network_guard

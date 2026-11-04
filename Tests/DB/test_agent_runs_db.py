@@ -1308,6 +1308,14 @@ def _seed_v18_definitions(path):
 
     conn = sqlite3.connect(path)
     try:
+        # Legacy reconstruction must not retain later mobile/command evidence.
+        for table in (
+            "console_command_receipts",
+            "mobile_consolidation_batches",
+            "mobile_import_authority_holds",
+        ):
+            assert conn.execute(f"SELECT count(*) FROM {table}").fetchone()[0] == 0
+            conn.execute(f"DROP TABLE {table}")
         conn.execute("ALTER TABLE agent_definitions DROP COLUMN max_wall_seconds")
         conn.execute("DELETE FROM schema_version WHERE version >= ?", (19,))
         conn.execute("DROP TABLE agent_worktrees")
@@ -2219,6 +2227,14 @@ def test_v20_routing_upgrade_preserves_wall_caps_worktrees_and_owner_data(tmp_pa
     definition_id = database.create_agent_definition(_defn(max_wall_seconds=12.5))
     run_id = database.create_run(conversation_id="c", agent_kind="primary")
     with database.connection() as conn:
+        # Legacy reconstruction must not retain later mobile/command evidence.
+        for table in (
+            "console_command_receipts",
+            "mobile_consolidation_batches",
+            "mobile_import_authority_holds",
+        ):
+            assert conn.execute(f"SELECT count(*) FROM {table}").fetchone()[0] == 0
+            conn.execute(f"DROP TABLE {table}")
         for column in ("provider", "params_json"):
             conn.execute(f"ALTER TABLE agent_definitions DROP COLUMN {column}")
         for column in (

@@ -373,3 +373,84 @@ def test_legacy_mobile_declaration_reuses_exact_agent_schema_policy(tmp_path):
     assert runs.status == "unused"
     assert "profile:test:db.chachanotes.primary:legacy-mobile" in runs.dependencies
     assert not runs.path.parent.exists()
+
+
+# Frozen native SQL from d204ddce, independent of the recovery catalog.
+_PRE_RENUMBER_FRESH_TABLES = {
+    21: (
+        "CREATE TABLE agent_definitions (\n                    id TEXT PRIMARY KEY,\n                    name TEXT NOT NULL,\n                    description TEXT NOT NULL DEFAULT '',\n                    instructions TEXT NOT NULL DEFAULT '',\n                    tool_allowlist TEXT NOT NULL DEFAULT '[]',\n                    model TEXT NOT NULL DEFAULT '',\n                    -- v21 (ADR-147, TASK-32477): preset routing -- the\n                    -- provider this definition pins ('' = inherit the\n                    -- caller's provider at spawn) and its sampling-param\n                    -- overrides as a JSON object string ('{}' = none).\n                    provider TEXT NOT NULL DEFAULT '',\n                    params_json TEXT NOT NULL DEFAULT '{}',\n                    enabled INTEGER NOT NULL DEFAULT 1,\n                    max_wall_seconds REAL,\n                    deleted INTEGER NOT NULL DEFAULT 0,\n                    created_at TEXT NOT NULL,\n                    updated_at TEXT NOT NULL\n                )",
+        "CREATE TABLE agent_runs (\n                    id TEXT PRIMARY KEY,\n                    conversation_id TEXT NOT NULL,\n                    parent_run_id TEXT,\n                    agent_kind TEXT NOT NULL,\n                    task TEXT,\n                    status TEXT NOT NULL,\n                    steps TEXT NOT NULL DEFAULT '[]',\n                    result TEXT,\n                    budget TEXT,\n                    created_at TEXT NOT NULL,\n                    updated_at TEXT NOT NULL,\n                    assistant_message_id TEXT,\n                    agent_definition TEXT,\n                    definition_fingerprint TEXT,\n                    wake_delivered_at TEXT,\n                    -- v11 (fleet PR3b Task 4, spec SS6): when this run is\n                    -- a CONTINUATION of a finished sub-agent -- a NEW run\n                    -- seeded from the old one's retained in-memory\n                    -- transcript via send_to_agent -- this records the\n                    -- run it resumed from. NULL for every ordinary run.\n                    -- Lineage only: parent_run_id still points at the\n                    -- RESUMING turn's primary, never at the old run.\n                    resumed_from_run_id TEXT,\n                    -- v14 (ADR-080): the stable parent Trace event that\n                    -- caused this run to exist. NULL for primary and\n                    -- legacy runs whose precise cause was not captured.\n                    spawn_event_id TEXT,\n                    budget_tokens INTEGER CHECK (\n                        budget_tokens IS NULL OR\n                        (typeof(budget_tokens) = 'integer' AND budget_tokens >= 0)\n                    ),\n                    -- v21 (ADR-147, TASK-32477; planned as v16, renumbered\n                    -- past dev's v16-v20 via #2641 and #2665): the\n                    -- resolved-target snapshot -- where this run's agent\n                    -- ACTUALLY went after preset routing resolved\n                    -- (provider, model, base_url, and the merged params as\n                    -- a raw JSON object string). Written once at spawn\n                    -- (Task 6); read back verbatim on resume/continuation\n                    -- (Task 8). NULL for every pre-v21 row and for runs\n                    -- spawned without routing resolution.\n                    resolved_provider TEXT,\n                    resolved_model TEXT,\n                    resolved_base_url TEXT,\n                    resolved_params_json TEXT\n                , work_chain_id TEXT REFERENCES automatic_work_chains(id))",
+    ),
+    23: (
+        "CREATE TABLE agent_definitions (\n                    id TEXT PRIMARY KEY,\n                    name TEXT NOT NULL,\n                    description TEXT NOT NULL DEFAULT '',\n                    instructions TEXT NOT NULL DEFAULT '',\n                    tool_allowlist TEXT NOT NULL DEFAULT '[]',\n                    model TEXT NOT NULL DEFAULT '',\n                    -- v21 (ADR-147, TASK-32477): preset routing -- the\n                    -- provider this definition pins ('' = inherit the\n                    -- caller's provider at spawn) and its sampling-param\n                    -- overrides as a JSON object string ('{}' = none).\n                    provider TEXT NOT NULL DEFAULT '',\n                    params_json TEXT NOT NULL DEFAULT '{}',\n                    fallback_models_json TEXT NOT NULL DEFAULT '[]',\n                    enabled INTEGER NOT NULL DEFAULT 1,\n                    max_wall_seconds REAL,\n                    deleted INTEGER NOT NULL DEFAULT 0,\n                    created_at TEXT NOT NULL,\n                    updated_at TEXT NOT NULL\n                )",
+        "CREATE TABLE agent_runs (\n                    id TEXT PRIMARY KEY,\n                    conversation_id TEXT NOT NULL,\n                    parent_run_id TEXT,\n                    agent_kind TEXT NOT NULL,\n                    task TEXT,\n                    status TEXT NOT NULL,\n                    steps TEXT NOT NULL DEFAULT '[]',\n                    result TEXT,\n                    budget TEXT,\n                    created_at TEXT NOT NULL,\n                    updated_at TEXT NOT NULL,\n                    assistant_message_id TEXT,\n                    agent_definition TEXT,\n                    definition_fingerprint TEXT,\n                    wake_delivered_at TEXT,\n                    -- v11 (fleet PR3b Task 4, spec SS6): when this run is\n                    -- a CONTINUATION of a finished sub-agent -- a NEW run\n                    -- seeded from the old one's retained in-memory\n                    -- transcript via send_to_agent -- this records the\n                    -- run it resumed from. NULL for every ordinary run.\n                    -- Lineage only: parent_run_id still points at the\n                    -- RESUMING turn's primary, never at the old run.\n                    resumed_from_run_id TEXT,\n                    -- v14 (ADR-080): the stable parent Trace event that\n                    -- caused this run to exist. NULL for primary and\n                    -- legacy runs whose precise cause was not captured.\n                    spawn_event_id TEXT,\n                    budget_tokens INTEGER CHECK (\n                        budget_tokens IS NULL OR\n                        (typeof(budget_tokens) = 'integer' AND budget_tokens >= 0)\n                    ),\n                    -- v21 (ADR-147, TASK-32477; planned as v16, renumbered\n                    -- past dev's v16-v20 via #2641 and #2665): the\n                    -- resolved-target snapshot -- where this run's agent\n                    -- ACTUALLY went after preset routing resolved\n                    -- (provider, model, base_url, and the merged params as\n                    -- a raw JSON object string). Written once at spawn\n                    -- (Task 6); read back verbatim on resume/continuation\n                    -- (Task 8). NULL for every pre-v21 row and for runs\n                    -- spawned without routing resolution.\n                    resolved_provider TEXT,\n                    resolved_model TEXT,\n                    resolved_base_url TEXT,\n                    resolved_params_json TEXT,\n                    fallback_targets_json TEXT,\n                    active_fallback_index INTEGER NOT NULL DEFAULT 0\n                , work_chain_id TEXT REFERENCES automatic_work_chains(id))",
+    ),
+}
+
+
+@pytest.mark.parametrize("version", [21, 23])
+@pytest.mark.parametrize(
+    "alteration", ["original", "unknown_comment", "mixed_definitions", "mixed_runs"]
+)
+def test_pre_adr_renumber_native_schemas_remain_exact(tmp_path, version, alteration):
+    from tldw_chatbook.DB.recovery_operations import (
+        _AGENT_RUNS_V21_TABLES,
+        _AGENT_RUNS_V23_FRESH_TABLES,
+    )
+
+    current = (
+        _AGENT_RUNS_V21_TABLES[0] if version == 21 else _AGENT_RUNS_V23_FRESH_TABLES
+    )
+    assert all("ADR-344" in sql for sql in current)
+    schema = next(
+        catalog
+        for stamp, catalog in _AGENT_RUNS_SCHEMA
+        if stamp == version and all(sql in catalog for sql in current)
+    )
+    historical = list(_PRE_RENUMBER_FRESH_TABLES[version])
+    if alteration == "unknown_comment":
+        historical = [sql.replace("ADR-147", "ADR-999") for sql in historical]
+    elif alteration == "mixed_definitions":
+        historical[0] = current[0]
+    elif alteration == "mixed_runs":
+        historical[1] = current[1]
+    replacements = dict(zip(current, historical, strict=True))
+    path = tmp_path / "pre-renumber.db"
+    with closing(sqlite3.connect(path)) as connection:
+        for sql in sorted(schema, key=lambda item: not item.startswith("CREATE TABLE")):
+            if not sql.startswith("CREATE TABLE sqlite_sequence"):
+                connection.execute(replacements.get(sql, sql))
+        connection.execute("INSERT INTO schema_version VALUES (?)", (version,))
+        connection.execute(
+            "INSERT INTO agent_definitions(id,name,created_at,updated_at) "
+            "VALUES ('kept','Saved preset','then','then')"
+        )
+        connection.execute(
+            "INSERT INTO agent_runs(id,conversation_id,agent_kind,status,result,created_at,updated_at) "
+            "VALUES ('retained-run','saved-conversation','primary','completed','saved result','then','then')"
+        )
+        connection.commit()
+    path.chmod(0o600)
+    before = path.read_bytes()
+    result = validate_candidate(owner(), path, Event(), migrate=False)
+    assert path.read_bytes() == before
+    if alteration != "original":
+        assert result == ("unsupported_schema",)
+        assert validate_candidate(owner(), path, Event(), migrate=True) == (
+            "unsupported_schema",
+        )
+        assert path.read_bytes() == before
+        return
+    assert result == ()
+    assert validate_candidate(owner(), path, Event(), migrate=True) == ()
+    with closing(sqlite3.connect(path)) as connection:
+        assert connection.execute(
+            "SELECT MAX(version) FROM schema_version"
+        ).fetchone() == (AgentRunsDB._CURRENT_SCHEMA_VERSION,)
+        assert connection.execute(
+            "SELECT id,name FROM agent_definitions"
+        ).fetchall() == [("kept", "Saved preset")]
+        assert connection.execute(
+            "SELECT id,status,result FROM agent_runs"
+        ).fetchall() == [("retained-run", "completed", "saved result")]
+    assert validate_candidate(owner(), path, Event(), migrate=False) == ()
