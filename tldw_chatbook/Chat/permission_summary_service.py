@@ -12,7 +12,7 @@ from typing import Any, Callable, Optional
 
 from tldw_chatbook.Chat.Chat_Functions import chat_api_call, chat_reply_text
 from tldw_chatbook.Chat.approval_constants import TOOL_DESCRIPTION_CAPTURE_CAP
-from tldw_chatbook.Widgets.Chat_Widgets.chat_approval_card import (
+from tldw_chatbook.Chat.approval_formatting import (
     format_context_line,
     summarize_arguments,
 )
