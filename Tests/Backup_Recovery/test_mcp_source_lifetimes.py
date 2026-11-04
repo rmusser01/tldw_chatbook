@@ -2,11 +2,21 @@
 
 import json
 import time
+from types import SimpleNamespace
 
 import pytest
 
 from tldw_chatbook.Backup_Recovery import bootstrap, storage_admission as storage
 from Tests.Backup_Recovery.test_participant_lifetimes import local_root
+
+
+def _scope_loads(monkeypatch, stub):
+    """Give only the permission store a ``json`` whose ``loads`` is ``stub``."""
+    from tldw_chatbook.MCP import permission_store
+
+    monkeypatch.setattr(
+        permission_store, "json", SimpleNamespace(**{**vars(json), "loads": stub})
+    )
 
 
 @pytest.fixture
@@ -75,7 +85,7 @@ def test_permission_rmw_admitted_before_pause_finishes(mcp_sources, monkeypatch)
             pauses.append(storage._begin_local_pause())
         return result
 
-    monkeypatch.setattr(json, "loads", loaded_then_pause)
+    _scope_loads(monkeypatch, loaded_then_pause)
     try:
         source.set_kill_switch(True)
         assert pauses
@@ -148,7 +158,7 @@ def test_same_path_distinct_source_cannot_borrow_admitted_permission(
                 other.set_kill_switch(False)
         return result
 
-    monkeypatch.setattr(json, "loads", loaded)
+    _scope_loads(monkeypatch, loaded)
     try:
         source.set_kill_switch(True)
         assert pauses, "foreign source refusal barrier was never reached"
@@ -174,7 +184,7 @@ def test_permission_corrupt_move_finishes_admitted_load_across_pause(
             pauses.append(storage._begin_local_pause())
         return original(value, *args, **kwargs)
 
-    monkeypatch.setattr(json, "loads", parse)
+    _scope_loads(monkeypatch, parse)
     try:
         assert source.load()["profiles"]["default"]["global_default"] == "ask"
         assert not source.path.exists()
@@ -541,7 +551,7 @@ def test_permission_identity_swap_preserves_foreign_entries(
                 foreign.replace(destination)
         return original(value, *args, **kwargs)
 
-    monkeypatch.setattr(json, "loads", parse)
+    _scope_loads(monkeypatch, parse)
     with pytest.raises(bootstrap.RecoveryRequired, match="identity_changed"):
         if which == "backup":
             source.load()

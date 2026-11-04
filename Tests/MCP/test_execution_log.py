@@ -4,6 +4,7 @@ import json
 import os
 import stat
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -327,7 +328,9 @@ def _count_parses(monkeypatch) -> dict[str, int]:
         counter["loads"] += 1
         return real_loads(payload, *args, **kwargs)
 
-    monkeypatch.setattr(module.json, "loads", counting_loads)
+    monkeypatch.setattr(
+        module, "json", SimpleNamespace(**{**vars(json), "loads": counting_loads})
+    )
     return counter
 
 

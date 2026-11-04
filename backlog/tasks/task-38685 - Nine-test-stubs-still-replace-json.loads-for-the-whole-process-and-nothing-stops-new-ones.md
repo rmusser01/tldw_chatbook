@@ -1,8 +1,11 @@
 ---
 id: TASK-38685
 title: "Nine test stubs still replace json.loads for the whole process, and nothing stops new ones"
-status: To Do
+status: Done
+assignee:
+- '@claude'
 created_date: 2026-11-03 11:40
+updated_date: '2026-11-04 00:49'
 labels:
 - follow-up
 - tests
@@ -41,6 +44,38 @@ No failure has been traced to them yet.
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 None of the nine sites replaces json.loads outside the module under test, and each changed test still fails when the behaviour it pins is removed
-- [ ] #2 A guard test fails on any new patch of json.loads on the stdlib json module under Tests/ (shown red with a planted stub)
+- [x] #1 None of the nine sites replaces json.loads outside the module under test, and each changed test still fails when the behaviour it pins is removed
+- [x] #2 A guard test fails on any new patch of json.loads on the stdlib json module under Tests/ (shown red with a planted stub)
 <!-- AC:END -->
+
+## Implementation Plan
+
+1. At each of the nine sites, replace `monkeypatch.setattr(<module>.json or json, "loads", stub)` with `monkeypatch.setattr(<module>, "json", SimpleNamespace(**{**vars(json), "loads": stub}))`, so only the module under test sees the stub and it keeps every other `json` name it reads. Targets: `MCP/permission_store.py` (five sites), `Chat/prompt_history.py`, `MCP/execution_log.py`, `Character_Chat/Chat_Dictionary_Lib.py`, `UI/LLM_Management/vllm_profiles.py`.
+2. Run the six files with `-n 4`; every changed test must stay green, so each stub still fires where it did.
+3. AC#1 controls: for each changed test, temporarily remove the source behaviour it pins, show it red, revert.
+4. AC#2: add an AST guard under `Tests/CI/` (the fast PR lane runs that directory whole) that fails on any `setattr`/`patch.object` of `loads` on `json` or `<x>.json`, any `patch("...json.loads")` string target, and any `json.loads = ...` assignment under `Tests/`. Show it red with a planted stub, then remove the plant.
+5. Preflight.
+
+## Implementation Notes
+
+All nine sites now patch the module under test's own `json` name with `SimpleNamespace(**{**vars(json), "loads": stub})`. The spread keeps every other `json` name the module reads, so no hand-kept list can miss `JSONDecodeError`. The five permission-store sites share `_scope_loads()` in `test_mcp_source_lifetimes.py`; `test_guarded_raw_evidence_reuse.py` already imported its fixture from there. The other sites scope to `prompt_history`, `execution_log`, `Chat_Dictionary_Lib` and `vllm_profiles`.
+
+Guard: `Tests/CI/test_json_loads_patch_guard.py`. The fast PR contract job runs `Tests/CI` whole, so no workflow or census edit was needed. It parses every `Tests/**/*.py` that passes a text pre-filter and flags `setattr`/`delattr`/`patch.object` of `"loads"` on `json`, on an alias of it or on `<x>.json`; a `"json.loads"` or `"<...>.json.loads"` patch target; and `json.loads = ...`. It takes about 3 s at load 15. Eight parametrized cases keep each form detected, and one case pins that the module-scoped form passes.
+
+Evidence (all through run.sh at load 9-19 on 18 CPUs):
+- Found while doing this: the two execution-log "no reparse" tests were red on dev, `assert 115 == 0`. The process-wide counter was counting storage-admission parses from other modules. Scoped, the file gives 26 passed.
+- Six files, `-n 4`: base gives 44 failed, 243 passed; the branch gives 42 failed, 245 passed. The failing node sets are identical apart from those two execution-log tests. The other 42 are red on dev and are not touched here; see proposed follow-ups.
+- AC#1 controls: each source edit below was temporary and reverted with `git checkout`.
+  - `raw._scope` without MCP nested-scope reuse: the rmw-admitted test and the 3 corrupt-move cases go red, `RecoveryRequired: storage_locally_paused`.
+  - `raw._scope` and `_mcp_observation` lending a same-path source the admitted operation: the borrow test goes red (`raw_operation_provenance_invalid` where `storage_locally_paused` is expected).
+  - `check_destination` and `published` identity checks removed: identity-swap `[destination]` and `[backup]` give `DID NOT RAISE`. `raw_parent_identity_changed` refusals removed: `[parent]` gives `DID NOT RAISE`.
+  - Composer recall with `exclusive=False`: `warm.is_cancelled` is False.
+  - Execution-log cache lookup disabled: `310 == 0` and `135 == 0`.
+  - Chat-dictionary bundle cache get returning None: second send gives `(3, 300, 3, 150)`, so the scoped spy sees the module's three entries parses.
+  - vLLM size checks removed: `Failed: oversized profile document reached JSON parsing`.
+- `test_actual_permission_parse_pause_matches_original_refusal[True/False]` is red on dev and on the branch at its warm precondition (`the actual source must be warm before the pause stimulus`). With that assert temporarily removed, both stubs (old and scoped) give `DID NOT RAISE`: on dev the admitted RMW completes across the pause, as `test_permission_rmw_admitted_before_pause_finishes` pins. A temporary probe showed the scoped stub fires exactly once (`len(pauses) == 1`). Its pinned refusal cannot be shown green here.
+- AC#2: a planted multi-line `monkeypatch.setattr(json, "loads", ...)` in a temporary `Tests/Utils/` file made the guard fail at `test_planted_json_stub_tmp.py:5`; the file was then deleted. Run on dev's blobs, the scan flags exactly the nine task lines (78/151/177/544, 403, 899, 330, 869, 309), and none on the branch.
+- `Tests/CI`, `-n 4`: 1187 passed, 1 skipped.
+
+Files: the six test files above, `Tests/CI/test_json_loads_patch_guard.py`, `backlog/docs/lessons-testing-evidence.md` (incident added to the existing json.loads entry).
+

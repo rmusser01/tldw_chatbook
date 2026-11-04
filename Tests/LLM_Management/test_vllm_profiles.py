@@ -8,6 +8,7 @@ import time
 from dataclasses import replace
 from io import StringIO
 from pathlib import Path
+from types import SimpleNamespace
 from uuid import uuid4
 
 import portalocker
@@ -306,7 +307,11 @@ def test_oversized_profile_document_is_bounded_and_preserved(
     def unexpected_parse(*args: object, **kwargs: object) -> object:
         pytest.fail("oversized profile document reached JSON parsing")
 
-    monkeypatch.setattr(profile_storage.json, "loads", unexpected_parse)
+    monkeypatch.setattr(
+        profile_storage,
+        "json",
+        SimpleNamespace(**{**vars(json), "loads": unexpected_parse}),
+    )
 
     with pytest.raises(VllmProfileCorrupt):
         VllmProfileRepository(path).save(
