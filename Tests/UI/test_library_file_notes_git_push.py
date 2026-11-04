@@ -2536,10 +2536,10 @@ async def test_session_git_views_lay_out_at_every_width_40_to_61(
     """TASK-38710: Session Git's one-row buttons cannot raise at any width.
 
     Open file -> Manage -> Review session changes -> Back to the navigator,
-    then sweep 61 to 40 and back. The 1fr button columns measured a label at
+    then sweep 61 down to 40. The 1fr button columns measured a label at
     width 0 (``ValueError: range() arg 3 must not be zero``) at 47-49 in the
     list ("Refresh") and 51-53 in the result ("Back to session"), and the app
-    exited.
+    exited. One direction keeps each case under the UI lane's 30 s budget.
     """
     owner, binding, replica, service, workspace = _push_workspace_fixture(tmp_path)
     _publish_candidate_on_owner(
@@ -2585,7 +2585,7 @@ async def test_session_git_views_lay_out_at_every_width_40_to_61(
             "Back did not return to the navigator",
         )
         assert workspace._navigator_mode == "git"
-        for width in (*range(61, 39, -1), *range(40, 62)):
+        for width in range(61, 39, -1):
             await pilot.resize_terminal(width, height)
             await pilot.pause()
             await pilot.pause()

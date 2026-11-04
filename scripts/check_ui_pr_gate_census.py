@@ -779,6 +779,10 @@ MINIMUM_FILES = 1373
 # contended-save cancel node and the Save to Library double-press node at the
 # tail. The floor is the measured entry count.
 MINIMUM_FILES = 1376
+# TASK-38710/38711/38700 (2026-11-04): append 18 File Notes regression node
+# ids at the tail (width sweeps, refit, quit, push rehydrate). The floor is
+# the measured entry count.
+MINIMUM_FILES = 1394
 
 
 def read_census(path: Path) -> list[str]:

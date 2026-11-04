@@ -5,7 +5,7 @@ status: Done
 assignee:
 - '@claude'
 created_date: 2026-11-04 00:43
-updated_date: 2026-11-04 03:39
+updated_date: 2026-11-04 04:32
 labels:
 - library
 - file-notes
@@ -75,3 +75,12 @@ Textual reports an exception raised during layout as an app error, and the app e
   - Red on the base CSS in all 6 cases: list at 47-49 ("Refresh"), result at 51-53 ("Back to session").
   - Green: 6 passed.
 - An uncommitted probe also passed (16 passed): Session Git list/result at heights 12/16/20/52 over widths 40-81 and 90-235, and the four folder-row states at heights 12 and 52 over widths 40-235, in both views. With the committed sweeps (height 20, and 24/30/44) and the earlier height probe, that covers AC #4.
+
+**UI lane (2026-11-04).** The Session Git sweep now runs one way, 61 down to 40. It is still red on the base CSS in all 6 cases (47, 49, 51 and 53 are on the way down).
+- 18 node ids are appended at the tail of `scripts/ui_pr_gate_census.txt`, and `MINIMUM_FILES` goes 1371 -> 1389. They are the folder-row sweep (4), the refit regression (2), the TASK-38711 quit tests (2), the TASK-38700 rehydrate/after-Back/cancellation tests (4) and the Session Git sweep (6).
+- Serial call times at load average 8-14 (`--durations-min=0`):
+  - folder-row sweep: linked 23.4 s, offline 24.6 s, offline-warning 25.5 s, pairing-pending 25.9 s
+  - refit: Warning 16.9 s, Offline 16.2 s
+  - Session Git: list-24 17.4 s, list-30 15.4 s, list-44 17.9 s, result-24 18.2 s, result-30 18.5 s, result-44 16.7 s
+  - quit in flight 1.0 s; reopen 0.6 s; admission rehydrate 0.8 s; observer rehydrate 0.8 s; after-Back 0.9 s; cancellation 0.7 s
+- None was over the 30 s budget, so none was left out. The folder-row sweep has the least margin.
