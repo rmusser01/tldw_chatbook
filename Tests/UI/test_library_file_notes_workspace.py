@@ -7864,6 +7864,7 @@ async def test_quit_closes_owned_replica_behind_a_search_in_flight(
         poll_interval=3600,
     )
     retention_done = threading.Event()
+    search_started = threading.Event()
     read_held = threading.Event()
     release_read = threading.Event()
     close_submitted = threading.Event()
@@ -7903,6 +7904,7 @@ async def test_quit_closes_owned_replica_behind_a_search_in_flight(
                 yield
 
         def held_search(*args, **kwargs):
+            search_started.set()
             assert retention_done.wait(5)
             holding.search = True
             try:
@@ -7935,7 +7937,9 @@ async def test_quit_closes_owned_replica_behind_a_search_in_flight(
         owner.submit = observed_submit
 
         workspace._start_search("findable")
-        await pilot.pause()
+        # Quit only once the read is running; a read submitted after quit
+        # began would be skipped, and the test would prove nothing.
+        await _wait_until(pilot, search_started.is_set, "the search never started")
         shutdown_task = asyncio.create_task(workspace.shutdown())
         await _wait_until(pilot, read_held.is_set, "the search never held")
         await _wait_until(

@@ -5,7 +5,7 @@ status: Done
 assignee:
 - '@claude'
 created_date: 2026-11-04 01:05
-updated_date: 2026-11-04 03:21
+updated_date: 2026-11-04 03:22
 labels:
 - library
 - file-notes
@@ -55,3 +55,5 @@ A file-backed replica's close refuses, without raising, while any core operation
 - Covering run of 12 File Notes / Library Notes files (`-n 4`, load average ~26): 56 failed, 578 passed. All 56 are in the set that fails on base with the same command (TASK-32185's authority/task-return reds, `test_prepare_session_fixed_regions_remain_visible_at_40_by_20`, 12 push-file tests and 37 Files-sync journey tests).
 
 **Files.** `tldw_chatbook/Widgets/Library/library_file_notes_workspace.py`, `Tests/UI/test_library_file_notes_workspace.py`, `Tests/Architecture/test_module_size_ratchet.py` (9599 -> 9615, dated).
+
+**Review fold (2026-11-04).** `test_quit_closes_owned_replica_behind_a_search_in_flight` now waits for `held_search` to start before it begins quit. A search submitted after quit began would be skipped, and the test would fail for the wrong reason. It still goes red with the base read path restored (`asyncio.to_thread`): the connection stays open. Green 2 of 2 alongside the reopen test.
