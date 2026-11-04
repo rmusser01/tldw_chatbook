@@ -5,7 +5,7 @@ status: Done
 assignee:
 - '@claude'
 created_date: 2026-11-04 01:05
-updated_date: 2026-11-04 01:19
+updated_date: 2026-11-04 03:21
 labels:
 - library
 - file-notes
@@ -44,7 +44,7 @@ A file-backed replica's close refuses, without raising, while any core operation
 
 **Approach.** The two direct reads, `replica.search` in `_run_search` and `replica.list_deleted` in `_load_deleted_paths`, now go through one helper, `_read_replica`.
 - When the workspace owns its replica, the read runs on the replica's one-thread owner executor, the same thread that opens and closes it. Quit's close is submitted to that thread too, so it queues behind any read in flight, and the read's core operation has always ended before `_core_closing` looks.
-- A read that starts once `shutdown()` has begun returns None without touching the replica. It checks before submitting (so it never meets the shut-down executor) and again on the thread (so a read queued before quit but run after the close is skipped).
+- A read that starts once `shutdown()` has begun returns None without touching the replica. It checks before submitting (so it never meets the shut-down executor) and again on the thread. The on-thread check skips a read queued before quit that runs during the shutdown window, after `_shutdown` is set and before the close. The owner thread is FIFO, so no queued read can run after the close (corrected in review, 2026-11-04).
 - An injected replica (no owner thread) keeps `asyncio.to_thread`.
 - I did not take the service lock instead. That would have queued every search behind scans and reconciles, including a scan wedged on a dead mount.
 
