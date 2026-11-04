@@ -16,7 +16,8 @@ The 2025 test had passed only because it counted "locked" as a conflict. The fix
 - To pin that, hold the first writer inside its transaction after its write while the second starts. `test_overlapping_saves_of_one_opened_version_end_in_one_conflict` wraps `_log_sync_event` to do this. It is red every time with a deferred BEGIN.
 - Probe a few hundred rounds under load before trusting 10 green runs.
 - Expect a test that injects a second writer from a trace callback inside the first writer's transaction to wait out the busy timeout once the first holds the lock from BEGIN.
-- IMMEDIATE turns an instant SQLITE_BUSY into a wait of up to the busy timeout (2.08 s measured in review). Move any caller that runs the write on the UI event loop to a worker thread, as the Console mix-in Save needed (AC#5).
+- IMMEDIATE turns an instant SQLITE_BUSY into a wait of up to the 10 s busy timeout (in review, 2.08 s behind a 2 s holder). Move any caller that runs the write on the UI event loop to a worker thread, as the Console mix-in Save needed (AC#5).
+- Once the write runs in a thread, its worker suspends mid-write. An exclusive worker group restarted by a second press then cancels it after the write lands, skipping the follow-up steps. Ignore the press while the save runs.
 
 ## A real key during an armed unknown-command send disarms it, so the send never reaches the checks after the skill await (TASK-38689, 2026-11-03)
 

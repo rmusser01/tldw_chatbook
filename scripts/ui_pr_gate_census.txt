@@ -2041,3 +2041,11 @@ Tests/UI/test_settings_category_sweep.py::test_every_settings_category_renders_a
 # no slot moves.
 Tests/UI/test_widget_css_consolidation.py::test_base_class_blocks_precede_their_subclasses
 Tests/UI/test_widget_css_consolidation.py::test_iter_blocks_emits_every_base_before_its_subclasses
+# TASK-38686 (2026-11-04): local prompt saves run their write in a thread.
+# The Console mix-in Save's write stays off the event loop, and a Save or
+# Preview pressed during a contended save (or a second Save to Library press)
+# cannot cancel it after the write lands. 6-13 s each, serially, at load 20.
+# Appended at the tail, so no slot moves.
+Tests/UI/test_console_prompt_mixins.py::test_mixin_save_writes_the_prompt_off_the_event_loop
+Tests/UI/test_console_prompt_mixins.py::test_press_during_contended_mixin_save_cannot_cancel_it
+Tests/UI/test_console_system_prompt.py::test_second_save_to_library_press_cannot_cancel_an_in_flight_save

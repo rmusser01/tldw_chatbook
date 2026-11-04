@@ -775,6 +775,10 @@ MINIMUM_FILES = 1371
 # TASK-38697 (2026-11-04): append the two widget-CSS base-before-subclass
 # nodes at the tail. The floor is the measured entry count.
 MINIMUM_FILES = 1373
+# TASK-38686 (2026-11-04): append the mix-in off-loop save node, the
+# contended-save cancel node and the Save to Library double-press node at the
+# tail. The floor is the measured entry count.
+MINIMUM_FILES = 1376
 
 
 def read_census(path: Path) -> list[str]:

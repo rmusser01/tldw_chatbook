@@ -312,6 +312,77 @@ async def test_mixin_save_writes_the_prompt_off_the_event_loop(runtime):
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("second", ["save", "preview"])
+async def test_press_during_contended_mixin_save_cannot_cancel_it(runtime, second):
+    """Save or Preview pressed while a contended mix-in save waits cannot cancel it.
+
+    The save's write runs in a worker thread (AC#5) and here waits for another
+    writer's lock. Both buttons start exclusive "console-mixins" workers, which
+    used to cancel the save after its write landed. The editor then kept
+    version 1 as unsaved, the preferences were never reconciled, and the next
+    Save was refused (TASK-38686 review).
+    """
+    import asyncio
+    import sqlite3
+    import threading
+
+    from textual.widgets import Input, Static
+
+    from tldw_chatbook.Widgets.Prompts.prompt_mixin_editor import PromptMixinEditor
+
+    database, scope, _, origin, _, service = runtime
+    await seed(scope)
+    writing = threading.Event()
+    update = database.update_prompt_by_id
+
+    def entering_update(*args, **kwargs):
+        writing.set()
+        return update(*args, **kwargs)
+
+    database.update_prompt_by_id = entering_update
+    app = WorkbenchHarness(runtime)
+    async with app.run_test(size=(100, 30)) as pilot:
+        app.pilot = pilot
+        await ready(app)
+        await add(app, "Style")
+        app.screen.query_one("#console-mixin-inspect-0", Button).press()
+        await ready(app)
+        app.screen.query_one("#mixin-name", Input).value = "Style saved"
+        blocker = sqlite3.connect(str(database.db_path), isolation_level=None)
+        try:
+            blocker.execute("BEGIN IMMEDIATE")  # another writer holds the lock
+            app.screen.query_one("#console-mixins-save", Button).press()
+            # The save's write has started in its thread and waits for the lock.
+            assert await asyncio.to_thread(writing.wait, 10)
+            target = f"#console-mixins-{second}"
+            app.screen.query_one(target, Button).press()
+            await pilot.pause()
+            status = app.screen.query_one("#console-mixins-status", Static)
+            assert "Saving" in str(status.render())
+        finally:
+            blocker.execute("COMMIT")
+            blocker.close()
+        await ready(app)
+        source = service.preferences(origin.id).entries[0].source
+        records = await scope.read_mixin_records(
+            mode="local", record_uuids=(source.record_uuid,)
+        )
+        assert records[0]["version"] == 2
+        assert not app.modal.query(PromptMixinEditor), "the editor kept version 1"
+        assert service.preferences(origin.id).entries[0].name == "Style saved"
+
+        app.screen.query_one("#console-mixin-inspect-0", Button).press()
+        await ready(app)
+        app.screen.query_one("#mixin-name", Input).value = "Style again"
+        app.screen.query_one("#console-mixins-save", Button).press()
+        await ready(app)
+        records = await scope.read_mixin_records(
+            mode="local", record_uuids=(source.record_uuid,)
+        )
+        assert (records[0]["version"], records[0]["name"]) == (3, "Style again")
+
+
+@pytest.mark.asyncio
 async def test_source_replacement_and_stale_revision_refuse_captured_intent(runtime):
     from dataclasses import replace
 

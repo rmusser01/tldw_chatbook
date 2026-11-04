@@ -5,7 +5,7 @@ status: Done
 assignee:
 - '@claude'
 created_date: 2026-11-03 11:40
-updated_date: '2026-11-04 02:56'
+updated_date: '2026-11-04 04:08'
 labels:
 - follow-up
 - tests
@@ -50,11 +50,12 @@ Found in the round-5 wave of the 2026-10-23 burn-down, where it was reported fai
 
 ## Implementation Notes
 
-Four commits:
+Five commits:
 1. The test rewrite.
 2. `update_prompt_by_id` begins IMMEDIATE, after the owner chose option (b).
 3. The same fix for `add_prompt(overwrite=True)` (AC#4).
 4. Review fixes: the wait claims below are corrected, and the Console mix-in Save's write moves off the event loop (AC#5).
+5. Review round 2: an in-flight save can no longer be cancelled, and `:memory:` saves run inline.
 
 **The test was wrong.** `update_prompt_by_id` has compared versions only when the caller passes `expected_version`. That parameter was added in 2026-08 for the Library prompt editors (`prompt_save_ack.py`, `prompt_history.py`, `library_prompts_controller.py`). Without it, an update is last-writer-wins by design. The test dates from 2025-06 (7ebdcc0731) and never passed `expected_version`. Its "conflict" could only come from SQLite lock errors, which it counted as conflicts.
 
@@ -114,9 +115,9 @@ The SQLITE_BUSY case happens when the loser's read-to-write upgrade meets the wi
 **AC#5: the Console mix-in Save no longer writes on the event loop.**
 - **The change.** `PromptScopeService.save_prompt` now runs a local create or update in a worker thread: `asyncio.to_thread(run_finite_local_worker, ...)`, the pattern `read_mixin_records` and `count_prompts` already use. A coroutine-returning local service is completed with `asyncio.run` inside that worker, as `count_prompts` does. Server saves are unchanged.
 - **Thread safety.**
-  - `PromptsDatabase` keeps one connection per thread (`threading.local`, `check_same_thread=False`), so the worker opens its own.
-  - `run_finite_local_worker` retires that connection when the worker ends.
-  - The suites that build the scope service over `:memory:` databases (`test_prompt_mixins.py`, `test_prompt_scope_service.py`, `test_prompt_chatbook_scope_service.py`, `test_prompts_db_retained_history.py`) pass: 292 passed.
+  - `PromptsDatabase` keeps one connection per thread (`threading.local`, `check_same_thread=False`), so the worker opens its own, and `run_finite_local_worker` retires it when the worker ends.
+  - **Correction (review round 2):** that is wrong for `:memory:`. The worker's own connection is a fresh, empty database, and the review's probe failed with `no such table: Prompts`. An earlier version of these notes said the `:memory:` suites passing showed this was safe; none of them writes through `save_prompt`.
+  - A `:memory:` save now runs inline (`prompt_db.is_memory_db`). `test_prompt_scope_service.py::test_local_save_over_an_in_memory_database_creates_and_updates` (create, then a versioned update) was red with that error before the change and is green after.
 - **Test.** `Tests/UI/test_console_prompt_mixins.py::test_mixin_save_writes_the_prompt_off_the_event_loop` drives the mounted mix-in editor's Save twice and records `threading.get_ident()` in a spy on `update_prompt_by_id`.
   - The first save lands. The editor closes and focus goes to `console-prompts-close`, the focus measured while the save still ran on the loop.
   - For the second save the spy raises `ExpectedVersionConflictError` inside the worker. The status shows the same "Library changes were not saved ..." copy, and the edited name is kept.
@@ -128,6 +129,31 @@ The SQLITE_BUSY case happens when the loser's read-to-write upgrade meets the wi
 - **`Tests/Prompts_DB` + `Tests/Prompt_Management`** (`-n 4`): 53 failed, 1123 passed, 3 errors both with and without the change, the same nodes, all red on dev.
 - `Tests/CI`: 1198 passed, 1 skipped. Architecture ratchets (serial): 256 passed.
 
+**Review round 2 (2026-11-04): a press during a save could cancel it.**
+- **The bug.** Moving the write into a thread gave the save worker a point where it suspends mid-write. Save and Preview both start exclusive `console-mixins` workers, so either one pressed during a contended save cancelled the save after its write landed. The preference reconcile and the editor's saved state never ran. In the review's probe, 4 of 4 rounds left the DB at version 2 while the editor kept version 1 as unsaved, and the next Save was refused.
+- **The fix** is the smaller option. While a mix-in save worker is unfinished, Save and Preview presses are ignored. Either press, and the save itself, shows "Saving Library changes…" in the workbench status line, which the save's outcome then replaces. Focus is not moved.
+- **Regression test:** `test_press_during_contended_mixin_save_cannot_cancel_it[save|preview]`. A raw connection holds `BEGIN IMMEDIATE`, and a spy on `update_prompt_by_id` shows the first save has reached its write before the second press. The test pins:
+  - the "Saving" copy;
+  - after release: DB version 2, the editor closed, and the preferences reconciled to the saved name;
+  - a further Save landing as version 3.
+- **Red at 0d12515a18**, with the "Saving" assertion temporarily removed so the cancel itself shows:
+  - `[preview]` failed 3 of 3 with "the editor kept version 1";
+  - `[save]` failed 2 of 3. It passes when the second save's thread wins the lock, so its own conditional write lands.
+- **Green:** 5 of 5 runs. The review's probe now gives version 2 and a closed editor in 8 of 8 rounds.
+- **Other save paths, checked.**
+  - The Console prompt editor's saves (`_save_prompt`, `_save_recipe`, `_update_original`, and the Draft Shelf buttons in `_shell_button`) are awaited inside `@on` handlers, which the modal's message pump runs one at a time. They are not exposed; confirmed.
+  - The system-prompt modal's Save to Library was exposed. It starts an exclusive worker per press, so a second press during the threaded write cancelled the first and saved again. It gets the same guard: the press is ignored while the first save runs, and the first save's outcome copy lands.
+  - `test_console_system_prompt.py::test_second_save_to_library_press_cannot_cancel_an_in_flight_save` was red before the change (`['Formal Tone', 'Formal Tone'] == ['Formal Tone']`) and passed 3 of 3 after.
+- **Lane.** The AC#5 off-loop pin, the regression node and the Save to Library node are appended at the UI census tail, with the floor at 1376. Measured serially at load 20: 10 s, 13 s (both cases) and 6 s.
+- **The review's 14 UI files plus `test_console_system_prompt.py`** (`-n 4`, same command): 241 failed, 510 passed on the branch; 243 failed, 508 passed with the three changed sources at 0d12515a18.
+  - Failing only with 0d12515a18's sources: the three new tests, `test_prompt_system_replacement_refreshes_visible_status_chip[append_active]`, and one `test_literal_history_restore_keeps_kind_definition_and_guards` case.
+  - Failing only on the branch:
+    - `test_browse_mixins_read_does_not_hold_navigation[close]`, which also failed in the earlier base run;
+    - another `test_literal_history_restore_...` case. That test fails 2-3 of 9 cases alone on both trees;
+    - `test_literal_save_keeps_live_defining_module_policy_callbacks`, which failed at its "Save did not reach its source worker" wait, before any real save runs, and passed 3 of 3 alone afterwards.
+  - Most failures on both sides are the local RecoveryRequired setup trap (TASK-38111).
+- `Tests/Prompts_DB` + `Tests/Prompt_Management`: 53 failed, 1124 passed, 3 errors, with the same failing tests as before (all red on dev). `Tests/CI`: 1198 passed, 1 skipped. Ratchets: green.
+
 **AC#3: not on a PR lane, by this brief's rule.** The only Prompts_DB lane target is `test_prompt_export_mixins.py` in `derived-artifacts.yml`, and this burn-down allowed workflow edits only for TASK-38699. The legacy file is green (72 tests, about 5 s), so it could be gated whole (proposed follow-up).
 
-Files: `tldw_chatbook/DB/Prompts_DB.py`, `tldw_chatbook/Prompt_Management/prompt_scope_service.py`, `Tests/Prompts_DB/test_prompts_db_legacy.py`, `Tests/Prompts_DB/test_prompts_db_pytest.py`, `Tests/UI/test_console_prompt_mixins.py`, `Tests/Architecture/test_module_size_ratchet.py`, `backlog/docs/lessons-testing-evidence.md`.
+Files: `tldw_chatbook/DB/Prompts_DB.py`, `tldw_chatbook/Prompt_Management/prompt_scope_service.py`, `tldw_chatbook/Widgets/Console/console_prompts_modal.py`, `tldw_chatbook/Widgets/Console/console_system_prompt_modal.py`, `Tests/Prompts_DB/test_prompts_db_legacy.py`, `Tests/Prompts_DB/test_prompts_db_pytest.py`, `Tests/Prompt_Management/test_prompt_scope_service.py`, `Tests/UI/test_console_prompt_mixins.py`, `Tests/UI/test_console_system_prompt.py`, `Tests/Architecture/test_module_size_ratchet.py`, `scripts/ui_pr_gate_census.txt`, `scripts/check_ui_pr_gate_census.py`, `backlog/docs/lessons-testing-evidence.md`.

@@ -79,6 +79,7 @@ class ConsoleSystemPromptModal(SafeModalDismissMixin, ModalScreen[Optional[str]]
         super().__init__()
         self._initial_text = system_prompt or ""
         self._save_to_library = save_to_library
+        self._save_worker = None
 
     def compose(self) -> ComposeResult:
         """Build the editor's text area, name/save row, and action buttons."""
@@ -147,7 +148,11 @@ class ConsoleSystemPromptModal(SafeModalDismissMixin, ModalScreen[Optional[str]]
         if not text:
             self._set_save_status(MISSING_TEXT_COPY)
             return
-        self.run_worker(
+        if self._save_worker is not None and not self._save_worker.is_finished:
+            # Its write runs in a thread; an exclusive restart would cancel it
+            # after the write lands and drop its outcome (TASK-38686).
+            return
+        self._save_worker = self.run_worker(
             self._run_save_to_library(name, text),
             exclusive=True,
             group="console-system-prompt-save-library",
