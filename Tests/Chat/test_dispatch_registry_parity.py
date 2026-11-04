@@ -21,3 +21,41 @@ def test_databricks_registered_and_audited():
 def test_audited_set_is_registry_derived_and_covers_all_handlers():
     assert SENSITIVE_AUXILIARY_AUDITED_ENDPOINTS == AUDITED_ENDPOINT_KEYS
     assert set(API_CALL_HANDLERS) <= SENSITIVE_AUXILIARY_AUDITED_ENDPOINTS
+
+
+# TASK-36946.2: the engine-preset entries are generated from the registry.
+# The literal below is the pre-generation hand-written list: every key in it
+# must stay generated (a dropped record fails), while a new engine record
+# needs no edit here -- the generator must simply cover every engine record.
+_BASE_ENGINE_KEYS = ('arcee', 'azure', 'baseten', 'byteplus', 'cerebras', 'cloudflare', 'commandcode', 'custom-hosted', 'databricks', 'deepinfra', 'fireworks', 'gmi', 'kilo', 'meta', 'mimo', 'minimax', 'nebius', 'nous', 'novita', 'nvidia', 'ollama_cloud', 'opencode_zen', 'qianfan', 'sambanova', 'siliconflow', 'stepfun', 'together', 'tokenhub', 'upstage', 'venice', 'vercel', 'wandb', 'zenmux')
+
+
+def test_engine_handlers_generated_from_registry_match_the_base_list():
+    from tldw_chatbook.Chat.Chat_Functions import _LazyHostedChatHandler
+    from tldw_chatbook.provider_registry import ENGINE_RECORDS, RECORDS_BY_KEY
+
+    engine = {k for k, v in API_CALL_HANDLERS.items() if isinstance(v, _LazyHostedChatHandler)}
+    records = {r.key for r in ENGINE_RECORDS}
+    assert engine == records
+    assert set(_BASE_ENGINE_KEYS) <= records
+    for key in records:
+        assert API_CALL_HANDLERS[key]._record is RECORDS_BY_KEY[key]
+
+
+def test_engine_param_maps_match_the_base_list():
+    from tldw_chatbook.Chat.Chat_Functions import (
+        CUSTOM_PROVIDER_PARAM_MAP,
+        ENGINE_PROVIDER_PARAM_MAP,
+        PROVIDER_PARAM_MAP,
+    )
+
+    from tldw_chatbook.provider_registry import ENGINE_RECORDS
+
+    records = {r.key for r in ENGINE_RECORDS}
+    assert set(_BASE_ENGINE_KEYS) <= records
+    for key in records:
+        expected = CUSTOM_PROVIDER_PARAM_MAP if key == "custom-hosted" else ENGINE_PROVIDER_PARAM_MAP
+        assert PROVIDER_PARAM_MAP[key] is expected
+    # zai is a hand adapter that shares the engine kwargs (explicit one-off).
+    assert PROVIDER_PARAM_MAP["zai"] is ENGINE_PROVIDER_PARAM_MAP
+    assert API_CALL_HANDLERS["zai"].__name__ == "chat_with_zai"
