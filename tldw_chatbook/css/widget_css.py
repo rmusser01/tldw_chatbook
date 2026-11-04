@@ -945,7 +945,9 @@ def _bases_first(
     pending, ordered = list(blocks), []
     while pending:
         waiting = {block.class_name for block in pending}
-        # A name cycle (two unrelated same-named classes) falls back to path order.
+        # Only a name cycle (unrelated same-named classes) leaves no block free;
+        # then the first pending block goes, so cycle members follow every block
+        # that can go, in path order among themselves ([P, Q, R], P<->Q: R, P, Q).
         index = next(
             (
                 i
