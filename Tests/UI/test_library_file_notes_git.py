@@ -1732,7 +1732,8 @@ async def test_commit_footer_keeps_disclosure_edit_cancel_confirm_order_and_geom
         cancel = panel.query_one("#file-notes-git-commit-cancel", Button)
         confirm = panel.query_one("#file-notes-git-commit-confirm", Button)
         footer = panel.query_one("#file-notes-git-commit-footer")
-        assert edit.has_focus
+        # The review focuses Edit after a refresh; one pause need not cover it.
+        await _wait_until(pilot, lambda: edit.has_focus, "review did not focus Edit")
         assert not confirm.has_focus
 
         await pilot.press("shift+tab")
