@@ -5,7 +5,7 @@ status: Done
 assignee:
   - '@claude'
 created_date: 2026-11-03 11:40
-updated_date: 2026-11-04 04:27
+updated_date: 2026-11-04 06:10
 labels:
 - follow-up
 - performance
@@ -80,6 +80,7 @@ Depends on TASK-38649 (in PR #3372).
   - New `test_a_chat_switch_restarts_the_refusal_backoff[before_the_read|during_the_read]` asserts the refused FULL's own delay: `[1.6]` in both.
   - The AC#1 backoff pin stays green.
   - Whole file: 14 passed in 4 runs.
+  - **Re-review Minor 1 (fleet survivor tick).** The one-second survivor tick (`fleet.py`, wired in `wiring.py`) ran its full sync as an explicit one, so while a background sub-agent outlived the run poll it cut a lasting refusal's backoff every second. Its sync now goes through `config_sync.run_periodic_console_sync` (`wiring._run_fleet_survivor_sync`), so it is a poll. The tick runs only while the run poll is stopped, so `_held_for_durable_commit(poll=True)` never holds it, and its projection follows the poll's unchanged-input rule. New `test_the_fleet_survivor_tick_does_not_cut_a_warm_up_backoff`, red at a28249f8ed: "the survivor tick ran the replay 1 time(s) inside its pending 3.2 s backoff". `test_console_fleet_survivor_tick.py` passes 8 of 8 twice, under a temporary `@private_profile_test` marker that was then removed (plain, 7 of its 8 tests hit the known local `RecoveryRequired` trap). `test_console_fleet_wake_ui_freshness.py::test_wake_turn_in_a_nonviewed_session_flips_the_tab_glyph_off_running` fails 2 of 2 at base and here.
   - Covering set after the fix: 332 failed / 1083 passed. No new failure beyond nodes that also fail at base: `test_console_delete_confirmation_resets_when_selection_changes` failed 3 of 3 at base, and the delete/regenerate/H3 nodes listed above. Serial `Tests/Architecture`: 43 failed, the same 43 nodes as base, including the wave6 inventories; `test_screen_size_ratchet` passes.
 
 **Files.** `tldw_chatbook/UI/Console_Modules/config_sync.py`, `tldw_chatbook/UI/Screens/chat_screen.py`, `Tests/UI/test_console_projection_reads_off_loop.py`.

@@ -825,6 +825,43 @@ async def test_a_chat_switch_restarts_the_refusal_backoff(request, monkeypatch, 
 
 @pytest.mark.asyncio
 @private_profile_test
+async def test_the_fleet_survivor_tick_does_not_cut_a_warm_up_backoff(
+    request, monkeypatch
+):
+    """TASK-38696 review: a periodic tick is no explicit sync for the backoff.
+
+    The one-second fleet survivor tick runs a full sync while a background
+    sub-agent outlives the run poll. Counted as explicit, it cut a lasting
+    refusal's backoff every second, a replay and a config read each time.
+    """
+    host, gateway, _timeline = build()
+    async with host.run_test(size=(160, 45)) as pilot:
+        with eager_tasks():
+            console, _composer = await ready_console(host, pilot, gateway)
+            await pilot.pause(1.0)
+            loop = asyncio.get_running_loop()
+            refusing, warms, armed, _fulls, _during, _delays = _refused_warm_up(
+                monkeypatch, console
+            )
+            console.run_worker(
+                console._sync_native_console_chat_ui(),
+                exclusive=True,
+                group="console-sync",
+            )
+            armed_at, delay, _timer = await _fresh_backoff(armed, 1.6)
+            seen = len(warms)
+            await console._fleet._console_fleet_survivor_tick()
+            await pilot.pause(0.3)
+            assert loop.time() < armed_at + delay, "the check ran after the backoff"
+            assert len(warms) == seen, (
+                f"the survivor tick ran the replay {len(warms) - seen} time(s) "
+                f"inside its pending {delay} s backoff"
+            )
+            refusing[0] = False
+
+
+@pytest.mark.asyncio
+@private_profile_test
 async def test_a_full_sync_asked_for_during_a_pause_runs_once_after_resume(
     request, monkeypatch
 ):

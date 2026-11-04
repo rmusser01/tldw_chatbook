@@ -2060,7 +2060,7 @@ def build_console_controllers(
         transcript_sync_timer_active=(
             lambda: screen._console_transcript_sync_timer is not None
         ),
-        sync_native_console_ui=lambda: screen._sync_native_console_chat_ui(),
+        sync_native_console_ui=lambda: _run_fleet_survivor_sync(screen),
         create_interval=(
             lambda seconds, callback: screen.set_interval(seconds, callback)
         ),
@@ -3311,6 +3311,25 @@ _CHARACTER_VIEW_ACCESSORS = (
         )
     ),
 )
+
+
+async def _run_fleet_survivor_sync(screen: Any) -> Any:
+    """Run the fleet survivor tick's full sync as the periodic poll it is.
+
+    TASK-38696 review: the one-second survivor tick only runs while the run
+    poll is stopped, so marking it a poll changes no commit hold, and its
+    projection follows the poll's unchanged-input rule. As an explicit sync
+    it cut a refused warm-up's backoff every second.
+
+    Args:
+        screen: The Console screen whose survivors the tick repaints.
+
+    Returns:
+        Whatever the full sync returned.
+    """
+    from .config_sync import run_periodic_console_sync
+
+    return await run_periodic_console_sync(screen._sync_native_console_chat_ui)
 
 
 # Code-review report presentation (ADR-281). `ChatScreen` keeps only the `u`
