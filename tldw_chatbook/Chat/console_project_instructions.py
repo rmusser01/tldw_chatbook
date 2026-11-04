@@ -11,9 +11,10 @@ from urllib.parse import urlsplit, urlunsplit
 
 from httpx import InvalidURL, URL
 
+from tldw_chatbook.Provider_Contract.provider_continuation import EPHEMERAL_ORIGIN_KEY  # noqa: F401  (re-export)
+
 
 PROJECT_CONTEXT_VERSION = 1
-EPHEMERAL_ORIGIN_KEY = "_chatbook_ephemeral_origin"
 
 LOCATOR_FINGERPRINT_DOMAIN = b"tldw_chatbook.console.project-instructions.locator.v1\0"
 PROVIDER_DESTINATION_FINGERPRINT_DOMAIN = (
