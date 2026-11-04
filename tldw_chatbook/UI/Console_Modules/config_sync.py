@@ -129,15 +129,63 @@ async def prepare_console_presentation_sync(screen: Any) -> bool:
     ):
         return False
     value = _screen_readiness_config(screen)
-    if not value or not screen._console_config_snapshot_is_disk_loaded(value):
+    warmed = True
+    if value and screen._console_config_snapshot_is_disk_loaded(value):
+        projection = ConsoleReadinessConfigProjection.for_screen(screen)
+        if (
+            type(projection) is ConsoleReadinessConfigProjection
+            and projection in _standard_readiness_projections
+        ):
+            warmed = await projection.warm()
+    # TASK-38696: consecutive refusals set the replay's backoff.
+    refusals = getattr(screen, "_console_warm_refusals", 0)
+    screen._console_warm_refusals = 0 if warmed else refusals + 1
+    return warmed
+
+
+def full_sync_replay_delay(screen: Any) -> bool | float:
+    """Delay for the whole-sync replay of a FULL that could not render.
+
+    TASK-38696: a refused warm-up used to replay every 0.2 s, starting another
+    config read each time, for as long as the refusal lasted. Each further
+    consecutive refusal now doubles the wait, on TASK-38649's schedule (0.2 s
+    up to 5 s). The first replay keeps the fixed 0.2 s timer (a cold mount's
+    one refusal replays exactly as before), and so does a maintenance pause:
+    that timer is its resume path.
+
+    Returns:
+        True for the fixed 0.2 s timer, else the backed-off delay in seconds.
+    """
+    from .console_spend_projection import RETRY_FIRST_DELAY, RETRY_MAX_DELAY
+
+    refusals = getattr(screen, "_console_warm_refusals", 0)
+    if refusals <= 1 or getattr(screen, "_console_sync_maintenance_paused", False):
         return True
-    projection = ConsoleReadinessConfigProjection.for_screen(screen)
-    if (
-        type(projection) is not ConsoleReadinessConfigProjection
-        or projection not in _standard_readiness_projections
-    ):
-        return True
-    return await projection.warm()
+    return min(RETRY_FIRST_DELAY * 2 ** (refusals - 1), RETRY_MAX_DELAY)
+
+
+def request_control_bar_sync(screen: Any, delayed: bool | float) -> None:
+    """Coalesce a live screen's control-bar syncs into one trailing run.
+
+    ``delayed=True`` waits 0.2 s and a number waits that long (a refused
+    warm-up's backoff). A pending run absorbs later requests, except that an
+    immediate request, such as the readiness projection's own retry or a
+    maintenance resume, cuts a backoff wait short (TASK-38696).
+    """
+    backoff = getattr(screen, "_console_replay_backoff_timer", None)
+    if getattr(screen, "_console_control_bar_sync_scheduled", False):
+        if delayed or backoff is None:
+            return
+        backoff.stop()  # Stopping a fired timer is a no-op; its run finds no replay.
+    screen._console_replay_backoff_timer = None
+    screen._console_control_bar_sync_scheduled = True
+    run = screen._run_coalesced_control_bar_sync
+    if not delayed:
+        screen.call_after_refresh(run)
+    elif delayed is True:
+        screen.set_timer(0.2, run)
+    else:
+        screen._console_replay_backoff_timer = screen.set_timer(delayed, run)
 
 
 def run_console_presentation_sync(screen, sync: Callable[[], None]) -> bool:

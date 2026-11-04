@@ -17679,7 +17679,11 @@ class ChatScreen(BaseAppScreen):
             return
         self._console_sync_maintenance_paused = False
         if getattr(self, "_console_control_bar_replay_whole_sync", False):
-            return  # Its coalesced timer already owns the fresh replay.
+            # Its coalesced timer owns the fresh replay; an immediate request
+            # cuts a warm-up backoff short so the resume waits 0.2 s at most
+            # (TASK-38696).
+            self._request_console_control_bar_sync()
+            return
         if self._console_sync_requested and not self._console_sync_in_progress:
             self._console_sync_requested = False
             if not _console_screen_is_torn_down(self):
@@ -17857,7 +17861,8 @@ class ChatScreen(BaseAppScreen):
                     return False
                 if not prepared or getattr(self, "_console_sync_maintenance_paused", False):
                     self._console_control_bar_replay_whole_sync = True
-                    self._request_console_control_bar_sync(delayed=True)
+                    delay = config_sync.full_sync_replay_delay(self)  # TASK-38696
+                    self._request_console_control_bar_sync(delayed=delay)
                     return False
             with self._workspace.tick_workspace_build_scope():
                 if config_sync.project_console_tick(self) is False:  # Replay owns it.
@@ -20838,7 +20843,7 @@ class ChatScreen(BaseAppScreen):
             message_id, direction=direction
         )
 
-    def _request_console_control_bar_sync(self, *, delayed: bool = False) -> None:
+    def _request_console_control_bar_sync(self, *, delayed: bool | float = False) -> None:
         """Coalesce control-bar syncs into one trailing run (task-3010).
 
         Every direct caller of `_sync_console_control_bar` was individually
@@ -20847,17 +20852,11 @@ class ChatScreen(BaseAppScreen):
         14 times — 0.65s of a ~1.2s settled push (cProfile in the task).
         Requests landing before the trailing run fires fold into it; the
         run always computes fresh state, so the last-writer semantics every
-        caller relied on are preserved.
+        caller relied on are preserved. A torn-down screen schedules nothing;
+        see `config_sync.request_control_bar_sync` for delays (TASK-38696).
         """
-        if _console_screen_is_torn_down(self) or getattr(
-            self, "_console_control_bar_sync_scheduled", False
-        ):
-            return
-        self._console_control_bar_sync_scheduled = True
-        if delayed:
-            self.set_timer(0.2, self._run_coalesced_control_bar_sync)
-        else:
-            self.call_after_refresh(self._run_coalesced_control_bar_sync)
+        if not _console_screen_is_torn_down(self):
+            config_sync.request_control_bar_sync(self, delayed)
 
     @on(ConsoleAutoSpeakChanged)
     def on_console_auto_speak_changed(self, event: ConsoleAutoSpeakChanged) -> None:

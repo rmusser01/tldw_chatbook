@@ -603,3 +603,201 @@ async def test_an_unparseable_config_leaves_an_idle_console_idle(request):
     )
     assert first["core_push"] >= 1, f"the full sync never pushed: {first}"
     assert first["identity"] >= 1, f"the identity refresh never ran: {first}"
+
+
+def _refused_warm_up(monkeypatch, console):
+    """Observe FULL's warm-up, replay timers and results (TASK-38696).
+
+    Returns ``(refusing, warms, armed, fulls)``: set ``refusing[0]`` to make
+    the presentation warm-up refuse, as a lasting storage pause or a replaced
+    reader does; otherwise it warms for real. ``warms`` holds the time of each
+    FULL warm-up, ``armed`` each coalesced-replay timer as ``(time, delay,
+    timer)``, and ``fulls`` each non-poll full sync's ``(end time, result)``.
+    """
+    loop = asyncio.get_running_loop()
+    refusing, warms, armed, fulls = [True], [], [], []
+    real_warm = spend.ConsoleReadinessConfigProjection.warm
+    prepare = config_sync.prepare_console_presentation_sync.__code__
+
+    async def warm(projection):
+        if sys._getframe(1).f_code is prepare:  # FULL's own warm-up only.
+            warms.append(loop.time())
+            if refusing[0]:
+                return False
+        return await real_warm(projection)
+
+    real_set_timer = console.set_timer
+
+    def set_timer(delay, callback=None, *args, **kwargs):
+        timer = real_set_timer(delay, callback, *args, **kwargs)
+        if getattr(callback, "__name__", "") == "_run_coalesced_control_bar_sync":
+            armed.append((loop.time(), delay, timer))
+        return timer
+
+    real_full = console._sync_native_console_chat_ui
+
+    async def full(*args, **kwargs):
+        result = await real_full(*args, **kwargs)
+        if not kwargs.get("_preparing_poll"):
+            fulls.append((loop.time(), result))
+        return result
+
+    monkeypatch.setattr(spend.ConsoleReadinessConfigProjection, "warm", warm)
+    monkeypatch.setattr(console, "set_timer", set_timer)
+    monkeypatch.setattr(console, "_sync_native_console_chat_ui", full)
+    return refusing, warms, armed, fulls
+
+
+async def _fresh_backoff(armed, minimum):
+    """The replay timer just armed with at least ``minimum`` seconds to wait."""
+    loop = asyncio.get_running_loop()
+
+    def fresh():
+        return bool(armed) and armed[-1][1] >= minimum and loop.time() - armed[-1][0] < 0.3
+
+    await until(fresh, timeout=20)
+    return armed[-1]
+
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_a_refused_full_sync_backs_off_and_renders_once_the_refusal_clears(
+    request, monkeypatch
+):
+    """TASK-38696: a refused warm-up replays FULL on a backoff, not every 0.2 s.
+
+    FULL awaits ``prepare_console_presentation_sync`` before it renders; a
+    refusal handed the whole sync to the coalesced replay on a fixed 0.2 s
+    timer, so a lasting refusal (a storage pause, a replaced reader) paid a
+    full sync and a config read about five times a second. The replay now
+    backs off on TASK-38649's schedule (0.2 s doubling to 5 s). Once the
+    refusal clears, an immediate request (the readiness projection's own
+    retry asks this way) renders at once instead of waiting out the backoff,
+    and the schedule starts over.
+    """
+    host, gateway, _timeline = build()
+    async with host.run_test(size=(160, 45)) as pilot:
+        with eager_tasks():
+            console, _composer = await ready_console(host, pilot, gateway)
+            await pilot.pause(1.0)  # The mount's own leftover syncs settle.
+            loop = asyncio.get_running_loop()
+            refusing, warms, armed, fulls = _refused_warm_up(monkeypatch, console)
+            start = loop.time()
+            console.run_worker(
+                console._sync_native_console_chat_ui(),
+                exclusive=True,
+                group="console-sync",
+            )
+            await pilot.pause(3.0)
+            window = [round(when - start, 2) for when in warms if when - start < 3.0]
+            # 0.2 s replays fit ~15 FULLs in 3 s; a backoff fits 4 or 5.
+            assert 3 <= len(window) <= 6, (
+                f"a 3 s warm-up refusal ran {len(window)} full syncs at {window}"
+            )
+
+            armed_at, delay, _timer = await _fresh_backoff(armed, 1.6)
+            refusing[0] = False
+            asked = loop.time()
+            console._request_console_control_bar_sync()  # The projection's retry.
+            await until(lambda: any(ok for when, ok in fulls if when >= asked), timeout=30)
+            rendered = next(when for when, ok in fulls if ok and when >= asked)
+            assert rendered < armed_at + delay, (
+                f"the cleared refusal rendered {rendered - asked:.2f} s after it "
+                f"was asked, after its pending {delay} s backoff had run out"
+            )
+            assert console._console_warm_refusals == 0
+
+            refusing[0] = True  # A later refusal starts the schedule over.
+            seen = len(armed)
+            console.run_worker(
+                console._sync_native_console_chat_ui(),
+                exclusive=True,
+                group="console-sync",
+            )
+            await until(lambda: len(armed) > seen, timeout=30)
+            assert armed[seen][1] == pytest.approx(0.2), armed[seen:]
+            refusing[0] = False
+
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_a_full_sync_asked_for_during_a_pause_runs_once_after_resume(
+    request, monkeypatch
+):
+    """TASK-38696: the replay's backoff never delays or repeats a resume's sync.
+
+    A maintenance pause leaves a requested full sync to the coalesced replay
+    timer. When that timer is a refused warm-up's backoff, the resume cuts it
+    short: the requested sync runs once, at resume, and the stopped backoff
+    timer runs nothing later.
+    """
+    host, gateway, _timeline = build()
+    async with host.run_test(size=(160, 45)) as pilot:
+        with eager_tasks():
+            console, _composer = await ready_console(host, pilot, gateway)
+            await pilot.pause(1.0)
+            loop = asyncio.get_running_loop()
+            refusing, _warms, armed, _fulls = _refused_warm_up(monkeypatch, console)
+            launched = []
+            real_run = console._run_coalesced_control_bar_sync
+
+            def _run_coalesced_control_bar_sync():  # Named as the timer filter expects.
+                if console._console_control_bar_replay_whole_sync:
+                    launched.append(loop.time())
+                return real_run()
+
+            monkeypatch.setattr(
+                console, "_run_coalesced_control_bar_sync", _run_coalesced_control_bar_sync
+            )
+            console.run_worker(
+                console._sync_native_console_chat_ui(),
+                exclusive=True,
+                group="console-sync",
+            )
+            armed_at, delay, _timer = await _fresh_backoff(armed, 0.8)
+            console._console_sync_maintenance_close_admission()
+            console.run_worker(  # Asked for during the pause.
+                console._sync_native_console_chat_ui(),
+                exclusive=True,
+                group="console-sync",
+            )
+            await until(lambda: console._console_sync_requested, timeout=10)
+            refusing[0] = False
+            replays, resumed = len(launched), loop.time()
+            console._console_sync_maintenance_resume()
+            await until(lambda: len(launched) > replays, timeout=30)
+            assert launched[replays] < armed_at + delay, (
+                f"the resume's sync waited {launched[replays] - resumed:.2f} s, "
+                f"out to its pending {delay} s backoff"
+            )
+            await pilot.pause(max(0.0, armed_at + delay + 0.5 - loop.time()))
+            assert len(launched) == replays + 1, (
+                f"the paused request replayed {len(launched) - replays} times "
+                "after resume"
+            )
+
+
+def test_a_closing_console_arms_no_replay_and_counts_no_refusal():
+    """TASK-38696: a closing Console's refused FULL schedules no replay.
+
+    Preparation refuses at once for a closing screen without counting a
+    warm-up refusal, and the replay request it leads to arms no timer.
+    """
+    from types import SimpleNamespace
+
+    from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
+
+    scheduled = []
+    screen = SimpleNamespace(
+        _closing=True,
+        _console_warm_refusals=3,
+        set_timer=lambda *args, **kwargs: scheduled.append(args),
+        call_after_refresh=lambda *args: scheduled.append(args),
+        _run_coalesced_control_bar_sync=lambda: None,
+    )
+    assert asyncio.run(config_sync.prepare_console_presentation_sync(screen)) is False
+    assert screen._console_warm_refusals == 3
+    delay = config_sync.full_sync_replay_delay(screen)
+    ChatScreen._request_console_control_bar_sync(screen, delayed=delay)
+    ChatScreen._request_console_control_bar_sync(screen)
+    assert scheduled == [], "a closing Console armed a replay"

@@ -1,8 +1,11 @@
 ---
 id: TASK-38696
 title: "Console: a full sync whose warm-up is refused replays every 0.2 s with no backoff"
-status: To Do
+status: Done
+assignee:
+  - '@claude'
 created_date: 2026-11-03 11:40
+updated_date: 2026-11-04 01:34
 labels:
 - follow-up
 - performance
@@ -36,6 +39,35 @@ Depends on TASK-38649 (in PR #3372).
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 While warm-up keeps refusing, full-sync replays back off instead of repeating every 0.2 s, and a pin counts replays over a refusal of several seconds and fails on the base build
-- [ ] #2 A refusal that clears still lets the next full sync render promptly (pinned), a closing screen schedules no replay, and a full sync requested during a maintenance pause still runs exactly once after resume (pinned)
+- [x] #1 While warm-up keeps refusing, full-sync replays back off instead of repeating every 0.2 s, and a pin counts replays over a refusal of several seconds and fails on the base build
+- [x] #2 A refusal that clears still lets the next full sync render promptly (pinned), a closing screen schedules no replay, and a full sync requested during a maintenance pause still runs exactly once after resume (pinned)
 <!-- AC:END -->
+
+## Implementation Plan
+
+<!-- SECTION:PLAN:BEGIN -->
+1. Count consecutive warm-up refusals in `prepare_console_presentation_sync` (`config_sync.py`); any True return resets the count; pause/closing returns leave it alone.
+2. The full sync's refusal replay asks for a backed-off delay (0.2 s doubling to 5 s, TASK-38649's constants); a maintenance pause keeps the fixed 0.2 s path.
+3. A pending backoff timer is cut short by an immediate control-bar request (the projection's own retry) and by maintenance resume, so neither a clearing refusal nor the resume waits out the backoff. Logic lives in `config_sync.py`; `chat_screen.py` stays within its size ratchet.
+4. Pins (in a PR-lane file): replays over a multi-second refusal (red on base), prompt render once the refusal clears, a closing screen arms no replay, and a sync requested during a pause runs exactly once after resume.
+<!-- SECTION:PLAN:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+**Approach (all logic in `UI/Console_Modules/config_sync.py`).**
+- `prepare_console_presentation_sync` counts consecutive warm-up refusals on the screen (`_console_warm_refusals`); any True return resets it, and the pause/closing early returns leave it alone.
+- `full_sync_replay_delay` picks the refused FULL's replay delay: the first refusal and a maintenance pause keep the fixed 0.2 s timer (so a cold mount's single refusal, and the pause's resume poll, behave exactly as before); each further refusal doubles the wait on TASK-38649's constants (0.4, 0.8, 1.6, 3.2, then 5 s).
+- `request_control_bar_sync` now holds the coalescing that `ChatScreen._request_console_control_bar_sync` did, plus a numeric delay. A pending backoff timer absorbs delayed requests as before, but an immediate request (the readiness projection's own backed-off `_retry`, any user-driven control-bar request, and `_console_sync_maintenance_resume`) stops it and runs the replay now. That is how a refusal that clears renders without waiting out the backoff, and how a resume is not delayed by one.
+- `chat_screen.py`: the refusal site asks for `full_sync_replay_delay`, `_request_console_control_bar_sync` delegates (a torn-down screen still schedules nothing), and the resume makes an immediate request instead of returning. Net 24,601 -> 24,600 lines, 741 methods.
+
+**Decision.** The first replay stays non-preemptible: an earlier cut made every refusal's timer preemptible, and an immediate request then ran a fresh screen's replay earlier than base, which changed the order of work in the H3 settlement tests. The backoff only needs to be cut short once it is longer than the fixed timer.
+
+**Evidence** (new tests in `Tests/UI/test_console_projection_reads_off_loop.py`, a UI-census whole-file entry; load 16-30 on 18 CPUs):
+- `test_a_refused_full_sync_backs_off_and_renders_once_the_refusal_clears` (AC#1, AC#2 promptness and reset): red on base c2cdb6b82e, "a 3 s warm-up refusal ran 14 full syncs at [0.03, 0.25, 0.46, ...]" (`assert 14 <= 6`); green with the fix (4-5). With preemption disabled (temporary edit) the promptness part is red: "the cleared refusal rendered 5.05 s after it was asked, after its pending 5.0 s backoff had run out".
+- `test_a_full_sync_asked_for_during_a_pause_runs_once_after_resume` (AC#2 resume): base has no backoff to delay it; with the fix but without the resume's immediate request (temporary edit) it is red, "the resume's sync waited 0.80 s, out to its pending 0.8 s backoff"; green with the fix, exactly one replay after resume.
+- `test_a_closing_console_arms_no_replay_and_counts_no_refusal` (AC#2 closing): an invariant base keeps; red with the torn-down check removed (temporary edit), "a closing Console armed a replay".
+- Whole file: 11 passed (`-n 4`). The 44 files that name the replay/coalescing symbols: the failing set equals base's apart from flakes that also fail at base (`test_console_pending_attachment_stash.py::test_fresh_mounted_screen_settles_late_h3_outcome_in_dom_and_controls` fails 2-3 of 3 at base and 1-3 of 3 here, every time with its own recorder's `TypeError: ... unexpected keyword argument 'delayed'`).
+
+**Files.** `tldw_chatbook/UI/Console_Modules/config_sync.py`, `tldw_chatbook/UI/Screens/chat_screen.py`, `Tests/UI/test_console_projection_reads_off_loop.py`.
+<!-- SECTION:NOTES:END -->
