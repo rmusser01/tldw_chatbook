@@ -141,7 +141,7 @@ class _CompletionObservation:
 @contextmanager
 def _completion_observation(budget, custody):
     """Borrow one original allowance/custody without preview/capture admission."""
-    from tldw_chatbook.Chat.console_trace_read_budget import _TraceReadBudget
+    from tldw_chatbook.Backup_Recovery.models import _TraceReadBudget
 
     from .storage_admission import _CaptureFileDescriptors, _local
 

@@ -6,6 +6,7 @@ from dataclasses import replace
 from datetime import date, datetime, time
 from pathlib import Path
 
+from tldw_chatbook.Backup_Recovery.limits import _TraceReadLimit
 from tldw_chatbook.Backup_Recovery.models import (
     OwnerAdapter,
     StorageItem,
@@ -18,7 +19,6 @@ from tldw_chatbook.Backup_Recovery.profile_paths import (
     user_data_dir,
 )
 from tldw_chatbook.Backup_Recovery.recovery_files import _RawDeclaration
-from tldw_chatbook.Chat.console_trace_read_budget import _TraceReadLimit
 from tldw_chatbook.Utils.platform_files import os
 
 

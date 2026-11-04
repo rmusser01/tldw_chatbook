@@ -182,7 +182,7 @@ def _authenticate_stages(session, frame, password, cancel):
 
 def _resume_rollback(session, journal, password, cancel):
     """Resume the actual rollback direction; an import still uses its own entry."""
-    from tldw_chatbook.Chat.console_trace_read_budget import _TraceReadBudget
+    from tldw_chatbook.Backup_Recovery.models import _TraceReadBudget
 
     from . import bootstrap
     from .control_records import _Pending

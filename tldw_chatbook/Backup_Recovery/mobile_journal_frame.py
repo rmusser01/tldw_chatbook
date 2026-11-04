@@ -227,7 +227,7 @@ def _locked_mobile(journal, session, custody, cancel):
 @contextmanager
 def _verify_current_mobile(journal, session, custody, cancel):
     """Verify only the existing frame of a fixed public owner transaction."""
-    from tldw_chatbook.Chat.console_trace_read_budget import _mobile_budget_pair
+    from tldw_chatbook.Backup_Recovery.models import _mobile_budget_pair
 
     from .storage_admission import _mobile_admission
 

@@ -65,7 +65,7 @@ def _validate_local_claim(journal, parent, records, present, budget, custody):
         ):
             raise ValueError("mobile_source_claim_changed")
         return
-    from tldw_chatbook.Chat.console_trace_read_budget import _TraceReadBudget
+    from tldw_chatbook.Backup_Recovery.models import _TraceReadBudget
 
     from .storage_admission import _CaptureFileDescriptors, _local, _mobile_admission
 
@@ -427,7 +427,7 @@ def _inventory_lineage(path, source):
     """Validate controls within actual live claim custody or a fresh read flock."""
     from contextlib import nullcontext
 
-    from tldw_chatbook.Chat.console_trace_read_budget import _TraceReadBudget
+    from tldw_chatbook.Backup_Recovery.models import _TraceReadBudget
 
     from .mobile_consolidation import _source_claim_locations
     from .mobile_consolidation_apply import _SourceClaim
