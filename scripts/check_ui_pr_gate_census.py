@@ -785,6 +785,10 @@ MINIMUM_FILES = 1376
 MINIMUM_FILES = 1394
 # TASK-38701 (2026-11-03): append two archive-recovery flow nodes at the tail.
 MINIMUM_FILES = 1396
+# TASK-38695 (2026-11-04): append the File Notes git, push and workspace
+# files' test functions (by parameter where one ran over the 30 s per-entry
+# budget) at the tail. The floor is the measured entry count.
+MINIMUM_FILES = 1660
 
 
 def read_census(path: Path) -> list[str]:
