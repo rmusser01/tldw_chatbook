@@ -2072,3 +2072,10 @@ Tests/UI/test_library_file_notes_git_push.py::test_session_git_views_lay_out_at_
 Tests/UI/test_library_file_notes_git_push.py::test_session_git_views_lay_out_at_every_width_40_to_61[result-24]
 Tests/UI/test_library_file_notes_git_push.py::test_session_git_views_lay_out_at_every_width_40_to_61[result-30]
 Tests/UI/test_library_file_notes_git_push.py::test_session_git_views_lay_out_at_every_width_40_to_61[result-44]
+# TASK-38701 (2026-11-03): the archive-recovery flow file was in no lane and
+# went red unseen. Its whole file is 42 mounted-Console cases (~6 min serial
+# here), so two nodes: the resource plateau, and a mounted send through the
+# harness whose controller.app swap refused turns under load (11-15 s each at
+# load average 15-20 on 18 CPUs). Appended at the tail, so no slot moves.
+Tests/UI/test_console_archive_recovery_flow.py::test_retained_native_recovery_resource_owners_plateau_and_close
+Tests/UI/test_console_archive_recovery_flow.py::test_native_result_refresh_remains_manual_and_imported_json_is_inert

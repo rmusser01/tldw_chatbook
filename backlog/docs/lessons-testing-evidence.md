@@ -1,5 +1,11 @@
 # Lessons: what counts as evidence a change works
 
+## A harness that reassigns an owner the product keeps rebinding gets turns refused only under load (TASK-38701, 2026-11-03)
+
+**Incident.** Mounted sends in `Tests/UI/test_console_archive_recovery_flow.py` were refused now and then: once in 9 plain `-n 4` runs here, and in 8 of 12 runs when two ran at once (load average 19-50). There were three refusal messages: "Hooks unavailable; review or disable hooks before sending.", "Required hook initialization failed.", and "Couldn't save the prepared turn." (a Library-policy mismatch at the durable commit). After mount, the harness set `controller.app = host`. The Console resets `controller.app` to its `app_instance` on every `_ensure_console_chat_controller` (66 call sites). Each turn's preparation reads (hook admission, hook preparation, the Library-policy capture, provider resolution) record `controller.app` when they start and refuse if it changes before they finish. Usually an ensure had already run before the first turn. Under load, it ran during one of those reads. To find this, a recorder on `ConsoleSubmitResult.__init__` collected the refusal messages, and a before/after diff around the hook read showed that only `controller.app` changed. Setting `controller.app = host` again just before the turn, with an ensure forced inside the hook read, refused 2 of 5 sends. With the harness line removed, the same forced ensure refused none.
+
+**What to do.** For an intermittent refused send, record the refusal's message first, then diff the owner objects that the refusing read recorded at its start. In a harness, do not assign an attribute that the product keeps resetting. Instrument a fail-closed boundary carefully: one diagnostic wrapper here raised inside the hook read, and the read turned that exception into 36 refusals per run.
+
 ## Two overlapping SQLite writers get a lock error before any version check runs (TASK-38686, 2026-11-04)
 
 **Incident.** `test_concurrent_updates_to_same_prompt` started two threads behind a barrier and expected one of them to hit a version conflict. Its rewrite passed both writers the same `expected_version`. Even so, a 300-round probe at load 34 gave a version conflict in only 106 rounds. In 186 rounds the loser got `DatabaseError: ... database is locked` instead.

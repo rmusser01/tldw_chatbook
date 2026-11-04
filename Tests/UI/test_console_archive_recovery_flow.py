@@ -226,7 +226,10 @@ async def mounted_recovery(
             monkeypatch.setattr(
                 console._session, "_build_console_turn_execution_context", configuration
             )
-            controller.app = host
+            # TASK-38701: leave controller.app alone. The Console rebinds it to
+            # its app_instance on every _ensure_console_chat_controller, and a
+            # turn's preparation reads refuse when it changes under them. A
+            # host swapped in here was flipped back mid-turn under load.
             await console._sync_native_console_chat_ui()
             await wait_until(
                 pilot,
@@ -1502,8 +1505,13 @@ async def test_retained_native_recovery_resource_owners_plateau_and_close(
                 }
                 for row in stable
             ), samples
-            assert stable[-1]["live_handles"]["chat"] >= 2
-            assert stable[-1]["live_handles"]["workspace"] >= 2
+            # TASK-38701: workers open chat and workspace handles every cycle,
+            # and each worker operation retires the handle it opened when it
+            # ends (operation-owned connections). The plateau holds only the
+            # main-thread handles opened above, not retained worker handles.
+            for name in ("chat", "workspace"):
+                assert stable[-1]["threads_seen"][name] >= 2, samples
+                assert stable[-1]["live_handles"][name] == 1, samples
             await runtime.close_session(rig.source.id)
             assert not runtime.presentations(rig.source.id)
             assert (
