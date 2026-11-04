@@ -2661,6 +2661,8 @@ def test_row_copy_never_runs_an_empty_or_dot_only_reason_into_its_recovery(
         assert cell_len(copy) <= width, (width, copy)
         assert copy.startswith(prefix), (width, copy)
         assert copy[len(prefix) : len(prefix) + 1].isalnum(), (width, copy)
+        # Every recovery, full or narrow, ends in "Refresh"; dropping it is wrong.
+        assert copy.endswith("Refresh"), (width, copy)
 
 
 @pytest.mark.asyncio
