@@ -17,6 +17,7 @@ from datetime import datetime
 from types import MappingProxyType
 from typing import TYPE_CHECKING, Literal, TypeAlias, cast
 
+from tldw_chatbook.Backup_Recovery.models import _TraceReadBudget
 from tldw_chatbook.Chat.console_trace_models import (
     MAX_SURFACE_REPLACEMENT_SPAN,
     PROMOTED_VOICE_IMPORT_REASON,
@@ -32,7 +33,6 @@ from tldw_chatbook.Chat.console_trace_models import (
     new_opaque_id,
     validate_call_transition,
 )
-from tldw_chatbook.Chat.console_trace_read_budget import _TraceReadBudget
 from tldw_chatbook.Chat.console_trace_redaction import (
     CREDENTIAL_SANITIZER_UNAVAILABLE,
     CredentialSanitizer,

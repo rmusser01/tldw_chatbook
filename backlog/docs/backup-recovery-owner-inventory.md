@@ -270,9 +270,9 @@ blocker. New calls in an existing symbol also change the expected count and fail
 | tldw_chatbook/Chat/console_image_view.py | ConsoleImageRenderCache.prepare | open | 1 | memory | PIL-BytesIO-render-cache; no-independent-file |
 | tldw_chatbook/Chat/prompt_template_manager.py | load_template | open | 1 | unsupported | files |
 | tldw_chatbook/Chat/prompt_history.py | PromptHistory._history_io | write | 1 | unsupported | phase7 async source lifetime; runtime composition pending |
-| tldw_chatbook/Backup_Recovery/raw_participants.py | _file | open | 2 | generic_boundary | fixed source raw native lifetime; runtime composition pending |
-| tldw_chatbook/Backup_Recovery/raw_participants.py | _mkdirs | mkdir | 2 | generic_boundary | fixed source raw native lifetime; runtime composition pending |
-| tldw_chatbook/Backup_Recovery/raw_participants.py | _mkdirs | open | 1 | generic_boundary | fixed source raw native lifetime; runtime composition pending |
+| tldw_chatbook/Backup_Recovery/raw_participants.py | file | open | 2 | generic_boundary | fixed source raw native lifetime; runtime composition pending |
+| tldw_chatbook/Backup_Recovery/raw_participants.py | mkdirs | mkdir | 2 | generic_boundary | fixed source raw native lifetime; runtime composition pending |
+| tldw_chatbook/Backup_Recovery/raw_participants.py | mkdirs | open | 1 | generic_boundary | fixed source raw native lifetime; runtime composition pending |
 | tldw_chatbook/Chat_Grammars_Interop/local_chat_grammars_service.py | LocalChatGrammarsService._persist | dump | 1 | unsupported | phase4 raw source lifetime; runtime composition pending |
 | tldw_chatbook/Feedback_Interop/local_feedback_service.py | LocalFeedbackService._persist | dump | 1 | unsupported | phase4 raw source lifetime; runtime composition pending |
 | tldw_chatbook/Notes/template_store.py | merge_templates | dump | 1 | unsupported | notes.templates phase8 raw source lifetime; runtime composition pending |
@@ -751,9 +751,9 @@ blocker. New calls in an existing symbol also change the expected count and fail
 | tldw_chatbook/UI/STTS_Window.py | AudioBookGenerationWidget._update_voice_options | open | 1 | unsupported | miscellaneous |
 | tldw_chatbook/UI/STTS_Window.py | AudioBookGenerationWidget.audiobook_generation_complete | write | 3 | unsupported | miscellaneous |
 | tldw_chatbook/UI/Screens/chat_screen.py | ChatScreen._write_sidebar_state_snapshot | dump | 1 | unsupported | phase7 async source lifetime; runtime composition pending |
-| tldw_chatbook/UI/Screens/settings_config_adapter.py | SettingsConfigAdapter.validate_config_file | open | 1 | unsupported | miscellaneous |
-| tldw_chatbook/UI/Screens/settings_image_gen_defaults.py | load_user_image_generation_table | open | 1 | unsupported | files |
-| tldw_chatbook/UI/Screens/settings_video_gen_defaults.py | load_user_video_generation_table | open | 1 | unsupported | files |
+| tldw_chatbook/UI/Settings_Modules/settings_config_adapter.py | SettingsConfigAdapter.validate_config_file | open | 1 | unsupported | miscellaneous |
+| tldw_chatbook/UI/Settings_Modules/settings_image_gen_defaults.py | load_user_image_generation_table | open | 1 | unsupported | files |
+| tldw_chatbook/UI/Settings_Modules/settings_video_gen_defaults.py | load_user_video_generation_table | open | 1 | unsupported | files |
 | tldw_chatbook/UI/Speech/audio_cpp_runtime_card.py | AudioCppRuntimeCard.apply_observation | write | 1 | unsupported | miscellaneous |
 | tldw_chatbook/UI/Speech/speech_playback_mixin.py | SpeechPlaybackMixin._generation_complete | write | 1 | unsupported | miscellaneous |
 | tldw_chatbook/UI/Speech/speech_playback_mixin.py | SpeechPlaybackMixin._handle_audio_export | copy2 | 1 | unsupported | miscellaneous |

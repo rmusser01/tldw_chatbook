@@ -5,7 +5,7 @@ import stat
 from contextlib import contextmanager
 from pathlib import Path
 
-from tldw_chatbook.Chat.console_trace_read_budget import _mobile_operation_budgets
+from tldw_chatbook.Backup_Recovery.models import _mobile_operation_budgets
 from tldw_chatbook.Utils.platform_files import os
 
 from . import bootstrap

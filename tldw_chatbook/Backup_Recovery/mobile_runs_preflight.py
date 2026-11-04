@@ -122,7 +122,7 @@ def _history_observations(history, *, _read_budget):
 
 
 def _plan_runs(reads, *, _read_budget=None):
-    from tldw_chatbook.Chat.console_trace_read_budget import _TraceReadBudget
+    from tldw_chatbook.Backup_Recovery.models import _TraceReadBudget
     from tldw_chatbook.DB.console_command_receipts import (
         ConsoleCommandReceiptRepository,
     )
@@ -139,7 +139,7 @@ def _plan_runs(reads, *, _read_budget=None):
     budget = _TraceReadBudget() if _read_budget is None else _read_budget
     if type(budget) is not _TraceReadBudget:
         raise TypeError("mobile_runs_native_budget_required")
-    integrated = _plan_integrated(reads, _read_budget=budget)
+    integrated = _plan_integrated(reads, _read_budget=budget, _include_run_duties=False)
     goals = _plan_goal_rows(reads, integrated.identities, _read_budget=budget)
     identities = goals.identities
     budget.container(len(_TABLES) * 6)

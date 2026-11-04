@@ -43,7 +43,7 @@ from textual.timer import Timer
 from textual.widgets import Button, Collapsible, Input, Select, Static, TextArea
 
 from tldw_chatbook.Chat.approval_constants import TOOL_DESCRIPTION_CAPTURE_CAP  # noqa: F401
-from tldw_chatbook.Chat.approval_review import APPROVAL_OPTIONS, approval_options
+from tldw_chatbook.Chat.approval_constants import APPROVAL_OPTIONS, approval_options
 from tldw_chatbook.Tools.raw_cli_executor import MAX_RAW_COMMAND_BYTES
 from tldw_chatbook.Utils.input_validation import MAX_APPROVAL_DENIAL_REASON_CHARS
 from tldw_chatbook.Utils.input_validation import escape_markup as escape

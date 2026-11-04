@@ -15,7 +15,7 @@ from tldw_chatbook.Chat.console_trace_custom_pii import (
     redact_pii_value_for_ruleset_revision,
 )
 from tldw_chatbook.Chat.console_trace_models import new_opaque_id
-from tldw_chatbook.Chat.console_trace_read_budget import _TraceReadBudget
+from tldw_chatbook.Backup_Recovery.models import _TraceReadBudget
 from tldw_chatbook.Chat.console_trace_redaction import (
     BUILTIN_PII_RULESET_REVISION_ID,
     CREDENTIAL_FILTER_VERSION,

@@ -31,7 +31,7 @@ from tldw_chatbook.Chat.console_trace_models import (
     TraceOmission,
 )
 from tldw_chatbook.Chat.console_trace_projection import NormalizedTraceCall
-from tldw_chatbook.Chat.console_trace_read_budget import _TraceReadBudget
+from tldw_chatbook.Backup_Recovery.models import _TraceReadBudget
 from tldw_chatbook.Chat.console_trace_redaction import CREDENTIAL_FILTER_VERSION
 from tldw_chatbook.Chat.console_trace_repository import (
     ConsoleTraceRepository,

@@ -27,7 +27,7 @@ from pathlib import Path
 
 from loguru import logger
 
-from tldw_chatbook.Chat.console_execution_owner import ConsoleExecutionOwner
+from tldw_chatbook.DB.console_execution_owner import ConsoleExecutionOwner
 from tldw_chatbook.Workspaces.change_bounds import (
     DEFAULT_RETENTION_DAYS,
     change_review_setting,

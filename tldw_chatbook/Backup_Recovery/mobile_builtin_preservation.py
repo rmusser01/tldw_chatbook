@@ -8,7 +8,7 @@ _OWNER = "persona.visual_identity_builtin"
 
 
 def _preservation_budget(_read_budget=None):
-    from tldw_chatbook.Chat.console_trace_read_budget import _TraceReadBudget
+    from tldw_chatbook.Backup_Recovery.models import _TraceReadBudget
 
     from .mobile_preview_budget import current
 

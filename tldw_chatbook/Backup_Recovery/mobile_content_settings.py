@@ -525,13 +525,15 @@ def _plan_content_settings(reads):
     from tldw_chatbook.Chat.console_library_policy_repository import (
         ConsoleLibraryPolicyRepository,
     )
-    from tldw_chatbook.Chat.provider_continuation import (
-        parse_provider_continuation_json,
-    )
-    from tldw_chatbook.Chat.thinking_blocks import parse_thinking_blocks_json
     from tldw_chatbook.DB.ChaChaNotes_DB import (
         CharactersRAGDB,
         _validated_thinking_history_policy,
+    )
+    from tldw_chatbook.Provider_Contract.provider_continuation import (
+        parse_provider_continuation_json,
+    )
+    from tldw_chatbook.Provider_Contract.thinking_blocks import (
+        parse_thinking_blocks_json,
     )
 
     from .mobile_captured_sqlite import _CapturedSQLite

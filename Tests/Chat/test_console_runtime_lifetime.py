@@ -1276,3 +1276,33 @@ async def test_runtime_disposal_retires_remote_subscription_claims():
     assert not projection._clients
     with pytest.raises(RuntimeError):
         runtime.ensure_remote_projection(projection.host_identity)
+
+
+def test_runtime_trace_callbacks_keep_dynamic_capture_policy_binding(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from tldw_chatbook.Chat import console_runtime
+    from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
+
+    db = CharactersRAGDB(tmp_path / "runtime-policy.sqlite", "runtime-policy")
+    runtime = ConsoleRuntime(SimpleNamespace(chachanotes_db=db))
+    try:
+        store = runtime.ensure_chat_store()
+        gateway = runtime.ensure_provider_gateway()
+        projection = store.trace_projection
+        assert projection is not None
+        for enabled in (False, True):
+            monkeypatch.setattr(
+                console_runtime,
+                "runtime_capture_policy",
+                lambda enabled=enabled: SimpleNamespace(
+                    normalized_reads_enabled=enabled,
+                    normalized_writes_enabled=enabled,
+                ),
+            )
+            assert projection._normalized_reads_enabled() is enabled
+            assert projection.normalized_writes_enabled is enabled
+            assert gateway._normalized_writes_enabled() is enabled
+    finally:
+        asyncio.run(runtime.dispose())
+        db.close_connection()

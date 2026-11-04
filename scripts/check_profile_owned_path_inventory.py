@@ -443,8 +443,6 @@ APPROVED_EXCEPTIONS: tuple[ExceptionRule, ...] = (
         Disposition.PERSISTED_DEFAULT,
         "compare shipped database sentinels before mapping isolated or replacement destinations; never open these literal paths",
     ),
-    # ADR-256 portable roots are confined acquired/private-attempt members;
-    # exact contexts and counts retain the same owner-path census enforcement.
     ExceptionRule(
         "tldw_chatbook/Backup_Recovery/detached_layout.py",
         "function:_owner_items",
@@ -630,22 +628,6 @@ APPROVED_EXCEPTIONS: tuple[ExceptionRule, ...] = (
         "exact discovery of existing reusable Higgs voice source; baseline ownership is unchanged",
     ),
     ExceptionRule(
-        "tldw_chatbook/UI/Speech/settings_speech_tts.py",
-        "module:_PROVIDER_NON_SECRET_DEFAULTS",
-        "literal:~/.config/tldw_cli/chatterbox_voices",
-        1,
-        Disposition.SHARED_ARTIFACT,
-        "global Settings default for the reusable Chatterbox voice artifact directory",
-    ),
-    ExceptionRule(
-        "tldw_chatbook/UI/Speech/settings_speech_tts.py",
-        "module:_PROVIDER_NON_SECRET_DEFAULTS",
-        "literal:~/.config/tldw_cli/higgs_voices",
-        1,
-        Disposition.SHARED_ARTIFACT,
-        "global Settings default for the reusable Higgs voice artifact directory",
-    ),
-    ExceptionRule(
         "tldw_chatbook/UI/Screens/settings_storage_defaults.py",
         "module:DEFAULT_CHACHANOTES_DB_PATH",
         "literal:~/.local/share/tldw_cli/tldw_chatbook_ChaChaNotes.db",
@@ -708,6 +690,22 @@ APPROVED_EXCEPTIONS: tuple[ExceptionRule, ...] = (
         1,
         Disposition.PERSISTED_DEFAULT,
         "shipped Settings storage default for the writing database",
+    ),
+    ExceptionRule(
+        "tldw_chatbook/UI/Speech/settings_speech_tts.py",
+        "module:_PROVIDER_NON_SECRET_DEFAULTS",
+        "literal:~/.config/tldw_cli/chatterbox_voices",
+        1,
+        Disposition.SHARED_ARTIFACT,
+        "global Settings default for the reusable Chatterbox voice artifact directory",
+    ),
+    ExceptionRule(
+        "tldw_chatbook/UI/Speech/settings_speech_tts.py",
+        "module:_PROVIDER_NON_SECRET_DEFAULTS",
+        "literal:~/.config/tldw_cli/higgs_voices",
+        1,
+        Disposition.SHARED_ARTIFACT,
+        "global Settings default for the reusable Higgs voice artifact directory",
     ),
     ExceptionRule(
         "tldw_chatbook/UI/Speech/speech_catalog_mixin.py",

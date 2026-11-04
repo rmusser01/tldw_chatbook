@@ -139,7 +139,6 @@ from tldw_chatbook.Chat.console_chat_models import (
     ConsoleSubmissionOrigin,
 )
 from tldw_chatbook.Chat.console_display_state import console_sent_source_count
-from tldw_chatbook.Chat.console_hook_review import HookReviewResult
 from tldw_chatbook.Chat.console_library_policy import (
     ConsoleAssistantLibraryAccess,
     ConsoleAutoRetrieve,
@@ -155,6 +154,7 @@ from . import console_attention_preparation as _attention_preparation
 
 if TYPE_CHECKING:
     from tldw_chatbook.Agents.execution_capacity import RuntimeCapacity
+    from tldw_chatbook.Chat.console_hook_review import HookReviewResult
     from tldw_chatbook.Chat.console_voice_promotion import (
         VoicePromotionOwner,
         VoicePromotionQuitPermit,
@@ -165,7 +165,6 @@ if TYPE_CHECKING:
 from tldw_chatbook.Chat.console_turn_context import ConsoleTurnCustodyRequest
 from tldw_chatbook.Provider_Contract.thinking_blocks import normalize_thinking_history_policy
 from tldw_chatbook.config import coerce_bool_setting
-from tldw_chatbook.Chat.console_capture_policy import runtime_capture_policy
 from tldw_chatbook.Persona_Buddy.console_adapter import PersonaBuddyConsoleAdapter
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
@@ -177,6 +176,19 @@ if TYPE_CHECKING:  # pragma: no cover - typing only
     from tldw_chatbook.Chat.console_chat_controller import ConsoleChatController
     from tldw_chatbook.Chat.console_chat_store import ConsoleChatStore
     from tldw_chatbook.Chat.console_worktree_recovery import ConsoleWorktreeRecovery
+
+
+def __getattr__(name: str) -> Any:
+    if name == "HookReviewResult":
+        from .console_hook_review import HookReviewResult
+
+        return HookReviewResult
+    if name == "runtime_capture_policy":
+        from .console_capture_policy import runtime_capture_policy
+
+        return runtime_capture_policy
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+
 
 #: The app attribute this module's helpers read and write. Named once so a
 #: test can assert on the protocol rather than on a string literal.
@@ -4613,6 +4625,7 @@ class ConsoleRuntime:
         """
         if self._chat_store is not None or self._disposed:
             return self._chat_store
+        console_runtime = _maintenance_source_sys.modules[__name__]
         from tldw_chatbook.Chat.chat_persistence_service import (
             ChatPersistenceService,
         )
@@ -4718,10 +4731,10 @@ class ConsoleRuntime:
                         read_normalized_calls if legacy_normalization_enabled else None
                     ),
                     normalized_reads_enabled=lambda: (
-                        runtime_capture_policy().normalized_reads_enabled
+                        console_runtime.runtime_capture_policy().normalized_reads_enabled
                     ),
                     normalized_writes_enabled=lambda: (
-                        runtime_capture_policy().normalized_writes_enabled
+                        console_runtime.runtime_capture_policy().normalized_writes_enabled
                     ),
                     compatibility_metrics=self.trace_compatibility_metrics,
                 )
@@ -4837,6 +4850,7 @@ class ConsoleRuntime:
         if callable(factory):
             self._provider_gateway = factory()
         else:
+            console_runtime = _maintenance_source_sys.modules[__name__]
             from tldw_chatbook.Chat.console_provider_gateway import (
                 ConsoleProviderGateway,
             )
@@ -4864,7 +4878,7 @@ class ConsoleRuntime:
                 ),
                 trace_call_boundary_factory=trace_call_boundary_factory,
                 normalized_writes_enabled=lambda: (
-                    runtime_capture_policy().normalized_writes_enabled
+                    console_runtime.runtime_capture_policy().normalized_writes_enabled
                 ),
                 trace_compatibility_metrics=self.trace_compatibility_metrics,
             )
@@ -4872,7 +4886,7 @@ class ConsoleRuntime:
 
     def ensure_execution_owner(self, run_store: Path):
         """Lazily own execution for the canonical sibling run store."""
-        from .console_execution_owner import (
+        from tldw_chatbook.DB.console_execution_owner import (
             ConsoleExecutionOwner,
             ConsoleExecutionUnavailable,
         )

@@ -34,7 +34,7 @@ from tldw_chatbook.Chat.console_dispatch_checkpoint import (
     parse_console_resolved_destination_json,
     parse_console_turn_library_authority_json,
 )
-from tldw_chatbook.Chat.console_trace_read_budget import _TraceReadBudget
+from tldw_chatbook.Backup_Recovery.models import _TraceReadBudget
 from tldw_chatbook.Chat.console_transaction_contribution import (
     ConsoleExactNativeIdTransactionContribution,
     _scoped_console_transaction_writer,

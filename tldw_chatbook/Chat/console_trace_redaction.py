@@ -8,10 +8,8 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from urllib.parse import SplitResult, urlsplit, urlunsplit
 
-from tldw_chatbook.Chat.console_trace_read_budget import (
-    _TraceReadBudget,
-    _TraceReadLimit,
-)
+from tldw_chatbook.Backup_Recovery.limits import _TraceReadLimit
+from tldw_chatbook.Backup_Recovery.models import _TraceReadBudget
 from tldw_chatbook.Utils.log_sanitizer import (
     REDACTION_MARKER,
     sanitize_trace_credentials_v1,

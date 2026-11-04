@@ -124,7 +124,79 @@ def test_actual_runs_preflight_preserves_operational_facts_and_native_history(
     ) as reads:
         build = getattr(reads, "runs_preflight", None)
         assert callable(build), "actual captured scope needs fixed all-owner preflight"
+        if history_case == "complete":
+            from collections import Counter
+
+            from tldw_chatbook.Backup_Recovery import (
+                mobile_integrated_plan,
+                mobile_runs_goals,
+                mobile_runs_preflight,
+            )
+            from tldw_chatbook.Backup_Recovery.mobile_captured_sqlite import (
+                _CapturedSQLite,
+                _runs24_receipts_absent,
+            )
+            from tldw_chatbook.Backup_Recovery.mobile_plan_manifest import _TABLES
+
+            specs = [s for s in _TABLES if s.handler == "A-runs"]
+            absent = {
+                ("legacy", s.family, s.table)
+                for s in specs
+                if _runs24_receipts_absent(reads, "legacy", s.family, s.table)
+            }
+            pages, handler_reads = Counter(), Counter()
+            native_page = _CapturedSQLite.page
+            native_rows = mobile_runs_preflight._rows
+
+            def unused_obligations(*args, **kwargs):
+                pytest.fail("composed runs scanned discarded run obligations")
+
+            def page(self, purpose, family, table, *, offset=0, limit=100):
+                result = native_page(
+                    self, purpose, family, table, offset=offset, limit=limit
+                )
+                pages[purpose, family, table, offset, limit] += 1
+                return result
+
+            def owner_rows(self, purpose, family, table, *, _read_budget=None):
+                result = native_rows(
+                    self, purpose, family, table, _read_budget=_read_budget
+                )
+                handler_reads[purpose, family, table] += 1
+                return result
+
+            monkeypatch.setattr(mobile_integrated_plan, "_rows", unused_obligations)
+            monkeypatch.setattr(_CapturedSQLite, "page", page)
+            monkeypatch.setattr(mobile_runs_preflight, "_rows", owner_rows)
+            monkeypatch.setattr(mobile_runs_goals, "_rows", owner_rows)
         plan = build()
+        if history_case == "complete":
+            assert all(handler_reads["legacy", s.family, s.table] == 1 for s in specs)
+            for spec in specs:
+                key = ("legacy", spec.family, spec.table)
+                if key in absent:
+                    assert pages[key + (0, 1000)] == 0
+                else:
+                    assert pages[key + (0, 1000)] >= 1
+            native_check = _CapturedSQLite.check
+            checked = []
+
+            def check(self):
+                result = native_check(self)
+                checked.append(self)
+                return result
+
+            with monkeypatch.context() as strict:
+                strict.setattr(_CapturedSQLite, "check", check)
+                for invalid in (0, 1, None):
+                    before = len(checked)
+                    with pytest.raises(
+                        TypeError, match="^mobile_integrated_run_duties_required$"
+                    ):
+                        mobile_integrated_plan._plan_integrated(
+                            reads, _include_run_duties=invalid
+                        )
+                    assert checked[before:] == [reads]
         assert all(
             proof.relative_path not in repr(plan) for proof in plan.history_observations
         )
