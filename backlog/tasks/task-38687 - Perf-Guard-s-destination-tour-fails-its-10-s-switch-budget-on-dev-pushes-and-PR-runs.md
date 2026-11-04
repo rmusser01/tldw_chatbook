@@ -1,8 +1,11 @@
 ---
 id: TASK-38687
 title: "Perf Guard's destination tour fails its 10 s switch budget on dev pushes and PR runs"
-status: To Do
+status: Done
+assignee:
+  - '@claude'
 created_date: 2026-11-03 11:40
+updated_date: '2026-11-04 01:27'
 labels:
 - follow-up
 - ci
@@ -33,6 +36,66 @@ The other failed runs failed other Perf Guard tests. The dev push at 18482c1cf7 
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 The over-budget time is attributed to its phase (press, arrival or settle) and its cause is recorded
-- [ ] #2 The destination tour passes 10 of 10 Perf Guard runs (CI, or local runs that match the job) with its 10 s budget unchanged, or any budget change is justified with measurements in the task notes
+- [x] #1 The over-budget time is attributed to its phase (press, arrival or settle) and its cause is recorded
+- [x] #2 The destination tour passes 10 of 10 Perf Guard runs (CI, or local runs that match the job) with its 10 s budget unchanged, or any budget change is justified with measurements in the task notes
 <!-- AC:END -->
+
+## Implementation Plan
+
+<!-- SECTION:PLAN:BEGIN -->
+1. Recount the failing CI runs from their logs (read-only gh).
+2. Split each destination's reading into press, arrival and settle with a local probe of the tour, counting how often a `pilot.pause()` idle wait runs to its 1 s ceiling.
+3. Find what keeps the process busy while the app is idle (cProfile of an idle window, timer and worker-start counters) and fix that cost where its callers converge.
+4. Pin the fix with a deterministic counter test, shown red on dev, in a file a PR lane runs.
+5. Re-run the tour 10 times locally (load recorded) with the 10 s budget unchanged; compare per-destination phases before and after.
+<!-- SECTION:PLAN:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+**Cause: an idle Console fed itself, so every `pilot.pause()` saw a busy process.** The switches themselves were within budget. One Console sync calls `ConsoleReadinessConfigProjection.tokenizer_ready` twice, with the provider spelled two ways: the chat's setting gives "OpenAI" and the display gives the config key "openai". The projection keeps a single tokenizer request. Each spelling replaced the other's request and reset its retry, which started a refresh worker. Each refresh then found the request changed and published a full `_sync_native_console_chat_ui`, and that sync asked again. The loop ran 16-28 full Console syncs a second for as long as the app ran, on every screen, because the Console stays mounted.
+
+Textual's `wait_for_idle` counts the process as busy when it uses more than 1 ms of CPU per 20 ms, across all threads. So each `pilot.pause()` in the tour waited its full 1 s.
+
+**CI census** (read-only `gh`): over the last 100 Perf Guard runs (2026-11-03 00:48Z to 11-04 00:26Z), 46 failed, 27 of them on this test. Those 27 runs had 40 over-budget readings, every one between 10.0 and 11.0 s:
+- `f4 -> Settings`: 15
+- `ctrl+7 -> Schedules`: 12
+- `ctrl+9 -> Settings`: 11
+- `ctrl+4 -> Personas`: 1
+- `f2 -> LLM`: 1
+
+Settings was over budget in 20 of the 27 runs (the coordinator's 14-of-19 count covered a narrower window). Another sign: in run 41610209372 the child's tour test took 104.7 s.
+
+**Phase attribution (AC#1).** A temporary probe (not committed) timed press, arrival and settle, counted idle waits that hit the 1 s ceiling, and measured idle CPU with `process_time`/`thread_time` over a 2 s idle window.
+- On dev, at load 11-18:
+  - press: 0.6-2.6 s
+  - arrival: 0 extra pauses (the screen was already current when the press returned)
+  - settle: 3.3-6.5 s, with 2 to 6 of its 6 pauses at the 1 s ceiling
+  - idle process CPU: 82-99 % of a core (the event-loop thread alone 65-81 %)
+- cProfile of the idle window, plus a worker-start census, found 39-60 `console-readiness-config` refreshes and as many `console-readiness-publication` syncs per 2 s. A per-call trace showed the provider alternating between "OpenAI" and "openai".
+- Settings led the counts because it has the costliest press (about 2-3 s) and the most idle-time timers of its own, the MCP workbench save status and subscription readiness, both every 0.25 s. Its settle hit the ceiling most often: 4-6 of 6 pauses.
+
+**Fix.** `tokenizer_ready` normalizes the provider with `normalize_provider_config_key` before it compares or captures. That is the key the display path already matches labels by (`_active_console_provider_model_display`). The preparation only lowercases the provider for the tokenizer lookup, so behaviour is unchanged. After the fix (probe, load 27-53):
+- idle CPU 0.8-5.3 % of a core
+- settle 0.46-1.37 s, with no idle wait at its ceiling
+- per-destination totals 1.2-4.5 s
+- no readiness refreshes while idle
+
+The 10 s budget is unchanged.
+
+**Tests**
+- `Tests/UI/test_console_tokenizer_preparation.py::test_provider_spellings_share_one_preparation`: red on dev (`tokenizer_ready('model', 'openai')` returned False and captured a second request), green with the fix.
+- `test_destination_tour_stays_under_switch_budgets` (Perf Guard) now also counts full Console syncs during 1 s of idle after the tour, with a limit of 1. It counts rather than times. It fails on dev sources (16 syncs at load 30, 28 at load 17) and records 0 with the fix.
+
+**AC#2: 10 of 10 local runs of the Perf Guard step command** (`pytest Tests/Performance/test_ui_latency_guardrails.py Tests/Utils/test_ui_responsiveness_stall_persist.py -v --timeout=300`, serial as in the job) were green, 13/13 tests each, at load 18.9-28.5. The step took 81-94 s and the tour test 29-37 s. The same command on dev sources took 199 s (load 17.8), with the tour test at 75 s.
+
+**Covering runs.** I ran the 22 test files that reach the tokenizer-readiness path on the fix and on dev sources, with the same command at `-n 4`.
+- Fix: 265 failed, 329 passed. Dev: 267 failed, 327 passed.
+- 246 of the failures are the known local `RecoveryRequired` trap, mostly in `test_console_native_chat_flow.py`.
+- One test failed on the fix only: `test_console_syncs_never_wait_for_a_config_rebuild[full-ui-held]`. Rerun 5 times on each arm, together with the dev-only failure `test_a_projection_rereads_an_aging_display_ahead_of_its_expiry`, both passed 5/5 on both arms (load 13-16), so both are load flakes.
+- The new unit test fails only on dev.
+
+No `/verify` live launch: the brief forbids launching the TUI, and the change has no visual surface.
+
+**Files:** `tldw_chatbook/UI/Console_Modules/console_spend_projection.py`, `Tests/UI/test_console_tokenizer_preparation.py`, `Tests/Performance/test_ui_latency_guardrails.py`, `backlog/docs/lessons-testing-evidence.md`.
+<!-- SECTION:NOTES:END -->

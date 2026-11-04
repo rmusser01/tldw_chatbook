@@ -1,5 +1,14 @@
 # Lessons: what counts as evidence a change works
 
+## Switch readings that cluster just over a budget, on several screens, are `pilot.pause()` ceilings (TASK-38687, 2026-11-03)
+
+**Incident.** Perf Guard's destination tour failed 27 of the last 100 runs, nearly always on a different screen. Settings was over budget in 20 of those runs, Schedules in 12, and Personas and LLM once each. Every reading was between 10.0 and 11.0 s against a 10 s budget. The task's working guess was a slow switch or a blocked loop. A phase probe found the switch itself (the `pilot.press`) took 0.6-2.6 s. The rest was the six settle pauses, 2 to 6 of which ran to `wait_for_idle`'s 1 s ceiling. That function treats the process as busy whenever it uses more than 1 ms of CPU per 20 ms, counting every thread. While the app sat idle, it was using 82-99 % of a core on every screen. cProfile of a 2 s idle window put that in a Console feedback loop. One sync passed the provider as "OpenAI" and "openai", each spelling replaced the other's tokenizer request, and every prepared request published another full Console sync, about 16 a second on whatever screen was showing. With the provider normalized, idle CPU fell to 1-5 %, the settle took 0.5-1.4 s and the tour test ran in 30-37 s instead of 105 s.
+
+**What to do.**
+- If readings cluster just above the budget on several screens, count the pauses before profiling the screen: N pauses x 1 s sets the floor.
+- Measure the process's idle CPU first (`time.process_time()` over an `asyncio.sleep` window, with `time.thread_time()` for the loop thread). Then profile that idle window, which is where the cost sits.
+- Pin the fix with a counter, not a clock. The tour now counts full Console syncs in one idle second: 16 before the fix, 0 after.
+
 ## A flake can be a test that passes only on the state before the layout settles (TASK-38693, 2026-11-04)
 
 **Incident.** `test_guarded_commit_success_renders_and_focuses_fresh_owner_status[40x20]` failed about 1 run in 10 with the success summary reading "Committed 2 session note\n...lated changes untouched." The obvious reading was a re-fit landing at a wrong, transient width. A 48-run repeat that also logged the summary's width and text after a further 0.5 s pause showed the opposite: in all 48 runs the settled width was 27 cells and the settled text was the elided one. The summary is first fitted while it is 28 cells wide; the rows' scrollbar then takes a cell without resizing the panel, and a later panel fit re-fits it to 27. The test read the summary straight after its wait, so it passed only when it read the stale 28-cell fit. The failing runs had read the correct, settled state. Base: 5 of 48 red; the test now waits until the summary equals the fitter's output for its current width, and passed 120 of 120.
