@@ -6,7 +6,7 @@ import os
 import re
 from collections.abc import Mapping
 from dataclasses import dataclass, field, replace
-from typing import Literal
+from typing import Literal, Optional
 from unicodedata import category as unicode_category
 
 # "Valid provider API key" has exactly ONE definition in this codebase --
@@ -38,6 +38,11 @@ from ..config import (
     resolve_provider_api_key as _valid_api_key,
 )
 from ..provider_registry import RECORDS_BY_KEY
+from ..Utils.input_validation import (
+    sanitize_string,
+    validate_navigation_context_text,
+    validate_text_input,
+)
 from .Chat_Deps import ChatConfigurationError
 from .provider_test_evidence import (
     ConfigurationFacet,
@@ -1180,3 +1185,82 @@ def configured_provider_is_ready(provider: str) -> bool:
             provider, load_cli_config_and_ensure_existence()
         ).ready
     )
+
+
+PROVIDER_API_KEY_MAX_LENGTH = 4096
+
+
+def validate_navigation_provider_key(value: object) -> str:
+    """Normalize and validate one provider key from navigation context.
+
+    Args:
+        value: External provider label or key.
+
+    Returns:
+        The normalized provider configuration key.
+
+    Raises:
+        ValueError: If the provider cannot be represented by the key contract.
+    """
+
+    raw_provider = validate_navigation_context_text(
+        value,
+        name="provider",
+        max_length=128,
+    )
+    provider = provider_config_key(raw_provider)
+    allowed = "abcdefghijklmnopqrstuvwxyz0123456789_"
+    if (
+        not provider
+        or not provider[0].isalnum()
+        or any(character not in allowed for character in provider)
+    ):
+        raise ValueError("provider is invalid")
+    return provider
+
+
+def provider_api_key_validation_error(
+    api_key: object,
+    max_length: int = PROVIDER_API_KEY_MAX_LENGTH,
+) -> Optional[str]:
+    """Return a validation error for a provider API key, or None when valid.
+
+    Args:
+        api_key: User-entered provider API key. Empty values are allowed so
+            optional local-key fields can represent "not configured."
+        max_length: Maximum allowed key length.
+
+    Returns:
+        A user-facing validation error, or None when the value is acceptable.
+    """
+    key = str(api_key or "")
+    if not key:
+        return None
+
+    sanitized = sanitize_string(key, max_length=max_length)
+    if (
+        sanitized != key
+        or any(char in key for char in "\r\n\t")
+        or not validate_text_input(key, max_length=max_length, allow_html=False)
+    ):
+        return f"API key must be a single-line value under {max_length} characters."
+
+    if not is_valid_provider_api_key(key):
+        return "API key looks like a placeholder; paste a real key."
+    return None
+
+
+def validate_provider_api_key(
+    api_key: object,
+    max_length: int = PROVIDER_API_KEY_MAX_LENGTH,
+) -> bool:
+    """Validate provider API-key input without leaking the value.
+
+    Args:
+        api_key: User-entered provider API key.
+        max_length: Maximum allowed key length.
+
+    Returns:
+        True when the value is empty or a usable single-line provider key.
+    """
+    return provider_api_key_validation_error(api_key, max_length=max_length) is None

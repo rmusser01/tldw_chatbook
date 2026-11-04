@@ -143,10 +143,6 @@ tldw_chatbook.Utils.db_upgrade_notice	tldw_chatbook.DB.private_sqlite	top
 tldw_chatbook.Utils.file_handlers	tldw_chatbook.Chat.attachment_core	lazy
 tldw_chatbook.Utils.file_handlers	tldw_chatbook.Event_Handlers.Chat_Events.chat_image_events	lazy
 tldw_chatbook.Utils.file_handlers	tldw_chatbook.Local_Ingestion.local_file_ingestion	lazy
-tldw_chatbook.Utils.input_validation	tldw_chatbook.Agents.agent_models	lazy
-tldw_chatbook.Utils.input_validation	tldw_chatbook.Chat.console_chat_models	lazy
-tldw_chatbook.Utils.input_validation	tldw_chatbook.Chat.provider_readiness	lazy
-tldw_chatbook.Utils.input_validation	tldw_chatbook.Terminal.contracts	lazy
 tldw_chatbook.Utils.launch_options	tldw_chatbook.Backup_Recovery.profile_paths	top
 tldw_chatbook.Utils.private_paths	tldw_chatbook.Backup_Recovery.storage_admission	lazy
 tldw_chatbook.Utils.sensitive_paths	tldw_chatbook.RAG_Search.config_profiles	lazy

@@ -16,10 +16,8 @@ from pydantic import (
     field_validator,
 )
 
-from ...Utils.input_validation import (
-    validate_navigation_context_text,
-    validate_navigation_provider_key,
-)
+from ...Chat.provider_readiness import validate_navigation_provider_key
+from ...Utils.input_validation import validate_navigation_context_text
 
 # Must cover every focus target a Chat settings draft snapshot may carry
 # (TASK-33003.10: a missing id failed the Configure credential handoff). The

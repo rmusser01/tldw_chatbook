@@ -57,7 +57,7 @@ from tldw_chatbook.Chat.console_session_settings import ConsoleSessionSettings
 from tldw_chatbook.Chat.provider_catalog import PROVIDER_DISPLAY_NAMES
 from tldw_chatbook.Constants import TAB_CHAT
 from tldw_chatbook.config import ConfigMutationResult
-from tldw_chatbook.Utils import input_validation as input_validation_module
+from tldw_chatbook.Chat import provider_readiness as provider_readiness_module
 from tldw_chatbook.UI.Screens.provider_model_resolution import (
     resolve_effective_provider_model,
 )
@@ -10765,8 +10765,8 @@ async def test_settings_provider_category_saves_and_clears_local_api_key(
 
 
 def test_settings_provider_api_key_validation_rejects_placeholder_values():
-    assert input_validation_module.validate_provider_api_key("<API_KEY_HERE>") is False
-    assert input_validation_module.validate_provider_api_key("sk-test-real-key") is True
+    assert provider_readiness_module.validate_provider_api_key("<API_KEY_HERE>") is False
+    assert provider_readiness_module.validate_provider_api_key("sk-test-real-key") is True
     assert SettingsScreen._validate_provider_api_key("<API_KEY_HERE>") == (
         "API key looks like a placeholder; paste a real key."
     )

@@ -17,7 +17,9 @@ from tldw_chatbook.Chat.console_chat_models import (
     ConsoleChatMessage,
     ConsoleMessageRole,
     ConsoleMessageStatus,
+    CONSOLE_FORK_TITLE_MAX_LENGTH as CONSOLE_FORK_TITLE_MAX_LENGTH,
     GenerationVariantMeta,
+    validate_console_fork_title,
     MessageAttachment,
 )
 from tldw_chatbook.Chat.attachment_core import MAX_ATTACHMENT_BYTES, MAX_IMAGE_BYTES
@@ -52,11 +54,7 @@ from tldw_chatbook.Chat.rag_scope import RagScope, ScopeItem
 from tldw_chatbook.Event_Handlers.Chat_Events.chat_image_events import (
     PAYLOAD_FORMAT_MIME,
 )
-from tldw_chatbook.Utils.input_validation import (
-    CONSOLE_FORK_TITLE_MAX_LENGTH as CONSOLE_FORK_TITLE_MAX_LENGTH,
-    escape_markup,
-    validate_console_fork_title,
-)
+from tldw_chatbook.Utils.input_validation import escape_markup
 
 from tldw_chatbook.Chat.console_prompt_mixins import MixinForkState
 

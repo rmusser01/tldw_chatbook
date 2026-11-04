@@ -11,10 +11,20 @@ import json
 import math
 import re
 from collections.abc import Callable, Mapping, Sequence
+from functools import cache
 from dataclasses import dataclass, field, replace
 from enum import Enum
 from types import MappingProxyType
-from typing import TYPE_CHECKING, Literal, Self, TypeAlias
+from typing import TYPE_CHECKING, Any, Literal, Self, TypeAlias
+
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    field_validator,
+    model_validator,
+)
+from pydantic import ValidationError as PydanticValidationError
 
 if TYPE_CHECKING:
     from tldw_chatbook.Chat.local_reasoning import ReasoningReplayPolicy
@@ -1474,3 +1484,101 @@ def contain_child_budget(child: RunBudget, max_wall_seconds: float) -> RunBudget
         max_wall_seconds=max(max_wall_seconds, 1.0),
         max_subagents=0,
     )
+
+
+@cache
+def _console_new_chat_input_model() -> type[BaseModel]:
+    """Build the creation-only schema lazily, outside application startup."""
+    from pydantic_core import PydanticCustomError
+
+    class ConsoleNewChatInput(BaseModel):
+        """Strict public fields; authority remains outside this projection."""
+
+        model_config = ConfigDict(
+            extra="ignore", frozen=True, strict=True, hide_input_in_errors=True
+        )
+
+        title: str = Field(default="", max_length=CHAT_CREATE_TITLE_MAX)
+        opening_prompt: str = Field(
+            default="", max_length=CHAT_CREATE_PAYLOAD_MAX, repr=False
+        )
+        instructions: str = Field(
+            default="", max_length=CHAT_CREATE_PAYLOAD_MAX, repr=False
+        )
+        destination: Literal["same_workspace", "casual"] = "same_workspace"
+        mode: Literal["draft", "start"] = "draft"
+        provider: str = ""
+        model: str = ""
+        preset: str = ""
+
+        @field_validator("destination", "mode", mode="before")
+        @classmethod
+        def _strict_choice_string(cls, value: object) -> str:
+            if not isinstance(value, str):
+                raise PydanticCustomError(
+                    "string_type", "Input should be a valid string"
+                )
+            return value
+
+        @field_validator("title")
+        @classmethod
+        def _trim_title(cls, value: str) -> str:
+            # Field length validation has already checked the untrimmed input.
+            return value.strip()
+
+        @model_validator(mode="after")
+        def _require_start_prompt(self) -> "ConsoleNewChatInput":
+            if self.mode == "start" and not self.opening_prompt.strip():
+                raise ValueError("start requires a nonblank opening_prompt")
+            return self
+
+    return ConsoleNewChatInput
+
+
+def validate_console_new_chat_arguments(arguments: Mapping[str, Any]) -> dict[str, str]:
+    """Validate public chat creation fields without retaining supplied authority.
+
+    Args:
+        arguments: Candidate title, opening_prompt, instructions, destination,
+            mode, provider, model, and preset. Strings are required without
+            coercion. Omitted fields default to empty strings, same_workspace,
+            and draft; unknown fields are discarded.
+
+    Returns:
+        The eight validated fields. Title is trimmed after its length check;
+        prompts, instructions, and routing strings retain their literal bytes.
+
+    Raises:
+        ValueError: With an input-free invalid_args or payload_too_large category
+            for invalid types, limits, choices, or a blank start prompt.
+    """
+    try:
+        return _console_new_chat_input_model().model_validate(arguments).model_dump()
+    except PydanticValidationError as exc:
+        errors = exc.errors(
+            include_input=False, include_context=False, include_url=False
+        )
+        # Preserve the original type-first contract even when an earlier field
+        # also exceeds a limit. Only known schema locations and error types
+        # participate; raw inputs, messages, and exception context never do.
+        for error in errors:
+            if error["type"] == "string_type":
+                raise ValueError(
+                    f"invalid_args: {error['loc'][0]} must be a string"
+                ) from None
+        for error in errors:
+            if error["type"] == "string_too_long":
+                if error["loc"] == ("title",):
+                    raise ValueError(
+                        f"payload_too_large: title exceeds {CHAT_CREATE_TITLE_MAX} characters"
+                    ) from None
+                raise ValueError(
+                    "payload_too_large: prompt/instructions exceed "
+                    f"{CHAT_CREATE_PAYLOAD_MAX} characters"
+                ) from None
+        for field in ("destination", "mode"):
+            if any(error["loc"] == (field,) for error in errors):
+                raise ValueError(f"invalid_args: {field}") from None
+        raise ValueError(
+            "invalid_args: start requires a nonblank opening_prompt"
+        ) from None

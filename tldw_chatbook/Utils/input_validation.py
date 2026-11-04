@@ -9,9 +9,8 @@ import re
 import time
 import unicodedata
 from collections.abc import Mapping
-from functools import cache
 from itertools import islice
-from typing import Annotated, Any, Literal, NoReturn, Optional, TypeVar, Union
+from typing import Annotated, Any, Literal, NoReturn, Optional, Union
 from urllib.parse import urlparse
 
 import regex
@@ -22,7 +21,6 @@ from pydantic import (
     TypeAdapter,
     ValidationInfo,
     field_validator,
-    model_validator,
 )
 from pydantic import (
     ValidationError as PydanticValidationError,
@@ -106,108 +104,6 @@ class ConsoleHookInput(BaseModel):
         return value
 
 
-@cache
-def _console_new_chat_input_model() -> type[BaseModel]:
-    """Build the creation-only schema lazily, outside application startup."""
-    from pydantic_core import PydanticCustomError
-
-    from ..Agents.agent_models import CHAT_CREATE_PAYLOAD_MAX, CHAT_CREATE_TITLE_MAX
-
-    class ConsoleNewChatInput(BaseModel):
-        """Strict public fields; authority remains outside this projection."""
-
-        model_config = ConfigDict(
-            extra="ignore", frozen=True, strict=True, hide_input_in_errors=True
-        )
-
-        title: str = Field(default="", max_length=CHAT_CREATE_TITLE_MAX)
-        opening_prompt: str = Field(
-            default="", max_length=CHAT_CREATE_PAYLOAD_MAX, repr=False
-        )
-        instructions: str = Field(
-            default="", max_length=CHAT_CREATE_PAYLOAD_MAX, repr=False
-        )
-        destination: Literal["same_workspace", "casual"] = "same_workspace"
-        mode: Literal["draft", "start"] = "draft"
-        provider: str = ""
-        model: str = ""
-        preset: str = ""
-
-        @field_validator("destination", "mode", mode="before")
-        @classmethod
-        def _strict_choice_string(cls, value: object) -> str:
-            if not isinstance(value, str):
-                raise PydanticCustomError(
-                    "string_type", "Input should be a valid string"
-                )
-            return value
-
-        @field_validator("title")
-        @classmethod
-        def _trim_title(cls, value: str) -> str:
-            # Field length validation has already checked the untrimmed input.
-            return value.strip()
-
-        @model_validator(mode="after")
-        def _require_start_prompt(self) -> "ConsoleNewChatInput":
-            if self.mode == "start" and not self.opening_prompt.strip():
-                raise ValueError("start requires a nonblank opening_prompt")
-            return self
-
-    return ConsoleNewChatInput
-
-
-def validate_console_new_chat_arguments(arguments: Mapping[str, Any]) -> dict[str, str]:
-    """Validate public chat creation fields without retaining supplied authority.
-
-    Args:
-        arguments: Candidate title, opening_prompt, instructions, destination,
-            mode, provider, model, and preset. Strings are required without
-            coercion. Omitted fields default to empty strings, same_workspace,
-            and draft; unknown fields are discarded.
-
-    Returns:
-        The eight validated fields. Title is trimmed after its length check;
-        prompts, instructions, and routing strings retain their literal bytes.
-
-    Raises:
-        ValueError: With an input-free invalid_args or payload_too_large category
-            for invalid types, limits, choices, or a blank start prompt.
-    """
-    from ..Agents.agent_models import CHAT_CREATE_PAYLOAD_MAX, CHAT_CREATE_TITLE_MAX
-
-    try:
-        return _console_new_chat_input_model().model_validate(arguments).model_dump()
-    except PydanticValidationError as exc:
-        errors = exc.errors(
-            include_input=False, include_context=False, include_url=False
-        )
-        # Preserve the original type-first contract even when an earlier field
-        # also exceeds a limit. Only known schema locations and error types
-        # participate; raw inputs, messages, and exception context never do.
-        for error in errors:
-            if error["type"] == "string_type":
-                raise ValueError(
-                    f"invalid_args: {error['loc'][0]} must be a string"
-                ) from None
-        for error in errors:
-            if error["type"] == "string_too_long":
-                if error["loc"] == ("title",):
-                    raise ValueError(
-                        f"payload_too_large: title exceeds {CHAT_CREATE_TITLE_MAX} characters"
-                    ) from None
-                raise ValueError(
-                    "payload_too_large: prompt/instructions exceed "
-                    f"{CHAT_CREATE_PAYLOAD_MAX} characters"
-                ) from None
-        for field in ("destination", "mode"):
-            if any(error["loc"] == (field,) for error in errors):
-                raise ValueError(f"invalid_args: {field}") from None
-        raise ValueError(
-            "invalid_args: start requires a nonblank opening_prompt"
-        ) from None
-
-
 _BATCH_TRANSCRIPTION_PROVIDER = TypeAdapter(
     Literal["default", "faster-whisper", "parakeet-onnx", "transcribe-cpp"]
 )
@@ -249,9 +145,7 @@ def validate_batch_transcription_provider(value: object) -> str:
     """
     return _BATCH_TRANSCRIPTION_PROVIDER.validate_python(value, strict=True)
 
-PROVIDER_API_KEY_MAX_LENGTH = 4096
 CONSOLE_DRAFT_MAX_LENGTH = 100_000
-CONSOLE_FORK_TITLE_MAX_LENGTH = 60
 CONSOLE_SWITCHER_QUERY_MAX_LENGTH = 512
 CONSOLE_CHARACTER_QUERY_MAX_LENGTH = 200
 WORKFLOW_SEARCH_MAX_LENGTH = 512
@@ -900,52 +794,6 @@ def _validate_strict_json_container(
     active_containers.add(marker)
 
 
-def derive_console_session_title(draft: str, *, max_length: int) -> str:
-    """Load the Console title helper lazily to keep validation imports acyclic."""
-    from tldw_chatbook.Chat.console_chat_models import (
-        derive_console_session_title as derive_title,
-    )
-
-    return derive_title(draft, max_length=max_length)
-
-
-def validate_console_fork_title(value: object) -> str:
-    """Return one normalized, bounded Console fork title.
-
-    Args:
-        value: Raw value received from the Console naming dialog.
-
-    Returns:
-        A nonblank title normalized by the shared Console title helper.
-
-    Raises:
-        ValueError: If ``value`` is not text or normalizes to blank.
-    """
-
-    if type(value) is not str:
-        raise ValueError("Fork title must be text.")
-    normalized = derive_console_session_title(
-        value,
-        max_length=CONSOLE_FORK_TITLE_MAX_LENGTH,
-    )
-    if not normalized:
-        raise ValueError("Fork title cannot be blank.")
-    return normalized
-
-
-class ConsoleForkTitleInput(BaseModel):
-    """Strict shared validation boundary for the Console fork naming dialog."""
-
-    model_config = ConfigDict(extra="forbid", frozen=True, strict=True)
-
-    title: str = Field(min_length=1, max_length=CONSOLE_FORK_TITLE_MAX_LENGTH)
-
-    @field_validator("title", mode="before")
-    @classmethod
-    def _normalize_title(cls, value: object) -> str:
-        return validate_console_fork_title(value)
-
-
 class ConsoleSwitcherQueryInput(BaseModel):
     """Strict shared boundary for the local Ctrl+K search query."""
 
@@ -1183,202 +1031,6 @@ class TerminalSessionNameInput(BaseModel):
         if "[" in normalized or "]" in normalized:
             raise ValueError("terminal session name must not contain markup")
         return normalized
-
-
-TerminalPasteViolation = Literal["too_large", "prohibited_control"]
-
-
-class TerminalPasteInput(BaseModel):
-    """Strict shared boundary for one terminal paste offer."""
-
-    model_config = ConfigDict(extra="forbid", frozen=True, strict=True)
-
-    text: str = Field(repr=False)
-    bracketed: bool
-
-    def classify(self) -> tuple[TerminalPasteViolation | None, bytes]:
-        """Classify paste content and return its replacement-encoded payload.
-
-        Returns:
-            A content-free violation category and payload bytes. The payload is
-            empty when a violation is present.
-        """
-        from ..Terminal.contracts import MAX_PASTE_BYTES
-
-        if len(self.text) > MAX_PASTE_BYTES:
-            return "too_large", b""
-        for character in self.text:
-            codepoint = ord(character)
-            if codepoint < 0x20 and character not in "\t\n\r":
-                return "prohibited_control", b""
-            if 0x7F <= codepoint <= 0x9F:
-                return "prohibited_control", b""
-        payload = self.text.encode("utf-8", "replace")
-        if len(payload) > MAX_PASTE_BYTES:
-            return "too_large", b""
-        return None, payload
-
-
-class TerminalKeyInput(BaseModel):
-    """Strict shared boundary for encoded terminal key bytes."""
-
-    model_config = ConfigDict(extra="forbid", frozen=True, strict=True)
-
-    data: bytes = Field(repr=False)
-
-
-class TerminalReplyInput(BaseModel):
-    """Strict shared boundary for code-owned terminal reply bytes."""
-
-    model_config = ConfigDict(extra="forbid", frozen=True, strict=True)
-
-    data: bytes = Field(repr=False)
-
-
-class TerminalOutputInput(BaseModel):
-    """Strict shared boundary for terminal backend output bytes."""
-
-    model_config = ConfigDict(extra="forbid", frozen=True, strict=True)
-
-    data: bytes = Field(repr=False)
-
-
-class TerminalResizeInput(BaseModel):
-    """Strict shared boundary for terminal resize dimensions."""
-
-    model_config = ConfigDict(extra="forbid", frozen=True, strict=True)
-
-    columns: int
-    rows: int
-
-    @field_validator("columns")
-    @classmethod
-    def _validate_columns(cls, value: int) -> int:
-        from ..Terminal.contracts import MAX_COLUMNS, MIN_COLUMNS
-
-        if not MIN_COLUMNS <= value <= MAX_COLUMNS:
-            raise ValueError("terminal columns are outside contract")
-        return value
-
-    @field_validator("rows")
-    @classmethod
-    def _validate_rows(cls, value: int) -> int:
-        from ..Terminal.contracts import MAX_ROWS, MIN_ROWS
-
-        if not MIN_ROWS <= value <= MAX_ROWS:
-            raise ValueError("terminal rows are outside contract")
-        return value
-
-
-_TerminalBytesInput = TypeVar(
-    "_TerminalBytesInput",
-    TerminalKeyInput,
-    TerminalReplyInput,
-    TerminalOutputInput,
-)
-
-
-def _validate_terminal_bytes_input(
-    model_type: type[_TerminalBytesInput],
-    data: object,
-    *,
-    label: str,
-) -> _TerminalBytesInput:
-    """Return one strict bytes model with a content-free type error."""
-    try:
-        return model_type.model_validate({"data": data})
-    except PydanticValidationError:
-        raise TypeError(f"terminal {label} data must be bytes") from None
-
-
-def validate_terminal_key_input(data: object) -> TerminalKeyInput:
-    """Validate encoded terminal key bytes through the shared model.
-
-    Args:
-        data: Candidate encoded key bytes.
-
-    Returns:
-        Strict validated key model.
-
-    Raises:
-        TypeError: If ``data`` is not immutable bytes.
-    """
-    return _validate_terminal_bytes_input(TerminalKeyInput, data, label="key")
-
-
-def validate_terminal_paste_input(
-    text: object, bracketed: object
-) -> TerminalPasteInput:
-    """Validate a terminal paste offer through the shared model.
-
-    Args:
-        text: Candidate paste text.
-        bracketed: Candidate bracketed-paste mode flag.
-
-    Returns:
-        Strict validated paste model.
-
-    Raises:
-        TypeError: If either value has the wrong type.
-    """
-    try:
-        return TerminalPasteInput.model_validate({"text": text, "bracketed": bracketed})
-    except PydanticValidationError:
-        raise TypeError("terminal paste values have invalid types") from None
-
-
-def validate_terminal_reply_input(data: object) -> TerminalReplyInput:
-    """Validate terminal reply bytes through the shared model.
-
-    Args:
-        data: Candidate terminal reply bytes.
-
-    Returns:
-        Strict validated reply model.
-
-    Raises:
-        TypeError: If ``data`` is not immutable bytes.
-    """
-    return _validate_terminal_bytes_input(TerminalReplyInput, data, label="reply")
-
-
-def validate_terminal_output_input(data: object) -> TerminalOutputInput:
-    """Validate terminal backend output through the shared model.
-
-    Args:
-        data: Candidate backend output bytes.
-
-    Returns:
-        Strict validated output model.
-
-    Raises:
-        TypeError: If ``data`` is not immutable bytes.
-    """
-    return _validate_terminal_bytes_input(TerminalOutputInput, data, label="output")
-
-
-def validate_terminal_resize_input(
-    columns: object, rows: object
-) -> TerminalResizeInput:
-    """Validate terminal dimensions through the shared model.
-
-    Args:
-        columns: Candidate terminal width.
-        rows: Candidate terminal height.
-
-    Returns:
-        Strict validated resize model.
-
-    Raises:
-        TypeError: If either dimension is not an integer.
-        ValueError: If either dimension is outside the terminal contract.
-    """
-    if type(columns) is not int or type(rows) is not int:
-        raise TypeError("terminal dimensions must be integers")
-    try:
-        return TerminalResizeInput.model_validate({"columns": columns, "rows": rows})
-    except PydanticValidationError:
-        raise ValueError("terminal dimensions are outside contract") from None
 
 
 class TerminalEnvironmentInput(BaseModel):
@@ -2127,86 +1779,6 @@ def validate_navigation_context_text(
     ):
         raise ValueError(f"{name} is invalid")
     return value
-
-
-def validate_navigation_provider_key(value: object) -> str:
-    """Normalize and validate one provider key from navigation context.
-
-    Args:
-        value: External provider label or key.
-
-    Returns:
-        The normalized provider configuration key.
-
-    Raises:
-        ValueError: If the provider cannot be represented by the key contract.
-    """
-
-    from tldw_chatbook.Chat.provider_readiness import provider_config_key
-
-    raw_provider = validate_navigation_context_text(
-        value,
-        name="provider",
-        max_length=128,
-    )
-    provider = provider_config_key(raw_provider)
-    allowed = "abcdefghijklmnopqrstuvwxyz0123456789_"
-    if (
-        not provider
-        or not provider[0].isalnum()
-        or any(character not in allowed for character in provider)
-    ):
-        raise ValueError("provider is invalid")
-    return provider
-
-
-def provider_api_key_validation_error(
-    api_key: object,
-    max_length: int = PROVIDER_API_KEY_MAX_LENGTH,
-) -> Optional[str]:
-    """Return a validation error for a provider API key, or None when valid.
-
-    Args:
-        api_key: User-entered provider API key. Empty values are allowed so
-            optional local-key fields can represent "not configured."
-        max_length: Maximum allowed key length.
-
-    Returns:
-        A user-facing validation error, or None when the value is acceptable.
-    """
-    key = str(api_key or "")
-    if not key:
-        return None
-
-    sanitized = sanitize_string(key, max_length=max_length)
-    if (
-        sanitized != key
-        or any(char in key for char in "\r\n\t")
-        or not validate_text_input(key, max_length=max_length, allow_html=False)
-    ):
-        return f"API key must be a single-line value under {max_length} characters."
-
-    from tldw_chatbook.Chat.provider_readiness import is_valid_provider_api_key
-
-    if not is_valid_provider_api_key(key):
-        return "API key looks like a placeholder; paste a real key."
-    return None
-
-
-def validate_provider_api_key(
-    api_key: object,
-    max_length: int = PROVIDER_API_KEY_MAX_LENGTH,
-) -> bool:
-    """Validate provider API-key input without leaking the value.
-
-    Args:
-        api_key: User-entered provider API key.
-        max_length: Maximum allowed key length.
-
-    Returns:
-        True when the value is empty or a usable single-line provider key.
-    """
-    return provider_api_key_validation_error(api_key, max_length=max_length) is None
 
 
 def validate_number_range(

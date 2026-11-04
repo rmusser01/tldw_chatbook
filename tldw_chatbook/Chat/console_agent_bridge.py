@@ -11907,7 +11907,7 @@ def validate_new_chat_arguments(arguments: Mapping[str, Any]) -> dict[str, str]:
             non-string fields, unsupported choices, exceeded limits, or a
             blank opening_prompt in start mode.
     """
-    from tldw_chatbook.Utils.input_validation import validate_console_new_chat_arguments
+    from tldw_chatbook.Agents.agent_models import validate_console_new_chat_arguments
 
     return validate_console_new_chat_arguments(arguments)
 

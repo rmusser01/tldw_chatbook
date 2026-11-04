@@ -2,16 +2,16 @@
 
 import pytest
 
+from tldw_chatbook.Agents import agent_models
 from tldw_chatbook.Agents.agent_models import (
     CHAT_CREATE_PAYLOAD_MAX,
     CHAT_CREATE_TITLE_MAX,
 )
 from tldw_chatbook.Chat.console_agent_bridge import validate_new_chat_arguments
-from tldw_chatbook.Utils import input_validation
 
 
 def _shared_validate(arguments):
-    validator = getattr(input_validation, "validate_console_new_chat_arguments", None)
+    validator = getattr(agent_models, "validate_console_new_chat_arguments", None)
     assert callable(validator), (
         "chat creation needs the shared Pydantic validation boundary"
     )
