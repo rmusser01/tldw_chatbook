@@ -80,6 +80,7 @@ Depends on TASK-38649 (in PR #3372).
   - New `test_a_chat_switch_restarts_the_refusal_backoff[before_the_read|during_the_read]` asserts the refused FULL's own delay: `[1.6]` in both.
   - The AC#1 backoff pin stays green.
   - Whole file: 14 passed in 4 runs.
+  - Covering set after the fix: 332 failed / 1083 passed. No new failure beyond nodes that also fail at base: `test_console_delete_confirmation_resets_when_selection_changes` failed 3 of 3 at base, and the delete/regenerate/H3 nodes listed above. Serial `Tests/Architecture`: 43 failed, the same 43 nodes as base, including the wave6 inventories; `test_screen_size_ratchet` passes.
 
 **Files.** `tldw_chatbook/UI/Console_Modules/config_sync.py`, `tldw_chatbook/UI/Screens/chat_screen.py`, `Tests/UI/test_console_projection_reads_off_loop.py`.
 <!-- SECTION:NOTES:END -->
