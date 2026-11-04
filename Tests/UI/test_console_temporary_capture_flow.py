@@ -38,9 +38,6 @@ from Tests.UI.test_console_received_intent_feedback import (
     _until,
 )
 from tldw_chatbook.Chat.console_chat_models import ConsoleRunStatus
-from tldw_chatbook.Chat.console_configuration_preparation import (
-    capture_runtime_configuration_owned,
-)
 from tldw_chatbook.Chat.console_turn_context import ConsoleTurnCustodyRequest
 from tldw_chatbook.Chat.console_turn_preparation import (
     ConsolePreparationPauseKind,
@@ -298,8 +295,9 @@ async def test_cancel_on_a_capture_pause_gives_back_the_message_and_its_image(
                     session_id=session_id,
                     draft=sent,
                     draft_revision=store.session_input_snapshot(session_id).draft_revision,
-                    configuration=await capture_runtime_configuration_owned(
-                        case.controller, session_id, require_current=lambda: None
+                    configuration=await case.controller.capture_turn_configuration_snapshot(
+                        session_id,
+                        context_provider=case.console._session._build_console_turn_execution_context,
                     ),
                     attachment_ids=(image.attachment_id,),
                 )

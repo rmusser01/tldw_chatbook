@@ -621,3 +621,97 @@ def test_borrowed_roster_rechecks_selected_native_owner_before_publication(
     finally:
         db.db_path = path
         db.close()
+
+
+def test_empty_native_censuses_defer_schema_but_real_receipts_remain_strict(tmp_path):
+    """A fresh codec needs the canonical schema only when a receipt exists."""
+    from Tests.Performance.test_app_startup_performance import _run_isolated_python
+
+    result = _run_isolated_python(
+        tmp_path,
+        """
+        import sqlite3
+        import sys
+        from Tests import network_guard, real_profile_guard
+        network_guard.install()
+        real_profile_guard.install()
+        authority_name = "tldw_chatbook.DB.mobile_import_authority"
+        assert authority_name not in sys.modules
+        from tldw_chatbook.DB import mobile_consolidation_receipts as codec
+        from tldw_chatbook.Backup_Recovery.models import _TraceReadBudget
+        assert authority_name not in sys.modules
+        for name in ("__path__", "_unknown_schema_port"):
+            try:
+                getattr(codec, name)
+            except AttributeError:
+                pass
+            else:
+                raise AssertionError("unknown receipt port accepted")
+        assert authority_name not in sys.modules
+        connection = sqlite3.connect(":memory:")
+        try:
+            connection.execute(
+                "CREATE TABLE mobile_consolidation_batches (operation_id TEXT, "
+                "source_fingerprint TEXT, batch_key TEXT, mapping_json TEXT, "
+                "committed_at TEXT)"
+            )
+            connection.execute("BEGIN")
+            assert codec._imported_chat_records(connection, _TraceReadBudget()) == {
+                "message": {}, "fleet_message": {}, "checkpoint": {}
+            }
+            assert codec._imported_note_ids(connection, _TraceReadBudget()) == set()
+            assert codec._imported_definition_ids(connection, _TraceReadBudget()) == set()
+            assert authority_name not in sys.modules
+            entry = {"version": 1, "kind": "identity", "data": {
+                "domain": "message", "original": "old", "mapped": "current"
+            }}
+            encoded = codec._encode_owner_receipt(
+                "chat", (entry,), source_manifest_sha256="a" * 64,
+                canonical_manifest_sha256="b" * 64, source_runs_version=None,
+                command_history_count=None, budget=_TraceReadBudget(),
+            )
+            assert authority_name in sys.modules
+            from tldw_chatbook.DB import mobile_import_authority as authority
+            for name in ("_TABLES", "_DOMAINS", "_COMPOSITES"):
+                assert getattr(codec, name) is getattr(authority, name)
+            from tldw_chatbook.DB.mobile_consolidation_receipts import _SPECS
+            assert codec._SPECS is _SPECS
+            connection.executemany(
+                "INSERT INTO mobile_consolidation_batches VALUES (?,?,?,?,?)",
+                (("operation", "c" * 64, key, raw, "2026-11-04T00:00:00Z")
+                 for key, raw in encoded),
+            )
+            _, children = codec._read_owner_receipt(
+                connection, "operation", "c" * 64, "chat", _TraceReadBudget()
+            )
+            assert list(children) == [entry]
+            assert codec._imported_chat_records(connection, _TraceReadBudget())[
+                "message"
+            ] == {"current": ("operation", "c" * 64)}
+            try:
+                codec._encode_owner_receipt(
+                    "chat", ({**entry, "data": {**entry["data"], "mapped": 1}},),
+                    source_manifest_sha256="a" * 64,
+                    canonical_manifest_sha256="b" * 64, source_runs_version=None,
+                    command_history_count=None, budget=_TraceReadBudget(),
+                )
+            except ValueError:
+                pass
+            else:
+                raise AssertionError("receipt scalar validation was lost")
+        finally:
+            connection.close()
+        assert real_profile_guard.take_violations() == []
+        assert network_guard.blocked_attempts() == ()
+        print("cold_census_and_strict_receipt_ok")
+        """,
+        extra_env={
+            "TLDW_CONFIG_PATH": str(tmp_path / "config" / "config.toml"),
+            "TLDW_TEST_CONFIG_ROOT": str(tmp_path),
+            "USERPROFILE": str(tmp_path / "home"),
+            "PYTHON_KEYRING_BACKEND": "keyring.backends.null.Keyring",
+            "HF_HUB_OFFLINE": "1",
+        },
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "cold_census_and_strict_receipt_ok" in result.stdout

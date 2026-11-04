@@ -210,3 +210,21 @@ and requests the existing idle refreeze. The domain warmup owner imports no UI.
 Config warnings load `app_config_notifications.py` only after detecting their
 existing failure/conflict condition. Notes startup outcome helpers live in
 `Notes/notes_sync_startup.py`; app wiring retains its lazy entry points.
+
+The ChaChaNotes FTS startup worker uses the database already selected on the
+app (`chachanotes_db`), just like the other app-owned startup repositories.
+An app with no selected database skips this speculative backfill; it does not
+construct the global database during shutdown. Cancellation polling and
+`operation_owned_connection` still govern the actual backfill and native handle
+retirement. PR3345's Windows teardown logs exposed the former second selection:
+a fresh global schema 0→87 migration and character seeding ran before the first
+FTS abort check, leaving executor custody uncertain under the unchanged 3-second join.
+The selected-owner regressions cover both absent and real selected databases;
+current-head Windows CI remains the platform qualification.
+
+The first-send warm-up includes Console runtime custody, saved-session hydration,
+scratch admission and migration-receipt decoding. Native send acceptance and
+settlement retain every imported-parent quarantine check. The already-resident
+`app_served` module and the served-child-only relay publisher are not separate
+first-send steps. The official UI-ready snapshot updater records the actual
+resident roster; its unchanged ceiling still rejects an over-budget refresh.

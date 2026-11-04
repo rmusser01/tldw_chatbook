@@ -651,6 +651,83 @@ async def test_replaced_incarnation_keeps_original_draft_until_explicit_choice(
     assert not case.commands
 
 
+async def test_flag_free_hint_preserves_one_exact_send_pointer_activation(
+    mobile_browser_case,
+):
+    case = mobile_browser_case
+    service, page = case.service, case.page
+    service.body = "Current transcript"
+    await case.open_chat("chat-a")
+    exact_text = "One Send across an ordinary update"
+    await page.locator("#chat-draft").fill(exact_text)
+    send = page.locator("#send-command")
+    await expect(send).to_be_enabled()
+    await send.scroll_into_view_if_needed()
+    box = await send.bounding_box()
+    assert box is not None
+    await page.mouse.move(box["x"] + box["width"] / 2, box["y"] + box["height"] / 2)
+    await page.evaluate("window.__mobileInputTrace = []")
+    gate = service.metadata_gate = asyncio.Event()
+    try:
+        await page.mouse.down()
+        try:
+            # A real metadata request proves the hint handler ran; its reply stays held.
+            async with page.expect_request(
+                lambda request: (
+                    "/api/v1/mobile/console/snapshot?" in request.url
+                    and "target=" in request.url
+                )
+            ):
+                await service.events_queue.put(
+                    MobileEvent("console.changed", "", {}, 2)
+                )
+            await expect(send).to_be_enabled()
+        finally:
+            await page.mouse.up()
+        await case.release_receipt("accepted")
+        await expect(page.locator("#command-status")).to_contain_text("send: accepted")
+        assert service.submitted.is_set() and not gate.is_set()
+        assert len(service.tickets) == len(service.commands) == 1
+        command = service.commands[0]
+        assert command["action"] == "send"
+        assert command["target"].model_dump(exclude_none=True) == {
+            "server_epoch": "epoch",
+            "console_id": "console",
+            "session_id": "chat-a",
+            "incarnation_id": "inc-a",
+            "run_id": "run-chat-a",
+            "turn_id": "turn-chat-a",
+        }
+        assert command["payload"] == {
+            "text": exact_text,
+            "expected_revisions": {key: 0 for key in REVISION_FIELDS},
+        }
+        trace = await page.evaluate("window.__mobileInputTrace")
+        assert (
+            len(
+                [
+                    row
+                    for row in trace
+                    if row["type"] == "click" and row["target"] == "send-command"
+                ]
+            )
+            == 1
+        )
+        assert (
+            len(
+                [
+                    row
+                    for row in trace
+                    if row["type"] == "submit" and row["target"] == "composer"
+                ]
+            )
+            == 1
+        )
+
+    finally:
+        gate.set()
+
+
 async def test_unrelated_attention_refresh_preserves_question_pointer_gesture(
     mobile_browser_case,
 ):
@@ -1079,8 +1156,10 @@ async def test_unequal_snapshot_sections_follow_exact_pairs_without_repeated_bod
     assert not any(call[0] == "bootstrap" for call in case.service.calls)
 
 
+@pytest.mark.parametrize("event_type", ["reset", "console.changed", "disconnect"])
 async def test_fresh_metadata_enables_exact_stop_during_changing_history_and_reset_reconfirms(
     mobile_browser_case,
+    event_type,
 ):
     case = mobile_browser_case
     page = case.page
@@ -1109,10 +1188,26 @@ async def test_fresh_metadata_enables_exact_stop_during_changing_history_and_res
         "physical exit not confirmed"
     )
     case.service.metadata_gate = asyncio.Event()
-    await case.service.events_queue.put(
-        MobileEvent("reset", "", {"reset_required": True}, 2)
-    )
-    await expect(page.locator("#stop-command")).to_be_disabled()
+    stop = page.locator("#stop-command")
+    await expect(stop).to_be_enabled()
+    await stop.scroll_into_view_if_needed()
+    box = await stop.bounding_box()
+    assert box is not None
+    await page.mouse.move(box["x"] + box["width"] / 2, box["y"] + box["height"] / 2)
+    await page.mouse.down()
+    try:
+        if event_type == "disconnect":
+            await case.service.events_queue.put(None)
+            await expect(page.locator("#connection-state")).to_contain_text(
+                "Disconnected"
+            )
+        else:
+            await case.service.events_queue.put(
+                MobileEvent(event_type, "", {"reset_required": True}, 2)
+            )
+        await expect(page.locator("#stop-command")).to_be_disabled()
+    finally:
+        await page.mouse.up()
     await page.locator("#chat-draft").fill("kept while target confirmation is delayed")
     # Replacement metadata cannot silently inherit the old incarnation draft.
     case.service.incarnation = "replacement"

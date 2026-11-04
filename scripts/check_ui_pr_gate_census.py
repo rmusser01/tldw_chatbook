@@ -1277,6 +1277,8 @@ MINIMUM_FILES = 2528
 # node at the tail. The floor is the measured entry count.
 MINIMUM_FILES = 2546
 
+# TASK-36769: the roster also includes both conversation-row P0 selectors.
+
 
 MINIMUM_FILES = 2038
 MINIMUM_FILES = 2045
