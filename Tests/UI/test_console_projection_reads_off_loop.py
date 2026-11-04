@@ -608,20 +608,25 @@ async def test_an_unparseable_config_leaves_an_idle_console_idle(request):
 def _refused_warm_up(monkeypatch, console):
     """Observe FULL's warm-up, replay timers and results (TASK-38696).
 
-    Returns ``(refusing, warms, armed, fulls)``: set ``refusing[0]`` to make
-    the presentation warm-up refuse, as a lasting storage pause or a replaced
-    reader does; otherwise it warms for real. ``warms`` holds the time of each
-    FULL warm-up, ``armed`` each coalesced-replay timer as ``(time, delay,
-    timer)``, and ``fulls`` each non-poll full sync's ``(end time, result)``.
+    Returns ``(refusing, warms, armed, fulls, during, delays)``: set
+    ``refusing[0]`` to make the presentation warm-up refuse, as a lasting
+    storage pause or a replaced reader does; otherwise it warms for real.
+    ``warms`` holds the time of each FULL warm-up, ``armed`` each
+    coalesced-replay timer as ``(time, delay, timer)``, ``fulls`` each
+    non-poll full sync's ``(end time, result)``, and ``delays`` each delay a
+    refused FULL asked for. Callables put in ``during`` run once, inside the
+    next FULL warm-up, before it answers.
     """
     loop = asyncio.get_running_loop()
-    refusing, warms, armed, fulls = [True], [], [], []
+    refusing, warms, armed, fulls, during, delays = [True], [], [], [], [], []
     real_warm = spend.ConsoleReadinessConfigProjection.warm
     prepare = config_sync.prepare_console_presentation_sync.__code__
 
     async def warm(projection):
         if sys._getframe(1).f_code is prepare:  # FULL's own warm-up only.
             warms.append(loop.time())
+            while during:
+                during.pop(0)()
             if refusing[0]:
                 return False
         return await real_warm(projection)
@@ -634,6 +639,12 @@ def _refused_warm_up(monkeypatch, console):
             armed.append((loop.time(), delay, timer))
         return timer
 
+    real_delay = config_sync.full_sync_replay_delay
+
+    def replay_delay(screen):
+        delays.append(real_delay(screen))
+        return delays[-1]
+
     real_full = console._sync_native_console_chat_ui
 
     async def full(*args, **kwargs):
@@ -645,7 +656,8 @@ def _refused_warm_up(monkeypatch, console):
     monkeypatch.setattr(spend.ConsoleReadinessConfigProjection, "warm", warm)
     monkeypatch.setattr(console, "set_timer", set_timer)
     monkeypatch.setattr(console, "_sync_native_console_chat_ui", full)
-    return refusing, warms, armed, fulls
+    monkeypatch.setattr(config_sync, "full_sync_replay_delay", replay_delay)
+    return refusing, warms, armed, fulls, during, delays
 
 
 async def _fresh_backoff(armed, minimum):
@@ -671,9 +683,9 @@ async def test_a_refused_full_sync_backs_off_and_renders_once_the_refusal_clears
     timer, so a lasting refusal (a storage pause, a replaced reader) paid a
     full sync and a config read about five times a second. The replay now
     backs off on TASK-38649's schedule (0.2 s doubling to 5 s). Once the
-    refusal clears, an immediate request (the readiness projection's own
-    retry asks this way) renders at once instead of waiting out the backoff,
-    and the schedule starts over.
+    refusal clears, the next explicit full sync (any of the Console's direct
+    callers, here a plain worker) renders at once instead of waiting out the
+    backoff, and the schedule starts over.
     """
     host, gateway, _timeline = build()
     async with host.run_test(size=(160, 45)) as pilot:
@@ -681,7 +693,9 @@ async def test_a_refused_full_sync_backs_off_and_renders_once_the_refusal_clears
             console, _composer = await ready_console(host, pilot, gateway)
             await pilot.pause(1.0)  # The mount's own leftover syncs settle.
             loop = asyncio.get_running_loop()
-            refusing, warms, armed, fulls = _refused_warm_up(monkeypatch, console)
+            refusing, warms, armed, fulls, _during, _delays = _refused_warm_up(
+                monkeypatch, console
+            )
             start = loop.time()
             console.run_worker(
                 console._sync_native_console_chat_ui(),
@@ -698,7 +712,11 @@ async def test_a_refused_full_sync_backs_off_and_renders_once_the_refusal_clears
             armed_at, delay, _timer = await _fresh_backoff(armed, 1.6)
             refusing[0] = False
             asked = loop.time()
-            console._request_console_control_bar_sync()  # The projection's retry.
+            console.run_worker(  # Any explicit full sync, as a user's action makes.
+                console._sync_native_console_chat_ui(),
+                exclusive=True,
+                group="console-sync",
+            )
             await until(lambda: any(ok for when, ok in fulls if when >= asked), timeout=30)
             rendered = next(when for when, ok in fulls if ok and when >= asked)
             assert rendered < armed_at + delay, (
@@ -721,6 +739,92 @@ async def test_a_refused_full_sync_backs_off_and_renders_once_the_refusal_clears
 
 @pytest.mark.asyncio
 @private_profile_test
+async def test_a_successful_readiness_read_during_a_backoff_renders_at_once(
+    request, monkeypatch
+):
+    """TASK-38696 review: the readiness projection's own successful read renders.
+
+    A read that lands a changed value publishes a full sync. During a refused
+    warm-up's backoff that full sync used to defer to the pending replay, so
+    the Console stayed unrendered until the backoff ran out (up to 5 s).
+    """
+    host, gateway, _timeline = build()
+    async with host.run_test(size=(160, 45)) as pilot:
+        with eager_tasks():
+            console, _composer = await ready_console(host, pilot, gateway)
+            await pilot.pause(1.0)
+            loop = asyncio.get_running_loop()
+            refusing, _warms, armed, fulls, _during, _delays = _refused_warm_up(
+                monkeypatch, console
+            )
+            console.run_worker(
+                console._sync_native_console_chat_ui(),
+                exclusive=True,
+                group="console-sync",
+            )
+            armed_at, delay, _timer = await _fresh_backoff(armed, 1.6)
+            refusing[0] = False
+            projection = spend.ConsoleReadinessConfigProjection.for_screen(console)
+            projection.key = None  # The read lands as a change, so it publishes.
+            asked = loop.time()
+            projection.run(lambda: None)  # The projection's own read starts.
+            await until(lambda: any(ok for when, ok in fulls if when >= asked), timeout=30)
+            rendered = next(when for when, ok in fulls if ok and when >= asked)
+            assert rendered < armed_at + delay, (
+                f"the published read rendered {rendered - asked:.2f} s after it "
+                f"started, after its pending {delay} s backoff had run out"
+            )
+
+
+@pytest.mark.asyncio
+@private_profile_test
+@pytest.mark.parametrize("when", ["before_the_read", "during_the_read"])
+async def test_a_chat_switch_restarts_the_refusal_backoff(request, monkeypatch, when):
+    """TASK-38696 review: only refusals of one unmoved owner count toward the backoff.
+
+    A switch to another chat moves the readiness owner. A refusal for the new
+    chat, or one whose owner moved while its warm-up read ran, is not the
+    lasting refusal the backoff is for: the next replay waits the fixed
+    0.2 s, not a doubled wait.
+    """
+    host, gateway, _timeline = build()
+    async with host.run_test(size=(160, 45)) as pilot:
+        with eager_tasks():
+            console, _composer = await ready_console(host, pilot, gateway)
+            await pilot.pause(1.0)
+            refusing, _warms, armed, _fulls, during, delays = _refused_warm_up(
+                monkeypatch, console
+            )
+            console.run_worker(
+                console._sync_native_console_chat_ui(),
+                exclusive=True,
+                group="console-sync",
+            )
+            await _fresh_backoff(armed, 0.8)
+            store = console._console_chat_store
+
+            def switch() -> None:
+                store.create_session(title="Other chat", activate=True)
+
+            seen = len(delays)
+            if when == "before_the_read":
+                switch()
+                console.run_worker(
+                    console._sync_native_console_chat_ui(),
+                    exclusive=True,
+                    group="console-sync",
+                )
+            else:
+                during.append(switch)  # The next replay's warm-up sees it.
+            await until(lambda: len(delays) > seen, timeout=30)
+            assert delays[seen] is True, (
+                f"a refusal after a chat switch backed off: {delays[seen:]}"
+            )
+            refusing[0] = False
+
+
+@pytest.mark.asyncio
+@private_profile_test
 async def test_a_full_sync_asked_for_during_a_pause_runs_once_after_resume(
     request, monkeypatch
 ):
@@ -737,7 +841,9 @@ async def test_a_full_sync_asked_for_during_a_pause_runs_once_after_resume(
             console, _composer = await ready_console(host, pilot, gateway)
             await pilot.pause(1.0)
             loop = asyncio.get_running_loop()
-            refusing, _warms, armed, _fulls = _refused_warm_up(monkeypatch, console)
+            refusing, _warms, armed, _fulls, _during, _delays = _refused_warm_up(
+                monkeypatch, console
+            )
             launched = []
             real_run = console._run_coalesced_control_bar_sync
 

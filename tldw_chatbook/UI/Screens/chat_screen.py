@@ -17728,6 +17728,7 @@ class ChatScreen(BaseAppScreen):
             or getattr(self, "_console_control_bar_replay_whole_sync", False)
         ):
             self._console_sync_requested = True
+            config_sync.cut_replay_backoff(self, held)  # TASK-38696
             return False
         if self._console_sync_in_progress:
             if _preparing_poll:

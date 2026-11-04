@@ -120,6 +120,7 @@ async def prepare_console_presentation_sync(screen: Any) -> bool:
     """
     from .console_spend_projection import (
         ConsoleReadinessConfigProjection,
+        _same_readiness_key,
         _screen_readiness_config,
         _standard_readiness_projections,
     )
@@ -129,16 +130,24 @@ async def prepare_console_presentation_sync(screen: Any) -> bool:
     ):
         return False
     value = _screen_readiness_config(screen)
-    warmed = True
+    warmed, key = True, None
     if value and screen._console_config_snapshot_is_disk_loaded(value):
         projection = ConsoleReadinessConfigProjection.for_screen(screen)
         if (
             type(projection) is ConsoleReadinessConfigProjection
             and projection in _standard_readiness_projections
         ):
+            key = projection._key()
             warmed = await projection.warm()
-    # TASK-38696: consecutive refusals set the replay's backoff.
+            if not warmed and not _same_readiness_key(key, projection._key()):
+                key = None  # A chat or model switch moved it mid-read.
+    # TASK-38696: the replay backs off only while one unmoved owner keeps
+    # refusing; a refusal for a switched chat or model starts over.
+    previous = getattr(screen, "_console_warm_refused_key", None)
     refusals = getattr(screen, "_console_warm_refusals", 0)
+    if not _same_readiness_key(key, previous):
+        refusals = 0
+    screen._console_warm_refused_key = None if warmed else key
     screen._console_warm_refusals = 0 if warmed else refusals + 1
     return warmed
 
@@ -162,6 +171,29 @@ def full_sync_replay_delay(screen: Any) -> bool | float:
     if refusals <= 1 or getattr(screen, "_console_sync_maintenance_paused", False):
         return True
     return min(RETRY_FIRST_DELAY * 2 ** (refusals - 1), RETRY_MAX_DELAY)
+
+
+def cut_replay_backoff(screen: Any, held: bool) -> None:
+    """Let an explicit FULL that defers to a warm-up backoff run that replay now.
+
+    TASK-38696 review: about 90 direct callers ask for a full sync (a user's
+    switch, a publication of a fresh readiness read); deferring them to the
+    backoff stalled the Console for up to 5 s after a refusal cleared. The
+    run poll's own ticks do not cut: they come every 0.2 s, so they would
+    bring the 0.2 s replay loop back for any refusal that overlaps a run, and
+    a refused FULL renders nothing anyway. A fixed 0.2 s replay (a first
+    refusal, a pause, a cold core-state push) stays as it was.
+
+    Args:
+        screen: The Console screen whose full sync was just deferred.
+        held: Whether a send's durable commit deferred it instead.
+    """
+    if held or _POLL_SYNC.get() or getattr(
+        screen, "_console_sync_maintenance_paused", False
+    ):
+        return
+    if getattr(screen, "_console_replay_backoff_timer", None) is not None:
+        screen._request_console_control_bar_sync()
 
 
 def request_control_bar_sync(screen: Any, delayed: bool | float) -> None:

@@ -5,7 +5,7 @@ status: Done
 assignee:
   - '@claude'
 created_date: 2026-11-03 11:40
-updated_date: 2026-11-04 01:34
+updated_date: 2026-11-04 04:27
 labels:
 - follow-up
 - performance
@@ -68,6 +68,18 @@ Depends on TASK-38649 (in PR #3372).
 - `test_a_full_sync_asked_for_during_a_pause_runs_once_after_resume` (AC#2 resume): base has no backoff to delay it; with the fix but without the resume's immediate request (temporary edit) it is red, "the resume's sync waited 0.80 s, out to its pending 0.8 s backoff"; green with the fix, exactly one replay after resume.
 - `test_a_closing_console_arms_no_replay_and_counts_no_refusal` (AC#2 closing): an invariant base keeps; red with the torn-down check removed (temporary edit), "a closing Console armed a replay".
 - Whole file: 11 passed (`-n 4`). The 44 files that name the replay/coalescing symbols (plus the cards file): 332 failed / 1080 passed on the branch against 328 failed at base, and the difference is nodes that also flake at base. `test_console_pending_attachment_stash.py::test_fresh_mounted_screen_settles_late_h3_outcome_in_dom_and_controls` fails 2-3 of 3 at base and 1-3 of 3 here, always with its own recorder's `TypeError: ... unexpected keyword argument 'delayed'`. Three `test_console_native_chat_flow.py` nodes (`more_delete_double_activation`, `original_attempt_delete`, `rejected_regenerate`) failed in 5 of 9 node runs at base and 4 of 9 here. Most of the 328 base failures are in files that no lane runs and that fail locally.
+
+**Review fix (2026-11-04, after a9fd04edbf).**
+- **Problem.** While the replay flag was set, every explicit full sync deferred to the pending backoff. About 90 direct callers do this, including a user's switch and the readiness projection's publication of a fresh read. So after a refusal cleared, the Console could stay unrendered for up to 5 s. The projection's own retry backs off on the same doubling, so it rarely cut in first. The first promptness pin missed this because it made the immediate request by hand.
+- **Fix.** `config_sync.cut_replay_backoff` is called from the full sync's deferral gate (one line in `chat_screen.py`, now 24,601 lines, at its row; 741 methods). When only the replay deferred an explicit, non-poll full sync and a backoff timer is pending (0.4 s or more), it makes an immediate control-bar request, which runs the replay now. The first 0.2 s replay, maintenance pauses, durable-commit holds and the cold core-state replay are unchanged.
+- **Decision: the run poll's ticks do not cut.** They come every 0.2 s while a run is live, so cutting would bring back the 0.2 s replay loop (a full sync and a config read each time) for any refusal that overlaps a run. A refused FULL also renders nothing either way: preparation refuses before the transcript projection. Painting resumes on the first explicit full sync, the projection's own retry, or the backoff timer, whichever comes first.
+- **Decision: a chat or model switch restarts the count.** The count now covers only consecutive refusals of one unmoved readiness owner key (session, its settings revision, workspace, config identity). A refusal for another chat or model, or one whose key moved during its own warm-up read, starts over at the fixed 0.2 s. TASK-38649's projection retry likewise restarts its delay for a new key.
+- **Evidence** (red at a9fd04edbf, green after):
+  - The promptness part of the first test now uses a plain full-sync worker: "rendered 5.04 s after it was asked, after its pending 5.0 s backoff had run out".
+  - New `test_a_successful_readiness_read_during_a_backoff_renders_at_once` (the projection's real read publishes): "3.23 s ... pending 3.2 s backoff".
+  - New `test_a_chat_switch_restarts_the_refusal_backoff[before_the_read|during_the_read]` asserts the refused FULL's own delay: `[1.6]` in both.
+  - The AC#1 backoff pin stays green.
+  - Whole file: 14 passed in 4 runs.
 
 **Files.** `tldw_chatbook/UI/Console_Modules/config_sync.py`, `tldw_chatbook/UI/Screens/chat_screen.py`, `Tests/UI/test_console_projection_reads_off_loop.py`.
 <!-- SECTION:NOTES:END -->
