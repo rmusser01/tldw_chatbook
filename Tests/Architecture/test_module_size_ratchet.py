@@ -892,7 +892,7 @@ _BUDGETS: dict[str, int] = {
     "tldw_chatbook/Character_Chat/Character_Chat_Lib.py": 4775,
     # 2026-11-04, TASK-38686 (owner size waiver 2026-10-31): +1, the comment
     # on update_prompt_by_id's IMMEDIATE transaction.
-    "tldw_chatbook/DB/Prompts_DB.py": 4671,
+    "tldw_chatbook/DB/Prompts_DB.py": 4674,  # 2026-11-03: +3 shared store-error import (TASK-36949.5)
     "tldw_chatbook/Chat/citation_trace_repository.py": 4717,
     # 2026-10-29, TASK-34000.28/.40 polish-1a (PR #3259), rebased onto dev
     # 38c9d2edcf: 4,646 -> 4,736 (+90: the filter fast path, kept draft and
