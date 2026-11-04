@@ -3533,13 +3533,37 @@ async def test_file_notes_root_row_refits_when_its_deferred_fit_beats_layout(
             return painted == state or painted.startswith(f"{state} · ")
 
         painted = await _settled_root_row(pilot, workspace, shows_state)
-        assert status.content_region.width < before
+        linked_width = status.content_region.width
+        assert linked_width < before
         assert shows_state(painted), painted
         # It settles: a refit cannot resize a 1fr, one-row status.
         settled_fits = fits
         for _ in range(10):
             await pilot.pause()
         assert fits == settled_fits
+
+        # Unlink: the prompt's auto width. Relink with the fit before layout:
+        # it fits the prompt's width, and layout restores the linked width.
+        workspace._root = None
+        workspace._update_root_surface()
+        await _wait_until(
+            pilot,
+            lambda: status.content_region.width != linked_width,
+            "the unlinked prompt kept the linked width",
+        )
+        # Reading ``region`` can arrange the map before the screen's own
+        # layout posts Resize. One pause ends in that layout; the next waits
+        # until the status has handled its Resize.
+        await pilot.pause()
+        await pilot.pause()
+        monkeypatch.setattr(workspace, "call_after_refresh", before_layout)
+        workspace._root = root
+        workspace._update_root_surface()
+        monkeypatch.setattr(workspace, "call_after_refresh", after_refresh)
+        assert status.content_region.width != linked_width
+        painted = await _settled_root_row(pilot, workspace, shows_state)
+        assert status.content_region.width == linked_width
+        assert shows_state(painted), painted
 
     replica.close()
 

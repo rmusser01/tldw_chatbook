@@ -5,7 +5,7 @@ status: Done
 assignee:
 - '@claude'
 created_date: 2026-11-04 00:43
-updated_date: 2026-11-04 01:44
+updated_date: 2026-11-04 03:20
 labels:
 - library
 - file-notes
@@ -61,3 +61,8 @@ Textual reports an exception raised during layout as an app error, and the app e
 - **Tests.** `_settled_root_row` can now wait, with `_wait_until`'s default deadline, for the painted state its caller asserts, and the 40-column test uses that.
   - New: `test_file_notes_root_row_refits_when_its_deferred_fit_beats_layout`. It runs every deferred fit before layout and counts fits to show the count stays the same over 10 idle frames. Red on ae0f24ecef in both params ("not fitted to its width").
   - Negative control: with the Offline-only fallback removed, the 40-column test's `[Offline-True]` case went red.
+
+**Review fold 1 (2026-11-04).** `_FolderRowStatus.on_resize` now records the width before the `-empty-root` check and skips only the refit. Otherwise this sequence went wrong: unlink (the prompt's auto width, unrecorded), then relink with the fit before layout. Layout restored the old width, which equalled the stale recorded width, so nothing fitted again.
+- Forcing that sequence in `test_file_notes_root_row_refits_when_its_deferred_fit_beats_layout` exposed a second, pre-existing bug. "Change…", written over "Choose folder…", kept the old 18-cell box (`Button.label` does not re-lay out; lessons-textual TASK-34000.22), so the relinked status was 2 cells ("..").
+- `_show_root_row_button` now lays out a relabelled button and its row, and both "Choose folder…"/"Change…" writes go through it.
+- **Red evidence.** With only the old `on_resize` order restored (label fix kept), the relink step was red in both params, 2 of 2 runs. Before the label fix, the new order was red in 4 of 4 runs (the status stuck at 2 cells). With both fixes: 4 of 4 runs green, and 70 root/folder/wait tests in the workspace and riders files pass.

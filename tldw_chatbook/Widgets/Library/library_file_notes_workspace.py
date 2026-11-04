@@ -374,7 +374,8 @@ class _FolderRowStatus(Static):
     layout pass. When it ran before the layout that seats "Review…", it fitted
     the old width and nothing fitted again. Layout sets this width (``1fr``,
     one row, no wrap), so a refit cannot resize it. The prompt's
-    ``-empty-root`` auto width is never fitted.
+    ``-empty-root`` auto width is never fitted, but it is still recorded: a
+    relink back to the old width must refit.
     """
 
     def __init__(self, *args: Any, refit: Callable[[], None], **kwargs: Any) -> None:
@@ -383,10 +384,11 @@ class _FolderRowStatus(Static):
         self._seen_width = -1
 
     def on_resize(self, event: Resize) -> None:
-        if event.size.width == self._seen_width or self.has_class("-empty-root"):
+        if event.size.width == self._seen_width:
             return
         self._seen_width = event.size.width
-        self._refit()
+        if not self.has_class("-empty-root"):
+            self._refit()
 
 
 class FileNotesEditorTextArea(TextArea):
@@ -3245,6 +3247,11 @@ class LibraryFileNotesWorkspace(Vertical):
             return
         if label is not None and str(button.label) != label:
             button.label = label
+            # A label write repaints without re-layout (lessons-textual,
+            # TASK-34000.22): "Change…" kept "Choose folder…"'s 18 cells.
+            button.refresh(layout=True)
+            if button.parent is not None:
+                button.parent.refresh(layout=True)
         button.display = visible
 
     def _structural_wait_line(self, wait: StructuralWait) -> str:
@@ -3428,8 +3435,9 @@ class LibraryFileNotesWorkspace(Vertical):
             status.set_class(False, "-warning")
             status.set_class(False, "-offline")
             details.display = False
-            choose.label = "Choose folder…"
-            choose.display = True
+            self._show_root_row_button(
+                "#file-notes-choose-root", True, label="Choose folder…"
+            )
             self._render_status_channels()
             if reason:
                 self.call_after_refresh(self._fit_root_status)
@@ -3464,8 +3472,7 @@ class LibraryFileNotesWorkspace(Vertical):
         status.tooltip = Text(detail)
         status.update(self._root_status_summary)
         details.display = True
-        choose.label = "Change…"
-        choose.display = True
+        self._show_root_row_button("#file-notes-choose-root", True, label="Change…")
         self._render_status_channels()
         self._apply_responsive_layout(self.size.width)
         self.call_after_refresh(self._fit_root_status)

@@ -785,7 +785,10 @@ _BUDGETS: dict[str, int] = {
     # publishes nothing.
     # TASK-38710 fold, 2026-11-04 (same waiver): 9640 -> 9663 (+23). The
     # folder-row status fits again when layout changes its width.
-    "tldw_chatbook/Widgets/Library/library_file_notes_workspace.py": 9663,
+    # TASK-38710 review fold, 2026-11-04 (same waiver): 9663 -> 9670
+    # (+7). The unlinked width is recorded, and a relabelled
+    # folder-row button lays out again.
+    "tldw_chatbook/Widgets/Library/library_file_notes_workspace.py": 9670,
     "tldw_chatbook/DB/Client_Media_DB_v2.py": 9429,  # 2026-11-02: +3 shared store-error import (TASK-36949.5)
     # TASK-37270: bounded template reads moved to local_reasoning_metadata.
     # 2026-10-29, TASK-33622.6 (owner decision: raise with a dated comment):
