@@ -520,6 +520,9 @@ def _run_module_main() -> None:
 
     print_db_upgrade_notice_if_pending()
 
+    from tldw_chatbook.Utils.optional_deps import apply_config_eager_flags
+
+    apply_config_eager_flags()  # config-driven eager dependency check, before the UI loop
     # Create instance with early logging flag
     app_instance = TldwCli()
     apply_launch_options(app_instance, _main_args)  # --focus, --no-splash
@@ -733,6 +736,9 @@ def main_cli_runner() -> object:
 
     print_db_upgrade_notice_if_pending()
 
+    from .Utils.optional_deps import apply_config_eager_flags
+
+    apply_config_eager_flags()  # config-driven eager dependency check, before the UI loop
     # Create instance with early logging flag
     app_instance = TldwCli()
     apply_launch_options(app_instance, args)  # --focus, --no-splash

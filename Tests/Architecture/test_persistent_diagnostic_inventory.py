@@ -166,7 +166,7 @@ REVIEWED_METADATA_ONLY_DIAGNOSTICS = {
         "Could not open the ChaChaNotes database": ("type(e).__name__",),
         "Notes keyword sub-leg failed": ("type(e).__name__",),
         "Conversations keyword sub-leg failed": ("type(e).__name__",),
-        "Query truncated": ("len(query)", "MAX_QUERY_LENGTH"),
+        "Query truncated": ("len(query)", "_rag_const('MAX_QUERY_LENGTH')"),
         "Unknown fts_match_construction; using conservative fallback": (),
     },
     "tldw_chatbook/UI/Console_Modules/fleet.py": {

@@ -47,7 +47,7 @@ except ImportError:
     np = None
 import psutil
 
-from tldw_chatbook.config import load_settings
+from tldw_chatbook.config import get_cli_setting
 from tldw_chatbook.Utils.fts5_match_forms import (
     FTS5_STOPWORDS,
     build_and_match_expression,
@@ -92,42 +92,47 @@ from .health_check import init_health_checker, get_health_status
 from .data_models import IndexingResult
 
 
-# Load constants from config with fallbacks
-_config = load_settings()
-_rag_service_config = _config.get("rag", {}).get("service", {})
+# Settings from ``[rag.service]``, read when used so a config reload takes
+# effect without a restart. Name -> (config key, default). Import-time reads
+# froze these; the names stay importable through ``__getattr__`` below.
+_RAG_SERVICE_CONSTANTS = {
+    "DEFAULT_EMBEDDING_DIM": ("default_embedding_dim", 768),
+    "KEYWORD_SEARCH_SCORE": ("keyword_search_score", 0.8),
+    "MAX_CITATION_MATCHES": ("max_citation_matches", 3),
+    "CITATION_CONTEXT_CHARS": ("citation_context_chars", 50),
+    "CITATION_SPAN_MERGE_GAP_CHARS": ("citation_span_merge_gap_chars", 3),
+    "PARTIAL_CITATION_CONFIDENCE": ("partial_citation_confidence", 0.8),
+    "KEYWORD_BATCH_SIZE": ("keyword_batch_size", 10),
+    "FTS5_CONNECTION_POOL_SIZE": ("fts5_connection_pool_size", 3),
+    "CACHE_TIMEOUT_SECONDS": ("cache_timeout_seconds", 3600.0),
+    "MAX_QUERY_LENGTH": ("max_query_length", 1000),
+    "DEFAULT_FTS5_LIMIT": ("default_fts5_limit", 100),
+    "MAX_FTS5_LIMIT": ("max_fts5_limit", 1000),
+    "SEARCH_RESULT_MULTIPLIER": ("search_result_multiplier", 2),
+    "MIN_SYSTEM_MEMORY_MB": ("min_system_memory_mb", 500),
+    "MEMORY_PRESSURE_REDUCTION": ("memory_pressure_reduction", 0.2),
+    "MAX_DOCUMENT_SIZE_MB": ("max_document_size_mb", 10),
+    "EMBEDDING_IDLE_TIMEOUT": ("embedding_idle_timeout", 900),
+    "CHUNK_PROGRESS_INTERVAL": ("chunk_progress_interval", 10),
+    "EMBEDDING_PROGRESS_INTERVAL": ("embedding_progress_interval", 5),
+    "DEFAULT_BATCH_SIZE": ("batch_size", 32),
+}
 
-# Constants from config
-DEFAULT_EMBEDDING_DIM = _rag_service_config.get("default_embedding_dim", 768)
-KEYWORD_SEARCH_SCORE = _rag_service_config.get("keyword_search_score", 0.8)
-MAX_CITATION_MATCHES = _rag_service_config.get("max_citation_matches", 3)
-CITATION_CONTEXT_CHARS = _rag_service_config.get("citation_context_chars", 50)
-# Two keyword spans this close together, with nothing alphanumeric between
-# them, are one piece of evidence (e.g. the two tokens of a contiguous
-# "spindle runout" match) rather than two separate citations.
-CITATION_SPAN_MERGE_GAP_CHARS = _rag_service_config.get(
-    "citation_span_merge_gap_chars", 3
-)
-# Confidence for a span that evidences only SOME of the query's tokens --
-# a real match, but weaker evidence than a span covering the whole query.
-PARTIAL_CITATION_CONFIDENCE = _rag_service_config.get(
-    "partial_citation_confidence", 0.8
-)
-KEYWORD_BATCH_SIZE = _rag_service_config.get("keyword_batch_size", 10)
-FTS5_CONNECTION_POOL_SIZE = _rag_service_config.get("fts5_connection_pool_size", 3)
-CACHE_TIMEOUT_SECONDS = _rag_service_config.get("cache_timeout_seconds", 3600.0)
-MAX_QUERY_LENGTH = _rag_service_config.get("max_query_length", 1000)
-DEFAULT_FTS5_LIMIT = _rag_service_config.get("default_fts5_limit", 100)
-MAX_FTS5_LIMIT = _rag_service_config.get("max_fts5_limit", 1000)
-SEARCH_RESULT_MULTIPLIER = _rag_service_config.get("search_result_multiplier", 2)
-MIN_SYSTEM_MEMORY_MB = _rag_service_config.get("min_system_memory_mb", 500)
-MEMORY_PRESSURE_REDUCTION = _rag_service_config.get("memory_pressure_reduction", 0.2)
-MAX_DOCUMENT_SIZE_MB = _rag_service_config.get("max_document_size_mb", 10)
-EMBEDDING_IDLE_TIMEOUT = _rag_service_config.get("embedding_idle_timeout", 900)
-CHUNK_PROGRESS_INTERVAL = _rag_service_config.get("chunk_progress_interval", 10)
-EMBEDDING_PROGRESS_INTERVAL = _rag_service_config.get("embedding_progress_interval", 5)
-DEFAULT_BATCH_SIZE = _rag_service_config.get(
-    "batch_size", 32
-)  # This one matches the rag.embedding.batch_size
+
+def _rag_const(name: str):
+    """Current value of a ``[rag.service]`` constant (read when used)."""
+    key, default = _RAG_SERVICE_CONSTANTS[name]
+    # ``load_settings()`` has no top-level "rag" key (the import-time read of
+    # ``.get("rag")`` always fell back to the defaults); ``[rag.service]`` is
+    # read the way ``active_config`` reads it.
+    return (get_cli_setting("rag", "service", {}) or {}).get(key, default)
+
+
+def __getattr__(name: str):
+    if name in _RAG_SERVICE_CONSTANTS:
+        return _rag_const(name)
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+
 
 # Review-B B1: presentation bounds for the conversations keyword sub-leg's
 # content assembly (``_chacha_conversations_fts``). The sub-leg renders every
@@ -915,7 +920,7 @@ class RAGService:
 
         # Document size limit (configurable)
         max_doc_size = getattr(
-            self.config, "max_document_size", MAX_DOCUMENT_SIZE_MB * 1024 * 1024
+            self.config, "max_document_size", _rag_const("MAX_DOCUMENT_SIZE_MB") * 1024 * 1024
         )
         if len(content) > max_doc_size:
             raise ValueError(
@@ -1075,7 +1080,7 @@ class RAGService:
         total = len(documents)
 
         for i, doc in enumerate(documents):
-            if show_progress and i % CHUNK_PROGRESS_INTERVAL == 0 and i > 0:
+            if show_progress and i % _rag_const("CHUNK_PROGRESS_INTERVAL") == 0 and i > 0:
                 logger.info(f"Indexing progress: {i}/{total} documents")
 
             try:
@@ -1613,7 +1618,7 @@ class RAGService:
                 self.vector_store.search_with_citations,
                 query_embedding,
                 query,
-                top_k * SEARCH_RESULT_MULTIPLIER,
+                top_k * _rag_const("SEARCH_RESULT_MULTIPLIER"),
                 score_threshold,
                 metadata_allowlist=metadata_allowlist,
             )
@@ -1621,7 +1626,7 @@ class RAGService:
             results = await asyncio.to_thread(
                 self.vector_store.search,
                 query_embedding,
-                top_k * SEARCH_RESULT_MULTIPLIER,
+                top_k * _rag_const("SEARCH_RESULT_MULTIPLIER"),
                 metadata_allowlist=metadata_allowlist,
             )
             # Apply score threshold for basic results
@@ -1975,7 +1980,7 @@ class RAGService:
             pool_size = getattr(
                 self.config.search,
                 "fts5_connection_pool_size",
-                FTS5_CONNECTION_POOL_SIZE,
+                _rag_const("FTS5_CONNECTION_POOL_SIZE"),
             )
             pool = get_connection_pool(str(db_path), pool_size=pool_size)
 
@@ -1991,7 +1996,7 @@ class RAGService:
                         self._perform_fts5_search,
                         pool,
                         query,
-                        top_k * SEARCH_RESULT_MULTIPLIER,  # Get extra for filtering
+                        top_k * _rag_const("SEARCH_RESULT_MULTIPLIER"),  # Get extra for filtering
                         allowed_ids,
                     )
                     break  # Success, exit retry loop
@@ -2090,7 +2095,7 @@ class RAGService:
                 self._chacha_fts_rows,
                 db_path,
                 query,
-                top_k * SEARCH_RESULT_MULTIPLIER,  # Get extra for filtering
+                top_k * _rag_const("SEARCH_RESULT_MULTIPLIER"),  # Get extra for filtering
                 selected,
                 allowed_ids,
             )
@@ -2277,8 +2282,8 @@ class RAGService:
             return rows
 
         if not isinstance(limit, int) or limit < 1:
-            limit = DEFAULT_FTS5_LIMIT
-        limit = min(limit, MAX_FTS5_LIMIT)
+            limit = _rag_const("DEFAULT_FTS5_LIMIT")
+        limit = min(limit, _rag_const("MAX_FTS5_LIMIT"))
 
         try:
             conn = self._connect_chacha_readonly(db_path)
@@ -2597,7 +2602,7 @@ class RAGService:
                 self._prompts_fts_rows,
                 db_path,
                 query,
-                top_k * SEARCH_RESULT_MULTIPLIER,  # Get extra for filtering
+                top_k * _rag_const("SEARCH_RESULT_MULTIPLIER"),  # Get extra for filtering
                 allowed_ids,
             )
             if not items:
@@ -2743,8 +2748,8 @@ class RAGService:
             return []
 
         if not isinstance(limit, int) or limit < 1:
-            limit = DEFAULT_FTS5_LIMIT
-        limit = min(limit, MAX_FTS5_LIMIT)
+            limit = _rag_const("DEFAULT_FTS5_LIMIT")
+        limit = min(limit, _rag_const("MAX_FTS5_LIMIT"))
 
         try:
             conn = self._connect_prompts_readonly(db_path)
@@ -3077,15 +3082,15 @@ class RAGService:
             if dim is None:
                 # Default if we can't determine
                 logger.warning(
-                    f"Could not determine embedding dimension, defaulting to {DEFAULT_EMBEDDING_DIM}"
+                    f"Could not determine embedding dimension, defaulting to {_rag_const("DEFAULT_EMBEDDING_DIM")}"
                 )
-                return DEFAULT_EMBEDDING_DIM
+                return _rag_const("DEFAULT_EMBEDDING_DIM")
             return dim
         except Exception as e:
             logger.warning(
-                f"Error getting embedding dimension: {e}, defaulting to {DEFAULT_EMBEDDING_DIM}"
+                f"Error getting embedding dimension: {e}, defaulting to {_rag_const("DEFAULT_EMBEDDING_DIM")}"
             )
-            return DEFAULT_EMBEDDING_DIM
+            return _rag_const("DEFAULT_EMBEDDING_DIM")
 
     @timeit("rag_chunking_operation")
     async def _chunk_document(
@@ -3253,7 +3258,7 @@ class RAGService:
 
             base_result = SearchResult(
                 id=f"{source_type}_{item['id']}",
-                score=KEYWORD_SEARCH_SCORE,  # FTS5 doesn't provide normalized scores
+                score=_rag_const("KEYWORD_SEARCH_SCORE"),  # FTS5 doesn't provide normalized scores
                 document=content,
                 metadata=self._keyword_row_metadata(item, content, source_type),
             )
@@ -3287,7 +3292,7 @@ class RAGService:
         results = []
 
         # Process in batches for efficiency
-        batch_size = KEYWORD_BATCH_SIZE
+        batch_size = _rag_const("KEYWORD_BATCH_SIZE")
 
         for i in range(0, len(search_results), batch_size):
             batch = search_results[i : i + batch_size]
@@ -3389,14 +3394,15 @@ class RAGService:
         # single-token case (and the old whole-query lookup) produced.
         selected: List[Tuple[int, int, frozenset]] = []
         covered_tokens: set = set()
+        max_matches = _rag_const("MAX_CITATION_MATCHES")
         for span in spans:
-            if len(selected) >= MAX_CITATION_MATCHES:
+            if len(selected) >= max_matches:
                 break
             if span[2] - covered_tokens:
                 selected.append(span)
                 covered_tokens |= span[2]
         for span in spans:
-            if len(selected) >= MAX_CITATION_MATCHES:
+            if len(selected) >= max_matches:
                 break
             if span not in selected:
                 selected.append(span)
@@ -3404,9 +3410,11 @@ class RAGService:
 
         citations = []
         all_token_indices = frozenset(range(len(tokens)))
+        context_chars = _rag_const("CITATION_CONTEXT_CHARS")
+        partial_confidence = _rag_const("PARTIAL_CITATION_CONFIDENCE")
         for start, end, span_tokens in selected:
-            start_context = max(0, start - CITATION_CONTEXT_CHARS)
-            end_context = min(len(full_content), end + CITATION_CONTEXT_CHARS)
+            start_context = max(0, start - context_chars)
+            end_context = min(len(full_content), end + context_chars)
             whole_query = span_tokens == all_token_indices
 
             citation = Citation(
@@ -3419,7 +3427,7 @@ class RAGService:
                 # A span covering every query token is the exact match the
                 # pre-implicit-AND builder used to emit; a span covering
                 # only some of them is real but weaker evidence.
-                confidence=1.0 if whole_query else PARTIAL_CITATION_CONFIDENCE,
+                confidence=1.0 if whole_query else partial_confidence,
                 match_type=CitationType.EXACT if whole_query else CitationType.KEYWORD,
                 metadata={
                     "query": query,
@@ -3449,7 +3457,7 @@ class RAGService:
 
         return SearchResultWithCitations(
             id=f"{source_type}_{item['id']}",
-            score=KEYWORD_SEARCH_SCORE,
+            score=_rag_const("KEYWORD_SEARCH_SCORE"),
             document=content,
             metadata=base_metadata,
             citations=citations,
@@ -3495,7 +3503,7 @@ class RAGService:
         # HERE rather than in the shared tokenizer: it is this service's
         # configured limit, and the Library's four-seam path -- the other
         # consumer since TASK-17755 -- validates against its own.
-        return fts5_query_tokens(query[:MAX_QUERY_LENGTH])
+        return fts5_query_tokens(query[:_rag_const("MAX_QUERY_LENGTH")])
 
     def _escape_fts5_query(self, query: str) -> str:
         """
@@ -3719,9 +3727,9 @@ class RAGService:
             query has no FTS5-searchable tokens (empty, whitespace-only,
             or all punctuation).
         """
-        if query and len(query) > MAX_QUERY_LENGTH:
+        if query and len(query) > _rag_const("MAX_QUERY_LENGTH"):
             logger.warning(
-                f"Query truncated from {len(query)} to {MAX_QUERY_LENGTH} characters"
+                f"Query truncated from {len(query)} to {_rag_const("MAX_QUERY_LENGTH")} characters"
             )
 
         # TASK-19558 moved the JOIN, not just the escape, to
@@ -4193,12 +4201,13 @@ class RAGService:
             return []
 
         merged: List[Tuple[int, int, set]] = []
+        merge_gap = _rag_const("CITATION_SPAN_MERGE_GAP_CHARS")
         for start, end, index in sorted(raw_spans):
             if merged:
                 previous_start, previous_end, covered = merged[-1]
                 gap = content[previous_end:start] if start > previous_end else ""
                 if start <= previous_end or (
-                    len(gap) <= CITATION_SPAN_MERGE_GAP_CHARS
+                    len(gap) <= merge_gap
                     and not any(ch.isalnum() for ch in gap)
                 ):
                     # Overlapping, or separated only by a little
@@ -4248,8 +4257,8 @@ class RAGService:
 
         # Validate limit parameter
         if not isinstance(limit, int) or limit < 1:
-            limit = DEFAULT_FTS5_LIMIT  # Safe default
-        limit = min(limit, MAX_FTS5_LIMIT)  # Cap maximum results
+            limit = _rag_const("DEFAULT_FTS5_LIMIT")  # Safe default
+        limit = min(limit, _rag_const("MAX_FTS5_LIMIT"))  # Cap maximum results
 
         # Note: `Media` has no `tags` column and `media_fts` only indexes
         # (title, content) -- see Client_Media_DB_v2's `_FTS_TABLES_SQL` and

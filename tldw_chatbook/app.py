@@ -685,9 +685,6 @@ _HOME_EVAL_RUN_QUERY_LIMIT = 50
 # Functions:
 
 
-# --- Global variable for config ---
-APP_CONFIG = load_settings()
-
 # Early logging configuration removed - handled by configure_application_logging() during app initialization
 
 

@@ -1166,6 +1166,9 @@ class TldwMCPServer:
 
 async def main() -> int:
     """Main entry point for running the MCP server."""
+    from ..Utils.optional_deps import apply_config_eager_flags
+
+    apply_config_eager_flags()
     return await TldwMCPServer().run("stdio")
 
 

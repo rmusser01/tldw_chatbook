@@ -170,3 +170,33 @@ def test_external_edit_is_picked_up_at_the_shipped_throttle(tmp_path):
         if "external_edit_swallowed" not in str(failure):
             raise RuntimeError("the isolated profile run failed otherwise") from failure
         raise ExternalEditSwallowed(str(failure)[-300:]) from None
+
+
+def test_import_time_settings_are_read_when_used_after_reload(tmp_path, monkeypatch):
+    """TASK-36945.3 AC#2: rag_service / Document_Processing_Lib settings that
+    used to freeze at import follow a config reload without a restart."""
+    from tldw_chatbook.Local_Ingestion import Document_Processing_Lib as doc_lib
+    from tldw_chatbook.RAG_Search.simplified import rag_service
+
+    target = tmp_path / "config.toml"
+    select_config_source(
+        monkeypatch, target, globals(), rag_service.__dict__, doc_lib.__dict__
+    )
+    monkeypatch.setattr(config_module, "_CONFIG_STAT_THROTTLE_SECONDS", 3600.0)
+    _clear()
+
+    target.write_text(
+        "[rag.service]\nmax_citation_matches = 5\n"
+        "[media_processing.document]\nchunk_size = 111\n"
+    )
+    config_module.load_cli_config_and_ensure_existence(force_reload=True)
+    assert rag_service.MAX_CITATION_MATCHES == 5
+    assert doc_lib._document_chunk_defaults()["max_size"] == 111
+
+    target.write_text(
+        "[rag.service]\nmax_citation_matches = 7\n"
+        "[media_processing.document]\nchunk_size = 222\n"
+    )
+    config_module.load_cli_config_and_ensure_existence(force_reload=True)
+    assert rag_service.MAX_CITATION_MATCHES == 7
+    assert doc_lib._document_chunk_defaults()["max_size"] == 222

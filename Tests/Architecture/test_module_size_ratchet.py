@@ -132,7 +132,9 @@ _BUDGETS: dict[str, int] = {
     # the row): 5687 -> 5689 (+2) -- the subscriptions backfill starter checks
     # activation against the wired DB's path instead of a checked config read
     # on the UI loop.
-    "tldw_chatbook/app.py": 5689,
+    # 2026-11-03, TASK-36945.3: 5689 -> 5686 (-3) -- the eager-dependency flag
+    # moved from on_mount to the entry points.
+    "tldw_chatbook/app.py": 5686,
     # TASK-34406.5: unchanged startup/footer wiring, born governed.
     "tldw_chatbook/app_startup.py": 176,
     # TASK-34406.7: app-owned served control and relay bodies, born governed.
@@ -886,7 +888,8 @@ _BUDGETS: dict[str, int] = {
     # 2026-10-31 PR3259: exact integrated measurement under the user size-limit waiver.
     "tldw_chatbook/Widgets/Library/library_notes_canvas.py": 4738,
     "tldw_chatbook/Web_Scraping/WebSearch_APIs.py": 4611,
-    "tldw_chatbook/RAG_Search/simplified/rag_service.py": 4507,
+    # 2026-11-03 TASK-36945.3: +9, [rag.service] constants read when used.
+    "tldw_chatbook/RAG_Search/simplified/rag_service.py": 4516,
     # owner decision 2026-10-04 (expand limits): TASK-34100.4 +2 (remote
     # Whisper never sends an enc: key).
     "tldw_chatbook/Local_Ingestion/transcription_service.py": 4496,

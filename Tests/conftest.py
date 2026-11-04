@@ -1385,6 +1385,22 @@ def isolate_test_environment(monkeypatch, tmp_path, request):
             "test_sensitive_llm_logging.py",
 
 
+            # TASK-36945.3: rag_service / Document_Processing_Lib now read
+            # their settings through get_cli_setting WHEN USED (not at
+            # import), so these suites hit the guarded config loader under the
+            # per-test redirect (same admission signature as
+            # test_hosted_chat.py above). They fake the engine/FTS5 helpers,
+            # not the config getters, so they keep the bootstrap profile.
+            "test_prf_probe.py",
+            "test_fusion_decision_rule.py",
+            "test_scoped_search_single_embed.py",
+            "test_metadata_filter_matching.py",
+            "test_semantic_search_offloaded.py",
+            "test_ingest_parse_worker.py",
+            "test_fts5_match_construction.py",
+            "test_fts5_query_escaping.py",
+
+
             # The mocked local-service connection test drives chat_api_call
             # for koboldcpp, whose handler reads settings through the guarded
             # config loader under the per-test redirect (same admission
