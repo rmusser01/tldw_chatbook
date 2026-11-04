@@ -5,7 +5,7 @@ status: Done
 assignee:
 - '@claude'
 created_date: 2026-11-03 11:40
-updated_date: '2026-11-04 00:49'
+updated_date: '2026-11-04 02:28'
 labels:
 - follow-up
 - tests
@@ -78,4 +78,13 @@ Evidence (all through run.sh at load 9-19 on 18 CPUs):
 - `Tests/CI`, `-n 4`: 1187 passed, 1 skipped.
 
 Files: the six test files above, `Tests/CI/test_json_loads_patch_guard.py`, `backlog/docs/lessons-testing-evidence.md` (incident added to the existing json.loads entry).
+
+Review fix (2026-11-04):
+- The guard now also recognises:
+  - a `json` bound by `from pkg import json [as j]`;
+  - `target=`, `name=` and `attribute=` keywords;
+  - `patch.multiple(json | "json" | "<pkg>.json", loads=...)`. The text pre-filter now matches `loads=`.
+- The 9 new parametrized cases were red on the old scanner and are green now.
+- A planted `mock.patch.multiple(json, loads=...)` in a temporary `Tests/Utils/` file made the full scan fail at its line; the file was then deleted.
+- The docstring lists what a syntax scan cannot see: rebinding, `sys.modules`, `importlib`, `setitem` on `json.__dict__`/`vars(json)`, and an attribute name held in a variable.
 
