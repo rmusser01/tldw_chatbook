@@ -36,7 +36,7 @@ One run of both files with `-n 4` gave 57 failed and 77 passed: 52 in the comman
 **Snapshot file (5 failed, none `RecoveryRequired`).** The file is already module-marked `bootstrap_profile` (:40), so the marker half of TASK-33621.36 AC#4 is done. That AC still owns these reds:
 - `test_console_submit_exception_retains_exact_recovery_and_keeps_app_alive`: `assert 'precious draft' == ''`;
 - `test_console_fresh_profile_first_send_resolves_real_session_not_sentinel`: an awaited `asyncio.Event` is never set;
-- `test_console_armed_unknown_mouse_send_snapshots_before_skill_await`: refused with `['Draft changed; Send again.']`, which is the received path's live-vs-stash check (TASK-38689); PR #3376 isolates the test from it;
+- `test_console_armed_unknown_mouse_send_snapshots_before_skill_await`: was refused with `['Draft changed; Send again.']` by the received path's live-vs-stash check. TASK-38689 (owner decision: TASK-340 wins) removed that refusal and renamed the test `test_console_armed_unknown_tokenless_send_snapshots_before_skill_await`; it passes, so it is no longer one of this file's reds;
 - `test_console_enter_schedules_visible_send_without_a_watchdog`: `assert None is not None`;
 - `test_console_deleted_owner_refuses_and_keeps_captured_inputs`: expected the warning "Console session is closed." and got "coroutine raised StopIteration".
 

@@ -2692,8 +2692,8 @@ class ConsoleComposerBar(Horizontal):
         # of the old CSS-classes-only subdual -- a hover tooltip was the sole
         # pre-click affordance, and an empty draft did not even get that.
         # The keyboard path does not go through this flag's event gating:
-        # `on_key`'s Enter branch detects the disabled button and dispatches
-        # `handle_console_send_message` directly, so the blocked-attempt
+        # `on_key`'s Enter branch ignores the disabled flag and hands the send
+        # to `request_visible_send` (TASK-33620.15), so the blocked-attempt
         # feedback (toast + transcript system row) survives the flag.
         send_button.disabled = not send_ready
         if raw_presentation:

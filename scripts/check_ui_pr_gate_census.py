@@ -761,6 +761,12 @@ MINIMUM_FILES = 1353
 # TASK-36527 (2026-11-03): append eight File Notes git-panel quit/removal
 # node ids at the tail: 1337 + 8.
 MINIMUM_FILES = 1361
+# TASK-38689 (2026-11-03): append the spoken-send capture node at the tail.
+# The floor is the measured entry count.
+MINIMUM_FILES = 1362
+# TASK-38689 review (2026-11-03): append the spent-capture spoken-send node
+# at the tail. The floor is the measured entry count.
+MINIMUM_FILES = 1363
 
 
 def read_census(path: Path) -> list[str]:

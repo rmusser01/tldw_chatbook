@@ -513,7 +513,10 @@ statistics tools.
   a send behind a **Blocked** turn (which is refused) skip this step.
 - Console stays responsive while it prepares the turn. Enter sends exactly
   what the composer held when you pressed it; anything you type afterwards
-  stays in the composer for your next message. An Enter on an empty composer
+  stays in the composer for your next message. A spoken "Console, send."
+  works the same way: it sends what the composer held when the send started,
+  and text you type while it starts stays for your next message instead of
+  stopping the send. An Enter on an empty composer
   sends nothing but a staged image, even if you start typing right after it.
   Pressing Enter again while the first message is being prepared never sends
   it twice. A bare second Enter (nothing new typed, or the same image still
