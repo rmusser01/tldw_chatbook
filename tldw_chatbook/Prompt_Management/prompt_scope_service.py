@@ -2089,12 +2089,27 @@ class PromptScopeService:
                     payload, for_update=action == "update"
                 )
             validate_prompt_request_size(payload, capabilities)
-        if action == "create":
-            response = await self._maybe_await(service.create_prompt(payload))
+        from functools import partial
+
+        from tldw_chatbook.Backup_Recovery.participants import (
+            run_finite_local_worker,
+        )
+
+        write = (
+            partial(service.create_prompt, payload)
+            if action == "create"
+            else partial(service.update_prompt, prompt_identifier, payload)
+        )
+        if normalized_mode == PromptBackend.LOCAL:
+            # A contended local write waits up to SQLite's busy timeout
+            # (TASK-38686): run it off the event loop, as read_mixin_records does.
+            def complete_write() -> Any:
+                result = write()
+                return asyncio.run(result) if inspect.isawaitable(result) else result
+
+            response = await asyncio.to_thread(run_finite_local_worker, complete_write)
         else:
-            response = await self._maybe_await(
-                service.update_prompt(prompt_identifier, payload)
-            )
+            response = await self._maybe_await(write())
         return self._normalize_prompt_record(response, backend=normalized_mode.value)
 
     async def delete_prompt(

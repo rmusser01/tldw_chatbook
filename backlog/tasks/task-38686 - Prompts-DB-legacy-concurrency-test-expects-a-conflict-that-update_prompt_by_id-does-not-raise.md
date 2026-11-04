@@ -5,7 +5,7 @@ status: Done
 assignee:
 - '@claude'
 created_date: 2026-11-03 11:40
-updated_date: '2026-11-04 01:55'
+updated_date: '2026-11-04 02:56'
 labels:
 - follow-up
 - tests
@@ -35,6 +35,7 @@ Found in the round-5 wave of the 2026-10-23 burn-down, where it was reported fai
 - [x] #2 The test fails when update_prompt_by_id's version comparison is removed (shown under a temporary source edit)
 - [x] #3 The test runs on a PR lane, or the task notes record why it does not
 - [x] #4 Overlapping `add_prompt(overwrite=True)` saves of one prompt both land, one after the other (the later overwrite wins, version goes up by 2), never a raw lock error or a lost-race conflict.
+- [x] #5 The Console mix-in Save runs its prompt write off the event loop, so a contended save cannot freeze the UI
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -45,13 +46,15 @@ Found in the round-5 wave of the 2026-10-23 burn-down, where it was reported fai
 4. AC#2: remove the `expected_version` comparison under a temporary source edit and show the test red. AC#3: record the lane outcome. This brief allows workflow edits only for TASK-38699.
 5. Owner decision (coordinator, 2026-11-04): option (b). `update_prompt_by_id` begins its transaction IMMEDIATE, so an overlapping save waits for the write lock and then fails the version check. Add an overlapping-saves test for AC#1, and show it red with the BEGIN deferred again.
 6. AC#4 (coordinator, 2026-11-04): `add_prompt` opens `transaction(immediate=serialize_create or overwrite)`. Add a deterministic overlapping-overwrite test, red with the deferred transaction, and rerun the probe for the overwrite path.
+7. AC#5 (review, 2026-11-04): IMMEDIATE turns an instant SQLITE_BUSY into a wait of up to the 10 s busy timeout, and the Console mix-in Save ran its write on the event loop. Move `PromptScopeService.save_prompt`'s local create/update to a worker thread (`asyncio.to_thread` + `run_finite_local_worker`, as `read_mixin_records` does). Pin it with a thread-recording spy that is red before the move.
 
 ## Implementation Notes
 
-Three commits:
+Four commits:
 1. The test rewrite.
 2. `update_prompt_by_id` begins IMMEDIATE, after the owner chose option (b).
 3. The same fix for `add_prompt(overwrite=True)` (AC#4).
+4. Review fixes: the wait claims below are corrected, and the Console mix-in Save's write moves off the event loop (AC#5).
 
 **The test was wrong.** `update_prompt_by_id` has compared versions only when the caller passes `expected_version`. That parameter was added in 2026-08 for the Library prompt editors (`prompt_save_ack.py`, `prompt_history.py`, `library_prompts_controller.py`). Without it, an update is last-writer-wins by design. The test dates from 2025-06 (7ebdcc0731) and never passed `expected_version`. Its "conflict" could only come from SQLite lock errors, which it counted as conflicts.
 
@@ -73,7 +76,8 @@ The SQLITE_BUSY case happens when the loser's read-to-write upgrade meets the wi
 
 **Nested callers.** `transaction()` issues no BEGIN when the connection is already in a transaction. So the one in-file nested caller, `restore_prompt_history_entry` (inside its own IMMEDIATE transaction), is unchanged, and no caller can be deadlocked by a second BEGIN.
 - Every other caller (`update_prompt`, `Prompts_Interop.apply_server_prompt_version`, `local_prompt_service.update_prompt`, `prompt_scope_service.update_prompt`) calls it with no outer transaction.
-- A same-thread writer on a second connection already waited at the deferred UPDATE for that same lock. IMMEDIATE moves the wait to BEGIN; it adds no new one.
+- **IMMEDIATE adds a bounded wait** where the deferred path failed at once. Under the deferred BEGIN, the SELECT-then-UPDATE upgrade skipped the busy handler and failed with SQLITE_BUSY immediately: the review's probe failed in 0.00 s. IMMEDIATE waits for the write lock instead, for at most the 10 s busy timeout; in the same probe it waited 2.08 s and then succeeded.
+- The review found one caller on the event loop: the Console mix-in Save (`ConsolePromptsModal._save_mixin_editor` → `_ConsolePromptMixinsFlow.save` → `PromptScopeService.save_prompt` → `LocalPromptService.update_prompt` → `update_prompt_by_id`). AC#5 moves that write off the event loop, so a contended save cannot freeze the UI.
 - The 517 to `ConflictError` mapping is still reachable inside a caller's own deferred transaction.
 
 **`test_busy_snapshot_from_a_second_writer_is_reported_as_conflict`** (`test_prompts_db_pytest.py`) ran the second writer's whole save from a trace callback at the first writer's UPDATE. Under IMMEDIATE, the first writer holds the lock by then, so that same-thread injection can only wait. The test now runs the update inside a caller's deferred transaction, where the race and its "version race" `ConflictError` still exist.
@@ -96,7 +100,7 @@ The SQLITE_BUSY case happens when the loser's read-to-write upgrade meets the wi
 - The fix: `add_prompt` opens `self.transaction(immediate=serialize_create or overwrite)`. The probe then gave two successes in order, version +2, in 300 of 300 rounds at load 19-21, with no lock errors and no conflicts. The update probe rerun in the same session gave `('conflict', 'success')` in 300 of 300 rounds.
 - "Both land in order" is the right outcome here: an overwrite replaces whatever is stored, as two overwrites that do not overlap always did. The AC wording was corrected on that basis.
 - `overwrite=False` creates keep `serialize_create`'s mode. So deferred creates still map a 517 race to `ConflictError`, and `test_busy_snapshot_during_create_is_reported_as_conflict` is unchanged.
-- Every `overwrite=True` path writes, so IMMEDIATE only moves the wait for the write lock from the UPDATE or INSERT to BEGIN. Nested callers are unaffected (`transaction()` issues no BEGIN inside an open transaction).
+- Every `overwrite=True` path writes. IMMEDIATE turns a contended overwrite's immediate SQLITE_BUSY into a bounded wait for the write lock, at most the 10 s busy timeout. Nested callers are unaffected, because `transaction()` issues no BEGIN inside an open transaction.
 - Test: `test_overlapping_overwrites_of_one_prompt_both_land_in_order`, with the hold-open harness now shared as `_overlap_two_saves`. The harness's catch is narrowed to `(DatabaseError, InputError)`, which removes a blind `except Exception` from the file.
   - 10 of 10 runs alone at load 19-20.
   - Red with the deferred transaction (4 of 4): `{2: DatabaseError("Failed to process prompt 'Overwrite Overlap': database is locked"), 1: 'success'} != {1: 'success', 2: 'success'}`.
@@ -107,6 +111,23 @@ The SQLITE_BUSY case happens when the loser's read-to-write upgrade meets the wi
   - The only difference is the two new overlap tests, both red on dev's source by design. The branch's failing tests are identical to the previous commit's run.
 - Architecture ratchets (serial): 256 passed. `Prompts_DB.py` line count is unchanged (4671).
 
+**AC#5: the Console mix-in Save no longer writes on the event loop.**
+- **The change.** `PromptScopeService.save_prompt` now runs a local create or update in a worker thread: `asyncio.to_thread(run_finite_local_worker, ...)`, the pattern `read_mixin_records` and `count_prompts` already use. A coroutine-returning local service is completed with `asyncio.run` inside that worker, as `count_prompts` does. Server saves are unchanged.
+- **Thread safety.**
+  - `PromptsDatabase` keeps one connection per thread (`threading.local`, `check_same_thread=False`), so the worker opens its own.
+  - `run_finite_local_worker` retires that connection when the worker ends.
+  - The suites that build the scope service over `:memory:` databases (`test_prompt_mixins.py`, `test_prompt_scope_service.py`, `test_prompt_chatbook_scope_service.py`, `test_prompts_db_retained_history.py`) pass: 292 passed.
+- **Test.** `Tests/UI/test_console_prompt_mixins.py::test_mixin_save_writes_the_prompt_off_the_event_loop` drives the mounted mix-in editor's Save twice and records `threading.get_ident()` in a spy on `update_prompt_by_id`.
+  - The first save lands. The editor closes and focus goes to `console-prompts-close`, the focus measured while the save still ran on the loop.
+  - For the second save the spy raises `ExpectedVersionConflictError` inside the worker. The status shows the same "Library changes were not saved ..." copy, and the edited name is kept.
+  - Before the change it was red only on the thread assertion: `assert 8461753728 not in [8461753728, 8461753728]`. After it: 5 of 5.
+- **Mix-in and Library prompt UI files** (`-n 4`, same command, 24 UI files plus `Tests/Chat/test_console_prompt_mixin_*.py` and `Tests/Library/test_library_prompts_seam.py`):
+  - Before the change: 291 failed, 723 passed. After: 289 failed, 726 passed (including the new test).
+  - Both runs are dominated by the local RecoveryRequired setup trap (TASK-38111), 271 nodes.
+  - The failing sets differ only by load flakes. Three nodes failed only before the change, and one only after: `test_collection_mutation_close_requests_dispatch_without_queuing[close_sources1-create]`, which passed 27 of 27 in three runs alone afterwards.
+- **`Tests/Prompts_DB` + `Tests/Prompt_Management`** (`-n 4`): 53 failed, 1123 passed, 3 errors both with and without the change, the same nodes, all red on dev.
+- `Tests/CI`: 1198 passed, 1 skipped. Architecture ratchets (serial): 256 passed.
+
 **AC#3: not on a PR lane, by this brief's rule.** The only Prompts_DB lane target is `test_prompt_export_mixins.py` in `derived-artifacts.yml`, and this burn-down allowed workflow edits only for TASK-38699. The legacy file is green (72 tests, about 5 s), so it could be gated whole (proposed follow-up).
 
-Files: `tldw_chatbook/DB/Prompts_DB.py`, `Tests/Prompts_DB/test_prompts_db_legacy.py`, `Tests/Prompts_DB/test_prompts_db_pytest.py`, `Tests/Architecture/test_module_size_ratchet.py`, `backlog/docs/lessons-testing-evidence.md`.
+Files: `tldw_chatbook/DB/Prompts_DB.py`, `tldw_chatbook/Prompt_Management/prompt_scope_service.py`, `Tests/Prompts_DB/test_prompts_db_legacy.py`, `Tests/Prompts_DB/test_prompts_db_pytest.py`, `Tests/UI/test_console_prompt_mixins.py`, `Tests/Architecture/test_module_size_ratchet.py`, `backlog/docs/lessons-testing-evidence.md`.

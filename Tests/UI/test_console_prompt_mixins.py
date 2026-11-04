@@ -249,6 +249,69 @@ async def test_shared_editor_dirty_close_invalid_save_and_version_change_preserv
 
 
 @pytest.mark.asyncio
+async def test_mixin_save_writes_the_prompt_off_the_event_loop(runtime):
+    """The Console mix-in Save runs its prompt write in a worker thread.
+
+    update_prompt_by_id begins IMMEDIATE (TASK-38686), so a contended save
+    waits for SQLite's write lock, for up to the 10 s busy timeout. On the
+    event loop that wait would freeze the UI. The saved state, the focus it
+    leaves, and the refusal copy for a write that fails in the worker are the
+    ones the on-loop save produced.
+    """
+    import threading
+
+    from textual.widgets import Input, Static
+
+    from tldw_chatbook.DB.Prompts_DB import ExpectedVersionConflictError
+    from tldw_chatbook.Widgets.Prompts.prompt_mixin_editor import PromptMixinEditor
+
+    database, scope, _, origin, _, service = runtime
+    await seed(scope)
+    loop_thread = threading.get_ident()
+    writers, refuse = [], []
+    update = database.update_prompt_by_id
+
+    def recording_update(*args, **kwargs):
+        writers.append(threading.get_ident())
+        if refuse:
+            raise ExpectedVersionConflictError("changed", "Prompts", args[0])
+        return update(*args, **kwargs)
+
+    database.update_prompt_by_id = recording_update
+    app = WorkbenchHarness(runtime)
+    async with app.run_test(size=(100, 30)) as pilot:
+        app.pilot = pilot
+        await ready(app)
+        await add(app, "Style")
+        app.screen.query_one("#console-mixin-inspect-0", Button).press()
+        await ready(app)
+        app.screen.query_one("#mixin-name", Input).value = "Style saved"
+        app.screen.query_one("#console-mixins-save", Button).press()
+        await ready(app)
+        source = service.preferences(origin.id).entries[0].source
+        records = await scope.read_mixin_records(
+            mode="local", record_uuids=(source.record_uuid,)
+        )
+        assert records[0]["name"] == "Style saved"
+        assert not app.modal.query(PromptMixinEditor)
+        # Measured while this save still ran on the event loop.
+        assert getattr(app.focused, "id", None) == "console-prompts-close"
+
+        app.screen.query_one("#console-mixin-inspect-0", Button).press()
+        await ready(app)
+        app.screen.query_one("#mixin-name", Input).value = "Style refused"
+        refuse.append(True)
+        app.screen.query_one("#console-mixins-save", Button).press()
+        await ready(app)
+        assert "Library changes were not saved" in str(
+            app.screen.query_one("#console-mixins-status", Static).render()
+        )
+        assert app.screen.query_one("#mixin-name", Input).value == "Style refused"
+    assert len(writers) == 2, writers
+    assert loop_thread not in writers, "the prompt write ran on the event loop"
+
+
+@pytest.mark.asyncio
 async def test_source_replacement_and_stale_revision_refuse_captured_intent(runtime):
     from dataclasses import replace
 
