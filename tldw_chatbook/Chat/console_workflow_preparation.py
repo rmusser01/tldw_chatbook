@@ -45,6 +45,11 @@ class _PlanningPreparationRead:
     body_error: object = None
     wrapper_error: object = None
     result: object = None
+    pending: object = field(default=None, repr=False)
+    completion: object = field(default=None, repr=False)
+    completion_future: object = field(default=None, repr=False)
+    issue: object = field(default=None, repr=False)
+    before_issue: object = field(default=None, repr=False)
 
 
 def current_workflow_preparation(controller=None):
@@ -158,6 +163,7 @@ class _PreparedWorkflowReply:
         self._configured_source_observation = None
         self.configuration = None
         self._source_scope = None
+        self._terminal_configuration_return = None
         self._native_closed = False
         self._close_operation = None
         self._launch_operation = None
@@ -609,9 +615,11 @@ class _PreparedWorkflowReply:
 
     def _release_configuration(self):
         if self._source_scope is not None:
+            registry = self.runtime._workflow_preparations
             scope, self._source_scope = self._source_scope, None
             scope.__exit__(None, None, None)
-            self.runtime._workflow_preparations.discard(self)
+            registry.discard(self)
+            return self, scope, registry
 
     def check(self):
         self.require_current()
@@ -685,15 +693,13 @@ class _PreparedWorkflowReply:
 
     async def _read(self, callback, *, roots=True, closing=False, _unpublished=None):
         """Own a complete finite callback; no native scope survives its return."""
-
         if self.phase is None or self.phase.attempt.purpose == "planning":
             if _unpublished is not None:
                 raise PermissionError("execution-only unpublished proof")
             return await self._read_planning(callback, roots=roots, closing=closing)
-
         if _unpublished is not None and not closing:
             raise PermissionError("unpublished storage proof is close-only")
-        retirement = []
+        self._execution_reads_returned()
         from .console_workflow_runs import _capture_workflow_read
 
         record = _PlanningPreparationRead(self, asyncio.current_task())
@@ -701,6 +707,7 @@ class _PreparedWorkflowReply:
         issuing = record.issuing
 
         def invoke_owned():
+            result = failure = owner = claim = operation = None
             with self.phase.context.scope():
                 self.check()
                 # shortcut: finite preflight serializes against all root writes;
@@ -719,32 +726,33 @@ class _PreparedWorkflowReply:
                             _WorkflowChildWait,
                         )
 
-                        raise _WorkflowChildWait(
+                        failure = record.body_error = _WorkflowChildWait(
                             "worktree_activity", "workflow preparation busy"
                         )
-                    owner = self.capacity.begin_execution(
-                        origin=WorkOrigin.AUTOMATIC,
-                        conversation_id=self.phase.attempt.conversation_id,
-                    )
-                    record.owner, record.claim = owner, claim
-                    operation = None
-                    proven = False
-                    try:
+                    else:
+                        owner = self.capacity.begin_execution(
+                            origin=WorkOrigin.AUTOMATIC,
+                            conversation_id=self.phase.attempt.conversation_id,
+                        )
+                        record.owner, record.claim = owner, claim
+                        self._finite = (owner, claim)
                         if claim is not None:
                             claim.bind_owner(owner)
                         operation = owner.reserve_tool()
                         record.operation = operation
-                        self._finite = (owner, claim)
                         with owner.activate(), self.activate_source():
                             self.check()
                             self.check_local_sources()
-                            result = callback()
-                            if inspect.isawaitable(result):
+                            try:
+                                result = callback()
+                            except BaseException as error:  # noqa: BLE001 - preserve the original callback outcome; scope exits are outside.
+                                failure = record.body_error = error
+                            if failure is None and inspect.isawaitable(result):
                                 from tldw_chatbook.Agents.activation import (
                                     async_worker_guard,
                                 )
 
-                                pending = result
+                                pending = record.pending = result
 
                                 @async_worker_guard(self.bridge)
                                 async def complete():
@@ -752,94 +760,414 @@ class _PreparedWorkflowReply:
                                         owned_goal_storage(self.service),
                                         self.activate_source(),
                                     ):
-                                        return await pending
+                                        value = body_error = None
+                                        try:
+                                            value = await pending
+                                        except BaseException as error:  # noqa: BLE001 - preserve the original callback outcome; scope exits are outside.
+                                            body_error = record.body_error = error
+                                        return pending, value, body_error
 
-                                result = asyncio.run_coroutine_threadsafe(
-                                    complete(), self._loop
-                                ).result()
-                            self.check()
-                            with self.activate_source():
-                                operation.finish()
-                            proven = True
-                            return result
-                    finally:
-                        if operation is not None and not proven:
-                            with owner.activate(), self.activate_source():
-                                operation.finish()
-                                proven = True
-                        self._finite = None
-                        if proven:
-                            retirement.append((owner, claim, operation))
-
-        def retire():
-            for owner, claim, _operation in retirement:
-                owner.on_drained(record.drains.append)
-                owner.finish_root()
-                if claim is not None:
-                    claim.settle(durable=True)
+                                record.completion = complete()
+                                record.completion_future = (
+                                    asyncio.run_coroutine_threadsafe(
+                                        record.completion, self._loop
+                                    )
+                                )
+                                outcome = record.completion_future.result()
+                                if (
+                                    type(outcome) is not tuple
+                                    or len(outcome) != 3
+                                    or outcome[0] is not pending
+                                    or outcome[2] is not record.body_error
+                                ):
+                                    raise RuntimeError(
+                                        "original finite async result changed"
+                                    )
+                                _, result, failure = outcome
+                            if failure is None:
+                                self.check()
+            return result, failure, owner, claim, operation
 
         def invoke():
             proof = record.proof = _capture_workflow_read(
                 self.controller, self, invoke, issuing
             )
-            body_error = None
-            try:
-                with (
-                    self._unpublished_storage_return(_unpublished)
-                    if _unpublished is not None
-                    else nullcontext(),
-                    owned_goal_storage(self.service),
-                    execution(self.bridge),
-                ):
+            result = failure = owner = claim = operation = None
+            with (
+                self._unpublished_storage_return(_unpublished)
+                if _unpublished is not None
+                else nullcontext(),
+                owned_goal_storage(self.service),
+                execution(self.bridge),
+            ):
+                if closing:
                     try:
-                        result = callback() if closing else invoke_owned()
-                    except BaseException as error:
-                        body_error = error
-                        raise
-            except BaseException as error:
-                # An original callback exception is conclusive only if its
-                # storage/execution exits returned without replacing it.
-                if error is body_error:
-                    retire()
-                raise
-            else:
-                retire()
-                record.scopes_returned = True
-                record.result = result
-                owner, claim, operation = (
-                    retirement[0] if retirement else (None, None, None)
-                )
-                return (
-                    record,
-                    self,
-                    issuing,
-                    invoke,
-                    proof,
-                    owner,
-                    claim,
-                    operation,
-                    result,
-                    None,
-                )
+                        result = callback()
+                    except BaseException as error:  # noqa: BLE001 - preserve the original callback outcome; scope exits are outside.
+                        failure = record.body_error = error
+                else:
+                    result, failure, owner, claim, operation = invoke_owned()
+            # No owning scope is crossed by a callback exception. An exit or
+            # finish failure retains this read and is never retried as cleanup.
+            if (
+                record.owner is not owner
+                or record.claim is not claim
+                or record.operation is not operation
+                or record.body_error is not failure
+            ):
+                raise RuntimeError("original workflow finite outcome changed")
+            if operation is not None:
+                operation.finish()
+            if owner is not None:
+                owner.on_drained(record.drains.append)
+                owner.finish_root()
+                if record.drains != [True]:
+                    raise RuntimeError("workflow preparation retirement unproven")
+            if claim is not None:
+                claim.settle(durable=True)
+            self._finite = None
+            record.scopes_returned = True
+            record.result = result
+            return (
+                record,
+                self,
+                issuing,
+                invoke,
+                proof,
+                owner,
+                claim,
+                operation,
+                result,
+                failure,
+            )
 
         record.callback = invoke
         try:
-            await run_preparation_read(
+            # Validate the original receiver before selecting its bound validator.
+            self._execution_reads_source()
+            validator = (lambda: None) if closing else self.require_current
+            if not closing and (
+                not inspect.ismethod(validator)
+                or validator.__self__ is not self
+                or validator.__func__
+                is not inspect.getattr_static(self, "require_current")
+            ):
+                raise PermissionError("original workflow read validator changed")
+            issuing_thread = threading.current_thread()
+            reads = self.controller._preparation_reads
+            observers = (self.runtime._preparation_reads,)
+            session_id = self.session.id
+
+            def read_current():
+                caller = sys._getframe(1)
+                initial = (
+                    threading.current_thread() is issuing_thread
+                    and inspect.getcoroutinestate(read_coroutine)
+                    == inspect.CORO_RUNNING
+                    and read_coroutine.cr_frame is read_frame is caller
+                    and caller.f_code is run_preparation_read.__code__
+                    and asyncio.current_task() is issuing
+                    and caller.f_locals.get("task") is issuing
+                    and caller.f_locals.get("callback") is invoke
+                    and caller.f_locals.get("creator") is self.controller
+                    and caller.f_locals.get("source") is self
+                    and caller.f_locals.get("require_current") is read_current
+                    and caller.f_locals.get("reads") is reads
+                    and caller.f_locals.get("observers") is observers
+                    and caller.f_locals.get("session_id") is session_id
+                    and not any(
+                        name in caller.f_locals
+                        for name in (
+                            "read",
+                            "submit_resolved",
+                            "producer",
+                        )
+                    )
+                )
+                self._execution_reads_source()
+                try:
+                    validator()
+                except BaseException as error:
+                    if initial:
+                        record.before_issue = (record, self, issuing, issue, error)
+                    raise
+
+            read_coroutine = run_preparation_read(
                 invoke,
                 creator=self.controller,
-                session_id=self.session.id,
-                reads=self.controller._preparation_reads,
-                observers=(self.runtime._preparation_reads,),
-                require_current=(lambda: None) if closing else self.require_current,
+                session_id=session_id,
+                reads=reads,
+                observers=observers,
+                require_current=read_current,
                 source=self,
             )
+            read_frame = read_coroutine.cr_frame
+            issue = record.issue = (
+                read_coroutine,
+                read_frame,
+                read_current,
+                validator,
+                issuing_thread,
+                reads,
+                observers,
+                session_id,
+                self.runtime,
+                self.controller,
+                self.service,
+                self.source,
+                self._source_scope,
+                self.runtime._workflow_preparations,
+                closing,
+            )
+            await read_coroutine
         except BaseException as error:
             record.wrapper_error = error
             raise
         self._execution_return_source()
         self._finite_read_return(record)
         record.positive = True
+        if record.body_error is not None:
+            if isinstance(record.body_error, StopIteration):
+                raise RuntimeError(
+                    "coroutine raised StopIteration"
+                ) from record.body_error
+            raise record.body_error
         return record.result
+
+    def _execution_reads_source(self):
+        """Pure original source/reader checks, without renewing admission."""
+        if (
+            _storage_source_current is not _STORAGE_SOURCE_CHECK[0]
+            or _storage_source_current.__code__ is not _STORAGE_SOURCE_CHECK[1]
+            or _storage_source_current.__defaults__ is not _STORAGE_SOURCE_CHECK[2]
+            or _storage_source_current.__kwdefaults__ is not _STORAGE_SOURCE_CHECK[3]
+            or _storage_source_current.__closure__ is not _STORAGE_SOURCE_CHECK[5]
+        ):
+            raise PermissionError("original workflow storage source changed")
+        _storage_source_current(self.source, preparation=self)
+        self._planning_read_sources()
+
+    def _execution_no_issue_return(self, record):
+        """Recognize only the original reader's terminated first-validator call."""
+        self._execution_reads_source()
+        issue, before = record.issue, record.before_issue
+        if type(issue) is not tuple or len(issue) != 15 or type(before) is not tuple:
+            raise RuntimeError("original workflow read issue unproven")
+        (
+            coroutine,
+            frame,
+            checker,
+            validator,
+            thread,
+            reads,
+            observers,
+            session_id,
+            runtime,
+            controller,
+            service,
+            source,
+            scope,
+            registry,
+            closing,
+        ) = issue
+        expected = (record, self, record.issuing, issue, record.wrapper_error)
+        checker_code = next(
+            code
+            for code in _PreparedWorkflowReply._read.__code__.co_consts
+            if inspect.iscode(code) and code.co_name == "read_current"
+        )
+        closure = (
+            {
+                name: cell.cell_contents
+                for name, cell in zip(
+                    checker.__code__.co_freevars, checker.__closure__ or ()
+                )
+            }
+            if inspect.isfunction(checker)
+            else {}
+        )
+        expected_closure = {
+            "self": self,
+            "record": record,
+            "issuing": record.issuing,
+            "invoke": record.callback,
+            "validator": validator,
+            "issuing_thread": thread,
+            "reads": reads,
+            "observers": observers,
+            "session_id": session_id,
+            "read_coroutine": coroutine,
+            "read_frame": frame,
+            "read_current": checker,
+            "issue": issue,
+        }
+        arguments = {
+            "task": record.issuing,
+            "callback": record.callback,
+            "creator": controller,
+            "source": self,
+            "require_current": checker,
+            "reads": reads,
+            "observers": observers,
+            "session_id": session_id,
+        }
+        configuration_current = (
+            scope is not None
+            and scope is self._source_scope
+            and registry is self.runtime._workflow_preparations
+            and self in registry
+        )
+        if not configuration_current:
+            terminal = self._terminal_configuration_return
+            if type(terminal) is tuple and len(terminal) == 3:
+                returned, closing_read, records = terminal
+                if (
+                    scope is not None
+                    and self._closed
+                    and self._source_scope is None
+                    and registry is self.runtime._workflow_preparations
+                    and self not in registry
+                    and type(returned) is tuple
+                    and len(returned) == 3
+                    and all(a is b for a, b in zip(returned, (self, scope, registry)))
+                    and type(records) is tuple
+                    and len(records) == len(self._finite_reads)
+                    and all(a is b for a, b in zip(records, self._finite_reads))
+                    and any(item is record for item in records)
+                    and records[-1] is closing_read
+                    and closing_read is not record
+                    and closing_read.positive
+                    and closing_read.wrapper_error is None
+                    and closing_read.body_error is None
+                    and type(closing_read.issue) is tuple
+                    and len(closing_read.issue) == 15
+                    and closing_read.issue[-1] is True
+                ):
+                    self._finite_read_return(closing_read)
+                    invoke = closing_read.callback
+                    invoke_code = next(
+                        code
+                        for code in _PreparedWorkflowReply._read.__code__.co_consts
+                        if inspect.iscode(code) and code.co_name == "invoke"
+                    )
+                    finish_code = next(
+                        code
+                        for code in _PreparedWorkflowReply.close.__code__.co_consts
+                        if inspect.iscode(code) and code.co_name == "finish"
+                    )
+                    cells = (
+                        dict(
+                            zip(
+                                invoke.__code__.co_freevars,
+                                (
+                                    cell.cell_contents
+                                    for cell in invoke.__closure__ or ()
+                                ),
+                            )
+                        )
+                        if inspect.isfunction(invoke)
+                        else {}
+                    )
+                    finish = cells.get("callback")
+                    finish_cells = (
+                        dict(
+                            zip(
+                                finish.__code__.co_freevars,
+                                (
+                                    cell.cell_contents
+                                    for cell in finish.__closure__ or ()
+                                ),
+                            )
+                        )
+                        if inspect.isfunction(finish)
+                        else {}
+                    )
+                    configuration_current = (
+                        inspect.isfunction(invoke)
+                        and invoke.__code__ is invoke_code
+                        and cells.get("self") is self
+                        and cells.get("record") is closing_read
+                        and cells.get("closing") is True
+                        and inspect.isfunction(finish)
+                        and finish.__code__ is finish_code
+                        and finish_cells.get("self") is self
+                    )
+        if (
+            len(before) != len(expected)
+            or any(a is not b for a, b in zip(before, expected))
+            or record.prepared is not self
+            or record.wrapper_error is None
+            or record.proof is not None
+            or record.owner is not None
+            or record.claim is not None
+            or record.operation is not None
+            or record.scopes_returned
+            or record.positive
+            or record.drains
+            or record.body_error is not None
+            or record.result is not None
+            or not inspect.iscoroutine(coroutine)
+            or coroutine.cr_code is not run_preparation_read.__code__
+            or inspect.getcoroutinestate(coroutine) != inspect.CORO_CLOSED
+            or coroutine.cr_frame is not None
+            or coroutine.cr_running
+            or not inspect.isframe(frame)
+            or frame.f_code is not coroutine.cr_code
+            or any(
+                frame.f_locals.get(name) is not value
+                for name, value in arguments.items()
+            )
+            or any(
+                name in frame.f_locals
+                for name in ("read", "submit_resolved", "producer")
+            )
+            or not inspect.isfunction(checker)
+            or checker.__code__ is not checker_code
+            or checker.__defaults__ is not None
+            or checker.__kwdefaults__ is not None
+            or closure.keys() != expected_closure.keys()
+            or any(
+                closure[name] is not value for name, value in expected_closure.items()
+            )
+            or runtime is not self.runtime
+            or controller is not self.controller
+            or service is not self.service
+            or source is not self.source
+            or not configuration_current
+            or reads is not self.controller._preparation_reads
+            or len(observers) != 1
+            or observers[0] is not self.runtime._preparation_reads
+            or self._finite is not None
+        ):
+            raise RuntimeError("original workflow read issue unproven")
+        if closing:
+            if (
+                not inspect.isfunction(validator)
+                or validator.__code__
+                not in _PreparedWorkflowReply._read.__code__.co_consts
+                or validator.__code__.co_name != "<lambda>"
+                or validator.__defaults__ is not None
+                or validator.__kwdefaults__ is not None
+                or validator.__closure__ is not None
+            ):
+                raise PermissionError("original workflow read validator changed")
+        elif (
+            not inspect.ismethod(validator)
+            or validator.__self__ is not self
+            or validator.__func__ is not inspect.getattr_static(self, "require_current")
+        ):
+            raise PermissionError("original workflow read validator changed")
+
+    def _execution_reads_returned(self):
+        """Keep unknown original finite reads from shedding their source custody."""
+        self._execution_reads_source()
+        for record in self._finite_reads:
+            if record.before_issue is not None:
+                self._execution_no_issue_return(record)
+            else:
+                self._finite_read_return(record)
+        if self._finite is not None:
+            raise RuntimeError("original workflow finite return unproven")
 
     def _finite_read_return(self, record):
         """Consume identities carried by the same native producer's result."""
@@ -987,23 +1315,40 @@ class _PreparedWorkflowReply:
                             if not closing:
                                 self.check() if self.phase is not None else self.require_current()
                             result = callback()
-                            if inspect.isawaitable(result):
-                                pending = result
+                        except BaseException as error:  # noqa: BLE001 - preserve the original callback outcome; scope exits are outside.
+                            failure = record.body_error = error
+                        if failure is None and inspect.isawaitable(result):
+                            pending = record.pending = result
 
-                                @async_worker_guard(self.bridge)
-                                async def complete():
-                                    with (
-                                        self._planning_storage_return(),
-                                        owned_goal_storage(self.service),
-                                        self.activate_source(),
-                                    ):
-                                        return await pending
+                            @async_worker_guard(self.bridge)
+                            async def complete():
+                                with (
+                                    self._planning_storage_return(),
+                                    owned_goal_storage(self.service),
+                                    self.activate_source(),
+                                ):
+                                    value = body_error = None
+                                    try:
+                                        value = await pending
+                                    except BaseException as error:  # noqa: BLE001 - preserve the original callback outcome; scope exits are outside.
+                                        body_error = record.body_error = error
+                                    return pending, value, body_error
 
-                                result = asyncio.run_coroutine_threadsafe(
-                                    complete(), self._loop
-                                ).result()
-                        except BaseException as error:  # noqa: BLE001 - retain original uncertainty or inspect exact native failure.
-                            failure = error
+                            record.completion = complete()
+                            record.completion_future = asyncio.run_coroutine_threadsafe(
+                                record.completion, self._loop
+                            )
+                            outcome = record.completion_future.result()
+                            if (
+                                type(outcome) is not tuple
+                                or len(outcome) != 3
+                                or outcome[0] is not pending
+                                or outcome[2] is not record.body_error
+                            ):
+                                raise RuntimeError(
+                                    "original planning async result changed"
+                                )
+                            _, result, failure = outcome
             # Only positively returned original scopes reach their held finish.
             # An unknown entry/unwind keeps _finite, its source, claim and slot.
             if operation is not None:
@@ -1672,6 +2017,7 @@ class _PreparedWorkflowReply:
                 if cancellation is not None:
                     raise cancellation
             return
+        self._execution_reads_returned()
         if (
             _storage_source_current is not _STORAGE_SOURCE_CHECK[0]
             or _storage_source_current.__code__ is not _STORAGE_SOURCE_CHECK[1]
@@ -1803,7 +2149,24 @@ class _PreparedWorkflowReply:
             raise PermissionError("original workflow helper source changed")
         _workflow_close_current(association)
         if self._wave is None:
-            self._release_configuration()
+            scope, registry = self._source_scope, self.runtime._workflow_preparations
+            records = tuple(self._finite_reads)
+            closing_read = records[-1]
+            self._finite_read_return(closing_read)
+            returned = self._release_configuration()
+            if returned is not None:
+                if (
+                    type(returned) is not tuple
+                    or len(returned) != 3
+                    or any(
+                        a is not b for a, b in zip(returned, (self, scope, registry))
+                    )
+                    or self.runtime._workflow_preparations is not registry
+                    or self._source_scope is not None
+                    or self in registry
+                ):
+                    raise RuntimeError("original configuration return changed")
+                self._terminal_configuration_return = returned, closing_read, records
 
     def _close_on_native_owner(self, owner):
         """Return the original frame inside its pre-held native child operation."""

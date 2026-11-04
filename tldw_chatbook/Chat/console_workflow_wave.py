@@ -252,7 +252,28 @@ class _WorkflowWave:
             self.runtime.worktree_activity._close_wave(self.fence)
         for item in self.prepared:
             if not self.retain_waits or item not in self.unlaunched:
-                item._release_configuration()
+                scope, registry = (
+                    item._source_scope,
+                    item.runtime._workflow_preparations,
+                )
+                records = tuple(item._finite_reads)
+                read = records[-1]
+                item._finite_read_return(read)
+                returned = item._release_configuration()
+                if returned is not None:
+                    if (
+                        type(returned) is not tuple
+                        or len(returned) != 3
+                        or any(
+                            a is not b
+                            for a, b in zip(returned, (item, scope, registry))
+                        )
+                        or item.runtime._workflow_preparations is not registry
+                        or item._source_scope is not None
+                        or item in registry
+                    ):
+                        raise RuntimeError("original configuration return changed")
+                    item._terminal_configuration_return = returned, read, records
         # All original callouts returned; enrollment protects them until now.
         if (
             _workflow_wave_sources is not _WAVE_SOURCE[0]

@@ -18,6 +18,10 @@ network_guard.install()
 real_profile_guard.install()
 
 routes = {
+    "terminal-config-exit": "test_workflow_native_return",
+    "finite-preentry": "test_workflow_native_return",
+    "finite-planning": "test_workflow_native_return",
+    "finite-scope": "test_workflow_native_return",
     "live-bind": "test_workflow_native_return",
     "callback-baseexception": "test_workflow_native_return",
     "wave-capture": "test_workflow_native_return",
@@ -93,6 +97,10 @@ with user_fixture_default_owner():
         else "Tests.Chat." + routes[sys.argv[1]]
     )
     method = {
+        "terminal-config-exit": "terminal_configuration_exit_journey",
+        "finite-preentry": "finite_preentry_failure_journey",
+        "finite-planning": "finite_planning_scope_journey",
+        "finite-scope": "finite_scope_failure_journey",
         "live-bind": "live_bind_source_journey",
         "callback-baseexception": "callback_baseexception_journey",
         "wave-capture": "wave_capture_close_journey",

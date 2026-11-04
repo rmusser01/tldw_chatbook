@@ -911,6 +911,7 @@ async def test_strict_start_unknown_retains_original_custody(tmp_path, mode):
 async def test_original_finisher_callback_keeps_launch_exclusion_after_removal(
     native_host,
 ):
+    import time
     from concurrent.futures import Future
 
     from tldw_chatbook.Agents import activation
@@ -1111,6 +1112,8 @@ async def test_original_finisher_callback_keeps_launch_exclusion_after_removal(
     }
 
     def observe(frame, event, result):
+        if frame.f_code not in codes and frame.f_code not in consumer_codes:
+            return
         if frame.f_code in consumer_codes:
             observe_consumer(frame, event, result)
             return
@@ -1140,6 +1143,7 @@ async def test_original_finisher_callback_keeps_launch_exclusion_after_removal(
                     parent.f_locals["run_child_owned"],
                 )
                 assert thread is parent.f_locals["thread"] and thread._target is target
+                codes.add(target.__code__)
                 saved.update(
                     thread=thread,
                     target=target,
@@ -1175,7 +1179,7 @@ async def test_original_finisher_callback_keeps_launch_exclusion_after_removal(
                     and saved["native_return"] is not None
                 )
                 saved.update(result=result, worker=threading.current_thread())
-                saved["thread"].join(5)
+                saved["thread"].join(max(0, setup_deadline - time.monotonic()))
                 try:
                     assert not saved["thread"].is_alive()
                 except AssertionError:
@@ -1241,11 +1245,14 @@ async def test_original_finisher_callback_keeps_launch_exclusion_after_removal(
             callback_entered.set()
 
     previous_thread_profile, previous_profile = threading.getprofile(), sys.getprofile()
+    setup_deadline = time.monotonic() + 30
     threading.setprofile_all_threads(observe)
     launch = asyncio.create_task(native_tests._launch_native_for_test(h, prepared))
-    receipt = None
+    receipt = primary = None
     try:
-        assert await asyncio.to_thread(own_entered.wait, 5)
+        assert await asyncio.to_thread(
+            own_entered.wait, max(0, setup_deadline - time.monotonic())
+        )
         if errors:
             raise errors[0]
         returned = saved["result"]
@@ -1280,14 +1287,35 @@ async def test_original_finisher_callback_keeps_launch_exclusion_after_removal(
             await prepared.close()
         assert not prepared._closed and not prepared._closing
         assert prepared._launch_operation is operation and not launch.done()
+    except BaseException as error:
+        primary = error
+        raise
     finally:
         own_release.set()
         callback_release.set()
+        cleanup_errors = []
         try:
-            receipt = await launch
+            try:
+                receipt = await launch
+            except BaseException as error:  # noqa: BLE001 - retain the original error without throwing into native observation or masking cleanup.
+                cleanup_errors.append(error)
+            thread = saved.get("thread")
+            if thread is not None:
+                try:
+                    await asyncio.to_thread(thread.join, 5)
+                    assert not thread.is_alive()
+                except BaseException as error:  # noqa: BLE001 - retain the original error without throwing into native observation or masking cleanup.
+                    cleanup_errors.append(error)
         finally:
             threading.setprofile_all_threads(previous_thread_profile)
             sys.setprofile(previous_profile)
+        if cleanup_errors:
+            if primary is None:
+                raise cleanup_errors[0]
+            primary.add_note(
+                "Original callback cleanup also failed; see retained errors"
+            )
+            primary.cleanup_errors = tuple(cleanup_errors)
     if errors:
         raise errors[0]
     assert receipt is saved["result"].receipt
@@ -1807,7 +1835,7 @@ async def test_original_initial_close_returns_empty_source_and_its_same_read(
     release_code = cls._release_configuration.__code__
     codes = {read_code, close_code, check_code, configure_code, release_code}
     issuer = asyncio.current_task()
-    saved, errors, checks = {}, [], []
+    saved, errors, checks, helper_checks = {}, [], [], []
 
     def observe(frame, event, result):
         if frame.f_code not in codes:
@@ -1886,11 +1914,12 @@ async def test_original_initial_close_returns_empty_source_and_its_same_read(
                 and frame.f_locals.get("preparation") is owner
             ):
                 parent = frame.f_back
-                assert (
-                    parent.f_code in {close_code, finish_code}
-                    and parent.f_locals["self"] is owner
-                )
-                checks.append((parent.f_code, threading.current_thread()))
+                assert parent.f_locals.get("self") is owner
+                if parent.f_code is cls._execution_reads_source.__code__:
+                    helper_checks.append(threading.current_thread())
+                else:
+                    assert parent.f_code in {close_code, finish_code}
+                    checks.append((parent.f_code, threading.current_thread()))
             elif (
                 frame.f_code is read_code
                 and frame.f_locals.get("self") is owner
@@ -1948,13 +1977,31 @@ async def test_original_initial_close_returns_empty_source_and_its_same_read(
         assert (
             producer.done()
             and not producer.cancelled()
-            and producer.exception() is caught.value
+            and producer.exception() is None
         )
         assert retired.done() and not retired.cancelled() and retired.result() is None
         assert (
             failed.owner is failed.claim is failed.operation is None
-            and not failed.positive
+            and failed.positive
+            and failed.scopes_returned
+            and failed.wrapper_error is None
+            and failed.body_error is caught.value
         )
+        actual_wait = producer.result()
+        expected_wait = (
+            failed,
+            first,
+            issuer,
+            callback,
+            failed.proof,
+            None,
+            None,
+            None,
+            None,
+            caught.value,
+        )
+        assert type(actual_wait) is tuple and len(actual_wait) == len(expected_wait)
+        assert all(a is b for a, b in zip(actual_wait, expected_wait))
         record = saved["close_record"]
         read, producer, retired, callback = record.proof
         assert (
@@ -1993,6 +2040,8 @@ async def test_original_initial_close_returns_empty_source_and_its_same_read(
         )
         assert record.scopes_returned and record.positive
         assert [code for code, _thread in checks] == [close_code, finish_code]
+        assert threading.current_thread() in helper_checks
+        assert any(thread is not threading.current_thread() for thread in helper_checks)
         assert (
             checks[0][1] is threading.current_thread()
             and checks[1][1] is not checks[0][1]
@@ -3264,11 +3313,6 @@ async def wave_capture_close_journey(tmp_path, monkeypatch):
             and code.co_name == "capture"
         )
         read_code = _PreparedWorkflowReply._read.__code__
-        retire_code = next(
-            code
-            for code in read_code.co_consts
-            if isinstance(code, type(read_code)) and code.co_name == "retire"
-        )
         invoke_code = next(
             code
             for code in read_code.co_consts
@@ -3287,7 +3331,6 @@ async def wave_capture_close_journey(tmp_path, monkeypatch):
         codes = frozenset(
             (
                 capture_code,
-                retire_code,
                 invoke_code,
                 finish_code,
                 constructor_code,
@@ -3336,50 +3379,6 @@ async def wave_capture_close_journey(tmp_path, monkeypatch):
                         capture_worker=threading.current_thread(),
                     )
                     inject = mode == "capture-exit"
-                elif frame.f_code is retire_code and normal:
-                    record = frame.f_locals["record"]
-                    if (
-                        record is not saved.get("capture_read")
-                        or mode != "unborrowed-close"
-                    ):
-                        return
-                    parent = frame.f_back
-                    assert (
-                        parent.f_code is invoke_code
-                        and parent.f_locals["record"] is record
-                    )
-                    assert (
-                        parent.f_locals["self"] is prepared
-                        and record.callback.__code__ is invoke_code
-                    )
-                    owner, actual_claim, operation = frame.f_locals["retirement"][0]
-                    assert (
-                        record.owner is owner
-                        and record.claim is actual_claim
-                        and record.operation is operation
-                    )
-                    assert record.drains == [True] and not record.scopes_returned
-                    assert threading.current_thread() is saved["capture_worker"]
-                    with owner.capacity._lock:
-                        assert (
-                            owner.capacity._owners.get(owner.execution_id) is not owner
-                        )
-                        assert operation not in owner._operations
-                    with prepared.runtime.worktree_activity._lock:
-                        assert (
-                            actual_claim.id
-                            not in prepared.runtime.worktree_activity._claims
-                        )
-                        assert (
-                            actual_claim.id
-                            not in prepared.runtime.worktree_activity._members
-                        )
-                    saved["capture_retirement"] = (owner, actual_claim, operation)
-                    entered.set()
-                    if not release.wait(5):
-                        errors.append(
-                            AssertionError("original capture retirement hold exceeded5")
-                        )
                 elif (
                     frame.f_code is finish_code
                     and event == "call"
@@ -3398,6 +3397,56 @@ async def wave_capture_close_journey(tmp_path, monkeypatch):
                     if record is saved.get("capture_read"):
                         assert result[0] is record and result[8] is saved["captured"]
                         saved["capture_return"] = result
+                        if mode == "unborrowed-close":
+                            expected = (
+                                record,
+                                prepared,
+                                record.issuing,
+                                record.callback,
+                                record.proof,
+                                record.owner,
+                                record.claim,
+                                record.operation,
+                                saved["captured"],
+                                None,
+                            )
+                            assert type(result) is tuple and len(result) == len(
+                                expected
+                            )
+                            assert all(a is b for a, b in zip(result, expected))
+                            assert frame.f_locals["self"] is prepared
+                            assert record.callback.__code__ is invoke_code
+                            owner, actual_claim, operation = result[5:8]
+                            assert record.drains == [True] and record.scopes_returned
+                            assert record.body_error is None
+                            assert threading.current_thread() is saved["capture_worker"]
+                            with owner.capacity._lock:
+                                assert (
+                                    owner.capacity._owners.get(owner.execution_id)
+                                    is not owner
+                                )
+                                assert operation not in owner._operations
+                            with prepared.runtime.worktree_activity._lock:
+                                assert (
+                                    actual_claim.id
+                                    not in prepared.runtime.worktree_activity._claims
+                                )
+                                assert (
+                                    actual_claim.id
+                                    not in prepared.runtime.worktree_activity._members
+                                )
+                            saved["capture_retirement"] = (
+                                owner,
+                                actual_claim,
+                                operation,
+                            )
+                            entered.set()
+                            if not release.wait(5):
+                                errors.append(
+                                    AssertionError(
+                                        "original capture retirement hold exceeded5"
+                                    )
+                                )
                     elif record is saved.get("close_read"):
                         assert result[0] is record
                         saved["close_return"] = result
@@ -3437,7 +3486,7 @@ async def wave_capture_close_journey(tmp_path, monkeypatch):
             assert prepared._wave is wave and rig.runtime._workflow_waves[wave] is wave
             assert not record.proof[1].done()
             with pytest.raises(
-                PermissionError, match="original wave close invocation required"
+                RuntimeError, match="original workflow reader return unproven"
             ):
                 await prepared.close()
             assert (
@@ -3504,16 +3553,29 @@ async def wave_capture_close_journey(tmp_path, monkeypatch):
             assert (
                 producer.done()
                 and not producer.cancelled()
-                and producer.exception() is injected
+                and producer.exception() is None
             )
             assert (
                 retired.done() and not retired.cancelled() and retired.result() is None
             )
-            assert record.wrapper_error is injected and not record.positive
-            with pytest.raises(
-                RuntimeError, match="original workflow reader return unproven"
-            ):
-                prepared._finite_read_return(record)
+            assert record.wrapper_error is None and record.positive
+            assert record.scopes_returned and record.body_error is injected
+            actual = producer.result()
+            expected = (
+                record,
+                prepared,
+                wave.driver,
+                callback,
+                record.proof,
+                record.owner,
+                record.claim,
+                record.operation,
+                None,
+                injected,
+            )
+            assert type(actual) is tuple and len(actual) == len(expected)
+            assert all(a is b for a, b in zip(actual, expected))
+            assert prepared._finite_read_return(record) is actual
             assert wave.driver.done() and wave.driver.exception() is injected
             assert rig.runtime._workflow_waves[wave] is wave and prepared._wave is wave
             assert not wave.closed and not prepared._closed and not prepared._closing
@@ -3565,7 +3627,7 @@ async def wave_capture_close_journey(tmp_path, monkeypatch):
             assert db.list_runs(workflow.request.conversation_id) == []
         if mode == "capture-exit":
             print(
-                "G_CAPTURE_SOURCE_RETAINED_WITH_FAILED_PRODUCER; no creator drain",
+                "G_CAPTURE_SOURCE_RETAINED_WITH_CALLBACK_ERROR; no creator drain",
                 flush=True,
             )
             os._exit(17)
@@ -3609,24 +3671,36 @@ async def wave_capture_close_journey(tmp_path, monkeypatch):
 async def test_original_wave_capture_retains_source_until_exact_disposition(
     tmp_path, mode
 ):
+    import subprocess
     from pathlib import Path
 
     from Tests.Backup_Recovery.test_home_citation_retirement import _run
 
+    script = Path(__file__).with_name("workflow_coordinator_probe.py").read_text()
     if mode == "capture-exit":
         with pytest.raises(
-            AssertionError, match="G_CAPTURE_SOURCE_RETAINED_WITH_FAILED_PRODUCER"
-        ):
+            AssertionError, match="G_CAPTURE_SOURCE_RETAINED_WITH_CALLBACK_ERROR"
+        ) as caught:
             await asyncio.to_thread(
                 _run,
                 tmp_path,
                 "wave-capture",
                 mode,
-                script=Path(__file__)
-                .with_name("workflow_coordinator_probe.py")
-                .read_text(),
+                script=script,
                 timeout=60,
             )
+        frames = []
+        tb = caught.value.__traceback__
+        while tb is not None:
+            if tb.tb_frame.f_code is _run.__code__:
+                frames.append(tb.tb_frame)
+            tb = tb.tb_next
+        assert len(frames) == 1
+        original = frames[0].f_locals
+        result = original["result"]
+        assert original["script"] is script and original["tmp_path"] is tmp_path
+        assert type(result) is subprocess.CompletedProcess
+        assert result.returncode == 17 and result.args[-2:] == ["wave-capture", mode]
     else:
         await asyncio.to_thread(
             _run,
@@ -4356,13 +4430,31 @@ async def callback_baseexception_journey(tmp_path, _unused):
                 assert (
                     producer.done()
                     and not producer.cancelled()
-                    and producer.exception() is closing.value
+                    and producer.exception() is None
                 )
                 assert (
-                    record.wrapper_error is closing.value
-                    and not record.positive
-                    and not record.scopes_returned
+                    record.wrapper_error is None
+                    and record.body_error is closing.value
+                    and record.positive
+                    and record.scopes_returned
                 )
+                actual_close = producer.result()
+                expected_close = (
+                    record,
+                    prepared,
+                    record.issuing,
+                    original_callback,
+                    record.proof,
+                    None,
+                    None,
+                    None,
+                    None,
+                    closing.value,
+                )
+                assert type(actual_close) is tuple and len(actual_close) == len(
+                    expected_close
+                )
+                assert all(a is b for a, b in zip(actual_close, expected_close))
                 assert prepared in h.runtime._workflow_preparations
                 assert (
                     prepared.source is source
@@ -4468,3 +4560,1353 @@ async def test_original_callback_baseexception_retains_removed_operation_custody
         route,
         outcome,
     ]
+
+
+@pytest.mark.parametrize(
+    "mode", ["value", "error", "async-error", "cancel", "async-cancel", "stop"]
+)
+async def test_original_finite_callback_outcome_crosses_all_scopes(native_host, mode):
+    from contextvars import ContextVar
+
+    from tldw_chatbook.Agents import activation
+    from tldw_chatbook.Agents.automatic_work_runtime import current_automatic_work
+    from tldw_chatbook.Agents.execution_capacity import current_execution_owner
+    from tldw_chatbook.Chat.console_ordinary_tree import current_ordinary_tree
+    from tldw_chatbook.Chat.console_workflow_preparation import (
+        _PreparedWorkflowReply,
+        current_workflow_preparation,
+    )
+
+    h = native_host
+    prepared = await h.bridge._prepare_workflow_reply(
+        phase=h.phase, task_id="task-1", binding=h.binding, resolution=h.selected
+    )
+    before = h.db.automatic_work.snapshot(prepared.authorization.claim.chain_id)
+    value = object()
+    error = (
+        asyncio.CancelledError("original callback cancellation")
+        if "cancel" in mode
+        else StopIteration("original callback stop")
+        if mode == "stop"
+        else RuntimeError("original finite callback failure")
+    )
+    marker = ContextVar("finite_test_caller", default=None)
+    token = marker.set(value)
+    task = asyncio.current_task()
+    saved, notices, drained, observations = {}, [], [], []
+    invoke_code = next(
+        code
+        for code in _PreparedWorkflowReply._read.__code__.co_consts
+        if isinstance(code, type(_PreparedWorkflowReply._read.__code__))
+        and code.co_name == "invoke"
+    )
+
+    def context():
+        return (
+            current_execution_owner(),
+            current_automatic_work(),
+            current_workflow_preparation(),
+            current_ordinary_tree(),
+            activation._guard.context.get(),
+            marker.get(),
+        )
+
+    def observe(frame, event, _result):
+        if frame.f_code is not invoke_code or event != "call":
+            return
+        try:
+            if frame.f_locals.get("self") is prepared:
+                assert not saved
+                saved.update(
+                    record=frame.f_locals["record"],
+                    ambient=context(),
+                    worker=threading.current_thread(),
+                )
+        except BaseException as failure:  # noqa: BLE001 - retain the original error without throwing into native observation or masking cleanup.
+            observations.append(failure)
+
+    def available():
+        try:
+            caller = sys._getframe(1).f_back
+            record = saved.get("record")
+            if (
+                record is not None
+                and caller.f_code is OwnedOperation.finish.__code__
+                and caller.f_locals.get("self") is record.operation
+            ):
+                notices.append((context(), threading.current_thread()))
+        except BaseException as failure:  # noqa: BLE001 - retain the original error without throwing into native observation or masking cleanup.
+            observations.append(failure)
+
+    def on_drained(proven):
+        drained.append((proven, context(), threading.current_thread()))
+
+    def enter_body():
+        owner, claim = prepared._finite
+        saved.update(owner=owner, claim=claim, body=context())
+        assert owner is current_execution_owner()
+        assert current_workflow_preparation() is prepared
+        assert current_automatic_work() is h.phase.context
+        owner.on_drained(on_drained)
+
+    async def pending():
+        enter_body()
+        raise error
+
+    def callback():
+        if mode.startswith("async-"):
+            return pending()
+        enter_body()
+        if mode != "value":
+            raise error
+        return value
+
+    previous_thread_profile, previous_profile = threading.getprofile(), sys.getprofile()
+    unsubscribe = h.runtime.execution_capacity.subscribe_tool_availability(available)
+    threading.setprofile_all_threads(observe)
+    try:
+        if mode == "value":
+            assert await prepared._read(callback) is value
+        elif mode == "stop":
+            with pytest.raises(
+                RuntimeError, match="coroutine raised StopIteration"
+            ) as caught:
+                await prepared._read(callback)
+            assert caught.value.__cause__ is error
+        else:
+            with pytest.raises(type(error)) as caught:
+                await prepared._read(callback)
+            assert caught.value is error
+        assert asyncio.current_task() is task and marker.get() is value
+    finally:
+        threading.setprofile_all_threads(previous_thread_profile)
+        sys.setprofile(previous_profile)
+        unsubscribe()
+        marker.reset(token)
+    if observations:
+        raise observations[0]
+    record = saved["record"]
+    assert record is prepared._finite_reads[-1]
+    assert record.positive and record.scopes_returned and record.wrapper_error is None
+    assert record.body_error is (None if mode == "value" else error)
+    actual = record.proof[1].result()
+    assert actual[:8] == (
+        record,
+        prepared,
+        task,
+        record.callback,
+        record.proof,
+        saved["owner"],
+        saved["claim"],
+        record.operation,
+    )
+    assert actual[8] is (value if mode == "value" else None)
+    assert actual[9] is record.body_error
+    assert record.proof[1].done() and record.proof[1].exception() is None
+    assert record.proof[2].done() and record.proof[2].result() is None
+    assert notices == [(saved["ambient"], saved["worker"])]
+    assert drained == [(True, saved["ambient"], saved["worker"])]
+    assert saved["body"][:4] != saved["ambient"][:4]
+    assert not saved["owner"].is_admitted and prepared._finite is None
+    with h.runtime.worktree_activity._lock:
+        assert saved["claim"].id not in h.runtime.worktree_activity._claims
+        assert saved["claim"].id not in h.runtime.worktree_activity._members
+    assert h.calls == [] and h.db.list_runs(h.conversation_id) == []
+    after = h.db.automatic_work.snapshot(before.chain_id)
+    assert after.used == before.used and after.reserved == before.reserved
+    await prepared.close()
+    assert prepared._closed and prepared._source_scope is None
+    assert prepared not in h.runtime._workflow_preparations
+
+
+async def terminal_configuration_exit_journey(tmp_path, _unused):
+    """A closed native frame does not certify its later configuration exit."""
+    import os
+    from types import SimpleNamespace
+
+    from tldw_chatbook.Chat.console_runtime import ConsoleRuntime
+    from tldw_chatbook.Chat.console_workflow_preparation import _PreparedWorkflowReply
+
+    generator = primary = None
+    saved, errors, releases = {}, [], []
+    old_trace, old_sys_trace = threading.gettrace(), sys.gettrace()
+    old_profile, old_sys_profile = threading.getprofile(), sys.getprofile()
+    with pytest.MonkeyPatch.context() as monkeypatch:
+        try:
+            generator = native_tests.native_host.__wrapped__(
+                tmp_path, monkeypatch, SimpleNamespace(param=None)
+            )
+            h = await anext(generator)
+            cancel = threading.Event()
+            prepared = await h.bridge._prepare_workflow_reply(
+                phase=h.phase,
+                task_id="task-1",
+                binding=h.binding,
+                resolution=h.selected,
+                should_cancel=cancel.is_set,
+            )
+            scope, registry = prepared._source_scope, h.runtime._workflow_preparations
+            source, native, lifetime, auth = (
+                prepared.source,
+                prepared.native,
+                prepared._lifetime,
+                prepared.authorization,
+            )
+            scope_frame = scope.gen.gi_frame
+            assert (
+                scope_frame.f_code
+                is ConsoleRuntime._first_send_source_scope.__wrapped__.__code__
+            )
+            before = h.db.automatic_work.snapshot(auth.claim.chain_id)
+            cancel.set()
+            with pytest.raises(
+                PermissionError, match="workflow native source changed"
+            ) as refused:
+                await prepared._read(lambda: pytest.fail("unissued callback ran"))
+            first = prepared._finite_reads[-1]
+            assert (
+                first.wrapper_error is refused.value and first.before_issue is not None
+            )
+            assert first.proof is first.owner is first.claim is first.operation is None
+            assert first.before_issue[0] is first and first.before_issue[1] is prepared
+            assert first.issue[0].cr_frame is None and not first.issue[0].cr_running
+            assert not any(
+                name in first.issue[1].f_locals
+                for name in ("read", "producer", "submit_resolved")
+            )
+            assert prepared._source_scope is scope and prepared in registry
+            task, host = asyncio.current_task(), threading.current_thread()
+
+            def observe(frame, event, _arg):
+                if (
+                    event == "call"
+                    and frame.f_code
+                    is _PreparedWorkflowReply._release_configuration.__code__
+                    and frame.f_locals.get("self") is prepared
+                ):
+                    releases.append(frame)
+
+            def trace(frame, event, _arg):
+                if frame is not scope_frame or saved.get("injected"):
+                    return trace
+                if event != "return" or dis.opname[
+                    frame.f_code.co_code[frame.f_lasti]
+                ] not in {"RETURN_VALUE", "RETURN_CONST"}:
+                    return trace
+                inject = False
+                try:
+                    assert (
+                        threading.current_thread() is host
+                        and asyncio.current_task() is task
+                    )
+                    assert frame.f_locals["self"] is h.runtime
+                    context_exit = frame.f_back
+                    assert (
+                        context_exit.f_code
+                        is contextlib._GeneratorContextManager.__exit__.__code__
+                    )
+                    assert context_exit.f_locals["self"] is scope
+                    release_frame = context_exit.f_back
+                    assert (
+                        release_frame.f_code
+                        is _PreparedWorkflowReply._release_configuration.__code__
+                    )
+                    assert release_frame.f_locals["self"] is prepared
+                    assert release_frame.f_locals["scope"] is scope
+                    assert release_frame.f_locals["registry"] is registry
+                    close_frame = release_frame.f_back
+                    assert close_frame.f_code is _PreparedWorkflowReply.close.__code__
+                    assert close_frame.f_locals["self"] is prepared
+                    closing = prepared._finite_reads[-1]
+                    assert (
+                        closing is not first
+                        and closing.positive
+                        and closing.scopes_returned
+                    )
+                    assert closing.wrapper_error is closing.body_error is None
+                    actual = prepared._finite_read_return(closing)
+                    assert actual is closing.proof[1].result() and actual[0] is closing
+                    assert closing.proof[2].done() and closing.proof[2].result() is None
+                    assert prepared._closed and prepared._native_closed
+                    assert prepared._source_scope is None and prepared in registry
+                    assert prepared._terminal_configuration_return is None
+                    saved.update(injected=True, closing=closing, actual=actual)
+                    inject = True
+                except BaseException as error:  # noqa: BLE001 - observation cannot change native configuration cleanup.
+                    errors.append(error)
+                if inject:
+                    threading.settrace_all_threads(None)
+                    sys.settrace(None)
+                    raise refused.value
+                return trace
+
+            threading.setprofile_all_threads(observe)
+            threading.settrace_all_threads(trace)
+            with pytest.raises(PermissionError) as closing_error:
+                await prepared.close()
+            assert closing_error.value is refused.value
+            assert saved.get("injected") and errors == []
+            assert len(releases) == 1 and scope.gen.gi_frame is None
+            records = tuple(prepared._finite_reads)
+            for _ in range(2):
+                with pytest.raises(
+                    RuntimeError, match="original workflow read issue unproven"
+                ):
+                    await prepared.close()
+                assert tuple(prepared._finite_reads) == records
+                assert prepared._finite_reads[-1] is saved["closing"]
+                assert prepared._finite_read_return(saved["closing"]) is saved["actual"]
+                assert prepared._terminal_configuration_return is None
+                assert prepared._source_scope is None and prepared in registry
+                assert h.runtime._workflow_preparations is registry
+                assert prepared.source is source and prepared.native is native
+                assert prepared._lifetime is lifetime and prepared.authorization is auth
+                assert prepared._closed and prepared._native_closed
+                assert len(releases) == 1
+            assert h.calls == [] and h.db.list_runs(h.conversation_id) == []
+            after = h.db.automatic_work.snapshot(before.chain_id)
+            assert after.used == before.used and after.reserved == before.reserved
+            print(
+                "G_TERMINAL_CONFIGURATION_RETURN_RETAINED; no fixture/creator drain",
+                flush=True,
+            )
+            os._exit(17)
+        except BaseException as error:
+            primary = error
+            raise
+        finally:
+            threading.settrace_all_threads(old_trace)
+            sys.settrace(old_sys_trace)
+            threading.setprofile_all_threads(old_profile)
+            sys.setprofile(old_sys_profile)
+            if generator is not None:
+                try:
+                    await generator.aclose()
+                except BaseException as error:
+                    if primary is None:
+                        raise
+                    primary.add_note(
+                        "Original fixture cleanup also failed: " + type(error).__name__
+                    )
+                    primary.cleanup_error = error
+
+
+async def test_original_configuration_exit_error_cannot_certify_terminal_close(
+    tmp_path,
+):
+    import subprocess
+    from pathlib import Path
+
+    from Tests.Backup_Recovery.test_home_citation_retirement import _run
+
+    route = "terminal-config-exit"
+    script = Path(__file__).with_name("workflow_coordinator_probe.py").read_text()
+    with pytest.raises(
+        AssertionError, match="G_TERMINAL_CONFIGURATION_RETURN_RETAINED"
+    ) as caught:
+        await asyncio.to_thread(
+            _run, tmp_path, route, "retained", script=script, timeout=60
+        )
+    frames = []
+    tb = caught.value.__traceback__
+    while tb is not None:
+        if tb.tb_frame.f_code is _run.__code__:
+            frames.append(tb.tb_frame)
+        tb = tb.tb_next
+    assert len(frames) == 1
+    original = frames[0].f_locals
+    result = original["result"]
+    assert original["script"] is script and original["tmp_path"] is tmp_path
+    assert type(result) is subprocess.CompletedProcess
+    assert result.returncode == 17 and result.args[-2:] == [route, "retained"]
+
+
+async def finite_preentry_failure_journey(tmp_path, _unused):
+    """The original configuration root survives an unreturned first capture."""
+    import os
+    from types import SimpleNamespace
+
+    from tldw_chatbook.Chat import console_preparation_reads as native_reads
+    from tldw_chatbook.Chat import console_workflow_runs as runs
+    from tldw_chatbook.Chat.console_workflow_preparation import _PreparedWorkflowReply
+
+    saved, errors = {}, []
+    sentinel = RuntimeError("original first preparation capture failure")
+    previous_thread_trace, previous_trace = threading.gettrace(), sys.gettrace()
+    invoke_code = next(
+        code
+        for code in _PreparedWorkflowReply._read.__code__.co_consts
+        if isinstance(code, type(runs._capture_workflow_read.__code__))
+        and code.co_name == "invoke"
+    )
+    generator = primary = None
+    with pytest.MonkeyPatch.context() as monkeypatch:
+        try:
+            generator = native_tests.native_host.__wrapped__(
+                tmp_path, monkeypatch, SimpleNamespace(param=None)
+            )
+            h = await anext(generator)
+            before = h.db.automatic_work.snapshot(h.phase.attempt.chain_id)
+
+            def trace(frame, event, _arg):
+                if (
+                    event != "call"
+                    or frame.f_code is not runs._capture_workflow_read.__code__
+                    or saved.get("injected")
+                ):
+                    return trace
+                inject = False
+                try:
+                    prepared = frame.f_locals.get("source")
+                    if (
+                        type(prepared) is not _PreparedWorkflowReply
+                        or prepared.phase is not h.phase
+                        or prepared.controller is not h.controller
+                        or prepared.runtime is not h.runtime
+                        or prepared.task_id != "task-1"
+                    ):
+                        return trace
+                    caller = frame.f_back
+                    assert caller.f_code is invoke_code
+                    record = caller.f_locals["record"]
+                    assert prepared._finite_reads == [record]
+                    assert record.prepared is prepared
+                    assert record.callback is caller.f_locals["invoke"]
+                    assert frame.f_locals["callback"] is record.callback
+                    assert frame.f_locals["issuing"] is record.issuing
+                    binding = native_reads._source_binding.get()
+                    assert (
+                        binding.active and binding.thread is threading.current_thread()
+                    )
+                    read = binding.read
+                    assert type(read) is native_reads.ConsolePreparationRead
+                    assert read.source is prepared and read.creator is h.controller
+                    assert (
+                        read.callback is record.callback and read.task is record.issuing
+                    )
+                    assert prepared._source_scope is not None
+                    assert prepared in h.runtime._workflow_preparations
+                    assert (
+                        prepared.source is prepared.native is prepared._lifetime is None
+                    )
+                    assert prepared.authorization is None
+                    saved.update(
+                        prepared=prepared,
+                        record=record,
+                        read=read,
+                        producer=read._producer,
+                        retired=read.retired,
+                        scope=prepared._source_scope,
+                        registry=h.runtime._workflow_preparations,
+                        injected=True,
+                    )
+                    inject = True
+                except BaseException as error:  # noqa: BLE001 - retain the original error without throwing into native observation or masking cleanup.
+                    errors.append(error)
+                if inject:
+                    threading.settrace_all_threads(None)
+                    sys.settrace(None)
+                    raise sentinel
+                return trace
+
+            threading.settrace_all_threads(trace)
+            with pytest.raises(
+                RuntimeError, match="original workflow read return missing"
+            ):
+                await h.bridge._prepare_workflow_reply(
+                    phase=h.phase,
+                    task_id="task-1",
+                    binding=h.binding,
+                    resolution=h.selected,
+                )
+            assert errors == [] and saved.get("injected") is True
+            prepared, record, read = saved["prepared"], saved["record"], saved["read"]
+            assert prepared._finite_reads == [record]
+            assert record.wrapper_error is sentinel
+            assert record.proof is record.before_issue is record.owner is None
+            assert record.claim is record.operation is record.body_error is None
+            assert not record.scopes_returned and not record.positive
+            assert prepared._finite is None
+            assert read.creator is h.controller and read.source is prepared
+            assert read.callback is record.callback and read.task is record.issuing
+            assert (
+                read._producer is saved["producer"] and read.retired is saved["retired"]
+            )
+            assert read._producer.done() and not read._producer.cancelled()
+            assert read._producer.exception() is sentinel
+            assert read.retired.done() and read.retired.result() is None
+            for _ in range(2):
+                with pytest.raises(
+                    RuntimeError, match="original workflow read return missing"
+                ):
+                    await prepared.close()
+                assert prepared._finite_reads == [record]
+                assert prepared._source_scope is saved["scope"]
+                assert saved["scope"].gen.gi_frame is not None
+                assert h.runtime._workflow_preparations is saved["registry"]
+                assert prepared in saved["registry"] and not prepared._closed
+                assert prepared.source is prepared.native is prepared._lifetime is None
+                assert prepared.authorization is None
+            assert h.calls == [] and h.db.list_runs(h.conversation_id) == []
+            after = h.db.automatic_work.snapshot(before.chain_id)
+            assert after.used == before.used and after.reserved == before.reserved
+            print(
+                "G_FINITE_PREENTRY_RETAINED; original configuration custody, no drain",
+                flush=True,
+            )
+            os._exit(17)
+        except BaseException as error:
+            primary = error
+            raise
+        finally:
+            threading.settrace_all_threads(previous_thread_trace)
+            sys.settrace(previous_trace)
+            if generator is not None:
+                try:
+                    await generator.aclose()
+                except BaseException as error:
+                    if primary is None:
+                        raise
+                    primary.add_note(
+                        "Original fixture cleanup also failed: " + type(error).__name__
+                    )
+                    primary.cleanup_error = error
+
+
+async def test_original_preentry_unknown_read_retains_configuration_before_auto_close(
+    tmp_path,
+):
+    import subprocess
+    from pathlib import Path
+
+    from Tests.Backup_Recovery.test_home_citation_retirement import _run
+
+    route = "finite-preentry"
+    script = Path(__file__).with_name("workflow_coordinator_probe.py").read_text()
+    with pytest.raises(AssertionError, match="G_FINITE_PREENTRY_RETAINED") as caught:
+        await asyncio.to_thread(
+            _run, tmp_path, route, "retained", script=script, timeout=60
+        )
+    frames = []
+    tb = caught.value.__traceback__
+    while tb is not None:
+        if tb.tb_frame.f_code is _run.__code__:
+            frames.append(tb.tb_frame)
+        tb = tb.tb_next
+    assert len(frames) == 1
+    original = frames[0].f_locals
+    result = original["result"]
+    assert original["script"] is script and original["tmp_path"] is tmp_path
+    assert type(result) is subprocess.CompletedProcess
+    assert result.returncode == 17 and result.args[-2:] == [route, "retained"]
+
+
+async def finite_scope_failure_journey(tmp_path, _unused):
+    """An actual failed owning exit cannot borrow its callback's error identity."""
+    import os
+    from types import SimpleNamespace
+
+    from tldw_chatbook.Agents import activation
+    from tldw_chatbook.Agents.execution_capacity import ExecutionOwner
+    from tldw_chatbook.Backup_Recovery.admission_runtime import RecoveryAdmissionGuard
+    from tldw_chatbook.Backup_Recovery.storage_admission import (
+        StorageLease,
+        _live_leases,
+    )
+    from tldw_chatbook.Chat import console_preparation_reads as native_reads
+    from tldw_chatbook.Chat import console_workflow_runs as runs
+    from tldw_chatbook.Chat.console_workflow_preparation import _PreparedWorkflowReply
+    from tldw_chatbook.Workspaces.worktree_activity import WorktreeActivity
+
+    mode = sys.argv[2]
+    generator = primary = None
+    saved, finish_calls, observer_errors = {}, [], []
+    old_trace, old_sys_trace = threading.gettrace(), sys.gettrace()
+    old_profile, old_sys_profile = threading.getprofile(), sys.getprofile()
+    sentinel = RuntimeError("original callback and owning exit failure")
+    codes = {
+        "owner": ExecutionOwner.activate.__wrapped__.__code__,
+        "source": _PreparedWorkflowReply.activate_source.__wrapped__.__code__,
+        "activity": WorktreeActivity.prelaunch.__wrapped__.__code__,
+        "outer-guard": RecoveryAdmissionGuard.execution.__wrapped__.__code__,
+        "outer-storage": StorageLease.close.__code__,
+        "async-storage": StorageLease.close.__code__,
+        "async-guard": RecoveryAdmissionGuard.execution.__wrapped__.__code__,
+        "finish": OwnedOperation.finish.__code__,
+        "read-missing": runs._capture_workflow_read.__code__,
+    }
+    with pytest.MonkeyPatch.context() as monkeypatch:
+        try:
+            generator = native_tests.native_host.__wrapped__(
+                tmp_path, monkeypatch, SimpleNamespace(param=None)
+            )
+            h = await anext(generator)
+            prepared = await h.bridge._prepare_workflow_reply(
+                phase=h.phase,
+                task_id="task-1",
+                binding=h.binding,
+                resolution=h.selected,
+            )
+            source, scope, lifetime = (
+                prepared.source,
+                prepared._source_scope,
+                prepared._lifetime,
+            )
+            before = h.db.automatic_work.snapshot(prepared.authorization.claim.chain_id)
+            invoke_code = next(
+                code
+                for code in _PreparedWorkflowReply._read.__code__.co_consts
+                if isinstance(code, type(codes["owner"])) and code.co_name == "invoke"
+            )
+            own_code = next(
+                code
+                for code in _PreparedWorkflowReply._read.__code__.co_consts
+                if isinstance(code, type(codes["owner"]))
+                and code.co_name == "invoke_owned"
+            )
+
+            def body():
+                record = prepared._finite_reads[-1]
+                saved.update(
+                    record=record,
+                    owner=record.owner,
+                    claim=record.claim,
+                    operation=record.operation,
+                )
+                assert prepared._finite == (record.owner, record.claim)
+                raise sentinel
+
+            async def pending():
+                body()
+
+            def callback():
+                return pending() if mode.startswith("async-") else body()
+
+            def profile(frame, event, _result):
+                if frame.f_code is OwnedOperation.finish.__code__ and event == "call":  # noqa: SIM102 - keep native-frame selection separate from the exact retained receiver.
+                    if frame.f_locals.get("self") is saved.get("operation"):
+                        finish_calls.append(frame)
+
+            def trace(frame, event, _arg):
+                if frame.f_code is not codes[mode] or saved.get("injected"):
+                    return trace
+                normal = event == "return" and dis.opname[
+                    frame.f_code.co_code[frame.f_lasti]
+                ] in {"RETURN_VALUE", "RETURN_CONST"}
+                if mode in {"outer-storage", "async-storage", "read-missing"}:
+                    if event != "call":
+                        return trace
+                elif not normal:
+                    return trace
+                inject = False
+                try:
+                    record = prepared._finite_reads[-1]
+                    ancestors = []
+                    caller = frame.f_back
+                    while caller is not None:
+                        ancestors.append(caller)
+                        caller = caller.f_back
+                    invoke = next(
+                        (
+                            f
+                            for f in ancestors
+                            if f.f_code is invoke_code
+                            and f.f_locals.get("record") is record
+                        ),
+                        None,
+                    )
+                    own = next(
+                        (
+                            f
+                            for f in ancestors
+                            if f.f_code is own_code
+                            and f.f_locals.get("record") is record
+                        ),
+                        None,
+                    )
+                    if mode == "read-missing":
+                        if (
+                            invoke is None
+                            or frame.f_locals.get("source") is not prepared
+                        ):
+                            return trace
+                        binding = native_reads._source_binding.get()
+                        assert binding.active and binding.read.source is prepared
+                        assert binding.read.callback is record.callback
+                        saved.update(record=record, read=binding.read)
+                        inject = True
+                    elif (
+                        record is saved.get("record") and record.body_error is sentinel
+                    ):
+                        if mode == "owner":
+                            inject = (
+                                own is not None
+                                and frame.f_locals.get("self") is saved["owner"]
+                            )
+                        elif mode == "source":
+                            inject = (
+                                own is not None
+                                and frame.f_locals.get("self") is prepared
+                            )
+                        elif mode == "activity":
+                            inject = (
+                                invoke is not None
+                                and frame.f_locals.get("self")
+                                is h.runtime.worktree_activity
+                                and frame.f_locals.get("claim") is saved["claim"]
+                            )
+                        elif mode == "outer-guard":
+                            inject = (
+                                invoke is not None
+                                and own is None
+                                and frame.f_locals.get("self") is activation._guard
+                            )
+                        elif mode == "outer-storage":
+                            inject = invoke is not None and own is None
+                        elif mode == "finish":
+                            inject = (
+                                invoke is not None
+                                and frame.f_locals.get("self") is saved["operation"]
+                            )
+                        elif mode.startswith("async-"):
+                            task = asyncio.current_task()
+                            inject = (
+                                task is not None
+                                and task.get_coro() is record.completion
+                            )
+                            if mode == "async-guard":
+                                # Only the actual outer async-worker guard return,
+                                # after complete's inner contexts have returned.
+                                inject = (
+                                    inject
+                                    and frame.f_locals.get("self") is activation._guard
+                                    and any(
+                                        f.f_locals.get("function") is not None
+                                        and getattr(
+                                            f.f_locals["function"], "__code__", None
+                                        )
+                                        is not None
+                                        and f.f_locals["function"].__code__.co_name
+                                        == "complete"
+                                        for f in ancestors
+                                    )
+                                    and not any(
+                                        f.f_code.co_name == "complete"
+                                        for f in ancestors
+                                    )
+                                )
+                            saved["async_task"] = task
+                    if inject:
+                        saved.update(
+                            injected=True,
+                            frame=frame,
+                            receiver=frame.f_locals.get("self"),
+                        )
+                        if "storage" in mode:
+                            assert type(saved["receiver"]) is StorageLease
+                            saved["lease"] = saved["receiver"]
+                except BaseException as observation_error:  # noqa: BLE001 - retain the original error without throwing into native observation or masking cleanup.
+                    observer_errors.append(observation_error)
+                    return trace
+                if inject:
+                    # Intentional fault at the SAME native boundary; observers
+                    # above only retain facts and cannot replace the fault.
+                    threading.settrace_all_threads(None)
+                    sys.settrace(None)
+                    raise sentinel
+                return trace
+
+            threading.setprofile_all_threads(profile)
+            threading.settrace_all_threads(trace)
+            try:
+                with pytest.raises(RuntimeError) as caught:
+                    await prepared._read(callback)
+                assert caught.value is sentinel
+                assert saved.get("injected") is True
+                assert observer_errors == []
+                record = saved["record"]
+                assert record is prepared._finite_reads[-1]
+                assert record.wrapper_error is sentinel and not record.positive
+                assert not record.scopes_returned
+                if mode == "read-missing":
+                    assert (
+                        record.proof
+                        is record.owner
+                        is record.claim
+                        is record.operation
+                        is None
+                    )
+                    read = saved["read"]
+                    assert record.body_error is None and prepared._finite is None
+                    assert record.before_issue is None
+                else:
+                    read, producer, retired, original = record.proof  # noqa: RUF059 - retain the complete original issue/proof fields for identity inspection.
+                    assert read.callback is original is record.callback
+                    assert record.body_error is sentinel
+                    assert (
+                        record.owner is saved["owner"]
+                        and record.claim is saved["claim"]
+                    )
+                    assert record.operation is saved["operation"]
+                    assert prepared._finite == (saved["owner"], saved["claim"])
+                    with h.runtime.execution_capacity._lock:
+                        assert (
+                            h.runtime.execution_capacity._owners.get(
+                                saved["owner"].execution_id
+                            )
+                            is saved["owner"]
+                        )
+                        assert not saved["owner"]._root_finished
+                        assert (saved["operation"] in saved["owner"]._operations) is (
+                            mode != "finish"
+                        )
+                    with h.runtime.worktree_activity._lock:
+                        assert saved["claim"].id in h.runtime.worktree_activity._claims
+                        assert (
+                            h.runtime.worktree_activity._members[
+                                saved["claim"].id
+                            ].owner
+                            is saved["owner"]
+                        )
+                    if "storage" in mode:
+                        assert saved["lease"] in _live_leases
+                assert read.creator is h.controller and read.source is prepared
+                assert read.task is record.issuing
+                assert read._producer.done() and read._producer.exception() is sentinel
+                assert read.retired.done() and read.retired.result() is None
+                assert len(finish_calls) == (1 if mode == "finish" else 0)
+                count = len(prepared._finite_reads)
+                for _ in range(2):
+                    with pytest.raises(RuntimeError, match="original workflow read"):
+                        await prepared.close()
+                    assert len(prepared._finite_reads) == count
+                    assert prepared.source is source and prepared._source_scope is scope
+                    assert prepared._lifetime is lifetime and not prepared._closed
+                    assert prepared in h.runtime._workflow_preparations
+                    assert len(finish_calls) == (1 if mode == "finish" else 0)
+                assert h.calls == [] and h.db.list_runs(h.conversation_id) == []
+                after = h.db.automatic_work.snapshot(before.chain_id)
+                assert after.used == before.used and after.reserved == before.reserved
+                print(
+                    "G_FINITE_SCOPE_RETAINED",
+                    mode,
+                    "; actual original custody, no fixture/creator drain",
+                    flush=True,
+                )
+                os._exit(17)
+            finally:
+                threading.settrace_all_threads(old_trace)
+                sys.settrace(old_sys_trace)
+                threading.setprofile_all_threads(old_profile)
+                sys.setprofile(old_sys_profile)
+        except BaseException as error:
+            primary = error
+            raise
+        finally:
+            if generator is not None:
+                try:
+                    await generator.aclose()
+                except BaseException as error:
+                    if primary is None:
+                        raise
+                    primary.add_note(
+                        "Original fixture cleanup also failed: " + type(error).__name__
+                    )
+                    primary.cleanup_error = error
+
+
+@pytest.mark.parametrize(
+    "mode",
+    [
+        "owner",
+        "source",
+        "activity",
+        "outer-guard",
+        "outer-storage",
+        "async-storage",
+        "async-guard",
+        "finish",
+        "read-missing",
+    ],
+)
+async def test_same_callback_error_does_not_certify_failed_native_scope(tmp_path, mode):
+    import subprocess
+    from pathlib import Path
+
+    from Tests.Backup_Recovery.test_home_citation_retirement import _run
+
+    route = "finite-scope"
+    script = Path(__file__).with_name("workflow_coordinator_probe.py").read_text()
+    with pytest.raises(AssertionError, match="G_FINITE_SCOPE_RETAINED") as caught:
+        await asyncio.to_thread(_run, tmp_path, route, mode, script=script, timeout=60)
+    frames = []
+    tb = caught.value.__traceback__
+    while tb is not None:
+        if tb.tb_frame.f_code is _run.__code__:
+            frames.append(tb.tb_frame)
+        tb = tb.tb_next
+    assert len(frames) == 1
+    original = frames[0].f_locals
+    result = original["result"]
+    assert original["script"] is script and original["tmp_path"] is tmp_path
+    assert type(result) is subprocess.CompletedProcess
+    assert result.returncode == 17 and result.args[-2:] == [route, mode]
+
+
+async def test_original_nonissued_finite_read_allows_exact_unused_cleanup(native_host):
+    cancel = threading.Event()
+    h = native_host
+    prepared = await h.bridge._prepare_workflow_reply(
+        phase=h.phase,
+        task_id="task-1",
+        binding=h.binding,
+        resolution=h.selected,
+        should_cancel=cancel.is_set,
+    )
+    scope = prepared._source_scope
+    source = prepared.source
+    calls = []
+    before = h.db.automatic_work.snapshot(prepared.authorization.claim.chain_id)
+    cancel.set()
+    with pytest.raises(
+        PermissionError, match="workflow native source changed"
+    ) as caught:
+        await prepared._read(lambda: calls.append(True))
+    record = prepared._finite_reads[-1]
+    (
+        coroutine,
+        frame,
+        checker,
+        validator,
+        thread,
+        reads,  # noqa: RUF059 - retain the complete original issue/proof fields for identity inspection.
+        observers,  # noqa: RUF059 - retain the complete original issue/proof fields for identity inspection.
+        session_id,  # noqa: RUF059 - retain the complete original issue/proof fields for identity inspection.
+        runtime,
+        controller,  # noqa: RUF059 - retain the complete original issue/proof fields for identity inspection.
+        service,  # noqa: RUF059 - retain the complete original issue/proof fields for identity inspection.
+        original_source,
+        original_scope,
+        registry,
+        closing,  # noqa: RUF059 - retain the complete original issue/proof fields for identity inspection.
+    ) = record.issue
+    assert record.before_issue == (
+        record,
+        prepared,
+        asyncio.current_task(),
+        record.issue,
+        caught.value,
+    )
+    assert record.wrapper_error is caught.value and record.proof is None
+    assert record.owner is record.claim is record.operation is None
+    assert (
+        record.body_error is None and not record.scopes_returned and not record.positive
+    )
+    assert coroutine.cr_frame is None and not coroutine.cr_running
+    assert not any(
+        name in frame.f_locals for name in ("read", "producer", "submit_resolved")
+    )
+    assert frame.f_locals["require_current"] is checker
+    assert validator.__self__ is prepared and thread is threading.current_thread()
+    assert original_source is source and original_scope is scope
+    assert registry is runtime._workflow_preparations and prepared in registry
+    assert calls == [] and h.calls == [] and h.db.list_runs(h.conversation_id) == []
+    assert prepared._finite is None
+    await prepared.close()
+    closing_read = prepared._finite_reads[-1]
+    assert closing_read is not record and closing_read.positive
+    assert closing_read.proof[1].exception() is None
+    assert closing_read.proof[2].done() and closing_read.proof[2].result() is None
+    assert prepared._closed and prepared._native_closed
+    assert prepared._source_scope is None and prepared not in registry
+    after = h.db.automatic_work.snapshot(before.chain_id)
+    assert after.used == before.used and after.reserved == before.reserved
+    original_reads = tuple(prepared._finite_reads)
+    original_proof = closing_read.proof
+    original_lifetime = prepared._lifetime
+    await prepared.close()
+    assert len(prepared._finite_reads) == len(original_reads)
+    assert all(a is b for a, b in zip(prepared._finite_reads, original_reads))
+    assert prepared._finite_reads[-1] is closing_read
+    assert closing_read.proof is original_proof
+    assert original_proof[1].exception() is None
+    assert original_proof[2].done() and original_proof[2].result() is None
+    assert prepared._lifetime is original_lifetime and prepared._finite is None
+    assert prepared.source is source and prepared._source_scope is None
+    assert prepared not in registry and prepared._closed and prepared._native_closed
+    assert h.calls == [] and h.db.list_runs(h.conversation_id) == []
+    repeated = h.db.automatic_work.snapshot(before.chain_id)
+    assert repeated.used == before.used and repeated.reserved == before.reserved
+
+
+async def test_original_no_owner_preparation_wait_returns_without_invented_owner(
+    native_host,
+):
+    h = native_host
+    prepared = await h.bridge._prepare_workflow_reply(
+        phase=h.phase, task_id="task-1", binding=h.binding, resolution=h.selected
+    )
+    before = h.db.automatic_work.snapshot(prepared.authorization.claim.chain_id)
+    competitor = h.runtime.execution_capacity.begin_execution(
+        origin=WorkOrigin.MANUAL, conversation_id="actual-preparation-contender"
+    )
+    drains, calls = [], []
+    competitor.on_drained(drains.append)
+    claim = h.runtime.worktree_activity.try_acquire(
+        owner=competitor, footprint=WorktreeFootprint(opaque=True)
+    )
+    assert claim is not None
+    try:
+        with pytest.raises(_WorkflowChildWait) as caught:
+            await prepared._read(lambda: calls.append(True))
+        record = prepared._finite_reads[-1]
+        assert record.body_error is caught.value and record.wrapper_error is None
+        assert record.positive and record.scopes_returned and record.drains == []
+        assert record.owner is record.claim is record.operation is None
+        assert record.proof[1].result()[5:8] == (None, None, None)
+        assert record.proof[1].result()[9] is caught.value
+        assert record.proof[2].done() and record.proof[2].result() is None
+        assert prepared._finite is None and competitor.is_admitted
+        assert calls == [] and h.calls == []
+    finally:
+        competitor.finish_root()
+        claim.settle(durable=True)
+    assert drains == [True] and not competitor.is_admitted
+    await prepared.close()
+    assert prepared._closed and prepared not in h.runtime._workflow_preparations
+    after = h.db.automatic_work.snapshot(before.chain_id)
+    assert after.used == before.used and after.reserved == before.reserved
+
+
+@pytest.mark.parametrize("body_fails", [False, True])
+async def test_original_finite_caller_cancellation_waits_and_keeps_body_outcome(
+    native_host, body_fails
+):
+    h = native_host
+    prepared = await h.bridge._prepare_workflow_reply(
+        phase=h.phase, task_id="task-1", binding=h.binding, resolution=h.selected
+    )
+    before = h.db.automatic_work.snapshot(prepared.authorization.claim.chain_id)
+    entered, release = threading.Event(), threading.Event()
+    value, failure = object(), RuntimeError("original held finite callback failed")
+    saved = {}
+
+    def callback():
+        record = prepared._finite_reads[-1]
+        saved.update(
+            record=record,
+            owner=record.owner,
+            operation=record.operation,
+            claim=record.claim,
+        )
+        entered.set()
+        assert release.wait(5), "original finite callback hold exceeded5s"
+        if body_fails:
+            raise failure
+        return value
+
+    task = asyncio.create_task(prepared._read(callback))
+    try:
+        assert await asyncio.to_thread(entered.wait, 5)
+        task.cancel("first original caller cancellation")
+        await asyncio.sleep(0)
+        task.cancel("second original caller cancellation")
+        await asyncio.sleep(0)
+        assert not task.done() and saved["owner"].is_admitted
+        assert prepared._finite == (saved["owner"], saved["claim"])
+    finally:
+        release.set()
+        with pytest.raises(asyncio.CancelledError) as caught:
+            await task
+    record = saved["record"]
+    assert record.issuing is task and record.wrapper_error is caught.value
+    assert record.body_error is (failure if body_fails else None)
+    assert record.scopes_returned and not record.positive
+    assert record.proof[1].exception() is None
+    actual = record.proof[1].result()
+    assert actual[8] is (None if body_fails else value)
+    assert actual[9] is record.body_error
+    assert record.proof[2].done() and record.proof[2].result() is None
+    assert record.drains == [True] and not saved["owner"].is_admitted
+    assert prepared._finite is None
+    await prepared.close()
+    assert prepared._closed and prepared._source_scope is None
+    assert prepared not in h.runtime._workflow_preparations
+    assert h.calls == [] and h.db.list_runs(h.conversation_id) == []
+    after = h.db.automatic_work.snapshot(before.chain_id)
+    assert after.used == before.used and after.reserved == before.reserved
+
+
+async def finite_planning_scope_journey(tmp_path, monkeypatch):
+    import os
+
+    from Tests.Chat.workflow_rig import WorkflowProvider, build_workflow_rig
+    from tldw_chatbook.Agents import activation
+    from tldw_chatbook.Backup_Recovery.admission_runtime import RecoveryAdmissionGuard
+    from tldw_chatbook.Chat.console_chat_controller import (
+        capture_run_admitted_workspace_roots,
+    )
+    from tldw_chatbook.Chat.console_workflow_preparation import (
+        _PreparedWorkflowReply,
+        prepare_workflow_planning,
+    )
+
+    mode = sys.argv[2]
+    negative = mode.startswith("async-")
+    host_thread, host_loop = threading.current_thread(), asyncio.get_running_loop()
+    rig = await build_workflow_rig(
+        tmp_path, monkeypatch, WorkflowProvider(), public_coordinator=False
+    )
+    original_error = RuntimeError("original planning finite callback failed")
+    old_trace, old_sys_trace = threading.gettrace(), sys.gettrace()
+    saved, errors = {}, []
+    primary = None
+    try:
+        assert not hasattr(rig.runtime, "_workflow_coordinator")
+        session = rig.store.sessions()[0]
+        binding = capture_run_admitted_workspace_roots(
+            session=session, registry=rig.service.persistence.workspace_registry
+        )[0]
+        request = rig.workflow.request
+        prepared = await prepare_workflow_planning(
+            rig.controller,
+            session_id=session.id,
+            binding=binding,
+            command_id="finite-planning-return",
+            objective=request.objective,
+            policy=request.policy,
+            _request=request,
+        )
+        assert prepared.phase.attempt.purpose == "planning"
+        assert prepared._loop is host_loop
+        assert prepared.primary_owner is None and rig.provider.calls == []
+        source, scope = prepared.source, prepared._source_scope
+        intake, token = prepared._planning_intake, prepared._planning_token
+        before = rig.service.db.automatic_work.snapshot(prepared.phase.context.chain_id)
+        source_code = _PreparedWorkflowReply.activate_source.__wrapped__.__code__
+        guard_code = RecoveryAdmissionGuard.execution.__wrapped__.__code__
+
+        def body():
+            record = prepared._planning_reads[-1]
+            saved.update(
+                record=record,
+                owner=record.owner,
+                claim=record.claim,
+                operation=record.operation,
+            )
+            raise original_error
+
+        async def pending():
+            body()
+
+        def callback():
+            if mode == "synchronous":
+                body()
+            return pending()
+
+        def trace(frame, event, _arg):
+            wanted = source_code if mode == "async-source" else guard_code
+            if (
+                not negative
+                or frame.f_code is not wanted
+                or event != "return"
+                or saved.get("injected")
+            ):
+                return trace
+            if dis.opname[frame.f_code.co_code[frame.f_lasti]] not in {
+                "RETURN_VALUE",
+                "RETURN_CONST",
+            }:
+                return trace
+            inject = False
+            try:
+                record = saved.get("record")
+                if (
+                    record is None
+                    or record.body_error is not original_error
+                    or record.completion is None
+                    or threading.current_thread() is not host_thread
+                ):
+                    return trace
+                task = asyncio.current_task()
+                if (
+                    asyncio.get_running_loop() is not host_loop
+                    or task is None
+                    or task.get_coro() is not record.completion
+                ):
+                    return trace
+                ancestors, caller = [], frame.f_back
+                while caller is not None:
+                    ancestors.append(caller)
+                    caller = caller.f_back
+                if mode == "async-source":
+                    inject = frame.f_locals.get("self") is prepared and any(
+                        f.f_code.co_name == "complete"
+                        and f.f_locals.get("record") is record
+                        for f in ancestors
+                    )
+                else:
+                    inject = (
+                        frame.f_locals.get("self") is activation._guard
+                        and not any(f.f_code.co_name == "complete" for f in ancestors)
+                        and any(
+                            getattr(f.f_locals.get("function"), "__code__", None)
+                            is not None
+                            and f.f_locals["function"].__code__.co_name == "complete"
+                            for f in ancestors
+                        )
+                    )
+                if inject:
+                    saved.update(injected=True, frame=frame, task=task)
+            except BaseException as error:  # noqa: BLE001 - retain the original error without throwing into native observation or masking cleanup.
+                errors.append(error)
+                return trace
+            if inject:
+                threading.settrace_all_threads(None)
+                sys.settrace(None)
+                raise original_error
+            return trace
+
+        if negative:
+            threading.settrace_all_threads(trace)
+        try:
+            with pytest.raises(RuntimeError) as caught:
+                await prepared._read(callback)
+        finally:
+            threading.settrace_all_threads(old_trace)
+            sys.settrace(old_sys_trace)
+        record = saved["record"]
+        assert (
+            record is prepared._planning_reads[-1]
+            and record.body_error is original_error
+        )
+        if errors:
+            details = []
+            for error in errors[:3]:
+                locations, tb = [], error.__traceback__
+                while tb is not None and len(locations) < 8:
+                    locations.append(
+                        (
+                            tb.tb_frame.f_code.co_filename,
+                            tb.tb_frame.f_code.co_name,
+                            tb.tb_lineno,
+                        )
+                    )
+                    tb = tb.tb_next
+                details.append((type(error).__name__, locations))
+            print("G_PLANNING_OBSERVER_ERRORS", len(errors), details, flush=True)
+        assert errors == []
+        read, producer, retired, original_callback = record.proof
+        assert (
+            read.source is prepared
+            and read.callback is original_callback is record.callback
+        )
+        assert read.task is record.issuing is asyncio.current_task()
+        assert read._producer is producer and read.retired is retired
+        assert retired.done() and retired.result() is None
+        if negative:
+            assert saved.get("injected") is True
+            assert str(caught.value) == "original workflow reader return unproven"
+            assert (
+                record.wrapper_error is original_error
+                and producer.exception() is original_error
+            )
+            assert record.completion_future.exception() is original_error
+            assert not record.positive and not record.scopes_returned
+            assert prepared._finite == (saved["owner"], saved["claim"])
+            with rig.runtime.execution_capacity._lock:
+                assert (
+                    rig.runtime.execution_capacity._owners.get(
+                        saved["owner"].execution_id
+                    )
+                    is saved["owner"]
+                )
+                assert saved["operation"] in saved["owner"]._operations
+                assert not saved["owner"]._root_finished
+            with rig.runtime.worktree_activity._lock:
+                assert saved["claim"].id in rig.runtime.worktree_activity._claims
+            count = len(prepared._planning_reads)
+            for _ in range(2):
+                # Original F close conservatively returns while retaining; it
+                # does not share execution's new no-issue alternative.
+                assert await prepared.close() is None
+                assert len(prepared._planning_reads) == count
+                assert prepared.source is source and prepared._source_scope is scope
+                assert prepared in rig.runtime._workflow_preparations
+                assert not prepared._closed and not prepared._planning_settled
+                assert (
+                    prepared._planning_intake is intake
+                    and prepared._planning_token is token
+                )
+            after = rig.service.db.automatic_work.snapshot(before.chain_id)
+            assert after.used == before.used and after.reserved == before.reserved
+            assert rig.provider.calls == [] and not hasattr(
+                rig.runtime, "_workflow_coordinator"
+            )
+            print(
+                "G_PLANNING_FINITE_RETAINED",
+                mode,
+                "; no constructor retirement",
+                flush=True,
+            )
+            os._exit(17)
+        assert caught.value is original_error and record.wrapper_error is None
+        assert producer.exception() is None and producer.result()[9] is original_error
+        assert record.positive and record.scopes_returned and record.drains == [True]
+        assert not saved["owner"].is_admitted and prepared._finite is None
+        await prepared.close()
+        assert prepared._closed and prepared._source_scope is None
+        assert prepared not in rig.runtime._workflow_preparations
+        assert prepared._planning_intake is prepared._planning_token is None
+        assert rig.runtime.execution_capacity.snapshot().executions == ()
+        assert rig.provider.calls == [] and not hasattr(
+            rig.runtime, "_workflow_coordinator"
+        )
+        after = rig.service.db.automatic_work.snapshot(before.chain_id)
+        assert after.used == before.used and after.reserved == before.reserved
+    except BaseException as error:
+        primary = error
+        raise
+    finally:
+        threading.settrace_all_threads(old_trace)
+        sys.settrace(old_sys_trace)
+        try:
+            await rig.close()
+        except BaseException as error:
+            if primary is None:
+                raise
+            primary.add_note(
+                "Original planning fixture cleanup also failed: " + type(error).__name__
+            )
+            primary.cleanup_error = error
+
+
+@pytest.mark.parametrize(
+    "mode", ["synchronous", "awaitable", "async-source", "async-guard"]
+)
+async def test_original_planning_finite_error_requires_its_actual_async_scope_return(
+    tmp_path, mode
+):
+    import subprocess
+    from pathlib import Path
+
+    from Tests.Backup_Recovery.test_home_citation_retirement import _run
+
+    route = "finite-planning"
+    script = Path(__file__).with_name("workflow_coordinator_probe.py").read_text()
+    if not mode.startswith("async-"):
+        await asyncio.to_thread(_run, tmp_path, route, mode, script=script, timeout=60)
+        return
+    with pytest.raises(AssertionError, match="G_PLANNING_FINITE_RETAINED") as caught:
+        await asyncio.to_thread(_run, tmp_path, route, mode, script=script, timeout=60)
+    frames, tb = [], caught.value.__traceback__
+    while tb is not None:
+        if tb.tb_frame.f_code is _run.__code__:
+            frames.append(tb.tb_frame)
+        tb = tb.tb_next
+    assert len(frames) == 1
+    actual = frames[0].f_locals
+    assert actual["script"] is script and actual["tmp_path"] is tmp_path
+    assert type(actual["result"]) is subprocess.CompletedProcess
+    assert actual["result"].returncode == 17
+    assert actual["result"].args[-2:] == [route, mode]
