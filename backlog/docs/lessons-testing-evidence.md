@@ -12,6 +12,7 @@ The 2025 test had passed only because it counted "locked" as a conflict. The fix
 **What to do.**
 - In a race test against a WAL database with deferred transactions, the barrier decides which mechanism refuses the loser, the lock or the version check, so the test pins neither.
 - A version-checked read-modify-write needs an IMMEDIATE transaction for its check to decide the race.
+- A read-modify-write without a caller-supplied version, such as `add_prompt(overwrite=True)`, becomes last-writer-wins under IMMEDIATE: both overlapping saves land in order. Write that outcome, not a conflict, into its criteria.
 - To pin that, hold the first writer inside its transaction after its write while the second starts. `test_overlapping_saves_of_one_opened_version_end_in_one_conflict` wraps `_log_sync_event` to do this. It is red every time with a deferred BEGIN.
 - Probe a few hundred rounds under load before trusting 10 green runs.
 - Expect a test that injects a second writer from a trace callback inside the first writer's transaction to deadlock once the first holds the lock from BEGIN.

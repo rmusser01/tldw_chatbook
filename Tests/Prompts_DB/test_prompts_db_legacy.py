@@ -975,7 +975,7 @@ class TestConcurrencyAndDataIntegrity(BaseTestCase):
                 results[user_id] = "success"
             except ExpectedVersionConflictError:
                 results[user_id] = "conflict"
-            except Exception as error:  # kept, so a wrong outcome names itself
+            except (DatabaseError, InputError) as error:  # a wrong outcome names itself
                 results[user_id] = error
             finally:
                 db_instance.close_connection()
@@ -989,6 +989,50 @@ class TestConcurrencyAndDataIntegrity(BaseTestCase):
         final_prompt = file_db.get_prompt_by_id(pid)
         self.assertEqual(final_prompt["version"], opened + 1)
         self.assertEqual(final_prompt["details"], "Updated by 1")
+
+    def _overlap_two_saves(self, save):
+        """Run ``save(db, user_id)`` for workers 1 and 2, overlapping.
+
+        Worker 1 holds its write transaction open, after its write (at
+        ``_log_sync_event``), until worker 2 has started its save, plus 0.3 s
+        for worker 2 to reach its BEGIN.
+
+        Returns:
+            ``{user_id: "success" or the exception the save raised}``.
+        """
+        holding, second_started = threading.Event(), threading.Event()
+        results = {}
+
+        def run(user_id):
+            db_instance = PromptsDatabase(self.db_path, client_id=f"worker_{user_id}")
+            if user_id == 1:
+                log_sync_event = db_instance._log_sync_event
+
+                def hold_then_log(*args, **kwargs):
+                    holding.set()
+                    second_started.wait(5)
+                    time.sleep(0.3)
+                    return log_sync_event(*args, **kwargs)
+
+                db_instance._log_sync_event = hold_then_log
+            else:
+                holding.wait(5)
+                second_started.set()
+            try:
+                save(db_instance, user_id)
+                results[user_id] = "success"
+            except (DatabaseError, InputError) as error:  # a wrong outcome names itself
+                results[user_id] = error
+            finally:
+                db_instance.close_connection()
+
+        workers = [threading.Thread(target=run, args=(user_id,)) for user_id in (1, 2)]
+        for worker in workers:
+            worker.start()
+        for worker in workers:
+            worker.join(30)
+        self.assertTrue(holding.is_set(), "worker 1 never held its write open")
+        return results
 
     def test_overlapping_saves_of_one_opened_version_end_in_one_conflict(self):
         """
@@ -1004,47 +1048,48 @@ class TestConcurrencyAndDataIntegrity(BaseTestCase):
         file_db = self._get_file_db()
         pid, _, _ = file_db.add_prompt("Overlap", "Initial", "Data")
         opened = file_db.get_prompt_by_id(pid)["version"]
-        holding, second_started = threading.Event(), threading.Event()
-        results = {}
 
-        def save(user_id):
-            db_instance = PromptsDatabase(self.db_path, client_id=f"worker_{user_id}")
-            if user_id == 1:
-                log_sync_event = db_instance._log_sync_event
+        results = self._overlap_two_saves(
+            lambda db, user_id: db.update_prompt_by_id(
+                pid, {"details": f"Updated by {user_id}"}, expected_version=opened
+            )
+        )
 
-                def hold_then_log(*args, **kwargs):
-                    holding.set()
-                    second_started.wait(5)
-                    time.sleep(0.3)  # worker 2 reaches its BEGIN meanwhile
-                    return log_sync_event(*args, **kwargs)
-
-                db_instance._log_sync_event = hold_then_log
-            else:
-                holding.wait(5)
-                second_started.set()
-            try:
-                db_instance.update_prompt_by_id(
-                    pid, {"details": f"Updated by {user_id}"}, expected_version=opened
-                )
-                results[user_id] = "success"
-            except ExpectedVersionConflictError:
-                results[user_id] = "conflict"
-            except Exception as error:  # kept, so a wrong outcome names itself
-                results[user_id] = error
-            finally:
-                db_instance.close_connection()
-
-        workers = [threading.Thread(target=save, args=(user_id,)) for user_id in (1, 2)]
-        for worker in workers:
-            worker.start()
-        for worker in workers:
-            worker.join(30)
-
-        self.assertTrue(holding.is_set(), "worker 1 never held its write open")
-        self.assertEqual(results, {1: "success", 2: "conflict"})
+        self.assertEqual(results[1], "success", results)
+        self.assertIsInstance(results[2], ExpectedVersionConflictError, results)
         final_prompt = file_db.get_prompt_by_id(pid)
         self.assertEqual(final_prompt["version"], opened + 1)
         self.assertEqual(final_prompt["details"], "Updated by 1")
+
+    def test_overlapping_overwrites_of_one_prompt_both_land_in_order(self):
+        """
+        Two overlapping overwrite saves of one prompt both land, in order.
+
+        add_prompt(overwrite=True) carries no expected version: it replaces
+        whatever is stored. Worker 1 holds its write transaction open, after
+        its UPDATE, while worker 2 starts its overwrite. An overwrite begins
+        IMMEDIATE, so worker 2 waits and then overwrites worker 1's save. With
+        a deferred BEGIN, worker 2 read the old version, and its write failed
+        on SQLite's lock (TASK-38686, AC#4).
+        """
+        file_db = self._get_file_db()
+        file_db.add_prompt("Overwrite Overlap", "Initial", "Data")
+        opened = file_db.get_prompt_by_name("Overwrite Overlap")["version"]
+
+        results = self._overlap_two_saves(
+            lambda db, user_id: db.add_prompt(
+                "Overwrite Overlap",
+                f"Author {user_id}",
+                f"Saved by {user_id}",
+                overwrite=True,
+            )
+        )
+
+        self.assertEqual(results, {1: "success", 2: "success"})
+        final_prompt = file_db.get_prompt_by_name("Overwrite Overlap")
+        self.assertEqual(final_prompt["version"], opened + 2)
+        self.assertEqual(final_prompt["author"], "Author 2")
+        self.assertEqual(final_prompt["details"], "Saved by 2")
 
     def test_unicode_character_support(self):
         """Ensure all text fields correctly handle Unicode characters."""

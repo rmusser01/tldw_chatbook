@@ -5,7 +5,7 @@ status: Done
 assignee:
 - '@claude'
 created_date: 2026-11-03 11:40
-updated_date: '2026-11-04 01:41'
+updated_date: '2026-11-04 01:55'
 labels:
 - follow-up
 - tests
@@ -34,6 +34,7 @@ Found in the round-5 wave of the 2026-10-23 burn-down, where it was reported fai
 - [x] #1 Two concurrent updates of one prompt that pass the same expected_version produce exactly one success and one conflict, and the rewritten test pins that, passing 10 of 10 runs alone on dev
 - [x] #2 The test fails when update_prompt_by_id's version comparison is removed (shown under a temporary source edit)
 - [x] #3 The test runs on a PR lane, or the task notes record why it does not
+- [x] #4 Overlapping `add_prompt(overwrite=True)` saves of one prompt both land, one after the other (the later overwrite wins, version goes up by 2), never a raw lock error or a lost-race conflict.
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -42,12 +43,15 @@ Found in the round-5 wave of the 2026-10-23 burn-down, where it was reported fai
 2. Rewrite the test: two writers on their own connections both hold the version they opened, and both save it as `expected_version`. Count only `ExpectedVersionConflictError` as the conflict, and pin one success, one conflict, version 2, and the winner's details.
 3. AC#1 asks for concurrent saves. Probe how overlapping transactions resolve before choosing how the test orders them.
 4. AC#2: remove the `expected_version` comparison under a temporary source edit and show the test red. AC#3: record the lane outcome. This brief allows workflow edits only for TASK-38699.
-
 5. Owner decision (coordinator, 2026-11-04): option (b). `update_prompt_by_id` begins its transaction IMMEDIATE, so an overlapping save waits for the write lock and then fails the version check. Add an overlapping-saves test for AC#1, and show it red with the BEGIN deferred again.
+6. AC#4 (coordinator, 2026-11-04): `add_prompt` opens `transaction(immediate=serialize_create or overwrite)`. Add a deterministic overlapping-overwrite test, red with the deferred transaction, and rerun the probe for the overwrite path.
 
 ## Implementation Notes
 
-Two commits. The first rewrote the test. The second, after the owner chose option (b), makes `update_prompt_by_id` begin IMMEDIATE.
+Three commits:
+1. The test rewrite.
+2. `update_prompt_by_id` begins IMMEDIATE, after the owner chose option (b).
+3. The same fix for `add_prompt(overwrite=True)` (AC#4).
 
 **The test was wrong.** `update_prompt_by_id` has compared versions only when the caller passes `expected_version`. That parameter was added in 2026-08 for the Library prompt editors (`prompt_save_ack.py`, `prompt_history.py`, `library_prompts_controller.py`). Without it, an update is last-writer-wins by design. The test dates from 2025-06 (7ebdcc0731) and never passed `expected_version`. Its "conflict" could only come from SQLite lock errors, which it counted as conflicts.
 
@@ -84,6 +88,25 @@ The SQLITE_BUSY case happens when the loser's read-to-write upgrade meets the wi
 - The shared reds are on dev: `test_prompt_improvement_service.py` (50), `test_prompt_batch_models.py::test_prompt_management_lazy_public_exports_preserve_class_identities`, and two `test_prompts_db_batch_mutations.py` privacy-log nodes.
 - Architecture ratchets (serial): 256 passed. `Prompts_DB.py`'s module-size row is re-pinned 4670 -> 4671 for the one-line comment (owner size waiver 2026-10-31).
 
-**AC#3: not on a PR lane, by this brief's rule.** The only Prompts_DB lane target is `test_prompt_export_mixins.py` in `derived-artifacts.yml`, and this burn-down allowed workflow edits only for TASK-38699. The legacy file is green (71 tests, about 5 s), so it could be gated whole (proposed follow-up).
+**AC#4: the same race in `add_prompt(overwrite=True)`.** The overwrite path reads the version inside its own transaction and then writes `UPDATE ... AND version = ?`. It has no caller-supplied expected version.
+- With the deferred BEGIN, 200 overlapping rounds at load 19 gave:
+  - one `DatabaseError` "database is locked" (SQLITE_BUSY) in 186 rounds;
+  - two successes, version +2, in 12 rounds;
+  - one `ConflictError` "Prompt creation lost a WAL snapshot race" (517) in 2 rounds.
+- The fix: `add_prompt` opens `self.transaction(immediate=serialize_create or overwrite)`. The probe then gave two successes in order, version +2, in 300 of 300 rounds at load 19-21, with no lock errors and no conflicts. The update probe rerun in the same session gave `('conflict', 'success')` in 300 of 300 rounds.
+- "Both land in order" is the right outcome here: an overwrite replaces whatever is stored, as two overwrites that do not overlap always did. The AC wording was corrected on that basis.
+- `overwrite=False` creates keep `serialize_create`'s mode. So deferred creates still map a 517 race to `ConflictError`, and `test_busy_snapshot_during_create_is_reported_as_conflict` is unchanged.
+- Every `overwrite=True` path writes, so IMMEDIATE only moves the wait for the write lock from the UPDATE or INSERT to BEGIN. Nested callers are unaffected (`transaction()` issues no BEGIN inside an open transaction).
+- Test: `test_overlapping_overwrites_of_one_prompt_both_land_in_order`, with the hold-open harness now shared as `_overlap_two_saves`. The harness's catch is narrowed to `(DatabaseError, InputError)`, which removes a blind `except Exception` from the file.
+  - 10 of 10 runs alone at load 19-20.
+  - Red with the deferred transaction (4 of 4): `{2: DatabaseError("Failed to process prompt 'Overwrite Overlap': database is locked"), 1: 'success'} != {1: 'success', 2: 'success'}`.
+  - After the refactor, the update overlap test passed 10 of 10 and was red 2 of 2 with its BEGIN deferred (`DatabaseError('... database is locked') is not an instance of ExpectedVersionConflictError`).
+- Covering set (`-n 4`, same five targets as above):
+  - Branch: 53 failed, 1164 passed, 3 errors.
+  - Dev's `Prompts_DB.py` swapped in: 55 failed, 1162 passed, 3 errors.
+  - The only difference is the two new overlap tests, both red on dev's source by design. The branch's failing tests are identical to the previous commit's run.
+- Architecture ratchets (serial): 256 passed. `Prompts_DB.py` line count is unchanged (4671).
+
+**AC#3: not on a PR lane, by this brief's rule.** The only Prompts_DB lane target is `test_prompt_export_mixins.py` in `derived-artifacts.yml`, and this burn-down allowed workflow edits only for TASK-38699. The legacy file is green (72 tests, about 5 s), so it could be gated whole (proposed follow-up).
 
 Files: `tldw_chatbook/DB/Prompts_DB.py`, `Tests/Prompts_DB/test_prompts_db_legacy.py`, `Tests/Prompts_DB/test_prompts_db_pytest.py`, `Tests/Architecture/test_module_size_ratchet.py`, `backlog/docs/lessons-testing-evidence.md`.

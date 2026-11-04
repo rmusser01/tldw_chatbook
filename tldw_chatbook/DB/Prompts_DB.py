@@ -1505,7 +1505,7 @@ class PromptsDatabase:
         )
 
         try:
-            with self.transaction(immediate=serialize_create) as conn:
+            with self.transaction(immediate=serialize_create or overwrite) as conn:
                 cursor = conn.cursor()
                 cursor.execute(
                     """
