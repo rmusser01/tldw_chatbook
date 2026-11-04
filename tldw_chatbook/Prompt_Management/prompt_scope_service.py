@@ -2100,7 +2100,11 @@ class PromptScopeService:
             if action == "create"
             else partial(service.update_prompt, prompt_identifier, payload)
         )
-        if normalized_mode == PromptBackend.LOCAL:
+        database = getattr(service, "prompt_db", None)
+        # A worker thread's own ":memory:" connection would be an empty database.
+        if normalized_mode == PromptBackend.LOCAL and not getattr(
+            database, "is_memory_db", False
+        ):
             # A contended local write waits up to SQLite's busy timeout
             # (TASK-38686): run it off the event loop, as read_mixin_records does.
             def complete_write() -> Any:

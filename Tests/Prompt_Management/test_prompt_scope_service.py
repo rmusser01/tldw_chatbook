@@ -2826,3 +2826,30 @@ async def test_mixin_snapshot_read_capability_is_enforced(monkeypatch):
     with pytest.raises(PromptCapabilityError, match="mix-in snapshot reads"):
         await service.read_mixin_records(mode="local", record_uuids=("uuid",))
     assert local.calls == []
+
+
+@pytest.mark.asyncio
+async def test_local_save_over_an_in_memory_database_creates_and_updates():
+    """A ':memory:' local save runs inline (TASK-38686 review).
+
+    save_prompt runs a file-backed local write in a worker thread. That
+    thread's own ':memory:' connection would be a fresh, empty database.
+    """
+    database = PromptsDatabase(":memory:", client_id="scope-memory-save")
+    service = PromptScopeService(
+        local_service=LocalPromptService(database), server_service=None
+    )
+    try:
+        created = await service.save_prompt(
+            mode="local", name="Memory", user_prompt="one"
+        )
+        updated = await service.save_prompt(
+            mode="local",
+            prompt_identifier=created["uuid"],
+            user_prompt="two",
+            expected_version=created["version"],
+        )
+        assert updated["version"] == created["version"] + 1
+        assert database.fetch_prompt_details("Memory")["user_prompt"] == "two"
+    finally:
+        database.close_connection()
