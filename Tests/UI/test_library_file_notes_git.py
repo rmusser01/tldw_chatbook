@@ -5045,13 +5045,20 @@ async def test_stage_draft_conflict_names_save_and_editor_recovery(
         await _wait_for_current_git_row_projection(workspace)
         workspace._set_save_state("conflict", "file changed on disk")
         workspace.query_one("#file-notes-git-stage-selected", Button).press()
-        await pilot.pause()
-
-        assert git_service.stage_calls == []
-        assert workspace._git_panel_widget._current_status_text == (
-            "Status: CURRENT · BLOCKED — Save conflict must be resolved "
-            "before staging. Return to the editor."
+        # The press reaches the workspace through two messages; wait for its
+        # refusal rather than one pause (TASK-38693).
+        await _wait_until(
+            pilot,
+            lambda: (
+                workspace._git_panel_widget._current_status_text
+                == (
+                    "Status: CURRENT · BLOCKED — Save conflict must be resolved "
+                    "before staging. Return to the editor."
+                )
+            ),
+            "Stage did not report the save conflict",
         )
+        assert git_service.stage_calls == []
         assert not workspace.query_one(
             "#file-notes-git-action-status",
             Static,
