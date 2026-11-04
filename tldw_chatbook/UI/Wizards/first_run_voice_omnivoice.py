@@ -29,7 +29,7 @@ from tldw_chatbook.TTS.omnivoice_artifact_catalog import (
     run_omnivoice_preflight,
     run_omnivoice_provision,
 )
-from tldw_chatbook.UI.Screens.model_browser_state import install_failure_message
+from tldw_chatbook.Model_Artifacts.model_browser_state import install_failure_message
 from tldw_chatbook.UI.Wizards import first_run_voice_status as voice_status
 from tldw_chatbook.UI.Wizards import first_run_voice_step_state as voice_state
 from tldw_chatbook.UI.Wizards.first_run_setup_widgets import SetupStep

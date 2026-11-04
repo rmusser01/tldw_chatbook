@@ -54,7 +54,7 @@ def _report(destination: Path) -> PreflightReport:
 
 def test_variant_guidance_recognizes_a_bounded_quantization_token() -> None:
     """Removing the exact-token parser must lose useful variant guidance."""
-    from tldw_chatbook.UI.Screens import model_browser_state
+    from tldw_chatbook.Model_Artifacts import model_browser_state
 
     guidance_factory = getattr(model_browser_state, "variant_guidance", None)
     if guidance_factory is None:
@@ -113,7 +113,7 @@ def test_variant_guidance_covers_supported_quantization_families(
     expected_summary: str,
 ) -> None:
     """Removing a supported family must not silently downgrade it to unknown."""
-    from tldw_chatbook.UI.Screens.model_browser_state import variant_guidance
+    from tldw_chatbook.Model_Artifacts.model_browser_state import variant_guidance
 
     guidance = variant_guidance(
         filename,
@@ -128,7 +128,7 @@ def test_variant_guidance_covers_supported_quantization_families(
 
 def test_variant_guidance_recognizes_a_token_at_a_nested_path_basename() -> None:
     """A provider path separator must not hide an exact basename token."""
-    from tldw_chatbook.UI.Screens.model_browser_state import variant_guidance
+    from tldw_chatbook.Model_Artifacts.model_browser_state import variant_guidance
 
     guidance = variant_guidance(
         "nested/Q4_K_M.gguf",
@@ -142,7 +142,7 @@ def test_variant_guidance_recognizes_a_token_at_a_nested_path_basename() -> None
 
 def test_variant_guidance_does_not_merge_conflicting_shard_tokens() -> None:
     """A mixed file set must not be presented as one known quantization."""
-    from tldw_chatbook.UI.Screens.model_browser_state import variant_guidance
+    from tldw_chatbook.Model_Artifacts.model_browser_state import variant_guidance
 
     guidance = variant_guidance(
         "model-Q4_K_M-00001-of-00002.gguf",
@@ -170,7 +170,7 @@ def test_variant_guidance_never_guesses_an_unrecognized_filename(
     filename: str,
 ) -> None:
     """A loose substring match must not fabricate a quantization fact."""
-    from tldw_chatbook.UI.Screens.model_browser_state import variant_guidance
+    from tldw_chatbook.Model_Artifacts.model_browser_state import variant_guidance
 
     guidance = variant_guidance(
         filename,
@@ -185,8 +185,8 @@ def test_variant_guidance_never_guesses_an_unrecognized_filename(
 
 def test_variant_guidance_filter_matches_filename_or_quantization_locally() -> None:
     """Dropping either local match field must hide a valid candidate search hit."""
-    from tldw_chatbook.UI.Screens import model_browser_state
-    from tldw_chatbook.UI.Screens.model_browser_state import VariantGuidance
+    from tldw_chatbook.Model_Artifacts import model_browser_state
+    from tldw_chatbook.Model_Artifacts.model_browser_state import VariantGuidance
 
     filter_rows = getattr(model_browser_state, "filter_variant_guidance", None)
     if filter_rows is None:
@@ -204,8 +204,8 @@ def test_variant_guidance_filter_matches_filename_or_quantization_locally() -> N
 
 def test_variant_guidance_sort_orders_are_deterministic() -> None:
     """Removing any supported order must not silently fall back to source order."""
-    from tldw_chatbook.UI.Screens import model_browser_state
-    from tldw_chatbook.UI.Screens.model_browser_state import VariantGuidance
+    from tldw_chatbook.Model_Artifacts import model_browser_state
+    from tldw_chatbook.Model_Artifacts.model_browser_state import VariantGuidance
 
     sort_rows = getattr(model_browser_state, "sort_variant_guidance", None)
     if sort_rows is None:
@@ -250,7 +250,7 @@ def test_variant_guidance_sort_orders_are_deterministic() -> None:
 
 def test_variant_guidance_sort_rejects_an_unknown_order() -> None:
     """A typo must fail closed instead of producing an unexplained ordering."""
-    from tldw_chatbook.UI.Screens.model_browser_state import (
+    from tldw_chatbook.Model_Artifacts.model_browser_state import (
         VariantGuidance,
         sort_variant_guidance,
     )
@@ -275,13 +275,13 @@ def test_variant_guidance_sort_rejects_an_unknown_order() -> None:
 
 
 def test_format_mib_renders_zero_bytes() -> None:
-    from tldw_chatbook.UI.Screens.model_browser_state import format_mib
+    from tldw_chatbook.Model_Artifacts.model_browser_state import format_mib
 
     assert format_mib(0) == "0.0 MiB"
 
 
 def test_format_mib_renders_a_sub_mib_value() -> None:
-    from tldw_chatbook.UI.Screens.model_browser_state import format_mib
+    from tldw_chatbook.Model_Artifacts.model_browser_state import format_mib
 
     # 512_000 / (1024*1024) = 0.48828125 -- hand-computed, not re-derived
     # from the division this test checks. This is also the case that used
@@ -291,13 +291,13 @@ def test_format_mib_renders_a_sub_mib_value() -> None:
 
 
 def test_format_mib_renders_exactly_one_mib() -> None:
-    from tldw_chatbook.UI.Screens.model_browser_state import format_mib
+    from tldw_chatbook.Model_Artifacts.model_browser_state import format_mib
 
     assert format_mib(1_048_576) == "1.0 MiB"
 
 
 def test_format_mib_renders_exactly_one_gib() -> None:
-    from tldw_chatbook.UI.Screens.model_browser_state import format_mib
+    from tldw_chatbook.Model_Artifacts.model_browser_state import format_mib
 
     # 1_073_741_824 bytes == exactly 1024 MiB (1 GiB) -- a round number
     # chosen so the expected string is verifiable by hand.
@@ -306,7 +306,7 @@ def test_format_mib_renders_exactly_one_gib() -> None:
 
 def test_plan_rows_and_totals_preserve_every_consent_field(tmp_path: Path) -> None:
     """The render model contains every field required for informed consent."""
-    from tldw_chatbook.UI.Screens.model_browser_state import plan_rows, plan_totals
+    from tldw_chatbook.Model_Artifacts.model_browser_state import plan_rows, plan_totals
 
     report = _report(tmp_path / "models")
     row = plan_rows(report)[0]
@@ -331,7 +331,7 @@ def test_plan_rows_and_totals_preserve_every_consent_field(tmp_path: Path) -> No
 
 def test_provenance_labels_are_precise_and_never_imply_safety() -> None:
     """Trust copy states evidence without claiming malware safety."""
-    from tldw_chatbook.UI.Screens.model_browser_state import provenance_label
+    from tldw_chatbook.Model_Artifacts.model_browser_state import provenance_label
 
     labels = (
         provenance_label((ProvenanceClass.CHATBOOK_CURATED,)),
@@ -347,7 +347,7 @@ def test_provenance_labels_are_precise_and_never_imply_safety() -> None:
 
 def test_inventory_keeps_broken_and_unmanaged_rows_visible(tmp_path: Path) -> None:
     """Corrupt manifests and legacy files remain visible and actionable."""
-    from tldw_chatbook.UI.Screens.model_browser_state import (
+    from tldw_chatbook.Model_Artifacts.model_browser_state import (
         UnmanagedRow,
         inventory_rows,
     )
@@ -380,7 +380,7 @@ def test_unmanaged_gguf_row_offers_import_without_managed_reference(
     tmp_path: Path,
 ) -> None:
     """An outside GGUF remains usable and gains only an optional Import action."""
-    from tldw_chatbook.UI.Screens.model_browser_state import (
+    from tldw_chatbook.Model_Artifacts.model_browser_state import (
         UnmanagedRow,
         inventory_rows,
     )
@@ -404,7 +404,7 @@ def test_inventory_labels_dependencies_and_never_allows_activation(
     tmp_path: Path,
 ) -> None:
     """A managed dependency remains readable without a root-only action."""
-    from tldw_chatbook.UI.Screens.model_browser_state import inventory_rows
+    from tldw_chatbook.Model_Artifacts.model_browser_state import inventory_rows
 
     descriptor = replace(make_descriptor(), role=ArtifactRole.DEPENDENCY)
     row = inventory_rows(
@@ -429,7 +429,7 @@ def test_inventory_keeps_repair_copy_ahead_of_dependency_label(
     tmp_path: Path,
 ) -> None:
     """A broken dependency remains repairable instead of looking installed."""
-    from tldw_chatbook.UI.Screens.model_browser_state import inventory_rows
+    from tldw_chatbook.Model_Artifacts.model_browser_state import inventory_rows
 
     descriptor = replace(make_descriptor(), role=ArtifactRole.DEPENDENCY)
     row = inventory_rows(
@@ -454,7 +454,7 @@ def test_inventory_marks_valid_unready_root_as_activation_required(
     tmp_path: Path,
 ) -> None:
     """Missing readiness is the action to activate, not a broken root."""
-    from tldw_chatbook.UI.Screens.model_browser_state import inventory_rows
+    from tldw_chatbook.Model_Artifacts.model_browser_state import inventory_rows
 
     row = inventory_rows(
         (
@@ -481,7 +481,7 @@ def test_inventory_keeps_assigned_consumer_readiness_copy(tmp_path: Path) -> Non
     This fails if the unassigned policy suppresses activation for any other
     consumer.
     """
-    from tldw_chatbook.UI.Screens.model_browser_state import inventory_rows
+    from tldw_chatbook.Model_Artifacts.model_browser_state import inventory_rows
 
     descriptor = make_descriptor()
     row = inventory_rows(
@@ -522,7 +522,7 @@ def test_install_failure_messages_are_typed_labeled_and_sanitized() -> None:
         PreflightNotGrantableError,
         TransferError,
     )
-    from tldw_chatbook.UI.Screens.model_browser_state import install_failure_message
+    from tldw_chatbook.Model_Artifacts.model_browser_state import install_failure_message
 
     marker = "SECRET-GATING-DETAIL-9c31af"
 
@@ -584,7 +584,7 @@ def test_transfer_readout_never_promises_time_left_past_its_total() -> None:
     less than a minute left" with minutes still to go. The figure is capped
     at the total and no time left is promised.
     """
-    from tldw_chatbook.UI.Screens.model_browser_state import (
+    from tldw_chatbook.Model_Artifacts.model_browser_state import (
         TransferRateEstimator,
         transfer_summary,
     )

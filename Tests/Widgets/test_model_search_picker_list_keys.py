@@ -19,7 +19,7 @@ from Tests.Widgets.test_model_search_picker import (
     _until,
     _wait_for_catalog,
 )
-from tldw_chatbook.UI.Screens.provider_model_resolution import ConsoleModelProvenance
+from tldw_chatbook.LLM_Provider_Catalog.provider_model_resolution import ConsoleModelProvenance
 from tldw_chatbook.Widgets.model_search_picker import CURRENT_MARK, ModelSearchPicker
 
 _CATALOG = ConsoleModelProvenance.CURRENT_CATALOG

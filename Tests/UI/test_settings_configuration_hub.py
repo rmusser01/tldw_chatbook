@@ -58,7 +58,7 @@ from tldw_chatbook.Chat.provider_catalog import PROVIDER_DISPLAY_NAMES
 from tldw_chatbook.Constants import TAB_CHAT
 from tldw_chatbook.config import ConfigMutationResult
 from tldw_chatbook.Chat import provider_readiness as provider_readiness_module
-from tldw_chatbook.UI.Screens.provider_model_resolution import (
+from tldw_chatbook.LLM_Provider_Catalog.provider_model_resolution import (
     resolve_effective_provider_model,
 )
 from tldw_chatbook.UI.Screens.settings_screen import (
@@ -76,12 +76,12 @@ from tldw_chatbook.UI.Navigation.pending_handoff_store import (
     HandoffChannel,
     PendingHandoffStore,
 )
-from tldw_chatbook.UI.Screens.settings_config_adapter import (
+from tldw_chatbook.UI.Settings_Modules.settings_config_adapter import (
     SettingsConfigAdapter,
     failure_status_text,
     redact_secret_text,
 )
-from tldw_chatbook.UI.Screens.settings_config_models import (
+from tldw_chatbook.state.settings_config_models import (
     SettingsCategoryId,
     SettingsDraft,
     SettingsValidationResult,
@@ -1118,7 +1118,7 @@ def test_adapter_save_values_attempts_all_keys_when_one_save_fails(monkeypatch):
         return key != "provider"
 
     monkeypatch.setattr(
-        "tldw_chatbook.UI.Screens.settings_config_adapter.save_setting_to_cli_config",
+        "tldw_chatbook.UI.Settings_Modules.settings_config_adapter.save_setting_to_cli_config",
         fake_save,
     )
 
@@ -1142,7 +1142,7 @@ def test_adapter_save_sections_batches_sections(monkeypatch):
         return True
 
     monkeypatch.setattr(
-        "tldw_chatbook.UI.Screens.settings_config_adapter.save_settings_to_cli_config",
+        "tldw_chatbook.UI.Settings_Modules.settings_config_adapter.save_settings_to_cli_config",
         fake_save,
     )
 
@@ -6771,7 +6771,7 @@ async def test_settings_overview_paste_summary_updates_after_toggle(
     # saves exclusively through settings_config_adapter's batched
     # save_settings_to_cli_config (see test_settings_console_behavior_uses_batched_save_adapter).
     monkeypatch.setattr(
-        "tldw_chatbook.UI.Screens.settings_config_adapter.save_settings_to_cli_config",
+        "tldw_chatbook.UI.Settings_Modules.settings_config_adapter.save_settings_to_cli_config",
         lambda *_args, **_kwargs: True,
     )
     host = DestinationHarness(app, "settings")
@@ -6803,7 +6803,7 @@ async def test_settings_paste_toggle_keeps_keyboard_focus_after_refresh(request,
     # saves exclusively through settings_config_adapter's batched
     # save_settings_to_cli_config (see test_settings_console_behavior_uses_batched_save_adapter).
     monkeypatch.setattr(
-        "tldw_chatbook.UI.Screens.settings_config_adapter.save_settings_to_cli_config",
+        "tldw_chatbook.UI.Settings_Modules.settings_config_adapter.save_settings_to_cli_config",
         lambda *_args, **_kwargs: True,
     )
     host = DestinationHarness(app, "settings")
@@ -8037,7 +8037,7 @@ async def test_settings_console_behavior_rejects_invalid_global_defaults(
     # save_setting_to_cli_config helper; Console Behavior saves exclusively
     # through settings_config_adapter's batched save_settings_to_cli_config.
     monkeypatch.setattr(
-        "tldw_chatbook.UI.Screens.settings_config_adapter.save_settings_to_cli_config",
+        "tldw_chatbook.UI.Settings_Modules.settings_config_adapter.save_settings_to_cli_config",
         lambda section_values: saved.append(section_values) or True,
     )
     host = DestinationHarness(app, "settings")
@@ -8079,7 +8079,7 @@ async def test_settings_console_behavior_revert_restores_global_defaults(
     # save_setting_to_cli_config helper; Console Behavior saves exclusively
     # through settings_config_adapter's batched save_settings_to_cli_config.
     monkeypatch.setattr(
-        "tldw_chatbook.UI.Screens.settings_config_adapter.save_settings_to_cli_config",
+        "tldw_chatbook.UI.Settings_Modules.settings_config_adapter.save_settings_to_cli_config",
         lambda section_values: saved.append(section_values) or True,
     )
     host = DestinationHarness(app, "settings")
@@ -8143,7 +8143,7 @@ async def test_settings_console_behavior_revert_button_works_with_input_focus(
     # save_setting_to_cli_config helper; Console Behavior saves exclusively
     # through settings_config_adapter's batched save_settings_to_cli_config.
     monkeypatch.setattr(
-        "tldw_chatbook.UI.Screens.settings_config_adapter.save_settings_to_cli_config",
+        "tldw_chatbook.UI.Settings_Modules.settings_config_adapter.save_settings_to_cli_config",
         lambda section_values: saved.append(section_values) or True,
     )
     host = DestinationHarness(app, "settings")
@@ -8188,7 +8188,7 @@ async def test_settings_console_behavior_revert_discards_draft(request, monkeypa
     # save_setting_to_cli_config helper; Console Behavior saves exclusively
     # through settings_config_adapter's batched save_settings_to_cli_config.
     monkeypatch.setattr(
-        "tldw_chatbook.UI.Screens.settings_config_adapter.save_settings_to_cli_config",
+        "tldw_chatbook.UI.Settings_Modules.settings_config_adapter.save_settings_to_cli_config",
         lambda section_values: saved.append(section_values) or True,
     )
     host = DestinationHarness(app, "settings")
@@ -11412,7 +11412,7 @@ async def test_settings_user_emptied_context_window_still_refuses_the_save(
     app.app_config["chat_defaults"] = {"provider": "OpenAI", "model": "gpt-4.1"}
     saved = []
     monkeypatch.setattr(
-        "tldw_chatbook.UI.Screens.settings_config_adapter.save_setting_to_cli_config",
+        "tldw_chatbook.UI.Settings_Modules.settings_config_adapter.save_setting_to_cli_config",
         lambda section, key, value: saved.append((section, key, value)) or True,
     )
     host = DestinationHarness(app, "settings")
@@ -13068,7 +13068,7 @@ async def test_settings_overview_config_path_label_hides_local_directory(
 async def test_settings_advanced_config_save_reports_invalid_env_override(
     monkeypatch, tmp_path
 ):
-    from tldw_chatbook.UI.Screens.settings_advanced_config import AdvancedConfigSettings
+    from tldw_chatbook.UI.Settings_Modules.settings_advanced_config import AdvancedConfigSettings
 
     monkeypatch.setenv("TLDW_CONFIG_PATH", str(tmp_path / "unsafe$(touch bad).toml"))
     model = AdvancedConfigSettings(lambda: None, lambda loaded: None)
@@ -13282,7 +13282,7 @@ async def test_settings_advanced_config_loads_backup_preview_without_saving(
 async def test_settings_advanced_config_backup_preview_handles_config_path_errors(
     monkeypatch,
 ):
-    from tldw_chatbook.UI.Screens.settings_advanced_config import AdvancedConfigSettings
+    from tldw_chatbook.UI.Settings_Modules.settings_advanced_config import AdvancedConfigSettings
 
     model = AdvancedConfigSettings(lambda: None, lambda loaded: None)
     await model.inspect_current()
@@ -13357,7 +13357,7 @@ async def test_settings_advanced_config_guided_path_buttons_escape_raw_toml():
 async def test_settings_advanced_config_new_file_save_reports_no_backup(
     request, monkeypatch, tmp_path
 ):
-    from tldw_chatbook.UI.Screens.settings_advanced_config import AdvancedConfigSettings
+    from tldw_chatbook.UI.Settings_Modules.settings_advanced_config import AdvancedConfigSettings
 
     config_path = Path(os.environ["TLDW_CONFIG_PATH"])
     config_path.unlink(missing_ok=True)

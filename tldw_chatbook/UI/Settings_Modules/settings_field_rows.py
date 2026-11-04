@@ -58,7 +58,7 @@ from ...Widgets.Console.console_settings_field_row import (
     hidden_fields_line,
     hidden_fields_list,
 )
-from ..Screens.settings_config_models import SettingsCategoryId
+from ...state.settings_config_models import SettingsCategoryId
 from ..Screens.settings_screen import (
     CLOSED_ENUM_SELECT_OPTIONS,
     MODEL_PROFILE_INPUT_PLACEHOLDERS,

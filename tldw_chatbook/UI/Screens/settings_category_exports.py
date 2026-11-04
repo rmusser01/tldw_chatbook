@@ -43,13 +43,13 @@ CATEGORY_EXPORTS = {
         "SettingsSplashScreenViewer",
     ),
     "AgentsSettingsPanel": ("...Widgets.settings_agents_panel", "AgentsSettingsPanel"),
-    "WEB_SEARCH_TERMS": (".settings_web_search", "SEARCH_TERMS"),
-    "WebSearchSettings": (".settings_web_search", "WebSearchSettings"),
+    "WEB_SEARCH_TERMS": ("..Settings_Modules.settings_web_search", "SEARCH_TERMS"),
+    "WebSearchSettings": ("..Settings_Modules.settings_web_search", "WebSearchSettings"),
     "WebSearchSettingsPanel": (
         "...Widgets.settings_web_search_panel",
         "WebSearchSettingsPanel",
     ),
-    "AdvancedConfigSettings": (".settings_advanced_config", "AdvancedConfigSettings"),
+    "AdvancedConfigSettings": ("..Settings_Modules.settings_advanced_config", "AdvancedConfigSettings"),
     "AdvancedConfigPanel": (
         "...Widgets.settings_advanced_config_panel",
         "AdvancedConfigPanel",

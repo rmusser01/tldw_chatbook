@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from tldw_chatbook.UI.Screens.settings_speech_tts import (
+from tldw_chatbook.UI.Speech.settings_speech_tts import (
     BUILT_IN_TTS_PROVIDER_ORDER,
     GLOBAL_TTS_PROVIDER_ENVIRONMENT_FIELDS,
     GLOBAL_TTS_PROVIDER_FIELD_IDS,
@@ -54,7 +54,7 @@ def test_projection_defaults_without_section() -> None:
 def test_projection_environment_wins_for_declared_fields() -> None:
     """Env presence is surfaced via field sources; runtime override is the
     engine layer's job (covered by the provider-wiring tests)."""
-    from tldw_chatbook.UI.Screens.settings_speech_tts import (
+    from tldw_chatbook.UI.Speech.settings_speech_tts import (
         GlobalSpeechTTSEffectiveSource,
     )
 

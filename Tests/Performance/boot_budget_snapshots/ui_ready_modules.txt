@@ -367,6 +367,7 @@ tldw_chatbook.LLM_Provider_Catalog.model_discovery_merge
 tldw_chatbook.LLM_Provider_Catalog.model_discovery_persistence
 tldw_chatbook.LLM_Provider_Catalog.model_discovery_provider_identity
 tldw_chatbook.LLM_Provider_Catalog.openai_compatible_model_discovery
+tldw_chatbook.LLM_Provider_Catalog.provider_model_resolution
 tldw_chatbook.LLM_Provider_Catalog.server_llm_provider_catalog_service
 tldw_chatbook.Library
 tldw_chatbook.Library.ingest_analysis
@@ -783,12 +784,10 @@ tldw_chatbook.UI.Navigation.vllm_handoff
 tldw_chatbook.UI.Screens
 tldw_chatbook.UI.Screens.chat_screen
 tldw_chatbook.UI.Screens.chat_screen_state
-tldw_chatbook.UI.Screens.provider_model_resolution
-tldw_chatbook.UI.Screens.settings_config_models
 tldw_chatbook.UI.Screens.settings_library_rag_defaults
-tldw_chatbook.UI.Screens.settings_speech_tts
 tldw_chatbook.UI.Screens.study_scope_models
 tldw_chatbook.UI.Speech
+tldw_chatbook.UI.Speech.settings_speech_tts
 tldw_chatbook.UI.Speech.speech_settings_contracts
 tldw_chatbook.UI.Speech.speech_settings_model
 tldw_chatbook.UI.Splash_Screens
@@ -1019,6 +1018,7 @@ tldw_chatbook.runtime_policy.server_parity_state
 tldw_chatbook.runtime_policy.source_state
 tldw_chatbook.runtime_policy.types
 tldw_chatbook.state
+tldw_chatbook.state.settings_config_models
 tldw_chatbook.state.ui_state
 tldw_chatbook.tldw_api
 tldw_chatbook.tldw_api.exceptions

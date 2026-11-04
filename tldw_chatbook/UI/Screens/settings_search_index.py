@@ -14,7 +14,7 @@ users know it by more than one name.
 
 from __future__ import annotations
 
-from .settings_config_models import SettingsCategoryId
+from ...state.settings_config_models import SettingsCategoryId
 
 #: Library reader destinations rendered as per-destination Items pane/width
 #: rows on the Appearance category (shared with settings_screen).
@@ -208,7 +208,7 @@ SPEECH_TTS_PROVIDER_FORM_FIELDS: dict[str, tuple[tuple[str, str], ...]] = {
 
 def _speech_provider_form_entries() -> tuple[tuple[str, str], ...]:
     """Index rows for every TTS provider configure form (finding 5)."""
-    from .settings_speech_tts import TTS_PROVIDER_LABELS
+    from ..Speech.settings_speech_tts import TTS_PROVIDER_LABELS
 
     entries: list[tuple[str, str]] = []
     for provider_id, fields in SPEECH_TTS_PROVIDER_FORM_FIELDS.items():
@@ -286,14 +286,14 @@ def build_field_search_index() -> None:
     from ...LLM_Provider_Catalog.model_catalog_settings import (
         AUTO_REFRESH_PROVIDER_LIST_KEYS,
     )
-    from .settings_image_gen_defaults import (
+    from ..Settings_Modules.settings_image_gen_defaults import (
         _GLOBAL_FLOAT_FIELD_SPECS as _imagegen_float_specs,
         _GLOBAL_INT_FIELD_SPECS as _imagegen_int_specs,
         BACKEND_LABELS as _imagegen_backend_labels,
         FIELD_SCHEMA as _imagegen_field_schema,
     )
     from .settings_storage_defaults import STORAGE_FIELD_LABELS as _labels
-    from .settings_video_gen_defaults import (
+    from ..Settings_Modules.settings_video_gen_defaults import (
         _GLOBAL_INT_FIELD_SPECS as _videogen_int_specs,
         BACKEND_LABELS as _videogen_backend_labels,
         FIELD_SCHEMA as _videogen_field_schema,

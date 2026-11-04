@@ -182,7 +182,7 @@ def test_preflight_carries_the_descriptor_usage_notice() -> None:
     from tldw_chatbook.TTS.omnivoice_artifact_catalog import (
         omnivoice_onnx_descriptor,
     )
-    from tldw_chatbook.UI.Screens.model_browser_state import plan_rows
+    from tldw_chatbook.Model_Artifacts.model_browser_state import plan_rows
 
     descriptor = omnivoice_onnx_descriptor()
     entry = ArtifactPreflightEntry(
@@ -1428,7 +1428,7 @@ def test_curated_component_copy_keys_track_the_parakeet_constants() -> None:
         PARAKEET_V3_ARTIFACT_ID,
         PARAKEET_VAD_ARTIFACT_ID,
     )
-    from tldw_chatbook.UI.Screens.model_browser_state import component_copy
+    from tldw_chatbook.Model_Artifacts.model_browser_state import component_copy
 
     for artifact_id in (
         PARAKEET_V2_ARTIFACT_ID,
@@ -1449,7 +1449,7 @@ def test_curated_frozen_notices_match_the_descriptors_they_hide() -> None:
         PARAKEET_V2_MODEL,
         PARAKEET_V3_MODEL,
     )
-    from tldw_chatbook.UI.Screens.model_browser_state import component_copy
+    from tldw_chatbook.Model_Artifacts.model_browser_state import component_copy
 
     descriptors = [parakeet_vad_descriptor()] + [
         parakeet_descriptor(model, precision)
@@ -1463,7 +1463,7 @@ def test_curated_frozen_notices_match_the_descriptors_they_hide() -> None:
 
 
 def test_licence_ids_render_in_canonical_spdx_case() -> None:
-    from tldw_chatbook.UI.Screens.model_browser_state import display_license
+    from tldw_chatbook.Model_Artifacts.model_browser_state import display_license
 
     assert display_license("mit") == "MIT"
     assert display_license("cc-by-4.0") == "CC-BY-4.0"

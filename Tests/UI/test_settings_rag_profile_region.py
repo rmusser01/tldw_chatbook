@@ -48,7 +48,7 @@ from tldw_chatbook.Library.library_rechunk_service import (
 )
 from tldw_chatbook.RAG_Search.config_profiles import reset_profile_manager_cache
 import tldw_chatbook.UI.Screens.settings_screen as settings_screen_module
-from tldw_chatbook.UI.Screens.settings_config_models import (
+from tldw_chatbook.state.settings_config_models import (
     SettingsCategoryId,
     SettingsDraft,
 )

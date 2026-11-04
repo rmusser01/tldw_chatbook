@@ -73,7 +73,7 @@ from tldw_chatbook.TTS.TTS_Generation import (
     TTSSettingsPublicationTicket,
     _join_retained_task,
 )
-from tldw_chatbook.UI.Screens.settings_speech_tts import (
+from tldw_chatbook.UI.Speech.settings_speech_tts import (
     ProcessProviderTestEvidenceStore,
     build_provider_test_fingerprint,
     load_global_speech_tts_state,

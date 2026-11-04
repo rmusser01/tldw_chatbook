@@ -582,7 +582,7 @@ async def test_switch_model_applies_a_saved_entry_through_the_live_rebase(
     )
     from Tests.UI.test_destination_shells import _wait_for_selector
     from tldw_chatbook.config import load_settings
-    from tldw_chatbook.UI.Screens.settings_config_adapter import SettingsConfigAdapter
+    from tldw_chatbook.UI.Settings_Modules.settings_config_adapter import SettingsConfigAdapter
 
     provider_id = f"custom-ep:{slug}"
     app = _persisted_console_app()
@@ -671,7 +671,7 @@ async def test_make_default_retains_hyphenated_entry_and_endpoint_on_reload(
         build_default_console_session_settings,
     )
     from tldw_chatbook.config import load_settings
-    from tldw_chatbook.UI.Screens.settings_config_adapter import SettingsConfigAdapter
+    from tldw_chatbook.UI.Settings_Modules.settings_config_adapter import SettingsConfigAdapter
 
     app = _persisted_console_app()
     assert SettingsConfigAdapter().save_sections(
@@ -1847,7 +1847,7 @@ async def test_make_default_for_new_chats_reads_the_configured_endpoint(
         _persisted_console_app,
     )
     from tldw_chatbook.config import get_cli_config_path
-    from tldw_chatbook.UI.Screens.settings_config_adapter import SettingsConfigAdapter
+    from tldw_chatbook.UI.Settings_Modules.settings_config_adapter import SettingsConfigAdapter
 
     probed = _on_9200(monkeypatch, None, configured=("model-a", "model-b"))
     app = _persisted_console_app()

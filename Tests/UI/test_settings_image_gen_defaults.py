@@ -15,9 +15,9 @@ import pytest
 
 from Tests.private_profile import private_profile_test
 from tldw_chatbook.Image_Generation.config import _NON_SECRET, _SECRETS
-from tldw_chatbook.UI.Screens import settings_image_gen_defaults as sigd
-from tldw_chatbook.UI.Screens.settings_config_adapter import SettingsConfigAdapter
-from tldw_chatbook.UI.Screens.settings_image_gen_defaults import (
+from tldw_chatbook.UI.Settings_Modules import settings_image_gen_defaults as sigd
+from tldw_chatbook.UI.Settings_Modules.settings_config_adapter import SettingsConfigAdapter
+from tldw_chatbook.UI.Settings_Modules.settings_image_gen_defaults import (
     BACKEND_IDS,
     BACKEND_LABELS,
     FIELD_SCHEMA,

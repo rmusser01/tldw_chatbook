@@ -1,7 +1,7 @@
 import pytest
 from textual.widgets import Select, Static
 
-from tldw_chatbook.UI.Screens.settings_config_adapter import SettingsConfigAdapter
+from tldw_chatbook.UI.Settings_Modules.settings_config_adapter import SettingsConfigAdapter
 from tldw_chatbook.UI.Screens.settings_network_defaults import load_network_tls
 
 from Tests.UI.test_destination_shells import (

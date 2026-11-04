@@ -19,7 +19,7 @@ from Tests.UI.test_destination_shells import (
 from Tests.UI.test_screen_navigation import _build_test_app
 from Tests.UI.test_settings_configuration_hub import _open_settings_category
 from Tests.UI.test_settings_qwencloud_api_mode import _capture_atomic_writes
-from tldw_chatbook.UI.Screens.settings_config_models import SettingsCategoryId
+from tldw_chatbook.state.settings_config_models import SettingsCategoryId
 from tldw_chatbook.UI.Settings_Modules.providers_models_card import (
     AUTH_SOURCE_API_KEY_HELP,
     AUTH_SOURCE_SUBSCRIPTION_HELP,

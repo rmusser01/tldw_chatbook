@@ -250,7 +250,7 @@ def test_retained_settings_draft_is_not_restored_or_discarded():
         RuntimeIdentity,
         ScreenStateStore,
     )
-    from tldw_chatbook.UI.Screens.settings_config_models import (
+    from tldw_chatbook.state.settings_config_models import (
         SettingsCategoryId,
         SettingsDraft,
     )
@@ -430,7 +430,7 @@ def test_retained_speech_realtime_draft_is_compared_without_panel_sync(changed):
         RuntimeIdentity,
         ScreenStateStore,
     )
-    from tldw_chatbook.UI.Screens.settings_speech_tts import (
+    from tldw_chatbook.UI.Speech.settings_speech_tts import (
         load_global_speech_tts_state,
     )
     from tldw_chatbook.Widgets.Settings_Widgets.speech_tts_settings_panel import (
@@ -469,7 +469,7 @@ def test_retained_speech_pipeline_voice_draft_is_compared(changed):
         RuntimeIdentity,
         ScreenStateStore,
     )
-    from tldw_chatbook.UI.Screens.settings_speech_tts import (
+    from tldw_chatbook.UI.Speech.settings_speech_tts import (
         load_global_speech_tts_state,
     )
     from tldw_chatbook.Widgets.Settings_Widgets.speech_tts_panel_types import (
@@ -989,3 +989,94 @@ def test_retained_settings_check_knows_every_key_settings_save_state_writes():
     assert _written_state_keys(SettingsScreen.save_state, namespace) == (
         SETTINGS_SNAPSHOT_KEYS
     )
+
+
+def _exact_type_name_pairs() -> set[tuple[str, str]]:
+    """Every (module, name) pair ``unsaved_editors._exact`` is asked about.
+
+    Collects literal ``_exact(x, "<module>", "<Name>")`` calls, calls whose
+    module is a function-local ``module = "<...>"`` literal, and literal
+    ``("<module>", "<Name>"[, label])`` tuples that feed ``module, name``.
+    An unresolvable call site fails the test with its line number.
+    """
+    import ast
+    import re
+    from pathlib import Path
+
+    import tldw_chatbook.Backup_Recovery.unsaved_editors as target
+
+    dotted = re.compile(r"^[A-Za-z_][A-Za-z_0-9]*(\.[A-Za-z_][A-Za-z_0-9]*)+$")
+
+    def literal(node: ast.AST) -> str | None:
+        if isinstance(node, ast.Constant) and isinstance(node.value, str):
+            return node.value
+        return None
+
+    tree = ast.parse(Path(target.__file__).read_text(encoding="utf-8"))
+    pairs: set[tuple[str, str]] = set()
+    unresolved: list[int] = []
+    for func in ast.walk(tree):
+        if not isinstance(func, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            continue
+        assigns = [
+            (node.lineno, node.targets[0].id, literal(node.value))
+            for node in ast.walk(func)
+            if isinstance(node, ast.Assign)
+            and len(node.targets) == 1
+            and isinstance(node.targets[0], ast.Name)
+            and literal(node.value) is not None
+        ]
+
+        def bound_before(var: str, line: int) -> str | None:
+            """The nearest preceding literal assignment to ``var`` in this function."""
+            earlier = [(n, v) for n, t, v in assigns if t == var and n < line]
+            return max(earlier)[1] if earlier else None
+
+        tuple_pairs = set()
+        for node in ast.walk(func):
+            if isinstance(node, ast.Tuple) and len(node.elts) in (2, 3):
+                mod, name = literal(node.elts[0]), literal(node.elts[1])
+                if mod and name and dotted.match(mod) and name.isidentifier():
+                    tuple_pairs.add((mod, name))
+        pairs |= tuple_pairs
+        for node in ast.walk(func):
+            if not (
+                isinstance(node, ast.Call)
+                and isinstance(node.func, ast.Name)
+                and node.func.id == "_exact"
+                and len(node.args) == 3
+            ):
+                continue
+            mod_arg, name_arg = node.args[1], node.args[2]
+            if literal(mod_arg) and literal(name_arg):
+                pairs.add((literal(mod_arg), literal(name_arg)))
+            elif (
+                isinstance(mod_arg, ast.Name)
+                and bound_before(mod_arg.id, node.lineno)
+                and literal(name_arg)
+            ):
+                pairs.add((bound_before(mod_arg.id, node.lineno), literal(name_arg)))
+            elif (
+                isinstance(mod_arg, ast.Name)
+                and isinstance(name_arg, ast.Name)
+                and tuple_pairs
+            ):
+                continue  # fed by the literal tuples collected above
+            else:
+                unresolved.append(node.lineno)
+    assert not unresolved, f"unresolvable _exact call sites at lines {unresolved}"
+    return pairs
+
+
+def test_exact_type_names_point_at_their_defining_modules():
+    import importlib
+
+    pairs = _exact_type_name_pairs()
+    assert len(pairs) >= 35, f"collector found only {len(pairs)} pairs"
+    wrong = []
+    for module, name in sorted(pairs):
+        full = "tldw_chatbook." + module
+        cls = getattr(importlib.import_module(full), name, None)
+        if getattr(cls, "__module__", None) != full:
+            wrong.append((module, name, getattr(cls, "__module__", None)))
+    assert not wrong, f"_exact() names a module that does not define the class: {wrong}"

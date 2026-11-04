@@ -25,7 +25,7 @@ from tldw_chatbook.Utils.library_rail_width import (
     LIBRARY_REFERENCE_WIDTH,
 )
 
-from .settings_config_models import SettingsValidationResult
+from ...state.settings_config_models import SettingsValidationResult
 
 DEFAULT_THEME = "textual-dark"
 DEFAULT_PALETTE_THEME_LIMIT = 1

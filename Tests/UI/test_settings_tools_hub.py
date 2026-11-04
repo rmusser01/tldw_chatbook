@@ -24,7 +24,7 @@ from tldw_chatbook.UI.Navigation.screen_registry import (
     registered_screen_aliases,
     resolve_screen_route,
 )
-from tldw_chatbook.UI.Screens.settings_config_models import SettingsCategoryId
+from tldw_chatbook.state.settings_config_models import SettingsCategoryId
 from tldw_chatbook.UI.Screens.settings_screen import (
     SETTINGS_OVERVIEW_BOUNDARY_ROWS,
     SettingsScreen,

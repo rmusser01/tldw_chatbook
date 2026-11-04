@@ -69,7 +69,7 @@ from tldw_chatbook.Third_Party.textual_fspicker import (
     Filters,
     SelectDirectory,
 )
-from tldw_chatbook.UI.Screens.model_browser_state import install_failure_message
+from tldw_chatbook.Model_Artifacts.model_browser_state import install_failure_message
 from tldw_chatbook.UI.Screens.model_installed_view import lifecycle_failure_message
 from tldw_chatbook.UI.Wizards import first_run_speech_step_state as speech_state
 from tldw_chatbook.UI.Wizards.BaseWizard import WizardStepConfig

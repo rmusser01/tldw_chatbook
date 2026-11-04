@@ -56,7 +56,7 @@ from tldw_chatbook.Media_Creation.generation_templates import (
     BUILTIN_TEMPLATES,
     get_all_templates,
 )
-from tldw_chatbook.UI.Screens.settings_image_gen_defaults import (
+from tldw_chatbook.UI.Settings_Modules.settings_image_gen_defaults import (
     BACKEND_IDS,
     BACKEND_LABELS,
     FIELD_SCHEMA,

@@ -11,8 +11,8 @@ import toml
 from Tests.Backup_Recovery.config_test_support import select_config_source
 from tldw_chatbook import config
 from tldw_chatbook.Backup_Recovery.bootstrap import RecoveryRequired
-from tldw_chatbook.UI.Screens import settings_config_adapter
-from tldw_chatbook.UI.Screens.settings_config_adapter import SettingsConfigAdapter
+from tldw_chatbook.UI.Settings_Modules import settings_config_adapter
+from tldw_chatbook.UI.Settings_Modules.settings_config_adapter import SettingsConfigAdapter
 from tldw_chatbook.Utils.config_encryption import config_encryption
 
 

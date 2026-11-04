@@ -73,7 +73,7 @@ elif route == 'import':
         assert active._first_run_import_done()
 else:
     from tldw_chatbook.UI.Screens.settings_screen import SettingsScreen
-    from tldw_chatbook.UI.Screens.settings_config_adapter import SettingsConfigAdapter
+    from tldw_chatbook.UI.Settings_Modules.settings_config_adapter import SettingsConfigAdapter
     from dataclasses import replace
     values = replace(adapter.load_rag_defaults_from_active_profile(), default_top_k=13)
     original = SettingsConfigAdapter.save_sections

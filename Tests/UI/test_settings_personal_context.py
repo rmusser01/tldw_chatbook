@@ -52,7 +52,7 @@ from tldw_chatbook.Personal_Context.service import (
     ProfileOperationalStatus,
     SettingsScopeSnapshot,
 )
-from tldw_chatbook.UI.Screens.settings_config_models import SettingsCategoryId
+from tldw_chatbook.state.settings_config_models import SettingsCategoryId
 from tldw_chatbook.UI.Screens.settings_screen import SettingsScreen
 from tldw_chatbook.UI.Workbench.help import WorkbenchHelpPanel
 from tldw_chatbook.Widgets.confirmation_dialog import ConfirmationDialog

@@ -1447,12 +1447,9 @@ class PersonasCharacterEditorWidget(Container):
                 ("personas-char-editor-pack-status", "portrait required", "error")
             )
         if avatar_bytes is not None:
-            # Local import: this widget module is itself imported by
-            # personas_screen at module-load time, so a top-level import of
-            # its constants back here would deadlock as a circular import.
-            from ...UI.Screens.personas_screen import (
-                PERSONAS_AVATAR_MAX_BYTES,
-                PERSONAS_AVATAR_MAX_SIZE_COPY,
+            from ...Character_Chat.character_avatar import (
+                AVATAR_MAX_BYTES as PERSONAS_AVATAR_MAX_BYTES,
+                AVATAR_MAX_SIZE_COPY as PERSONAS_AVATAR_MAX_SIZE_COPY,
             )
 
             if len(avatar_bytes) > PERSONAS_AVATAR_MAX_BYTES:

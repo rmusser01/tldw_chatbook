@@ -16,7 +16,7 @@ from Tests.UI.test_settings_configuration_hub import (
 )
 from tldw_chatbook.app import TldwCli
 from tldw_chatbook.UI.Screens import settings_endpoint_probe
-from tldw_chatbook.UI.Screens.settings_config_models import SettingsCategoryId
+from tldw_chatbook.state.settings_config_models import SettingsCategoryId
 
 CATEGORY = SettingsCategoryId.PROVIDERS_MODELS
 MODEL = "review-model"

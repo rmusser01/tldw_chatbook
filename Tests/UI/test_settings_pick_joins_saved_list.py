@@ -937,7 +937,7 @@ async def test_the_capability_line_no_longer_ties_capabilities_to_saving(
         FakeConsoleModelDiscoveryScope,
         _merged_model,
     )
-    from tldw_chatbook.UI.Screens import provider_model_resolution
+    from tldw_chatbook.LLM_Provider_Catalog import provider_model_resolution
 
     _write(_LLAMA)
     app = _booted_app()

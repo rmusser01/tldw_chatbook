@@ -27,7 +27,7 @@ from tldw_chatbook.Chat.console_chat_models import ConsoleMessageRole
 from tldw_chatbook.Chat.console_provider_support import supported_generation_fields
 from tldw_chatbook.Chat.console_session_settings import ConsoleSessionSettings
 from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
-from tldw_chatbook.UI.Screens.settings_config_adapter import SettingsConfigAdapter
+from tldw_chatbook.UI.Settings_Modules.settings_config_adapter import SettingsConfigAdapter
 from tldw_chatbook.Widgets.Console.console_settings_modal import ConsoleSettingsModal
 from tldw_chatbook.Widgets.Console.console_settings_saved_defaults import (
     USE_SAVED_DEFAULTS_ID,

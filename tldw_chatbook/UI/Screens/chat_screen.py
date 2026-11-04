@@ -84,12 +84,12 @@ from .chat_screen_state import TaskResumeState
 # `Chat.trajectory_export` or `Widgets/Console/trace_export_dialog.py`.
 # Per-file guard that names the offender:
 # `Tests/Packaging/test_exchange_export_trajectory_deferral.py`.
-from .provider_model_resolution import (
+from ...LLM_Provider_Catalog.provider_model_resolution import (
     ResolvedProviderModelOption,
     resolve_effective_provider_model,
     resolve_provider_model_options,
 )
-from .settings_config_models import SettingsCategoryId
+from ...state.settings_config_models import SettingsCategoryId
 from ..Console_Modules.attach_visit import ConsoleAttachVisit
 from ..Console_Modules.frame import (
     frame_console_region,
@@ -10184,7 +10184,7 @@ class ChatScreen(BaseAppScreen):
         backends: tuple[str, ...] = ()
         styles: dict[str, str] = {}
         try:
-            from ...UI.Screens.settings_image_gen_defaults import BACKEND_IDS
+            from ..Settings_Modules.settings_image_gen_defaults import BACKEND_IDS
 
             backends = tuple(BACKEND_IDS)
         except Exception:

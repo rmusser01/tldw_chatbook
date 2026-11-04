@@ -32,7 +32,7 @@ from tldw_chatbook.Chat.console_session_settings import (
 )
 from tldw_chatbook.config import load_settings
 from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
-from tldw_chatbook.UI.Screens.settings_config_adapter import SettingsConfigAdapter
+from tldw_chatbook.UI.Settings_Modules.settings_config_adapter import SettingsConfigAdapter
 from tldw_chatbook.Widgets.Console.console_model_popover import ConsoleModelPopover
 from tldw_chatbook.Widgets.Console.console_status_chips import ConsoleStatusChips
 

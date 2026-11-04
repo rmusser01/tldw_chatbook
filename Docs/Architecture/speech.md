@@ -38,7 +38,7 @@ start is not newly serialized or automatically bounded (TASK-33621.111).
 | TTS event handler | `Event_Handlers/TTS_Events/tts_events.py` | `TTSEventHandler`, `TTSMessageSpeechRequestEvent`, `TTSPlaybackEvent`, `TTSGlobalOverrideDecisionEvent`, `ConsoleTTSDestination` |
 | Speech snapshots | `Chat/console_speech.py`, `Chat/console_chat_store.py` | `TTSMessageSpeechSnapshot`, `issue_tts_message_speech_snapshot` / `validate_tts_message_speech_snapshot` |
 | Hands-free | `Chat/console_hands_free.py`, `UI/Console_Modules/hands_free.py`, `Chat/reply_sentence_sequencer.py`, `Chat/console_auto_speak.py` | headless FSM (`idle|listening|countdown|awaiting_reply|speaking`), `ConsoleHandsFreeController`, `SentenceSequencer`, `decide_auto_speak()` |
-| Settings | `UI/Screens/settings_speech_tts.py`, `UI/Speech/` | the speech-tts settings category + Speech Lab |
+| Settings | `UI/Speech/settings_speech_tts.py`, `UI/Speech/` | the speech-tts settings category + Speech Lab |
 
 ## Voice selection and provider reconfiguration
 

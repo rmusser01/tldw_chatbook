@@ -32,7 +32,7 @@ from Tests.UI.test_destination_shells import (
     _wait_for_selector,
 )
 from Tests.UI.test_settings_configuration_hub import _open_settings_category
-from tldw_chatbook.UI.Screens.settings_config_models import SettingsCategoryId
+from tldw_chatbook.state.settings_config_models import SettingsCategoryId
 from tldw_chatbook.UI.Speech.speech_settings_contracts import SpeechTTSNavigationTarget
 
 

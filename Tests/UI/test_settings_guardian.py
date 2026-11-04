@@ -50,7 +50,7 @@ from Tests.UI.test_settings_configuration_hub import (
 )
 from tldw_chatbook.DB.Guardian_DB import GuardianDB
 from tldw_chatbook.Guardian.settings import guardian_db_path
-from tldw_chatbook.UI.Screens.settings_config_models import SettingsCategoryId
+from tldw_chatbook.state.settings_config_models import SettingsCategoryId
 
 
 def _config_path() -> Path:

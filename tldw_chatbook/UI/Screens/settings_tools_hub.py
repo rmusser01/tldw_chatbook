@@ -25,7 +25,7 @@ from textual.widgets import Button, Static
 
 from ...Widgets.destination_workbench import DestinationModeStrip
 from ..MCP_Modules.mcp_workbench import MCP_HUB_MODES, MCPWorkbench
-from .settings_config_models import (
+from ...state.settings_config_models import (
     LISTED_SAVE_MODELS,
     SettingsCategorySummary,
     SettingsCategoryId,

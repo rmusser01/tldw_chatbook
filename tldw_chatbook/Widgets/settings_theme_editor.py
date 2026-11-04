@@ -2178,8 +2178,7 @@ class SettingsThemeEditor(Vertical):
         session: int | None = None,
     ) -> None:
         session = self._session if session is None else session
-        # Lazy: the Settings screen module imports this one.
-        from ..UI.Screens.settings_screen import RagProfileNameModal
+        from .rag_profile_name_modal import RagProfileNameModal
 
         def refusal(text: str) -> str | None:
             target = self._export_target(text)

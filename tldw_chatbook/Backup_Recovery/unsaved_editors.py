@@ -30,7 +30,7 @@ def _text(value: object) -> bool:
 
 
 def _settings_drafts_dirty(drafts) -> bool:
-    from tldw_chatbook.UI.Screens.settings_config_models import (
+    from tldw_chatbook.state.settings_config_models import (
         SettingsCategoryId,
         SettingsDraft,
     )
@@ -57,7 +57,7 @@ def _speech_snapshot_dirty(snapshot) -> bool:
         return False
     if not _exact(
         snapshot,
-        "Widgets.Settings_Widgets.speech_tts_settings_panel",
+        "Widgets.Settings_Widgets.speech_tts_panel_types",
         "SpeechTTSPanelDraftSnapshot",
     ):
         raise TypeError("unknown speech settings snapshot")
@@ -246,16 +246,16 @@ def _settings_snapshot_dirty(state: dict) -> bool:
     dirty = _settings_drafts_dirty(state.get("settings_drafts", {}))
     dirty = _speech_snapshot_dirty(state.get("speech_tts_panel_draft")) or dirty
     if "web_search_session" in state:
-        from tldw_chatbook.UI.Screens.settings_config_models import SettingsCategoryId
+        from tldw_chatbook.state.settings_config_models import SettingsCategoryId
 
         session = state["web_search_session"]
-        if not _exact(session, "UI.Screens.settings_web_search", "WebSearchSettings"):
+        if not _exact(session, "UI.Settings_Modules.settings_web_search", "WebSearchSettings"):
             raise TypeError("unknown retained web search session")
         drafts = {SettingsCategoryId.WEB_SEARCH: session.draft}
         dirty = _settings_drafts_dirty(drafts) or dirty
     if "raw_config_session" in state:
         session = state["raw_config_session"]
-        module = "UI.Screens.settings_advanced_config"
+        module = "UI.Settings_Modules.settings_advanced_config"
         if (
             not _exact(session, module, "AdvancedConfigSettings")
             or not _exact(session.state, module, "RawConfigDraft")

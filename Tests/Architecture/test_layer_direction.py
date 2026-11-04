@@ -259,3 +259,43 @@ def test_allowlist_has_no_stale_rows() -> None:
         "an upward import. The allowlist only shrinks: delete these rows.\n"
         + "\n".join("  " + "\t".join(row) for row in stale)
     )
+
+
+def _widgets_screen_imports_at_module_level() -> list[str]:
+    """Module-level imports in Widgets/** that target UI/Screens (TASK-36944.8)."""
+    found: list[str] = []
+    screens = f"{PACKAGE}.UI.Screens"
+    for path in sorted((REPO_ROOT / PACKAGE / "Widgets").rglob("*.py")):
+        rel = path.relative_to(REPO_ROOT)
+        module = ".".join(rel.with_suffix("").parts)
+        tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+        for node, kind in _imports(tree):
+            if kind != "top" or isinstance(node, ast.Call):
+                continue
+            if isinstance(node, ast.Import):
+                targets = [alias.name for alias in node.names]
+            else:
+                if node.level:
+                    package = module.split(".")
+                    package = package[:-1] if path.name != "__init__.py" else package
+                    package = package[: len(package) - (node.level - 1)]
+                    base = ".".join(package + ([node.module] if node.module else []))
+                else:
+                    base = node.module or ""
+                targets = [base] + [f"{base}.{alias.name}" for alias in node.names]
+            if any(t == screens or t.startswith(screens + ".") for t in targets):
+                found.append(f"{rel.as_posix()}:{node.lineno}")
+    return found
+
+
+def test_widgets_import_nothing_from_ui_screens_at_module_level() -> None:
+    """Scope: runtime module-level imports only.
+
+    ``if TYPE_CHECKING:`` imports, function-local imports and
+    ``importlib.import_module`` calls are out of scope (TASK-36944.8 AC#1).
+    """
+    offenders = _widgets_screen_imports_at_module_level()
+    assert not offenders, (
+        "Widgets must not import tldw_chatbook.UI.Screens at module level; move the "
+        "shared state/helpers to a non-Screens package:\n  " + "\n  ".join(offenders)
+    )

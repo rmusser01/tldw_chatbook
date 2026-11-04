@@ -205,7 +205,7 @@ def test_real_settings_save_and_environment_override_reach_http(
     """Only outgoing HTTP is replaced; Settings persistence, resolution and dispatch run."""
     import json
 
-    from tldw_chatbook.UI.Screens.settings_config_adapter import SettingsConfigAdapter
+    from tldw_chatbook.UI.Settings_Modules.settings_config_adapter import SettingsConfigAdapter
 
     adapter = SettingsConfigAdapter()
     adapter.load(force_reload=True)

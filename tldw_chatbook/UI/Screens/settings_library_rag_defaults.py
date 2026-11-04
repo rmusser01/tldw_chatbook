@@ -7,7 +7,7 @@ from copy import deepcopy
 from dataclasses import dataclass
 from typing import Any
 
-from .settings_config_models import SettingsValidationResult
+from ...state.settings_config_models import SettingsValidationResult
 
 
 SEARCH_MODES = frozenset({"plain", "semantic", "hybrid"})

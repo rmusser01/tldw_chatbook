@@ -564,7 +564,7 @@ APPROVED_EXCEPTIONS: tuple[ExceptionRule, ...] = (
         "exact discovery of existing reusable Higgs voice source; baseline ownership is unchanged",
     ),
     ExceptionRule(
-        "tldw_chatbook/UI/Screens/settings_speech_tts.py",
+        "tldw_chatbook/UI/Speech/settings_speech_tts.py",
         "module:_PROVIDER_NON_SECRET_DEFAULTS",
         "literal:~/.config/tldw_cli/chatterbox_voices",
         1,
@@ -572,7 +572,7 @@ APPROVED_EXCEPTIONS: tuple[ExceptionRule, ...] = (
         "global Settings default for the reusable Chatterbox voice artifact directory",
     ),
     ExceptionRule(
-        "tldw_chatbook/UI/Screens/settings_speech_tts.py",
+        "tldw_chatbook/UI/Speech/settings_speech_tts.py",
         "module:_PROVIDER_NON_SECRET_DEFAULTS",
         "literal:~/.config/tldw_cli/higgs_voices",
         1,
