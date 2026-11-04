@@ -136,7 +136,7 @@ from tldw_chatbook.Provider_Contract.thinking_blocks import (
 )
 from tldw_chatbook.config import save_settings_to_cli_config
 from tldw_chatbook.model_capabilities import is_vision_capable
-from tldw_chatbook.UI.character_display_text import sanitize_character_display_label
+from tldw_chatbook.Utils.character_display_text import sanitize_character_display_label
 from tldw_chatbook.UI.Navigation.conversation_settings_navigation import (
     ProviderSettingsNavigationTarget,
 )

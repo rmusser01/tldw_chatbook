@@ -113,7 +113,7 @@ from tldw_chatbook.Utils.input_validation import (
     validate_url,
 )
 from tldw_chatbook.Utils.token_counter import count_tokens_messages
-from tldw_chatbook.UI.character_display_text import sanitize_character_display_label
+from tldw_chatbook.Utils.character_display_text import sanitize_character_display_label
 
 if TYPE_CHECKING:
     # Imported lazily at call sites: custom_endpoint_registry imports this

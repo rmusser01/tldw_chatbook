@@ -52,7 +52,7 @@ from tldw_chatbook.Chat.console_session_settings import (
 )
 from tldw_chatbook.Chat.console_settings_apply import ConsoleSettingsAction
 from tldw_chatbook.Chat.custom_endpoint_registry import provider_identity_key
-from tldw_chatbook.UI.character_display_text import sanitize_character_display_label
+from tldw_chatbook.Utils.character_display_text import sanitize_character_display_label
 
 #: The modal's name everywhere it is named (TASK-33006.5, spec §3).
 CHAT_SETTINGS_NAME = "Chat settings"

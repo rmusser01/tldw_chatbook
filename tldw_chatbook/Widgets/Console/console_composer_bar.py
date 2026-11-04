@@ -101,7 +101,7 @@ from ...config import (
     coerce_bool_setting,
     coerce_int_setting,
 )
-from ...UI.character_display_text import sanitize_character_display_label
+from tldw_chatbook.Utils.character_display_text import sanitize_character_display_label
 from ...Widgets.glyph_fallback import resolve_glyph, resolve_glyph_text
 
 _CollapseState = Literal["literal", "collapsed", "confirm", "expanded"]

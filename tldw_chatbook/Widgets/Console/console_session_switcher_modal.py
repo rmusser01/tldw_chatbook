@@ -51,7 +51,7 @@ from tldw_chatbook.Chat.console_switcher_state import (
     build_console_switcher_entries,
     filter_console_active_results,
 )
-from tldw_chatbook.UI.character_display_text import sanitize_character_display_label
+from tldw_chatbook.Utils.character_display_text import sanitize_character_display_label
 from tldw_chatbook.UI.Workbench.help import WorkbenchHelpPanel, WorkbenchHelpState
 from tldw_chatbook.Utils.input_validation import (
     CONSOLE_SWITCHER_QUERY_MAX_LENGTH,

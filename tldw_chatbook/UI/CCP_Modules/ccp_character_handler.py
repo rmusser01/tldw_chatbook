@@ -9,7 +9,7 @@ from rich.text import Text
 from textual.widgets import Input, Select, Static, TextArea
 
 from tldw_chatbook.Utils.fts5_match_forms import quote_fts5_prefix
-from ..character_display_text import (
+from tldw_chatbook.Utils.character_display_text import (
     sanitize_character_display_items,
     sanitize_character_display_label,
     sanitize_character_display_text,
