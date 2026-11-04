@@ -15,6 +15,7 @@ from tldw_chatbook.DB.Prompts_DB import (
     DatabaseError,
     InputError,
     ConflictError,
+    ExpectedVersionConflictError,
     add_or_update_prompt,
     load_prompt_details_for_ui,
     export_prompt_keywords_to_csv,
@@ -948,52 +949,45 @@ class TestConcurrencyAndDataIntegrity(BaseTestCase):
 
     def test_concurrent_updates_to_same_prompt(self):
         """
-        Simulate a race condition where two threads update the same prompt.
-        One should succeed, the other should fail with a ConflictError.
+        Two editors open the same prompt version, and both save it.
+
+        Each save passes the version its editor opened as expected_version,
+        so the first lands and the second raises ExpectedVersionConflictError
+        instead of overwriting it (TASK-38686). Without expected_version an
+        update is last-writer-wins, which is what this test used to miss.
+        The saves run one after the other, each on its own connection and
+        thread: when the two SQLite transactions overlap, the later writer is
+        refused by a database lock before the version comparison runs.
         """
         file_db = self._get_file_db()
         pid, _, _ = file_db.add_prompt("Race Condition", "Initial", "Data")
+        opened = file_db.get_prompt_by_id(pid)["version"]
 
         results = {}
-        barrier = threading.Barrier(2, timeout=5)
 
-        def worker(user_id):
+        def save(user_id):
+            db_instance = PromptsDatabase(self.db_path, client_id=f"worker_{user_id}")
             try:
-                db_instance = PromptsDatabase(
-                    self.db_path, client_id=f"worker_{user_id}"
-                )
-                barrier.wait()
                 db_instance.update_prompt_by_id(
-                    pid, {"details": f"Updated by {user_id}"}
+                    pid, {"details": f"Updated by {user_id}"}, expected_version=opened
                 )
                 results[user_id] = "success"
-            except ConflictError:
+            except ExpectedVersionConflictError:
                 results[user_id] = "conflict"
-            except DatabaseError as e:
-                if "locked" in str(e).lower() or "conflict" in str(e).lower():
-                    results[user_id] = "conflict"
-                else:
-                    results[user_id] = e
-            except Exception as e:
-                results[user_id] = e
+            except Exception as error:  # kept, so a wrong outcome names itself
+                results[user_id] = error
             finally:
-                if "db_instance" in locals():
-                    db_instance.close_connection()
+                db_instance.close_connection()
 
-        thread1 = threading.Thread(target=worker, args=(1,))
-        thread2 = threading.Thread(target=worker, args=(2,))
+        for user_id in (1, 2):
+            worker = threading.Thread(target=save, args=(user_id,))
+            worker.start()
+            worker.join()
 
-        thread1.start()
-        thread2.start()
-        thread1.join()
-        thread2.join()
-
-        self.assertIn("success", results.values())
-        self.assertIn("conflict", results.values())
-
+        self.assertEqual(results, {1: "success", 2: "conflict"})
         final_prompt = file_db.get_prompt_by_id(pid)
-        self.assertEqual(final_prompt["version"], 2)
-        self.assertTrue(final_prompt["details"].startswith("Updated by"))
+        self.assertEqual(final_prompt["version"], opened + 1)
+        self.assertEqual(final_prompt["details"], "Updated by 1")
 
     def test_unicode_character_support(self):
         """Ensure all text fields correctly handle Unicode characters."""
