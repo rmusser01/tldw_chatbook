@@ -5,7 +5,7 @@ status: Done
 assignee:
 - '@claude'
 created_date: 2026-11-03 11:40
-updated_date: 2026-11-04 01:24
+updated_date: 2026-11-04 03:26
 labels:
 - follow-up
 - tests
@@ -68,4 +68,4 @@ Branch fu/r6-fntests, base c2cdb6b82e. The work is a test-only change; no produc
 - **`test_workspace_rehydrate_hidden_settlement_without_duplicate_work[size0]` (40x20): stale expectation.** The test went Back to the narrow navigator view and opened Session Git from there, expecting the navigator displayed and the editor pane hidden. Session Git is now in the editor pane, and Manage switches a narrow workspace to the editor view. The case now enters Manage and expects the editor view at three points: on entry, after the remount, and on the reopened result. At those points `_narrow_view == "editor"`, the editor pane is displayed, and the navigator is not. Its point is unchanged: leave and remount reuse the exact observer without starting Git again.
 - **Green:** six whole-file `-n 4` runs, 64 passed each (load 15-28, 26-38 s).
 - Files: `Tests/UI/test_library_file_notes_git_push.py`.
-
+- 2026-11-04, review round 1: `test_push_focus_repair_and_buffered_enter_cannot_cross_operation` asserted that no message was posted at all. That held only because Enter lands before the review's deferred focus. It now asserts the safety property: no `push_reviewed_commit` message and no message for the stale operation 61. Red: with Push focused before Enter (a temporary edit replacing the review's deferred Back focus with a direct Push focus), it fails with `[PushOperationRequested()]`. Green on the branch.

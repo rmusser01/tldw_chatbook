@@ -5,7 +5,7 @@ status: Done
 assignee:
 - '@claude'
 created_date: 2026-11-03 11:40
-updated_date: 2026-11-04 01:21
+updated_date: 2026-11-04 03:26
 labels:
 - follow-up
 - tests
@@ -62,4 +62,18 @@ PR #3377 adds this file's new quit and removal tests to the UI census (8 entries
   - **Whole file, `-n 4`:** 10 runs before that third fix, with 9 green; the one red was the third flake. AC#2's two tests passed all 10. After it, 5 of 5 green (223 passed, 64-72 s each).
   - Docs: `Docs/User_Guide/library/file-notes.md` gives the narrow blocked-row copy. Lesson added to `backlog/docs/lessons-testing-evidence.md`.
   - Files: `tldw_chatbook/Widgets/Library/library_file_notes_git_panel.py`, `Tests/UI/test_library_file_notes_git.py`.
+- 2026-11-04, review round 1 (fu/r6-fntests):
+  - **Narrow rows.** Other states still ran an empty or dot-only reason into their "; " narrow recovery: ignored at widths 36-39 ("BLOCKED · ; fix ignore, then Refresh", then ".", "..", "..."); the externally staged and unsupported-family states at 33-36; failed at 25-28. When the narrow recovery still leaves the reason under 4 cells, the reason and the leading "; " are now dropped, as in "BLOCKED · fix ignore, then Refresh". The module stays at 4,259 lines.
+  - The pure test is renamed `test_row_copy_never_runs_an_empty_or_dot_only_reason_into_its_recovery`, and its census entry with it. It covers all ten states that carry a reason, at every width from where the short recovery fits up to 119. The check: the state word is followed by a letter, never "." or ";". Red before the fix for the eight "; " states (for example `(34, 'BLOCKED · ; fix ...e, then Refresh')`); green after. The User Guide sentence now gives the ignored example too.
+  - **Comment and lesson.** The commit-success wait's comment and the lesson now say: wait until the copy matches its fit for the current width (28 or 27 cells at 40x20, both middle-elided).
+  - **`test_commit_footer_keeps_disclosure_edit_cancel_confirm_order_and_geometry[size0]`.** The reviewer saw it fail 1 of 3 at load 34, at `assert edit.has_focus` one pause after the review rendered. The review focuses Edit through `call_after_refresh`, so this is a test race; the test now waits on that focus. Red: with that focus delayed 0.3 s (temporary edit), the old test failed at the assertion and the new one passed. The failure itself did not reproduce here: 0 of 480 [size0] repeats at load 10-23, and 0 of 10 whole-file runs run five at a time at load 30-35.
+  - **Other one-off failures under heavy load.** One five-at-a-time set of whole-file runs, at load 34 with the 80 repeats added, had five one-off failures in tests this branch does not touch:
+    - `test_row_action_table_is_driven_by_row_policy[owned_topology_changed-stage_update-False]`;
+    - `test_session_git_actions_reveal_only_the_current_next_steps[size1]`;
+    - `test_unstage_selected_reports_counts_and_refreshes_once`;
+    - `test_stage_rechecks_transition_admission_after_flush_await`;
+    - `test_opening_session_git_moves_focus_to_a_visible_ready_control`.
 
+    The plain five-at-a-time rerun at head was 5 of 5 green. The same command at base also had a one-off failure: `test_mutation_blocks_root_and_path_while_path_lease_blocks_mutation`.
+  - **`test_stage_draft_conflict_names_save_and_editor_recovery`.** The review round's own whole-file run, at load 25-32, failed it once: the status still read "READY" one pause after the Stage press. The press reaches the workspace's `StageRequested` handler through two messages, so the test now waits for the refusal's status text. Red: a temporary 0.2 s sleep in that workspace handler reproduced the exact failure on the old test; the new test passed under it.
+  - After round 1, `-n 4` whole-file runs at load 13-27: git 3 of 3 (231 passed); push 3 of 3 (64 passed); workspace 2 runs with only TASK-32185's six excluded reds failing (166 passed).

@@ -5,7 +5,7 @@ status: Done
 assignee:
 - '@claude'
 created_date: 2026-11-03 11:40
-updated_date: 2026-11-04 02:01
+updated_date: 2026-11-04 03:26
 labels:
 - follow-up
 - tests
@@ -95,4 +95,4 @@ Branch fu/r6-fntests, on top of TASK-38693 and TASK-38694; base c2cdb6b82e. On 2
   - Collecting the three new modules adds about 3 s per shard locally.
   - Job wall time in those runs was pytest time plus 1.0-2.9 min (median per run), with outliers up to 7 min on light shards. So the projected heaviest shard is about 15 min against the 20-min cap, under the 17-min target. All 264 entries fit, so none waits on TASK-38716.
 - Files: `scripts/ui_pr_gate_census.txt`, `scripts/check_ui_pr_gate_census.py`, `Tests/UI/test_library_file_notes_workspace.py`.
-
+- 2026-11-04, review round 1: the gated `test_file_notes_root_row_keeps_state_word_beside_pairing_review_at_40_columns` flaked 1 of 5 in the lane's serial setup, from a lost deferred root-row fit. TASK-38710 (branch fu/r6-fnprod, commit 8d1e1c56f3) fixes that refit and merges first. The entry stays, and the census comment records that dependency. The git test renamed in review keeps its census slot under its new name.
