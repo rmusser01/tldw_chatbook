@@ -133,6 +133,21 @@ _capture_service._review_digest = _observed_review_digest
 from tldw_chatbook.Backup_Recovery.capture_service import capture, preview_capture""",
 )
 
+
+# Reuse native snapshot-refusal diagnostics without changing the capture result.
+_RETAIN_PUBLIC = (
+    "from pathlib import Path\n"
+    "from Tests.Backup_Recovery.thread_diagnostics import observe_capture_review, stop_observer\n"
+    "_capture_review_log = Path.home() / 'capture-review.json'\n"
+    "_stop_capture_review = observe_capture_review(_capture_review_log)\n"
+    "try:\n" + indent(_RETAIN_PUBLIC, "    ") + "\nfinally:\n"
+    "    try:\n"
+    "        stop_observer(_stop_capture_review)\n"
+    "    finally:\n"
+    "        stop_observer(lambda: print('eval_capture_native_diagnostic=' + "
+    "(_capture_review_log.read_text(encoding='utf-8') if _capture_review_log.exists() else '[]'), flush=True))\n"
+)
+
 _RETAIN_RESTORE = _replace(
     _RESTORE,
     "source.rename(source.with_name('source-home-removed'))",
