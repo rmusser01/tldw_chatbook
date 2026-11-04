@@ -5291,7 +5291,7 @@ _CHOICE_IDS = (
     "console-settings-thinking-effort",
 )
 #: llama.cpp shows Reasoning effort only, and so does a llama.cpp custom
-#: endpoint entry (ADR-146): TASK-33006.2's review fix decides an entry as its
+#: endpoint entry (ADR-343): TASK-33006.2's review fix decides an entry as its
 #: family, where it used to show all four choice rows that Apply then cleared.
 #: OpenAI's three rows and Anthropic's Thinking cover the other Selects.
 _CHOICE_ROW_CHATS = {
@@ -7290,7 +7290,7 @@ async def test_console_settings_modal_saves_blank_session_base_url_for_entry() -
 ):
     """Gateway invariant: the read-only entry URL is display-only -- Save must
     persist a blank session base_url so the registry entry stays the
-    authoritative endpoint on send (ADR-146 entry-URL authority)."""
+    authoritative endpoint on send (ADR-343 entry-URL authority)."""
     app = ModalHarness()
     app.app_config = _registry_app_config()
     settings = ConsoleSessionSettings(

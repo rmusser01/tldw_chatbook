@@ -11,7 +11,7 @@ references:
 - https://github.com/rmusser01/tldw_chatbook/pull/3162
 documentation:
 - backlog/decisions/166-agent-assisted-archive-recovery.md
-- backlog/decisions/228-sqlite-store-kernel.md
+- backlog/decisions/353-sqlite-store-kernel.md
 updated_date: 2026-10-31 21:02
 ---
 
@@ -40,7 +40,7 @@ ADR required: no. Existing ADR166/097/228 and design-token/component ADR150/161 
 6. Repair the hosted startup MountError with a deterministic pre-mount/after-mount regression; verify cold/warm boot census without widening ADR097 budgets and re-review the bounded lifecycle delta before republishing. ADR required: no, existing ADR166/097 and Textual mount ownership apply.
 2026-10-31 local integration preparation after replaying all six PR3162 commits onto dev57e330e735 (head52269c3dd4).
 ADR required: no
-ADR path: backlog/decisions/166-agent-assisted-archive-recovery.md; backlog/decisions/228-sqlite-store-kernel.md
+ADR path: backlog/decisions/166-agent-assisted-archive-recovery.md; backlog/decisions/353-sqlite-store-kernel.md
 Reason: preserve approved archive, SQLite custody and predecessor recovery boundaries during compatibility repair.
 1. Inspect final archive chronology/CAS and exact retained recovery catalogs at ChaChaNotes85 and Workspace10, and correct only demonstrated regressions.
 2. Run original focused archive tools/search/coordinator/dispatch/card ownership tests and static checks; retain exact logs and limitations in Docs/superpowers/qa/2026-10-31-pr3162-backlog-rebase.md.
@@ -49,7 +49,7 @@ Reason: preserve approved archive, SQLite custody and predecessor recovery bound
 5. Commit the local review-ready correction/evidence with task In Progress. Root owns final current-dev rebase, independent requesting-code-review in place of Qodo, publication and merge. No full-suite run or new live requests; original30/30 endpoint cap remains consumed.
 2026-10-31 final current-dev integration onto 0d05d27fa1d569f1edebbc2346d43f8c03da9911.
 ADR required: no
-ADR path: backlog/decisions/166-agent-assisted-archive-recovery.md; backlog/decisions/228-sqlite-store-kernel.md
+ADR path: backlog/decisions/166-agent-assisted-archive-recovery.md; backlog/decisions/353-sqlite-store-kernel.md
 Reason: compatibility rebase preserving the existing archive and native custody contracts.
 1. Replay the clean local head3f9676738c onto the fixed current dev tip; preserve landed Plugins, OS notifications, approval-profile authority, Kanban F9 and schema85/10.
 2. Resolve conflicts, inspect range-diff, reconcile canonical CSS and reviewed diagnostic entries, retain the current1174 census prefix and append only the verified archive cards file (1175).

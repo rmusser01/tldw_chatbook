@@ -86,7 +86,7 @@ def test_runtime_tool_names():
     assert SPAWN_TOOL_NAME == "spawn_subagent"
     assert (
         RUNTIME_TOOL_NAMES
-        == {  # ADR-150 chat fork/spawn + dev-baseline completion (fleet message/
+        == {  # ADR-348 chat fork/spawn + dev-baseline completion (fleet message/
             # worktree constants were in RUNTIME_TOOL_NAMES but unlisted here).
             REPORT_TO_SUPERVISOR_TOOL_NAME,
             READ_AGENT_MESSAGES_TOOL_NAME,
@@ -627,7 +627,7 @@ def test_definition_rejects_unknown_param_key():
 
 def test_fingerprint_legacy_shape_unchanged_for_model_only_preset():
     # provider/params enter the fingerprint ONLY when set, so a legacy
-    # model-only preset keeps its pre-ADR-147 fingerprint (the audit
+    # model-only preset keeps its pre-ADR-344 fingerprint (the audit
     # identity persisted on existing run rows stays comparable).
     defn = AgentDefinition(name="reader", instructions="Read files.", model="m1")
     import hashlib, json

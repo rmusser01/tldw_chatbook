@@ -48,7 +48,7 @@ Finish the useful read-only milestone with trustworthy export and Console handof
 
 ## Closeout 2026-10-04
 
-Closed superseded with reslice. Landed under ADR-029 (TASK-969, PR #992, then
+Closed superseded with reslice. Landed under ADR-296 (TASK-969, PR #992, then
 the hardening arc through PR #2979): exact-byte copy/export, Console handoff
 (`Tests/UI/test_library_notes_w4_console_handoff.py`), and Database parity
 (`Tests/UI/test_library_notes_w4_data_truth.py`). The Unlink / Relink / Forget
@@ -58,4 +58,4 @@ root-keyed replica, so those ACs were never implemented as written.
 Resliced 2026-10-04 — the genuinely missing slices now live in TASK-34381
 (reads-path), TASK-34382 (retention policy), and TASK-34383
 (delete-safety/refusal); those tasks carry their own PRs. Superseded by
-ADR-029 (backlog/decisions/029-file-notes-disk-authority.md).
+ADR-296 (backlog/decisions/296-file-notes-disk-authority.md).

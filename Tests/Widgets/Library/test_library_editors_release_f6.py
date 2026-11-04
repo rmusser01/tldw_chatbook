@@ -1,7 +1,7 @@
 """The Library's note-body editors leave F6 to the app (TASK-34000.28 N-32, fix round 1 I-1).
 
 Textual 8.2.8's ``TextArea`` binds ``f6`` to ``select_line`` (non-priority),
-and the app's own F6 -- "next pane" -- is non-priority by ADR-031, so with a
+and the app's own F6 -- "next pane" -- is non-priority by ADR-299, so with a
 note body focused F6 selected the current line and focus stayed put.
 LibraryScreen keeps F6 app-owned (no screen binding); each Library body
 editor releases its own ``f6`` instead (``release_pane_key``).

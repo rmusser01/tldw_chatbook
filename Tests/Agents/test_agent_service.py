@@ -4395,7 +4395,7 @@ def test_no_definitions_spawn_unchanged(db):
     assert '"agent"' not in json.dumps(chat.calls[0], default=str)
 
 
-# -- ADR-067: pausable per-call deadline ---------------------------------
+# -- ADR-314: pausable per-call deadline ---------------------------------
 #
 # A blocking human prompt (approval card / skill confirm) can wait inside
 # the callable handed to _call_with_timeout. The pre-ADR invariant
@@ -4450,7 +4450,7 @@ def test_call_with_timeout_deadline_resumes_after_pause_ends():
 
 
 def test_make_invoke_tool_pauses_deadline_during_human_input_wait(db, monkeypatch):
-    """The ADR-067 production wiring: ``_make_invoke_tool`` feeds
+    """The ADR-314 production wiring: ``_make_invoke_tool`` feeds
     ``human_input_wait_active(run_id)`` into the wrapper, so a registry
     tool blocked on a human decision (marked from ANY thread via
     ``use_human_input_wait``) outlives max_tool_call_seconds."""

@@ -1,4 +1,4 @@
-"""Component tests for the Console "New endpoint from template" modal (ADR-146)."""
+"""Component tests for the Console "New endpoint from template" modal (ADR-343)."""
 
 import os
 import threading

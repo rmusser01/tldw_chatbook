@@ -367,7 +367,7 @@ def make_call_model(
         if suppress_cut:
             self._primary_cut_suppress.add(run_id)
         try:
-            # ADR-147 (Task 6): this run's OWN resolved sampling params
+            # ADR-344 (Task 6): this run's OWN resolved sampling params
             # and base_url ride the call -- for a spawned child they are
             # the resolver's target (never the parent's params, which
             # simply are not on its config); both stay absent for a
@@ -767,7 +767,7 @@ def make_invoke_tool(
                     lambda: (
                         should_cancel() or runtime.tool_call_abandon_requested(run_id)
                     ),
-                    # ADR-067: pause the per-call clock while a human
+                    # ADR-314: pause the per-call clock while a human
                     # decision is pending for THIS run, so an approval/
                     # confirm wait inside the invoke outlives the ceiling.
                     pauses_deadline=lambda: runtime.human_input_wait_active(run_id),

@@ -41,9 +41,9 @@ Integrate read/write mode transitions, safe Unlink and Forget lifecycle barriers
 ## Closeout 2026-10-04
 
 Closed superseded, not implemented as written. There is no read/write
-transition and no release gate to open: under ADR-029 the feature shipped
+transition and no release gate to open: under ADR-296 the feature shipped
 writable directly (TASK-969, PR #992), so the RW upgrade/downgrade barriers,
 manifest-gated admission, writable Unlink/Forget lifecycle, and the
 all-or-nothing B1 gate specified above were never built.
 
-Superseded by: ADR-029 (backlog/decisions/029-file-notes-disk-authority.md) via TASK-969 (PR #992).
+Superseded by: ADR-296 (backlog/decisions/296-file-notes-disk-authority.md) via TASK-969 (PR #992).

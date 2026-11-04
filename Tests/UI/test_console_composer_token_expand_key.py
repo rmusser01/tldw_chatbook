@@ -6,7 +6,7 @@ dedicated key instead, Ctrl+E, which every chip names in its own hint
 ("Pasted text | N characters | Ctrl+E expand"). It expands the token next to
 the caret, from either side of it, and a click still expands a token.
 
-Ctrl+E was chosen against the Console's key map and ADR-031: bare letters
+Ctrl+E was chosen against the Console's key map and ADR-299: bare letters
 type into the draft; Ctrl+O, Ctrl+G, Ctrl+K, Ctrl+T, Ctrl+Y and Ctrl+Z are
 Console actions; Ctrl+C/V/X/S/D/A/R/W are reserved or terminal-convention
 keys; Alt chords type characters on macOS terminals; Ctrl+Shift+<letter>

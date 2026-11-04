@@ -236,7 +236,7 @@ async def _run_agent_reply(
                 )
             if host.is_remote(project_selection.root):
                 # Task 19: AGENTS.md reads route through the remote
-                # executor (reader strategy). ADR-069 prep-failure
+                # executor (reader strategy). ADR-317 prep-failure
                 # posture: any reader failure warns content-free and
                 # the dispatch proceeds without startup instructions.
                 startup_candidate = (
@@ -535,7 +535,7 @@ async def _run_agent_reply(
             recovery_persona_rules=turn_context.persona_policy_rules,
         )
 
-        # Local tools (ADR-032): same per-run composition point. Both
+        # Local tools (ADR-300): same per-run composition point. Both
         # hooks see every batch; each gates only what its provider owns,
         # so the combined hook is a collision-free merge.
         if local_review_hook is not None:

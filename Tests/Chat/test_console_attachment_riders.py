@@ -219,7 +219,7 @@ class TestSaveImageToastEscaping:
         # TASK-19642.8.1: the `_console_chat_store` setter below reaches
         # `ConsoleRuntime.attach_view` -> `ChatScreen.console_view_hooks`,
         # which registers the project-instruction hooks off `self._session`
-        # (ADR-069 support). This detached shell builds no session
+        # (ADR-317 support). This detached shell builds no session
         # controller, so a minimal stand-in keeps the hook registration
         # alive without mounting anything; no scenario here dispatches a
         # project instruction.

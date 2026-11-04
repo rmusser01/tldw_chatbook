@@ -572,7 +572,7 @@ def _qualified_file_notes_core_read(source_path, symbol, call):
 
 
 def _qualified_store_kernel_dispatch(source_path, symbol, call):
-    """Admit the store kernel's per-subclass owner dispatch (ADR-228).
+    """Admit the store kernel's per-subclass owner dispatch (ADR-353).
 
     The ONE qualified connect lives in SQLiteStoreKernel._get_connection;
     each subclass declares a class-level _kernel_sqlite_owner that

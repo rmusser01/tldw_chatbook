@@ -150,11 +150,11 @@ Tests/integration/test_speculative_voice_pipeline.py
 Tests/integration/test_speculative_voice_process_pipeline.py
 Tests/test_persistent_diagnostic_boundary.py
 Tests/test_persistent_diagnostic_sentinel_matrix.py
-backlog/decisions/094-console-turn-lifetime-and-navigation-boundary.md
-backlog/decisions/098-low-latency-speculative-duplex-voice-pipeline.md
 backlog/decisions/125-lock-safe-private-sqlite-validation.md
 backlog/decisions/139-independent-buddy-conversation-and-workspace-bindings.md
 backlog/decisions/147-conversation-archive-and-exact-resume.md
+backlog/decisions/336-console-turn-lifetime-and-navigation-boundary.md
+backlog/decisions/338-low-latency-speculative-duplex-voice-pipeline.md
 backlog/docs/lessons-testing-evidence.md
 backlog/tasks/task-23175 - Add-low-latency-speculative-duplex-voice-pipeline.md
 native/voice_aec/.gitattributes

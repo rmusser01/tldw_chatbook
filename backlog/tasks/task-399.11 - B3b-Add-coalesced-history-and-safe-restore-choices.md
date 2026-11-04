@@ -43,11 +43,11 @@ Provide minimal per-note recovery history without turning every autosave into a 
 ## Closeout 2026-10-04
 
 Closed superseded with reslice. Coalescing holds by construction under
-ADR-029: a protected editing session seals at most its session checkpoints
+ADR-296: a protected editing session seals at most its session checkpoints
 while ordinary autosaves update only the current replica (TASK-969, PR #992),
 so the checkpoint-spam problem this task guards against cannot arise in the
 shipped design. The per-note history read-path, verify/export, and the
 50-checkpoint/30-day retention enforcement were not built as written.
 
 Resliced 2026-10-04 — the missing read-path now lives in TASK-34381 and
-retention in TASK-34382. Superseded by ADR-029 (backlog/decisions/029-file-notes-disk-authority.md).
+retention in TASK-34382. Superseded by ADR-296 (backlog/decisions/296-file-notes-disk-authority.md).

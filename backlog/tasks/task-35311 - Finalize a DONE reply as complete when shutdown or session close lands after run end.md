@@ -30,7 +30,7 @@ CancelledError branch and `_finalize_agent_reply`'s `stopped_now` decide purely 
 `cancel_event.is_set()`, discarding the DONE outcome. User-Stop and shutdown are currently
 indistinguishable at this seam (citation repair already threads a `cancel_reason`).
 
-Governance: ADR-230 / ADR-094 turn-lifetime context; user-Stop semantics are pinned by
+Governance: ADR-230 / ADR-336 turn-lifetime context; user-Stop semantics are pinned by
 `test_shutdown_stops_and_awaits_active_stream_task` and the durable-turn acceptance
 parametrization and must not change.
 <!-- SECTION:DESCRIPTION:END -->
@@ -55,9 +55,9 @@ parametrization and must not change.
 3. CancelledError branch + `_finalize_agent_reply.stopped_now` become reason- and
    outcome-aware; shield the finalize call site (bounded drain).
 3. Variant tests for user-stop and mid-stream shutdown.
-PR3173 repair (2026-10-31): verify completed-result recovery against current provider and citation custody; retain explicit Stop and live-stream shutdown outcomes; add focused lifecycle regressions for any discovered issue, then test affected contracts. ADR required: no. ADR path: backlog/decisions/094-console-turn-lifetime-and-navigation-boundary.md; backlog/decisions/230-console-send-preparation-and-io-ownership.md. Reason: repair within existing terminal and cancellation owners. Owner waived size limits and CI waiting, with independent requesting-code-review before publication.
+PR3173 repair (2026-10-31): verify completed-result recovery against current provider and citation custody; retain explicit Stop and live-stream shutdown outcomes; add focused lifecycle regressions for any discovered issue, then test affected contracts. ADR required: no. ADR path: backlog/decisions/336-console-turn-lifetime-and-navigation-boundary.md; backlog/decisions/230-console-send-preparation-and-io-ownership.md. Reason: repair within existing terminal and cancellation owners. Owner waived size limits and CI waiting, with independent requesting-code-review before publication.
 
-Review repair plan (2026-10-31): reproduce a provider failure after submit cancellation with the real retained native call; keep Stop prompt and retain/observe its wrapper until terminal using the existing maintenance owner. Verify exception observation and retirement without a full sweep. ADR required: no. ADR path: backlog/decisions/094-console-turn-lifetime-and-navigation-boundary.md. Reason: repair lifetime custody within the current owner.
+Review repair plan (2026-10-31): reproduce a provider failure after submit cancellation with the real retained native call; keep Stop prompt and retain/observe its wrapper until terminal using the existing maintenance owner. Verify exception observation and retirement without a full sweep. ADR required: no. ADR path: backlog/decisions/336-console-turn-lifetime-and-navigation-boundary.md. Reason: repair lifetime custody within the current owner.
 <!-- SECTION:PLAN:END -->
 ## Implementation Notes
 
@@ -73,7 +73,7 @@ Review repair plan (2026-10-31): reproduce a provider failure after submit cance
 - Stop reasons retire with their cancel-event owner; provider exceptions retire
   retained worker entries. Both cleanup regressions were RED before the repair.
 - The finalization AC states ownership rather than prescribing shielding: the
-  existing ADR-094/230 citation contract requires the active stream task. No new
+  existing ADR-336/230 citation contract requires the active stream task. No new
   ADR is needed. This is repair inside the current cancellation/persistence owners.
 - Seven new/extended shutdown tests pass, including user-Stop-then-shutdown and
   actual shutdown with armed citation repair. Thirteen targeted adjacent Stop,

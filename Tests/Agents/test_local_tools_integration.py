@@ -1,5 +1,5 @@
 # Tests/Agents/test_local_tools_integration.py
-"""End-to-end local-tool integration (phases 1-2, ADR-032): a scripted model
+"""End-to-end local-tool integration (phases 1-2, ADR-300): a scripted model
 emits a ```tool_call fence for fs_list; the run must flow fence -> registry
 -> build_local_review_hook -> approval round trip -> LocalToolProvider.invoke
 -> fs_list core -> result appended back into the model's next turn.
@@ -462,7 +462,7 @@ def test_fs_list_fence_flow_denied_still_completes(db, workspace):
 # so fs_only_specs remains a compact direct-disclosure fixture. Do NOT add
 # newer fs_* tools here; update LOCAL_TOOL_NAMES below instead.
 FS_TOOL_NAMES = {"fs_list", "fs_read", "fs_write", "fs_edit", "fs_glob", "fs_grep"}
-# phase-3b-ii: read-only git tools (no risk tags per ADR-033).
+# phase-3b-ii: read-only git tools (no risk tags per ADR-302).
 GIT_TOOL_NAMES = {"git_status", "git_diff", "git_log", "git_blame", "git_branches"}
 LOCAL_TOOL_NAMES = (
     FS_TOOL_NAMES | {"fs_patch", "web_fetch", "web_search"} | GIT_TOOL_NAMES

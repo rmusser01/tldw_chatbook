@@ -26,7 +26,7 @@ A kanban surface exists in the app but is not directly accessible and its UI is 
 - [x] #2 The backlog-md-py kanban TUI is evaluated and ported/adapted as a self-contained screen or widget: keyboard-first navigation (columns ←/→, cards ↑/↓, Enter opens card detail) with no mouse dependency
 - [x] #3 Existing kanban data (if the audit finds any usable) maps or migrates to the new surface honestly — no silent loss, and dead/unusable legacy data is explicitly reported rather than carried
 - [x] #4 The board is reachable from the app shell (nav bar and command palette) under normal chrome rules; no dead or hidden entry points
-- [x] #5 Keybindings follow ADR-031 (htop-style single-letter screen actions; no terminal-convention keys; footer hints only advertise implemented actions)
+- [x] #5 Keybindings follow ADR-299 (htop-style single-letter screen actions; no terminal-convention keys; footer hints only advertise implemented actions)
 - [x] #6 Tests cover navigation, data mapping, and shell accessibility; a user guide page documents the board
 <!-- AC:END -->
 
@@ -40,7 +40,7 @@ Reason: long-lived application-structure decision — replaces an existing (brok
 1. Audit the existing kanban surface and data; record findings in this task
 2. Draft ADR-075: port vs rewrite boundary, data ownership, integration seams (Scheduling, agent runs)
 3. Port/adapt the backlog-md-py board UI as a self-contained Textual surface
-4. Shell entry points + keyboard conventions per ADR-031
+4. Shell entry points + keyboard conventions per ADR-299
 5. Tests + user guide page
 2026-10-31 backlog integration: ADR required: no new ADR. ADR paths: backlog/decisions/237-kanban-board-port-and-data-ownership.md;150 design tokens;031/152 navigation. Reason: repair existing board data mapping and literal rendering while preserving LocalKanbanService ownership. Rebase onto current dev, preserve retired MCP routing, then reproduce duplicate-name/suffix collisions and markup rendering with real store/mounted controls. Repair collision-safe labels, literal user text and token-backed layout without new runtime/store. Run targeted Kanban/navigation tests and independent requesting-code-review, fix blockers and publish oldest-first with exact lease. Hosted CI and size ceilings are explicitly waived by user. Reconcile shortcut after earlier Plugins PR lands; no release or excluded PR actions.
 <!-- SECTION:PLAN:END -->
@@ -111,13 +111,13 @@ view-models `BoardSnapshot`/`TaskView`/`FilterState`/`SelectionState`),
 `data.py` (`BoardDataSource` Protocol + markdown-backed local impl +
 daemon impl), `dialogs.py` (ModalScreen dialogs), `app.py` (App shell,
 bindings, 5s refresh worker). Port frictions: App-level bindings must
-move onto a chatbook screen; `q`/`ctrl+q` quit bindings violate ADR-031;
+move onto a chatbook screen; `q`/`ctrl+q` quit bindings violate ADR-299;
 its data layer is markdown-files, not our store.
 
 **6. Registration pattern (current)**: `Constants.py` `TAB_KANBAN` +
 label → `UI/Navigation/screen_registry.py` `_SCREEN_ROUTES` entry →
 `shell_destinations.py` `SHELL_DESTINATION_ORDER` + `SHELL_DESTINATION_
-SHORTCUTS` in lockstep (ADR-031/152); palette entries derive
+SHORTCUTS` in lockstep (ADR-299/152); palette entries derive
 automatically. Next-free shortcut slot to be taken at implementation.
 
 **7. ADR numbering**: `075-kanban-board-foundation.md` does not exist and
@@ -131,7 +131,7 @@ Implemented on branch feat/18934-kanban-board (worktree .worktrees/tasks-18925-2
 
 Audit (AC#1): recorded in this file before any code — no kanban UI ever existed (nothing broken to patch); a fully-tested zero-consumer service layer (Kanban_Interop local SQLite + server REST + router) was kept lazily by merged PR #3084; NO legacy data exists to migrate (AC#3: store ships empty, nothing user-facing ever wrote to it — honest empty start with user-initiated n-key bootstrap of a Personal/To Do/Doing/Done board); backlog-md-py's board TUI is port-ready in the sibling repo.
 
-Port (AC#2): new tldw_chatbook/UI/Kanban/ package — board_models.py (pure view-models CardView/BoardSnapshot/FilterState/SelectionState + filter_snapshot + upstream's refresh-stable select_after_refresh; snapshot carries list_ids so mutations work off any loader), board_widgets.py (BoardHeader/BoardColumn/CardWidget/CardInspector, markup-free rendering, ASCII-sanitized widget ids), kanban_board_screen.py (BaseAppScreen; arrows+hjkl columns/rows with empty-column skipping, shift+h/l move card via service.move_card, Enter focuses inspector, n = NewCardModal in focused column or first-board bootstrap, / filter, r refresh; exclusive async workers for load and mutations; snapshot_loader injectable for tests). Keyboard per ADR-031 (AC#5): upstream q/ctrl+q dropped; single-letter actions; no terminal-convention keys.
+Port (AC#2): new tldw_chatbook/UI/Kanban/ package — board_models.py (pure view-models CardView/BoardSnapshot/FilterState/SelectionState + filter_snapshot + upstream's refresh-stable select_after_refresh; snapshot carries list_ids so mutations work off any loader), board_widgets.py (BoardHeader/BoardColumn/CardWidget/CardInspector, markup-free rendering, ASCII-sanitized widget ids), kanban_board_screen.py (BaseAppScreen; arrows+hjkl columns/rows with empty-column skipping, shift+h/l move card via service.move_card, Enter focuses inspector, n = NewCardModal in focused column or first-board bootstrap, / filter, r refresh; exclusive async workers for load and mutations; snapshot_loader injectable for tests). Keyboard per ADR-299 (AC#5): upstream q/ctrl+q dropped; single-letter actions; no terminal-convention keys.
 
 Registration (AC#4): TAB_KANBAN + label, _SCREEN_ROUTES entry, SHELL_DESTINATION_ORDER appended LAST with f8 (next free slot per the left-to-right walk; no existing slot moved) + lockstep test dict updated (the explicit-edit rule).
 

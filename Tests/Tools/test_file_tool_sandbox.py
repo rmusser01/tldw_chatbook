@@ -421,12 +421,12 @@ def test_default_sandbox_configuration_still_works_end_to_end():
 # hidden files/directories is not allowed"), so `.git/config` was already
 # unreachable here -- disabling the new `is_git_metadata_write` check leaves
 # the refusal test passing. The real gap was in the OTHER family
-# (`local_tool_impls`), which sets `allow_hidden=True` per ADR-032 so a
+# (`local_tool_impls`), which sets `allow_hidden=True` per ADR-300 so a
 # coding agent can read dotfiles; that is where the guard is load-bearing
 # and mutation-proven (see `Tests/Tools/test_local_tool_sensitive_paths.py`).
 #
 # The check is still wired here as defense-in-depth -- if this family ever
-# adopts `allow_hidden` the way ADR-032 drove the other one to, the guard is
+# adopts `allow_hidden` the way ADR-300 drove the other one to, the guard is
 # already in place -- but these tests are honest about which mechanism does
 # the work today, rather than crediting the new one for a refusal it did not
 # produce.

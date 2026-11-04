@@ -6858,7 +6858,7 @@ class ConsoleWorkspaceController:
                         store.messages_for_session(session.id), target
                     ),
                 )
-                # Live identity re-resolution on resume (task-32481, ADR-149):
+                # Live identity re-resolution on resume (task-32481, ADR-346):
                 # refresh the display name from the live card/profile. Dev's
                 # hydration already set the label from the persisted snapshot,
                 # which stays as the fallback when live resolution fails.
@@ -6880,7 +6880,7 @@ class ConsoleWorkspaceController:
                 elif session.assistant_kind == "persona" and session.assistant_id:
                     # Persona sessions carry no local projection; the display name
                     # is re-resolved from the live profile on every resume
-                    # (ADR-149), for local and server backends alike.
+                    # (ADR-346), for local and server backends alike.
                     persona_name = await self._resolve_resumed_persona_name(
                         session.assistant_id, session.runtime_backend
                     )

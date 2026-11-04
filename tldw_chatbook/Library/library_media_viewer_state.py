@@ -527,7 +527,7 @@ def media_edit_form_dirty(
     form reads -- Escape, Back, another row, a rail row, the nav bar and
     Ctrl+Q -- so the footer chip, the veto toast, the "Discard changes"
     label and the refusal itself can never disagree. Raw string compare, no
-    stripping (ADR-027: persistence never strips, so a trailing space the
+    stripping (ADR-293: persistence never strips, so a trailing space the
     user typed is a change the exit must not drop).
 
     Args:

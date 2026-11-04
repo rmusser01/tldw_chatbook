@@ -420,7 +420,7 @@ CONSOLE_FORK_SAVED_HISTORY_MISMATCH = (
 
 
 def console_fork_skips(message: ConsoleChatMessage) -> bool:
-    """Return whether a native node is left out of a fork (ADR-092 §2).
+    """Return whether a native node is left out of a fork (ADR-334 §2).
 
     The fork source is the USER/ASSISTANT parent chain. SYSTEM rows -- /help,
     /doctor, unknown-command hints and other command feedback, saved or not --

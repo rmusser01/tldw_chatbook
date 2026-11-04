@@ -133,5 +133,5 @@ rollback boundary.
 ## Links
 
 - [Backlog task TASK-901](../tasks/task-901%20-%20Make-media-deletion-and-schema-migrations-preserve-lifecycle-invariants.md)
-- [ADR-005: local RAG](005-invest-in-local-rag-mirroring-tldw-server.md)
+- [ADR-288: local RAG](288-invest-in-local-rag-mirroring-tldw-server.md)
 - [Implementation plan](../../Docs/superpowers/plans/2026-07-24-media-lifecycle-and-migration-invariants.md)

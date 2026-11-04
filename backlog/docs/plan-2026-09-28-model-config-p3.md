@@ -13,7 +13,7 @@ At full screen, the Chat settings modal spends its rows on chrome and blank spac
 - C5(b): three unscoped global rules make one collapsed section cost about 7 rows: css/features/_conversations.tcss:298-303 and :313-316, and css/features/_evaluation_unified.tcss:59-63.
 - C5 width: controls are about 125 columns wide because of a 75% cap (_console_panels.tcss:77-81).
 - C5(c): the fold hint never reads scroll_y (console_settings_modal.py:3850-3866).
-- C8(2): Esc, a backdrop click and Cancel discard an edited draft without asking (:4041-4054). This contradicts ADR-031's task-16211 refinement.
+- C8(2): Esc, a backdrop click and Cancel discard an edited draft without asking (:4041-4054). This contradicts ADR-299's task-16211 refinement.
 - C8(4): the Settings category rail signals focus only with a 1.1-1.2:1 background swap, and a focused active row looks the same as an unfocused one (css/features/_settings.tcss:193-209).
 - Report issue 2 also measured a Select highlight at 1.12:1 and a focused primary button that gets darker.
 
@@ -23,7 +23,7 @@ Constraints:
 - Geometry comes only from tokens defined in css/core/_variables.tcss (ADR-150/161). The floor for raw literals is a hard zero (Tests/UI/test_component_pattern_governance.py:266-289).
 - ADR-097 ratchets never rise.
 - console_settings_modal.py has zero headroom: its row in Tests/Architecture/test_module_size_ratchet.py (line 99 at phase start) is 7,802, which is its current length. Measured at the PR head: 7,764 lines, and the row (line 101) is lowered to 7,764. Modal edits are paid for by moving its DEFAULT_CSS control rules to the app tier.
-- No binding from ADR-031 rule 2 (Ctrl+C, Ctrl+V, Ctrl+X, Ctrl+S, Ctrl+D, Ctrl+Z, Ctrl+A, Ctrl+R, Ctrl+W).
+- No binding from ADR-299 rule 2 (Ctrl+C, Ctrl+V, Ctrl+X, Ctrl+S, Ctrl+D, Ctrl+Z, Ctrl+A, Ctrl+R, Ctrl+W).
 
 Not in this phase: the inverted select-row height in Settings (css/features/_settings.tcss:465-470), field order, and the quick model popover. Design for 211x44 first and 235x52 second.
 
@@ -40,7 +40,7 @@ Not in this phase: the inverted select-row height in Settings (css/features/_set
 - [ ] #9 All new geometry uses tokens defined only in css/core/_variables.tcss. test_dimension_literal_ratchet and test_python_style_ratchet (Tests/UI/test_component_pattern_governance.py:266, :291) stay at zero, and the hex ratchet (Tests/UI/test_design_token_governance.py:170) does not rise.
 - [ ] #10 No ADR-097 ratchet rises: the boot CSS byte budget (608,090, Tests/Performance/test_boot_css_byte_budget.py:117) and the _ui_ready census (1,031, Tests/Performance/test_ui_ready_module_census.py:150). If dev is already red, the branch's number equals dev's.
 - [ ] #11 console_settings_modal.py ends the phase at no more than 7,802 lines. If it shrank, its row in Tests/Architecture/test_module_size_ratchet.py is lowered to the measured size in the same PR.
-- [ ] #12 No binding from ADR-031 rule 2 (Ctrl+C, V, X, S, D, Z, A, R or W) is added.
+- [ ] #12 No binding from ADR-299 rule 2 (Ctrl+C, V, X, S, D, Z, A, R or W) is added.
 - [ ] #13 Live captures at 211x44 and 235x52, taken with a scratch TLDW_CONFIG_PATH profile, are attached to the PR. They cover the Chat settings Model view (collapsed and expanded), the unsaved-edits prompt and Settings rail focus.
 - [ ] #14 The Docs/User_Guide pages are updated: console.md (Chat settings density and the Esc prompt) and settings.md (rail focus), each with a Verified-against stamp.
 - [ ] #15 ./scripts/preflight.sh passes, including CSS bundle sync.
@@ -53,7 +53,7 @@ Not in this phase: the inverted select-row height in Settings (css/features/_set
 - ADR-126 storage gate: RecoveryRequired in a clean worktree is environmental. Prefer gate-free unit tests plus real-implementation tests at the seam, and compare failure-name sets against origin/dev.
 - Size ratchets never rise (ADR-097). console_settings_modal.py has ZERO headroom: net lines must be <= 0. Check Tests/Architecture/test_module_size_ratchet.py and test_screen_size_ratchet.py before and after.
 - Geometry (heights, widths, spacing) only through tokens in tldw_chatbook/css/core/_variables.tcss (ADR-150/161; raw dimension literals are banned in .tcss sheets). Rebuild the CSS bundle with the repo script; never hand-edit the bundle.
-- ADR-031: never bind Ctrl+C/V/X/S/D/Z/A/R/W. Footer hints must match working bindings.
+- ADR-299: never bind Ctrl+C/V/X/S/D/Z/A/R/W. Footer hints must match working bindings.
 - TDD: write the failing test first. For config and provider surfaces, add at least one real-implementation integration test (no kwargs fakes).
 - Where a fix changes behaviour an existing test pins, rewrite that test on purpose and name it in the report.
 - Commit per task: `fix(model-config): <summary> (TASK-33003.N)` or `feat(...)`, ending with `Co-Authored-By: Claude Opus 5.5 (1M context) <noreply@anthropic.com>`. Never push. NEVER merge origin/dev into the branch (the owner requires rebases).
@@ -205,7 +205,7 @@ Depends on: —
 
 Three gestures reach _request_settings_close (:4041-4054) through request_safe_cancel: Esc (bound at Widgets/Console/console_settings_modal.py:1140), a backdrop click, and the Cancel button (:4250-4253). That method checks only for a pending memory reset or a running compaction, then dismisses. An edited draft is therefore thrown away without a word (C8(2)).
 
-ADR-031's task-16211 refinement sets three rules:
+ADR-299's task-16211 refinement sets three rules:
 - A generic gesture never discards by itself.
 - The modal owns its dirty guards.
 - Any displayed Escape hint must describe the action that is actually active.
@@ -221,9 +221,9 @@ The existing close guard (#console-settings-close-guard, :2611-2631), with its r
 - [ ] #3 Apply from the prompt commits through the same Apply-to-this-chat path as the modal's Apply button and writes no configuration. If the draft is invalid, the modal stays open with its validation summary.
 - [ ] #4 With no edits, Esc, a backdrop click and Cancel close immediately, as today. test_console_settings_modal_cancel_discards_draft (Tests/UI/test_console_session_settings.py:5254) and test_console_settings_modal_escape_dismisses_none (:5302) stay green unchanged.
 - [ ] #5 The existing memory-reset and compaction close guards keep their precedence, copy and buttons.
-- [ ] #6 While edits are unsaved, the visible Esc hint says that closing will ask first; otherwise it says Esc simply closes (ADR-031 task-16211).
+- [ ] #6 While edits are unsaved, the visible Esc hint says that closing will ask first; otherwise it says Esc simply closes (ADR-299 task-16211).
 - [ ] #7 Tests/UI/test_console_modal_dismissal.py stays green.
-- [ ] #8 No binding from ADR-031 rule 2 (Ctrl+C, V, X, S, D, Z, A, R or W) is added.
+- [ ] #8 No binding from ADR-299 rule 2 (Ctrl+C, V, X, S, D, Z, A, R or W) is added.
 - [ ] #9 A 211x44 live capture of the prompt is attached to the task notes.
 
 ### References
@@ -232,7 +232,7 @@ The existing close guard (#console-settings-close-guard, :2611-2631), with its r
 - tldw_chatbook/Widgets/modal_dismissal.py
 - Tests/UI/test_console_session_settings.py
 - Tests/UI/test_console_modal_dismissal.py
-- backlog/decisions/031-tui-keybinding-and-footer-hint-conventions.md
+- backlog/decisions/299-tui-keybinding-and-footer-hint-conventions.md
 
 ## Task 6: Raise boundary, focus and highlight contrast to at least 3:1 (TASK-33003.6)
 

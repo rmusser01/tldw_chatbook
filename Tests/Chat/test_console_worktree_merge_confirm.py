@@ -80,7 +80,7 @@ def make_controller() -> Callable[[], ConsoleChatController]:
     yield _make
 
     for controller in made:
-        # ADR-067's no-deadline default means a round left armed at test
+        # ADR-314's no-deadline default means a round left armed at test
         # end would hang its non-daemon worker thread forever otherwise --
         # `begin_shutdown()` sets the signal the round's poll loop checks.
         controller.begin_shutdown()

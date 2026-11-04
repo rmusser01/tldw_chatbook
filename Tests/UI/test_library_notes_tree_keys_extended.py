@@ -1,6 +1,6 @@
 """F6 in the note body leaves the editor without selecting text (TASK-34000.28, N-32).
 
-The real ``TldwCli``: the app's own non-priority F6 binding (ADR-031,
+The real ``TldwCli``: the app's own non-priority F6 binding (ADR-299,
 untouched), the ``TextualAppGuards`` (``DetachedFocusGuard`` first) and
 Textual's ``TextArea`` are all in the path. LibraryScreen declares no ``f6``
 of its own (dev's pin ``test_library_keeps_f6_owned_by_the_app_global_
@@ -39,7 +39,7 @@ async def test_f6_from_the_note_body_moves_focus_without_selecting_text(
 ) -> None:
     """AC#9: F6 in the body leaves the editor; nothing is selected or changed.
 
-    The real ``TldwCli``: the app's own non-priority F6 binding (ADR-031,
+    The real ``TldwCli``: the app's own non-priority F6 binding (ADR-299,
     untouched) is what moves focus, through the app-wide guards. Base:
     Textual's ``TextArea`` f6 binding selects line 2 and focus stays on the
     body.

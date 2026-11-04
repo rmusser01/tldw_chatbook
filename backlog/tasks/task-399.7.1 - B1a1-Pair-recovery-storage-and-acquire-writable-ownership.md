@@ -42,9 +42,9 @@ Establish the fail-closed recovery pairing, packaged capability admission, lease
 Closed superseded, not implemented as written. Every substrate this child was
 to pair — installed APFS capability-manifest admission, coordinator election,
 exclusive mutation leases, and reserved recovery capacity — is ADR-021
-machinery that ADR-029 rejected; no manifest, lease, or fixed recovery store
+machinery that ADR-296 rejected; no manifest, lease, or fixed recovery store
 was ever built. Recovery under the shipped design is the root-namespaced
 SQLite replica's current bytes plus protected-path checkpoints
 (`tldw_chatbook/Notes/file_notes_replica.py`; TASK-969, PR #992).
 
-Superseded by: ADR-029 (backlog/decisions/029-file-notes-disk-authority.md) via TASK-969 (PR #992).
+Superseded by: ADR-296 (backlog/decisions/296-file-notes-disk-authority.md) via TASK-969 (PR #992).

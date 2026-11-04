@@ -16,9 +16,9 @@ This document describes the Artifacts surface: a top-level destination that was 
 3. **Watchlists artifacts pane** — per-watchlist briefings with Generate/Export/Keep actions; deep-linkable via the watchlists nav context (`section="artifacts"` + optional briefing id, local backend only).
 4. **Home** — the newest chatbook artifact appears as an active row (older ones as recent), with open-details routing to the artifacts alias and an "Open Chatbook in Console" handoff staged through the pending-handoff store (`local:chatbook:` prefix).
 
-## Daily Reports (the read model, ADR-079)
+## Daily Reports (the read model, ADR-323)
 
-A "Daily Report" **is** a briefing: `Subscriptions/daily_reports_view.py` is a thin read-only derivation over the briefings/scripts/audio tables (`list_recent_reports`, timestamp normalization). **Kept briefings** (`Subscriptions/briefing_keep.py::keep_briefing`) copy a completed briefing plus its scripts into denormalized ChaChaNotes tables so they survive watchlist deletion; refusal (`KeepRefused`) happens before any write; idempotent on `source_briefing_id`, race-safe via conflict folding. The kept badge requires a per-row cross-DB lookup — the reason it was deferred in ADR-079. Live and kept reports have separate namespaced identities; "all reports" totals count copies. Demo seeding (`daily_report_demo.py`) installs a real Daily Brief watchlist (RSS sources, preset, 24 h cadence) with a dismissible banner.
+A "Daily Report" **is** a briefing: `Subscriptions/daily_reports_view.py` is a thin read-only derivation over the briefings/scripts/audio tables (`list_recent_reports`, timestamp normalization). **Kept briefings** (`Subscriptions/briefing_keep.py::keep_briefing`) copy a completed briefing plus its scripts into denormalized ChaChaNotes tables so they survive watchlist deletion; refusal (`KeepRefused`) happens before any write; idempotent on `source_briefing_id`, race-safe via conflict folding. The kept badge requires a per-row cross-DB lookup — the reason it was deferred in ADR-323. Live and kept reports have separate namespaced identities; "all reports" totals count copies. Demo seeding (`daily_report_demo.py`) installs a real Daily Brief watchlist (RSS sources, preset, 24 h cadence) with a dismissible banner.
 
 ## Dataflow
 
@@ -29,7 +29,7 @@ A "Daily Report" **is** a briefing: `Subscriptions/daily_reports_view.py` is a t
 
 ## Governing decisions
 
-ADR-172 (`172-library-artifacts-browse-and-navigation.md` — note: its written status line says "implementation pending", but the route alias, Library sections, and catalog are demonstrably implemented; the ADR lags the code), ADR-079 (`079-daily-reports-surface-and-demo-seeding.md`), ADR-123 (artifact share web export), ADR-015 (Artifacts was the fifth destination pre-172), ADR-078 (no second universal artifact DB). Specs: `2026-08-01-kept-briefings-design.md`, `2026-08-29-daily-reports-demo-design.md` (under `Docs/superpowers/specs/`).
+ADR-172 (`172-library-artifacts-browse-and-navigation.md` — note: its written status line says "implementation pending", but the route alias, Library sections, and catalog are demonstrably implemented; the ADR lags the code), ADR-323 (`323-daily-reports-surface-and-demo-seeding.md`), ADR-123 (artifact share web export), ADR-015 (Artifacts was the fifth destination pre-172), ADR-322 (no second universal artifact DB). Specs: `2026-08-01-kept-briefings-design.md`, `2026-08-29-daily-reports-demo-design.md` (under `Docs/superpowers/specs/`).
 
 ## Verified gotchas
 

@@ -1,7 +1,7 @@
 # Console semantic mutation inventory
 
 This document is the TASK-23113.2 baseline for the mutation-integrity boundary
-decided by [ADR-097](../../backlog/decisions/097-console-reference-backed-semantic-trace-ledger.md).
+decided by [ADR-337](../../backlog/decisions/337-console-reference-backed-semantic-trace-ledger.md).
 It inventories live Python routes that can mutate canonical `messages` rows or
 message-owned sidecars. It does not change any writer. Task 6 adds the database
 guard and coordinator; Task 7 routes the model-visible owners named here through
@@ -100,7 +100,7 @@ sidecars. Ordinary message deletion APIs remain soft deletes. The census treats
 every live `DELETE FROM conversations` as a
 `conversations(cascades-messages)` route, in addition to detecting direct
 `DELETE FROM messages`, so any additional hard-delete owner must be classified
-and preserve ADR-097's same-transaction materialization contract.
+and preserve ADR-337's same-transaction materialization contract.
 
 ## Generated and dynamic SQL
 

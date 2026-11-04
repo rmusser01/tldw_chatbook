@@ -142,7 +142,7 @@ class LogsWindow(Container):
     }
     """
 
-    # htop/less-style single letters (ADR-031). Printable keys are consumed
+    # htop/less-style single letters (ADR-299). Printable keys are consumed
     # first by the focused filter Input, so they are safe everywhere else.
     BINDINGS = [
         Binding("/", "focus_filter", "Filter", show=False),

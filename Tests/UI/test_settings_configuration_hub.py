@@ -14018,7 +14018,7 @@ def test_state_banner_text_has_exactly_one_state_segment(request):
 async def test_state_banner_dirty_branch_keeps_priority(request):
     """The dirty line keeps the save-model badge and adds the unsaved count
     (TASK-33002.4, rewritten on purpose): it used to replace the badge with
-    "Unsaved changes", hiding ADR-033's label exactly when it mattered."""
+    "Unsaved changes", hiding ADR-303's label exactly when it mattered."""
     app = _build_test_app()
     screen = SettingsScreen(app)
     draft = SettingsDraft(category=SettingsCategoryId.CONSOLE_BEHAVIOR)

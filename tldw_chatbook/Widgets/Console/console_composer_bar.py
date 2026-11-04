@@ -428,7 +428,7 @@ REDIRECT_ACTION_WIDTH = 10
 
 #: Owner decision 2026-10-30 (TASK-37870/37871): Enter always sends. This
 #: key expands the collapsed token beside the caret, and every chip names it.
-#: Free in the Console and in ADR-031's grammar; 0x05 in every terminal.
+#: Free in the Console and in ADR-299's grammar; 0x05 in every terminal.
 EXPAND_TOKEN_KEY = "ctrl+e"
 EXPAND_TOKEN_KEY_LABEL = "Ctrl+E"
 

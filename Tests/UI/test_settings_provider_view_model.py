@@ -121,7 +121,7 @@ def test_provider_picker_grouping_is_stable_and_empty_search_lists_catalog():
 
     The old order (Cloud, Local, Custom & legacy aliases) mixed the few
     providers a user set up in among the whole catalog. A configured custom
-    slot leads too; a configured legacy alias stays last (ADR-066).
+    slot leads too; a configured legacy alias stays last (ADR-311).
     """
     from tldw_chatbook.UI.Screens.settings_provider_view_model import (
         build_provider_picker_groups,

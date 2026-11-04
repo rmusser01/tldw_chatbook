@@ -8,7 +8,7 @@ Related Task: TASK-18919
 
 Related Spec: [Library Collections Capture Reader Design](../../Docs/superpowers/specs/2026-08-31-library-collections-capture-reader-design.md)
 
-Extends: [ADR-030](030-local-library-agent-tool-boundary.md), [ADR-055](055-library-destructive-action-reversibility-rule.md), [ADR-067](067-library-top-level-pagination-contracts.md), and [ADR-086](086-library-adaptive-reader-shell.md)
+Extends: [ADR-298](298-local-library-agent-tool-boundary.md), [ADR-055](055-library-destructive-action-reversibility-rule.md), [ADR-067](067-library-top-level-pagination-contracts.md), and [ADR-086](086-library-adaptive-reader-shell.md)
 
 ## Context
 
@@ -222,7 +222,7 @@ Collections or point capture APIs at Media.
 ## Links
 
 - [Approved Collections capture reader design](../../Docs/superpowers/specs/2026-08-31-library-collections-capture-reader-design.md)
-- [ADR-030: Local Library agent tool boundary](030-local-library-agent-tool-boundary.md)
+- [ADR-298: Local Library agent tool boundary](298-local-library-agent-tool-boundary.md)
 - [ADR-055: Library destructive-action reversibility](055-library-destructive-action-reversibility-rule.md)
 - [ADR-067: Library top-level pagination contracts](067-library-top-level-pagination-contracts.md)
 - [ADR-086: Shared adaptive Library reader shell](086-library-adaptive-reader-shell.md)

@@ -42,7 +42,7 @@ Establish a finite, release-blocking executable and packaged go/no-go contract f
 
 ## Closeout 2026-10-04
 
-Closed superseded, not implemented as written. ADR-029 explicitly deferred the
+Closed superseded, not implemented as written. ADR-296 explicitly deferred the
 APFS writable-substrate programme: saves ship as hash-checked atomic writes on
 ordinary filesystem primitives (TASK-969 implementation notes; PR #992), so
 the two-release go/no-go probe matrix, the versioned manifest resource
@@ -51,4 +51,4 @@ mutation-adapter qualification were never built. The surviving kernel of this
 task — fsync-parent / F_FULLFSYNC durability hardening of the atomic write
 helper — is already filed as TASK-32896.
 
-Superseded by: ADR-029 (backlog/decisions/029-file-notes-disk-authority.md) via TASK-969 (PR #992).
+Superseded by: ADR-296 (backlog/decisions/296-file-notes-disk-authority.md) via TASK-969 (PR #992).

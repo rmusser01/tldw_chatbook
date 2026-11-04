@@ -1309,11 +1309,11 @@ STREAMING_CONFIG_KEY_FACT = (
     "when streaming is absent"
 )
 #: TASK-33002.12: the API key row's help for a saved default naming an
-#: ADR-146 registry entry that no longer exists (one row: 39 cells).
+#: ADR-343 registry entry that no longer exists (one row: 39 cells).
 ENDPOINT_NOT_FOUND_SETTINGS_COPY = "not found · choose another provider"
 #: Placeholder for a Connect field a registry default does not offer.
 REGISTRY_FIELD_PLACEHOLDER = "Managed in Custom endpoints"
-#: Connect fields Save cannot apply for an ADR-146 ``custom-ep:`` id (Qodo
+#: Connect fields Save cannot apply for an ADR-343 ``custom-ep:`` id (Qodo
 #: #2876): their drafts stage under ``api_settings`` or ride the provider
 #: mutation, and both reject a registry id. Enabled for every other provider.
 _REGISTRY_LOCKED_FIELD_SELECTORS = (
@@ -1361,7 +1361,7 @@ HOST_ACCESS_UNLOCK_DISCLOSURE_LINES = (
     "user. Neither is sandboxed or confined to a workspace.",
     "Review each feature's separate arm disclosure before use.",
 )
-# ADR-090: ids of the instant-apply [permission_summary] controls, for the
+# ADR-332: ids of the instant-apply [permission_summary] controls, for the
 # same focus-tracking reason as MODEL_CATALOG_FIELD_IDS above.
 PERMISSION_SUMMARY_FIELD_IDS = frozenset(
     {
@@ -3643,7 +3643,7 @@ class SettingsScreen(BaseAppScreen):
     audio_cpp_result_cleanup_fenced = reactive(False)
 
     BINDINGS = [
-        # TASK-33001.4 (also task-32943): F6 is app-global (ADR-031 rule 1)
+        # TASK-33001.4 (also task-32943): F6 is app-global (ADR-299 rule 1)
         # and app.py hands it to action_focus_next_workbench_pane below;
         # Shift+F6 has no app binding, so the screen owns it (Personas
         # precedent).
@@ -3952,7 +3952,7 @@ class SettingsScreen(BaseAppScreen):
         # The quit summary's latest unsaved values; one writer drains them.
         self._session_summary_save_lock = threading.Lock()
         self._session_summary_pending_save: dict[str, dict[str, object]] | None = None
-        # ADR-146 task-7 custom endpoints panel: the entry slug (if any)
+        # ADR-343 task-7 custom endpoints panel: the entry slug (if any)
         # whose inline Rename/Edit form is open, the slug whose delete is
         # blocked awaiting the Detach-references confirmation, and the
         # section's single status line. Everything is inline controls (no
@@ -4645,7 +4645,7 @@ class SettingsScreen(BaseAppScreen):
     def watch_active_category(self) -> None:
         """Re-advertise the honest hint set, then repaint the two category panes.
 
-        ADR-031 rule 4 (task-1340): the footer teaches only the keys that
+        ADR-299 rule 4 (task-1340): the footer teaches only the keys that
         work in the ACTIVE category, so switching categories re-registers.
         Safe pre-mount: the persisting API stores the registration and the
         footer is seeded from it when compose() yields the widget.
@@ -7499,7 +7499,7 @@ class SettingsScreen(BaseAppScreen):
         )
 
     def _saved_permission_summary_payload(self) -> dict[str, str]:
-        """The normalized saved ``[permission_summary]`` trio (ADR-090).
+        """The normalized saved ``[permission_summary]`` trio (ADR-332).
 
         Read the cached runtime configuration shared with the approval
         summary consumer. Normalize through the payload helper so composition
@@ -10620,7 +10620,7 @@ class SettingsScreen(BaseAppScreen):
 
     def _category_state_banner_text(self, category: SettingsCategoryId) -> str:
         if self._category_has_unsaved_changes(category):
-            # TASK-33002.4: the badge stays (ADR-033) and the line counts the
+            # TASK-33002.4: the badge stays (ADR-303) and the line counts the
             # unsaved fields. "revert with r" rides along where r is the
             # category's key and the 120-cell row at 211x44 has room: not on
             # Providers & Models (its scope fills the row) or Speech & TTS
@@ -11363,14 +11363,14 @@ class SettingsScreen(BaseAppScreen):
                     "text until the transcript next redraws them.",
                 ),
             )
-        # ADR-090: one shared branch for the instant-apply permission-summary
+        # ADR-332: one shared branch for the instant-apply permission-summary
         # group -- the trio is one consent surface (the disclosure copy above
         # the controls), not three independent fields.
         if self._active_settings_field_id in PERMISSION_SUMMARY_FIELD_IDS:
             return (
                 (
                     "Purpose",
-                    "Opt-in advisory summaries on agent approval cards (ADR-090).",
+                    "Opt-in advisory summaries on agent approval cards (ADR-332).",
                 ),
                 (
                     "Consequences",
@@ -14033,7 +14033,7 @@ class SettingsScreen(BaseAppScreen):
 
         TASK-33001.2: a thin draft-key adapter over the one field-support
         decision (``supported_generation_fields``) the Console shares. The
-        config carries the ADR-146 registry, so a ``custom-ep`` id is decided
+        config carries the ADR-343 registry, so a ``custom-ep`` id is decided
         as its entry's family, as the Console rebase decides it.
         """
         return PROVIDER_MODEL_PROFILE_FIELD_KEYS[
@@ -15124,11 +15124,11 @@ class SettingsScreen(BaseAppScreen):
 
     @staticmethod
     def _provider_is_registry_id(provider: object) -> bool:
-        """Whether ``provider`` addresses an ADR-146 entry (dangling included)."""
+        """Whether ``provider`` addresses an ADR-343 entry (dangling included)."""
         return canonical_custom_endpoint_id(provider) is not None
 
     def _provider_registry_entry(self, provider: object) -> CustomEndpointEntry | None:
-        """The ADR-146 entry ``provider`` names, in either spelling, else None."""
+        """The ADR-343 entry ``provider`` names, in either spelling, else None."""
         return entry_for(
             self._provider_readiness_app_config(),
             canonical_custom_endpoint_id(provider),
@@ -18984,7 +18984,7 @@ class SettingsScreen(BaseAppScreen):
         )
 
     # ------------------------------------------------------------------
-    # Custom endpoints (ADR-146 task-7): rename / edit / guarded delete /
+    # Custom endpoints (ADR-343 task-7): rename / edit / guarded delete /
     # built-in slot conversion. Panel logic lives in settings_provider_view_
     # model and composition in Settings_Modules/providers_models_card; this
     # block is the handlers + threaded config writes (one shared status line).
@@ -19691,7 +19691,7 @@ class SettingsScreen(BaseAppScreen):
                 id="settings-console-tool-result-display-chars-help",
                 classes="settings-detail-row",
             )
-            # ADR-090: permission summaries. Instant-apply group (the
+            # ADR-332: permission summaries. Instant-apply group (the
             # model-catalog ADR-020/task-1341 pattern): the controls sit in a
             # bordered group, values initialize inline from the saved config,
             # and changes persist immediately via the handlers below -- the
@@ -34027,7 +34027,7 @@ class SettingsScreen(BaseAppScreen):
         ):
             self.app.notify("No Settings changes to revert.", severity="information")
             return
-        # ADR-031 rule 3 (task-1340): revert discards every staged edit in
+        # ADR-299 rule 3 (task-1340): revert discards every staged edit in
         # the category, so a destructive single-letter key needs a
         # confirmation guard before anything is thrown away.
         summary = self._category_summary_by_id(category)

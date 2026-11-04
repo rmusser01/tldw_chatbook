@@ -1,4 +1,4 @@
-"""Wire-format composition for local thinking controls (ADR-066)."""
+"""Wire-format composition for local thinking controls (ADR-311)."""
 
 from tldw_chatbook.Chat.console_provider_support import (
     build_local_thinking_payload_fields,

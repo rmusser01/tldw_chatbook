@@ -86,7 +86,7 @@ Textual replaces absent screen coordinates with local coordinates, `Pilot.click`
 - `ConsoleSettingsModal` has a non-dismissal click handler for redirected Textual-Web Select events that must survive the mixin.
 - `VideoPlayerScreen` has no bounded wrapper; treating only a child as content would misclassify ordinary player cells as backdrop.
 - A pure mixin is safer than a second `ModalScreen` base for `EnhancedFileOpen`'s deep inheritance chain.
-- The cross-module, long-lived dismissal grammar should amend ADR-031 rather than merely cite it.
+- The cross-module, long-lived dismissal grammar should amend ADR-299 rather than merely cite it.
 
 ## Questions to Consider
 

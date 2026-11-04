@@ -87,8 +87,8 @@ _PROVIDER_LEGACY_ALIAS_KEYS = frozenset(
 )
 PROVIDER_CUSTOM_GROUP_KEYS = PROVIDER_CUSTOM_SLOT_KEYS | _PROVIDER_LEGACY_ALIAS_KEYS
 #: The legacy aliases alone: the custom group minus the built-in custom slots,
-#: which stay listable (ADR-146) while Console hides an alias unless it is
-#: configured or current (ADR-066).
+#: which stay listable (ADR-343) while Console hides an alias unless it is
+#: configured or current (ADR-311).
 PROVIDER_LEGACY_ALIAS_KEYS = PROVIDER_CUSTOM_GROUP_KEYS - PROVIDER_CUSTOM_SLOT_KEYS
 #: TASK-35578: said under a server's listing in Chat settings and the first-run
 #: wizard's model step, whose picks never join a model list: a provider's
@@ -135,7 +135,7 @@ def provider_display_name(
     Args:
         provider_key: Provider key in any saved spelling (``Llama_cpp``,
             ``local-llm``), or a ``custom-ep:<slug>`` registry id.
-        app_config: Config holding the ADR-146 endpoint registry; when given,
+        app_config: Config holding the ADR-343 endpoint registry; when given,
             a registry id renders as its entry's ``display_name``.
 
     Returns:

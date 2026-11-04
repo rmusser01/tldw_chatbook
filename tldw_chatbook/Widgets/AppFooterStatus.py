@@ -53,7 +53,7 @@ class AppFooterStatus(Widget):
     """
 
     #: (key, label) pairs backing each width tier of the app-global hint
-    #: cluster (ADR-031: f1/f6/ctrl+p/ctrl+q are app-global keys screens
+    #: cluster (ADR-299: f1/f6/ctrl+p/ctrl+q are app-global keys screens
     #: must not rebind). Single source of truth for both the joined
     #: class-level strings below (still referenced directly by several
     #: tests/screens) and the per-key dedup in `_remaining_global_text`.

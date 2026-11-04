@@ -8,7 +8,7 @@ Review finding N-08 (notes-library-ux-review-2026-10-02): a power user typed
 The edge tests run the real ``CharactersRAGDB`` through the real
 ``NotesInteropService``/``NotesScopeService`` wiring over a temp file, the way
 ``test_note_backlink_query.py`` does, because the rule under test -- exactly
-one LIVE title match, case-insensitive, the body byte-identical (ADR-027) --
+one LIVE title match, case-insensitive, the body byte-identical (ADR-293) --
 is a property of the SQL ``replace_note_links`` runs, which a fake cannot
 have. Pure helpers get pure tests; the Hypothesis properties live in the
 sibling ``test_note_links_typed_titles_properties.py`` (outside the fast
@@ -87,7 +87,7 @@ async def test_a_typed_title_that_matches_exactly_one_note_records_a_backlink(
     notes_scope_service, db
 ):
     """AC#2 / AC#5: the review's exact body links Lisbon, and the body is
-    stored byte-for-byte as typed (ADR-027: no rewrite at persistence)."""
+    stored byte-for-byte as typed (ADR-293: no rewrite at persistence)."""
     lisbon = await _add(notes_scope_service, LISBON, "itinerary")
     await _add(notes_scope_service, "Index", "hub")
 

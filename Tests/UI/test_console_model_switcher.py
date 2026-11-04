@@ -700,7 +700,7 @@ def test_switcher_rows_read_the_one_readiness_vocabulary() -> None:
 
 
 async def test_legacy_aliases_are_hidden_unless_current_then_labelled() -> None:
-    """AC#12 (ADR-066): hidden, not deleted; shown when current, as a legacy alias."""
+    """AC#12 (ADR-311): hidden, not deleted; shown when current, as a legacy alias."""
     recorder = Recorder()
     app = SwitcherHarness()
     async with app.run_test(size=(211, 44)) as pilot:
@@ -2247,7 +2247,7 @@ async def test_a_more_rows_provider_name_is_typed_after_from_the_values_too() ->
 
 
 async def test_custom_endpoints_show_display_names_and_builtin_slots_stay() -> None:
-    """AC#13 (ADR-146): registry entries by display name; custom/custom_2 listable."""
+    """AC#13 (ADR-343): registry entries by display name; custom/custom_2 listable."""
     recorder = Recorder()
     app_config = {
         "api_settings": {},
@@ -3432,7 +3432,7 @@ async def test_ctrl_o_carries_the_highlighted_pair_and_its_edits_unapplied() -> 
 
 
 def test_the_switcher_binds_no_terminal_convention_key() -> None:
-    """AC#17 (ADR-031 rule 2): no Ctrl+C/V/X/S/D/Z/A/R/W on the switcher."""
+    """AC#17 (ADR-299 rule 2): no Ctrl+C/V/X/S/D/Z/A/R/W on the switcher."""
     banned = {f"ctrl+{letter}" for letter in "cvxsdzarw"}
     bound = {
         key.strip()

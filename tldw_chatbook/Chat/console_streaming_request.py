@@ -24,7 +24,7 @@ def chat_call_impl(
     continuation_groups: tuple[ContinuationOwnerGroup, ...] = (),
     **per_call_kwargs,
 ) -> dict:
-    """Stream one turn, honoring ADR-147 per-call routing kwargs.
+    """Stream one turn, honoring ADR-344 per-call routing kwargs.
 
     Task 6 emits a spawned child's resolved target onto every call:
     ``api_endpoint`` (raw provider id, possibly ``custom-ep:<slug>``),
@@ -184,7 +184,7 @@ def chat_call_impl(
             reasoning_replay=None,
             local_structured_thinking=False,
         )
-    # ADR-147 Task 6B: per-call sampling/base-url kwargs overlay the
+    # ADR-344 Task 6B: per-call sampling/base-url kwargs overlay the
     # call-local resolution (model already handled above). Only the
     # dispatch/stream/usage paths read ``effective_resolution``; a
     # rerouted call re-resolves entirely inside ``_consume``.

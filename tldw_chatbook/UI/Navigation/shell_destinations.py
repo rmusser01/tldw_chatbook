@@ -201,7 +201,7 @@ _BY_DESTINATION_ID: Mapping[str, ShellDestination] = {
 # ctrl+1..ctrl+9, ctrl+0 across the number row for the first ten
 # destinations, then the F-row from its left end (f2, f3, f4, f5, then f7)
 # for the rest, because f1 (Help) and f6 (Next Pane) are reserved
-# app-globals (ADR-031). Higher F-keys read as an arbitrary jump: the old
+# app-globals (ADR-299). Higher F-keys read as an arbitrary jump: the old
 # f7..f11 tail scanned as "9, 0, 7, 8, 9, 10, 11" with F10/F11 stranded
 # mid-strip. Any change here must update the strip ORDER in lockstep so
 # position and shortcut stay aligned. ADR-172 retires the permanent Artifacts

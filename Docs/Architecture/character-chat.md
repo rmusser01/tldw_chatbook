@@ -215,7 +215,7 @@ copies the current fitted canvas without acquiring a timer.
 
 ## Governing decisions
 
-ADR-037 (roleplay assistant identity / persona-user profile separation), ADR-046 (display identity and template provenance), ADR-075 (durable character emote metadata), ADR-120 (conversation navigation + local semantic search), ADR-122/139/146 (bundled buddy, independent buddy bindings, Petdex), ADR-144 (expression playback), ADR-149 (persona session identity), ADR-152 (roleplay mode keys). Feature docs: `Docs/Features/World-Lore-Books-Documented.md`, `Docs/Features/ChatDictionaries-Documented.md`, `Docs/User_Guide/roleplay-chat-dictionaries/`.
+ADR-037 (roleplay assistant identity / persona-user profile separation), ADR-046 (display identity and template provenance), ADR-075 (durable character emote metadata), ADR-120 (conversation navigation + local semantic search), ADR-122/139/146 (bundled buddy, independent buddy bindings, Petdex), ADR-144 (expression playback), ADR-346 (persona session identity), ADR-152 (roleplay mode keys). Feature docs: `Docs/Features/World-Lore-Books-Documented.md`, `Docs/Features/ChatDictionaries-Documented.md`, `Docs/User_Guide/roleplay-chat-dictionaries/`.
 
 ## Verified gotchas
 

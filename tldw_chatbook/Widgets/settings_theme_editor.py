@@ -1536,7 +1536,7 @@ class SettingsThemeEditor(Vertical):
     def on_reset_theme(self) -> None:
         """Reset theme to original values (confirms before discarding edits)."""
         # task-1371: Reset throws away unapplied edits; the Settings screen
-        # confirms its equivalent discard (revert) per ADR-031 rule 3, so the
+        # confirms its equivalent discard (revert) per ADR-299 rule 3, so the
         # editor follows the same confirmation rule.
         if self._require_theme_name() is None:
             return

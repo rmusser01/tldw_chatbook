@@ -1,6 +1,6 @@
 # Console run hooks
 
-The Console supports the six legacy argv-command events and the implemented v2 runtime with structured effects and MCP-backed handlers. Legacy behavior follows ADR-148/197; v2 lifecycle and authority contracts follow ADR-163.
+The Console supports the six legacy argv-command events and the implemented v2 runtime with structured effects and MCP-backed handlers. Legacy behavior follows ADR-345/197; v2 lifecycle and authority contracts follow ADR-163.
 
 ## Legacy authoritative files
 
@@ -11,7 +11,7 @@ The Console supports the six legacy argv-command events and the implemented v2 r
 | `Chat/console_chat_controller.py` | Fire sites: `UserPromptSubmit` on manual submit, `Stop` on terminal run-state transition, `ApprovalRequested` when a permission round is admitted |
 | `Chat/console_agent_bridge.py` | Fire sites: `PreToolUse` via `wrap_review` (guard), `PostToolUse` via the dispatch-loop dependency, `SubagentStop` when a child settles |
 
-Decisions: `backlog/decisions/148-console-run-hooks.md`, `197-console-hook-configuration-review.md`, `163-expanded-console-hook-runtime.md` (the status line predates the live v2 wiring; the modules below implement that contract). Specs: `Docs/superpowers/specs/2026-09-11-console-run-hooks-design.md`, `2026-09-27-console-hook-settings-and-review-design.md`.
+Decisions: `backlog/decisions/345-console-run-hooks.md`, `197-console-hook-configuration-review.md`, `163-expanded-console-hook-runtime.md` (the status line predates the live v2 wiring; the modules below implement that contract). Specs: `Docs/superpowers/specs/2026-09-11-console-run-hooks-design.md`, `2026-09-27-console-hook-settings-and-review-design.md`.
 
 ## Legacy configuration
 
@@ -28,7 +28,7 @@ command = ["/usr/local/bin/guard.sh", "--strict"]  # argv list — no shell, no 
 timeout_s = 10.0                              # default 10; must be positive and finite
 ```
 
-Invalid entries fail loud: a warning is logged and that hook is disabled; a non-bool `enabled` disables all hooks. Project-shipped hooks are rejected outright (ADR-069 trust rule — untrusted project files cannot configure hooks).
+Invalid entries fail loud: a warning is logged and that hook is disabled; a non-bool `enabled` disables all hooks. Project-shipped hooks are rejected outright (ADR-317 trust rule — untrusted project files cannot configure hooks).
 
 ## The six legacy lifecycle events
 

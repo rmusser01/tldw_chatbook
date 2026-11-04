@@ -693,7 +693,7 @@ class MCPPermissionsMode(DataTableClickSelectMixin, VerticalScroll):
     BINDINGS = [
         Binding("space", "cycle_state", "Cycle permission", show=False),
         # TASK-18928: suggestion-review actions (htop-style single letters,
-        # ADR-031). All four act ONLY while the suggestions table holds
+        # ADR-299). All four act ONLY while the suggestions table holds
         # focus (see `_focused_suggestion_row`), so they can never fire
         # from the permission matrix and vice versa.
         Binding("a", "accept_suggestion", "Accept suggestion", show=False),

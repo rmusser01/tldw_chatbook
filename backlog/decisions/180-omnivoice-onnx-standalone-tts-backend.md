@@ -4,9 +4,9 @@ Status: Accepted (2026-09-23)
 Date: 2026-09-23
 Companion spec: [2026-09-23 OmniVoice ONNX TTS backend design](../../Docs/superpowers/specs/2026-09-23-omnivoice-onnx-tts-backend-design.md)
 Related: [ADR-023](023-tts-adapter-registry-and-audio-cpp-runtime-boundary.md) (TTS
-adapter registry — followed, not amended), [ADR-039](039-global-and-studio-tts-settings-ownership.md)
+adapter registry — followed, not amended), [ADR-304](304-global-and-studio-tts-settings-ownership.md)
 (TTS settings ownership), [ADR-051](051-private-tts-clone-reference-assets.md)
-(clone reference assets), [ADR-080](080-model-machine-memory-fit-estimation.md)
+(clone reference assets), [ADR-327](327-model-machine-memory-fit-estimation.md)
 (machine-memory fit)
 
 ## Decision

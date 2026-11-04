@@ -53,7 +53,7 @@ backlog/decisions/210-console-region-ownership.md
 
 Reason: additive Console actions within existing response ownership, display
 capture, clipboard transport, Notes authority and navigation. No schema,
-retention, dependency, provider/runtime or ownership boundary change. ADR-031
+retention, dependency, provider/runtime or ownership boundary change. ADR-299
 and ADR-150/161 continue to apply.
 
 ## Planning Context
@@ -99,7 +99,7 @@ Core files: `Chat/console_response_trace.py`, `Chat/console_message_actions.py`,
 boundary, `UI/Library_Modules/library_notes_controller.py` and Library's initial
 load delegate. Generated selection-menu CSS was regenerated from Python sources.
 
-ADR required: no. Existing ADR-068, ADR-195 and ADR-210 apply; ADR-031 and
+ADR required: no. Existing ADR-068, ADR-195 and ADR-210 apply; ADR-299 and
 ADR-150/161 govern keys and UI tokens. No schema, retention, provider, dependency
 or navigation-protocol change.
 

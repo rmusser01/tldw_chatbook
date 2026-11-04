@@ -989,7 +989,7 @@ CONSOLE_VIEW_HOOK_SLOTS: tuple[ConsoleViewHookSlot, ...] = (
     ConsoleViewHookSlot(
         "update_pending_approval_summary",
         "controller",
-        why="ADR-090: `_deliver_permission_summary` guards with `is not "
+        why="ADR-332: `_deliver_permission_summary` guards with `is not "
         "None` and the summary it would patch is ALREADY durably stored "
         "on the round state and the retained payload before this fires, "
         "so a viewless delivery loses nothing -- the next mount re-renders "
@@ -4835,7 +4835,7 @@ class ConsoleRuntime:
             blank_console_session_settings,
         )
 
-        # Default/global scopes never inherit a Persona (ADR-079). Keep their
+        # Default/global scopes never inherit a Persona (ADR-325). Keep their
         # ordinary boot path free of workspace Persona resolution.
         if workspace_id in (CONSOLE_GLOBAL_WORKSPACE_ID, DEFAULT_WORKSPACE_ID, ""):
             config = getattr(self._app, "app_config", {})

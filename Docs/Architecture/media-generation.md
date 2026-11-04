@@ -127,7 +127,7 @@ drains the owning task. Static/Reduce motion keeps manual still review available
 
 ## Governing decisions
 
-ADR-044 (`backlog/decisions/044-ephemeral-generated-video-storage-playback-and-streaming.md`, rev 3) — video mirrors image, ephemeral storage, marker protocol. Related: ADR-052 (ComfyUI H3 image-edit provider boundary). Settings categories `image_generation` / `video_generation` in the Settings screen.
+ADR-044 (`backlog/decisions/044-ephemeral-generated-video-storage-playback-and-streaming.md`, rev 3) — video mirrors image, ephemeral storage, marker protocol. Related: ADR-309 (ComfyUI H3 image-edit provider boundary). Settings categories `image_generation` / `video_generation` in the Settings screen.
 
 ## Verified gotchas
 

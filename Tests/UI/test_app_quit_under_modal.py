@@ -1,6 +1,6 @@
 """Ctrl+Q reaches the app's quit flow while a Console modal is open (TASK-33622.10).
 
-ADR-031 makes Ctrl+Q app-global and the footer advertises it on every screen.
+ADR-299 makes Ctrl+Q app-global and the footer advertises it on every screen.
 ``TldwCli`` rebinds ``ctrl+q``, and Textual merges a subclass's BINDINGS per key
 by REPLACEMENT, so the rebinding silently dropped the ``priority=True`` that
 Textual's own ``ctrl+q`` carries. Non-priority bindings are looked up along

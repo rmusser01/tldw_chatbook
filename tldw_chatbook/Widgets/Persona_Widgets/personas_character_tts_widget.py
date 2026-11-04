@@ -158,7 +158,7 @@ def _character_tts_option_suffix(option: CharacterTTSProfileOption) -> str:
     naming it plain "unverified" would read as an audio.cpp-style
     transient glitch a refresh could resolve. Never branch on
     `provider_id` here; the recovery action already carries the honest
-    distinction (ADR-031, `_ALLOWED_RECOVERY_ACTIONS` in
+    distinction (ADR-299, `_ALLOWED_RECOVERY_ACTIONS` in
     `TTS/profile_service.py`).
     """
 
@@ -600,7 +600,7 @@ def _character_tts_presentation_from_snapshot(
         # `recovery_action == "none"` means this provider has no
         # catalog to preflight, so its "unverified" is permanent, not a
         # transient glitch Refresh could resolve -- naming Refresh here
-        # would promise a recovery control can never perform (ADR-031).
+        # would promise a recovery control can never perform (ADR-299).
         # The state word itself also changes: bare "Unverified" would
         # still misread as temporary even with an honest tail.
         status = (

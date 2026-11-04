@@ -25,7 +25,7 @@ Structure follows this stream's own modal idioms (see
   notices, never crashes.
 
 Key routing note: the goals ``ListView`` holds focus on mount so the
-single-letter bindings (``a``/``x``/``s``/``q``, ADR-031) reach the screen;
+single-letter bindings (``a``/``x``/``s``/``q``, ADR-299) reach the screen;
 the add ``Input`` consumes printable keys only while IT is focused, and
 ``a`` with a filled input submits without focusing it first.
 """
@@ -122,7 +122,7 @@ class DreamsGoalsModal(SafeModalDismissMixin, ModalScreen[None]):
                 id="dgm-empty",
             )
             yield Input(placeholder="new goal", id="dgm-new-goal")
-            # ADR-031 rule 4: the hint line advertises EXACTLY the four
+            # ADR-299 rule 4: the hint line advertises EXACTLY the four
             # implemented actions.
             yield Static(self._hints_text(), id="dgm-hints")
 
@@ -214,7 +214,7 @@ class DreamsGoalsModal(SafeModalDismissMixin, ModalScreen[None]):
         except Exception as exc:  # noqa: BLE001 - a broken refresh must not crash
             logger.warning(f"Dreams on_changed callback failed: {type(exc).__name__}")
 
-    # --- Actions (ADR-031 single letters) ----------------------------------
+    # --- Actions (ADR-299 single letters) ----------------------------------
 
     def action_add(self) -> None:
         """Add the input's text as a user goal (searchable by default)."""

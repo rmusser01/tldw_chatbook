@@ -1,4 +1,4 @@
-"""ADR-090: fire-once trigger matrix + guarded delivery, no real threads."""
+"""ADR-332: fire-once trigger matrix + guarded delivery, no real threads."""
 
 import builtins
 

@@ -161,4 +161,4 @@ writers remains outside scope.
 - [ADR-033: Application Session State Ownership](033-application-session-state-ownership.md)
 - [ADR-023: TTS Adapter Registry and Runtime Boundary](023-tts-adapter-registry-and-audio-cpp-runtime-boundary.md)
 - [ADR-025: Shared STT Artifacts and Runtime Routing](025-shared-stt-artifacts-and-runtime-routing.md)
-- [ADR-028: Character TTS Generation Profile Ownership](028-character-tts-generation-profile-ownership.md)
+- [ADR-294: Character TTS Generation Profile Ownership](294-character-tts-generation-profile-ownership.md)

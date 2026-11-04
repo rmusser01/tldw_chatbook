@@ -294,7 +294,7 @@ def compose_saved_model_list(screen: SettingsScreen, provider: str) -> ComposeRe
             disabled=not screen._model_discovery_models,
             tooltip="Clear runtime-discovered models for this provider.",
         )
-        # ADR-033's labelled exception: Add writes now, not on s.
+        # ADR-303's labelled exception: Add writes now, not on s.
         yield Static(INSTANT_APPLY_BEHAVIOR_COPY, classes="settings-instant-apply-hint")
     not_listed = saved_models_not_listed(screen)
     line = Static(

@@ -8,7 +8,7 @@ Related Tasks: TASK-24309, TASK-24613
 
 Related Spec: [Agent Lessons and Notes Organization Sync Design](../../Docs/superpowers/specs/2026-08-29-agent-lessons-notes-organization-sync-design.md)
 
-Extends: [ADR-105](105-portable-notes-organization-and-agent-lessons.md), [ADR-030](030-local-library-agent-tool-boundary.md), [ADR-009](009-local-skill-trust-boundary.md), [ADR-032](032-local-agent-tool-permission-boundary.md), and [ADR-069](069-console-project-instruction-local-state-and-preflight.md)
+Extends: [ADR-105](105-portable-notes-organization-and-agent-lessons.md), [ADR-298](298-local-library-agent-tool-boundary.md), [ADR-009](009-local-skill-trust-boundary.md), [ADR-300](300-local-agent-tool-permission-boundary.md), and [ADR-317](317-console-project-instruction-local-state-and-preflight.md)
 
 ## Context
 
@@ -152,7 +152,7 @@ authority escalation.
 - [Approved design spec](../../Docs/superpowers/specs/2026-08-29-agent-lessons-notes-organization-sync-design.md)
 - [How Warp builds self-improving agents on Claude](https://claude.com/blog/how-warp-builds-self-improving-agents-on-claude)
 - [ADR-009: Local Skill Trust Boundary](009-local-skill-trust-boundary.md)
-- [ADR-030: Local Library Agent Tool Boundary](030-local-library-agent-tool-boundary.md)
-- [ADR-032: Local Agent Tool Permission Boundary](032-local-agent-tool-permission-boundary.md)
-- [ADR-069: Console Project-Instruction Local State and Preflight](069-console-project-instruction-local-state-and-preflight.md)
+- [ADR-298: Local Library Agent Tool Boundary](298-local-library-agent-tool-boundary.md)
+- [ADR-300: Local Agent Tool Permission Boundary](300-local-agent-tool-permission-boundary.md)
+- [ADR-317: Console Project-Instruction Local State and Preflight](317-console-project-instruction-local-state-and-preflight.md)
 - [ADR-105: Portable Notes Organization and Agent Lessons](105-portable-notes-organization-and-agent-lessons.md)

@@ -5,7 +5,7 @@ working is covered by "Quit while still working?". Several such dialogs close
 themselves once their operation finishes -- the fork dialog, the Trace
 export, the personal-context reviews (a save, a proposal, a cleanup retry),
 the Console Prompts apply, the session switcher's fallback and
-Library-recovery opens. Only the top screen may be dismissed (ADR-031), so a
+Library-recovery opens. Only the top screen may be dismissed (ADR-299), so a
 close that landed while the question was up was refused and never tried
 again: after Wait the dialog stayed open over finished work, some with Escape
 still refused, others closing with no result so the export or review was

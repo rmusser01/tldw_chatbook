@@ -137,7 +137,7 @@ class HostedHTTPTransportConfig:
     extra_headers: Mapping[str, str] = field(default_factory=dict, compare=False)
     # Auth contract (engine, ADR-179 Phase 2): ``"bearer"`` requires a
     # non-empty key; ``"bearer_optional"`` admits an empty key (keyless
-    # endpoint, ADR-146) and then sends no Authorization header at all.
+    # endpoint, ADR-343) and then sends no Authorization header at all.
     # ``"api_key_header"`` (Phase 3) requires a key and sends it as
     # ``api-key: <key>`` with no Authorization header. Legacy adapters
     # construct without the field and keep the byte-identical ``"bearer"``

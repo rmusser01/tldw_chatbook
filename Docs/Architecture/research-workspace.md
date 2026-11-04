@@ -79,7 +79,7 @@ to the separately routed **Runs** screen, not the Workspace source controller.
 
 ## Governing decisions
 
-ADR-068 (`068-local-research-execution-engine.md`), ADR-070 (`070-research-run-lease-and-durability.md`), ADR-078 (`078-research-workspace-authority-and-screen-boundaries.md`, amends ADR-015/028). Specs: `Docs/superpowers/specs/2026-08-23-research-workspace-design.md`, `2026-08-18-durable-research-jobs-design.md` (+ the plan series under `Docs/superpowers/plans/`). Config: `research_db_path` for the runs DB.
+ADR-315 (`315-local-research-execution-engine.md`), ADR-070 (`070-research-run-lease-and-durability.md`), ADR-322 (`322-research-workspace-authority-and-screen-boundaries.md`, amends ADR-015/028). Specs: `Docs/superpowers/specs/2026-08-23-research-workspace-design.md`, `2026-08-18-durable-research-jobs-design.md` (+ the plan series under `Docs/superpowers/plans/`). Config: `research_db_path` for the runs DB.
 
 ## Verified gotchas
 

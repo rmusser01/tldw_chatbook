@@ -38,7 +38,7 @@ profiles:
 - **States**: `allow` / `ask` / `deny`; the default global is `ask`.
 - **Profiles**: every mutator and resolver takes `profile_id` (default `"default"`). Named workspace profiles exist so an "Always allow" persists into the active workspace profile. The resolver walks `[named, default]` per level: named tool override → named server default → named global → the same three in `default` → `ask`.
 - **Atomicity**: `.tmp` sibling + `Path.replace`; per-path locks. Corruption policy: never raise out of `load()` — missing file → fresh default; corrupt or wrong-version file → renamed `.bak` + fresh default.
-- `SCHEMA_VERSION` stays 1 even though `profiles` was added — a bump would trigger the corrupt-file reset and destroy every user's permissions (ADR-079).
+- `SCHEMA_VERSION` stays 1 even though `profiles` was added — a bump would trigger the corrupt-file reset and destroy every user's permissions (ADR-325).
 
 ### Decision semantics (`resolve_effective_state`)
 
@@ -66,7 +66,7 @@ Path containment, file-size and UTF-8 checks remain at the workbench boundary. T
 
 ## Permission decision lifecycle (one tool call)
 
-1. The model emits a call; the Console review hook clears per-run decision stamps at entry (so a raising approval round can never leak a prior turn's stamp), collects pending rows (only resolved `ask` states without a live session approval; `deny` never reaches the card), and makes **one** approval round trip — the `ChatApprovalCard` on the UI thread, bounded by `[mcp] approval_timeout_seconds` (0 = wait indefinitely, ADR-067).
+1. The model emits a call; the Console review hook clears per-run decision stamps at entry (so a raising approval round can never leak a prior turn's stamp), collects pending rows (only resolved `ask` states without a live session approval; `deny` never reaches the card), and makes **one** approval round trip — the `ChatApprovalCard` on the UI thread, bounded by `[mcp] approval_timeout_seconds` (0 = wait indefinitely, ADR-314).
 2. The runtime dispatches; `MCPToolProvider.invoke` (serialized on a per-provider lock) checks in order: kill switch (refuses the whole batch without prompting) → per-run approval stamp (peeked, so same-name calls in one turn share the verdict) → fresh gate resolution → persona floor (`require_confirmation` floors allow→ask; origin `persona_policy`; never widens) → `deny` refuses with a pinned copy and audit token → `ask` tries arg rules, then the approval callback, else fails closed.
 3. Card decisions apply: `approve_once` executes; `approve_session` approves in-memory for the session; `allow_matching` writes an exact-args rule (degraded to approve-once for high-risk tools); `always_allow` persists `state=allow` with the live definition hash into the active workspace profile. Unanswered keys fail closed to deny/timeout and are carried as `unresolved_keys` so audit rows never claim a human Deny.
 4. Execution routes through `execute_hub_tool` (local external profile → on-demand connect; builtin → in-process), bounded by `[mcp] tool_call_timeout_seconds`; results are JSON-redacted, non-text content becomes a placeholder, and sizes are capped; exactly one audit row is recorded per call.
@@ -109,7 +109,7 @@ and profile authority fails closed. Dismissals remain policy-independent.
 
 ## Governing decisions
 
-ADR-032 (`032-local-agent-tool-permission-boundary.md` — local tools under the MCP permission model), ADR-053 (`053-mcp-unified-standalone-runtime-boundary.md`), ADR-067 (indefinite human approval waits), ADR-079 (workspace assistant defaults / profiles), ADR-240 (`240-mcp-destination-retirement-tools-hub-in-settings.md` — destination retired; Settings hosts the hub). Specs: `Docs/superpowers/specs/2026-08-04-local-agent-tools-design.md`, `Docs/superpowers/specs/2026-09-11-mcp-hub-ux/`, `Docs/superpowers/specs/2026-10-15-tools-hub-in-settings-design.md`. User guide: `Docs/User_Guide/mcp.md`.
+ADR-300 (`300-local-agent-tool-permission-boundary.md` — local tools under the MCP permission model), ADR-053 (`053-mcp-unified-standalone-runtime-boundary.md`), ADR-314 (indefinite human approval waits), ADR-325 (workspace assistant defaults / profiles), ADR-240 (`240-mcp-destination-retirement-tools-hub-in-settings.md` — destination retired; Settings hosts the hub). Specs: `Docs/superpowers/specs/2026-08-04-local-agent-tools-design.md`, `Docs/superpowers/specs/2026-09-11-mcp-hub-ux/`, `Docs/superpowers/specs/2026-10-15-tools-hub-in-settings-design.md`. User guide: `Docs/User_Guide/mcp.md`.
 
 ## Verified gotchas
 

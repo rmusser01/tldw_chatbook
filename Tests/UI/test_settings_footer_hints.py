@@ -1,4 +1,4 @@
-"""TASK-1340: Settings footer hints must be honest (ADR-031).
+"""TASK-1340: Settings footer hints must be honest (ADR-299).
 
 Before this task the footer advertised ``s save category`` / ``r revert
 category`` / ``t test category`` for ALL 19 Settings categories even though
@@ -119,7 +119,7 @@ def test_category_footer_shortcuts_only_advertise_working_keys():
         )
         for key in {"a", "e", "d", "x"}:
             assert (key in keys) == (category is SettingsCategoryId.PERSONAL_CONTEXT)
-        # Keys and labels stay in lockstep (ADR-031 rule 4: 1:1, no stubs).
+        # Keys and labels stay in lockstep (ADR-299 rule 4: 1:1, no stubs).
         expected_labels = []
         if has_save:
             expected_labels.append("save category")

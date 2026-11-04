@@ -4,7 +4,7 @@ Status: Proposed
 Date: 2026-09-11
 Related Tasks: MCP Hub UX program 2026-09-11 (Waves D and E); supersedes the "accepted trade-off" recorded in `mcp_servers_mode._tool_gate_widgets()`'s docstring
 Specs: Docs/superpowers/specs/2026-09-11-mcp-hub-rail-ia-split-design.md; Docs/superpowers/specs/2026-09-11-mcp-hub-narrow-width-triad-design.md
-Related: ADR-032 (local:__local__ synthetic hub key), ADR-053 (built-in stdio server boundary)
+Related: ADR-300 (local:__local__ synthetic hub key), ADR-053 (built-in stdio server boundary)
 
 ## Decision
 
@@ -65,7 +65,7 @@ JSON), and the F-057 narrow-width work had covered only the tables.
 
 - The rail, workbench selection routing, one detail-pane builder, and
   the narrow-width grid CSS change; permission resolution, store shape,
-  keybindings policy (ADR-031), and all ADR-081/090 safety semantics are
+  keybindings policy (ADR-299), and all ADR-081/090 safety semantics are
   untouched.
 - Saved view state keyed on `builtin:tldw_chatbook` keeps working; only
   Servers-mode detail routing branches on the new snapshot source.

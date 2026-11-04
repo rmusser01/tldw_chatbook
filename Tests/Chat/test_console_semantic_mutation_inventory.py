@@ -2802,7 +2802,7 @@ def test_boundary_scanner_resolves_reviewed_residual_writer_routes() -> None:
 
 def test_inventory_document_exists_and_names_the_contract() -> None:
     inventory = INVENTORY_PATH.read_text(encoding="utf-8")
-    assert "ADR-097" in inventory
+    assert "ADR-337" in inventory
     assert "Hard deletion" in inventory
     assert "Generated and dynamic SQL" in inventory
     assert "41 live SQL sink identities and 62 boundary call" in inventory

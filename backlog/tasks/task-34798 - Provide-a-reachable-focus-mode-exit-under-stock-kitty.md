@@ -24,7 +24,7 @@ Current dev still binds and advertises this chord. The application already has m
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
 - [ ] #1 Under stock kitty, at least one advertised, reachable affordance exits focus mode without requiring the user to override a terminal-intercepted shortcut.
-- [ ] #2 The focus footer describes the reachable exit accurately under ADR-031; it does not present a known intercepted chord as the only visible route.
+- [ ] #2 The focus footer describes the reachable exit accurately under ADR-299; it does not present a known intercepted chord as the only visible route.
 - [ ] #3 The chosen exit has mounted application key/action regression coverage, plus recorded stock-kitty delivery evidence. Existing Ctrl+Shift+F Pilot coverage is retained; Pilot alone is not terminal-delivery evidence.
 - [ ] #4 The current Ctrl+Shift+letter bindings are checked against the reported terminal's stock mappings, with the surviving/colliding set documented in the relevant lesson and ADR-071 amendment or Console user guide.
 - [ ] #5 Chrome suppression, clearing focus on non-Console navigation, the palette toggle, and ADR-210 region ownership retain their current behavior.
@@ -51,7 +51,7 @@ For kitty, `map ctrl+shift+f no_op` removes kitty's interception of this chord; 
 ## ADR check
 
 ADR required: no new ADR for this issue filing and documentation reconciliation.
-ADR path: `backlog/decisions/031-tui-keybinding-and-footer-hint-conventions.md`, `backlog/decisions/071-focus-mode-chrome-free-console.md`, and `backlog/decisions/210-console-region-ownership.md`.
+ADR path: `backlog/decisions/299-tui-keybinding-and-footer-hint-conventions.md`, `backlog/decisions/071-focus-mode-chrome-free-console.md`, and `backlog/decisions/210-console-region-ownership.md`.
 Reason: this PR changes no runtime or UX behavior. The eventual exit design must follow these existing contracts and amend ADR-071 if its shortcut or affordance changes.
 
 ## Renumbering provenance

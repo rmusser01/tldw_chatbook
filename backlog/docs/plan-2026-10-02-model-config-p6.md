@@ -28,8 +28,8 @@ Target: judge mock (b), 150x22 over Console at 211x44. The layout is a Model row
 
 Constraints:
 - ADR-150/161: geometry lives in tokens in core/_variables.tcss only.
-- ADR-031 rule 2: no Ctrl+C, V, X, S, D, Z, A, R or W.
-- ADR-033: keep the commit models.
+- ADR-299 rule 2: no Ctrl+C, V, X, S, D, Z, A, R or W.
+- ADR-303: keep the commit models.
 - ADR-095: Apply is conversation-owned, and explicit source-owned chats never rebase.
 - ADR-097: ratchets never rise.
 - Target sizes: 211x44 first, then 235x52. Smaller sizes are not redesigned.
@@ -44,7 +44,7 @@ Constraints:
 - [ ] #6 No user-visible copy names this modal 'Conversation settings'; it is 'Chat settings' everywhere
 - [ ] #7 console_settings_modal.py shrinks, and its row in Tests/Architecture/test_module_size_ratchet.py is lowered to the measured size in this PR. Boot CSS bytes and the _ui_ready census do not rise (ADR-097)
 - [ ] #8 New geometry comes only from tokens in core/_variables.tcss. The dimension-literal and Python-style ratchets in Tests/UI/test_component_pattern_governance.py (:266, :291) stay at their floors (ADR-150/161)
-- [ ] #9 No binding from ADR-031 rule 2 (Ctrl+C, V, X, S, D, Z, A, R or W) is added, and every key the modal advertises works
+- [ ] #9 No binding from ADR-299 rule 2 (Ctrl+C, V, X, S, D, Z, A, R or W) is added, and every key the modal advertises works
 - [ ] #10 Every existing test that pinned the old layout is rewritten on purpose and listed in the PR description, and the Context and memory view's tests pass unchanged
 - [ ] #11 Live evidence: tmux captures at 211x44 and 235x52 from a scratch profile (TLDW_CONFIG_PATH), using the production stylesheet and real keypresses. They cover an Anthropic chat, a Not-ready chat and a chat using 'Use saved defaults'
 - [ ] #12 Docs/User_Guide pages updated: console.md (Chat settings) and settings.md (the Console-modal reference near :373) (content only; verification is recorded in the task notes, never as a "Verified against" paragraph, per CLAUDE.md)
@@ -58,7 +58,7 @@ Constraints:
 - ADR-126 RecoveryRequired in a clean worktree is environmental: compare failure-NAME sets against origin/dev.
 - Size ratchets never rise (ADR-097); console_settings_modal.py net lines <= 0 against its current row.
 - Geometry only through tokens in css/core/_variables.tcss (ADR-150/161); rebuild the CSS bundle with the repo script.
-- ADR-031: never bind Ctrl+C/V/X/S/D/Z/A/R/W; footer hints must match working bindings.
+- ADR-299: never bind Ctrl+C/V/X/S/D/Z/A/R/W; footer hints must match working bindings.
 - TDD; real-implementation tests for config/provider surfaces; rewrite pinned tests on purpose and name them.
 - Commit per task `fix|feat(model-config): <summary> (TASK-33006.N)` + `Co-Authored-By: Claude Opus 5.5 (1M context) <noreply@anthropic.com>`. Never push; NEVER merge origin/dev into the branch.
 - Tick ACs, set Done, add Implementation Notes in each subtask file. Update Docs/User_Guide CONTENT; never add "Verified against" paragraphs (record verification in task notes).
@@ -223,7 +223,7 @@ ConsoleProviderPicker (console_provider_picker.py, 455 lines) is used only by th
 - The generated tldw_chatbook/css/widget_defaults_self.tcss (:1450-1470).
 - The boot-CSS snapshot Tests/Performance/boot_budget_snapshots/boot_css_bytes.json (:196, 494 bytes).
 
-P4 provides the switcher's pick-only mode. ADR-031's task-16211 refinement requires dismissal inventory coverage for modal-to-modal launches (Tests/UI/test_console_modal_dismissal.py). Alt on macOS types composed characters unless Option-as-Meta is on (chat_screen.py:1333-1339), so the Change button must work without Alt.
+P4 provides the switcher's pick-only mode. ADR-299's task-16211 refinement requires dismissal inventory coverage for modal-to-modal launches (Tests/UI/test_console_modal_dismissal.py). Alt on macOS types composed characters unless Option-as-Meta is on (chat_screen.py:1333-1339), so the Change button must work without Alt.
 
 Hand-off from TASK-33006.2 (review round 1): its AC#6 test, `test_changing_the_model_updates_the_hidden_set_and_line_at_once` in Tests/UI/test_console_settings_hidden_fields.py, drives `_rebase_to` with the real controller rebaser, because pick mode was not wired yet. The support sync that re-decides the hidden rows and the Sampling line runs in `_apply_rebased_state`, where `_rebase_to` lands. Pick mode must land through `_rebase_to` (AC#2's controller rebaser), and that test is re-pointed at the Change gesture under AC#7.
 
@@ -232,7 +232,7 @@ Hand-off from TASK-33006.2 (review round 1): its AC#6 test, `test_changing_the_m
 - [ ] #1 The MODEL row shows the model, the provider's display name, a Source word, the readiness word and the context window, with a '[Change Alt+M]' button
 - [ ] #2 Change (the button, or Alt+M inside Chat settings) opens the switcher in pick mode over the modal. Choosing a pair rebases the Chat settings draft to that exact provider and model through the existing controller rebaser, and nothing is applied until Apply
 - [ ] #3 Chat settings no longer hosts a provider picker or its own model search, so a provider cannot be chosen without a model. An unlisted or custom model ID can still be chosen through pick mode (TASK-30012 AC#4)
-- [ ] #4 Esc in pick mode returns to Chat settings with the draft unchanged and focus on Change. This modal-to-modal path is covered in Tests/UI/test_console_modal_dismissal.py (ADR-031 task-16211)
+- [ ] #4 Esc in pick mode returns to Chat settings with the draft unchanged and focus on Change. This modal-to-modal path is covered in Tests/UI/test_console_modal_dismissal.py (ADR-299 task-16211)
 - [ ] #5 console_provider_picker.py and Tests/Widgets/test_console_provider_picker.py are deleted, and no import or test reference remains; the boot-closure and CSS parse-cache probe lists are updated
 - [ ] #6 The generated widget-defaults CSS is regenerated by css/build_css.py, and the boot CSS byte snapshot goes down, never up (ADR-097)
 - [ ] #7 Tests that drove the removed pickers are rewritten to drive pick mode
@@ -251,7 +251,7 @@ Hand-off from TASK-33006.2 (review round 1): its AC#6 test, `test_changing_the_m
 - Tests/UI/test_console_modal_dismissal.py
 - Tests/Performance/boot_budget_snapshots/boot_css_bytes.json
 - Tests/Architecture/test_module_size_ratchet.py
-- backlog/decisions/031-tui-keybinding-and-footer-hint-conventions.md
+- backlog/decisions/299-tui-keybinding-and-footer-hint-conventions.md
 - backlog/decisions/097-boot-budget-ratchets.md
 
 ## Task 5: Name the modal, its scope and its actions, and add Use saved defaults (TASK-33006.5)
@@ -267,7 +267,7 @@ The scope line reads 'Use: this conversation only. Defaults: future provider con
 
 The footer (:2569-2610) offers Cancel, 'Save as model default', 'Make default for new chats' and 'Apply to this chat'. Ctrl+Enter is bound (:1141) but no button teaches it (report.md), although TASK-30014 AC#5 requires the accelerator to be discoverable. Phase 3 already made the Esc hint describe what Esc does.
 
-The judge made 'adopt defaults' a button because Ctrl+R is banned (ADR-031 rule 2). Other ADR-095 rules that apply:
+The judge made 'adopt defaults' a button because Ctrl+R is banned (ADR-299 rule 2). Other ADR-095 rules that apply:
 - Apply never mutates configuration (ADR-095:20).
 - 'Save as model default' uses the full field mask (:74-77).
 
@@ -277,7 +277,7 @@ Ctrl+N is unbound in Console and is not a Textual Input binding.
 
 - [ ] #1 The title reads 'Chat settings · <chat title>' and shows the count of unsaved edits. The scope line reads 'Applies to this chat only · saved with the conversation · defaults live in Settings ▸ Providers & Models (F4)'
 - [ ] #2 The footer shows, in order: phase 3's Esc hint, 'Use saved defaults', 'Save as model default', 'Default for new chats (Ctrl+N)' and 'Apply to this chat (Ctrl+Enter)'. Every advertised key works
-- [ ] #3 No binding from ADR-031 rule 2 (Ctrl+C, V, X, S, D, Z, A, R or W) is added
+- [ ] #3 No binding from ADR-299 rule 2 (Ctrl+C, V, X, S, D, Z, A, R or W) is added
 - [ ] #4 'Use saved defaults' stages, for the current provider·model, exactly the values a newly created chat on that provider·model would resolve (build_default_console_session_settings: model profile, saved console.provider_defaults, applicable extra sources, chat_defaults, then provider settings). It replaces unapplied edits in the draft, marks each field that differs from the conversation 'edited *', keeps the provider and model, and applies nothing until Apply
 - [ ] #5 A parity test shows that 'Use saved defaults' stages the same values as a new blank chat (Ctrl+T) on the same provider and model, including when [console.provider_defaults.<provider>] holds a value
 - [ ] #6 'Use saved defaults' is disabled with a visible reason when the draft already equals the saved defaults
@@ -292,7 +292,7 @@ Ctrl+N is unbound in Console and is not a Textual Input binding.
 - tldw_chatbook/UI/Screens/chat_screen.py
 - tldw_chatbook/UI/Screens/settings_screen.py
 - backlog/decisions/095-conversation-owned-console-generation-settings.md
-- backlog/decisions/031-tui-keybinding-and-footer-hint-conventions.md
+- backlog/decisions/299-tui-keybinding-and-footer-hint-conventions.md
 - backlog/tasks/task-30014 - Harden-Conversation-Settings-verification-accessibility-and-geometry.md
 - Tests/UI/test_console_session_settings.py
 

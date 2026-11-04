@@ -91,7 +91,7 @@ from tldw_chatbook.Provider_Contract.sampling_params import (
     optional_string_setting_from_sources as _optional_string_setting_from_sources,
     temperature_range,
 )
-# The enum sets canonicalize in sampling_params.py (ADR-147's shared leaf)
+# The enum sets canonicalize in sampling_params.py (ADR-344's shared leaf)
 # so presets, registry entries, and Console settings validate against ONE
 # contract; the underscore aliases keep this module's call sites unchanged.
 from tldw_chatbook.Provider_Contract.sampling_params import (
@@ -957,7 +957,7 @@ def build_console_provider_options(
         providers_models: Configured provider -> model ids mapping feeding
             the WIP-marked configured-provider options.
         app_config: Full CLI config mapping. When given, registry entries
-            (ADR-146) follow the sorted built-ins as a final run: value
+            (ADR-343) follow the sorted built-ins as a final run: value
             ``custom-ep:<slug>``, label ``display_name``, ordered by creation
             (config file order) then display name. None keeps the
             built-in-only result so existing callers are unchanged.
@@ -1017,7 +1017,7 @@ def _custom_endpoint_provider_options(
 ) -> list[ConsoleSettingsOption]:
     """Return registry entry options appended after the built-in providers.
 
-    ADR-146: each valid ``[custom_endpoints.<slug>]`` entry renders as a
+    ADR-343: each valid ``[custom_endpoints.<slug>]`` entry renders as a
     first-class provider option -- value ``custom-ep:<slug>``, label
     ``display_name`` -- after the built-in Custom & legacy group, ordered by
     creation (config file order, which ``load_custom_endpoints`` preserves)
@@ -1071,7 +1071,7 @@ def build_console_model_options(
 
 
 class ConsoleValueLayer(str, Enum):
-    """One layer of the Console parameter stack (ADR-147), highest first."""
+    """One layer of the Console parameter stack (ADR-344), highest first."""
 
     EDITED_DRAFT = "edited_draft"
     THIS_CHAT = "this_chat"
@@ -1249,7 +1249,7 @@ def resolve_console_value_layers(
         edited: Fields the user edited in the open draft.
         chat_settings: This chat's committed settings when the shown pair is
             its pair; a value that differs from the default chain is the chat's.
-        extra_sources: ADR-147 registry params, as the builder takes them.
+        extra_sources: ADR-344 registry params, as the builder takes them.
         excluded_model_profile_fields: Model-default fields to skip, so a
             blank Settings model default names the layer it inherits from
             (TASK-33007.5), as the builder takes them. The chain the chat is
@@ -1314,7 +1314,7 @@ def build_default_console_session_settings(
             inherited controls can re-resolve lower-precedence defaults.
         extra_sources: Optional param-name → value mappings slotted between
             the saved console provider defaults and ``chat_defaults`` in the
-            precedence walk (ADR-147: registry entry params ride this seam).
+            precedence walk (ADR-344: registry entry params ride this seam).
             The default ``()`` keeps the source order unchanged.
     """
     effective, layers = _console_default_layers(
@@ -1637,7 +1637,7 @@ def reasoning_effort_hint_for_model(model: str | None) -> frozenset[str] | None:
 def console_settings_warnings(settings: ConsoleSessionSettings) -> list[str]:
     """Return non-blocking warnings for the Console settings modal.
 
-    Warnings never block a save or send (ADR-066); blocking validation
+    Warnings never block a save or send (ADR-311); blocking validation
     lives in :func:`validate_console_session_settings`.
 
     Args:
@@ -1830,7 +1830,7 @@ def build_console_settings_readiness(
     """
     if type(active_run) is not bool:
         raise ValueError("Active-run state must be boolean.")
-    # ADR-146 (registry seam): a custom-ep provider resolves through its
+    # ADR-343 (registry seam): a custom-ep provider resolves through its
     # registry entry -- the family it executes as, and the entry's persisted
     # endpoint when the session carries no explicit base URL. Lazy import:
     # custom_endpoint_registry imports this module for URL normalization, so
@@ -1854,7 +1854,7 @@ def build_console_settings_readiness(
 
     base_url = _string_value(settings.base_url)
     if entry is not None and not base_url:
-        # ADR-146: the entry is the persisted endpoint carrier, so a blank
+        # ADR-343: the entry is the persisted endpoint carrier, so a blank
         # session base_url resolves from it instead of the family default.
         base_url = entry.base_url
     provider_settings, provider_configuration_invalid = (
@@ -2383,7 +2383,7 @@ def _canonical_chat_provider_id(
     """Return the canonical provider id for a chat-defaults provider value.
 
     A ``custom-ep:<slug>`` id whose registry entry resolves in ``app_config``
-    is returned unchanged (ADR-146: the entry -- not its family -- is the
+    is returned unchanged (ADR-343: the entry -- not its family -- is the
     persisted default, and the config-key normalization below would mangle
     the prefix's hyphen into an underscore). Every other value keeps the
     legacy-alias and readiness-key fallback chain.
@@ -2414,7 +2414,7 @@ def console_provider_settings(
             instead of treating it as empty.
 
     Returns:
-        The registry entry's flattened view for a ``custom-ep:`` id (ADR-146),
+        The registry entry's flattened view for a ``custom-ep:`` id (ADR-343),
         else the matching ``api_settings`` table, else an empty mapping.
 
     Raises:
@@ -2463,7 +2463,7 @@ def _custom_endpoint_declared_credential(
     blocks when a declared credential does not resolve; this one names the
     credential that DOES flow for a ready entry, so the readiness copy never
     claims "No API key is required" while a send authenticates with one.
-    ADR-146 precedence applies (the env reference wins over the stored key).
+    ADR-343 precedence applies (the env reference wins over the stored key).
 
     Args:
         entry: Resolved registry entry for the session's custom-ep provider.
@@ -2625,7 +2625,7 @@ def custom_endpoint_missing_key_readiness(
     """Return missing-key readiness for an entry whose declared credential
     does not resolve, or None when it resolves or nothing is declared.
 
-    ADR-146: entry credentials mirror provider-settings semantics — the env
+    ADR-343: entry credentials mirror provider-settings semantics — the env
     reference wins over the stored key, and an entry declaring neither rides
     the plain family readiness. An entry that declares a credential the
     environment cannot satisfy blocks the send instead of silently sending
@@ -2720,7 +2720,7 @@ def _provider_settings_with_validity(
 ) -> tuple[Mapping[str, object], bool]:
     """Return selected provider settings and whether their table is malformed."""
 
-    # ADR-146: a registry entry is its own settings carrier, so an entry
+    # ADR-343: a registry entry is its own settings carrier, so an entry
     # provider is never "missing from api_settings" -- route it through the
     # registry-aware reader and skip the table-validity walk.
     from tldw_chatbook.Chat.custom_endpoint_registry import (
@@ -3119,7 +3119,7 @@ def console_session_endpoint_survives_restart(
     """Return whether the session endpoint is backed for the next boot.
 
     ``True`` when the provider uses no endpoint, the session carries no
-    endpoint, the session rides a resolvable registry entry (ADR-146: the
+    endpoint, the session rides a resolvable registry entry (ADR-343: the
     entry is the persisted endpoint carrier), or the session endpoint equals
     the restart fallback chain's value (so re-deriving defaults next boot
     reproduces it). ``False`` means the endpoint lives only in this session

@@ -653,7 +653,7 @@ async def test_save_prompt_closes_without_writing_and_restores_focus(
 ) -> None:
     """AC#2: Esc and Cancel both close the prompt, write nothing, and return
     focus to the row control that opened the menu. A click on the dimmed
-    backdrop is the same cancel (the ADR-031 modal contract)."""
+    backdrop is the same cancel (the ADR-299 modal contract)."""
     async with make_console_pilot(size=(160, 48), production_styles=True) as pilot:
         chat_screen = pilot.app.screen
         await _seed_row_zero_messages(pilot)

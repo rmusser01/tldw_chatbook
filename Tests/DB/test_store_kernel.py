@@ -1,4 +1,4 @@
-"""SQLiteStoreKernel contract tests (ADR-228, TASK-33132).
+"""SQLiteStoreKernel contract tests (ADR-353, TASK-33132).
 
 The kernel extracts the hardened Workspace/RAG lineage; these tests pin the
 four load-bearing semantics: autocommit held connections, fail-loud nesting,
@@ -117,7 +117,7 @@ def test_liveness_replaces_connection_closed_behind_our_back(tmp_path) -> None:
 
 
 def test_kernel_wiring_is_participants_observable(tmp_path, monkeypatch) -> None:
-    """The kernel's entry points fire the Backup_Recovery hooks (ADR-228).
+    """The kernel's entry points fire the Backup_Recovery hooks (ADR-353).
 
     The kernel imports the ``_core_*`` helpers by name, so the pin patches
     the kernel module's own bindings and asserts each hook fires with this
@@ -205,7 +205,7 @@ class _PoisonableConnection(sqlite3.Connection):
 
 
 def test_probe_failure_on_live_connection_propagates(tmp_path) -> None:
-    """Failed probe on a still-live handle must raise, not replace (ADR-228).
+    """Failed probe on a still-live handle must raise, not replace (ADR-353).
 
     The reference port's asymmetry: a probe that fails while the handle is
     positively alive propagates the error and retains the cached

@@ -157,7 +157,7 @@ class ProviderRecord:
             ``"proprietary"`` (private to the terminal turn).
         auth_scheme: Credential contract of engine resolution and
             transport: ``"bearer"`` hard-requires a key;
-            ``"bearer_optional"`` lets keyless endpoints (ADR-146) execute
+            ``"bearer_optional"`` lets keyless endpoints (ADR-343) execute
             with no Authorization header; ``"api_key_header"`` (Phase 3)
             hard-requires a key and sends it as an ``api-key`` header.
         continuation_protocol: Protocol for provider continuation
@@ -258,7 +258,7 @@ class ProviderRecord:
     # Auth contract of the engine's credential resolution and transport:
     # "bearer" hard-requires a key (a missing key is an actionable
     # configuration error); "bearer_optional" (Phase 2) lets keyless
-    # endpoints (ADR-146 custom endpoints) execute with no Authorization
+    # endpoints (ADR-343 custom endpoints) execute with no Authorization
     # header while still using a resolved key when one exists;
     # "api_key_header" (Phase 3, TASK-33350) requires a key and sends it as
     # an ``api-key`` header instead of Authorization. See ADR-179 spec §3.
@@ -1486,7 +1486,7 @@ COMMANDCODE = ProviderRecord(
 )
 
 # --- Custom hosted family (ADR-179 Phase 2 Task 6) ---
-# The engine-driven execution surface for the ADR-146 custom-endpoint
+# The engine-driven execution surface for the ADR-343 custom-endpoint
 # ``openai_compatible`` family, swapped in at the Console gateway identity
 # site when ``[console] custom_endpoints_use_engine`` is on. Identity,
 # readiness, and saved sessions keep the ``custom``/``custom-ep:<slug>``
@@ -1499,7 +1499,7 @@ COMMANDCODE = ProviderRecord(
 # ``[api_settings.custom]`` table via ``defaults_settings_section`` under
 # ``chat_with_custom_openai``'s exact key spellings (``api_timeout`` et al;
 # the shipped table's ``timeout`` spellings were never read by the legacy
-# handler and stay unread). ADR-066 custom row: ``reasoning_effort`` is
+# handler and stay unread). ADR-311 custom row: ``reasoning_effort`` is
 # consumed verbatim; a thinking budget is accepted and dropped (strict
 # OpenAI proxies may reject llama.cpp-specific fields).
 CUSTOM_HOSTED = ProviderRecord(

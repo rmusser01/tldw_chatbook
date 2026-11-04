@@ -471,7 +471,7 @@ async def test_a_fork_that_finishes_under_the_quit_question_closes_after_wait(
     From the second Ctrl+Q on, "Quit while still working?" covers the fork
     dialog. The controller closes the dialog once the fork is open
     (``close_after_success``), but only the top screen may be dismissed
-    (ADR-031), so that close was refused while the question was up and never
+    (ADR-299), so that close was refused while the question was up and never
     tried again: after Wait the dialog sat on "Forking..." with every button
     disabled and Escape refused, and quitting was the only way out.
     """
@@ -841,7 +841,7 @@ async def test_an_interview_discard_finishing_while_covered_still_closes_it(
     """A refused close is kept and finished once the interview is on top again.
 
     The discard completes while another screen covers the interview, so its
-    close is refused (only the top screen may be dismissed, ADR-031). Before
+    close is refused (only the top screen may be dismissed, ADR-299). Before
     the fix that close was never retried: the interview stayed open and busy
     over a discarded draft.
     """

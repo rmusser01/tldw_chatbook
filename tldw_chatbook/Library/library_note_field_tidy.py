@@ -1,10 +1,10 @@
 """Tidy a note field when the user leaves it (TASK-34000.10, review N-07).
 
-ADR-027 forbids the save from stripping a title or deduplicating keywords:
+ADR-293 forbids the save from stripping a title or deduplicating keywords:
 persistence never rewrites what the user typed. So a title ending in a
 space, or keywords with a case-insensitive duplicate ("ok, x, X"), veto
 every autosave until the user notices -- and the review's first-timer never
-did. The repair that keeps ADR-027 is a VISIBLE draft edit made at the
+did. The repair that keeps ADR-293 is a VISIBLE draft edit made at the
 moment the user leaves the field: the Input shows the tidied text, the
 session receives it as an ordinary draft mutation through the field's own
 ``Changed`` handler, and the save payload stays untouched.

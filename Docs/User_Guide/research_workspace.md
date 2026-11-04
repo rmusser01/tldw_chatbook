@@ -182,7 +182,7 @@ Grounded Chat exposes a canonical message owner.
 - [Library](library.md) owns global Local catalog browsing, ingestion, and
   editing.
 - [Console](console.md) remains the live agent and tool surface.
-- [ADR-078](../../backlog/decisions/078-research-workspace-authority-and-screen-boundaries.md)
+- [ADR-322](../../backlog/decisions/322-research-workspace-authority-and-screen-boundaries.md)
   records the authority, canonical-owner, overlay, and unlink boundaries.
 
 —

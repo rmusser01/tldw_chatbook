@@ -3,7 +3,7 @@
 Status: Accepted
 Date: 2026-10-29
 Related tasks: TASK-37630, TASK-37631, TASK-37632
-Amends: ADR-078, ADR-094, ADR-101
+Amends: ADR-321, ADR-094, ADR-101
 
 ## Decision
 

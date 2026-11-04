@@ -235,7 +235,7 @@ MESSAGE_TOOL_NAMES = frozenset(
         SEND_TO_PEER_TOOL_NAME,
     }
 )
-# Chat fork/spawn (2026-09-11 spec, ADR-150): the two primary-agent tools
+# Chat fork/spawn (2026-09-11 spec, ADR-348): the two primary-agent tools
 # for handing a parallel workstream to the user -- fork_chat copies this
 # chat's active history into a new chat, new_chat starts an empty one. Each
 # call lands on a user-confirmation card and the new chat opens in the
@@ -244,7 +244,7 @@ FORK_CHAT_TOOL_NAME = "fork_chat"
 NEW_CHAT_TOOL_NAME = "new_chat"
 
 #: Agent-supplied title cap (chars) for a fork_chat/new_chat conversation
-#: (ADR-150). Shared by the bridge closures and the controller executor so
+#: (ADR-348). Shared by the bridge closures and the controller executor so
 #: confirmation and execution can never drift apart.
 CHAT_CREATE_TITLE_MAX = 120
 #: Per-field cap (chars) for opening_prompt / instructions payloads.
@@ -370,7 +370,7 @@ class ToolSchema:
     parameters: dict
 
 
-#: ADR-090: cap for rationale text captured at parse time (tail-biased).
+#: ADR-332: cap for rationale text captured at parse time (tail-biased).
 RATIONALE_CAPTURE_CAP = 500
 
 _RATIONALE_CONTROL_CHARS = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]")
@@ -380,7 +380,7 @@ _RATIONALE_WHITESPACE = re.compile(r"\s+")
 def normalize_rationale(text: object, cap: int = RATIONALE_CAPTURE_CAP) -> str:
     """Normalize model-authored advisory text for display-surface transit.
 
-    Untrusted-content hygiene (ADR-090 §Security): strip control characters,
+    Untrusted-content hygiene (ADR-332 §Security): strip control characters,
     collapse all whitespace to single spaces, and cap length keeping the
     TAIL (the end of a preamble is the part adjacent to the tool call; the
     head is often an unrelated answer to the user), prefixing an ellipsis
@@ -410,7 +410,7 @@ def with_preamble_rationale(
 ) -> tuple[ToolCall, ...]:
     """Attach a turn's preamble text as the rationale of calls lacking one.
 
-    The hybrid rule (ADR-090): an explicit fence ``rationale`` key wins, so
+    The hybrid rule (ADR-332): an explicit fence ``rationale`` key wins, so
     calls that already carry a rationale pass through untouched; everything
     else (native turn text, fence preamble) fills in from ``preamble``.
 
@@ -447,7 +447,7 @@ class ToolCall:
     args: dict
     call_id: str = ""
     raw_arguments: str = ""
-    #: ADR-090: the model's own stated reason for this call (explicit fence
+    #: ADR-332: the model's own stated reason for this call (explicit fence
     #: ``rationale`` key, else the turn's preamble text). Advisory display
     #: data for the approval card ONLY -- never persisted, never serialized
     #: into durable captures, never an input to any security verdict.
@@ -893,7 +893,7 @@ class RunBudget:
     # to execute (`_tool_call_timeout() = 60.0` in
     # `MCP/unified_control_plane_service.py` plus
     # `_RESULT_WAIT_SLACK_SECONDS = 5.0` in `Agents/mcp_tool_provider.py`).
-    # ADR-067: time spent waiting on a HUMAN decision no longer counts --
+    # ADR-314: time spent waiting on a HUMAN decision no longer counts --
     # the wrapper's deadline pauses while `Agents.human_input_wait` marks
     # the run (approval card / skill confirms; their default is no
     # auto-deny at all), superseding the old requirement that the approval
@@ -947,7 +947,7 @@ class AgentDefinition:
     prefix-matching it). ``tool_allowlist`` only ever narrows the child's
     inherited allow-list (intersection, never union); empty means inherit.
     ``model`` overrides the parent's model on the preset's ``provider``
-    endpoint (ADR-147): ``provider`` is "" (inherit the parent's endpoint —
+    endpoint (ADR-344): ``provider`` is "" (inherit the parent's endpoint —
     the legacy behavior), a bare provider id, or a ``custom-ep:<slug>``
     registry id; ``model`` without ``provider`` keeps the legacy
     same-endpoint behavior, and empty ``model`` means inherit the model.
@@ -1108,10 +1108,10 @@ def definition_fingerprint(defn: AgentDefinition) -> str:
     """16-hex-char content hash of the fields that shape a child run.
 
     Covers instructions, tool allow-list, model, an optional wall cap, plus
-    provider/params WHEN SET (spec §4, ADR-147) — the audit identity of what
+    provider/params WHEN SET (spec §4, ADR-344) — the audit identity of what
     actually ran. Description/enabled are presentation. The conditional
     inclusion keeps a legacy provider-less/params-less preset's payload
-    byte-identical to its pre-ADR-147 shape, so fingerprints persisted on
+    byte-identical to its pre-ADR-344 shape, so fingerprints persisted on
     existing run rows stay comparable.
     """
     payload_dict = {
@@ -1254,7 +1254,7 @@ class AgentConfig:
         response_reserve_tokens: Non-negative output-token capacity excluded
             from project-instruction input admission.
         base_url: The resolved request-pinned endpoint override handed to
-            ``chat_api_call`` (ADR-147 spawn routing); ``None`` for a
+            ``chat_api_call`` (ADR-344 spawn routing); ``None`` for a
             primary and for children inheriting a built-in provider.
         sampling_params: The resolved target's own sampling/API params as
             ``(key, value)`` pairs (keys from
@@ -1274,7 +1274,7 @@ class AgentConfig:
     workspace_context_note: str = ""
     personal_context_block: str = ""
     response_reserve_tokens: int = 2048
-    # ADR-147 (TASK-32477 Task 6): the spawn resolver's target for THIS run.
+    # ADR-344 (TASK-32477 Task 6): the spawn resolver's target for THIS run.
     # Both stay empty for a primary; ``AgentService``'s spawn closure fills
     # them on a child's config from the resolved SpawnTarget.
     base_url: str | None = field(default=None, kw_only=True)

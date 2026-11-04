@@ -157,8 +157,8 @@ and trusted runtime guidance that treats retrieved lessons as untrusted data.
 
 - [Approved design spec](../../Docs/superpowers/specs/2026-08-29-agent-lessons-notes-organization-sync-design.md)
 - [ADR-008: Sync-v2 Client M1 Contract Alignment](008-sync-v2-client-m1-contract-alignment.md)
-- [ADR-030: Local Library Agent Tool Boundary](030-local-library-agent-tool-boundary.md)
-- [ADR-032: Local Agent Tool Permission Boundary](032-local-agent-tool-permission-boundary.md)
+- [ADR-298: Local Library Agent Tool Boundary](298-local-library-agent-tool-boundary.md)
+- [ADR-300: Local Agent Tool Permission Boundary](300-local-agent-tool-permission-boundary.md)
 - [ADR-055: Library Destructive Action Reversibility Rule](055-library-destructive-action-reversibility-rule.md)
 - [ADR-059: Notes Folder Import and Device-Local Sync Ownership](059-notes-folder-import-and-device-local-sync-ownership.md)
 - [ADR-073: Notes Sync Round-trip and Interoperability Constraints](073-notes-sync-round-trip-and-interoperability-constraints.md)

@@ -138,7 +138,7 @@ Schema version at `DB/Evals_DB.py::SCHEMA_VERSION`, tracked via `PRAGMA user_ver
 
 ## Governing decisions and docs
 
-ADR-031 (`031-bounded-evaluation-and-tool-worker-execution.md`). Specs: `Docs/superpowers/specs/2026-07-24-evaluation-execution-contracts-design.md`, `2026-07-25-evals-console-rebuild-design.md`, `2026-08-01-character-probe-eval-design.md`. Configuration ownership: [ADR-220](../../backlog/decisions/220-evaluation-defaults-and-private-overrides.md); backup/recovery: [ADR-126](../../backlog/decisions/126-complete-local-backup-and-recovery.md).
+ADR-031 (`031-bounded-evaluation-and-tool-worker-execution.md`). Specs: `Docs/superpowers/specs/2026-07-24-evaluation-execution-contracts-design.md`, `2026-07-25-evals-console-rebuild-design.md`, `2026-08-01-character-probe-eval-design.md`. Configuration ownership: [ADR-352](../../backlog/decisions/352-evaluation-defaults-and-private-overrides.md); backup/recovery: [ADR-126](../../backlog/decisions/126-complete-local-backup-and-recovery.md).
 
 ## Verified gotchas
 

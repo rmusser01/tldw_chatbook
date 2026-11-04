@@ -23,7 +23,7 @@ shutdown_grace_seconds = 120.0
 
 [console]
 collapse_large_pastes = true  # Display large pasted chunks compactly in Console composer
-# Custom endpoints (ADR-146): execute the openai_compatible family through
+# Custom endpoints (ADR-343): execute the openai_compatible family through
 # the strict hosted engine (custom-hosted execution key) instead of the
 # legacy custom handlers. Set false to roll back to the legacy path
 # (ADR-179 Phase 2 kill switch); identity, readiness, saved sessions, and
@@ -375,7 +375,7 @@ openai_cache_key = false
 # max_goal_output_tokens = 8192
 # max_goal_wall_seconds = 900
 #
-# --- Sub-agent routing (ADR-147) ---
+# --- Sub-agent routing (ADR-344) ---
 # Default provider/model for spawned sub-agents when neither the spawn call
 # nor the named agent preset routes them. Empty = inherit the parent's.
 # subagent_default_provider = ""
@@ -1716,7 +1716,7 @@ auto_save = false
 show_analysis_button = true
 
 [permission_summary]
-# ADR-090: advisory summaries on Console approval cards.
+# ADR-332: advisory summaries on Console approval cards.
 # mode: off (default) | fallback (only when the model gave no rationale)
 # | always (every approval round). Enabling sends a bounded tail of the
 # conversation (user/assistant text only) to this provider.

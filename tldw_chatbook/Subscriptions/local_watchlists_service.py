@@ -1137,7 +1137,7 @@ class LocalWatchlistsService:
     async def find_source_id_by_url(self, url: str) -> int | None:
         """The id of the source carrying exactly this URL, or `None`.
 
-        TASK-3604 (ADR-043 rule 6): OPML import dedupes against the existing
+        TASK-3604 (ADR-307 rule 6): OPML import dedupes against the existing
         roster through this lookup -- `create_source` is a plain INSERT, so
         without it a re-import duplicates every feed. Thin delegate to
         `SubscriptionsDB.get_subscription_id_by_source`.
@@ -1156,7 +1156,7 @@ class LocalWatchlistsService:
     ) -> tuple[dict[str, Any], bool]:
         """The watchlist named `name` (case-insensitive), creating it if missing.
 
-        TASK-3604 (ADR-043 rule 4): OPML folder names map to watchlists by
+        TASK-3604 (ADR-307 rule 4): OPML folder names map to watchlists by
         case-insensitive match on the stripped name -- `"AI"` reuses `AI`
         rather than creating a duplicate the rail cannot tell apart. The
         membership SQL stays in `WatchlistBundleService`; this is the seam

@@ -53,7 +53,7 @@ class WatchlistOpmlService:
     def parse(self, xml_text: str) -> list[dict[str, Any]]:
         """Parse OPML XML into source create payloads, preserving folders.
 
-        ADR-043. An outline with NO feed URL whose descendants include feeds
+        ADR-307. An outline with NO feed URL whose descendants include feeds
         is a FOLDER: feeds below it carry its name under `"folder"` (raw --
         case-insensitive reuse is the assignment layer's job, not the
         parser's). Nested folders flatten to the innermost name. An outline
@@ -103,7 +103,7 @@ class WatchlistOpmlService:
                         }
                     )
                     # A feed's children inherit ITS context -- a feed is
-                    # never a folder (ADR-043 rule 3).
+                    # never a folder (ADR-307 rule 3).
                     walk(child, folder)
                 else:
                     # Folder candidate: its name becomes the context for its
@@ -120,7 +120,7 @@ class WatchlistOpmlService:
         watchlists: list[dict[str, Any]],
         unassigned: list[dict[str, Any]],
     ) -> str:
-        """Serialize watchlist structure to OPML 2.0 XML (ADR-043 rule 5).
+        """Serialize watchlist structure to OPML 2.0 XML (ADR-307 rule 5).
 
         One folder outline per watchlist (ordered case-insensitively by
         name) with its member feeds nested (same ordering); a source in

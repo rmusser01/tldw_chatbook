@@ -2065,7 +2065,7 @@ ChatScreen.-focus #console-workbench-header {
     padding: $ds-space-0;
 }
 
-/* Governed Console exchange capture surfaces (ADR-089). */
+/* Governed Console exchange capture surfaces (ADR-331). */
 #console-library-access {
     width: $ds-size-76;
     max-width: $ds-percent-96;

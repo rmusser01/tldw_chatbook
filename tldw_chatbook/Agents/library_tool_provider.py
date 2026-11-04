@@ -1,6 +1,6 @@
 """Descriptor-backed Console ToolProvider over `LocalLibraryToolService`.
 
-task-1337 / ADR-030/031/032. Synchronous `ToolProvider`: it runs on the
+task-1337 / ADR-298/031/032. Synchronous `ToolProvider`: it runs on the
 agent worker thread and delegates to the shared synchronous
 `LocalLibraryToolService`. Result mapping follows the spec's Console/MCP
 parity rule: a successful payload is JSON-serialized into

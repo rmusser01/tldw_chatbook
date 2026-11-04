@@ -5,7 +5,7 @@ Amended by: [ADR-210](210-console-region-ownership.md) (accepted 2026-10-01)
 Date: 2026-08-23
 Related Task: [TASK-21351](../tasks/task-21351%20-%20Add-activity-views-to-CtrlK-session-switcher.md)
 Related Spec: [Console session-switcher activity views design](../../Docs/superpowers/specs/2026-08-23-console-session-switcher-activity-views-design.md)
-Preserves: ADR-010, ADR-031, ADR-083
+Preserves: ADR-010, ADR-299, ADR-083
 
 ## Decision
 
@@ -83,10 +83,10 @@ The switcher owns bounded asynchronous History paging and validates modal,
 profile, mode, query, and generation before committing a result. Its complete
 geometry is capped at 35 terminal rows, result labels are exactly two rows, and
 Cancel is always pointer-accessible. F3 is a deliberate modal-scoped exception
-to ADR-031's general single-letter screen-action rule: it toggles the two
+to ADR-299's general single-letter screen-action rule: it toggles the two
 switcher modes without inserting text into the focused search input, matches
 the incumbent F2 modal action vocabulary, and is advertised only while it is
-implemented and active. ADR-031's reserved globals, terminal-convention keys,
+implemented and active. ADR-299's reserved globals, terminal-convention keys,
 truthful hints, and safe modal dismissal remain unchanged.
 
 Blank-query activation is a deliberate last-tab command: when another open
@@ -116,7 +116,7 @@ adds `Character chats` as a third `Ctrl+K` mode beside Active and History while
 preserving the switcher's operational ownership. Every ordinary open still
 starts in Active, and blank Active Enter retains MRU-other-tab behavior. F3
 remains the sole modal-local mode key and cycles Active → History → Character
-chats → Active under ADR-031. Character chats owns a separate per-visit query
+chats → Active under ADR-299. Character chats owns a separate per-visit query
 and searches only eligible local character conversations in the active Data
 Profile; it does not auto-widen into another corpus or admit Personas, server,
 or cached-server rows.
@@ -238,5 +238,5 @@ run.
 - [Approved design](../../Docs/superpowers/specs/2026-08-23-console-session-switcher-activity-views-design.md)
 - [Implementation plan](../../Docs/superpowers/plans/2026-08-23-task-21351-console-session-switcher-activity-views.md)
 - [ADR-010: Console conversation-local marks](010-console-conversation-local-marks.md)
-- [ADR-031: TUI keybinding and footer-hint conventions](031-tui-keybinding-and-footer-hint-conventions.md)
+- [ADR-299: TUI keybinding and footer-hint conventions](299-tui-keybinding-and-footer-hint-conventions.md)
 - [ADR-083: Console edge rails and workspace-owned conversation Tree](083-console-edge-rails-and-workspace-tree-ownership.md)

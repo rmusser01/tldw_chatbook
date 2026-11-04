@@ -11627,7 +11627,7 @@ def test_live_usage_two_fleet_streams_publish_pre_step_through_adapter(
     assert bridge._live_usage_owners == {}
 
 
-# --- ADR-147 Task 6B: `_StreamingModelAdapter.chat_call` honors the per-call
+# --- ADR-344 Task 6B: `_StreamingModelAdapter.chat_call` honors the per-call
 # routing kwargs Task 6 emits for a spawned child (`api_endpoint`, `model`,
 # `api_base_url`, and the 13 `_CHAT_CALL_PARAM_MAP` sampling kwargs) instead
 # of dropping them into `**_ignored`. ---

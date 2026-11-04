@@ -223,7 +223,7 @@ Engine fork at entry: realtime (opt-in `[realtime] enabled`) or the pipeline FSM
 
 ## Governing decisions
 
-ADR-023 (TTS adapter registry + audio.cpp runtime boundary), ADR-028 (character TTS profile ownership), ADR-039 (global and studio settings ownership), ADR-040 (Speech Lab current result/auto-play), ADR-050 (audio.cpp generated model setup), ADR-051 (private TTS clone references), ADR-012 (provider credentials), ADR-025 (shared STT artifacts). Note duplicate ADR numbers exist — cite by filename. User guides: `Docs/User_Guide/console/voice-and-hands-free.md`, `Docs/User_Guide/console/attachments-images-voice.md`, `Docs/Features/Speech-Services-Guide.md`.
+ADR-023 (TTS adapter registry + audio.cpp runtime boundary), ADR-294 (character TTS profile ownership), ADR-304 (global and studio settings ownership), ADR-306 (Speech Lab current result/auto-play), ADR-308 (audio.cpp generated model setup), ADR-051 (private TTS clone references), ADR-012 (provider credentials), ADR-025 (shared STT artifacts). Note duplicate ADR numbers exist — cite by filename. User guides: `Docs/User_Guide/console/voice-and-hands-free.md`, `Docs/User_Guide/console/attachments-images-voice.md`, `Docs/Features/Speech-Services-Guide.md`.
 
 ## Verified gotchas
 

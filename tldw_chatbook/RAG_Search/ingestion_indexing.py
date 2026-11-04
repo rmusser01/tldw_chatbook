@@ -4,7 +4,7 @@
 Ingestion-time RAG indexing.
 
 This module is the bridge between content ingestion and the local semantic
-RAG stack (ADR-005): whenever media is added or updated through
+RAG stack (ADR-288): whenever media is added or updated through
 ``MediaDatabase.add_media_with_keywords``, a post-commit hook enqueues the
 item for chunking -> embedding -> vector-store upsert on a background worker
 thread, so semantic/hybrid search finally has something to search.

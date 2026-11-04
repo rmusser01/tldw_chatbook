@@ -7,7 +7,7 @@ Amends: [ADR-038 File Notes Guarded Session Commit](038-file-notes-guarded-sessi
 Conforms to:
 [ADR-035 File Notes Session Git Index Controls](035-file-notes-session-git-index-controls.md),
 [ADR-033 Application Session State Ownership](033-application-session-state-ownership.md),
-[ADR-029 File Notes disk authority](029-file-notes-disk-authority.md),
+[ADR-296 File Notes disk authority](296-file-notes-disk-authority.md),
 [ADR-011 Chatbook Workbench UI System](011-chatbook-workbench-ui-system.md), and
 [ADR-029 Local Private Data Boundary](029-local-private-data-boundary.md)
 
@@ -427,7 +427,7 @@ remain in force.
 - [ADR-038](038-file-notes-guarded-session-commit.md)
 - [ADR-035](035-file-notes-session-git-index-controls.md)
 - [ADR-033](033-application-session-state-ownership.md)
-- [ADR-029 File Notes](029-file-notes-disk-authority.md)
+- [ADR-296 File Notes](296-file-notes-disk-authority.md)
 - [ADR-029 Local Private Data](029-local-private-data-boundary.md)
 - [ADR-011](011-chatbook-workbench-ui-system.md)
 - [TASK-1711](../tasks/task-1711%20-%20Add-guarded-exact-session-commit-push-to-File-Notes.md)

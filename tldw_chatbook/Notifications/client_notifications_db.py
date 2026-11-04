@@ -59,7 +59,7 @@ class ClientNotificationsDB(SQLiteStoreKernel, BaseDB):
 
     _CURRENT_SCHEMA_VERSION = 1
 
-    #: Dual connect owner (ADR-228): the file branch opens through
+    #: Dual connect owner (ADR-353): the file branch opens through
     #: BaseDB's db.base seam (this store's _open_connection override),
     #: while the :memory: branch connects directly under
     #: notifications.client -- which is also the store's participants
@@ -133,7 +133,7 @@ class ClientNotificationsDB(SQLiteStoreKernel, BaseDB):
         core_access(self)
         # Explicit BaseDB target: a bare super() now resolves to the kernel
         # (MRO), whose _get_connection calls _open_connection back -- the
-        # recursion this line caused before the explicit target (ADR-228
+        # recursion this line caused before the explicit target (ADR-353
         # provenance pattern).
         conn = BaseDB._get_connection(self)
         register_core_connection(self, conn)
@@ -167,7 +167,7 @@ class ClientNotificationsDB(SQLiteStoreKernel, BaseDB):
         return conn
 
     def _held_connection(self) -> sqlite3.Connection:
-        """Memory stores share the single cached connection (ADR-228 per-store
+        """Memory stores share the single cached connection (ADR-353 per-store
         ``:memory:`` policy); file stores take the kernel's held/liveness path.
         """
         if getattr(self, "is_memory_db", False):

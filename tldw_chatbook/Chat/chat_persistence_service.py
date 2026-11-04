@@ -2546,7 +2546,7 @@ class ChatPersistenceService:
     ) -> str | None:
         """Walk a copied row's saved parent up past saved System notes.
 
-        A fork copies only the USER/ASSISTANT chain (ADR-092 §2), so a saved
+        A fork copies only the USER/ASSISTANT chain (ADR-334 §2), so a saved
         SYSTEM row -- a promoted ``/help`` note, image-edit failure guidance --
         may sit between two copied rows. Only live ``system`` rows of the
         source conversation are skipped (TASK-33621.10); anything else stops

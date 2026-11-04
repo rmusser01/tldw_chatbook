@@ -5679,7 +5679,7 @@ class ConsoleSettingsModal(
         if not self._provider_uses_base_url(provider):
             return None
         if self._custom_endpoint_entry_for(provider) is not None:
-            # Gateway invariant (ADR-146 entry-URL authority): a blank session
+            # Gateway invariant (ADR-343 entry-URL authority): a blank session
             # base_url is what makes the entry URL authoritative on send.
             # The read-only displayed URL must never flow back into drafts,
             # readiness identities, or the saved settings.

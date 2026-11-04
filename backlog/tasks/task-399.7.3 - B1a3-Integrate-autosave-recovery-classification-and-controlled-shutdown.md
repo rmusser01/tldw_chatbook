@@ -45,8 +45,8 @@ durability, and reload/compare flows landed in the workbench
 (`tldw_chatbook/Widgets/Library/library_file_notes_workspace.py`; TASK-969,
 PR #992), but the deterministic interrupted-operation recovery classifier,
 recovery-only enumerate/verify/export access, and the app-owned
-controlled-shutdown barrier are ADR-021 machinery that ADR-029 rejected and
+controlled-shutdown barrier are ADR-021 machinery that ADR-296 rejected and
 that was never built. The genuine controlled-shutdown concern lives on in
 TASK-19561.
 
-Superseded by: ADR-029 (backlog/decisions/029-file-notes-disk-authority.md) via TASK-969 (PR #992).
+Superseded by: ADR-296 (backlog/decisions/296-file-notes-disk-authority.md) via TASK-969 (PR #992).

@@ -4,7 +4,7 @@ Date: 2026-09-27
 Status: Accepted by the user with written-spec approval on 2026-09-27
 Task: [TASK-33096](../tasks/task-33096%20-%20Design-structured-document-validation-and-formatting-across-Chatbook-and-server-Notes.md)
 Spec: [Structured document editing](../../Docs/superpowers/specs/2026-09-27-structured-document-editing-design.md)
-Extends: ADR-027, ADR-029, ADR-073 without changing their save-authority boundaries
+Extends: ADR-293, ADR-296, ADR-073 without changing their save-authority boundaries
 
 ## Context
 

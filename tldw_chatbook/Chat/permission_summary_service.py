@@ -1,4 +1,4 @@
-"""ADR-090: external fast-LLM summaries for Console approval rounds.
+"""ADR-332: external fast-LLM summaries for Console approval rounds.
 
 Advisory-only by construction: this module resolves config, builds one
 bounded prompt per approval round, and returns a normalized line of text
@@ -47,7 +47,7 @@ class PermissionSummaryResolution:
             for keyless local providers.
         model: Configured model, or None to let the provider default apply.
         timeout_seconds/max_tokens/tail_max_chars/system_prompt: Call
-            parameters; defaults per ADR-090.
+            parameters; defaults per ADR-332.
     """
 
     mode: str
@@ -132,7 +132,7 @@ def build_messages_tail(
 ) -> list[dict[str, str]]:
     """Project stored conversation messages into the bounded summary tail.
 
-    ADR-090 egress bound: user/assistant visible text ONLY -- tool results,
+    ADR-332 egress bound: user/assistant visible text ONLY -- tool results,
     system messages, and anything else never egress. Newest messages are
     kept; the oldest are dropped first once the budget is exceeded. Every
     retained message is HARD-capped at ``tail_max_chars`` (Qodo review #5):
@@ -196,7 +196,7 @@ def pending_calls_info_from_payload(
 #: Qodo review #8: aggregate cap on the tool section of the summarizer
 #: prompt. Per-row caps (descriptions, redacted argument summaries) bound
 #: each row, but a large batch could still egress unboundedly in total --
-#: the whole point of the ADR-090 bounded-egress design.
+#: the whole point of the ADR-332 bounded-egress design.
 TOOL_PROMPT_MAX_CHARS = 6000
 
 
@@ -257,7 +257,7 @@ def summarize_pending_round(
     pending_calls_info: list[dict[str, str]],
     call_fn: Callable[..., Any] = chat_api_call,
 ) -> Optional[str]:
-    """One advisory summary for one approval round; never raises (ADR-090).
+    """One advisory summary for one approval round; never raises (ADR-332).
 
     Args:
         resolution: An ACTIVE resolution (inactive -> None, no call).

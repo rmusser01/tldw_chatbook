@@ -119,7 +119,7 @@ def _heavy_task(self):
 **New Screen/Destination**:
 1. Create a `BaseAppScreen` subclass in `UI/Screens/`
 2. Add a route entry in `UI/Navigation/screen_registry.py` (`_SCREEN_ROUTES`; add a TAB_X constant if shared)
-3. For a shell destination: extend `SHELL_DESTINATION_ORDER` + `SHELL_DESTINATION_SHORTCUTS` in `shell_destinations.py` (lockstep, ADR-031/152)
+3. For a shell destination: extend `SHELL_DESTINATION_ORDER` + `SHELL_DESTINATION_SHORTCUTS` in `shell_destinations.py` (lockstep, ADR-299/152)
 4. Add `@on(...)` handlers / workers on the screen
 
 **New Tool**:
@@ -221,14 +221,14 @@ variable is unset, which means off.
 - SSH workspace bindings reuse the Console file authority model: `ssh-filesystem` roots are `fs_*`-only (family B read_file/write_file/list_directory/edit_file stays local-only), status/availability per binding comes from the in-memory cache, and each call runs a transient stdlib worker over ssh (nothing installed on the server) — see ADR-181.
 
 ### Console Run Hooks
-- User-configured external commands at six lifecycle events (UserPromptSubmit, PreToolUse, PostToolUse, ApprovalRequested, Stop, SubagentStop); config: `[hooks]` in config.toml (ADR-148).
+- User-configured external commands at six lifecycle events (UserPromptSubmit, PreToolUse, PostToolUse, ApprovalRequested, Stop, SubagentStop); config: `[hooks]` in config.toml (ADR-345).
 - Deny-only: hooks can refuse tool calls but never bypass the permission store; PreToolUse fails closed, UserPromptSubmit fails open; argv-list commands only, process-group timeout kill.
 
 ### Console Project Instructions
 - `AGENTS.override.md` / `AGENTS.md` startup and lazy nested guidance is untrusted, ephemeral user context bounded by one selected local-filesystem binding; it never grants tool permission.
 - Registry ownership and path targets feed one shared activation ledger before normal tool review; read-only bindings do not advertise mutating tools.
 - UI, persistence, and logs keep automatic bodies out of metadata surfaces; the explicit disposable Context **Next Send** preview is the only automatic UI body view.
-- Governance: `backlog/decisions/069-console-project-instruction-local-state-and-preflight.md` and `Docs/superpowers/specs/2026-08-20-agents-md-support-design.md`.
+- Governance: `backlog/decisions/317-console-project-instruction-local-state-and-preflight.md` and `Docs/superpowers/specs/2026-08-20-agents-md-support-design.md`.
 
 ### Config Encryption
 - AES-256 with PBKDF2
@@ -260,7 +260,7 @@ variable is unset, which means off.
 ### Workspace Assistant Defaults
 - Explicit workspaces carry reference-backed `assistant_defaults` (persona + permission profile); Default/global stay unset.
 - Persona policy rules narrow only (deny-by-default advertising, ask floors, per-run call caps); profiles inherit unset keys from `default`; all existing gates/floors apply first.
-- Governance: `backlog/decisions/079-workspace-assistant-defaults.md` and `Docs/superpowers/specs/2026-08-29-workspace-assistant-defaults-design.md`.
+- Governance: `backlog/decisions/325-workspace-assistant-defaults.md` and `Docs/superpowers/specs/2026-08-29-workspace-assistant-defaults-design.md`.
 
 ## Project-Specific Gotchas
 
@@ -269,12 +269,12 @@ variable is unset, which means off.
 3. **Schema migrations** - Always increment version, add to migrations/
 4. **Optional deps** - Check with `optional_deps.py` before importing
 5. **Thread safety** - Use transaction() context manager
-6. **Route ids** - TAB_* constants must match `screen_registry.py` routes; shell destinations move in lockstep with their shortcuts (ADR-031/152)
+6. **Route ids** - TAB_* constants must match `screen_registry.py` routes; shell destinations move in lockstep with their shortcuts (ADR-299/152)
 7. **Streaming** - Always offer non-streaming fallback
 8. **FTS5** - Triggers auto-update on text columns
 9. **Workers** - Mark exclusive=True to prevent duplicates
 10. **Reactive** - recompose=True rebuilds, default just refreshes
-11. **Keybindings** - Screens must not bind terminal-convention keys (ctrl+c/v/x/s/d/z/a/r/w) or shadow the globals ctrl+p/ctrl+q/f1/f6; screen actions use single-letter htop-style bindings; footer hints may only advertise implemented actions — see `backlog/decisions/031-tui-keybinding-and-footer-hint-conventions.md`
+11. **Keybindings** - Screens must not bind terminal-convention keys (ctrl+c/v/x/s/d/z/a/r/w) or shadow the globals ctrl+p/ctrl+q/f1/f6; screen actions use single-letter htop-style bindings; footer hints may only advertise implemented actions — see `backlog/decisions/299-tui-keybinding-and-footer-hint-conventions.md`
 
 ## File Reference
 

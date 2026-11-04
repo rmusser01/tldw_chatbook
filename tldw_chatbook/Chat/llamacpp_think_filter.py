@@ -4,7 +4,7 @@ Qwen-family chat templates emit thinking at the very start of the response
 (an empty ``<think>\n\n</think>`` prefix appears in no-think mode on some
 generations). Only a think block that opens at the beginning of the stream
 is split; a literal ``<think>`` mid-reply remains visible content. See
-ADR-066 and ADR-090.
+ADR-311 and ADR-090.
 """
 
 from __future__ import annotations
@@ -269,5 +269,5 @@ class StartAnchoredThinkFilter:
             raise
 
     def flush(self) -> str:
-        """Drop an unterminated thinking tail, preserving ADR-066 privacy."""
+        """Drop an unterminated thinking tail, preserving ADR-311 privacy."""
         return self._splitter.flush().content

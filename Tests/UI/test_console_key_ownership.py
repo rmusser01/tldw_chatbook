@@ -7,7 +7,7 @@ contract:
 * TASK-33622.3 (G4-12) -- a printable key typed while a status-strip, rail or
   header control had focus was dropped, and the screen's bare ``y`` binding
   opened the full-screen Trace from any of them (the rest of the sentence then
-  ran as Trace commands). Owner ruling 2026-10-27, recorded as an ADR-031
+  ran as Trace commands). Owner ruling 2026-10-27, recorded as an ADR-299
   refinement: single-letter screen actions fire only from the transcript (the
   announced list mode); elsewhere a printable key that no binding claims types
   into the composer.
@@ -492,7 +492,7 @@ async def test_y_from_the_transcript_still_opens_trace_and_f1_lists_it():
     assert "y" in transcript_keys, transcript_keys
     assert "trace" in transcript_keys["y"].lower()
     # The general footer no longer advertises a key that only the
-    # transcript honours (ADR-031 rule 4).
+    # transcript honours (ADR-299 rule 4).
     assert ("Y", "trace") not in CONSOLE_WORKBENCH_SHORTCUTS
 
 

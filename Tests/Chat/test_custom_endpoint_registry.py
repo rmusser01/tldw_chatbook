@@ -180,7 +180,7 @@ def test_entry_mutation_round_trips_params():
 def test_entry_credential_keeps_adr146_order_variable_reference_then_stored_key(
     exported, expected
 ):
-    # TASK-36941.3: the owner kept ADR-146's order for custom endpoints
+    # TASK-36941.3: the owner kept ADR-343's order for custom endpoints
     # (2026-10-26). The variable is one the user named on the entry, so it
     # outranks the entry's stored key; the engine presets' ADR-012 order
     # does not apply here. Fake keys; the assertion compares names only.

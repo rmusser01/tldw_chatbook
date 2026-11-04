@@ -334,7 +334,7 @@ First minor release cut from eight weeks of dev work since 0.1.8.x. Highlights:
 - Rejected, unreachable dictation-history implementations removed:
   `Audio/transcription_history.py`, `Widgets/transcription_history_viewer.py`,
   and `UI/Dictation_Window.py`.
-- Legacy navigation chrome retired (ADR-014, as amended on rebase): the permanently
+- Legacy navigation chrome retired (ADR-290, as amended on rebase): the permanently
   occluded `TitleBar` and the `TabBar`/`TabLinks`/`TabDropdown` legacy nav widgets are
   deleted, along with the dead `general.use_dropdown_navigation` /
   `general.use_link_navigation` config switches. Users who set those options lose nothing
@@ -398,7 +398,7 @@ First minor release cut from eight weeks of dev work since 0.1.8.x. Highlights:
   create/update validates the template body (stored-invalid rows stay listed
   with a flag and editable, but are refused at apply with a named error).
   **Once a media DB has been migrated to v7, downgrade is impossible** — v7
-  voids ADR-073's revert net for the chunking store. Back up the media DB
+  voids ADR-318's revert net for the chunking store. Back up the media DB
   before updating if you may need to return to an older build.
 - **Chunking templates govern local ingestion (chunking-template-parity).**
   A resolved template's chunk-stage options now take precedence over the

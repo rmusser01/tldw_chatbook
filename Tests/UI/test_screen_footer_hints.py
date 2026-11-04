@@ -505,7 +505,7 @@ def test_library_note_footer_shortcut_contract_is_exact():
 async def test_settings_registration_updates_the_screens_own_footer():
     """task-264 review Important: Settings' footer hints must reach its own
     footer via registration. task-1340: the advertised set is per-category
-    (ADR-031) -- the default Overview category supports no s/r/t action, so
+    (ADR-299) -- the default Overview category supports no s/r/t action, so
     none are advertised; switching to Providers & Models (which implements
     save, revert, AND test) advertises all three."""
     from tldw_chatbook.UI.Screens.settings_screen import SettingsScreen

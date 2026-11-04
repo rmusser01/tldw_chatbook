@@ -1,6 +1,6 @@
-"""File Notes replica retention bounds (task-34382, ADR-218).
+"""File Notes replica retention bounds (task-34382, ADR-351).
 
-Without retention the ADR-029 replica grows forever: one checkpoint per
+Without retention the ADR-296 replica grows forever: one checkpoint per
 editing session per protected file, and tombstones that outlive the deletion
 by years. These tests pin the bounded policy — per-note checkpoint cap,
 30-day tombstone/revision expiry, and the two things never evicted
@@ -167,7 +167,7 @@ def test_protected_checkpoints_are_capped_but_never_expire(replica: FileNotesRep
     """The cap applies to protected paths; the age cutoff never does.
 
     PR #3016 review finding 14: exempting protected paths from the cap left
-    exactly the unbounded growth ADR-218 describes, because protected saves
+    exactly the unbounded growth ADR-351 describes, because protected saves
     are the only writer of ``pre_edit`` revisions. The Consequences line
     ("up to 50 sessions") is the contract; this pins both halves of it:
     the cap counts a protected path's fresh checkpoints, while stale ones

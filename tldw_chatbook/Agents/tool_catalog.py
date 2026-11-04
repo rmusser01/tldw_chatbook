@@ -218,12 +218,12 @@ def build_spawn_schema(
 
     With no definitions AND the override gate closed, returns
     ``SPAWN_TOOL_SCHEMA`` itself (identity — byte-identical payloads for
-    every pre-ADR-147 caller). With definitions, adds an OPTIONAL ``agent``
+    every pre-ADR-344 caller). With definitions, adds an OPTIONAL ``agent``
     parameter carrying both an ``enum`` (native tool-calling) and a prose
     roster in the description (fence-protocol models read prose better than
     schema; this text rides every fence-model turn, which is why
     AgentDefinition.description is hard-capped). A definition that sets
-    ``provider`` or ``model`` (ADR-147) gets its roster line suffixed with
+    ``provider`` or ``model`` (ADR-344) gets its roster line suffixed with
     ``(runs on <provider> / <model>)`` so the master can SEE the preset's
     routing; an unrouted definition's line is unchanged.
 
@@ -302,7 +302,7 @@ def build_chat_create_schema(
 ) -> ToolSchema:
     """A chat-creation tool's schema for THIS run (TASK-32874).
 
-    Mirrors ``build_spawn_schema``'s ADR-147 pattern: returns ``base``
+    Mirrors ``build_spawn_schema``'s ADR-344 pattern: returns ``base``
     itself when there is nothing to add (byte-identical disclosure for
     every pre-routing caller). Adds an OPTIONAL ``preset`` string arg --
     enum + prose roster -- when named definitions carry routing
@@ -369,7 +369,7 @@ def build_chat_create_schema(
 
 
 def _spawn_roster_line(d: AgentDefinition) -> str:
-    """One roster line; ADR-147 routing suffix only when routed."""
+    """One roster line; ADR-344 routing suffix only when routed."""
     line = f"- {d.name} — {d.description}" if d.description else f"- {d.name}"
     if d.provider or d.model:
         line += f" (runs on {d.provider or 'parent'} / {d.model or 'default model'})"

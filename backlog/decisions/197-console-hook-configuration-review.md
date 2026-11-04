@@ -6,10 +6,10 @@ Amended by: [ADR-210](210-console-region-ownership.md) (accepted 2026-10-01)
 Task: [TASK-33151](../tasks/task-33151%20-%20Design-Console-hook-settings-and-persistent-review.md)
 Spec: [Console hook settings and review](../../Docs/superpowers/specs/2026-09-27-console-hook-settings-and-review-design.md)
 Implementation: [TASK-33163](../tasks/task-33163%20-%20Add-Console-hook-settings-and-consent-review.md), [plan](../../Docs/superpowers/plans/2026-09-27-console-hook-settings-and-review.md)
-Extends: [ADR-148](148-console-run-hooks.md)
-Follows: [ADR-033](033-settings-commit-models-three-honestly-labeled.md),
+Extends: [ADR-345](345-console-run-hooks.md)
+Follows: [ADR-303](303-settings-commit-models-three-honestly-labeled.md),
 [ADR-029](029-local-private-data-boundary.md),
-[ADR-069](069-console-project-instruction-local-state-and-preflight.md), and
+[ADR-317](317-console-project-instruction-local-state-and-preflight.md), and
 [ADR-150](150-design-token-system-and-design-language.md)
 
 ## Context
@@ -59,7 +59,7 @@ An editor-only or screen-only gate would leave shared/background execution open.
    existing bounded queues. Already launched processes retain timeout/shutdown
    ownership. Cancelled modal generations cannot resume a Send or overwrite a
    newer revocation.
-6. Preserve ADR-148's six-event, argv-only, user-scope, deny-only protocol and its
+6. Preserve ADR-345's six-event, argv-only, user-scope, deny-only protocol and its
    execution-error semantics. Consent is an earlier admission requirement, not a
    tool permission grant or executable-content signature. Project instructions
    cannot approve hooks. Managed plugins and v2 effects remain governed by
@@ -101,7 +101,7 @@ enforcement boundary; this store follows the existing local permission-store mod
 The linked spec defines modal actions, legacy identity migration, draft custody,
 revocation limits, concurrency, and verification. The user reviewed the written spec
 positively on 2026-09-27 and requested an audit before continuing; the resulting
-clarifications preserve the approved layout and feature scope. ADR-148 remains
+clarifications preserve the approved layout and feature scope. ADR-345 remains
 authoritative
 for hook execution after consent; its accepted text is not rewritten.
 

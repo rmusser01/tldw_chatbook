@@ -35,7 +35,7 @@ shows **Saving…** and is disabled; repeated button or direct Save actions reta
 the original operation instead of cancelling a waiter whose SQLite thread may
 still commit. Validation errors, server refusals and failed writes keep the draft
 open and restore Save for retry. Successful local saves and offline server saves
-retain the service's `saved` and `queued` outcomes respectively (ADR-018).
+retain the service's `saved` and `queued` outcomes respectively (ADR-291).
 
 Completion acknowledges the submitted raw form snapshot. Newer editable values
 keep the form open and dirty; an unchanged successful form still closes. A
@@ -55,7 +55,7 @@ Mark all read batch. Admission captures the selected result and its definition,
 or the scope's current unread IDs; cursor movement, refreshed definition lookups,
 and later arrivals cannot retarget it. A batch retains the existing per-row
 success/failure count and failed rows remain unread for retry. Review-plus-outbox
-transactions and each row's owner still belong to `SchedulingService` (ADR-018).
+transactions and each row's owner still belong to `SchedulingService` (ADR-291).
 
 Reminder bulk toggle and confirmed deletion share one synchronous workbench
 admission before worker submission. The batch freezes each row's ID and owner,
@@ -65,7 +65,7 @@ settle; cursor navigation remains available. Completion removes only the capture
 marks and preserves the existing per-row success/refusal/failure counts. Worker
 submission failure retains marks for retry, and every settlement releases
 admission. Service ownership, transfer guards and offline outcomes remain under
-ADR-018; this screen-local guard does not establish physical cancellation of a
+ADR-291; this screen-local guard does not establish physical cancellation of a
 remote request or extend the batch lifetime beyond the workbench.
 
 Full reminder-form Saves use named, non-exclusive mutation workers (TASK-37032).
@@ -89,7 +89,7 @@ allowlist and serialize datetimes as ISO strings. The computed local `next_run_a
 remains in SQLite rather than being replayed to the strict server update method.
 Partial payloads and explicit nulls retain their shape. The pending mutation's
 top-level idempotency metadata still belongs to `ScheduledTasksDB` and is stripped
-only by the existing client seam, as ADR-018 requires. Private mounted controls
+only by the existing client seam, as ADR-291 requires. Private mounted controls
 exercise durable offline queues and reminder sync replay through the real
 `SchedulingServerClient` and `ServerNotificationsService` request schema with a
 controlled API transport; retry, schema and conflict policies are unchanged.
@@ -141,7 +141,7 @@ Specs: `Docs/superpowers/specs/2026-09-14-workflows-authoring-compatibility.md`,
 
 ## Governing decisions
 
-ADR-018 (`018-local-server-hybrid-scheduled-tasks.md`), ADR-019 (watchlist scheduler migration), ADR-077 (`077-server-offloaded-scheduled-agent-tasks.md`), ADR-099 (`099-schedule-editor-shape.md`), ADR-112 (`112-per-task-schedule-ownership-transfer.md`), ADR-116 (`116-schedules-inspector-editing.md`), ADR-138 (workflow definitions and session execution), ADR-196 (`196-dreams-daily-discovery-and-tracking.md`; Dreams discovery/tracking). User guide: `Docs/User_Guide/schedules.md` (the authoritative behavior copy for liveness, preflight, incidents, lateness, run-now, transfers, timeouts).
+ADR-291 (`291-local-server-hybrid-scheduled-tasks.md`), ADR-019 (watchlist scheduler migration), ADR-077 (`077-server-offloaded-scheduled-agent-tasks.md`), ADR-339 (`339-schedule-editor-shape.md`), ADR-112 (`112-per-task-schedule-ownership-transfer.md`), ADR-116 (`116-schedules-inspector-editing.md`), ADR-138 (workflow definitions and session execution), ADR-196 (`196-dreams-daily-discovery-and-tracking.md`; Dreams discovery/tracking). User guide: `Docs/User_Guide/schedules.md` (the authoritative behavior copy for liveness, preflight, incidents, lateness, run-now, transfers, timeouts).
 
 ## Verified gotchas
 
@@ -160,4 +160,4 @@ Held occurrences do not enter the run ledger or advance their due clock.
 
 ## Inline reminder edit ownership
 
-Each Frequency edit captures its reminder ID, field and submitted value. Its exclusive workbench worker is scoped to that reminder and field, so changing another reminder cannot cancel the first save. Same-reminder later intent keeps the existing supersession behavior; cancelling a client await does not imply remote rollback. Completion refreshes authoritative data. It only clears or paints the inline error when the reused detail row still belongs to the captured reminder; a failure after selection moves is reported as an earlier edit failure instead of overwriting the current row (TASK-36728; ADR-018, Proposed ADR-116 context).
+Each Frequency edit captures its reminder ID, field and submitted value. Its exclusive workbench worker is scoped to that reminder and field, so changing another reminder cannot cancel the first save. Same-reminder later intent keeps the existing supersession behavior; cancelling a client await does not imply remote rollback. Completion refreshes authoritative data. It only clears or paints the inline error when the reused detail row still belongs to the captured reminder; a failure after selection moves is reported as an earlier edit failure instead of overwriting the current row (TASK-36728; ADR-291, Proposed ADR-116 context).

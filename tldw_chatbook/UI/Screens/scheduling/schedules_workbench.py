@@ -450,7 +450,7 @@ class SchedulesWorkbench(BaseAppScreen):
     ]
 
     # Footer hints must stay 1:1 with BINDINGS (minus escape, which needs
-    # no advertising) and only advertise implemented actions (ADR-031).
+    # no advertising) and only advertise implemented actions (ADR-299).
     # Single letters are safe: focused inputs consume printable keys
     # before screen bindings fire.
     SCHEDULES_SHORTCUTS = (

@@ -9,7 +9,7 @@ provider boundary.
 Path safety has TWO layers, and both are mandatory (TASK-19551):
 
 1. **Confinement** to the configured ``[console] workspace_root``
-   (ADR-032), enforced by ``validate_path`` inside
+   (ADR-300), enforced by ``validate_path`` inside
    ``resolve_workspace_path`` — the single choke point every path-taking
    function here (and in ``patch_tool_impls``/``git_tool_impls``) funnels
    through.
@@ -201,7 +201,7 @@ def resolve_workspace_path(
     Two checks, in order:
 
     1. **Confinement** (``validate_path``). Hidden components (``.github/``,
-       ``.gitignore``) are allowed under the root, per ADR-032: a coding
+       ``.gitignore``) are allowed under the root, per ADR-300: a coding
        agent that cannot read a repository's dotfile configuration is
        useless, and the ADR adopted ``allow_hidden`` for exactly this
        family. That parameter is deliberately KEPT — dotted names are how
@@ -1370,9 +1370,9 @@ def glob_files(
     """Match ``pattern`` under the workspace, newest-mtime first, capped.
 
     Paths in the result are workspace-relative. Hidden files/dirs under the
-    root ARE matched (workspace policy, ADR-032). Matches that escape the
+    root ARE matched (workspace policy, ADR-300). Matches that escape the
     root via ``..`` pattern segments are excluded (lexical check only —
-    symlinks are not resolved, per ADR-032 review). Denylisted matches are
+    symlinks are not resolved, per ADR-300 review). Denylisted matches are
     excluded too (TASK-19551): under a home-rooted workspace ``**/*`` would
     otherwise report ``.ssh/id_rsa`` back to the model by name.
 

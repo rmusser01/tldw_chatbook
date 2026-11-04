@@ -398,7 +398,7 @@ async def test_settings_f6_pressed_mid_category_swap_lands_in_the_new_panes(requ
 
 
 def test_settings_binds_only_shift_f6_and_leaves_f6_to_the_app():
-    """TASK-33001.4 + task-32943: F6 is app-global (ADR-031 rule 1) and
+    """TASK-33001.4 + task-32943: F6 is app-global (ADR-299 rule 1) and
     reaches Settings through ``action_focus_next_workbench_pane``; a screen
     ``f6`` binding would shadow it. Exactly one ``shift+f6`` -- the merge of
     both F6 implementations once auto-merged two identical entries."""

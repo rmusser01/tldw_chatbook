@@ -233,7 +233,7 @@ def _chat_with_openai_compatible_local_server(
     if user_identifier is not None:
         payload["user"] = user_identifier
 
-    # ADR-066: merge the provider-specific thinking-control wire fields
+    # ADR-311: merge the provider-specific thinking-control wire fields
     # (chat_template_kwargs / reasoning_budget_tokens / reasoning_effort)
     # selected by the caller's execution key.
     if thinking_wire_key and (
@@ -606,7 +606,7 @@ def chat_with_local_llm(
         stop: Stop sequence(s).
         response_format: Optional response format constraint (e.g. JSON).
         reasoning_effort: Thinking level for reasoning-capable models,
-            composed into the request per ADR-066 (verbatim where the
+            composed into the request per ADR-311 (verbatim where the
             target consumes it, dropped where a strict chat template
             would reject it).
         thinking_budget_tokens: Max thinking tokens; sent as the
@@ -615,7 +615,7 @@ def chat_with_local_llm(
         api_base_url: Request-pinned endpoint override; provider config
             is the fallback.
         provider_name: Provider key for dynamic config lookup; also
-            drives ADR-066 thinking wire composition.
+            drives ADR-311 thinking wire composition.
         chat_template_kwargs: Reviewed template options selected by the caller.
 
     Returns:
@@ -784,7 +784,7 @@ def chat_with_llama(
         stop: Stop sequence(s).
         response_format: Optional response format constraint (e.g. JSON).
         reasoning_effort: Thinking level for reasoning-capable models,
-            composed into the request per ADR-066 (verbatim where the
+            composed into the request per ADR-311 (verbatim where the
             target consumes it, dropped where a strict chat template
             would reject it).
         thinking_budget_tokens: Max thinking tokens; sent as the
@@ -793,7 +793,7 @@ def chat_with_llama(
         api_base_url: Request-pinned endpoint override; provider config
             is the fallback.
         provider_name: Provider key for dynamic config lookup; also
-            drives ADR-066 thinking wire composition.
+            drives ADR-311 thinking wire composition.
         chat_template_kwargs: Reviewed template options selected by the caller.
         api_key_resolved: Whether the caller made the final credential decision,
             including an explicitly keyless endpoint.
@@ -1577,7 +1577,7 @@ def chat_with_vllm(
         stop: Stop sequence(s).
         response_format: Optional response format constraint (e.g. JSON).
         reasoning_effort: Thinking level for reasoning-capable models,
-            composed into the request per ADR-066 (verbatim where the
+            composed into the request per ADR-311 (verbatim where the
             target consumes it, dropped where a strict chat template
             would reject it).
         thinking_budget_tokens: Max thinking tokens; sent as the
@@ -1586,7 +1586,7 @@ def chat_with_vllm(
         api_base_url: Request-pinned endpoint override; provider config
             is the fallback.
         provider_name: Provider key for dynamic config lookup; also
-            drives ADR-066 thinking wire composition.
+            drives ADR-311 thinking wire composition.
         chat_template_kwargs: Reviewed template options selected by the caller.
         api_key_resolved: Whether the caller made the final credential decision,
             including an explicitly keyless endpoint.
@@ -2093,7 +2093,7 @@ def chat_with_custom_openai(
         stop: Stop sequence(s).
         response_format: Optional response format constraint (e.g. JSON).
         reasoning_effort: Thinking level for reasoning-capable models,
-            composed into the request per ADR-066 (verbatim where the
+            composed into the request per ADR-311 (verbatim where the
             target consumes it, dropped where a strict chat template
             would reject it).
         thinking_budget_tokens: Max thinking tokens; sent as the
@@ -2282,7 +2282,7 @@ def chat_with_custom_openai_2(
         stop: Stop sequence(s).
         response_format: Optional response format constraint (e.g. JSON).
         reasoning_effort: Thinking level for reasoning-capable models,
-            composed into the request per ADR-066 (verbatim where the
+            composed into the request per ADR-311 (verbatim where the
             target consumes it, dropped where a strict chat template
             would reject it).
         thinking_budget_tokens: Max thinking tokens; sent as the

@@ -940,7 +940,7 @@ class NoteEditorTextArea(DetachSafeTextArea):
 
     #: TASK-34000.11: the keys the open ``[[`` picker owns. Up/Down move its
     #: highlight, Enter/Tab accept, Escape dismisses -- routed to the owning
-    #: screen as ``LinkPickerKey`` (ADR-031: routed, not bound), and never
+    #: screen as ``LinkPickerKey`` (ADR-299: routed, not bound), and never
     #: a printable key, so typing keeps narrowing.
     LINK_PICKER_KEYS: ClassVar[frozenset[str]] = frozenset(
         {"up", "down", "enter", "escape", "tab"}

@@ -18953,7 +18953,7 @@ DELETE FROM keywords
         TASK-34000.11 (AC#2): besides the ``(note://<id>)`` tails, a bare
         ``[[Title]]``/``[[Title|alias]]`` outside a code span records an edge
         when ``_resolve_note_titles`` finds exactly one live note with that
-        title. The body is NEVER modified here (ADR-027): identity is derived
+        title. The body is NEVER modified here (ADR-293): identity is derived
         at write time, the text stays as typed, and a note saved before this
         rule picks its typed-link edges up on its next save. Import bodies
         get the same rule through the executor's call, so a vault note that

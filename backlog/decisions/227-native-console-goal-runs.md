@@ -53,7 +53,7 @@ requirement to build CLI support or postpone verification first.
    existing permissions; they do not grant them. Enforce the goal's scope on
    catalog tools, runtime callbacks and progressive loading at both schema and
     invocation boundaries. Automatically loaded project instruction bodies
-    retain their ephemeral ownership under ADR-069.
+    retain their ephemeral ownership under ADR-317.
     Additional selected source bindings must provide usable, bounded read-only
     context or file reads through the existing permission owner. They never
     widen write authority beyond the primary writable binding, and unselected
@@ -90,7 +90,7 @@ requirement to build CLI support or postpone verification first.
    rerun, preserving outputs and diffs. Workflows may later invoke the same
    service through an advertised target capability; that does not establish
    portable/server support or change ADR-138's control-flow roadmap.
-10. Reuse current execution services and grants. ADR-033's restriction on a
+10. Reuse current execution services and grants. ADR-302's restriction on a
     particular native raw-shell interface is not a ban on CLI execution.
     Repository commit/worktree automation needs explicit checkpoint policy;
     it does not require adding basic CLI support. Existing shadow snapshots
@@ -153,14 +153,14 @@ or integration and add the accepted decision to the ADR index at that point.
 
 ## Related decisions
 
-- [Local tool permissions](032-local-agent-tool-permission-boundary.md)
-- [Local process boundary](033-local-agent-process-execution-boundary.md)
+- [Local tool permissions](300-local-agent-tool-permission-boundary.md)
+- [Local process boundary](302-local-agent-process-execution-boundary.md)
 - [Existing skill subprocess execution](../../tldw_chatbook/Skills_Interop/skill_script_runner.py)
 - [Existing agent script dispatch](../../tldw_chatbook/Chat/console_agent_bridge.py)
 - [Existing MCP executable transport](../../tldw_chatbook/MCP/client.py)
 - [Provider continuation](063-hosted-provider-wire-and-durable-tool-continuation.md)
-- [Human approval waits](067-indefinite-human-approval-waits.md)
-- [Project instruction ownership](069-console-project-instruction-local-state-and-preflight.md)
+- [Human approval waits](314-indefinite-human-approval-waits.md)
+- [Project instruction ownership](317-console-project-instruction-local-state-and-preflight.md)
 - [Budget accounting](131-durable-agent-budget-accounting.md)
 - [Automatic admission](134-fleet-admission-and-automatic-work-budgets.md)
 - [Automatic recovery](135-fleet-completion-delivery-and-crash-recovery.md)
@@ -188,7 +188,7 @@ allowance or fleet-policy substitution is permitted.
 
 Selected source bindings use current admitted local roots and the workspace-tool
 executor, preserving exclusions, revocation, read-before-write and worker cleanup.
-They remain read-only data; primary writes and ADR-069 instruction ownership are
+They remain read-only data; primary writes and ADR-317 instruction ownership are
 unchanged. UI composes current ADR-150/161 tokens and canonical Settings/draft
 owners without raising size or visual governance ceilings.
 

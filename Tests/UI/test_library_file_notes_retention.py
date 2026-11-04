@@ -1,4 +1,4 @@
-"""Workspace invocation of replica retention (task-34382, ADR-218).
+"""Workspace invocation of replica retention (task-34382, ADR-351).
 
 The retention policy itself is pinned in ``Tests/Notes/test_file_notes_retention.py``;
 these tests pin the two invocation seams the AC names -- cleanup runs when the

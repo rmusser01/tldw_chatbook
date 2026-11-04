@@ -47,7 +47,7 @@ stay service-level concerns the board does not touch yet. A thin adapter
 sides — the view-models and widgets stay store-agnostic, so a future
 server-backed or mixed board swaps the adapter, not the UI.
 
-**Keyboard: ADR-031 reconciliation.** The upstream `q`/`ctrl+q` quit
+**Keyboard: ADR-299 reconciliation.** The upstream `q`/`ctrl+q` quit
 bindings are dropped (app-global `ctrl+q` owns quit; the destination's
 own hotkey owns navigation). Kept from upstream: arrows (+ hidden
 `hjkl`), `shift+h`/`shift+l` move the selected card between adjacent
@@ -82,7 +82,7 @@ client, and the board needs no changes to surface them.
 
 - `UI/Kanban/` is a new UI package with its own tests; registration
   follows the lockstep rules (TAB_KANBAN ↔ `_SCREEN_ROUTES` ↔
-  `SHELL_DESTINATION_ORDER` + `SHELL_DESTINATION_SHORTCUTS`, ADR-031/152).
+  `SHELL_DESTINATION_ORDER` + `SHELL_DESTINATION_SHORTCUTS`, ADR-299/152).
 - The vendored code is adapted, not copied verbatim: view-models drop
   markdown-project fields (paths, orchestration queue, run history) in
   favor of kanban card fields; refresh runs as an exclusive async worker

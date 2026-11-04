@@ -1,5 +1,5 @@
 # Tests/Agents/test_agent_routing_integration.py
-"""Spawn routing integration (ADR-147, TASK-32477 Task 6): the Task 5 pure
+"""Spawn routing integration (ADR-344, TASK-32477 Task 6): the Task 5 pure
 resolver wired into ``AgentService``'s spawn path.
 
 A spawned child can now run on a DIFFERENT provider/model than its parent
@@ -399,7 +399,7 @@ def test_inheriting_child_of_custom_ep_parent_snapshots_endpoint_not_family(db):
 
 
 def test_spawn_without_raw_identity_keeps_legacy_family_inheritance(db):
-    """The fallback is unchanged: no ``parent_raw_provider`` (every pre-ADR-147
+    """The fallback is unchanged: no ``parent_raw_provider`` (every pre-ADR-344
     caller and every plain-provider selection) keys inheritance off
     ``api_endpoint`` exactly as before — family target, no registry URL."""
     service, chat = _make_service(

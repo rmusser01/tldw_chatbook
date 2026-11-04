@@ -13,9 +13,9 @@ Related tasks:
 - [TASK-32828: Inspector modal](../tasks/task-32828%20-%20Redesign-the-Conversation-Inspector-modal-for-context-and-costs.md)
 
 Amends presentation in ADR-083. Preserves ADR-010 local marks, ADR-085 receipt
-authority, ADR-069 including its September 7 capture amendment, ADR-097 trace
-disclosure, ADR-031 keyboard conventions and ADR-150 design tokens.
-authority, ADR-069 instruction disclosure, ADR-031 keyboard conventions and
+authority, ADR-317 including its September 7 capture amendment, ADR-337 trace
+disclosure, ADR-299 keyboard conventions and ADR-150 design tokens.
+authority, ADR-317 instruction disclosure, ADR-299 keyboard conventions and
 ADR-150 design tokens.
 
 ## Context
@@ -57,7 +57,7 @@ its underlying data requires. The user explicitly excludes the Inspector sidebar
    Context uses section/detail navigation; usage uses turn/detail navigation;
    narrow layouts provide a Back route. Preserve accounting, capture, export,
    redaction and explicit Next Send disclosure authorities. Preserve historical
-   captured instruction access under ADR-069/097, and invalidate Safe/Full bodies
+   captured instruction access under ADR-317/097, and invalidate Safe/Full bodies
    across every trace-bearing view. Usage labels state actual estimate/coverage
    scope; call detail is never added twice to aggregate costs.
    redaction and explicit Next Send disclosure authorities.

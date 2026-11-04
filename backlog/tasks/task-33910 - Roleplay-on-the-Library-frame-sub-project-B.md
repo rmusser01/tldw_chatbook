@@ -43,7 +43,7 @@ The 2026-10-01 Roleplay NN/g + HCI layout review (findings RP-001..RP-097, repor
 - [ ] #6 The right-hand Inspector column no longer exists; its contents live in the work pane's title row, view strip, More actions and Info.
 - [ ] #7 Every slice subtask (B0, B1, B2a, B2b, B3, B4, B5a, B5b-1, B5b-2, B5c, B6, B7, B8, B9a, B9b, B10, B11, B12) is Done, each having met the spec's §5.4 definition of done.
 - [ ] #8 The User Guide is consolidated (B12): the Roleplay pages are retitled "Roleplay" with their filenames kept, the drift listed in spec §5.8 is fixed, and every `scripts/check_guide_claim_strings.py` candidate on the four pages is fixed or named as a reviewed exception.
-- [ ] #9 The governance changes of spec §5.9 have landed on dev: the new shared-pane-shell ADR (G1-G1e) with its ADR-086 and ADR-084 pointers, and the amendments to ADR-046, ADR-031, ADR-120 (mirrored in ADR-004), ADR-115, ADR-152, ADR-015 and DESIGN.md (G11, G12, G14).
+- [ ] #9 The governance changes of spec §5.9 have landed on dev: the new shared-pane-shell ADR (G1-G1e) with its ADR-086 and ADR-329 pointers, and the amendments to ADR-046, ADR-299, ADR-120 (mirrored in ADR-287), ADR-342, ADR-152, ADR-015 and DESIGN.md (G11, G12, G14).
 - [ ] #10 Boot parsed CSS is no larger after B12 than at the programme's base, and every slice PR recorded its §5.10 budget-ledger rows.
 - [ ] #11 Follow-ups FU-1..FU-5 are each Done or carry a recorded owner decision.
 <!-- AC:END -->

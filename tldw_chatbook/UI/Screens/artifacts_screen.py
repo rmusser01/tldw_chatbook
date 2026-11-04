@@ -122,7 +122,7 @@ ARTIFACTS_CHATBOOK_TARGET_MISSING_RECOVERY = DestinationRecoveryState(
 class ArtifactsScreen(BaseAppScreen):
     """Generated outputs, portable bundles, reports, datasets, and Chatbooks."""
 
-    # `enter` is hidden (ADR-031: advertised ⊆ bound): it opens the Dreams
+    # `enter` is hidden (ADR-299: advertised ⊆ bound): it opens the Dreams
     # story modal only when a dreams row is focused, and stays silent
     # otherwise. Focusable controls (Button/Input/Select/...) own Enter
     # before this screen-level binding is ever consulted.
@@ -179,7 +179,7 @@ class ArtifactsScreen(BaseAppScreen):
         self._start_chatbook_refresh()
         self._start_daily_reports_refresh()
         self._start_dreams_refresh()
-        # ADR-031: the footer hint must stay 1:1 with a working binding;
+        # ADR-299: the footer hint must stay 1:1 with a working binding;
         # `s` -> action_share_artifacts is registered alongside it.
         self.register_footer_shortcuts(
             source="artifacts-screen", shortcuts=(("s", "Share"),)

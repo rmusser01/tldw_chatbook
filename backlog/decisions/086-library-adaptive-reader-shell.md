@@ -100,13 +100,13 @@ The shell is extracted in the Conversations migration PR from the shipped Media 
 retains its domain behavior and preference compatibility while adopting the shared structure. The
 remaining migrations land in order: Notes, Prompts, then Skills.
 
-This decision amends ADR-084's Media-local shell boundary now that multiple concrete Library
+This decision amends ADR-329's Media-local shell boundary now that multiple concrete Library
 consumers have been designed. It does not authorize sharing an application-wide implementation
 with Watchlists.
 
 ## Context
 
-ADR-084 deliberately kept the first adaptive reader inside Media and deferred extraction until
+ADR-329 deliberately kept the first adaptive reader inside Media and deferred extraction until
 concrete consumers existed. Conversations, Notes, Prompts, and Skills now have approved reader
 contracts with the same structural roles, collapse grammar, requested-versus-effective geometry,
 and race-safe selected/loaded identity. Keeping four additional copies would multiply subtle
@@ -153,7 +153,7 @@ recorded as an ADR.
 ## Links
 
 - [Approved design spec](../../Docs/superpowers/specs/2026-08-24-library-destinations-adaptive-reader-design.md)
-- [ADR-084: Library Media reader information architecture](084-library-media-reader-ia.md)
+- [ADR-329: Library Media reader information architecture](329-library-media-reader-ia.md)
 - [Library Media reader design](../../Docs/superpowers/specs/2026-08-23-library-media-netnewswire-reader-design.md)
 - [Library compose-once design](../../Docs/superpowers/specs/2026-08-13-library-compose-once-design.md)
 
@@ -169,7 +169,7 @@ Owner-approved with the Library reading desk design
   header that names both; it never collapses the companion. Below 64 columns the existing emergency
   stage applies and the faces still flip.
 - The companion's share is `clamp(round(0.40 × available), 40, 72)` cells; the work pane keeps the
-  rest (see ADR-084's amendment). While a companion is open the Library rail collapses transiently;
+  rest (see ADR-329's amendment). While a companion is open the Library rail collapses transiently;
   the saved preference is untouched.
 - The list-region grip names what the region currently holds (for example `Note`), never a stale
   destination label. In stacked mode the list grip is hidden.

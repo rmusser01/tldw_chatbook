@@ -14,7 +14,7 @@ dependencies: []
 references:
   - .impeccable/critique/2026-08-24T04-39-32Z__chatbook-widgets-console-console-prompts-modal-py.md
   - Docs/superpowers/qa/console-prompt-improvement-2026-08/README.md
-  - backlog/decisions/040-versioned-prompt-artifacts-and-safe-improvement-transactions.md
+  - backlog/decisions/305-versioned-prompt-artifacts-and-safe-improvement-transactions.md
 priority: medium
 ---
 

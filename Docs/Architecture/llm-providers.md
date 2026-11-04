@@ -48,7 +48,7 @@ Adding an OpenAI-compatible hosted provider is a record, a dispatch line and a p
 | --- | --- | --- |
 | Engine presets | explicit, then a recorded `credential_source`; with none recorded, **stored** `api_key`, then env | `LLM_Calls/hosted_provider_engine.py::_resolve_api_key`, through readiness's `Chat/provider_readiness.py::resolve_provider_credential` |
 | `moonshot.py`, `zai.py`, `qwencloud.py` | explicit, then **stored**, then env | `moonshot.py::_resolve_api_key`, `zai.py::_resolve_api_key`, `qwencloud.py::resolve_qwencloud_api_key` |
-| Custom-endpoint registry | the entry's `api_key_env` variable, then its stored `api_key` | `Chat/custom_endpoint_registry.py::resolve_entry_credential` (ADR-146) |
+| Custom-endpoint registry | the entry's `api_key_env` variable, then its stored `api_key` | `Chat/custom_endpoint_registry.py::resolve_entry_credential` (ADR-343) |
 
 Registry entry credentials end at none when neither source supplies a key. The
 gateway preserves that keyless decision through health checks and chat dispatch;
@@ -64,7 +64,7 @@ Engine presets follow [ADR-012](../../backlog/decisions/012-provider-credential-
 - The engine resolves through readiness's own resolver, so readiness reports the key a send spends, with one exception below.
 - A present-but-unusable stored key (a placeholder, an empty value, or a key still encrypted) fails closed when the source reads it: no source recorded, or `"stored"`. Readiness instead skips that key. So with no source recorded and the variable exported, readiness reports Ready via the variable and a Console send spends it, but an engine call with no caller key (a catalog refresh, or `chat_api_call` without a key) raises `api_settings.<provider>.api_key is invalid`. This is deliberate: a placeholder the user typed is surfaced, never silently shadowed.
 
-Custom endpoints keep ADR-146's order by the owner's 2026-10-26 decision. That variable is one the user named on the entry, not a provider default.
+Custom endpoints keep ADR-343's order by the owner's 2026-10-26 decision. That variable is one the user named on the entry, not a provider default.
 
 ### Implemented providers
 

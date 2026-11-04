@@ -103,7 +103,7 @@ is kept deliberately small and biased toward names that are credential
 stores by definition; a name is added only when a false refusal would be
 a curiosity rather than routine obstruction -- which is why ``.env`` is
 deliberately NOT here (as often build configuration as secrets, and
-refusing it would break the ADR-032 coding-agent use case this module
+refusing it would break the ADR-300 coding-agent use case this module
 must not break). The cost is real and accepted: an agent cannot read a
 test fixture named ``credentials``, and the refusal names it as protected
 rather than failing silently.
@@ -112,7 +112,7 @@ The two families' HIDDEN-COMPONENT policies still differ, and that
 difference is design, not residue. Family 1 confines through
 ``validate_path_multi``, which defaults ``allow_hidden=False`` and so
 refuses any dotted component before this module is consulted; family 2
-passes ``allow_hidden=True`` (ADR-032 -- a coding agent that cannot read
+passes ``allow_hidden=True`` (ADR-300 -- a coding agent that cannot read
 ``.github/`` or ``.gitignore`` is useless). Family 1 is therefore
 strictly stricter for dotted NAMES, which is acceptable because the two
 roots are different kinds of place: family 1's sandbox root is app-owned
@@ -1359,7 +1359,7 @@ def is_git_metadata_write(path: Path) -> bool:
 
     Deliberately WRITE-only and deliberately NOT part of
     :func:`is_sensitive_path`: that denylist governs reads as well, and an
-    agent reading repository state is legitimate (ADR-032 adopted
+    agent reading repository state is legitimate (ADR-300 adopted
     ``allow_hidden`` precisely so a coding agent can see dotfiles). The
     read-side question -- ``.git/config`` can embed a credential in a remote
     URL -- is tracked separately rather than smuggled in here.

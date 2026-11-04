@@ -149,7 +149,7 @@ test that tries to break it.
 - [Spec: Scheduled-task handoff parity](../docs/spec-2026-08-31-schedules-handoff-parity.md)
 - [Plan: schedules-handoff PR-5](../docs/plan-2026-09-02-schedules-handoff-pr5.md)
 - [ADR-077 — Server-offloaded scheduled agent tasks](077-server-offloaded-scheduled-agent-tasks.md) (amended here)
-- [ADR-018 — Local/server hybrid scheduled-tasks storage and sync](018-local-server-hybrid-scheduled-tasks.md)
+- [ADR-291 — Local/server hybrid scheduled-tasks storage and sync](291-local-server-hybrid-scheduled-tasks.md)
 - [TASK-18940 — Server-offloaded scheduled agent tasks: execution seam and result pass-back](../tasks/task-18940%20-%20Server-offloaded-scheduled-agent-tasks-execution-seam.md)
 - [Tests/Scheduling/test_transfer_invariant.py](../../Tests/Scheduling/test_transfer_invariant.py) — the §3 invariant property test
 - [Tests/Scheduling/test_transfer_end_to_end.py](../../Tests/Scheduling/test_transfer_end_to_end.py) — directed full-stack transfer walkthroughs

@@ -318,7 +318,7 @@ class SafeModalDismissMixin:
     def dismiss(self, result: Any = None) -> AwaitComplete:
         """Dismiss this modal -- but only while it is the app's top screen.
 
-        TASK-33622.10 (ADR-031: async cancellation may dismiss only the
+        TASK-33622.10 (ADR-299: async cancellation may dismiss only the
         active top screen). Textual 8.2.8's ``Screen.dismiss`` delivers THIS
         screen's result and then pops whatever is on TOP. Called while another
         screen covers this one -- a timer, poll or worker deciding the modal
@@ -388,7 +388,7 @@ class SafeModalDismissMixin:
 
         For a one-shot close made when an operation finishes -- a fork
         opened, an export written, a review saved. ``dismiss_safe_once``
-        refuses while another screen covers this modal (ADR-031), and such a
+        refuses while another screen covers this modal (ADR-299), and such a
         caller has no later turn to try again. Ctrl+Q's "Quit while still
         working?" covers exactly these modals, so an operation finishing
         under it left the modal open after Wait over finished work, often

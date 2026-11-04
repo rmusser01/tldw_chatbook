@@ -441,7 +441,7 @@ def rewritten_history_revision_id(descriptor: TraceProvenance) -> str | None:
 class RewrittenTailWitness:
     """Saved-branch evidence for replacing a rewritten surface tail.
 
-    ADR-097 amendment 2026-10-27 (TASK-33621.29, TASK-33621.7). Compact now and
+    ADR-337 amendment 2026-10-27 (TASK-33621.29, TASK-33621.7). Compact now and
     Edit & resend change the provider-visible history without a captured call
     that records the change. The next FRESH or AGENT_FIRST send may replace the
     recorded surface's whole tail with the current branch's saved rows, ending

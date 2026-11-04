@@ -2017,7 +2017,7 @@ def test_a_resumed_childs_spend_reaches_the_fleet_rollup_at_finish(db):
 
 
 # =========================================================================
-# 5. ADR-147 (Task 8): continuation reuses the persisted resolved-target
+# 5. ADR-344 (Task 8): continuation reuses the persisted resolved-target
 #    snapshot (schema v16) instead of re-resolving the preset live
 # =========================================================================
 

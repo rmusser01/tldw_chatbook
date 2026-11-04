@@ -774,7 +774,7 @@ class LibraryArtifactsController:
         call-time disk read the brief itself spends through, so the copy
         names the provider · model that will actually be billed. A schedule
         already on disk switches to the reuse wording (the service never
-        re-seeds, ADR-079 §2). No provider -- or an unreadable config --
+        re-seeds, ADR-323 §2). No provider -- or an unreadable config --
         leaves the run button disabled with the reason as its tooltip.
         """
         from ...Subscriptions.briefing_service import (

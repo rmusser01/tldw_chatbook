@@ -10216,7 +10216,7 @@ async def test_auxiliary_direct_llama_is_nonstreaming_exact_and_sensitive() -> N
     assert result.text == " llama exact \n"
     assert captured["url"] == "http://127.0.0.1:9099/v1/chat/completions"
     assert captured["sensitive"] is True
-    # Auxiliary requests inherit session thinking settings (ADR-066): level
+    # Auxiliary requests inherit session thinking settings (ADR-311): level
     # via chat_template_kwargs, budget via top-level
     # reasoning_budget_tokens.
     assert captured["payload"] == {
@@ -12619,7 +12619,7 @@ async def test_custom_endpoint_openai_compatible_resolves_entry_url(
     console_settings, execution_key
 ) -> None:
     """An openai_compatible entry executes as the custom family with the
-    entry's URL (ADR-146), never the endpoint-not-saved guard."""
+    entry's URL (ADR-343), never the endpoint-not-saved guard."""
     gateway = ConsoleProviderGateway(
         config_provider=lambda: {
             "console": console_settings,
@@ -12652,7 +12652,7 @@ async def test_custom_endpoint_openai_compatible_resolves_entry_url(
     assert "not saved" not in resolved.visible_copy
 
 
-# ADR-146 credential wiring: an entry that declares a credential
+# ADR-343 credential wiring: an entry that declares a credential
 # (api_key_env / api_key) must see it flow into ``resolution.api_key`` on
 # BOTH family execution paths -- the custom/llama families are keyless, so
 # the family readiness alone would resolve ``api_key=None`` and send
@@ -12790,7 +12790,7 @@ async def test_custom_endpoint_llama_family_declared_key_flows_to_resolution() -
     assert resolved.api_key == "llama-secret"
 
 
-# ADR-146 entry-URL authority: when a custom-ep provider resolves, the
+# ADR-343 entry-URL authority: when a custom-ep provider resolves, the
 # entry's base_url wins over any session/selection-carried URL -- an edited
 # entry re-resolves on the next send, so a stale session-pinned URL must
 # never outrank it. Non-custom-ep providers keep selection.base_url

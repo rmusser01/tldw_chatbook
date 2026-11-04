@@ -1342,7 +1342,7 @@ class RemoteInstructionIO:
     """IO strategy that reads instruction candidates over the executor.
 
     LOCAL analogue (what this class replaces for remote roots, per
-    ADR-068/069 and the spec section "AGENTS.md from remote"):
+    ADR-316/069 and the spec section "AGENTS.md from remote"):
 
     * fd-pinned no-follow read + before/after identity re-checks
       → the WORKER-SIDE PIN: every dispatched op re-validates the pinged
@@ -1384,7 +1384,7 @@ class RemoteInstructionIO:
       divergence of the local same-clock comparison.
 
     Any executor failure — transport, pin, protocol — is source-closed
-    (``resolution_failed``): per ADR-069's prep-failure posture an
+    (``resolution_failed``): per ADR-317's prep-failure posture an
     unreachable remote yields a content-free warning and the dispatch
     proceeds. NOTHING in this class raises past the resolver.
     """

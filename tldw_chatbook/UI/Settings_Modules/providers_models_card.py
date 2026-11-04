@@ -134,7 +134,7 @@ API_KEY_CLEARED_HELP = "s removes the saved key"
 #: The Key check row's action, labelled with the key that runs it (AC#6).
 KEY_CHECK_ACTION_LABEL = "Test (t)"
 #: Owner ruling 2026-10-04: Clear is a key on the API key field, not a Tab
-#: stop. Not ctrl+d: Textual's Input binds it (delete right) and ADR-031
+#: stop. Not ctrl+d: Textual's Input binds it (delete right) and ADR-299
 #: rule 2 reserves it. ctrl+l is unbound in Settings, the app and Input, and
 #: the Speech playground already clears with it.
 API_KEY_CLEAR_KEY = "ctrl+l"
@@ -218,7 +218,7 @@ CATALOG_STARTUP_OFF_ID = "settings-model-catalog-startup-off"
 CATALOG_STARTUP_OFF_COPY = (
     "Refresh on startup is Off, so the per-provider choices below are not in effect."
 )
-#: The head of ADR-033's instant-apply label, for one-row titles.
+#: The head of ADR-303's instant-apply label, for one-row titles.
 APPLIES_IMMEDIATELY = "applies immediately"
 SNAPSHOTS_SCOPE = "llama.cpp only"
 
@@ -267,7 +267,7 @@ class ProviderFilterInput(PickerSearchInput):
     def _on_key(self, event: events.Key) -> None:
         if event.key == "escape" and self._picker().display:
             # The list closes and Escape goes on to the screen, which releases
-            # the field (task-1560), so the footer's "Esc, s" holds (ADR-031).
+            # the field (task-1560), so the footer's "Esc, s" holds (ADR-299).
             close_provider_list(self.screen)
 
     def _on_blur(self, event: events.Blur) -> None:
@@ -2061,7 +2061,7 @@ def compose_providers_models_card(screen: SettingsScreen) -> ComposeResult:
         # ADR-020: [model_catalog] auto-refresh toggles. Values initialize
         # inline from the saved config (the Connect block pattern) and
         # persist immediately on change via the screen's handlers.
-        # task-1341 / ADR-033: instant-apply is the labeled exception to the
+        # task-1341 / ADR-303: instant-apply is the labeled exception to the
         # staged default; the group and its hint line keep these operational
         # flags apart from the staged fields (TASK-33007.6: no border, the
         # pane's is the only frame, and its inputs are one row like the
@@ -2169,7 +2169,7 @@ def compose_providers_models_card(screen: SettingsScreen) -> ComposeResult:
                         "(1-30). Invalid or empty values fall back to 3 seconds."
                     ),
                 )
-        # ADR-146 task-7: named-endpoint management (rename / edit /
+        # ADR-343 task-7: named-endpoint management (rename / edit /
         # delete-with-reference-guard / slot conversion). Instant-apply
         # like the catalog block above: threaded config writes, one
         # shared status line, no partial-apply states.
@@ -2217,7 +2217,7 @@ def compose_providers_models_card(screen: SettingsScreen) -> ComposeResult:
 
 
 def compose_custom_endpoints_section(screen: SettingsScreen) -> ComposeResult:
-    """Compose the Custom endpoints section (ADR-146 management).
+    """Compose the Custom endpoints section (ADR-343 management).
 
     Args:
         screen: The Settings screen that owns the section's state.

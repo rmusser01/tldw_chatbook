@@ -151,7 +151,7 @@ async def test_keys_typed_before_the_activation_restore_land_in_the_draft_in_ord
 
         # The window is over: Home, focused on purpose now, is not re-armed.
         # A letter typed on it follows the Console's general rule instead
-        # (TASK-33622.3, ADR-031 refinement 2026-10-27): a printable key no
+        # (TASK-33622.3, ADR-299 refinement 2026-10-27): a printable key no
         # binding claims on a non-text control is typed into the draft.
         console.set_focus(arrival)
         await pilot.pause()
@@ -199,7 +199,7 @@ async def test_a_focus_the_user_moves_before_the_restore_closes_the_arrival_wind
         assert console.focused is arrival
 
         # Outside the window a letter typed on a non-text control follows the
-        # Console's general rule (TASK-33622.3, ADR-031 refinement
+        # Console's general rule (TASK-33622.3, ADR-299 refinement
         # 2026-10-27): no binding claims it, so it is typed into the draft.
         _type(host, "y")
         await _wait_for(

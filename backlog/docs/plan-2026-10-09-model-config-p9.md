@@ -37,7 +37,7 @@ Size facts at HEAD (Tests/Architecture/test_module_size_ratchet.py and test_scre
 - ADR-126 RecoveryRequired in a clean worktree is environmental: compare failure-NAME sets against origin/dev.
 - Size ratchets never rise (ADR-097); console_settings_modal.py net lines <= 0 against its current row (see the size facts above for settings_screen.py and providers_models_card.py).
 - Geometry only through tokens in css/core/_variables.tcss (ADR-150/161); rebuild the CSS bundle with the repo script.
-- ADR-031: never bind Ctrl+C/V/X/S/D/Z/A/R/W; footer hints must match working bindings.
+- ADR-299: never bind Ctrl+C/V/X/S/D/Z/A/R/W; footer hints must match working bindings.
 - TDD; real-implementation tests for config/provider surfaces; rewrite pinned tests on purpose and name them.
 - Commit per rider `fix|feat|test(model-config): <summary> (<rider id>)`, using the rider's own id (for example TASK-33006.13 or TASK-33666), + the session's `Co-Authored-By: Claude Opus 5.5 ... <noreply@anthropic.com>` trailer (the earlier commits carry `Claude Opus 5.5 (1M context)`, the later ones `Claude Opus 5.5`, as the session's trailer changed; both are this phase's). Never push; NEVER merge origin/dev into the branch.
 - Tick ACs, set Done, add Implementation Notes in each rider's task file. Update Docs/User_Guide CONTENT; never add "Verified against" paragraphs (record verification in task notes).

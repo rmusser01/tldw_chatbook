@@ -1,6 +1,6 @@
 """Console run hooks: user-configured external commands on session/run lifecycle events.
 
-Spec: Docs/superpowers/specs/2026-09-11-console-run-hooks-design.md (ADR-148).
+Spec: Docs/superpowers/specs/2026-09-11-console-run-hooks-design.md (ADR-345).
 Deny-only guardrails, argv-list commands, JSON-on-stdin protocol, per-purpose
 fail direction (PreToolUse fails closed, UserPromptSubmit fails open).
 """

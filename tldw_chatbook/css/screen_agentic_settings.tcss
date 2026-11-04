@@ -1261,7 +1261,7 @@ Button.settings-category-group-toggle:focus {
    the Providers & Models card draws no frame of its own and no bordered
    group -- the pane border is the only frame, and each section starts with
    a one-row header. The instant-apply groups keep their class, hint line
-   and place outside the draft (ADR-033); other focus cards keep frames. */
+   and place outside the draft (ADR-303); other focus cards keep frames. */
 #settings-providers-models-card,
 #settings-providers-models-card .settings-instant-apply-group {
     border: none;

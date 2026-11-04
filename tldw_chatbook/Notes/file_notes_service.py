@@ -1629,7 +1629,7 @@ class FileNotesService:
 
     @_serialized
     def enforce_retention(self) -> OperationResult:
-        """Apply the ADR-218 retention bounds for this service's root.
+        """Apply the ADR-351 retention bounds for this service's root.
 
         Returns:
             Retention status and any replica warning.

@@ -1,4 +1,4 @@
-"""Console "New endpoint from template" creation modal (ADR-146, Task 6).
+"""Console "New endpoint from template" creation modal (ADR-343, Task 6).
 
 A small creation flow for ``[custom_endpoints.<slug>]`` entries: pick a
 template (blank OpenAI-compatible, a built-in provider, or an existing
@@ -69,7 +69,7 @@ CANCEL_BUTTON_ID = "endpoint-template-cancel"
 ERROR_STATIC_ID = "endpoint-template-error"
 
 BLANK_TEMPLATE_LABEL = "OpenAI-compatible (blank)"
-#: The three execution families a registry entry can run as (ADR-146);
+#: The three execution families a registry entry can run as (ADR-343);
 #: values are the exact registry family strings ``validate_entry`` accepts.
 FAMILY_SELECT_OPTIONS: tuple[tuple[str, str], ...] = (
     ("llama.cpp", "llama_cpp"),

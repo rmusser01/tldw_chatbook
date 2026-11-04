@@ -4,12 +4,12 @@ Status: Accepted
 Date: 2026-10-04
 Related Task: TASK-34215.2
 Related plan: [PR2995 review and merge](../../Docs/superpowers/plans/2026-10-03-console-pr2995-review-and-merge.md)
-Extends: ADR-052, ADR-067, ADR-092, ADR-097 boot budgets and ADR-219
+Extends: ADR-052, ADR-314, ADR-334, ADR-097 boot budgets and ADR-219
 Amends: [Console interrupt-host design](../../Docs/superpowers/specs/2026-08-20-console-interrupt-host-design.md), section3.2
 
 ## Context
 
-The integrated Console controller has33695 lines against its existing29367 ratchet. The store's pure fork projections were placed in their existing owner under ADR092 and now meet22344. Newly landed compaction/pre-dispatch behavior also brings ChatScreen to25239 lines/761 methods against25218/759. The source must retain both current dev and the approved creation/start contracts. Size guards stay fixed.
+The integrated Console controller has33695 lines against its existing29367 ratchet. The store's pure fork projections were placed in their existing owner under ADR334 and now meet22344. Newly landed compaction/pre-dispatch behavior also brings ChatScreen to25239 lines/761 methods against25218/759. The source must retain both current dev and the approved creation/start contracts. Size guards stay fixed.
 
 The existing interrupt host coordinates generic rounds but still receives a broad controller receiver. Its original design leaves kind-specific bridge behavior in the controller. Compaction planning/transactions have a resident owner, while controller preflight orchestration still couples to many live services and patch seams. This decision records the explicit contracts for those responsibilities before moving their implementations.
 

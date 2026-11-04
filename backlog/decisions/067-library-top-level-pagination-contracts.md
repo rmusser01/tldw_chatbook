@@ -115,7 +115,7 @@ true Media offset paging, stable-ID owning-page reads, complete facets, and
 Skills trust aggregates are cross-module contracts that need one durable
 decision.
 
-Exact totals and stable bounded pages extend ADR-030. They do not promise a
+Exact totals and stable bounded pages extend ADR-298. They do not promise a
 frozen session: concurrent writes may move later boundaries. Generation guards
 protect presentation correctness when cancelled Textual workers leave an
 already-running local thread read to finish.
@@ -168,5 +168,5 @@ follow-up tasks.
 
 - [Design specification](../../Docs/superpowers/specs/2026-08-14-library-top-level-source-pagination-design.md)
 - [ADR-003: Settings Library/RAG Defaults Boundary](003-settings-library-rag-defaults.md)
-- [ADR-030: Direct Local Library Tool Boundary for Console and MCP](030-local-library-agent-tool-boundary.md)
+- [ADR-298: Direct Local Library Tool Boundary for Console and MCP](298-local-library-agent-tool-boundary.md)
 - [ADR-033: Application Session State Ownership](033-application-session-state-ownership.md)

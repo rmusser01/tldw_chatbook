@@ -95,7 +95,7 @@ those contracts or bridging their namespaces requires its own scoped design.
 
 ADR required: no new ADR for this audit and test-only fixture corrections.
 ADR paths: [ADR-201](../decisions/201-versioned-profile-evidence-and-temporal-claims.md),
-[ADR-097](../decisions/097-console-reference-backed-semantic-trace-ledger.md),
+[ADR-337](../decisions/337-console-reference-backed-semantic-trace-ledger.md),
 [ADR-024](../decisions/024-rag-citation-provenance-and-source-resolution.md).
 Reason: document existing boundaries and exercise their existing guards. No new
 storage, retention, authority interface or runtime policy is selected here.

@@ -1571,7 +1571,7 @@ class ConsoleChatSession:
     #: IDs remain opaque in ``assistant_id`` and never populate this field.
     character_id: int | None = None
     character_name: str | None = None
-    #: Persona-kind assistant display name (ADR-149). Set only when
+    #: Persona-kind assistant display name (ADR-346). Set only when
     #: ``assistant_kind == "persona"``; mutually exclusive with
     #: ``character_name``. Never persisted on the conversation row --
     #: re-resolved from ``assistant_id`` at resume.
@@ -1580,7 +1580,7 @@ class ConsoleChatSession:
     user_display_name_override: str | None = None
     #: Trusted character system source; materialized into ``settings.system_prompt``.
     character_system_template: str | None = None
-    #: Trusted persona system-prompt source (ADR-149); materialized into
+    #: Trusted persona system-prompt source (ADR-346); materialized into
     #: ``settings.system_prompt`` via the identity-template expander and
     #: persisted as an optional key in the version-1 roleplay envelope.
     persona_system_template: str | None = None
@@ -12917,7 +12917,7 @@ class ConsoleChatStore(ConsoleReceivedTurnAdmissionMixin, ConsoleReceivedIntentI
         source_changed = session.character_system_template != source
         session.character_name = new_name
         session.character_system_template = source
-        # One-name-set invariant (ADR-149): a character swap retires any
+        # One-name-set invariant (ADR-346): a character swap retires any
         # persona identity bound to this session.
         session.assistant_name = None
         session.persona_system_template = None
@@ -13030,7 +13030,7 @@ class ConsoleChatStore(ConsoleReceivedTurnAdmissionMixin, ConsoleReceivedIntentI
         """Set persona identity through the projection revision seam.
 
         Setting a non-blank persona name clears any character name, keeping
-        the one-name-set invariant (ADR-149).
+        the one-name-set invariant (ADR-346).
         """
         session = self._session_or_raise(session_id)
         normalized = assistant_name.strip() if isinstance(assistant_name, str) else ""
@@ -19570,7 +19570,7 @@ class ConsoleChatStore(ConsoleReceivedTurnAdmissionMixin, ConsoleReceivedIntentI
         message becomes terminal.  If all slots are deferred on that message,
         waiting for terminal persistence deadlocks the call that would reach
         it.  Promote the oldest sanitized handoff to the existing worker as a
-        labeled response artifact; ADR-097 permits that fallback when an exact
+        labeled response artifact; ADR-337 permits that fallback when an exact
         assistant revision is not yet available.  A cross-owner waiter may
         promote the oldest deferred handoff globally because its own owner has
         nothing to release yet.  The handoff stays owned while moving from

@@ -4,7 +4,7 @@ Status: Accepted
 Date: 2026-09-20
 Related Task: [TASK-32833](../tasks/task-32833%20-%20Workspace-binding-exclusions.md)
 Design: [Workspace binding exclusions](../../Docs/superpowers/specs/2026-09-20-workspace-binding-exclusions-design.md)
-Related: ADR-028, ADR-069, ADR-079, ADR-101, ADR-102
+Related: ADR-028, ADR-317, ADR-326, ADR-101, ADR-340
 
 ## Decision
 
@@ -25,7 +25,7 @@ in BOTH agent-facing file-tool families and in project-instruction
 discovery, and the model cannot distinguish user exclusions or learn that
 the paths exist. No worker-protocol change.
 
-Run semantics follow ADR-102's discipline, as shipped. Admission snapshots
+Run semantics follow ADR-340's discipline, as shipped. Admission snapshots
 the exclusion set; a per-root provider live-reads the registry on every
 tool call and keeps a high-water mark, wired into both the one-shot
 executor and the local provider's preflight, so mid-run additions refuse
@@ -33,14 +33,14 @@ the next tool call and removals take effect only for new runs. Registry
 read failures degrade to the last-known effective set. The builtin
 file-tool family merges the effective set per invocation through the same
 fold. Project-instruction activation freezes the excluded set at ledger
-construction (ADR-069 snapshot discipline): already-activated instructions
+construction (ADR-317 snapshot discipline): already-activated instructions
 are not retracted mid-run, and candidates under an exclusion are skipped
 at activation. In the files modal, unexclude removes the deepest covering
 layer first and reports remaining parent coverage truthfully instead of
 claiming inclusion.
 
 The user's own surfaces (Console file inspector, Settings) remain
-direct-user authority (ADR-079): excluded entries stay visible, badged,
+direct-user authority (ADR-326): excluded entries stay visible, badged,
 and un-excludable there.
 
 ## Alternatives considered
@@ -55,7 +55,7 @@ and un-excludable there.
 ## Links
 
 - [ADR-028](028-settings-workspaces-category-and-folder-roots.md)
-- [ADR-069](069-console-project-instruction-local-state-and-preflight.md)
-- [ADR-079](079-workspace-file-inspector-direct-user-authority-and-save-publication.md)
+- [ADR-317](317-console-project-instruction-local-state-and-preflight.md)
+- [ADR-326](326-workspace-file-inspector-direct-user-authority-and-save-publication.md)
 - [ADR-101](101-one-shot-pinned-workspace-tool-execution.md)
-- [ADR-102](102-console-run-admitted-local-path-authority.md)
+- [ADR-340](340-console-run-admitted-local-path-authority.md)

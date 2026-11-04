@@ -3,7 +3,7 @@
 Covers: LocalToolProvider registration in the per-run registry/allow-list
 (builtin -> local -> skill -> MCP shadowing order) and the combined
 review_state_scope that isolates BOTH providers' approval stamps around
-nested sub-agent runs (ADR-032's third mechanism).
+nested sub-agent runs (ADR-300's third mechanism).
 
 Phase 3c adds: _BridgeSkillRunner narrows a skill's declared allowed_tools
 against builtins + local tool names (never grants), undeclared skills pass

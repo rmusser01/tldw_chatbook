@@ -1,7 +1,7 @@
 """Source words: which layer of the Console parameter stack a value came from.
 
 TASK-33004.5 AC#3. Spec §6 prints one of six words next to every value; the
-ADR-147 stack has eight layers. ``resolve_console_value_layers`` names the
+ADR-344 stack has eight layers. ``resolve_console_value_layers`` names the
 layer, and ``CONSOLE_VALUE_SOURCE_WORDS`` maps each layer to exactly one word.
 """
 
@@ -112,7 +112,7 @@ def test_each_config_layer_names_itself(layer, expected, word) -> None:
 
 
 def test_custom_endpoint_params_name_their_layer() -> None:
-    """ADR-147: registry entry params ride the ``extra_sources`` seam."""
+    """ADR-344: registry entry params ride the ``extra_sources`` seam."""
     layers = _layers(
         _config(chat_defaults=_values(0.6, 512, True)),
         extra_sources=({"temperature": 0.5, "max_tokens": 4096},),

@@ -20,7 +20,7 @@ priority: high
 <!-- SECTION:DESCRIPTION:BEGIN -->
 Console Behavior is a draft page, which means edits wait until the user presses s. Yet four of its controls save the moment they are touched: Show model thinking, Status row placement, Chat images and Permission summaries. A fifth group, Exchange capture, saves only through its own Apply button.
 
-The first three lack the shared instant-apply label that ADR-033 rule 3 requires. While one of them is focused, the Scope Inspector's only Save row says edits save with s. The State line also gives no hint that the page has exceptions.
+The first three lack the shared instant-apply label that ADR-303 rule 3 requires. While one of them is focused, the Scope Inspector's only Save row says edits save with s. The State line also gives no hint that the page has exceptions.
 
 The Inspector's storage line says "Local-only: saves write your config file." on every page, including pages that save to a database and pages that save nothing at all. The User Guide's and DESIGN.md's save-model text no longer matches the badges the app shows. In particular, the guide says s works on seven categories when it works on ten.
 
@@ -30,7 +30,7 @@ As a result, a user cannot tell from the screen whether a change needs s, or whe
 - makes the storage line true for each page;
 - brings the documented badge tables back in line with the app.
 
-No commit model changes (ADR-033 rule 1).
+No commit model changes (ADR-303 rule 1).
 
 Plan: `backlog/docs/plan-2026-10-14-settings-save-honesty.md`. Findings closed: D1, D-shell-design-M1, D5, D-shell-design-M4 (Settings UX review, 2026-10-14).
 <!-- SECTION:DESCRIPTION:END -->

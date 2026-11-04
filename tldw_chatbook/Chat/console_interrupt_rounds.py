@@ -668,7 +668,7 @@ class InterruptRoundHost(InitialHookReviewMixin):
         }
         #: Per-kind hook run on the UI thread after a head payload is pushed,
         #: whichever path pushed it (teardown promotion, revocation sweep,
-        #: activation, attach). Approvals register their ADR-090 permission
+        #: activation, attach). Approvals register their ADR-332 permission
         #: summary trigger here once, so no remount path can forget it.
         self.after_remount: dict[str, Callable[[dict[str, Any]], None]] = {}
         self.payloads: dict[str, dict[str, dict[str, Any]]] = {
@@ -1924,7 +1924,7 @@ class InterruptRoundHost(InitialHookReviewMixin):
 
         Args:
             payload: The approval payload dict, or ``None`` to clear.
-            fire_summary: Whether to run the ADR-090 advisory-summary
+            fire_summary: Whether to run the ADR-332 advisory-summary
                 trigger check after delivery. The arm-time head-mount site
                 passes ``False`` and fires the check itself inside the
                 ``use_human_input_wait`` mark, so the hook's config read
@@ -2079,7 +2079,7 @@ class InterruptRoundHost(InitialHookReviewMixin):
     def _maybe_fire_permission_summary(self, payload: dict[str, Any]) -> None:
         """Fire the external summarizer once per round, if configured.
 
-        ADR-090 trigger: ``fallback`` only when some pending row lacks a
+        ADR-332 trigger: ``fallback`` only when some pending row lacks a
         rationale, ``always`` for every round with rows. One call per
         ``round_id`` -- no-call outcomes also consume the once-flag, so
         exactly one trigger check runs per round no matter how many times
@@ -2340,7 +2340,7 @@ class InterruptRoundHost(InitialHookReviewMixin):
 
         The approval wait loop is never blocked and the round's deadline is
         unaffected; a slow call that outlives the round is dropped on
-        delivery. Content-free failures only (ADR-090).
+        delivery. Content-free failures only (ADR-332).
 
         ``tail`` arrives already built: it is store-derived, and the store
         belongs to the thread that spawned this one (TASK-32801.4). Nothing
@@ -2551,7 +2551,7 @@ class InterruptRoundHost(InitialHookReviewMixin):
 
         The pre-host body, kept verbatim: every kind's activation re-derive
         and the approval attach path call it with their own store and
-        setter, and it fires the ADR-090 permission summary for any dict
+        setter, and it fires the ADR-332 permission summary for any dict
         payload -- ``_maybe_fire_permission_summary`` itself ignores round
         ids it does not know, so a skill payload passes through untouched.
 
@@ -2735,7 +2735,7 @@ class InterruptRoundHost(InitialHookReviewMixin):
 
     def _reproject_pending_decision_for_session(self, session_id: str) -> None:
         """Re-derive one session through the unified or legacy card seams."""
-        # ADR-150: the chat-create card rides its OWN standalone registry
+        # ADR-348: the chat-create card rides its OWN standalone registry
         # (pre-host design), so it must re-derive BEFORE the unified
         # decision projection's early return -- otherwise a resolved card
         # lingers on every session switch (live-UAT defect).
@@ -3401,7 +3401,7 @@ class InterruptRoundHost(InitialHookReviewMixin):
         if payload is None:
             return False
         self.read_controller_set_pending_approval()(payload)
-        # ADR-090: a headless attach is often the FIRST mount a parked
+        # ADR-332: a headless attach is often the FIRST mount a parked
         # round ever gets -- arm the summary trigger here (bypasses
         # `_marshal_pending_approval`; fire-once makes re-attaches safe).
         if isinstance(payload, dict):
@@ -3605,7 +3605,7 @@ class InterruptRoundHost(InitialHookReviewMixin):
             if self.read_controller_chat_create_confirm_timeout_seconds() is not None
             else self.read_global__DEFAULT_CHAT_CREATE_CONFIRM_TIMEOUT_SECONDS()
         )
-        # ADR-067: <= 0 arms NO deadline (the default) -- the round waits
+        # ADR-314: <= 0 arms NO deadline (the default) -- the round waits
         # for a decision or the owning run's cancellation.
         deadline = (
             self.read_global_time().monotonic() + timeout_seconds
@@ -3617,7 +3617,7 @@ class InterruptRoundHost(InitialHookReviewMixin):
         card_payload["request_id"] = request_id
         card_payload["session_id"] = owning_session_id
         # See `_head_round_payload`'s remaining-time snapshot. None when
-        # ADR-067 armed no deadline.
+        # ADR-314 armed no deadline.
         card_payload["deadline_monotonic"] = deadline
         is_parked = session_id is not None and session_id != (
             self.read_controller_store().active_session_id or ""
@@ -3650,7 +3650,7 @@ class InterruptRoundHost(InitialHookReviewMixin):
                     )
             elif is_head:
                 self.read_controller__marshal_pending_chat_create()(card_payload)
-            # ADR-067: mark the owning run as waiting on a human decision
+            # ADR-314: mark the owning run as waiting on a human decision
             # (see the sibling bridges' identical wrap for the why).
             with use_human_input_wait(str(chat_create_round_state.get("run_id") or "")):
                 while not event.wait(self.read_global__MCP_APPROVAL_POLL_SECONDS()):
@@ -3790,7 +3790,7 @@ class InterruptRoundHost(InitialHookReviewMixin):
         its own ``round_id`` until that sibling's teardown promotes it.
         Either way it then polls ``event.wait(1.0)`` re-checking this run's OWN
         cancel signal (``_is_session_cancelled``) and -- only when a
-        POSITIVE timeout is configured (ADR-067: the default is 0 = none)
+        POSITIVE timeout is configured (ADR-314: the default is 0 = none)
         -- a deadline, every second until one of three things happens: the
         user submits a decision (``resolve_pending_approval``, called from
         the UI thread once the card's own stamped ``round_id`` is delivered
@@ -4192,7 +4192,7 @@ class InterruptRoundHost(InitialHookReviewMixin):
             if self.read_controller_skill_install_confirm_timeout_seconds() is not None
             else self.read_global__DEFAULT_SKILL_INSTALL_CONFIRM_TIMEOUT_SECONDS()
         )
-        # ADR-067: <= 0 arms NO deadline (the default) -- the round waits
+        # ADR-314: <= 0 arms NO deadline (the default) -- the round waits
         # for a decision or the owning run's cancellation.
         deadline = (
             self.read_global_time().monotonic() + timeout_seconds
@@ -4300,7 +4300,7 @@ class InterruptRoundHost(InitialHookReviewMixin):
             if self.read_controller_skill_script_confirm_timeout_seconds() is not None
             else self.read_global__DEFAULT_SKILL_SCRIPT_CONFIRM_TIMEOUT_SECONDS()
         )
-        # ADR-067: <= 0 arms NO deadline (the default) -- the round waits
+        # ADR-314: <= 0 arms NO deadline (the default) -- the round waits
         # for a decision or the owning run's cancellation.
         deadline = (
             self.read_global_time().monotonic() + timeout_seconds
@@ -5130,7 +5130,7 @@ def _build_approval_payload(
 ) -> dict[str, Any]:
     """Marshal one approval round's card payload.
 
-    ADR-090: rows carry ``rationale`` (the model's advisory context) and
+    ADR-332: rows carry ``rationale`` (the model's advisory context) and
     ``description`` (the tool definition's own text, for the external
     summarizer); the payload carries a ``summary`` slot that starts ``None``
     and is filled by the advisory summarizer -- payload-carried so any

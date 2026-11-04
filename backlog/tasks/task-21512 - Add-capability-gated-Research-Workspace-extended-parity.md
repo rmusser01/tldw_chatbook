@@ -19,7 +19,7 @@ dependencies:
 references:
   - Docs/superpowers/specs/2026-08-23-research-workspace-design.md
   - Docs/superpowers/plans/2026-08-23-research-workspace-extended-parity.md
-  - backlog/decisions/078-research-workspace-authority-and-screen-boundaries.md
+  - backlog/decisions/322-research-workspace-authority-and-screen-boundaries.md
 priority: medium
 ---
 
@@ -47,9 +47,9 @@ Complete the audited Research Workspace control namespace with honest capability
 <!-- SECTION:PLAN:BEGIN -->
 ADR required: no new ADR
 
-ADR path: `backlog/decisions/078-research-workspace-authority-and-screen-boundaries.md`
+ADR path: `backlog/decisions/322-research-workspace-authority-and-screen-boundaries.md`
 
-Reason: ADR-078 and the approved design already classify the audited controls and define their owners. This phase activates only existing real contracts and must raise a new ADR if it introduces a new generator, canonical owner, or server contract.
+Reason: ADR-322 and the approved design already classify the audited controls and define their owners. This phase activates only existing real contracts and must raise a new ADR if it introduces a new generator, canonical owner, or server contract.
 
 Follow `Docs/superpowers/plans/2026-08-23-research-workspace-extended-parity.md` task-by-task with test-first checkpoints and one scoped commit per completed plan task.
 <!-- SECTION:PLAN:END -->

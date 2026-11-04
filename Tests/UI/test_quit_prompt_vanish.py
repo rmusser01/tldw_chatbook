@@ -267,7 +267,7 @@ async def _open_prompt_over_a_safe_modal(app, pilot):
 
 
 async def test_a_covered_safe_modal_cannot_pop_the_quit_prompt():
-    """ADR-031: async self-closing may dismiss only the active top screen.
+    """ADR-299: async self-closing may dismiss only the active top screen.
 
     ``SafeModalDismissMixin.dismiss`` refuses while another screen covers the
     modal, so the prompt stays up for the user to answer, the modal's result

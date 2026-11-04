@@ -1,7 +1,7 @@
 """Settings opens when the saved default provider is a custom endpoint.
 
 TASK-33002.12: with ``[chat_defaults] provider = "custom-ep:<slug>"`` (the
-ADR-146 registry), opening Settings killed the app -- readiness canonicalized
+ADR-343 registry), opening Settings killed the app -- readiness canonicalized
 the id to ``custom_ep:<slug>``, which ``ProviderReadiness`` rejects with
 ``ValueError('Provider key is invalid.')``. Readiness for a registry id now
 resolves through the registry, and a dangling slug reads as an honest

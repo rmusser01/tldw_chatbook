@@ -2,7 +2,7 @@
 
 Textual 8.2.8's ``TextArea`` binds ``f6`` to ``select_line`` (non-priority).
 The app's F6 -- ``focus_next_workbench_pane`` -- is non-priority too, by
-ADR-031, so Textual resolves a focused editor's own binding first: in the
+ADR-299, so Textual resolves a focused editor's own binding first: in the
 Library's note body F6 SELECTED the current line, focus stayed put, and the
 next keystroke replaced the line. LibraryScreen keeps F6 app-owned (no screen
 binding; dev's pin ``test_library_keeps_f6_owned_by_the_app_global_binding``
@@ -20,7 +20,7 @@ from textual.widgets import TextArea
 
 _EditorT = TypeVar("_EditorT", bound=TextArea)
 
-#: The app-global next-pane key (``app.py``, ADR-031).
+#: The app-global next-pane key (``app.py``, ADR-299).
 PANE_KEY = "f6"
 
 

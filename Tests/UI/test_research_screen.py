@@ -21,7 +21,7 @@ def test_runs_screen_composes_shared_research_mode_strip_before_window():
     assert isinstance(children[1], ResearchWindow)
 
 
-# NOTE (task-16322, ADR-068): ``ResearchScreen`` is back -- the local
+# NOTE (task-16322, ADR-315): ``ResearchScreen`` is back -- the local
 # research execution engine drives launched local runs, so the window is
 # reachable from navigation again under the "research" route id (the
 # task-255 library alias is reversed). The screen-level behavior is covered
@@ -305,7 +305,7 @@ async def test_research_window_reports_no_pending_local_checkpoint():
     assert "No pending checkpoint" in window.status_message
 
 
-# --- local engine start wiring (task-16322, ADR-068) ---------------------------
+# --- local engine start wiring (task-16322, ADR-315) ---------------------------
 
 
 @pytest.mark.asyncio

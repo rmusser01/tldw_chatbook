@@ -480,7 +480,7 @@ logger = logger.bind(module="PersonasScreen")
 MODE_CHIP_ORDER: tuple[str, ...] = ("characters", "personas", "dictionaries", "lore")
 
 #: Single-letter mode hotkeys, zipped against MODE_CHIP_ORDER positionally:
-#: c Characters, p Personas, d Dictionaries, l Lore. ADR-031 rule 3 (htop-style
+#: c Characters, p Personas, d Dictionaries, l Lore. ADR-299 rule 3 (htop-style
 #: printable keys) / ADR-152: the ctrl+digit chords these replaced belong to
 #: the app-global shell destination layer, which screens must not bind.
 #: Printable keys are consumed first by focused text inputs, so the letters
@@ -725,7 +725,7 @@ class PersonasScreen(BaseAppScreen):
         Binding("ctrl+s", "personas_save", "Save", show=False),
         Binding("escape", "personas_escape", "Back", show=False),
         # Single-letter mode keys mirror the mode strip order (MODE_CHIP_ORDER
-        # + MODE_HOTKEYS), per ADR-031 rule 3 / ADR-152. The ctrl+1..4 chords
+        # + MODE_HOTKEYS), per ADR-299 rule 3 / ADR-152. The ctrl+1..4 chords
         # these replaced shadowed the app-global shell destination hotkeys on
         # this screen, making the nav bar's ⌃1..⌃3 labels lie here.
         *[

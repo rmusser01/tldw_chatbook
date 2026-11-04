@@ -37,7 +37,7 @@ class SessionSummaryDialog(ModalScreen[None]):
 
     Follows the SplashScreen timed-close idiom (strong timer reference,
     idempotent close that stops the timer) and the ConfirmationDialog
-    small-modal structure. No BINDINGS: any key skips (ADR-031 -- no
+    small-modal structure. No BINDINGS: any key skips (ADR-299 -- no
     terminal-convention keys bound; ctrl+q stays app-global). Styling uses
     legacy semantic variables because ``$ds-*`` tokens do not resolve in a
     class's own DEFAULT_CSS: Textual scopes variables per stylesheet source.

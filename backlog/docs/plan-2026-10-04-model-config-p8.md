@@ -27,8 +27,8 @@ The judge's budgets: first run with a local server takes 2 keys; with a cloud ke
 Constraints:
 - chat_screen.py has 32 lines of headroom (25,331 against 25,363, Tests/Architecture/test_screen_size_ratchet.py:85), so new logic goes in UI/Console_Modules.
 - FirstRunSetupWizard.py already measures 10,462 lines against its 10,404 row (test_module_size_ratchet.py:81). That is a red on dev today, and this phase must not make it worse.
-- ConsoleSetupModal stays the documented non-dismissible gate (ADR-031, task-16211 refinement).
-- First-run copy may only teach keys that the footer shows (ADR-031 rule 5).
+- ConsoleSetupModal stays the documented non-dismissible gate (ADR-299, task-16211 refinement).
+- First-run copy may only teach keys that the footer shows (ADR-299 rule 5).
 
 Absorbs TASK-32572 (Tab does not cycle the Get started card's buttons). Its 100x30 capture is replaced by the program's full-screen targets.
 
@@ -60,7 +60,7 @@ After this phase, task-1379 re-runs the Settings critique.
 - ADR-126 RecoveryRequired in a clean worktree is environmental: compare failure-NAME sets against origin/dev.
 - Size ratchets never rise (ADR-097); console_settings_modal.py net lines <= 0 against its current row.
 - Geometry only through tokens in css/core/_variables.tcss (ADR-150/161); rebuild the CSS bundle with the repo script.
-- ADR-031: never bind Ctrl+C/V/X/S/D/Z/A/R/W; footer hints must match working bindings.
+- ADR-299: never bind Ctrl+C/V/X/S/D/Z/A/R/W; footer hints must match working bindings.
 - TDD; real-implementation tests for config/provider surfaces; rewrite pinned tests on purpose and name them.
 - Commit per task `fix|feat(model-config): <summary> (TASK-33008.N)` + `Co-Authored-By: Claude Opus 5.5 (1M context) <noreply@anthropic.com>`. Never push; NEVER merge origin/dev into the branch.
 - Tick ACs, set Done, add Implementation Notes in each subtask file. Update Docs/User_Guide CONTENT; never add "Verified against" paragraphs (record verification in task notes).
@@ -210,7 +210,7 @@ ConsoleSetupBackdrop paints a snow field behind the card (console_setup_modal.py
 
 TASK-32572: Tab does not cycle the card's actions. The card shows up to three: Set up provider or Choose model, Write a note in Library, and Use detected <provider>. A keyboard-only user therefore cannot reach the notes action or the detected-server action.
 
-The card must stay the documented non-dismissible gate (ADR-031, task-16211 refinement), and its copy may only teach keys that the footer shows (ADR-031 rule 5).
+The card must stay the documented non-dismissible gate (ADR-299, task-16211 refinement), and its copy may only teach keys that the footer shows (ADR-299 rule 5).
 
 The opt-in Console background effects (Console Behavior ▸ Background effects, Utils/console_background_effects.py) are a separate feature and are not touched.
 
@@ -241,7 +241,7 @@ This subtask absorbs TASK-32572. That task's 100x30 capture is replaced by captu
 - Tests/UI/test_console_rail_sections.py
 - Tests/Performance/test_boot_css_byte_budget.py
 - backlog/tasks/task-32572 - Console-Tab-does-not-cycle-the-Get-started-cards-buttons.md
-- backlog/decisions/031-tui-keybinding-and-footer-hint-conventions.md
+- backlog/decisions/299-tui-keybinding-and-footer-hint-conventions.md
 
 ## Task 5: Show the wizard's model-step status messages as text, not radio options (TASK-33008.5)
 

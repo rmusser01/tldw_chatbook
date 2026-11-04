@@ -420,7 +420,7 @@ def test_skills_route_resolves_to_library_screen():
 
 
 def test_research_route_resolves_to_research_screen():
-    """task-16322 (ADR-068) reverses task-255's library alias: the research
+    """task-16322 (ADR-315) reverses task-255's library alias: the research
     route is a real screen again.
 
     The local research execution engine now drives launched local runs
@@ -2892,7 +2892,7 @@ def test_library_screen_bindings_are_all_gated_or_universal():
     # resolves only visible targets and safely no-ops when none exist.  "/"
     # (focus search) is also screen-wide but is not a Binding (see
     # ``LibraryScreen.on_key``), so it never appears in this audit. Neither
-    # does F6 (next pane): it stays the app-global binding (ADR-031; pinned
+    # does F6 (next pane): it stays the app-global binding (ADR-299; pinned
     # by ``test_library_keeps_f6_owned_by_the_app_global_binding``). The
     # Library's note-body editors release ``TextArea``'s own f6 instead, so
     # the key reaches that binding from the body (TASK-34000.28 N-32,

@@ -101,7 +101,7 @@ The options, kept as the record:
   - `./scripts/preflight.sh` is stdlib-only static checks, and the drift guard needs a mounted app.
   - Editing `.github/workflows/derived-artifacts.yml` would risk the queue's `evict-workflow-file` refusal, since #3057 also edits that file.
   - Fallback: if the lane qualification below fails, use pr-fast-lane's admission-sensitive step.
-- **Ctrl+S.** ADR-031's 2026-10-03 refinement (an owner ruling) defines it, and TASK-34000.43 names Settings forms among its examples. Personas (`personas_screen.py`, `Binding("ctrl+s", "personas_save", ...)`) and Library already bind it at screen level, non-priority. TASK-35022 delivers the Settings slice of TASK-34000.43 AC#2 and AC#4. That task keeps the inventory, the architecture test and the other editors.
+- **Ctrl+S.** ADR-299's 2026-10-03 refinement (an owner ruling) defines it, and TASK-34000.43 names Settings forms among its examples. Personas (`personas_screen.py`, `Binding("ctrl+s", "personas_save", ...)`) and Library already bind it at screen level, non-priority. TASK-35022 delivers the Settings slice of TASK-34000.43 AC#2 and AC#4. That task keeps the inventory, the architecture test and the other editors.
 
 ## Global constraints (verified against the repo)
 
@@ -331,7 +331,7 @@ Closes D8 (Tab half) and B17, and fixes S5-N1.
 
 ## Task TASK-35022: Ctrl+S saves a Settings page from inside its fields
 
-Closes the D8 in-field save half. Conforms the Settings pages that offer s to ADR-031's 2026-10-03 refinement.
+Closes the D8 in-field save half. Conforms the Settings pages that offer s to ADR-299's 2026-10-03 refinement.
 
 ### Design
 
@@ -339,9 +339,9 @@ Closes the D8 in-field save half. Conforms the Settings pages that offer s to AD
    - **Appearance text field.** Edit it, press Ctrl+S. The scratch config changes, the result line matches what the Save (s) button gives, and focus is still in the field.
    - **Appearance checkbox.** Toggle it, press Ctrl+S: the same holds.
    - **Providers & Models invalid Custom ID** (helpers from `Tests/UI/test_settings_default_model_picker.py`). Type an invalid Custom ID, press Ctrl+S. The saved model is the previously committed one, never "" (`DefaultModelPicker._restore_committed_display_after_blur`).
-   - **Session summary Duration** (instant-apply; commits on submit or on leaving). Type a value, press Ctrl+S: it is written (ADR-031 b).
+   - **Session summary Duration** (instant-apply; commits on submit or on leaving). Type a value, press Ctrl+S: it is written (ADR-299 b).
    - **A custom endpoint's Edit form.** Change the URL, press Ctrl+S. The endpoint is saved, as with Save endpoint, and the page draft is not saved.
-   - **Ctrl+S does nothing** (no save, no toast; ADR-031 d) on a rail row, in `#settings-category-search`, in the inspector and with nothing focused.
+   - **Ctrl+S does nothing** (no save, no toast; ADR-299 d) on a rail row, in `#settings-category-search`, in the inspector and with nothing focused.
    - **This task's binding saves nothing on Theme and Workspaces**, pages whose footer does not offer s. Ctrl+S in those pages' editors is TASK-34000.43's, so the test asserts only that the Settings binding performs no save there, and TASK-34000.43 may later change that page's own behaviour.
    - **Footer in a text field.** It shows `("ctrl+s", "save category")`, or the editor's own verb inside an in-page editor, and no `("Esc, s", ...)`. `("Esc, r", ...)` and the `t` hint keep their "Esc," form.
 2. **`settings_screen.py` changes:**
@@ -360,7 +360,7 @@ Closes the D8 in-field save half. Conforms the Settings pages that offer s to AD
       2. After `model_search_picker._BLUR_RESTORE_DELAY_SECONDS` (via `set_timer`), run `action_settings_save_category(allow_text_entry_focus=True)`. That is exactly what the Save button's `handle_save_category` calls.
       3. Return focus to the remembered widget if it is still mounted and nothing else took focus. P8 Task 1's focus on "Return to Console" after a successful save must win.
    4. Mark the timer coupling with a `ponytail:` comment. It is tied to the picker's blur delay. The upgrade is an explicit commit hook if a field ever commits later than that.
-4. **Footer.** Map `s` to `ctrl+s` only while a text field inside the detail pane has focus. Outside a field, `s` works and the footer keeps "s save category". In the filter box it keeps "Esc, s". F1 is unchanged (ADR-031 rule 4, refinement e).
+4. **Footer.** Map `s` to `ctrl+s` only while a text field inside the detail pane has focus. Outside a field, `s` works and the footer keeps "s save category". In the filter box it keeps "Esc, s". F1 is unchanged (ADR-299 rule 4, refinement e).
 
 ### Pinned tests to update (with reason)
 
@@ -437,7 +437,7 @@ Closes the D8 in-field save half. Conforms the Settings pages that offer s to AD
   - `_move_focus` resets when the focused widget is missing from the chain, so `tab_chain` always keeps it.
   - Keyboard scrolling must be checked by pressing PageDown (lessons-live-verification, "CSS overflow alone does not provide keyboard scrolling").
 - **Ctrl+S.**
-  - ADR-031 (d) forbids it outside an editor; the focus guard enforces that.
+  - ADR-299 (d) forbids it outside an editor; the focus guard enforces that.
   - The timer is coupled to the picker's blur delay.
   - P8's Return-to-Console focus must win over T3's focus restore.
   - The in-page editor table must be measured, not guessed; a missed editor would save the page instead.
@@ -466,5 +466,5 @@ No task changes config schema or user data, so no migration rollback is needed.
 - TASK-2831: hidden-row focus edge.
 - TASK-32385: Folder Files labels in the same index file.
 - TASK-1378: split of `settings_screen.py`.
-- ADR-212 §4; ADR-031 (2026-10-03 refinement).
+- ADR-212 §4; ADR-299 (2026-10-03 refinement).
 - S3: TASK-35016 (rail groups, group toggles) lands before T2; TASK-35017 (page order). S4 (other User Guide copy; the Tab sentence stays T2's).

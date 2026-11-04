@@ -63,8 +63,8 @@ Out of scope:
 - [ ] #7 This PR closes task-338, task-32859 and task-194.
 - [ ] #8 chat_screen.py ends the phase within its line and method budget (Tests/Architecture/test_screen_size_ratchet.py:85). If the phase shrank the file, the budget is lowered to the measured size.
 - [ ] #9 No ADR-097 ratchet rises: the boot CSS byte budget (608,090, Tests/Performance/test_boot_css_byte_budget.py:117) and the _ui_ready census (1,031, Tests/Performance/test_ui_ready_module_census.py:150). Modules used only by the switcher are not imported on the boot path. If dev is already red, the branch's number equals dev's.
-- [ ] #10 No binding from ADR-031 rule 2 (Ctrl+C, V, X, S, D, Z, A, R or W) is added.
-- [ ] #11 Every printed key hint matches a working binding (ADR-031 rule 4).
+- [ ] #10 No binding from ADR-299 rule 2 (Ctrl+C, V, X, S, D, Z, A, R or W) is added.
+- [ ] #11 Every printed key hint matches a working binding (ADR-299 rule 4).
 - [ ] #12 Live captures at 211x44 and 235x52, taken with a scratch TLDW_CONFIG_PATH profile, are attached to the PR.
 - [ ] #13 Docs/User_Guide pages are updated: console.md covers Switch model, /model [query], Ctrl+O, the keys table and the rail's Change action, with a Verified-against stamp.
 - [ ] #14 ./scripts/preflight.sh passes.
@@ -77,7 +77,7 @@ Out of scope:
 - ADR-126 RecoveryRequired in a clean worktree is environmental: compare failure-NAME sets against origin/dev.
 - Size ratchets never rise (ADR-097); console_settings_modal.py net lines <= 0 against its current row.
 - Geometry only through tokens in css/core/_variables.tcss (ADR-150/161); rebuild the CSS bundle with the repo script.
-- ADR-031: never bind Ctrl+C/V/X/S/D/Z/A/R/W; footer hints must match working bindings.
+- ADR-299: never bind Ctrl+C/V/X/S/D/Z/A/R/W; footer hints must match working bindings.
 - TDD; real-implementation tests for config/provider surfaces; rewrite pinned tests on purpose and name them.
 - Commit per task `fix|feat(model-config): <summary> (TASK-33004.N)` + `Co-Authored-By: Claude Opus 5.5 (1M context) <noreply@anthropic.com>`. Never push; NEVER merge origin/dev into the branch.
 - Tick ACs, set Done, add Implementation Notes in each subtask file. Update Docs/User_Guide CONTENT; never add "Verified against" paragraphs (record verification in task notes).
@@ -137,7 +137,7 @@ Commit 097411fca0 already extracted a single selection core (ConsoleSelectionCor
 - build_console_provider_selection_from_settings (:685-720)
 - the screen chain at UI/Screens/chat_screen.py:9614, :9631, :9666 and :9687, which constructs its own at :9731
 
-ConsoleProviderSelection is constructed at eight sites. The _provider_settings helpers also disagree: Chat/console_session_settings.py:1996 is registry-aware per ADR-146, while Chat/console_provider_gateway.py:7171 raises.
+ConsoleProviderSelection is constructed at eight sites. The _provider_settings helpers also disagree: Chat/console_session_settings.py:1996 is registry-aware per ADR-343, while Chat/console_provider_gateway.py:7171 raises.
 
 The switcher resolves a selection and readiness for many provider·model pairs. A third path would recreate exactly the drift task-32859 documents: the PR-2668 fix had to be applied twice. Removing the screen's copy also frees lines in chat_screen.py, which has only 32 lines of headroom. No ADR is needed, because ADR-006 ('Console owns effective session resolution') already covers the consolidation.
 
@@ -146,7 +146,7 @@ The switcher resolves a selection and readiness for many provider·model pairs. 
 - [ ] #1 Exactly one builder constructs a ConsoleProviderSelection from Console session settings. The screen chain (chat_screen.py:9614-9731) and the controller builder (console_chat_controller.py:685-720) collapse into it, and the screen's extra fields (endpoint policy, workspace, identity) survive.
 - [ ] #2 Every other ConsoleProviderSelection construction site either routes through that builder or is listed in the task notes with the reason it is not a selection built from settings.
 - [ ] #3 The model / api_model / default_model fallback chain is spelled once.
-- [ ] #4 The unified provider-settings lookup is registry-aware (ADR-146). The gateway's raising error policy (console_provider_gateway.py:7171) is kept at its call sites, or a recorded decision changes it.
+- [ ] #4 The unified provider-settings lookup is registry-aware (ADR-343). The gateway's raising error policy (console_provider_gateway.py:7171) is kept at its call sites, or a recorded decision changes it.
 - [ ] #5 ADR-006 precedence is unchanged and pinned by the existing Console settings tests.
 - [ ] #6 The PR-2668 CE-001 custom-endpoint slug fix exists in exactly one place.
 - [ ] #7 Switch model resolves each row's selection and readiness through this builder; the switcher has no selection logic of its own.
@@ -159,7 +159,7 @@ The switcher resolves a selection and readiness for many provider·model pairs. 
 - tldw_chatbook/Chat/console_session_settings.py
 - tldw_chatbook/Chat/console_provider_gateway.py
 - backlog/decisions/006-provider-aware-generation-settings.md
-- backlog/decisions/146-console-custom-endpoint-registry.md
+- backlog/decisions/343-console-custom-endpoint-registry.md
 - backlog/tasks/task-32859 - Unify-the-console-provider-selection-builder.md
 
 ## Task 3: Derive recent and previous model pairs from existing conversation data (TASK-33004.3)
@@ -220,8 +220,8 @@ Catalogs come from the existing snapshot resolution (resolve_provider_model_opti
 NEEDS SETUP rows reuse the existing Settings recovery navigation (_open_console_provider_recovery, chat_screen.py:20533-20563) with that row's own provider, per ADR-012 and owner decision D4.
 
 Other rules this list follows:
-- Legacy aliases may be hidden but not deleted (ADR-066).
-- Custom endpoints appear as custom-ep instances, and the built-in custom and custom_2 slots stay (ADR-146).
+- Legacy aliases may be hidden but not deleted (ADR-311).
+- Custom endpoints appear as custom-ep instances, and the built-in custom and custom_2 slots stay (ADR-343).
 - The active model is always preserved (ADR-020).
 
 This subtask closes task-194, which is about the popover's provider labels only. Behaviour when no provider is configured (the setup gate) is unchanged in this phase.
@@ -241,8 +241,8 @@ Absorbs TASK-194.
 - [ ] #9 A provider whose catalog is loading, empty or unavailable shows an explicit row saying so, never silently no rows (TASK-14812 AC#4).
 - [ ] #10 Readiness is resolved at most once per provider each time the switcher opens, off the UI thread wherever it could block, through a resolver the screen injects. The switcher widget calls no provider service itself (ADR-011).
 - [ ] #11 With no test evidence, a row reads 'Ready · not tested' or 'Not ready · <reason>'; no row claims verified or reachable.
-- [ ] #12 Legacy alias providers are hidden unless configured or current, and are then labelled as legacy aliases (ADR-066).
-- [ ] #13 custom-ep endpoints appear under their display names, and the built-in custom and custom_2 slots stay listable (ADR-146).
+- [ ] #12 Legacy alias providers are hidden unless configured or current, and are then labelled as legacy aliases (ADR-311).
+- [ ] #13 custom-ep endpoints appear under their display names, and the built-in custom and custom_2 slots stay listable (ADR-343).
 - [ ] #14 Enter on a NEEDS SETUP row never applies it. It closes the switcher and opens Settings ▸ Providers & Models with that row's provider selected and its credential or endpoint field focused (ADR-012).
 - [ ] #15 The switcher has no credential input (D4).
 - [ ] #16 At 211x44 and 235x52 the switcher is 120 columns wide, set by a width token in css/core/_variables.tcss, with auto height up to 80% of the screen and its key rows always visible.
@@ -267,8 +267,8 @@ Absorbs TASK-194.
 - Tests/ProductionApp/test_provider_selection_ownership.py
 - backlog/decisions/011-chatbook-workbench-ui-system.md
 - backlog/decisions/012-provider-credential-settings-boundary.md
-- backlog/decisions/066-local-provider-thinking-controls.md
-- backlog/decisions/146-console-custom-endpoint-registry.md
+- backlog/decisions/311-local-provider-thinking-controls.md
+- backlog/decisions/343-console-custom-endpoint-registry.md
 - backlog/decisions/020-automatic-model-catalog-refresh.md
 - backlog/tasks/task-194 - console_model_popover-uses-the-shared-provider-display-name-catalog.md
 - backlog/tasks/task-14812 - Unify-Console-model-selection-into-a-searchable-picker.md
@@ -289,15 +289,15 @@ The value row relies on existing machinery:
 - Ctrl+O replaces 'Full settings…' and carries a ConsoleSettingsTransfer (console_settings_apply.py:171).
 - Field support comes from phase 1's single supported-field function, and labels from phase 2's field table.
 
-This is the first surface that prints Source words, so it introduces the one resolver later editors reuse. Provenance today records only inherited/explicit/carried (ConsoleSettingsFieldProvenance, console_settings_apply.py:64-70). The Console parameter stack has more layers than the six words (ADR-147: model default, Console per-provider saved defaults, custom-endpoint params, chat_defaults, provider scalars, built-in fallbacks), and every layer must map to one word without being dropped.
+This is the first surface that prints Source words, so it introduces the one resolver later editors reuse. Provenance today records only inherited/explicit/carried (ConsoleSettingsFieldProvenance, console_settings_apply.py:64-70). The Console parameter stack has more layers than the six words (ADR-344: model default, Console per-provider saved defaults, custom-endpoint params, chat_defaults, provider scalars, built-in fallbacks), and every layer must map to one word without being dropped.
 
-Save as model default has no key because Ctrl+S is banned (ADR-031 rule 2). Streaming is On/Off at chat scope (ADR-095:79). A Select posts Changed on mount, so an unguarded Streaming Select would invent an edit.
+Save as model default has no key because Ctrl+S is banned (ADR-299 rule 2). Streaming is On/Off at chat scope (ADR-095:79). A Select posts Changed on mount, so an unguarded Streaming Select would invent an edit.
 
 ### Acceptance criteria
 
 - [ ] #1 The value row shows exactly Temperature, Max tokens and Streaming for the highlighted pair; Thinking and every other field stay in Chat settings.
 - [ ] #2 Each value is one row tall and shows that pair's effective value with a Source word.
-- [ ] #3 Source words come from one shared resolver that maps every layer of the Console parameter stack (ADR-147: edited draft, this chat, model default, Console per-provider default, custom-endpoint params, chat_defaults, provider scalars, built-in fallback) to exactly one of 'edited *', 'this chat', 'model default', 'Console Behavior', 'provider' or 'built-in'. A unit test covers each layer.
+- [ ] #3 Source words come from one shared resolver that maps every layer of the Console parameter stack (ADR-344: edited draft, this chat, model default, Console per-provider default, custom-endpoint params, chat_defaults, provider scalars, built-in fallback) to exactly one of 'edited *', 'this chat', 'model default', 'Console Behavior', 'provider' or 'built-in'. A unit test covers each layer.
 - [ ] #4 Tab from a list row rebases the draft to that pair and focuses Temperature with its value selected.
 - [ ] #5 Edits made for pair A come back when the user returns to A in the same session (A→B→A).
 - [ ] #6 Streaming is a single Select offering On and Off at this scope (ADR-095:79).
@@ -311,7 +311,7 @@ Save as model default has no key because Ctrl+S is banned (ADR-031 rule 2). Stre
 - [ ] #14 Esc with edits shows 'Enter apply · d discard · Esc keep editing' and discards nothing until the user chooses.
 - [ ] #15 The key rows print every accelerator the switcher binds (Enter, Tab, Ctrl+N, Ctrl+O, Esc) plus 'Applies to: this chat only'.
 - [ ] #16 Every printed key works while Find has focus.
-- [ ] #17 No binding from ADR-031 rule 2 (Ctrl+C, V, X, S, D, Z, A, R or W) exists on the switcher.
+- [ ] #17 No binding from ADR-299 rule 2 (Ctrl+C, V, X, S, D, Z, A, R or W) exists on the switcher.
 - [ ] #18 Pilot tests driven by real key presses from the composer pin Alex's path at 14 keys, the A/B toggle at 2, a model-only change at 5, and a model change saved as the model default at 16 or fewer.
 - [ ] #19 A live capture of Alex's path at 211x44 is attached to the task notes.
 
@@ -324,8 +324,8 @@ Save as model default has no key because Ctrl+S is banned (ADR-031 rule 2). Stre
 - tldw_chatbook/Chat/console_session_settings.py
 - tldw_chatbook/UI/Screens/chat_screen.py
 - backlog/decisions/095-conversation-owned-console-generation-settings.md
-- backlog/decisions/147-agent-provider-routing.md
-- backlog/decisions/031-tui-keybinding-and-footer-hint-conventions.md
+- backlog/decisions/344-agent-provider-routing.md
+- backlog/decisions/299-tui-keybinding-and-footer-hint-conventions.md
 
 ## Task 6: Add pick-only mode and mark the committed model in ModelSearchPicker (TASK-33004.6)
 
@@ -379,7 +379,7 @@ Constraints: ADR-083:20-22 caps the Model section's natural height at 15 rows, a
 - [ ] #3 The rail Model section's action reads 'Change  Alt+M' and opens Switch model. It keeps its button id, so the rail reconciliation tests (Tests/UI/test_console_rail_reconciliation.py, Tests/UI/test_console_model_section_dedup.py) stay valid.
 - [ ] #4 The Model section stays within ADR-083's cap of 15 rows of natural height.
 - [ ] #5 Ctrl+O from the Console opens Chat settings, and a live check at 211x44 confirms the terminal delivers Ctrl+O to the app.
-- [ ] #6 The Console footer, F1 help, the palette entry and the Provider/Model chip help text name Switch model (Alt+M) and Chat settings (Ctrl+O), and every key they teach works (ADR-031 rule 4).
+- [ ] #6 The Console footer, F1 help, the palette entry and the Provider/Model chip help text name Switch model (Alt+M) and Chat settings (Ctrl+O), and every key they teach works (ADR-299 rule 4).
 - [ ] #7 Query dispatch for /model lives under UI/Console_Modules/, not in chat_screen.py.
 - [ ] #8 A 211x44 live capture of the rail and of '/model son' is attached to the task notes.
 
@@ -392,7 +392,7 @@ Constraints: ADR-083:20-22 caps the Model section's natural height at 15 rows, a
 - tldw_chatbook/UI/console_command_provider.py
 - tldw_chatbook/Widgets/Console/console_status_chips.py
 - backlog/decisions/083-console-edge-rails-and-workspace-tree-ownership.md
-- backlog/decisions/031-tui-keybinding-and-footer-hint-conventions.md
+- backlog/decisions/299-tui-keybinding-and-footer-hint-conventions.md
 - backlog/tasks/task-338 - Restore-Streaming-on-off-visibility-in-the-Console-rail-Model-section.md
 - Docs/User_Guide/console.md
 

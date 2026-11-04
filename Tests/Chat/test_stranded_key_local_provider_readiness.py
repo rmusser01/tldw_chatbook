@@ -2,7 +2,7 @@
 
 TASK-34100.4 AC #10 (part 2 residue). Part 1 blocked a stranded `enc:` key in
 `[api_settings.<provider>]`, including keyless local providers. A local server
-is just as often saved as an ADR-146 custom endpoint, and that entry's own
+is just as often saved as an ADR-343 custom endpoint, and that entry's own
 `api_key` is encrypted the same way (``encrypt_api_keys_in_config`` walks every
 table). Its readiness fell back to the keyless family: a llama.cpp entry whose
 key was still `enc:` read "Ready · not tested", and the send went out with no

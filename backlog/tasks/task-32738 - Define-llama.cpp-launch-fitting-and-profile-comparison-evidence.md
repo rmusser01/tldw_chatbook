@@ -30,7 +30,7 @@ One ADR and focused tuning spec covering runtime-assisted fit, observable effect
 
 ### Explicit exclusions
 
-No replacement of ADR-080 download scenarios, summed GPU memory, opaque automatic tuning, default speculative decoding or broad benchmarking framework.
+No replacement of ADR-327 download scenarios, summed GPU memory, opaque automatic tuning, default speculative decoding or broad benchmarking framework.
 
 ### Architecture gate
 

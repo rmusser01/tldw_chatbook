@@ -1,4 +1,4 @@
-"""Guarded in-memory raw TOML drafts, owned by Settings (ADR-033)."""
+"""Guarded in-memory raw TOML drafts, owned by Settings (ADR-303)."""
 
 from __future__ import annotations
 

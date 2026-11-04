@@ -274,7 +274,7 @@ def parse_fenced_tool_call(text: str) -> ToolCall | None:
     call_id = payload.get("call_id", "")
     if not isinstance(call_id, str):
         return None
-    # ADR-090: an optional explicit rationale key; wrong-typed values are
+    # ADR-332: an optional explicit rationale key; wrong-typed values are
     # ignored, never fatal -- the call itself must still parse.
     rationale = payload.get("rationale", "")
     if not isinstance(rationale, str):
@@ -526,7 +526,7 @@ class LoopDeps:
     # payload budget, so this layer never knows the budget. `None` (the
     # default) is a no-op: behavior is byte-identical to pre-hooks runs.
     post_tool_call: Callable[[str, str, dict, str, bool], None] | None = None
-    # fork_chat / new_chat: the chat-creation runtime tools (ADR-150).
+    # fork_chat / new_chat: the chat-creation runtime tools (ADR-348).
     # Wired ONLY for the top-level agent (agent_kind == primary) by the
     # service, like install_skill above -- children never create chats in
     # v1 (sub-agents: TASK-32480). `None` (the default) means the run is
@@ -2103,14 +2103,14 @@ def run_agent_loop(
             total_tokens += turn.tokens
             calls = list(turn.tool_calls)
             if calls:
-                # ADR-090: native turns -- the assistant text of the same
+                # ADR-332: native turns -- the assistant text of the same
                 # turn is the rationale for every call in it.
                 calls = list(with_preamble_rationale(calls, turn.text))
         fenced = None
         if not calls:
             _visible, fenced = split_visible_text_and_tool_call(turn.text)
             if fenced is not None:
-                # ADR-090: fence turns -- the visible text preceding the
+                # ADR-332: fence turns -- the visible text preceding the
                 # fence is the fallback rationale (explicit key wins inside
                 # with_preamble_rationale).
                 calls = list(with_preamble_rationale([fenced], _visible))
@@ -2977,7 +2977,7 @@ def run_agent_loop(
                         isolation = (
                             str(call.args.get("isolation") or "").strip() or None
                         )
-                        # ADR-147 (Task 6): ad-hoc routing args. Same
+                        # ADR-344 (Task 6): ad-hoc routing args. Same
                         # `.get(...) or ""` coercion as `agent` above: an
                         # explicit JSON null must not become the truthy
                         # string "None". The resolver (inside deps.spawn)
@@ -3053,7 +3053,7 @@ def run_agent_loop(
                                     **route_kwargs,
                                 )
                             elif agent_name:
-                                # `isolation=` (and the ADR-147 routing
+                                # `isolation=` (and the ADR-344 routing
                                 # overrides) are passed only when set: many
                                 # unit tests build a bare `LoopDeps` with a
                                 # narrow single/double-arg `spawn` double

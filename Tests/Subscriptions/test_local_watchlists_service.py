@@ -2326,7 +2326,7 @@ async def test_list_items_filters_by_is_flagged(tmp_path):
 async def test_resolve_watchlist_name_is_not_limited_to_the_first_10000_rows(
     tmp_path,
 ):
-    """ADR-043 reuse remains correct beyond the old list-scan cap.
+    """ADR-307 reuse remains correct beyond the old list-scan cap.
 
     Replacing the direct lookup with ``list_watchlists(limit=10000)`` makes
     this create ``Target (2)`` instead of returning the existing final row.

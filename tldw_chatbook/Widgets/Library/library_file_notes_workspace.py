@@ -2743,7 +2743,7 @@ class LibraryFileNotesWorkspace(Vertical):
                 await asyncio.shield(save_task)
             except (asyncio.CancelledError, Exception):
                 pass
-        # task-34382 (ADR-218): the session-end retention pass, after any
+        # task-34382 (ADR-351): the session-end retention pass, after any
         # in-flight save settles and before the owner/replica retire.
         # PR #3016 review finding 10: the service reports replica cleanup
         # failures as results, so the result is inspected too -- a failed
@@ -3059,7 +3059,7 @@ class LibraryFileNotesWorkspace(Vertical):
         service: FileNotesService,
         generation: int,
     ) -> str | None:
-        """Run one ADR-218 retention pass for a scanned root (task-34382).
+        """Run one ADR-351 retention pass for a scanned root (task-34382).
 
         Args:
             service: Service bound to the root candidate just scanned.
@@ -6405,7 +6405,7 @@ class LibraryFileNotesWorkspace(Vertical):
                 if generation == self._root_generation:
                     self._report_root_change_reason(ROOT_CHANGE_TIMEOUT_COPY)
                 return False
-            # task-34382 (ADR-218): retention runs after the scan adopts the
+            # task-34382 (ADR-351): retention runs after the scan adopts the
             # candidate and BEFORE Recently-deleted is read, so the listing
             # never names entries the policy just expired. Failure warns; it
             # never blocks the root change.

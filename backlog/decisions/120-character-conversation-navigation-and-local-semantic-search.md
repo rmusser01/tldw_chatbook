@@ -11,8 +11,8 @@ Meaning and its Settings/runtime contracts below remain deferred requirements.
 Date: 2026-09-03
 Related Task: [TASK-31241](../tasks/task-31241%20-%20Align-character-conversation-navigation-decisions.md)
 Related Spec: [Character Conversation Navigation and Local Meaning Search Design](../../Docs/superpowers/specs/2026-09-03-character-conversation-navigation-design.md)
-Preserves: ADR-031, ADR-033
-Amends: ADR-004 (`004-personas-destination-native-workbench.md`), ADR-030,
+Preserves: ADR-299, ADR-303
+Amends: ADR-287 (`287-personas-destination-native-workbench.md`), ADR-030,
   ADR-037, ADR-046, ADR-083, ADR-085
 
 ## Decision
@@ -204,7 +204,7 @@ Surface roles remain distinct:
   exposes bounded recent groups plus global local Keyword entry.
 - `Ctrl+K` remains an operational switchboard. Active remains the default,
   blank Active Enter preserves MRU-other behavior, and F3 cycles Active,
-  History, and Character chats under [ADR-031](031-tui-keybinding-and-footer-hint-conventions.md).
+  History, and Character chats under [ADR-299](299-tui-keybinding-and-footer-hint-conventions.md).
 - Roleplay owns complete, keyset-paginated browsing, search, preview, and exact
   Console resume for one resolved local character. Library retains the global
   archive and conversation-administration role.
@@ -226,7 +226,7 @@ offered.
 `Index existing chats`, Pause, Resume, Cancel, Rebuild, and Delete semantic
 index are explicit immediate maintenance commands labeled `applies immediately
 - no Save needed` under the unchanged
-[ADR-033](033-settings-commit-models-three-honestly-labeled.md) commit-model
+[ADR-303](303-settings-commit-models-three-honestly-labeled.md) commit-model
 contract. Immediate commands capture saved configuration, never draft values.
 Index, Rebuild, and Delete are unavailable while relevant Settings fields are
 dirty; Pause, Resume, and Cancel remain available for an existing job and never
@@ -279,9 +279,9 @@ authority or mutation right.
   rebuild controls; optional dependencies degrade to visible unavailability.
 - A ready snapshot may remain queryable while maintenance is off or a rebuild
   stages, but partial or stale content never becomes eligible.
-- ADR-031 continues to own global/reserved keys and truthful hints; this decision
+- ADR-299 continues to own global/reserved keys and truthful hints; this decision
   introduces no new global binding.
-- ADR-033 continues to own Settings transaction labels; this decision assigns
+- ADR-303 continues to own Settings transaction labels; this decision assigns
   each preference or maintenance action to an existing commit model.
 
 ## Links
@@ -289,6 +289,6 @@ authority or mutation right.
 - [Approved design](../../Docs/superpowers/specs/2026-09-03-character-conversation-navigation-design.md)
 - [Implementation plan](../../Docs/superpowers/plans/2026-09-03-character-conversation-navigation-implementation.md)
 - [TASK-31241](../tasks/task-31241%20-%20Align-character-conversation-navigation-decisions.md)
-- [ADR-004: Personas destination-native workbench](004-personas-destination-native-workbench.md)
-- [ADR-031: TUI keybinding and footer-hint conventions](031-tui-keybinding-and-footer-hint-conventions.md)
-- [ADR-033: Settings commit models](033-settings-commit-models-three-honestly-labeled.md)
+- [ADR-287: Personas destination-native workbench](287-personas-destination-native-workbench.md)
+- [ADR-299: TUI keybinding and footer-hint conventions](299-tui-keybinding-and-footer-hint-conventions.md)
+- [ADR-303: Settings commit models](303-settings-commit-models-three-honestly-labeled.md)

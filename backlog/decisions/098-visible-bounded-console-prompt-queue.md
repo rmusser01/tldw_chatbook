@@ -231,5 +231,5 @@ changes. See TASK-33628.1 AC2 and TASK-14806 AC7.
 - [Console Prompt Queue Design](../../Docs/superpowers/specs/2026-08-09-console-prompt-queue-design.md)
 - [Parallel Agents Across Workspaces Design](../../Docs/superpowers/specs/2026-07-26-parallel-agents-across-workspaces-design.md)
 - [ADR-011: Chatbook Workbench UI System](011-chatbook-workbench-ui-system.md)
-- [ADR-031: TUI Keybinding and Footer-Hint Conventions](031-tui-keybinding-and-footer-hint-conventions.md)
+- [ADR-299: TUI Keybinding and Footer-Hint Conventions](299-tui-keybinding-and-footer-hint-conventions.md)
 - [ADR-033: Application Session State Ownership](033-application-session-state-ownership.md)

@@ -4,7 +4,7 @@ Edits the AgentRuns DB directly (immediate CRUD) — unlike TOML-backed
 Settings categories there is no draft/Save-with-`s` cycle; each Save/Delete
 applies at once. Fleet spec §4.
 
-ADR-147 (TASK-32477 task 9): the preset form also edits the routing fields
+ADR-344 (TASK-32477 task 9): the preset form also edits the routing fields
 (``provider`` / ``params``), and a routing block below the form edits the
 four ``[agents]`` routing keys (sub-agent defaults + spawn-override policy)
 and offers a "Test routing" dry-run over the pure resolver. The routing keys
@@ -360,7 +360,7 @@ class AgentsSettingsPanel(Vertical):
 
     def _provider_select_options(self) -> list[tuple[str, str]]:
         """Build provider Select options via the shared Console builder so
-        custom-ep entries appear by display_name (ADR-146/147)."""
+        custom-ep entries appear by display_name (ADR-343/147)."""
         return [
             (option.label, option.value)
             for option in build_console_provider_options(

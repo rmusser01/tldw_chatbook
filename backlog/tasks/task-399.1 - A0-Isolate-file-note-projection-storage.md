@@ -58,16 +58,16 @@ Detailed plan: Docs/superpowers/plans/2026-07-23-file-notes-a0-storage-isolation
 
 Closed superseded, not implemented as written. The isolation goal — linked-file
 state must not be able to alter, delay, or impair the existing Database Notes
-store — was met by the accepted ADR-029 design: File Notes state lives in one
+store — was met by the accepted ADR-296 design: File Notes state lives in one
 root-namespaced SQLite replica (`tldw_chatbook/Notes/file_notes_replica.py`)
 entirely outside ChaChaNotes, whose schema, triggers, CRUD, and backup/restore
 behavior stayed unchanged (TASK-969 implementation notes; PR #992). The
 ADR-021 mechanisms this task specified — domain-hashed storage-instance-id
 directories, the owner-only fixed runtime namespace, coordinator/lease
 election, and the post-first-paint read-only startup probe — were rejected by
-ADR-029 in favor of disk authority and were never built. Stale `In Progress`
+ADR-296 in favor of disk authority and were never built. Stale `In Progress`
 since 2026-07-23 with zero live claims; this flip records the board's true
 state.
 
-Superseded by: ADR-029 (backlog/decisions/029-file-notes-disk-authority.md) via TASK-969, landed starting PR #992 and
+Superseded by: ADR-296 (backlog/decisions/296-file-notes-disk-authority.md) via TASK-969, landed starting PR #992 and
 hardened through PR #2979.

@@ -1011,7 +1011,7 @@ class ConsoleControlState:
             approval_count: Pending MCP approvals.
             system_prompt_set: Whether the active session has a system prompt;
                 the chip then reads ``System Prompt: set``.
-            app_config: Config holding the ADR-146 endpoint registry, so a
+            app_config: Config holding the ADR-343 endpoint registry, so a
                 ``custom-ep`` provider shows its entry's name.
             emergency_stop_held: Whether the global emergency stop is active
                 (TASK-33620.1); the header and status strip show the hold.

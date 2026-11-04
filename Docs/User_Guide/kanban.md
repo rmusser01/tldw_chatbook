@@ -24,7 +24,7 @@ the board shows the selected card's full detail. Enter focuses it; arrows, PageU
 
 ## Keys
 
-All board actions are single-letter htop-style keys (ADR-031); nothing
+All board actions are single-letter htop-style keys (ADR-299); nothing
 here needs a mouse, though clicking a card selects it.
 
 | Key | Action |

@@ -616,7 +616,7 @@ async def test_scope_banner_points_to_the_two_profile_surfaces() -> None:
     """The pointer card names where profiles actually live (task 1, slice 4).
 
     Voice profiles are a Speech Lab concept and per-character assignment
-    lives in the Roleplay character editor (ADR-039 scope separation) --
+    lives in the Roleplay character editor (ADR-304 scope separation) --
     neither is managed from this panel. The card is a two-line static
     note; the single "Open Speech Lab" action lives with the Save actions.
     """

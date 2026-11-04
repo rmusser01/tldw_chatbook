@@ -45,7 +45,7 @@ The Console bridge composes a fresh registry per `run_reply`, in a fixed order: 
 
 ## Local tools and file authority
 
-`LocalToolProvider` exposes the `fs_*` family (`fs_list`, `fs_read`, `fs_write`, `fs_edit`, `fs_glob`, `fs_grep`), git tools, patch tools, and web tools. Local tools deliberately reuse the MCP permission model through the `local:__local__` hub server key (ADR-032), so they appear in the same permission store and approval cards. Their root model is the admitted-roots contract described in [console-file-authority.md](./console-file-authority.md): `None` = legacy single `workspace_root`; `()` = path tools stripped entirely; ≥1 root = per-alias specs with an injected `root_alias` parameter when multiple. Read-only composition filters every mutating spec — `fs_write`/`fs_edit`/`fs_patch`/todo tools are simply not advertised.
+`LocalToolProvider` exposes the `fs_*` family (`fs_list`, `fs_read`, `fs_write`, `fs_edit`, `fs_glob`, `fs_grep`), git tools, patch tools, and web tools. Local tools deliberately reuse the MCP permission model through the `local:__local__` hub server key (ADR-300), so they appear in the same permission store and approval cards. Their root model is the admitted-roots contract described in [console-file-authority.md](./console-file-authority.md): `None` = legacy single `workspace_root`; `()` = path tools stripped entirely; ≥1 root = per-alias specs with an injected `root_alias` parameter when multiple. Read-only composition filters every mutating spec — `fs_write`/`fs_edit`/`fs_patch`/todo tools are simply not advertised.
 
 Tool results that exceed budgets spill into the chat's private scratch space (`tool-spill`, per-result cap 32 KiB, aggregate inline budget 256 KiB, 0600 files in a 0700 dir); the preview names the read-back path so `fs_read` can page it back with no new grant. The opaque absolute scratch locator is stripped from every model/log-bound result via the redaction-root seam.
 
@@ -89,7 +89,7 @@ Script skills (`run_skill_script`) add three independent gates: the runtime poli
 
 ## Runtime tools
 
-The loop owns several tools itself (ids `runtime:<name>`, schemas in `tool_catalog.py`): `spawn_subagent`, the fleet tools (`wait_agents`, `check_agents`, `send_to_agent`, message/steering tools, worktree merge/discard), `find_tools`/`load_tools`, `skill_file` / `install_skill` / `run_skill_script`, `fork_chat` / `new_chat` (ADR-150), and the run-log search tools. Fleet waits dispatch in-loop rather than through `invoke_tool` so they are not killed by the per-call timeout (see [agent-runtime.md](./agent-runtime.md)).
+The loop owns several tools itself (ids `runtime:<name>`, schemas in `tool_catalog.py`): `spawn_subagent`, the fleet tools (`wait_agents`, `check_agents`, `send_to_agent`, message/steering tools, worktree merge/discard), `find_tools`/`load_tools`, `skill_file` / `install_skill` / `run_skill_script`, `fork_chat` / `new_chat` (ADR-348), and the run-log search tools. Fleet waits dispatch in-loop rather than through `invoke_tool` so they are not killed by the per-call timeout (see [agent-runtime.md](./agent-runtime.md)).
 
 ## MCP tools
 

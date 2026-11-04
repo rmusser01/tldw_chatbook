@@ -153,7 +153,7 @@ _MAX_SOURCE_CHARS = 256
 _MAX_ENV_VAR_CHARS = 128
 _MAX_REASON_CHARS = 128
 _MAX_RECOVERY_CHARS = 1024
-#: ADR-146: the readiness reason for a ``custom-ep:<slug>`` id whose registry
+#: ADR-343: the readiness reason for a ``custom-ep:<slug>`` id whose registry
 #: entry is gone (TASK-33002.12).
 ENDPOINT_NOT_FOUND_REASON = "Endpoint not found"
 STILL_ENCRYPTED_REASON = "Saved API key is still encrypted"
@@ -211,7 +211,7 @@ def _validate_safe_text(value: object, *, label: str, max_chars: int) -> None:
 def safe_provider_label(text: str, fallback: str) -> str:
     """Return ``text`` when ``ProviderReadiness.provider`` can carry it.
 
-    An ADR-146 entry's ``display_name`` is user text the registry accepts
+    An ADR-343 entry's ``display_name`` is user text the registry accepts
     but the record rejects (a no-break space, a ZWJ emoji, a tab), and a
     rejected record is an unhandled ValueError that kills Settings on open
     (TASK-33002.12), so such a name reads as ``fallback`` instead.
@@ -624,7 +624,7 @@ def custom_endpoint_family_readiness(
     environ: Mapping[str, str] | None = None,
     background_credentials: bool = False,
 ) -> ProviderReadiness:
-    """The family readiness an ADR-146 custom endpoint entry rides.
+    """The family readiness an ADR-343 custom endpoint entry rides.
 
     The family slot's own saved key (``[api_settings.<family>] api_key``) is
     never the entry's credential, so a keyless family blocked only because
@@ -665,7 +665,7 @@ def _custom_endpoint_readiness(
     environ: Mapping[str, str],
     background_credentials: bool,
 ) -> ProviderReadiness | None:
-    """Resolve an ADR-146 ``custom-ep:<slug>`` id through its registry entry.
+    """Resolve an ADR-343 ``custom-ep:<slug>`` id through its registry entry.
 
     A registry id is not an ``api_settings`` key: canonicalized, it becomes
     ``custom_ep:<slug>``, which no readiness record can carry (TASK-33002.12:

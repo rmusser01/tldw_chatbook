@@ -244,7 +244,7 @@ have no Ruff findings, and `git diff --check` passes.
 ## Follow-up repairs (TASK-32710 and TASK-32711)
 
 The user authorized all remaining findings. The three pre-existing test failures
-are repaired without production changes: identity assertions follow ADR-149,
+are repaired without production changes: identity assertions follow ADR-346,
 compaction close/reopen uses the production Console harness and durable memory
 records, and first-persistence coverage now checks both character and persona
 ownership including the persona system template. The two affected test files

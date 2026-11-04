@@ -1117,7 +1117,7 @@ def _build_locked_default_mutation(
 ) -> config_module.LiteralSettingsMutation:
     """Build one exact mutation from locked authoritative raw/effective views."""
 
-    # ADR-146 (registry seam): a registry-entry provider (``custom-ep:<slug>``
+    # ADR-343 (registry seam): a registry-entry provider (``custom-ep:<slug>``
     # id with its immutable slug preserved)
     # persists NOTHING under ``api_settings`` -- the entry itself is the
     # endpoint and model carrier under ``[custom_endpoints.<slug>]``, and an
@@ -1133,7 +1133,7 @@ def _build_locked_default_mutation(
     if registry_slug is not None and intent.action is (
         ConsoleSettingsAction.SAVE_MODEL_DEFAULT
     ):
-        # ADR-146: per-model generation defaults have no durable registry
+        # ADR-343: per-model generation defaults have no durable registry
         # destination yet (the entry carries endpoint and model list only),
         # so Save-as-model-default for a registry entry fails closed with a
         # named reason instead of persisting an empty mutation that reports
@@ -1152,7 +1152,7 @@ def _build_locked_default_mutation(
     endpoint_key: str | None = None
     readiness_config = snapshot.effective_values
     if patch is not None and registry_slug is not None:
-        # ADR-146: a registry entry's endpoint edit previews against the
+        # ADR-343: a registry entry's endpoint edit previews against the
         # ENTRY's base_url (the carrier the seam resolves), not an
         # api_settings table keyed by a custom-ep id.
         import copy
@@ -1243,7 +1243,7 @@ def _build_locked_default_mutation(
         }
 
     if patch is not None and registry_slug is not None:
-        # ADR-146: an endpoint edit for a registry entry updates the
+        # ADR-343: an endpoint edit for a registry entry updates the
         # entry's own base_url (the section write merges, preserving the
         # entry's other keys); never mint an api_settings table for it.
         section_values[("custom_endpoints", registry_slug)] = {

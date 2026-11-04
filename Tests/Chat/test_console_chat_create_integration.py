@@ -493,7 +493,7 @@ def test_closure_rejects_non_string_args():
 
 
 # ---------------------------------------------------------------------------
-# TASK-32874: routing for the CREATED chat (ADR-147 gates + vocabulary).
+# TASK-32874: routing for the CREATED chat (ADR-344 gates + vocabulary).
 # ---------------------------------------------------------------------------
 
 _FAKE_APP_CONFIG = {
@@ -633,7 +633,7 @@ def test_execute_routing_not_allowlisted(real_db_controller, monkeypatch):
 
 def test_execute_routing_final_guard_on_model_only(real_db_controller, monkeypatch):
     """A model-only override must still match the allowlist glob
-    (ADR-147's final-provider guard)."""
+    (ADR-344's final-provider guard)."""
     controller, db = real_db_controller
     _routing(monkeypatch, enabled=True, allowlist=("llama_cpp/m1",))
     _app_config(monkeypatch)

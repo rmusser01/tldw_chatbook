@@ -3,7 +3,7 @@
 Status: Accepted
 Date: 2026-08-10
 Related Task: [TASK-14811](../tasks/task-14811%20-%20Console-conversation-memory-and-auto-compaction.md)
-Extends: ADR-006, ADR-011, ADR-033, ADR-040
+Extends: ADR-006, ADR-011, ADR-033, ADR-305
 Supersedes: the Console behavior that concatenates `context_summary` into the
 first system message; manual rewind summarization remains supported through
 the new memory service
@@ -420,5 +420,5 @@ required.
 - [ADR-006: Provider-aware generation settings](006-provider-aware-generation-settings.md)
 - [ADR-011: Chatbook Workbench UI System](011-chatbook-workbench-ui-system.md)
 - [ADR-033: Application session state ownership](033-application-session-state-ownership.md)
-- [ADR-040: Versioned prompt artifacts and safe improvement transactions](040-versioned-prompt-artifacts-and-safe-improvement-transactions.md)
+- [ADR-305: Versioned prompt artifacts and safe improvement transactions](305-versioned-prompt-artifacts-and-safe-improvement-transactions.md)
 - [TASK-575 range-memory design](../../Docs/superpowers/specs/2026-08-28-console-rewind-summarize-from-here-design.md)
