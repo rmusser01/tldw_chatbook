@@ -367,6 +367,28 @@ _FILE_NOTES_WORKSPACE_BINDINGS = [
 ]
 
 
+class _FolderRowStatus(Static):
+    """Folder-row status that fits itself again once layout changes its width.
+
+    TASK-38710: the fit is deferred with ``call_after_refresh``, which runs no
+    layout pass. When it ran before the layout that seats "Review…", it fitted
+    the old width and nothing fitted again. Layout sets this width (``1fr``,
+    one row, no wrap), so a refit cannot resize it. The prompt's
+    ``-empty-root`` auto width is never fitted.
+    """
+
+    def __init__(self, *args: Any, refit: Callable[[], None], **kwargs: Any) -> None:
+        super().__init__(*args, **kwargs)
+        self._refit = refit
+        self._seen_width = -1
+
+    def on_resize(self, event: Resize) -> None:
+        if event.size.width == self._seen_width or self.has_class("-empty-root"):
+            return
+        self._seen_width = event.size.width
+        self._refit()
+
+
 class FileNotesEditorTextArea(TextArea):
     """The Folder files editor, with document-end and document-start keys.
 
@@ -2414,10 +2436,11 @@ class LibraryFileNotesWorkspace(Vertical):
             markup=False,
         )
         with Horizontal(id="file-notes-root-row"):
-            root_status = Static(
+            root_status = _FolderRowStatus(
                 "Choose a notes folder.",
                 id="file-notes-root-status",
                 markup=False,
+                refit=self._fit_root_status,
             )
             # task-2850: match ``_update_root_surface``'s class so the very
             # first paint (before ``on_mount`` runs) already keeps the

@@ -3322,9 +3322,21 @@ async def test_file_notes_linked_root_leads_with_friendly_folder_identity(
     replica.close()
 
 
-async def _settled_root_row(pilot, workspace: LibraryFileNotesWorkspace) -> str:
-    """Return the folder row's painted status once its deferred fit has run."""
+async def _settled_root_row(
+    pilot,
+    workspace: LibraryFileNotesWorkspace,
+    settled: Callable[[str], bool] | None = None,
+) -> str:
+    """Return the folder row's painted status once its deferred fit has run.
+
+    ``settled`` is the painted state the caller asserts. With it the wait ends
+    on that state rather than on any text that happens to fit (TASK-38710).
+    """
     status = workspace.query_one("#file-notes-root-status", Static)
+
+    def painted() -> str:
+        return _painted_text_in_region(pilot.app, status.region)
+
     await pilot.pause()
     await _wait_until(
         pilot,
@@ -3332,11 +3344,12 @@ async def _settled_root_row(pilot, workspace: LibraryFileNotesWorkspace) -> str:
             0
             < cell_len(_static_text(workspace, "#file-notes-root-status"))
             <= status.content_region.width
-        ),
-        "folder row status was not fitted to its width",
+        )
+        and (settled is None or settled(painted())),
+        "folder row status was not fitted to its width, or not to the asserted state",
     )
     await pilot.pause()
-    return _painted_text_in_region(pilot.app, status.region)
+    return painted()
 
 
 def _is_middle_elision_of(fitted: str, full: str) -> bool:
@@ -3432,8 +3445,12 @@ async def test_file_notes_root_row_keeps_state_word_beside_pairing_review_at_40_
             ),
             (),
         )
-        painted = await _settled_root_row(pilot, workspace)
-        assert painted == state or painted.startswith(f"{state} · "), painted
+
+        def shows_state(painted: str) -> bool:
+            return painted == state or painted.startswith(f"{state} · ")
+
+        painted = await _settled_root_row(pilot, workspace, shows_state)
+        assert shows_state(painted), painted
         review = workspace.query_one("#file-notes-recovery-review", Button)
         assert review.display
         assert "pairing" in str(review.tooltip)
@@ -3448,6 +3465,81 @@ async def test_file_notes_root_row_keeps_state_word_beside_pairing_review_at_40_
                 selector,
                 button.region,
             )
+
+    replica.close()
+
+
+@pytest.mark.parametrize(
+    ("state", "offline"), (("Warning", False), ("Offline", True))
+)
+@pytest.mark.asyncio
+async def test_file_notes_root_row_refits_when_its_deferred_fit_beats_layout(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    state: str,
+    offline: bool,
+) -> None:
+    """TASK-38710: the folder row fits again once layout narrows it.
+
+    TASK-36513 defers the fit with ``call_after_refresh``, which runs no
+    layout pass. Here every fit that reconcile defers runs before the layout
+    that seats "Review…". On the base build the row stayed fitted to the old
+    18 cells inside 9.
+    """
+    fits = 0
+    fit = LibraryFileNotesWorkspace._fit_root_status
+
+    def counted(self: LibraryFileNotesWorkspace) -> None:
+        nonlocal fits
+        fits += 1
+        fit(self)
+
+    monkeypatch.setattr(LibraryFileNotesWorkspace, "_fit_root_status", counted)
+    root = tmp_path / "deep" / "nested" / "Research Notes"
+    root.mkdir(parents=True)
+    replica = FileNotesReplica(":memory:")
+    workspace = LibraryFileNotesWorkspace(
+        root=root, replica=replica, poll_interval=3600
+    )
+
+    async with _WorkspaceHarness(workspace).run_test(size=(40, 20)) as pilot:
+        await _wait_until(pilot, lambda: workspace.initialized, "scan did not finish")
+        await _settled_root_row(pilot, workspace)
+        status = workspace.query_one("#file-notes-root-status", Static)
+        before = status.content_region.width
+        after_refresh = workspace.call_after_refresh
+
+        def before_layout(callback, *args, **kwargs):
+            if callback == workspace._fit_root_status:
+                callback(*args, **kwargs)
+                return True
+            return after_refresh(callback, *args, **kwargs)
+
+        monkeypatch.setattr(workspace, "call_after_refresh", before_layout)
+        workspace._apply_reconcile(
+            ReconcileResult(
+                status="offline" if offline else "ok",
+                offline=offline,
+                replica_warning=ACTIVATION_WARNING,
+            ),
+            (),
+        )
+        monkeypatch.setattr(workspace, "call_after_refresh", after_refresh)
+        stale = _static_text(workspace, "#file-notes-root-status")
+        assert status.content_region.width == before
+        assert cell_len(stale) > len(state), stale
+
+        def shows_state(painted: str) -> bool:
+            return painted == state or painted.startswith(f"{state} · ")
+
+        painted = await _settled_root_row(pilot, workspace, shows_state)
+        assert status.content_region.width < before
+        assert shows_state(painted), painted
+        # It settles: a refit cannot resize a 1fr, one-row status.
+        settled_fits = fits
+        for _ in range(10):
+            await pilot.pause()
+        assert fits == settled_fits
 
     replica.close()
 

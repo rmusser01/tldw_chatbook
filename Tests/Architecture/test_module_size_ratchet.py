@@ -783,7 +783,9 @@ _BUDGETS: dict[str, int] = {
     # TASK-38700, 2026-11-04 (same waiver): 9615 -> 9640 (+25). Attention
     # only the workspace knows survives a rehydrate; a cancelled observer
     # publishes nothing.
-    "tldw_chatbook/Widgets/Library/library_file_notes_workspace.py": 9640,
+    # TASK-38710 fold, 2026-11-04 (same waiver): 9640 -> 9663 (+23). The
+    # folder-row status fits again when layout changes its width.
+    "tldw_chatbook/Widgets/Library/library_file_notes_workspace.py": 9663,
     "tldw_chatbook/DB/Client_Media_DB_v2.py": 9429,  # 2026-11-02: +3 shared store-error import (TASK-36949.5)
     # TASK-37270: bounded template reads moved to local_reasoning_metadata.
     # 2026-10-29, TASK-33622.6 (owner decision: raise with a dated comment):

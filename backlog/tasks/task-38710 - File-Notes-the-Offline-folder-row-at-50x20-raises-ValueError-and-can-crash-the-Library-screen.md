@@ -5,7 +5,7 @@ status: Done
 assignee:
 - '@claude'
 created_date: 2026-11-04 00:43
-updated_date: 2026-11-04 01:01
+updated_date: 2026-11-04 01:44
 labels:
 - library
 - file-notes
@@ -55,3 +55,9 @@ Textual reports an exception raised during layout as an app error, and the app e
 - An uncommitted wider probe also passed (15 passed): three states, heights 12/16/24/30/44, widths 40-81 plus 100/120/160/235, in the navigator, Manage and Edit views.
 
 **Files.** `tldw_chatbook/Widgets/Library/library_file_notes_workspace.py` (CSS), `Tests/UI/test_library_file_notes_workspace.py`, `Tests/Architecture/test_module_size_ratchet.py` (9593 -> 9599, dated).
+
+**Fold (2026-11-04, the coordinator approved).** `test_file_notes_root_row_keeps_state_word_beside_pairing_review_at_40_columns` flaked under load, and the cause was a product race, not its wait. TASK-36513's deferred fit (`call_after_refresh`) could run before the layout that seats "Review…". It then fitted 18 cells, the status became 9, and nothing fitted again.
+- **Fix.** `#file-notes-root-status` is now `_FolderRowStatus`, which calls the fit again from its own `on_resize` when its width changes. It skips an unchanged width and the auto-width `-empty-root` prompt. Layout fixes this width (`1fr`, one row, `nowrap`), so a refit cannot resize it and cannot loop.
+- **Tests.** `_settled_root_row` can now wait, with `_wait_until`'s default deadline, for the painted state its caller asserts, and the 40-column test uses that.
+  - New: `test_file_notes_root_row_refits_when_its_deferred_fit_beats_layout`. It runs every deferred fit before layout and counts fits to show the count stays the same over 10 idle frames. Red on ae0f24ecef in both params ("not fitted to its width").
+  - Negative control: with the Offline-only fallback removed, the 40-column test's `[Offline-True]` case went red.
