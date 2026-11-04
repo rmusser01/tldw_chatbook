@@ -31,7 +31,7 @@ class _FakeProvider:
     diff_display_max_lines = 2000
 
     def __init__(self):
-        from tldw_chatbook.UI.Screens.change_review_screen import ReviewTurn
+        from tldw_chatbook.Workspaces.change_review_provider import ReviewTurn
 
         self._row = {
             "root": "/ws",
@@ -610,7 +610,7 @@ async def test_real_provider_two_windows_on_same_root_no_duplicates_own_diffs(tm
         CHANGE_KIND_TURN,
     )
     from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
-    from tldw_chatbook.UI.Screens.change_review_screen import (
+    from tldw_chatbook.Workspaces.change_review_provider import (
         AgentRunsChangeReviewProvider,
     )
     from tldw_chatbook.Workspaces.change_tracking import ShadowRepoService

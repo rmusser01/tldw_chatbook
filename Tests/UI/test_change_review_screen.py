@@ -21,10 +21,12 @@ from textual.widgets import Button, Input, Select, Static, Tree
 from Tests.UI.test_console_narrow_layout import _compositor_text
 from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
 from tldw_chatbook.UI.Screens.change_review_screen import (
-    AgentRunsChangeReviewProvider,
     ChangeReviewDiffPane,
     ChangeReviewScreen,
     _hunk_containing_line,
+)
+from tldw_chatbook.Workspaces.change_review_provider import (
+    AgentRunsChangeReviewProvider,
     _window_labels,
 )
 from tldw_chatbook.Widgets.glyph_fallback import resolve_glyph
@@ -2817,7 +2819,7 @@ def test_file_count_noun_is_singular_for_one_file():
     """AC#6: a one-file turn read "1 files" in the header and the turn
     selector while the rail's own row for the same fact read "1 file". The
     repeated-root branch already pluralized correctly; the two now agree."""
-    from tldw_chatbook.UI.Screens.change_review_screen import _file_count_noun
+    from tldw_chatbook.Workspaces.change_review_provider import _file_count_noun
 
     assert _file_count_noun(1, repeated_root=False) == "file"
     assert _file_count_noun(0, repeated_root=False) == "files"

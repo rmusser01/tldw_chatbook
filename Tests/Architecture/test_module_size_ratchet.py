@@ -732,7 +732,7 @@ _BUDGETS: dict[str, int] = {
     # Provider '!' after Model hides -> 975.
     "tldw_chatbook/UI/Wizards/first_run_model_step.py": 975,
     "tldw_chatbook/UI/Screens/llm_screen.py": 5143,
-    "tldw_chatbook/UI/Screens/change_review_screen.py": 4930,
+    "tldw_chatbook/UI/Screens/change_review_screen.py": 4216,
     # TASK-36942.1 (architecture review 2026-10-25, F16): every module of
     # 4,000+ lines that had no row in any of the three size ratchets, each
     # pinned at its measured size on dev 2b296e60b3. The review filed 40
