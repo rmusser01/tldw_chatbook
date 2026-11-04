@@ -384,6 +384,9 @@ class WorkflowRunService:
 
         allowed = (
             WorkflowRunService.get,
+            WorkflowRunService.runtime_snapshot,
+            WorkflowRunService.set_status,
+            WorkflowRunService.phase_task_ids,
             WorkflowRunService.prepare_task_inputs,
             WorkflowRunService.validate_task_inputs,
             WorkflowRunService.checkpoint_task,
@@ -416,6 +419,106 @@ class WorkflowRunService:
     def get(self, workflow_id: str) -> WorkflowSnapshot:
         """Read saved workflow state without dispatch or startup recovery."""
         return self.db.workflow_runs.get(workflow_id)
+
+    @goal_storage_operation
+    def set_status(self, workflow_id, *, status, expected_control_revision):
+        """CAS passive state after the original native producer has retired."""
+        return self.db.workflow_runs.set_status(
+            workflow_id,
+            status=status,
+            expected_control_revision=expected_control_revision,
+        )
+
+    @goal_storage_operation
+    def phase_task_ids(self, phase):
+        """Read only the task claims belonging to this original accepted phase."""
+        with self.db.connection() as conn:
+            return tuple(
+                row[0]
+                for row in conn.execute(
+                    "SELECT t.task_id FROM workflow_task_attempts t JOIN workflow_task_claims c ON c.task_attempt_id=t.id "
+                    "JOIN workflow_phase_attempts p ON p.id=c.phase_attempt_id WHERE p.native_attempt_id=?",
+                    (phase.attempt.id,),
+                )
+            )
+
+    @goal_storage_operation
+    def runtime_snapshot(self, workflow_id):
+        """Read finite body-free metadata in one original storage transaction."""
+        from .workflow_models import WorkflowRuntimeSnapshot, WorkflowRuntimeTask
+
+        with self.db.connection() as conn:
+
+            def read():
+                row = self.db.workflow_runs._row(conn, workflow_id)
+                phase = conn.execute(
+                    "SELECT phase_id,plan_revision,purpose,status,retirement,control_revision FROM workflow_phase_attempts "
+                    "WHERE workflow_id=? ORDER BY ordinal DESC LIMIT 1",
+                    (workflow_id,),
+                ).fetchone()
+                state = {
+                    "awaiting_approval": "awaiting_phase_review",
+                    "awaiting_resume": "paused",
+                    "closed": "stopped",
+                }.get(row["status"], row["status"])
+                if phase is not None and row["status"] in {
+                    "running",
+                    "awaiting_approval",
+                }:
+                    if phase["purpose"] == "planning" and phase["status"] == "accepted":
+                        state = "planning"
+                    elif (
+                        phase["purpose"] == "execution"
+                        and phase["status"] == "completed"
+                        and phase["retirement"] == "drained"
+                    ):
+                        latest = conn.execute(
+                            "SELECT MAX(revision) FROM workflow_plan_revisions WHERE workflow_id=?",
+                            (workflow_id,),
+                        ).fetchone()[0]
+                        reviewed = conn.execute(
+                            "SELECT 1 FROM workflow_decisions WHERE workflow_id=? AND plan_revision=? AND phase_id=? "
+                            "AND control_revision>=? AND json_extract(payload_json,'$.action')='complete' "
+                            "AND json_extract(payload_json,'$.evidence.kind')='quality' LIMIT 1",
+                            (
+                                workflow_id,
+                                phase["plan_revision"],
+                                phase["phase_id"],
+                                phase["control_revision"],
+                            ),
+                        ).fetchone()
+                        if phase["plan_revision"] == latest and reviewed is None:
+                            state = "awaiting_result_review"
+                tasks = tuple(
+                    WorkflowRuntimeTask(**dict(task))
+                    for task in conn.execute(
+                        "SELECT t.task_id,COALESCE(a.status,'pending') status,a.run_id "
+                        "FROM workflow_tasks t LEFT JOIN workflow_task_attempts a ON a.id=("
+                        "SELECT x.id FROM workflow_task_attempts x WHERE x.workflow_id=t.workflow_id "
+                        "AND x.plan_revision=t.plan_revision AND x.task_id=t.task_id ORDER BY x.ordinal DESC LIMIT 1) "
+                        "WHERE t.workflow_id=? AND t.plan_revision=(SELECT MAX(revision) "
+                        "FROM workflow_plan_revisions WHERE workflow_id=?) ORDER BY t.ordinal LIMIT 12",
+                        (workflow_id, workflow_id),
+                    )
+                )
+                return WorkflowRuntimeSnapshot(
+                    id=workflow_id,
+                    conversation_id=row["conversation_id"],
+                    control_revision=row["control_revision"],
+                    progress_cursor=row["progress_cursor"],
+                    status=state,
+                    phase_id=phase["phase_id"] if phase else None,
+                    tasks=tasks,
+                    accounting=self.db.automatic_work._snapshot(conn, row["chain_id"]),
+                )
+
+            if conn.in_transaction:
+                return read()
+            conn.execute("BEGIN")
+            try:
+                return read()
+            finally:
+                conn.rollback()
 
     def _preparation_read_footprint(self, phase, task_id, binding):
         """Cover the existing review collector and task seed in one finite claim."""
@@ -1547,8 +1650,40 @@ class WorkflowRunService:
             return snapshot
         if snapshot.control_revision != expected_control_revision:
             raise ValueError("revision_conflict")
-        if snapshot.status != "awaiting_resume" or snapshot.accounting.uncertain:
+        if (
+            snapshot.status not in {"awaiting_resume", "paused"}
+            or snapshot.accounting.uncertain
+        ):
             raise ValueError("resume_requires_clean_checkpoint")
+
+        def planning_checkpoint(conn, current):
+            if not current.plans or self.db.workflow_runs._active(conn, workflow_id):
+                raise ValueError("resume_requires_completed_planning")
+            latest = conn.execute(
+                "SELECT id,native_attempt_id,plan_revision,purpose,status,retirement,control_revision "
+                "FROM workflow_phase_attempts WHERE workflow_id=? ORDER BY ordinal DESC LIMIT 1",
+                (workflow_id,),
+            ).fetchone()
+            plan = conn.execute(
+                "SELECT * FROM workflow_plan_revisions WHERE workflow_id=? ORDER BY revision DESC LIMIT 1",
+                (workflow_id,),
+            ).fetchone()
+            if (
+                latest is None
+                or plan is None
+                or latest["purpose"] != "planning"
+                or latest["status"] != "completed"
+                or latest["retirement"] != "drained"
+                or latest["plan_revision"] != (len(current.plans) - 1 or None)
+                or latest["control_revision"] != current.control_revision - 2
+            ):
+                raise ValueError("resume_requires_completed_planning")
+            return tuple(latest), tuple(plan)
+
+        planning = None
+        if snapshot.status == "paused":
+            with self.db.connection() as conn:
+                planning = planning_checkpoint(conn, snapshot)
         if self._binding_reason(snapshot) is not None:
             raise ValueError("binding_changed")
         upcoming_checked = False
@@ -1594,9 +1729,11 @@ class WorkflowRunService:
             current = self.get(workflow_id)
             if (
                 current.control_revision != expected_control_revision
-                or current.status != "awaiting_resume"
+                or current.status != snapshot.status
             ):
                 raise ValueError("revision_conflict")
+            if planning is not None and planning_checkpoint(conn, current) != planning:
+                raise ValueError("resume_planning_changed")
             if conn.execute(
                 "SELECT 1 FROM workflow_phase_attempts WHERE workflow_id=? AND status IN ('prepared','accepted','uncertain') LIMIT 1",
                 (workflow_id,),

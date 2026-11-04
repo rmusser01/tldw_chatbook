@@ -5903,6 +5903,17 @@ class ConsoleRuntime:
             self._workflow_service = service
         return service
 
+    def ensure_workflow_coordinator(self):
+        """Lazily attach public workflow coordination to this native Runtime."""
+        from .console_workflow_runs import ConsoleWorkflowCoordinator
+
+        service = self.ensure_workflow_service()
+        coordinator = getattr(self, "_workflow_coordinator", None)
+        if coordinator is None:
+            coordinator = ConsoleWorkflowCoordinator(self._chat_controller, service)
+            self._workflow_coordinator = coordinator
+        return coordinator
+
     async def _project_workflow_recovery(self, audit):
         controller = self._chat_controller
         if self._disposed or controller is None:
@@ -6825,10 +6836,14 @@ class ConsoleRuntime:
         """
         controller = self._chat_controller
         recovery_owner = None
+        workflow_cancellation = None
         try:
             # Native waves must finish their actual B/E and child/source tails
             # before capacity and consent owners close. No new wave may enter.
             self._workflow_closing = True
+            coordinator = getattr(self, "_workflow_coordinator", None)
+            if coordinator is not None:
+                workflow_cancellation = await coordinator.close(_runtime_disposal=self)
             # Planning retains the same native primary and source until its
             # required terminal worker returns. Fence it before closing capacity.
             planning = tuple(
@@ -6893,6 +6908,8 @@ class ConsoleRuntime:
                 timeout_seconds=timeout_seconds,
                 _recovery_owner=recovery_owner,
             )
+            if workflow_cancellation is not None:
+                raise workflow_cancellation
             if wave_cancelled or planning_cancelled:
                 raise asyncio.CancelledError
         finally:

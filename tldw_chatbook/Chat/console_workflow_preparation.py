@@ -589,10 +589,7 @@ class _PreparedWorkflowReply:
         if self.authorization is not None:
             self.authorization.check_preparation()
             if self.phase.attempt.purpose == "planning":
-                if (
-                    goal_provider_ref(self.resolution)
-                    not in self.planning_request.targets
-                ):
+                if self.resolution is not self._planning_resolution:
                     raise PermissionError("workflow native target changed")
             elif goal_provider_ref(self.resolution) != self.authorization.task.target:
                 raise PermissionError("workflow native target changed")
@@ -1166,7 +1163,7 @@ class _PreparedWorkflowReply:
             )
         )
         if (
-            goal_provider_ref(self.resolution) not in saved.request.targets
+            self.resolution is not self._planning_resolution
             if task is None
             else goal_provider_ref(self.resolution) != task.target
         ) or not self.resolution.ready:
@@ -1711,12 +1708,51 @@ class _PreparedWorkflowReply:
             ):
                 raise RuntimeError("planning root return unproven")
 
-    async def run_planning(self):
+    async def run_planning(self, *, _coordinator_run=None):
         """Run the same native primary and settle only after its actual returns."""
         from tldw_chatbook.Agents.activation import async_worker_guard
         from tldw_chatbook.Agents.agent_models import RUN_DONE
         from tldw_chatbook.Agents.workflow_models import WorkflowPlan
         from tldw_chatbook.Workspaces.worktree_activity import WorktreeFootprint
+
+        from .console_workflow_runs import (
+            _COORDINATOR_PLAN_RECORD,
+            _planning_driver_source,
+            _WorkflowRun,
+        )
+
+        driver = asyncio.current_task()
+        coordinator = getattr(self.runtime, "_workflow_coordinator", None)
+        phase, source = self.phase, self.source
+        if _coordinator_run is None:
+            if (
+                getattr(driver.get_coro(), "cr_code", None)
+                is _COORDINATOR_PLAN_RECORD[1]
+                or coordinator is not None
+                and any(
+                    run.driver is driver or run.prepared is self
+                    for run in coordinator._runs.values()
+                )
+            ):
+                raise PermissionError("original G planning association required")
+        elif type(_coordinator_run) is not _WorkflowRun:
+            raise PermissionError("original G planning run required")
+
+        def coordinator_source():
+            if _coordinator_run is None:
+                return
+            _planning_driver_source(coordinator, _coordinator_run, entered=True)
+            if (
+                self.runtime._workflow_coordinator is not coordinator
+                or _coordinator_run.prepared is not self
+                or _coordinator_run.phase is not phase
+                or self.phase is not phase
+                or self.source is not source
+                or asyncio.current_task() is not driver
+            ):
+                raise PermissionError("original G planning association changed")
+
+        coordinator_source()
 
         if self.phase.attempt.purpose != "planning" or self.primary_owner is not None:
             raise PermissionError("unused original planning preparation required")
@@ -1871,6 +1907,23 @@ class _PreparedWorkflowReply:
         ):
             raise RuntimeError("original planning tracked worker return unproven")
         self._planning_physical_proof()
+        if _coordinator_run is not None:
+            coordinator_source()
+            control_return = _coordinator_run.control_return
+            while control_return is not None and not control_return.is_set():
+                try:
+                    await control_return.wait()
+                except asyncio.CancelledError as error:
+                    cancellation = error
+            coordinator_source()
+            if (
+                _coordinator_run.control_return is not control_return
+                or _coordinator_run.control_unknown
+                or _coordinator_run.status == "recovery_required"
+            ):
+                raise RuntimeError("original workflow control return unproven")
+            self._planning_return_source()
+            self._planning_physical_proof()
         drain = []
         owner.on_drained(drain.append)
         owner.finish_root()
@@ -1982,6 +2035,53 @@ async def _finish_native_preparation(prepared):
     return prepared
 
 
+async def _resolve_workflow_targets(controller, session, targets, *, selected=None):
+    """Resolve passive references through native settings, without donating routing."""
+    from dataclasses import replace
+
+    from .console_chat_controller import build_console_provider_selection_from_settings
+    from .console_received_dispatch import resolve_received_provider
+
+    original = controller._provider_selection_for_session(session.id)
+    settings = controller.store.effective_session_settings(session.id)
+    results = []
+    for target in targets:
+        if selected is not None and goal_provider_ref(selected) == target:
+            resolution = selected
+        else:
+            resolution = None
+            if original.provider == target.provider:
+                candidate = selected or await resolve_received_provider(
+                    controller, original
+                )
+                if candidate.ready and goal_provider_ref(candidate) == target:
+                    resolution = candidate
+            if resolution is not None:
+                results.append(resolution)
+                continue
+            selection = build_console_provider_selection_from_settings(
+                replace(
+                    settings,
+                    provider=target.provider,
+                    model=target.model,
+                    base_url=None,
+                ),
+                app_config=controller._provider_config()
+                if controller._provider_config
+                else {},
+                workspace_context=original.workspace_context,
+                identity_session=session,
+                global_user_name=controller._global_user_display_name,
+            )
+            resolution = await resolve_received_provider(controller, selection)
+        if not resolution.ready or goal_provider_ref(resolution) != target:
+            raise PermissionError("workflow requested target unavailable")
+        results.append(resolution)
+    if original != controller._provider_selection_for_session(session.id):
+        raise PermissionError("workflow provider selection changed")
+    return tuple(results)
+
+
 async def prepare_workflow_planning(
     controller,
     *,
@@ -1993,6 +2093,7 @@ async def prepare_workflow_planning(
     workflow_id=None,
     revision_id=None,
     repair_instruction=None,
+    _request=None,
 ):
     """Prepare an explicit native Chat, persisting initial identity before request.
 
@@ -2037,6 +2138,21 @@ async def prepare_workflow_planning(
         raise ValueError("initial planning requires an objective and policy")
     if workflow_id is not None and (objective is not None or policy is not None):
         raise ValueError("repair cannot replace the immutable request")
+    if _request is not None and (
+        type(_request) is not WorkflowRequest
+        or workflow_id is not None
+        or _request.objective != objective
+        or _request.policy != policy
+        or _request.conversation_id != (session.persisted_conversation_id or session.id)
+        or _request.binding
+        != GoalBindingRef(
+            workspace_id=binding.workspace_id,
+            binding_id=binding.binding_id,
+            locator=str(binding.root),
+            access="rw" if binding.allow_write else "ro",
+        )
+    ):
+        raise ValueError("workflow request selection conflict")
     from tldw_chatbook.Agents.workflow_models import RECORD_BYTES
 
     if workflow_id is None:
@@ -2094,6 +2210,10 @@ async def prepare_workflow_planning(
                 raise PermissionError("workflow provider selection changed")
             prepared.resolution = prepared._planning_resolution = resolved
             prepared.planning_selection = selection
+            if _request is not None:
+                prepared.execution_resolutions = await _resolve_workflow_targets(
+                    controller, session, _request.targets, selected=resolved
+                )
             from .console_session_settings import ConsoleSessionSettings
 
             settings = session.settings
@@ -2165,7 +2285,9 @@ async def prepare_workflow_planning(
                     conversation_id=conversation,
                     objective=objective,
                     binding=reference,
-                    targets=(goal_provider_ref(prepared.resolution),),
+                    targets=_request.targets
+                    if _request is not None
+                    else (goal_provider_ref(prepared.resolution),),
                     policy=policy,
                 )
                 snapshot = prepared.service.db.workflow_runs.create(
@@ -2176,8 +2298,6 @@ async def prepare_workflow_planning(
                 if (
                     snapshot.request.conversation_id != conversation
                     or snapshot.request.binding != reference
-                    or goal_provider_ref(prepared.resolution)
-                    not in snapshot.request.targets
                 ):
                     raise PermissionError("saved workflow selection changed")
             attempt = prepared.service.db.automatic_work.prepare_workflow_planning(

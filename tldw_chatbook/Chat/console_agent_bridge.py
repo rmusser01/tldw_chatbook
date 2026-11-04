@@ -30,6 +30,7 @@ from typing import Generic, TypeVar
 from uuid import uuid4
 
 if TYPE_CHECKING:
+    from tldw_chatbook.Agents.workflow_models import WorkflowTaskClaim
     from tldw_chatbook.Agents.local_tool_provider import RunAdmittedWorkspaceRoot
     from tldw_chatbook.Agents.run_log_paging import RunLogPage, RunLogPageCursor
     from tldw_chatbook.Agents.execution_capacity import ExecutionOwner, OwnedOperation, RuntimeCapacity
@@ -2288,6 +2289,7 @@ class SettledChild:
     session_id: str
     assistant_message_id: str
     settled_after_turn: bool = False
+    workflow_task: WorkflowTaskClaim | None = None
 
 
 @dataclass(frozen=True)
@@ -8241,6 +8243,15 @@ class ConsoleAgentBridge:
                     assistant_message_id,
                     run_id,
                     status,
+                    workflow_task=(
+                        _workflow_preparation.authorization.claim
+                        if _workflow_preparation is not None
+                        and _workflow_preparation.phase.attempt.purpose == "execution"
+                        and _workflow_preparation.authorization is not None
+                        and _workflow_preparation.authorization.claim.launch_run_id
+                        == run_id
+                        else None
+                    ),
                 )
 
         def _redirect_ready(redirect_fn, abort_probe):
@@ -9494,6 +9505,8 @@ class ConsoleAgentBridge:
         assistant_message_id: str,
         run_id: str | None,
         status: str,
+        *,
+        workflow_task: WorkflowTaskClaim | None = None,
     ) -> None:
         """Record one settlement, notify individually, then fire any final drain.
 
@@ -9528,6 +9541,7 @@ class ConsoleAgentBridge:
             # HERE knows which was which by fire time.
             record = SettledChild(
                 run_id=run_id,
+                workflow_task=workflow_task,
                 status=status,
                 session_id=session_id,
                 assistant_message_id=assistant_message_id,

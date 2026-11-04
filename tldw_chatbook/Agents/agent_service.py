@@ -779,6 +779,7 @@ class _PreparedWorkflowChild:
     threads: dict = dataclasses.field(default_factory=dict, repr=False)
     activity_claims: list = dataclasses.field(default_factory=list, repr=False)
     log_finalized: list = dataclasses.field(default_factory=list, repr=False)
+    wait_return: list = dataclasses.field(default_factory=list, repr=False)
 
 
 @dataclasses.dataclass(frozen=True, slots=True)
@@ -4930,14 +4931,17 @@ class AgentService:
                     raise _WorkflowChildLaunchFailed(result)
                 return result
             raise PermissionError("workflow child launch already claimed")
+        with authorization._lock:
+            prepared.wait_return.clear()
         from tldw_chatbook.Backup_Recovery.participants import _core_operation
 
         from .activation import execution
+        from .execution_capacity import CapacityRefused
 
         @_core_operation(self.db)
         def launch():
             activity = authorization._runtime.worktree_activity
-            owner = None
+            owner = claim = None
             bound = False
             dispatched = False
             bridge_preparation = (
@@ -5017,7 +5021,7 @@ class AgentService:
                         authorization._native_launch[0] = receipt
                     return receipt
 
-            except BaseException:
+            except BaseException as error:
                 if not dispatched:
                     if (
                         bridge_preparation is not None
@@ -5032,6 +5036,32 @@ class AgentService:
                         prepared.activity_claims.clear()
                     with authorization._lock:
                         authorization._native_launch.clear()
+                    transient = (
+                        type(error) is CapacityRefused
+                        and error.args
+                        in {
+                            (name,)
+                            for name in (
+                                "child_capacity",
+                                "automatic_child_capacity",
+                                "tool_capacity",
+                                "automatic_tool_capacity",
+                            )
+                        }
+                    ) or (
+                        type(error) is _WorkflowChildWait
+                        and error.reason in {"fleet_capacity", "worktree_activity"}
+                    )
+                    with self.runtime_capacity._lock:
+                        live = not self.runtime_capacity._closed
+                    with prepared.fleet._lock:
+                        live = live and not prepared.fleet._fenced
+                    if transient and live:
+                        # Hold metadata as a RETURN VALUE. A same-object exception
+                        # from either inner exit must never publish a retry receipt.
+                        with authorization._lock:
+                            prepared.wait_return[:] = [None]
+                        return (error, owner, claim)
                 raise
 
         with execution(self):
@@ -5044,7 +5074,12 @@ class AgentService:
                 # File authority is separate from the DB-only launch operation.
                 self._finalize_workflow_child_log(authorization, status=RUN_ERROR)
                 raise PermissionError(result.error)
-            return result
+        if type(result) is tuple:
+            # Both original _core_operation and execution(self) exited normally.
+            with authorization._lock:
+                prepared.wait_return[:] = [result]
+            raise result[0]
+        return result
 
     def _finalize_workflow_child_log(
         self, authorization, *, status: str, total_tokens: int = 0

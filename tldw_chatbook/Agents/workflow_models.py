@@ -11,6 +11,7 @@ from pydantic import (
     ConfigDict,
     Field,
     StringConstraints,
+    field_serializer,
     field_validator,
     model_serializer,
     model_validator,
@@ -36,6 +37,21 @@ WorkflowStatus = Literal[
     "recovery_required",
     "removed",
     "awaiting_resume",
+]
+
+WorkflowRuntimeStatus = Literal[
+    "awaiting_plan",
+    "planning",
+    "awaiting_phase_review",
+    "running",
+    "pausing",
+    "paused",
+    "stopping",
+    "stopped",
+    "recovery_required",
+    "awaiting_result_review",
+    "completed",
+    "removed",
 ]
 
 
@@ -400,7 +416,7 @@ class WorkflowSnapshot(BaseModel):
     request: WorkflowRequest
     control_revision: Positive
     progress_cursor: Finite
-    status: WorkflowStatus
+    status: WorkflowStatus | WorkflowRuntimeStatus
     plans: tuple[WorkflowPlan, ...]
     results: tuple[WorkflowTaskResult, ...]
     accounting: AutomaticWorkSnapshot
@@ -437,3 +453,39 @@ class WorkflowTaskClaim(WorkflowTaskAttempt):
     conversation_id: Identity
     session_id: Identity
     owner_id: Identity
+
+
+class WorkflowRuntimeTask(WorkflowModel):
+    """Body-free latest task metadata, not a task authority or history page."""
+
+    task_id: Identity
+    status: Identity
+    run_id: Identity | None = None
+
+
+class WorkflowRuntimeSnapshot(BaseModel):
+    """Bounded subscription projection; private payload history is fetched separately."""
+
+    model_config = ConfigDict(strict=True, frozen=True, extra="forbid")
+
+    id: Identity
+    conversation_id: Identity
+    control_revision: Positive
+    progress_cursor: Finite
+    status: WorkflowRuntimeStatus
+    phase_id: Identity | None = None
+    tasks: tuple[WorkflowRuntimeTask, ...] = Field(default=(), max_length=12)
+    accounting: AutomaticWorkSnapshot
+
+    @field_serializer("accounting")
+    def serialize_accounting(self, value):
+        from dataclasses import asdict, fields
+
+        return {
+            item.name: dict(getattr(value, item.name))
+            if item.name in {"used", "reserved", "available"}
+            else asdict(value.limits)
+            if item.name == "limits"
+            else getattr(value, item.name)
+            for item in fields(value)
+        }

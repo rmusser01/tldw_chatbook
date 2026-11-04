@@ -2409,6 +2409,7 @@ class AutomaticWorkLedger:
         session_id,
         command_id,
         _remaining=None,
+        _initial=None,
         _repair_digest=None,
     ):
         from tldw_chatbook.Agents.workflow_models import RECORD_BYTES
@@ -2416,6 +2417,9 @@ class AutomaticWorkLedger:
         for value in (workflow_id, owner_id, session_id, command_id):
             _identity(value)
         store = self._db.workflow_runs
+        if _remaining is not None and _initial is not None:
+            raise ValueError("workflow_decision_conflict")
+        decision = _remaining if _remaining is not None else _initial
         with self._db.connection() as conn:
             chain_id = store._row(conn, workflow_id)["chain_id"]
         with self._admission_transaction(chain_id) as conn:
@@ -2449,8 +2453,8 @@ class AutomaticWorkLedger:
                 if prior["repair_instruction_sha256"] != _repair_digest:
                     raise ValueError("workflow_command_conflict")
                 if (
-                    _remaining is not None
-                    and store._attempt_decision(conn, prior) != _remaining
+                    decision is not None
+                    and store._attempt_decision(conn, prior) != decision
                 ):
                     raise ValueError("workflow_command_conflict")
                 attempt_id = prior["native_attempt_id"]
@@ -2482,6 +2486,16 @@ class AutomaticWorkLedger:
                     ).fetchone()
                     if _remaining is None and previous:
                         raise AutomaticWorkRefused("workflow_phase_already_attempted")
+                    if _initial is not None and (
+                        previous is not None
+                        or _initial.workflow_id != workflow_id
+                        or _initial.plan_revision != revision_id
+                        or _initial.phase_id != phase_id
+                        or _initial.action != "approve"
+                        or _initial.reason != "ready"
+                        or _initial.control_revision != row["control_revision"]
+                    ):
+                        raise ValueError("workflow_initial_decision_conflict")
                     if _remaining is not None:
                         if (
                             previous is None
@@ -2527,8 +2541,8 @@ class AutomaticWorkLedger:
                     RECORD_BYTES * (len(tasks) or 1)
                     + (64 if _repair_digest is not None else 0),
                 )
-                if _remaining is not None:
-                    store._save_decision(conn, _remaining, status="awaiting_approval")
+                if decision is not None:
+                    store._save_decision(conn, decision, status="awaiting_approval")
                     row = store._row(conn, workflow_id)
                 attempt_id, reservation_id, phase_key = (
                     uuid4().hex,

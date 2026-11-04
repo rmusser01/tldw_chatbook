@@ -106,7 +106,7 @@ class RuntimeCapacity:
     def subscribe_tool_availability(
         self, callback: Callable[[], None]
     ) -> Callable[[], None]:
-        """Observe actual tool releases/limit increases, outside the capacity lock."""
+        """Observe actual tool/child releases and limit increases outside the lock."""
         with self._lock:
             self._tool_observers.add(callback)
 
@@ -144,8 +144,14 @@ class RuntimeCapacity:
         total = total if total > 0 else 6
         reserve = max(0, min(_integer(reserved_manual, 2), total))
         with self._lock:
+            previous = getattr(self, "max_child_executions", total)
+            previous_auto = previous - getattr(
+                self, "reserved_manual_children", reserve
+            )
             self.max_child_executions = total
             self.reserved_manual_children = reserve
+        if total > previous or total - reserve > previous_auto:
+            self._notify_tool_available()
 
     def begin_execution(
         self, *, origin: WorkOrigin, conversation_id: str, child: bool = False
@@ -328,6 +334,8 @@ class ExecutionOwner:
             self._root_finished = True
             callbacks, outcome = self._prune_if_finished()
         self._invoke_callbacks(callbacks, outcome)
+        if self.child and outcome is True:
+            self.capacity._notify_tool_available()
 
     def on_drained(self, callback: Callable[[bool], None]) -> None:
         """Invoke callback once physical ownership drains, outside the lock."""
@@ -392,5 +400,5 @@ class OwnedOperation:
             self.owner._operations.discard(self)
             callbacks, outcome = self.owner._prune_if_finished()
         self.owner._invoke_callbacks(callbacks, outcome)
-        if released:
+        if released or self.owner.child and outcome is True:
             self.owner.capacity._notify_tool_available()

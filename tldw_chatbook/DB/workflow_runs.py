@@ -961,7 +961,10 @@ class WorkflowRunsStore:
         if len(rows) != 1:
             raise ValueError("workflow_decision_link_unproven")
         decision = WorkflowDecision.model_validate_json(rows[0][0])
-        if decision.action != "approve" or decision.reason != "remaining_ready":
+        if decision.action != "approve" or decision.reason not in {
+            "ready",
+            "remaining_ready",
+        }:
             raise ValueError("workflow_decision_link_unproven")
         return decision
 

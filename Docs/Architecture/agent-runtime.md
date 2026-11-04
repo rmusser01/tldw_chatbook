@@ -526,9 +526,72 @@ Known post-return cancellation preserves that proof and is re-raised after
 retirement; missing proof never releases custody.
 Caller command identity is stored verbatim; the unique decision at R and
 attempt at R+1 are committed together. Only the never-run complement gets new
-ordinals/charges, and final quality checks retained plus new results. Planning and
-public coordinator/UI integration remain separate work; no scheduler or restored
-owner adoption is introduced.
+ordinals/charges, and final quality checks retained plus new results. The public
+Console coordinator composes these native producers; UI integration remains
+separate. No scheduler or restored owner adoption is introduced.
+
+### Public native workflow coordination
+
+`ConsoleRuntime.ensure_workflow_coordinator` lazily owns the
+`Chat/console_workflow_runs.py::ConsoleWorkflowCoordinator`. `start` preserves the
+complete immutable `WorkflowRequest`, resolves every execution target through the
+actual session/configured gateway selection, and retains the original selected
+planner separately. The planner need not be an execution target. Native readiness,
+full target equality, source, binding and admission checks precede acceptance and
+billing. Original `prepare_workflow_planning` and `run_planning` retain planning
+custody through required plan/accounting and physical return; planning does not
+launch approved tasks.
+
+`approve` uses the same original E acceptance cell for truthful initial or
+remaining decisions. Exact command duplicates return their original outcome;
+stored workflow/decision/attempt IDs never supply execution authority. An original
+pending cell survives cancellation, COMMIT, host handoff and shutdown until its
+same read/producer/retired/source/storage/owner/claim returns are proven. A
+conclusive pre-prepare refusal releases admission only after those positive
+returns; a missing reader or entered PREPARED attempt retains custody.
+
+The accepted execution driver prepares finite native tasks and composes
+`console_workflow_wave.run_workflow_wave`. Capacity/activity/fleet notifications
+are subscribed before readiness recheck. A genuine no-dispatch wait retries the
+same preparation/TaskAuth only after both original scope/operation returns and
+wave B/E settlement; negative or uncertain return markers retain the original
+preparation, operation and fence. Workflow child membership excludes these tasks
+from ordinary fleet automatic-wake synthesis without changing unrelated fanout.
+
+Explicit workflow-ID Pause stops new launches while committed native work settles.
+Read-only planning Pause waits the original plan return before its paused CAS.
+Stop revokes through the original native control fence and drains original work;
+unknown accounting/required return remains recovery-required. Controls themselves
+use the original tracked offloaded reader and a same-run return Event, which also
+fences planning root release. Resume requires fresh review and either original
+clean awaiting-resume state or the actual latest positively drained planning
+attempt with its saved latest plan; a later execution attempt cannot masquerade
+as that planning state. Failed/stale results require explicit `revise`, preserving
+request, history, spend and exact repair instruction. Completed execution remains
+awaiting result review until a matching native quality decision accepts it.
+
+`subscribe` delivers the distinct bounded `WorkflowRuntimeSnapshot`; full private
+history remains `get`. Both reuse original tracked passive reads. Full history
+and runtime projection share one worker-only SQLite read transaction; no SQL
+transaction spans a host await or callback. Existing issuing Tasks sequence each
+read and synchronous host delivery/discard through the previous invocation's
+actual disposition Future. Equal revision/progress counters remain deliverable
+because native accounting and retirement can change without advancing them.
+Captured run/phase (or absence), definition-time producer records and source
+identity are rechecked: superseded publication discards, while `get` explicitly
+raises `workflow_snapshot_superseded`. No replacement overlay is adopted.
+
+Final drivers retain their original run through actual metadata worker and host
+return. Only the same final cell's positive original proof permits synchronous
+release; source/producer failures preserve both caller cancellation and original
+error, keep recovery sticky, and prevent downstream disposal. Close seals
+subscriptions/external reads, drains original commands/drivers and admitted host
+dispositions without joining unrelated caller work, and refuses unresolved
+custody. The original runtime-only cancellation handoff continues its existing
+disposal before redelivery after positive G return; independent direct coordinator
+close retains normal cancellation semantics. Headless native tests qualify these
+specific paths, not mounted UI, remote providers, performance or whole-system
+reliability.
 
 
 ### Ordinary tree integration contract under implementation

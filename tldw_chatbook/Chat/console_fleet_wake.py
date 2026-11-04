@@ -723,6 +723,7 @@ class ConsoleFleetWakeCoordinator:
             for child in children
             if getattr(child, "settled_after_turn", False)
             and getattr(child, "run_id", None)
+            and getattr(child, "workflow_task", None) is None
         ]
         excluded = [
             str(child.run_id)

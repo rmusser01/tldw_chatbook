@@ -18,7 +18,7 @@ from tldw_chatbook.Workspaces.worktree_activity import WorktreeFootprint, Worktr
 class _WorkflowWave:
     """Exact process-local membership, never reconstructed from stored IDs."""
 
-    def __init__(self, phase, prepared):
+    def __init__(self, phase, prepared, *, retain_waits=False):
         from .console_workflow_preparation import _PreparedWorkflowReply
         from .console_workflow_runs import WorkflowPhaseAuthorization
 
@@ -52,6 +52,10 @@ class _WorkflowWave:
         self.ending_return = self.loop.create_future()
         self.source = self.publication = self.reservation = self.fence = None
         self.receipts = []
+        self.unlaunched = {}
+        self.unproven_launches = set()
+        self.retain_waits = retain_waits
+        self.wait_footprint = None
         self.anchor = None
         self.closed = False
         self.stopping = Event()
@@ -139,7 +143,8 @@ class _WorkflowWave:
         self.closed = True
         self.runtime._workflow_waves.pop(self, None)
         for item in self.prepared:
-            item._release_configuration()
+            if not self.retain_waits or item not in self.unlaunched:
+                item._release_configuration()
 
     def bind_member(self, authorization, owner):
         """Use the existing committed bind_native seam, never a requested run ID."""
@@ -194,20 +199,30 @@ class _WorkflowWave:
         if not self.runtime.execution_capacity._workflow_children_ready(
             len(self.prepared)
         ):
-            raise _WorkflowChildWait(
+            if self.runtime.execution_capacity.snapshot().closed:
+                raise PermissionError("workflow runtime closed")
+            wait = _WorkflowChildWait(
                 "runtime_capacity", "workflow wave capacity unavailable"
             )
+            if self.retain_waits:
+                return wait
+            raise wait
         fleets = {}
         for item in self.prepared:
             fleet = item.authorization._native_preparation[0].fleet
             fleets[fleet] = fleets.get(fleet, 0) + 1
-        if any(
-            fleet.live_count() + count > fleet.max_live
-            for fleet, count in fleets.items()
-        ):
-            raise _WorkflowChildWait(
-                "fleet_capacity", "workflow wave fleet capacity unavailable"
-            )
+        for fleet, count in fleets.items():
+            with fleet._lock:
+                if fleet._fenced:
+                    raise PermissionError("workflow fleet fenced")
+                full = len(fleet._live_ids) + count > fleet.max_live
+            if full:
+                wait = _WorkflowChildWait(
+                    "fleet_capacity", "workflow wave fleet capacity unavailable"
+                )
+                if self.retain_waits:
+                    return wait
+                raise wait
         footprints = tuple(
             item.authorization.physical_footprint for item in self.prepared
         )
@@ -245,10 +260,15 @@ class _WorkflowWave:
             )
 
         footprint = await first._read(capture)
+        self.wait_footprint = footprint
         self.fence = self.runtime.worktree_activity._open_wave(
             self, footprint, tuple(item.authorization for item in self.prepared)
         )
         if self.fence is None:
+            if self.retain_waits:
+                return _WorkflowChildWait(
+                    "worktree_activity", "workflow wave activity busy"
+                )
             raise PermissionError("workflow wave activity busy")
         self.runtime._workflow_waves[self] = self
         for item in self.prepared:
@@ -318,6 +338,10 @@ class _WorkflowWave:
         def launch():
             if self.stopping.is_set():
                 raise PermissionError("workflow wave cancelled before child")
+            native = item.authorization._native_preparation[0]
+            with item.authorization._lock:
+                prior = native.wait_return[0] if native.wait_return else None
+            wait = None
             body_error = None
             source_returned = False
             try:
@@ -338,24 +362,81 @@ class _WorkflowWave:
                             )
                         except _WorkflowChildLaunchFailed as error:
                             receipt, failure = error.receipt, error
+                        except BaseException as error:
+                            with item.authorization._lock:
+                                candidate = (
+                                    native.wait_return[0]
+                                    if native.wait_return
+                                    else None
+                                )
+                            if (
+                                candidate is None
+                                or candidate is prior
+                                or candidate[0] is not error
+                            ):
+                                raise
+                            # Suppress ONLY this invocation's post-inner-return wait.
+                            # All outer scopes must now return normally, even if an
+                            # unwind were to raise this very same exception object.
+                            wait = candidate
+                            receipt, failure = None, None
                         else:
                             failure = None
-                        self.service.bind_native_receipt(item.authorization, receipt)
+                        if receipt is not None:
+                            self.service.bind_native_receipt(
+                                item.authorization, receipt
+                            )
                     except BaseException as error:
                         body_error = error
                         raise
                 source_returned = True
-                return receipt, failure
             except BaseException as error:
-                source_returned = error is body_error
+                with item.authorization._lock:
+                    unproven = (
+                        bool(native.wait_return) and native.wait_return[0] is None
+                    )
+                source_returned = not unproven and wait is None and error is body_error
                 raise
             finally:
                 operation = item._launch_operation
                 if source_returned and operation is not None:
                     operation.finish()
                     item._launch_operation = None
+            if wait is not None:
+                error, owner, claim = wait
+                if owner is not None:
+                    drained = []
+                    owner.on_drained(drained.append)
+                    if drained != [True]:
+                        raise PermissionError("workflow capacity wait drain unproven")
+                activity = self.runtime.worktree_activity
+                with activity._lock:
+                    if claim is not None and (
+                        claim.id in activity._claims or claim.id in activity._members
+                    ):
+                        raise PermissionError(
+                            "workflow capacity wait activity return unproven"
+                        )
+                if (
+                    item.authorization._native_launch
+                    or item.authorization._native_dispatch
+                ):
+                    raise PermissionError("workflow capacity wait dispatched")
+                return None, error
+            return receipt, failure
 
-        receipt, error = await asyncio.to_thread(launch)
+        try:
+            receipt, error = await asyncio.to_thread(launch)
+        except BaseException:
+            native = item.authorization._native_preparation[0]
+            with item.authorization._lock:
+                if native.wait_return:
+                    self.unproven_launches.add(item)
+            raise
+        if receipt is None:
+            # Only after the actual original worker RETURN is this pending.
+            self.unlaunched[item] = error
+            return None
         self.receipts.append((item, receipt))
         if error is not None:
             raise error
@@ -402,7 +483,11 @@ class _WorkflowWave:
 
     async def run(self):
         """Launch a fixed eligible set; close E at its first actual quiescent gap."""
-        await self._open()
+        waiting = await self._open()
+        if waiting is not None:
+            self.unlaunched.update((item, waiting) for item in self.prepared)
+            self._release()
+            return self.reservation
         for item in self.prepared:
             item._wave = self
         launches = await asyncio.gather(
@@ -415,8 +500,14 @@ class _WorkflowWave:
         for result in settled:
             if isinstance(result, BaseException):
                 raise result
+        if self.unproven_launches:
+            raise next(
+                result for result in launches if isinstance(result, BaseException)
+            )
         for item in self.prepared:
-            if not any(item is admitted for admitted, _receipt in self.receipts):
+            if not any(item is admitted for admitted, _receipt in self.receipts) and (
+                not self.retain_waits or item not in self.unlaunched
+            ):
                 await item.close()
         if not self.capture_enabled:
             pass
@@ -442,12 +533,14 @@ class _WorkflowWave:
         for result in launches:
             if isinstance(result, BaseException):
                 raise result
+        if self.unlaunched and not self.retain_waits:
+            raise next(iter(self.unlaunched.values()))
         return self.reservation
 
 
-async def run_workflow_wave(phase, prepared):
+async def run_workflow_wave(phase, prepared, *, _retain_waits=False):
     """Private complete-wave consumer for the existing accepted phase owner."""
-    wave = _WorkflowWave(phase, prepared)
+    wave = _WorkflowWave(phase, prepared, retain_waits=_retain_waits)
     if wave.runtime._workflow_closing:
         raise PermissionError("workflow admission is closing")
     wave.runtime._workflow_waves[wave] = wave
@@ -465,9 +558,18 @@ async def run_workflow_wave(phase, prepared):
         result = wave.driver.result()
         if cancelled:
             raise asyncio.CancelledError
+        if _retain_waits:
+            for item in wave.unlaunched:
+                item._wave = None
+            return wave
         return result
     finally:
-        if wave.reservation is None and not wave.closed and not wave.receipts:
+        if (
+            wave.reservation is None
+            and not wave.closed
+            and not wave.receipts
+            and not wave.unproven_launches
+        ):
             if wave.fence is not None:
                 wave.runtime.worktree_activity._close_wave(wave.fence)
             wave.runtime._workflow_waves.pop(wave, None)

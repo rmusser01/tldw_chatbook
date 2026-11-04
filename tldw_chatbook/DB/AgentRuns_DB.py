@@ -3438,6 +3438,7 @@ class AgentRunsDB(SQLiteStoreKernel, BaseDB):
                 "AND child.wake_delivered_at IS NULL "
                 "AND NOT EXISTS (SELECT 1 FROM automatic_wake_claims AS claim WHERE claim.run_id=child.id) "
                 "AND child.status IN ('done', 'error', 'cancelled') "
+                "AND NOT EXISTS (SELECT 1 FROM workflow_task_attempts w WHERE w.run_id=child.id) "
                 f"AND parent.status IN ({', '.join('?' for _ in TERMINAL_RUN_STATUSES)}) "
                 "AND child.updated_at >= parent.updated_at "
                 "ORDER BY child.updated_at ASC, child.id ASC",
@@ -3457,6 +3458,7 @@ class AgentRunsDB(SQLiteStoreKernel, BaseDB):
                 "JOIN agent_runs AS parent ON parent.id=child.parent_run_id "
                 "WHERE child.wake_delivered_at IS NULL AND child.agent_kind!='primary' "
                 "AND child.status IN ('done','error','cancelled') "
+                "AND NOT EXISTS (SELECT 1 FROM workflow_task_attempts w WHERE w.run_id=child.id) "
                 f"AND parent.status IN ({', '.join('?' for _ in TERMINAL_RUN_STATUSES)}) "
                 "AND child.updated_at>=parent.updated_at ORDER BY child.conversation_id",
                 tuple(sorted(TERMINAL_RUN_STATUSES)),
@@ -3471,6 +3473,7 @@ class AgentRunsDB(SQLiteStoreKernel, BaseDB):
                 "JOIN agent_runs AS parent ON parent.id=child.parent_run_id "
                 "WHERE child.conversation_id=? AND child.wake_delivered_at IS NULL "
                 "AND child.agent_kind!='primary' AND child.status IN ('done','error','cancelled') "
+                "AND NOT EXISTS (SELECT 1 FROM workflow_task_attempts w WHERE w.run_id=child.id) "
                 f"AND parent.status IN ({', '.join('?' for _ in TERMINAL_RUN_STATUSES)}) "
                 "AND child.updated_at>=parent.updated_at ORDER BY child.updated_at, child.id",
                 (conversation_id, *sorted(TERMINAL_RUN_STATUSES)),
