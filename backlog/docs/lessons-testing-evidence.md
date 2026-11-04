@@ -479,6 +479,21 @@ into the suspect step reproduced the CI error exactly. So when a speed fix turns
 into teardown errors, read the captured teardown log for work that started in
 the body. Reproduce it by slowing that one step, not by emulating the platform.
 
+**Follow-up incident, PR #3345 (2026-11-04 UTC).** Windows job
+126398414464 repeated this mechanism in the original three-second startup
+check: UI readiness and audio initializers had progressed, but the DB callback
+had never entered. Its 0.1-second timer was 2.75 seconds late and its retained
+executor source Future was still pending. Five of six sampled workers were
+Textual waiters, with two workers omitted; this did not prove all eight were
+sleepers or that DB calculation was slow. Keep that distinction when diagnosing.
+ADR-354 / TASK-38462 fixes the shared timer seam with Windows-only
+`textual.timer.sleep = asyncio.sleep`, before the already-installed executor
+return. A real-Timer/eight-held-worker proxy failed at the unchanged deadline,
+then delivered and retired a long timer after the correction; every owned
+wait/cancel job was released and awaited. Existing executor/context and original
+startup assertions stayed intact. Current-head hosted Windows qualification is
+still required; a proxy pass does not establish Windows clock precision.
+
 ## A child kept across its parent's rebuild defeats an "every child is unlaid" guard (TASK-33622.6, 2026-10-29)
 
 **Incident.** To stop the Console rail's filter input being replaced under

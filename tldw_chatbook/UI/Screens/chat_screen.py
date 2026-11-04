@@ -322,10 +322,6 @@ from ...Chat.console_chat_models import (
     derive_console_session_title,
 )
 from tldw_chatbook.Utils.character_display_text import sanitize_character_display_label
-from ...Utils.os_notifications import (
-    normalize_console_os_notifications,
-    send_os_notification,
-)
 from ...Chat.console_session_settings import (
     ConsoleSessionSettings,
     ConsoleSettingsReadiness,

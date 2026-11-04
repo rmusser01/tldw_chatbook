@@ -287,7 +287,6 @@ from ...Utils.console_background_effects import (
     MIN_CONSOLE_BACKGROUND_FPS,
     normalize_console_background_effects,
 )
-from ...Utils.os_notifications import normalize_console_os_notifications
 from ...Utils.path_validation import validate_path_simple
 from ...Utils.timestamps import parse_utc, utc_now, utc_now_iso
 from ..Navigation.base_app_screen import BaseAppScreen
@@ -7918,7 +7917,7 @@ class SettingsScreen(BaseAppScreen):
 
     def _loaded_console_os_notifications(self) -> dict[str, object]:
         """Normalized ``[console] os_notifications`` values (draft-agnostic)."""
-        return normalize_console_os_notifications(
+        return _settings_category_symbol("normalize_console_os_notifications")(
             self._console_settings().get("os_notifications")
         ).to_config()
 
@@ -33910,7 +33909,7 @@ class SettingsScreen(BaseAppScreen):
                             key.removeprefix("os_notifications.")
                         ] = bool(dirty_values[key])
                 console_values["os_notifications"] = (
-                    normalize_console_os_notifications(
+                    _settings_category_symbol("normalize_console_os_notifications")(
                         merged_os_notifications
                     ).to_config()
                 )

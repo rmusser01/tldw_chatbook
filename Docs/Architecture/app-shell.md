@@ -23,6 +23,15 @@ This document describes the `TldwCli` Textual application: startup phases, the s
 
 `TldwCli` composes `TextualAppGuards` before `App`. The aggregate in `Utils/text_selection_crash_guard.py` includes the Textual 8.x text-selection crash guard, detached-focus recovery, input activity tracking, and thread-worker context isolation.
 
+On Windows, `ThreadWorkerContextGuard.on_load` selects `asyncio.sleep` for
+`textual.timer.sleep` before checking for an already-installed executor
+(ADR-354). Native Timer callback, interval, repeat, pause/reset and stop code
+remains in Textual; waits and cancellation no longer occupy default-executor
+workers. Executor capacity, fresh job contexts and replaced-pool cleanup remain
+unchanged. This sets the process-wide Textual timer policy on Windows and uses
+the standard event-loop clock resolution rather than Textual's high-resolution
+Windows sleeper. macOS/Linux leave the timer slot unchanged.
+
 On native Windows, its `get_driver_class()` adapts Textual's default `WindowsDriver` to enable `ENABLE_WINDOW_INPUT` after every application-mode start, including resume (TASK-37173). Textual 8.2.8 enables VT input but omits this resize-reporting flag, leaving screens at their old dimensions after a terminal resize. The adapter preserves the remaining input flags and upstream console restoration; constructor-supplied and environment-selected drivers, including served transports, are unchanged. Unix does not import the Windows adapter path. Native before/after evidence and a reproducible Logs probe live in `qa/windows-terminal-resize-2026-10-28/`.
 
 Construction is phased and timed (`self._startup_phases`, histogram `app_startup_phase_duration_seconds`):
