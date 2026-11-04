@@ -7,6 +7,7 @@ through the existing preview and maintenance discovery issuers.
 
 import os
 import sqlite3
+import sys
 import threading
 from contextlib import contextmanager
 from contextvars import ContextVar
@@ -190,6 +191,7 @@ def current():
     from .storage_admission import (
         _DiscoveryScope,
         _local,
+        _mobile_admission,
         _mobile_coordinator_budget,
         _PreviewScope,
     )
@@ -208,15 +210,30 @@ def current():
         raise ValueError("mobile_preview_scope_changed")
     scope.check()
     budget = scope.read_budget
+    if type(scope) is _DiscoveryScope:
+        bindings = _mobile_admission(scope.session)[3]
+        discovery_budget = None
+        # An actual receiver's defining module is already loaded by its issuer.
+        if f"{__package__}.mobile_captured_sqlite" in sys.modules:
+            from .mobile_captured_sqlite import _captured_discovery_budget
+
+            discovery_budget = _captured_discovery_budget(scope.session, scope)
+        elif getattr(_local, "mobile_sqlite_scope", None) is not None or (
+            type(bindings) is dict and scope in bindings
+        ):
+            raise ValueError("mobile_native_reader_changed")
+        if discovery_budget is not None:
+            if discovery_budget is not budget:
+                raise ValueError("mobile_preview_budget_changed")
+        elif budget is not None and (
+            scope.sqlite_copies is None
+            or scope.sqlite_copies.native_scope is not scope
+            or scope.sqlite_copies.read_budget is not budget
+            or _mobile_coordinator_budget(scope.session) is not budget
+        ):
+            raise ValueError("mobile_preview_budget_changed")
     if budget is None:
         return None
-    if type(scope) is _DiscoveryScope and (
-        scope.sqlite_copies is None
-        or scope.sqlite_copies.native_scope is not scope
-        or scope.sqlite_copies.read_budget is not budget
-        or _mobile_coordinator_budget(scope.session) is not budget
-    ):
-        raise ValueError("mobile_preview_budget_changed")
     return scope
 
 
@@ -421,16 +438,28 @@ def matching_schemas(connection, schemas):
         if count > 10_000 or size > 8 * 1024**2:
             raise ValueError("sqlite_resource_limit")
         candidates = [row for row in schemas if len(row[1]) == count]
+        rowids = ()
+        if candidates:
+            budget.reserve(512 + 128 * (count + 1))
+            rowids = tuple(
+                row[0]
+                for row in cursor.execute(
+                    "SELECT rowid FROM sqlite_schema WHERE sql IS NOT NULL "
+                    "ORDER BY type,name LIMIT ?",
+                    (count + 1,),
+                )
+            )
+            if len(rowids) != count:
+                raise ValueError("sqlite_resource_limit")
         parameters = [None, 0]
-        for offset in range(count):
+        for offset, rowid in enumerate(rowids):
             if not candidates:
                 break
             expected = candidates[0][1][offset]
-            parameters[0], parameters[1] = expected, offset
+            parameters[0], parameters[1] = expected, rowid
             budget.reserve(256)
             equal = cursor.execute(
-                "SELECT sql IS ? FROM sqlite_schema WHERE sql IS NOT NULL "
-                "ORDER BY type,name LIMIT 1 OFFSET ?",
+                "SELECT sql IS ? FROM sqlite_schema WHERE sql IS NOT NULL AND rowid=?",
                 parameters,
             ).fetchone() == (1,)
             if all(row[1][offset] == expected for row in candidates):
@@ -447,8 +476,7 @@ def matching_schemas(connection, schemas):
                     parameters[0] = alternative
                     budget.reserve(256)
                     if cursor.execute(
-                        "SELECT sql IS ? FROM sqlite_schema WHERE sql IS NOT NULL "
-                        "ORDER BY type,name LIMIT 1 OFFSET ?",
+                        "SELECT sql IS ? FROM sqlite_schema WHERE sql IS NOT NULL AND rowid=?",
                         parameters,
                     ).fetchone() == (1,):
                         accepted = alternative

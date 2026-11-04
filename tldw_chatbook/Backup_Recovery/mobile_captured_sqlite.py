@@ -18,7 +18,7 @@ from .mobile_consolidation_apply import (
     _SourceClaim,
     _verify_capture_archives,
 )
-from .models import DiscoverySelections
+from .models import DiscoverySelections, _mobile_pairs, _TraceReadBudget
 from .storage_admission import MaintenanceSession, _CaptureFileDescriptors, _local
 
 # These are selectors within an authenticated native declaration, never grants.
@@ -29,6 +29,128 @@ _FAMILIES = (
 )
 _PAGE_ROWS = 1000
 _PAGE_BYTES = 16 * 1024**2
+
+
+def _captured_discovery_budget(session, child=None, *, _read_budget=None):
+    """Look up the original coordinator for this reader's held discovery."""
+    from .storage_admission import (
+        _DiscoveryScope,
+        _mobile_admission,
+        _PreviewScope,
+    )
+
+    session._check()
+    reader = getattr(_local, "mobile_sqlite_scope", None)
+    receiver = None
+    for native in session._scopes:
+        if type(native) is _CapturedSQLite and native.active:
+            if receiver is not None:
+                raise ValueError("mobile_native_reader_changed")
+            receiver = native
+    admission = _mobile_admission(session)
+    if reader is None and receiver is None:
+        if (
+            child is None
+            or _read_budget is not None
+            or type(child) is not _DiscoveryScope
+            or child not in session._scopes
+            or not child.active
+            or getattr(_local, "discovery_scope", None) is not child
+            or type(admission[3]) is dict
+            and child in admission[3]
+        ):
+            raise ValueError("mobile_native_reader_changed")
+        return None
+    if (
+        type(reader) is not _CapturedSQLite
+        or reader is not receiver
+        or reader.session is not session
+    ):
+        raise ValueError("mobile_native_reader_changed")
+    native_budget = reader.read_budget
+    if (
+        admission is not reader.admission
+        or admission[2] is not native_budget
+        or type(native_budget) is not _TraceReadBudget
+        or native_budget._parent is not admission[4]
+        or _mobile_pairs.get(native_budget) is not admission[4]
+        or admission[3] is not reader.discovery_bindings
+        or type(admission[3]) is not dict
+    ):
+        raise ValueError("mobile_sqlite_admission_changed")
+    # The issuer's fixed role is public aggregate or original private generic.
+    budget = admission[4]
+    if _read_budget is not None and _read_budget is not budget:
+        raise ValueError("mobile_preview_budget_changed")
+    holders = (reader,)
+    if child is not None:
+        if type(child) is not _DiscoveryScope:
+            raise ValueError("mobile_native_discovery_child_changed")
+        copies = child.sqlite_copies
+        expected = admission[3].get(child)
+        if (
+            type(expected) is not tuple
+            or len(expected) != 4
+            or expected[0] is not reader
+            or child.session is not session
+            or child not in session._scopes
+            or not child.active
+            or getattr(_local, "discovery_scope", None) is not child
+            or type(copies) is not _PreviewScope
+            or not copies.active
+            or expected[1] is not copies
+            or expected[2] is not child.resources
+            or expected[3] is not copies.resources
+            or copies.native_scope is not child
+            or child.read_budget is not budget
+            or copies.read_budget is not budget
+        ):
+            raise ValueError("mobile_native_discovery_child_changed")
+        child.check()
+        copies.check()
+        holders = (reader, child, copies)
+    for holder in holders:
+        custody = holder.custody
+        if (
+            type(custody) is not _CaptureFileDescriptors
+            or custody.scope is not holder
+            or not any(resource is custody for resource in holder.resources)
+            or custody.close_failed
+            or getattr(holder, "close_failed", False)
+            or getattr(holder, "resource_close_failed", False)
+            or any(
+                getattr(resource, "close_failed", False)
+                or getattr(resource, "resource_close_failed", False)
+                for resource in holder.resources
+            )
+        ):
+            raise ValueError("mobile_native_readers_not_retired")
+    if child is None:
+        reader.check()
+    return budget
+
+
+@contextmanager
+def _borrowed_capture_discovery(session, partition, budget):
+    """Retain this exact canonical member's native images through fresh project."""
+    child = getattr(_local, "discovery_scope", None)
+    if child is None:
+        raise ValueError("mobile_native_discovery_child_changed")
+    if _captured_discovery_budget(session, child) is not budget:
+        raise ValueError("mobile_preview_budget_changed")
+    reader = getattr(_local, "mobile_sqlite_scope", None)
+    if (
+        reader._canonical_archive is None
+        or partition is not reader._canonical_archive[0]
+    ):
+        raise ValueError("mobile_native_discovery_child_changed")
+    if child.config_sources != session._config_capture_sources:
+        raise ValueError("capture_config_scope_changed")
+    try:
+        yield
+    finally:
+        # Preserve the original end-of-discovery check, including failure.
+        child.sqlite_copies.verify_sources()
 
 
 class _CapturedSQLite:
@@ -994,6 +1116,13 @@ def _sqlite_reads(captured, *, password, cancel):
 
     _native_preopen(captured, cancel)
     admission = _mobile_admission(session)
+    if type(admission[2]) is not _TraceReadBudget:
+        raise ValueError("mobile_native_budget_required")
+    if admission[3] is None:
+        admission[2].container()
+        admission[3] = {}
+    elif type(admission[3]) is not dict:
+        raise ValueError("mobile_sqlite_admission_changed")
     with captured.journal._locked(exclusive=False) as fd:
         records = captured.journal._records(fd)
     if _mobile_active_owner(records) is not None and admission[1]:

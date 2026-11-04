@@ -49,6 +49,22 @@ def _members(captured, document, *, _read_budget=None, _scope=None):
     from .mobile_consolidation import mobile_inventory
     from .models import DISCOVERY_CONTEXT_KEY, DiscoveryContext
 
+    if _scope is not None:
+        from .mobile_captured_sqlite import (
+            _captured_discovery_budget,
+            _CapturedSQLite,
+        )
+
+        if (
+            type(_scope) is not _CapturedSQLite
+            or _scope.captured is not captured
+            or getattr(_local, "mobile_sqlite_scope", None) is not _scope
+            or _read_budget is None
+        ):
+            raise ValueError("mobile_runs_selector_scope_required")
+        coordinator = _captured_discovery_budget(_scope.session)
+        if coordinator is not None and _read_budget is not _scope.read_budget:
+            raise ValueError("mobile_runs_selector_scope_required")
     if _read_budget is not None:
         _read_budget.value(document)
         _read_budget.container(
@@ -66,16 +82,8 @@ def _members(captured, document, *, _read_budget=None, _scope=None):
     else:
         from tldw_chatbook.Agents.recovery import _run_log_names
 
-        from .mobile_captured_sqlite import _CapturedSQLite
         from .mobile_runs_selector import _source_config
 
-        if (
-            type(_scope) is not _CapturedSQLite
-            or _scope.captured is not captured
-            or _read_budget is None
-        ):
-            raise ValueError("mobile_runs_selector_scope_required")
-        _scope.check()
         config = _source_config(_scope, _read_budget)
         _read_budget.container(8)
         names = frozenset(_run_log_names(config, _read_budget=_read_budget))
@@ -83,10 +91,21 @@ def _members(captured, document, *, _read_budget=None, _scope=None):
         selector, hashlib.sha256(str(selector).encode()).hexdigest()[:24]
     )
     with captured.session._discovery_reads(private_sqlite=True):
+        inventory_budget = _read_budget
+        if _scope is not None:
+            child = getattr(_local, "discovery_scope", None)
+            if child is None:
+                raise ValueError("mobile_native_discovery_child_changed")
+            metadata = _captured_discovery_budget(captured.session, child)
+            if metadata is not None:
+                inventory_budget = metadata
         declarations = {
             row.logical_id: row
             for row in mobile_inventory(
-                config, _runs_scope=_scope, _run_names=names, _read_budget=_read_budget
+                config,
+                _runs_scope=_scope,
+                _run_names=names,
+                _read_budget=inventory_budget,
             )
             if row.owner == "agents.history"
             and row.status in {"included", "included_directory"}

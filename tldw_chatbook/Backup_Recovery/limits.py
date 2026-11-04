@@ -42,6 +42,16 @@ class ArchiveLimits:
             raise ValueError("invalid_compression_review")
 
 
+def _read_limits(limits, byte_budget, *, kind="preview"):
+    limits = ArchiveLimits() if limits is None else limits
+    if type(limits) is not ArchiveLimits:
+        raise TypeError(f"invalid_{kind}_limits")
+    byte_budget = limits.expanded_bytes if byte_budget is None else byte_budget
+    if type(byte_budget) is not int or not 0 < byte_budget <= limits.expanded_bytes:
+        raise ValueError(f"invalid_{kind}_budget")
+    return limits, byte_budget
+
+
 class _TraceReadLimit(RuntimeError):
     """Body-free materialization refusal shared without importing Chat services."""
 
