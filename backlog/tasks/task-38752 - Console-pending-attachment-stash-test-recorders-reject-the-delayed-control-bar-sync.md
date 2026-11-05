@@ -5,7 +5,7 @@ status: Done
 assignee:
   - '@claude'
 created_date: 2026-11-05 07:11
-updated_date: 2026-11-05 22:03
+updated_date: 2026-11-05 23:18
 labels:
 - follow-up
 - tests
@@ -49,13 +49,30 @@ The file runs on no PR lane.
 ## Implementation Notes
 
 <!-- SECTION:NOTES:BEGIN -->
-**Change.** In `Tests/UI/test_console_pending_attachment_stash.py::test_fresh_mounted_screen_settles_late_h3_outcome_in_dom_and_controls`, `_record_control_sync` and `_count_control_sync` now take `*args, **kwargs` and forward them to the original, so a deferred `delayed=` request reaches the real method (AC#1). They count only argument-free requests, the settlement's own call shape (`image.py` `_settle_current_h3_outcome`). A forwarded deferral retry is not the settlement's request, so it cannot inflate `control_syncs` or reorder the events.
+**Change (AC#1).** In `Tests/UI/test_console_pending_attachment_stash.py::test_fresh_mounted_screen_settles_late_h3_outcome_in_dom_and_controls`, `_record_control_sync` and `_count_control_sync` take `*args, **kwargs` and forward them, so a deferred `delayed=` request still reaches the real method.
 
-**Second fix, needed for AC#2.** With only the forwarding, the node failed 2 of 3 `-n 4` runs (load 43-49) on its own ordering assertion. The first event list was `['transcript', 'transcript', 'reconcile', 'reconcile', 'transcript', 'controls']`: the Console's own ticks call `_sync_native_console_chat_ui`, which also reconciles (`chat_screen.py:17767`), before and during the settlement. At base this was hidden, because the TypeError failed the node first. The test now requires the settlement's order as a subsequence (`reconcile`, then `transcript`, then `controls`), both in its wait predicate and in the final assertion, instead of comparing the first occurrence of each event.
+**Attribution (review r8c-rev1).** The first version recorded every argument-free control request and checked the order only as a subsequence. Neither pinned anything:
+- Console ticks append `transcript` and `reconcile`.
+- The settlement's own nested native sync adds an inner `reconcile`.
+- Other code makes argument-free control requests: the readiness `_retry`, `cut_replay_backoff`, and three `chat_screen.py` sites.
 
-**Red/green.** With a temporary `fresh._request_console_control_bar_sync(delayed=True)` right after the recorders are installed, base failed all 3 cases with `TypeError: ..._record_control_sync() got an unexpected keyword argument 'delayed'`. The fixed test passed all 3 cases (load 24-26).
+The reviewer's in-memory controls left `[success]` and `[failure]` green.
 
-**AC#2 runs.** The node passed 10 of 10 `-n 4` runs, 3 of 3 cases each, at load 27.8-40.7 (1-minute average), with no TypeError and no failure.
+Each recorder (and both `[cancel]` counters) now counts a call only when `_settle_current_h3_outcome` is the nearest owner on its caller stack, ahead of `ChatScreen._sync_native_console_chat_ui`. Ticks and the nested sync are both ignored. The wait predicate and the final assertion require exactly `["reconcile", "transcript", "controls"]`.
+
+**Two other load flakes in this node, fixed after the attribution exposed them:**
+- **The settled row's text.** The predicate now also waits for the row's rendered text. It treats `NoMatches` as not settled, because the row mounts before its Markdown body. Without this the node failed 1 of 10 at `assert '[image] settle terminal' in 'Assistant ... image/png'`, and once with `NoMatches: 'Markdown'`.
+- **The pop timeout.** The setup's `wait_for(host.pop_screen(), timeout=0.5)` timed out at load ~30-36 in 2 of 30 runs (`TimeoutError` at the old :736), once in all 3 cases. It is now 5 s. That still fails long before the held edit's 10 s `release.wait`.
+
+**Red evidence.**
+- With a temporary `fresh._request_console_control_bar_sync(delayed=True)` after the recorders are installed, base failed all 3 cases with `TypeError: ..._record_control_sync() got an unexpected keyword argument 'delayed'`. The fixed test passed all 3.
+- The reviewer's three controls, each a temporary edit of `_settle_current_h3_outcome` in `UI/Console_Modules/image.py`, were each red in all 3 cases (`Timed out waiting for late H3 <kind> transcript/control settlement`), then reverted. All three were run before and after the two flake fixes (load 14-31):
+  - reconcile moved after the transcript sync;
+  - the settlement's reconcile dropped;
+  - its control-bar request dropped.
+- A temporary edit that lets a stale generation settle failed `[cancel]` at the attributed counter (`assert 1 == 0`).
+
+**AC#2.** The final node passed 30 of 30 `-n 4` runs, 3 of 3 cases each: 10 at load 10.4-17.3, then two batches of 10 in parallel at load 20.9-47.9 (1-minute average). No TypeError and no failure. One `[cancel]` settlement timeout in an intermediate run (load 20.5) did not recur in the 82 later runs; the other failures in those runs were the pop timeout and the row text above. Its events were not captured.
 
 **Whole file** (`-n 4`): 8 other plain nodes fail with `RecoveryRequired: raw_source_selection_changed` on the branch and at base with the same command. That is TASK-38111's trap. At base the same run also failed this node's `[success]` and `[failure]` cases.
 <!-- SECTION:NOTES:END -->

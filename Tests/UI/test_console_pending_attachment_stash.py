@@ -13,11 +13,13 @@ dies with the app (restart drops pendings, which is the accepted trade).
 import asyncio
 from io import BytesIO
 from types import SimpleNamespace
+import sys
 import threading
 import time
 
 import pytest
 from PIL import Image as PILImage
+from textual.css.query import NoMatches
 from textual.widgets import Button
 
 from Tests.private_profile import private_profile_test
@@ -732,7 +734,9 @@ async def test_fresh_mounted_screen_settles_late_h3_outcome_in_dom_and_controls(
             old_generation = operation.generation
             saved_state = old.save_state()
 
-            await asyncio.wait_for(host.pop_screen(), timeout=0.5)
+            # The pop must not wait for the held edit (``release.wait(10)``);
+            # 0.5 s timed out at load ~30-36 in 2 of 30 runs (TASK-38752).
+            await asyncio.wait_for(host.pop_screen(), timeout=5.0)
 
             async def _stale_sync_tripwire():
                 raise AssertionError("unmounted screen UI sync")
@@ -754,19 +758,36 @@ async def test_fresh_mounted_screen_settles_late_h3_outcome_in_dom_and_controls(
             original_reconcile = fresh._image._reconcile_h3_image_edit_completions
             original_transcript_sync = fresh._sync_native_console_chat_ui
             original_control_sync = fresh._request_console_control_bar_sync
+            settle_code = type(fresh._image)._settle_current_h3_outcome.__code__
+            native_code = type(fresh)._sync_native_console_chat_ui.__code__
+
+            def _from_settlement() -> bool:
+                # TASK-38752: Console ticks also sync, reconcile and request
+                # controls, and so does the settlement's own nested native
+                # sync. Count a call only when the settlement itself made it:
+                # the nearest of the two owners on the recorder's caller stack.
+                frame = sys._getframe(2)
+                while frame is not None:
+                    if frame.f_code is settle_code:
+                        return True
+                    if frame.f_code is native_code:
+                        return False
+                    frame = frame.f_back
+                return False
 
             def _record_reconcile(store=None):
-                settlement_events.append("reconcile")
+                if _from_settlement():
+                    settlement_events.append("reconcile")
                 original_reconcile(store)
 
             async def _record_transcript_sync():
-                settlement_events.append("transcript")
+                if _from_settlement():
+                    settlement_events.append("transcript")
                 await original_transcript_sync()
 
             def _record_control_sync(*args, **kwargs):
-                # TASK-38752: a deferred sync re-requests with ``delayed=``;
-                # forward it, and record only the settlement's own request.
-                if not args and not kwargs:
+                # A deferred sync re-requests with ``delayed=``: forward it.
+                if _from_settlement():
                     settlement_events.append("controls")
                 original_control_sync(*args, **kwargs)
 
@@ -784,17 +805,10 @@ async def test_fresh_mounted_screen_settles_late_h3_outcome_in_dom_and_controls(
                 ),
             }.get(terminal_kind)
 
-            def _settled_in_order() -> bool:
-                # TASK-38752: Console ticks also sync the transcript and
-                # reconcile, before and during the settlement; require the
-                # settlement's order, not the first occurrence of each.
-                events = iter(settlement_events)
-                return all(
-                    event in events for event in ("reconcile", "transcript", "controls")
-                )
+            settlement_order = ["reconcile", "transcript", "controls"]
 
             def _settled() -> bool:
-                if not _settled_in_order():
+                if settlement_events != settlement_order:
                     return False
                 if stop.styles.display != "none":
                     return False
@@ -809,7 +823,12 @@ async def test_fresh_mounted_screen_settles_late_h3_outcome_in_dom_and_controls(
                 ]
                 if len(matching) != 1:
                     return False
-                return bool(fresh.query(f"#console-message-{matching[0].id}"))
+                # The row mounts before its Markdown body (TASK-38752).
+                try:
+                    text = _message_row_plain_text(fresh, matching[0].id)
+                except NoMatches:
+                    return False
+                return expected_content in text
 
             await _wait_for_h3_state(
                 pilot,
@@ -818,7 +837,7 @@ async def test_fresh_mounted_screen_settles_late_h3_outcome_in_dom_and_controls(
             )
             assert fresh._native_run_status_copy() == ""
             assert stop.styles.display == "none"
-            assert _settled_in_order(), settlement_events
+            assert settlement_events == settlement_order
             if expected_content is None:
                 assert (
                     fresh._ensure_console_chat_store().messages_for_session(session.id)
@@ -867,12 +886,13 @@ async def test_fresh_mounted_screen_settles_late_h3_outcome_in_dom_and_controls(
 
                 async def _count_transcript_sync():
                     nonlocal transcript_syncs
-                    transcript_syncs += 1
+                    if _from_settlement():
+                        transcript_syncs += 1
                     await newer_transcript_sync()
 
                 def _count_control_sync(*args, **kwargs):
                     nonlocal control_syncs
-                    if not args and not kwargs:
+                    if _from_settlement():
                         control_syncs += 1
                     newer_control_sync(*args, **kwargs)
 
