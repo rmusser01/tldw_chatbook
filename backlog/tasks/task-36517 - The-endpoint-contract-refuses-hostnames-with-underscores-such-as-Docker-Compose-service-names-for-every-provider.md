@@ -5,7 +5,7 @@ status: Done
 assignee:
 - '@claude'
 created_date: 2026-10-24 00:26
-updated_date: '2026-11-05 22:16'
+updated_date: '2026-11-05 22:40'
 labels:
 - follow-up
 - settings
@@ -63,5 +63,15 @@ Review r8e-rev1 (AC#2): two Console helpers kept the old label rule. The Console
   - New `test_an_underscore_host_displays_and_compares_as_itself` in `Tests/Chat/test_local_server_discovery.py`: the host displays as itself, two underscore hosts compare distinct, and leading- or trailing-hyphen labels still read "invalid endpoint".
 - Red at the round-1 head fd45ecd087: both preview cases failed with `assert None is not None`, and the display test with `'invalid endpoint' == 'http://my_proxy.corp/v1'`. Green after.
 
-Files: `tldw_chatbook/Provider_Contract/provider_endpoint_contract.py`, `tldw_chatbook/Chat/console_settings_defaults.py`, `tldw_chatbook/Chat/console_provider_endpoints.py`, `Tests/Chat/test_local_server_discovery.py`, `Tests/Chat/test_provider_endpoint_contract.py`, `Tests/Chat/test_console_settings_defaults.py`.
+Review r8e-rev2 (AC#2): `Chat/console_project_instructions.py` had a third copy of the old label rule (`_valid_dns_label`, used by `_canonical_hostname`). With the contract accepting `kobold_cpp`, a Console send to such a host raised "invalid provider endpoint" while keying its project-instruction consent. The foreground run ended as RUN_CANCELLED, the background start raised, and traces read "[invalid endpoint]".
+- The private copy is deleted, and `_canonical_hostname` uses the contract's `valid_dns_label`. Its host has already been decoded to ASCII by httpx (an IDN becomes `xn--...`), and the only change is that `_` is now allowed. Every `canonical_provider_endpoint_identity` caller goes through this one parser: the provider gateway, trace final values, exchange capture and exchange export.
+- A grep of the provider-endpoint path found no other private label or hostname rule. `provider_continuation._validate_base_url`, `console_library_destination`, `console_settings_field_row.endpoint_host` and `safe_llm_url_host` do no label checks. The label checks in the TTS, watchlists, Notes git push and model-artifact modules guard other kinds of URL and were left alone.
+- New `test_an_underscore_host_gets_a_project_instruction_key_and_its_origin_label` (`Tests/Chat/test_local_server_discovery.py`):
+  - `kobold_cpp:5001` and `My_Proxy.corp` get a notice key, their canonical identity and a real-origin label.
+  - The consent keys of five hosts accepted before this change (a hyphen host, a mixed-case host, IPv4, an IDN, IPv6) equal their digests measured at 3795dee3bd.
+  - `-bad`, `bad-` and `-bad_x` still raise and read "(invalid endpoint)".
+- Red at 3795dee3bd: `ValueError: invalid provider endpoint`. Green after.
+- Covering run (`-n 4`, load average 12-16): 18 files, covering project instructions (Chat, Agents, UI), exchange capture and export, trace final values, the provider gateway, project setup refusal, the Console defaults and endpoints, the contract and local-server discovery. Result: 1268 passed, 28 failed. The 28 nodes failed identically, the same set, with all six changed source files at base 29592ecc9b; 54 of the failure lines are `RecoveryRequired`. `Tests/Architecture` ratchets, layer direction, the agent-runtime import footprint and the Agents/Chat boundary: 270 passed. The contract module was already loaded through `provider_continuation`, so the import sets do not change.
+
+Files: `tldw_chatbook/Provider_Contract/provider_endpoint_contract.py`, `tldw_chatbook/Chat/console_settings_defaults.py`, `tldw_chatbook/Chat/console_provider_endpoints.py`, `tldw_chatbook/Chat/console_project_instructions.py`, `Tests/Chat/test_local_server_discovery.py`, `Tests/Chat/test_provider_endpoint_contract.py`, `Tests/Chat/test_console_settings_defaults.py`.
 

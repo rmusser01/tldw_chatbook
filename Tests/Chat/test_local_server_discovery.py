@@ -26,6 +26,12 @@ from tldw_chatbook.Chat.local_server_discovery import (
     normalize_probe_base_url,
     probe_models_endpoint,
 )
+from tldw_chatbook.Chat.console_project_instructions import (
+    canonical_provider_endpoint_identity,
+    fingerprint_canonical_locator,
+    project_instruction_notice_key,
+    sanitized_destination_label,
+)
 from tldw_chatbook.Chat.provider_setup_persistence import (
     ProviderSetupDraft,
     build_provider_setup_mutation,
@@ -985,4 +991,55 @@ def test_an_underscore_host_displays_and_compares_as_itself():
     # The other label rules still refuse.
     for refused in ("http://-my_proxy.corp/v1", "http://my_proxy-.corp/v1"):
         assert safe_endpoint_display(refused) == "invalid endpoint"
+
+
+#: Consent keys for hosts the project-instruction parser accepted before
+#: TASK-36517, measured at 3795dee3bd: allowing "_" must not move any of them.
+_NOTICE_KEYS_BEFORE_UNDERSCORES = {
+    "http://kobold-cpp:5001/v1": (
+        "735cc3db6de8cffdec48e7e1d3941c7c34b03d812c1a8e68dce0a8f01817180e"
+    ),
+    "https://My-Proxy.corp/v1/": (
+        "aa7ba74582109afee14981af841a0ee435ebc65e722a60584838664840bc6a90"
+    ),
+    "http://127.0.0.1:5001/api/v1/generate": (
+        "230a4eb202e98922dd8500ab912ba358797508c63878267e0edb3f8a0f2c7295"
+    ),
+    "https://bücher.example/v1": (
+        "9c2eb1086a90887408a48e6c5e276b214e1e40d3f0fcd41d8f7b99ef551623a3"
+    ),
+    "http://[::1]:8080/v1": (
+        "904ad8976b81be75c1b119602a56909d35d01517b07eee0aaa2128ca7ffc98b6"
+    ),
+}
+
+
+def test_an_underscore_host_gets_a_project_instruction_key_and_its_origin_label():
+    """TASK-36517 review r8e-rev2: project instructions kept their own label
+    rule, so a Console send to ``kobold_cpp`` raised "invalid provider
+    endpoint" while keying its consent (the foreground run was cancelled,
+    traces read "[invalid endpoint]")."""
+    locator = fingerprint_canonical_locator("workspace:/r8e")
+    for endpoint, origin in (
+        ("http://kobold_cpp:5001/v1", "http://kobold_cpp:5001"),
+        ("http://My_Proxy.corp/v1", "http://my_proxy.corp"),
+    ):
+        key = project_instruction_notice_key(locator, "koboldcpp", endpoint)
+        assert len(key) == 64 and int(key, 16) >= 0
+        assert canonical_provider_endpoint_identity(endpoint) == f"{origin}/v1"
+        assert sanitized_destination_label("KoboldCpp", endpoint) == (
+            f"KoboldCpp ({origin})"
+        )
+    for endpoint, key in _NOTICE_KEYS_BEFORE_UNDERSCORES.items():
+        assert project_instruction_notice_key(locator, "koboldcpp", endpoint) == key
+    for refused in (
+        "http://-bad.corp/v1",
+        "http://bad-.corp/v1",
+        "http://-bad_x.corp/v1",
+    ):
+        with pytest.raises(ValueError, match="invalid provider endpoint"):
+            project_instruction_notice_key(locator, "koboldcpp", refused)
+        assert sanitized_destination_label("KoboldCpp", refused) == (
+            "KoboldCpp (invalid endpoint)"
+        )
 
