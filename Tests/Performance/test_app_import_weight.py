@@ -163,7 +163,14 @@ MAX_MODULE_COUNT = 2200
 # Owner-approved ADR-097 exception (2026-09-14, PR #2642, TASK-32562):
 # backup startup admission/activation adds 26 modules versus dev (643 -> 669).
 # Preserve dev's existing headroom; timing and heavy-import guards are unchanged.
-MAX_TLDW_MODULE_COUNT = 686
+# 686 -> 688 (2026-11-05, TASK-38765; owner size waiver 2026-10-31): two
+# arch/p2 extractions merged red past this guard while the tour test failed
+# first and skipped the step. #3359 added `DB.store_errors` (19 lines of shared
+# exception bases the four stores derive from, so they import it at class
+# definition); #3375 moved `Chat.console_capture_policy` out of the resident
+# `config.py`, which shrank by as much. One module each, no new code on the
+# path; measured 687 at dev 447628d08b.
+MAX_TLDW_MODULE_COUNT = 688
 
 
 def _run_isolated_python(tmp_path: Path, code: str) -> subprocess.CompletedProcess[str]:
