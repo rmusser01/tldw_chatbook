@@ -1,7 +1,7 @@
 ---
 id: TASK-38533
 title: Qualify shared-worktree workflows across execution and restart
-status: In Progress
+status: Done
 created_date: 2026-11-01 17:31
 dependencies:
 - TASK-38531
@@ -15,7 +15,7 @@ references:
 documentation:
 - Docs/superpowers/specs/2026-11-01-native-phased-agent-workflows-design.md
 - backlog/decisions/285-native-phased-agent-workflows.md
-updated_date: 2026-11-05 03:03
+updated_date: 2026-11-05 05:24
 ---
 
 ## Description
@@ -26,9 +26,9 @@ Deliver implementation slice 10 of the accepted native shared-worktree workflow 
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 A1–A12 have retained evidence from real files/Git/SQLite, native admission, held-worker races and fresh-process recovery controls.
-- [ ] #2 A real provider performs an authorized correction between failed and passing targeted checks with exact manifests, process results and phase approvals.
-- [ ] #3 Living architecture/user/Settings/recovery docs describe only qualified behavior; unresolved bootstrap, platform or uncertainty limitations remain explicit.
+- [x] #1 A1–A12 have retained evidence from real files/Git/SQLite, native admission, held-worker races and fresh-process recovery controls.
+- [x] #2 A real provider performs an authorized correction between failed and passing targeted checks with exact manifests, process results and phase approvals.
+- [x] #3 Living architecture/user/Settings/recovery docs describe only qualified behavior; unresolved bootstrap, platform or uncertainty limitations remain explicit.
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -62,13 +62,19 @@ Qualified native correction/dependency/review, true process crashes and complete
 
 Five narrowly reviewed corrections reuse existing owners under ADR285 and ADR126. Execution preparation composes the original explicitly allowed exclusive shell provider and review hook. Complete fresh native nonzero evidence derives workflow task failure for explicit repair. All-review-required passive accounting avoids a live Console import. Original hook-source validators serialize and reread current policy/source after waiting. Scheduled sync-log retention uses the existing finite-worker cache helper.
 
-Added native/process/race regression coverage, retained adverse and passing cohorts, updated five Architecture pages plus Console/Settings guidance, and recorded the actual65-second timer incident in testing lessons. Source-qualified A1–A12 evidence, bounded commands and historical limitations are under Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows. Fourteen changed Python/test files pass full Ruff checks. Two narrowly changed files retain exactly76 and1 preexisting lint findings with zero added diagnostics and passing modified-range formatting. Verification stayed targeted. Root independent task/whole-execution review and final status/census remain pending.
+Added native/process/race regression coverage, retained adverse and passing cohorts, updated five Architecture pages plus Console/Settings guidance, and recorded the actual65-second timer incident in testing lessons. Source-qualified A1–A12 evidence, bounded commands and historical limitations are under Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows. Fourteen changed Python/test files pass full Ruff checks. Two narrowly changed files retain exactly76 and1 preexisting lint findings with zero added diagnostics and passing modified-range formatting. Verification stayed targeted. Independent Task10 spec/quality review is approved with the source limits below; final whole-execution review and root archive/census closure remain pending.
+
+Independent task review `310931472fb9e279a490058f4b15aa8b2cc40c65216ab35f91d910c6d9865965` approved spec compliance and quality with zero Critical/Important findings. Native Qwen functional proof (restart9), later same-profile timer/Creator proof (inspect3) and final evidence-label proof retain separate exact source versions. Root independently verified all489 committed paths,8325 current source/config hashes, original staged61 diff and protected279 files. Existing ADR-285 and ADR-126 apply.
+
+Known evidence caveat M1: the functional live run also emitted `RuntimeWarning: coroutine 'ChatScreen._sync_native_console_chat_ui' was never awaited` at qualification/live/restart9/process-tail.txt:13. Its allocation cause and lifetime consequence remain unexplained. This is distinct from the attributed MediaDB cache refusal and later cleanup fix. It is carried to final whole-execution triage. Raw logs, old failed cohorts,12 unavailable early driver bodies, dirty-source dependencies, Darwin-only physical coverage, inherited lint/format debt and raw-data whitespace remain explicitly qualified; no full-suite, clean-checkout or single all-final-source end-to-end claim.
 
 <!-- SECTION:IMPLEMENTATION_NOTES:END -->
 
 ## Final Summary
 
 <!-- SECTION:FINAL_SUMMARY:BEGIN -->
+
+Implemented and independently accepted the native shared-worktree qualification slice at bea503a7e3e64dffe313b2bc5b22196a3b8da5aa. Real local-provider correction and exact failed/passing verifier evidence, native race/accounting controls, true process recovery and full-profile backup/restore/rebackup are retained in the qualification index. All three task acceptance criteria are satisfied within their documented source/platform limits. The feature remains disabled by default. Final whole-execution review and root disclosure/archive closure follow this task gate.
 
 <!-- SECTION:FINAL_SUMMARY:END -->
 

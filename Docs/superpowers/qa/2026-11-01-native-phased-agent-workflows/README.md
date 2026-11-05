@@ -47,3 +47,7 @@ The latest minimal mounted read positively observed the original fs_read return,
 ## Historical limitations
 
 Prior source-qualified adverse results remain in the root archive, including the original155P/28F/5E selection, consumer77/remaining36 qualifications, whole202-path limits, separate12P/9F whole-fix attempts, ordinary81P/65F and profile133P/13F selections, and four foreign governance failures. Earlier Task5 source swapping lacked an intervening-writer audit. The absent historical65560expected/c3a09current metadata input remains unavailable. No current cohort resolves those historical limitations by aggregation. The root-owned archive preserves exact full bodies, source identities and unpinned versions. [Archive scope and limitations](rulings/README.md)
+
+## Independent task-review caveat
+
+The functional local-provider run also emitted `RuntimeWarning: coroutine 'ChatScreen._sync_native_console_chat_ui' was never awaited` ([retained log](qualification/live/restart9/process-tail.txt):13). No allocation traceback was retained, so its cause and lifetime consequence remain unexplained. This warning is separate from the attributed MediaDB cache refusal and its later timer/cleanup proof. Independent Task10 review approved spec compliance and quality with this Minor carried to final whole-execution triage.

@@ -1,11 +1,11 @@
 # ADR-285: Native phased agent workflows in a shared worktree
 
-- Status: Accepted 2026-11-01 (implementation in progress; runtime qualification pending)
+- Status: Accepted 2026-11-01 (Tasks 1–10 individually reviewed; final whole-execution review pending)
 - Date: 2026-11-01
 - Task: [TASK-38493](../tasks/task-38493%20-%20Design-native-phased-agent-workflows-in-a-shared-worktree.md)
 - Spec: [Shared-worktree workflow design](../../Docs/superpowers/specs/2026-11-01-native-phased-agent-workflows-design.md)
-- Plan: [Native shared-worktree workflows](../../Docs/superpowers/plans/2026-11-01-native-phased-agent-workflows-implementation.md) (implementation in progress)
-- Implementation: Tasks 1–9 independently reviewed; full-app, live-provider and recovery qualification remain tracked in the linked plan.
+- Plan: [Native shared-worktree workflows](../../Docs/superpowers/plans/2026-11-01-native-phased-agent-workflows-implementation.md) (task implementation complete; final whole-execution review pending)
+- Implementation: Tasks 1–10 independently reviewed. [Qualification evidence](../../Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/README.md) retains the source-specific native, live-provider, recovery and cleanup results and their limits; final whole-execution review remains pending.
 - Governing contracts: [project instructions](069-console-project-instruction-local-state-and-preflight.md),
   [Change Review consent](084-change-review-consent-and-asynchronous-finalization.md),
   [per-turn review ownership](089-console-per-turn-change-review-ownership.md),
