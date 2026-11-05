@@ -1282,14 +1282,18 @@ async def test_active_edit_cancels_an_already_armed_idle_cost_timer(monkeypatch)
     async with host.run_test(size=(200, 48)) as pilot:
         console = host.screen_stack[-1]
         await _wait_for_selector(console, pilot, "#console-native-composer")
-        summary_refresh = Mock()
-        cost_refresh = Mock()
-        monkeypatch.setattr(console, "_sync_console_settings_summary", summary_refresh)
-        monkeypatch.setattr(console, "_sync_console_cost_chip", cost_refresh)
+        # TASK-38690: watch the timer's own callback. The credential poll and
+        # the native UI tick also call the summary and cost syncs, so mocks on
+        # those failed this test with the timer already cancelled. The long
+        # delay keeps the timer from firing before the edit's handler runs.
+        refresh = console._console_draft_spend_refresh
+        refresh_callback = Mock()
+        monkeypatch.setattr(type(refresh), "refresh", refresh_callback)
+        monkeypatch.setattr(refresh, "delay_seconds", 60.0)
         composer = console.query_one("#console-native-composer", ConsoleComposerBar)
         composer.load_draft("arm while idle")
         await pilot.pause(0.01)
-        assert console._console_draft_spend_refresh.timer is not None
+        assert refresh.timer is not None
 
         controller = console._ensure_console_chat_controller()
         session_id = console._ensure_console_chat_store().active_session_id
@@ -1298,11 +1302,12 @@ async def test_active_edit_cancels_an_already_armed_idle_cost_timer(monkeypatch)
             session_id=session_id,
         )
         composer.load_draft("edit after send starts")
-        await pilot.pause(0.3)
+        deadline = time.monotonic() + _ASYNC_SETTLE_TIMEOUT
+        while refresh.timer is not None and time.monotonic() < deadline:
+            await pilot.pause(0.01)
 
-        assert console._console_draft_spend_refresh.timer is None
-        summary_refresh.assert_not_called()
-        cost_refresh.assert_not_called()
+        assert refresh.timer is None
+        refresh_callback.assert_not_called()
 
 
 @pytest.mark.asyncio
@@ -1317,26 +1322,32 @@ async def test_keyboard_send_cancels_idle_refresh_before_run_starts(monkeypatch)
     async with host.run_test(size=(200, 48)) as pilot:
         console = host.screen_stack[-1]
         await _wait_for_selector(console, pilot, "#console-native-composer")
+        refresh = console._console_draft_spend_refresh
         refresh_callback = Mock()
-        monkeypatch.setattr(
-            type(console._console_draft_spend_refresh), "refresh", refresh_callback
-        )
+        monkeypatch.setattr(type(refresh), "refresh", refresh_callback)
+        # TASK-38690: under load the send's dispatch can start after the
+        # production 0.2 s delay; only the dispatch may clear this timer.
+        monkeypatch.setattr(refresh, "delay_seconds", 60.0)
         composer = console.query_one("#console-native-composer", ConsoleComposerBar)
         composer.focus()
         composer.load_draft("send before debounce fires")
         await pilot.pause(0.01)
-        assert console._console_draft_spend_refresh.timer is not None
+        assert refresh.timer is not None
 
         await pilot.press("enter")
         await asyncio.wait_for(gateway.resolving.wait(), timeout=_ASYNC_SETTLE_TIMEOUT)
-        await pilot.pause(0.3)
 
-        assert composer.draft_text() == ""
-        assert console._console_draft_spend_refresh.timer is None
+        # No draft assertion: since ADR-230 (2026-10-31) the pressed draft
+        # stays in the composer until the turn's durable acceptance, which
+        # comes after this held resolve.
+        assert refresh.timer is None
         refresh_callback.assert_not_called()
 
         gateway.release.set()
-        await _wait_for_visible_text(console, pilot, "ready answer")
+        # The reply took over the 4 s default at load ~60 (TASK-38690).
+        await _wait_for_visible_text(
+            console, pilot, "ready answer", timeout=_ASYNC_SETTLE_TIMEOUT
+        )
 
 
 @pytest.mark.asyncio
@@ -1492,12 +1503,22 @@ async def test_unaccepted_predispatch_echo_is_visible_but_excluded_from_context_
             and row.content == "slow readiness request"
             for row in store.messages_for_session(session_id)
         )
-        assert context_spend_for_test(console)._last_console_context_control_state.request_tokens == 0
+        # TASK-38690: since ADR-230 (2026-10-31) the pressed draft stays in
+        # the composer until durable acceptance, so the estimate still counts
+        # it once as the draft. A counted echo would add it a second time.
+        assert composer.draft_text() == "slow readiness request"
+        assert (
+            context_spend_for_test(console)._last_console_context_control_state.request_tokens
+            == before_tokens
+        )
         assert state is not None
         assert "Current $0.00" in state.label
 
         gateway.release.set()
-        await _wait_for_visible_text(console, pilot, "ready answer")
+        # The reply took over the 4 s default at load ~60 (TASK-38690).
+        await _wait_for_visible_text(
+            console, pilot, "ready answer", timeout=_ASYNC_SETTLE_TIMEOUT
+        )
 
 
 @pytest.mark.asyncio
