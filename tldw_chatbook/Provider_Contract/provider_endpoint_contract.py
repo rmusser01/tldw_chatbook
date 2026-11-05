@@ -564,11 +564,12 @@ def _canonical_host(hostname: str) -> str | None:
 
 
 def _valid_dns_label(label: str) -> bool:
+    # TASK-36517: "_" as in Docker Compose names (kobold_cpp), which httpx and
+    # discovery accept; a hyphen still never starts or ends a label.
     return (
         1 <= len(label) <= 63
-        and label[0].isalnum()
-        and label[-1].isalnum()
-        and all(character.isalnum() or character == "-" for character in label)
+        and "-" not in (label[0], label[-1])
+        and all(character.isalnum() or character in "-_" for character in label)
     )
 
 

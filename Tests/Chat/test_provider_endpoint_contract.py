@@ -408,7 +408,9 @@ def test_raw_unicode_path_is_serialized_as_uppercase_utf8_percent_escapes() -> N
         "http://:8080/v1",
         "http://localhost:0/v1",
         "http://localhost:99999/v1",
-        "http://bad_host/v1",
+        # TASK-36517, rewritten on purpose: "_" alone no longer refuses a
+        # host (Docker Compose names); a leading hyphen still does.
+        "http://-bad_host/v1",
         "https://example.test/proxy%2Fv1%2Fchat%2Fcompletions",
         "https://example.test/proxy/v1%2fchat%2fcompletions",
         "https://example.test/proxy%5Cv1%5Cchat%5Ccompletions",

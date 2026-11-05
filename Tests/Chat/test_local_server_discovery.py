@@ -21,6 +21,17 @@ from tldw_chatbook.Chat.local_server_discovery import (
     normalize_probe_base_url,
     probe_models_endpoint,
 )
+from tldw_chatbook.Chat.provider_setup_persistence import (
+    ProviderSetupDraft,
+    build_provider_setup_mutation,
+)
+from tldw_chatbook.LLM_Provider_Catalog.openai_compatible_model_discovery import (
+    supports_openai_compatible_model_discovery,
+)
+from tldw_chatbook.Provider_Contract.provider_endpoint_contract import (
+    URL_BASED_PROVIDER_KEYS,
+    resolve_provider_endpoint,
+)
 
 # These ARE the tests of the probe implementation, so they opt out of the
 # autouse `_no_local_server_probes` guard (Tests/conftest.py, task-15111).
@@ -864,3 +875,88 @@ async def test_probe_rejects_non_chat_and_unrecognized_only_listing() -> None:
     assert result.detail == (
         "No models endpoint at http://127.0.0.1:9099 (unrecognized API payload)."
     )
+
+
+#: TASK-36517: every provider the endpoint contract serves, as the task's
+#: dev probe listed them; koboldcpp on the native route its send needs.
+_CONTRACT_PROVIDERS = (
+    *sorted(URL_BASED_PROVIDER_KEYS),
+    "openai",
+    "deepinfra",
+    "anthropic",
+)
+
+
+def _endpoint_for(provider: str, host: str) -> str:
+    path = "/api/v1/generate" if provider == "koboldcpp" else "/v1"
+    return f"http://{host}:5001{path}"
+
+
+def _saved_endpoint(provider: str, endpoint: str) -> str | None:
+    """The endpoint the provider save writes, or None when it refuses."""
+    try:
+        mutation = build_provider_setup_mutation(
+            ProviderSetupDraft(
+                provider=provider,
+                model="m",
+                endpoint=endpoint,
+                credential_source="none",
+                credential_revision=0,
+                draft_generation=1,
+            ),
+            {"api_settings": {}},
+        )
+    except ValueError:
+        return None
+    (table,) = (
+        values
+        for section, values in mutation.section_values.items()
+        if section.startswith("api_settings.")
+    )
+    return table.get("api_url") or table.get("api_base_url")
+
+
+@pytest.mark.parametrize("provider", _CONTRACT_PROVIDERS)
+def test_an_underscore_host_saves_and_discovers_like_its_hyphen_spelling(provider):
+    """TASK-36517 AC#1/AC#2: a Docker Compose name such as ``kobold_cpp`` was
+    refused by the save ("valid host and port") while Discover models listed
+    from it. Both now accept it exactly as they accept ``kobold-cpp``."""
+    hyphen = _endpoint_for(provider, "kobold-cpp")
+    underscore = _endpoint_for(provider, "kobold_cpp")
+
+    assert resolve_provider_endpoint(provider, underscore).errors == ()
+    saved = _saved_endpoint(provider, underscore)
+    assert saved is not None
+    assert saved == _saved_endpoint(provider, hyphen).replace("-", "_")
+    assert supports_openai_compatible_model_discovery(provider, underscore) is True
+    assert supports_openai_compatible_model_discovery(provider, hyphen) is True
+
+
+@pytest.mark.parametrize(
+    "host",
+    [
+        "-kobold",
+        "kobold-",
+        "-kobold_cpp",
+        "kobold_cpp-",
+        "kob..old",
+        "kob_..old",
+        "kob%41ld",
+        "kob_%41ld",
+        "kob*old",
+        "kob_*old",
+        "1.2.3",
+        "a" * 64,
+        "a_" * 32,
+        ".".join(["a" * 60] * 5),
+    ],
+)
+def test_hosts_refused_for_another_reason_are_still_refused(host):
+    """TASK-36517 AC#3: allowing "_" relaxes no other host rule, with or
+    without an underscore in the host."""
+    for provider in _CONTRACT_PROVIDERS:
+        endpoint = _endpoint_for(provider, host)
+        assert resolve_provider_endpoint(provider, endpoint).errors == (
+            "Endpoint URL must include a valid host and port.",
+        ), provider
+        assert _saved_endpoint(provider, endpoint) is None, provider
