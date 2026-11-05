@@ -853,6 +853,11 @@ MINIMUM_FILES = 1744
 # TASK-38981 re-review 4 (2026-11-06): append the four stage-pick
 # user-move nodes at the tail. The floor is the measured entry count.
 MINIMUM_FILES = 1748
+# TASK-36571.1 (2026-11-05): append the run tick's workspace-build pins (the
+# projection's and control bar's label reads, the Agent section's flag read,
+# the poll tick's one reuse and its push and unit guards) as node entries at
+# the tail; the file runs about 60 s serially. The floor is the entry count.
+MINIMUM_FILES = 1755
 
 
 def read_census(path: Path) -> list[str]:
