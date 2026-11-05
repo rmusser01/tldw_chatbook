@@ -3,8 +3,27 @@
 from __future__ import annotations
 
 import asyncio
+import sqlite3
 
+from loguru import logger
 from textual.widgets import Button
+
+from tldw_chatbook.Workspaces.registry_service import WorkspaceRegistryServiceError
+
+WORKFLOW_VIEW_ERRORS = (
+    ValueError,
+    RuntimeError,
+    OSError,
+    sqlite3.Error,
+    WorkspaceRegistryServiceError,
+)
+
+
+def workflow_view_error(context, error):
+    """Retain the storage owner's chained diagnostic without changing its exception."""
+    cause = error.__cause__
+    logger.warning("Workflow {} unavailable: {!r} (cause: {!r})", context, error, cause)
+    return f"{context} unavailable · {error}"
 
 
 def workflows_enabled() -> bool:
@@ -122,8 +141,10 @@ class ConsoleWorkflowsController:
                     self._coordinator(), chat, self.open_detail, self.open_setup
                 )
             )
-        except (RuntimeError, PermissionError, ValueError) as error:
-            self.screen.notify(str(error), severity="warning", markup=False)
+        except WORKFLOW_VIEW_ERRORS as error:
+            self.screen.notify(
+                workflow_view_error("History", error), severity="warning", markup=False
+            )
 
     def open_setup(self, conversation_id=None):
         from tldw_chatbook.Chat.console_workflow_runs import native_workflow_qualified
@@ -139,7 +160,13 @@ class ConsoleWorkflowsController:
                 severity="warning",
             )
             return
-        session = self._session(conversation_id)
+        try:
+            session = self._session(conversation_id)
+        except WORKFLOW_VIEW_ERRORS as error:
+            self.screen.notify(
+                workflow_view_error("Setup", error), severity="warning", markup=False
+            )
+            return
         if (
             session is None
             or session.ephemeral
@@ -197,8 +224,14 @@ class ConsoleWorkflowsController:
                 ),
                 callback=started,
             )
-        except (RuntimeError, ValueError, OSError) as error:
-            self.screen.notify(str(error), severity="warning", markup=False)
+        except WORKFLOW_VIEW_ERRORS as error:
+            if not self.reads.closed and self.screen.is_mounted:
+                self.screen.notify(
+                    workflow_view_error("Setup", error)
+                    + " Reopen /workflow new to retry.",
+                    severity="warning",
+                    markup=False,
+                )
 
     def open_detail(self, conversation_id, workflow_id):
         from tldw_chatbook.Widgets.Console.console_workflow_status import (
@@ -234,8 +267,7 @@ class ConsoleWorkflowsController:
         )
 
     def open_approval(self, modal, conversation_id):
-        if self.pending_approvals(conversation_id):
-            modal.dismiss()
+        if self.pending_approvals(conversation_id) and modal.dismiss_safe_once(None):
             self.screen.call_after_refresh(self.screen.action_review_pending_approval)
 
     def open_fleet(self, modal, conversation_id, run_id):
@@ -249,7 +281,8 @@ class ConsoleWorkflowsController:
                 severity="warning",
             )
             return
-        modal.dismiss()
+        if not modal.dismiss_safe_once(None):
+            return
         if run_id:
             self.screen._reveal_console_inspector_rail()
             self.screen._agent._drill_into_console_agent_subagent(run_id)
@@ -273,9 +306,9 @@ class ConsoleWorkflowsController:
             )
 
     async def _load_line(self, chat):
-        coordinator = self._coordinator()
         row = None
         try:
+            coordinator = self._coordinator()
             page = await self.reads.read(
                 coordinator.service.call, coordinator.service.list_history, chat
             )
@@ -291,9 +324,21 @@ class ConsoleWorkflowsController:
                 full = await self.reads.read(coordinator.get, row["id"])
                 if self._active_id == chat and self.screen.is_mounted:
                     self._show_line(chat, full.id, full.status)
-        except (ValueError, PermissionError, RuntimeError, OSError):
-            if row and self._active_id == chat and self.screen.is_mounted:
-                self._show_line(chat, row["id"], "review_unavailable")
+        except WORKFLOW_VIEW_ERRORS as error:
+            message = workflow_view_error("Workflow history", error)
+            if (
+                not self.reads.closed
+                and self._active_id == chat
+                and self.screen.is_mounted
+            ):
+                if row:
+                    self._show_line(chat, row["id"], "review_unavailable")
+                else:
+                    self.screen.notify(
+                        message + " Open /workflow to retry.",
+                        severity="warning",
+                        markup=False,
+                    )
 
     def _show_line(self, chat, workflow_id, status):
         from tldw_chatbook.Widgets.Console.console_workflow_status import status_label
@@ -310,13 +355,31 @@ class ConsoleWorkflowsController:
     def _published(self, view):
         if not self.screen.is_mounted:
             return
+        attention = view.status in {
+            "awaiting_phase_review",
+            "awaiting_result_review",
+            "recovery_required",
+            "paused",
+        }
+        if self._background and self._background.id == view.id and attention:
+            self._background = view
+        elif self._background and self._background.id == view.id:
+            self._background = None
+            line = self.screen.query_one("#console-workflow-line", ConsoleWorkflowLine)
+            if view.conversation_id != self._active_id and line.target == (
+                view.conversation_id,
+                view.id,
+            ):
+                line.target = None
+                line.display = False
+                if self._active_id:
+                    self.screen.run_worker(
+                        self._load_line(self._active_id),
+                        group="workflow-line-read",
+                        exclusive=True,
+                    )
         if view.conversation_id != self._active_id:
-            if view.status not in {
-                "awaiting_phase_review",
-                "awaiting_result_review",
-                "recovery_required",
-                "paused",
-            }:
+            if not attention:
                 return
             self._background = view
         self._show_line(view.conversation_id, view.id, view.status)

@@ -35,7 +35,7 @@ from Tests.UI.test_console_workflow_command import mounted_workflow
 with user_fixture_default_owner():
     asyncio.run(mounted_workflow(Path(os.environ["XDG_DATA_HOME"]).parent, sys.argv[2]))
 """
-    if mode == "metadata":
+    if mode in {"metadata", "unknown-task"}:
         from Tests.Chat.test_console_workflow_scheduling import (
             _expect_retained_planning_child,
         )
@@ -43,8 +43,8 @@ with user_fixture_default_owner():
         _expect_retained_planning_child(
             (tmp_path, "workflow-ui", mode),
             {"script": script, "timeout": 60},
-            "WORKFLOW_UI_METADATA_REFUSED_ACTIONS",
-            "WORKFLOW_UI_METADATA_RETAINED_NO_CREATORS",
+            f"WORKFLOW_UI_{mode.upper()}_REFUSED_ACTIONS",
+            f"WORKFLOW_UI_{mode.upper()}_RETAINED_NO_CREATORS",
         )
     else:
         _run(tmp_path, "workflow-ui", mode, script=script, timeout=60)
@@ -97,8 +97,31 @@ async def mounted_workflow(tmp_path, mode):
                 )
             return response
 
+    failed_task = {
+        "mixed-failure": "task-2",
+        "clean-failure": "task-1",
+        "unknown-task": "task-1",
+    }.get(mode)
+
+    class FailedTaskProvider(WorkflowProvider):
+        def __call__(self, **kwargs):
+            from tldw_chatbook.LLM_Calls.provider_outcomes import (
+                PreEffectPermanentError,
+            )
+
+            response = super().__call__(**kwargs)
+            if self.calls[-1][0] == failed_task:
+                if mode == "unknown-task":
+                    raise RuntimeError("Unknown fixture provider outcome")
+                raise PreEffectPermanentError(
+                    "Private provider refused before dispatch"
+                )
+            return response
+
     provider = (
-        CaptureProvider()
+        FailedTaskProvider()
+        if failed_task
+        else CaptureProvider()
         if mode == "capture"
         else WorkflowProvider(hold=("planning",) if held else ())
     )
@@ -119,6 +142,14 @@ async def mounted_workflow(tmp_path, mode):
                 fallback_models=(("openai", "worker-b"),),
             )
         )
+    if mode == "mixed-failure":
+        from copy import deepcopy
+
+        sibling = deepcopy(provider.plan["phases"][0]["tasks"][0])
+        sibling.update(
+            id="task-2", instructions="Execute task-2", dependencies=["task-1"]
+        )
+        provider.plan["phases"][0]["tasks"].append(sibling)
     if mode == "two-phase":
         from copy import deepcopy
 
@@ -177,7 +208,9 @@ async def mounted_workflow(tmp_path, mode):
 
     def capture(name):
         target = os.environ.get("TLDW_WORKFLOW_UI_CAPTURE_DIR")
-        if target and mode in {"command", "controls", "navigation"}:
+        if target and (
+            mode in {"command", "controls", "navigation"} or name == "phase-handoff"
+        ):
             folder = Path(target)
             folder.mkdir(exist_ok=True, parents=True)
             key = f"{name}-{host.size.width}x{host.size.height}"
@@ -194,6 +227,34 @@ async def mounted_workflow(tmp_path, mode):
             (folder / (key + ".json")).write_text(json.dumps(data, indent=2))
 
     try:
+        if mode == "default":
+            from Tests.Workspaces.test_workspace_registry_service import (
+                _insert_stale_default_binding,
+            )
+            from tldw_chatbook.Workspaces.models import DEFAULT_WORKSPACE_ID
+
+            registry = rig.service.persistence.workspace_registry
+            registry.ensure_default_workspace()
+            _insert_stale_default_binding(registry.db, "stale-default")
+
+            def stale_rows():
+                with registry.db.connection() as conn:
+                    return [
+                        tuple(row)
+                        for row in conn.execute(
+                            "SELECT * FROM workspace_runtime_bindings WHERE binding_id='stale-default'"
+                        )
+                    ]
+
+            before = stale_rows()
+            assert len(before) == 1
+            for workspace_id in (DEFAULT_WORKSPACE_ID, f" {DEFAULT_WORKSPACE_ID} "):
+                assert await rig.service.call(
+                    rig.service.setup_choices, workspace_id
+                ) == ((), (), None)
+                assert stale_rows() == before and not provider.calls
+            print("WORKFLOW_DEFAULT_STALE_ROW_RETAINED", flush=True)
+            return
         async with host.run_test(
             size=(80, 24) if mode == "navigation" else (140, 42)
         ) as pilot:
@@ -208,6 +269,50 @@ async def mounted_workflow(tmp_path, mode):
                 await click(pilot, "#console-session-tab-" + owner.id)
                 await wait_until(pilot, lambda: rig.store.active_session_id == owner.id)
             composer = console.query_one("#console-native-composer")
+            if mode == "registry-error":
+                from loguru import logger
+
+                registry = rig.service.persistence.workspace_registry
+                diagnostics = []
+                sink = logger.add(
+                    diagnostics.append, level="WARNING", format="{message}"
+                )
+                with registry.db.transaction() as conn:
+                    conn.execute(
+                        "ALTER TABLE workspace_runtime_bindings RENAME TO fixture_hidden_bindings"
+                    )
+                try:
+                    console._workflows.command("new")
+                    await wait_until(
+                        pilot,
+                        lambda: any(
+                            "Setup unavailable" in n.message
+                            and "/workflow new" in n.message
+                            for n in host._notifications
+                        ),
+                    )
+                    assert host.screen is console and not provider.calls
+                    assert any(
+                        "WorkspaceRegistryServiceError" in str(m)
+                        and "OperationalError" in str(m)
+                        and "no such table" in str(m)
+                        for m in diagnostics
+                    )
+                finally:
+                    logger.remove(sink)
+                    with registry.db.transaction() as conn:
+                        conn.execute(
+                            "ALTER TABLE fixture_hidden_bindings RENAME TO workspace_runtime_bindings"
+                        )
+                console._workflows.command("new")
+                await wait_until(
+                    pilot, lambda: isinstance(host.screen, ConsoleWorkflowSetup)
+                )
+                await pilot.press("escape")
+                await wait_until(pilot, lambda: host.screen is console)
+                assert not provider.calls
+                print("WORKFLOW_UI_REGISTRY_REFUSAL_RECOVERED", flush=True)
+                return
             if mode == "history-page":
                 palette = ConsoleCommandProvider(console)
                 hits = [h async for h in palette.discover()]
@@ -487,6 +592,21 @@ async def mounted_workflow(tmp_path, mode):
                         and rig.store.active_session_id == other.id
                     )
                     assert composer.draft_text() == "Keep the other chat draft"
+                    await click(pilot, "#workflow-stop")
+                    await wait_until(
+                        pilot, lambda: host.screen.snapshot.status == "stopped"
+                    )
+                    await pilot.press("escape")
+                    await wait_until(
+                        pilot, lambda: host.screen is console and not line.display
+                    )
+                    await click(pilot, "#console-session-tab-" + owner.id)
+                    await click(pilot, "#console-session-tab-" + other.id)
+                    await pilot.pause()
+                    assert (
+                        not line.display
+                        and composer.draft_text() == "Keep the other chat draft"
+                    )
                     return
             await wait_until(pilot, lambda: status.decision is not None, timeout=15)
             assert status.focused is not status.query_one("#workflow-approve")
@@ -511,6 +631,7 @@ async def mounted_workflow(tmp_path, mode):
                 assert [key for key, _ in provider.calls] == ["planning"]
                 return
             if mode == "stale":
+                stale_decision = status.decision
                 (tmp_path / "project" / "input.txt").write_text("changed after display")
                 await click(pilot, "#workflow-approve")
                 await wait_until(
@@ -524,6 +645,66 @@ async def mounted_workflow(tmp_path, mode):
                 assert now.control_revision == status.snapshot.control_revision and [
                     key for key, _ in provider.calls
                 ] == ["planning"]
+                await wait_until(
+                    pilot,
+                    lambda: (
+                        status.decision
+                        and status.decision != stale_decision
+                        and status.decision.evidence.ready
+                        and not status._reading
+                    ),
+                )
+                fresh = status.decision
+                assert fresh.control_revision == stale_decision.control_revision
+                assert (
+                    fresh.evidence.input_manifest
+                    != stale_decision.evidence.input_manifest
+                )
+                await click(pilot, "#workflow-approve")
+                await wait_until(
+                    pilot, lambda: status.snapshot.status == "awaiting_result_review"
+                )
+                full = await rig.coordinator.get(workflow_id)
+                with rig.service.db.connection() as conn:
+                    payloads = [
+                        row[0]
+                        for row in conn.execute(
+                            "SELECT payload_json FROM workflow_decisions WHERE workflow_id=?",
+                            (workflow_id,),
+                        )
+                    ]
+                assert payloads == [fresh.canonical_json()]
+                assert (
+                    full.accounting.used["child_launch"] == 1
+                    and full.accounting.used["generation"] == 2
+                )
+                assert [key for key, _ in provider.calls] == ["planning", "task-1"]
+                receipts = {
+                    identity: key[1]
+                    for key, (identity, _) in rig.coordinator._commands.items()
+                    if key[0] == "approve"
+                }
+                assert set(receipts) == {
+                    stale_decision.canonical_json(),
+                    fresh.canonical_json(),
+                }
+                assert (
+                    receipts[fresh.canonical_json()]
+                    != receipts[stale_decision.canonical_json()]
+                )
+                await rig.coordinator.approve(
+                    fresh, command_id=receipts[fresh.canonical_json()]
+                )
+                assert (
+                    await rig.coordinator.get(workflow_id)
+                ).accounting.used == full.accounting.used
+                print(
+                    "WORKFLOW_FRESH_DECISION_ONE_APPROVAL",
+                    fresh.id,
+                    fresh.control_revision,
+                    full.accounting.used,
+                    flush=True,
+                )
                 return
             if mode == "revise":
                 status.query_one(
@@ -588,6 +769,50 @@ async def mounted_workflow(tmp_path, mode):
                     released.set()
                     monitor.free_tool_id(index)
                 return
+            if mode == "detail-storage-error":
+                with rig.service.db.transaction() as conn:
+                    conn.execute(
+                        "ALTER TABLE workflow_change_windows RENAME TO fixture_hidden_windows"
+                    )
+                try:
+                    await click(pilot, "#workflow-refresh")
+                    await wait_until(
+                        pilot,
+                        lambda: (
+                            "no such table"
+                            in str(status.query_one("#workflow-notice").content)
+                        ),
+                    )
+                    assert host.screen is status and status.decision is None
+                    assert all(
+                        status.query_one("#workflow-" + name, Button).disabled
+                        for name in (
+                            "approve",
+                            "accept",
+                            "revise",
+                            "resume",
+                            "pause",
+                            "stop",
+                        )
+                    )
+                finally:
+                    with rig.service.db.transaction() as conn:
+                        conn.execute(
+                            "ALTER TABLE fixture_hidden_windows RENAME TO workflow_change_windows"
+                        )
+                await click(pilot, "#workflow-refresh")
+                await wait_until(
+                    pilot,
+                    lambda: (
+                        status.decision is not None
+                        and not status.query_one("#workflow-approve").disabled
+                    ),
+                )
+                assert status.snapshot.accounting.used["child_launch"] == 0
+                await pilot.press("escape")
+                await wait_until(pilot, lambda: host.screen is console)
+                print("WORKFLOW_UI_DETAIL_SQLITE_RETRY", flush=True)
+                return
             if mode == "pending":
                 rig.controller.add_pending_round(owner.id, "workflow-test-pending")
                 try:
@@ -632,12 +857,127 @@ async def mounted_workflow(tmp_path, mode):
                 )
                 assert host.screen.workflow_id == workflow_id
                 return
+            if mode == "unknown-task":
+                earlier_full = status.snapshot
+                earlier_view = await rig.service.call(
+                    rig.service.runtime_snapshot, workflow_id
+                )
             first_rect = status.query_one("#workflow-approve", Button).region
             point = (
                 first_rect.x + first_rect.width // 2,
                 first_rect.y + first_rect.height // 2,
             )
             await click(pilot, "#workflow-approve")
+            if failed_task:
+                await wait_until(
+                    pilot,
+                    lambda: status.snapshot.status in {"paused", "recovery_required"},
+                    timeout=20,
+                )
+                previous = status.snapshot
+                if mode == "unknown-task":
+                    assert previous.status == "recovery_required"
+                    assert all(
+                        status.query_one("#workflow-" + name, Button).disabled
+                        for name in (
+                            "approve",
+                            "accept",
+                            "revise",
+                            "resume",
+                            "pause",
+                            "stop",
+                        )
+                    )
+                    # The earlier coherent review must also refuse a now-uncertain native decision.
+                    assert (
+                        earlier_full.status == "awaiting_phase_review"
+                        and not earlier_full.accounting.uncertain
+                    )
+                    with pytest.raises(
+                        ValueError, match="Recovery required · uncertain_execution"
+                    ):
+                        await status._review(earlier_full, earlier_view)
+                    print(
+                        "WORKFLOW_UI_EARLIER_VIEW_REFUSED_ACTUAL_TYPED_RECOVERY",
+                        flush=True,
+                    )
+                    print("WORKFLOW_UI_UNKNOWN-TASK_REFUSED_ACTIONS", flush=True)
+                    return
+                assert previous.status == "paused"
+                assert [r.status for r in previous.results] == (
+                    ["completed", "failed"] if mode == "mixed-failure" else ["failed"]
+                )
+                assert previous.accounting.used["child_launch"] == len(previous.results)
+                assert not previous.accounting.uncertain
+                assert (
+                    status.query_one("#workflow-instruction").display
+                    and not status.query_one("#workflow-revise", Button).disabled
+                )
+                if mode == "mixed-failure":
+                    await click(pilot, "#workflow-resume")
+                    await wait_until(
+                        pilot,
+                        lambda: (
+                            status.snapshot.status == "awaiting_phase_review"
+                            and not status._sending
+                        ),
+                    )
+                    assert (
+                        status.snapshot.control_revision
+                        == previous.control_revision + 1
+                    )
+                assert status.snapshot.results == previous.results
+                assert (
+                    status.query_one("#workflow-approve", Button).disabled
+                    and not status.query_one("#workflow-stop", Button).disabled
+                )
+                if mode == "mixed-failure":
+                    provider.plan["phases"][0]["tasks"][-1]["instructions"] = (
+                        "Inspect and repair the failed task"
+                    )
+                    status.query_one(
+                        "#workflow-instruction", Input
+                    ).value = "Preserve successful work and revise the failed task"
+                    await click(pilot, "#workflow-revise")
+                    await wait_until(
+                        pilot,
+                        lambda: (
+                            len(status.snapshot.plans) == 2
+                            and status.snapshot.status == "awaiting_phase_review"
+                        ),
+                        timeout=15,
+                    )
+                    revised = status.snapshot
+                    assert (
+                        previous.plans == revised.plans[:1]
+                        and revised.results == previous.results
+                    )
+                    assert (
+                        revised.accounting.used["generation"]
+                        == previous.accounting.used["generation"] + 1
+                    )
+                    assert (
+                        revised.accounting.used["child_launch"]
+                        == previous.accounting.used["child_launch"]
+                    )
+                    assert [key for key, _ in provider.calls] == [
+                        "planning",
+                        "task-1",
+                        "task-2",
+                        "planning",
+                    ]
+                await click(pilot, "#workflow-stop")
+                await wait_until(pilot, lambda: status.snapshot.status == "stopped")
+                assert (
+                    await rig.coordinator.get(workflow_id)
+                ).results == previous.results
+                print(
+                    "WORKFLOW_UI_DRAINED_FAILURE",
+                    mode,
+                    status.snapshot.accounting.used,
+                    flush=True,
+                )
+                return
             # Repeat the physical point, even if the first click has already changed the visible controls.
             assert await pilot.click(offset=point)
             await wait_until(
@@ -690,6 +1030,14 @@ async def mounted_workflow(tmp_path, mode):
                     str(status.query_one("#workflow-approve", Button).label)
                     == "Approve next phase"
                 )
+                heading = str(status.query_one("#workflow-state").content)
+                assert (
+                    f"phase {status.decision.phase_id} · plan {status.decision.plan_revision} · control revision {status.decision.control_revision}"
+                    in heading
+                )
+                assert status.decision.phase_id == "phase-2"
+                capture("phase-handoff")
+                print("WORKFLOW_HANDOFF_HEADING", heading, flush=True)
                 await click(pilot, "#workflow-approve")
                 await wait_until(
                     pilot,
@@ -719,15 +1067,30 @@ async def mounted_workflow(tmp_path, mode):
                     )
                 ]
             assert actions == ["approve", "complete"] * count
+            if mode == "controls":
+                selected = status.query_one("#workflow-task", Select).value
+                assert selected == full.results[0].run_id
+                await click(pilot, "#workflow-fleet")
+                await wait_until(
+                    pilot,
+                    lambda: (
+                        host.screen is console
+                        and console._agent._console_agent_drilldown_run_id == selected
+                    ),
+                )
+                assert (
+                    console._agent._current_console_rail_conversation_id()
+                    == full.request.conversation_id
+                )
     finally:
         try:
             await rig.close()
             assert not capacity.snapshot().executions
         except RuntimeError as error:
             if (
-                mode != "metadata"
+                mode not in {"metadata", "unknown-task"}
                 or str(error) != "workflow_original_shutdown_unresolved"
             ):
                 raise
             assert rig.coordinator._runs[workflow_id].status == "recovery_required"
-            print("WORKFLOW_UI_METADATA_RETAINED_NO_CREATORS", flush=True)
+            print(f"WORKFLOW_UI_{mode.upper()}_RETAINED_NO_CREATORS", flush=True)

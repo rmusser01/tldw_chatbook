@@ -14,10 +14,16 @@ from textual.screen import ModalScreen
 from textual.widgets import Button, Collapsible, Input, Label, Select, Static, TextArea
 
 from tldw_chatbook.Agents.workflow_models import WorkflowSetup
+from tldw_chatbook.UI.Console_Modules.workflows import (
+    WORKFLOW_VIEW_ERRORS,
+    workflow_view_error,
+)
+from tldw_chatbook.Widgets.modal_dismissal import SafeModalDismissMixin
 
 
-class ConsoleWorkflowSetup(ModalScreen):
-    BINDINGS = (("escape", "close", "Close"),)
+class ConsoleWorkflowSetup(SafeModalDismissMixin, ModalScreen):
+    SAFE_MODAL_CONTENT = ".workflow-dialog"
+    BINDINGS = (("escape", "request_safe_cancel", "Close"),)
     AUTO_FOCUS = "#workflow-objective"
 
     def __init__(self, coordinator, conversation_id, planner, policy, choices):
@@ -153,6 +159,7 @@ class ConsoleWorkflowSetup(ModalScreen):
         self.query_one("#workflow-plan", Button).disabled = (
             bool(reason)
             or self._sending
+            or self._safe_pending_close is not None
             or not self.query_one("#workflow-objective", TextArea).text.strip()
         )
         if not self._sending and self._submitted is None:
@@ -192,9 +199,9 @@ class ConsoleWorkflowSetup(ModalScreen):
         )
         self._update_submit()
 
-    def on_button_pressed(self, event: Button.Pressed):
+    async def on_button_pressed(self, event: Button.Pressed):
         if event.button.id == "workflow-close":
-            self.dismiss(None)
+            await self.request_safe_cancel(source="button")
             return
         if event.button.id != "workflow-plan" or self._sending:
             return
@@ -221,22 +228,21 @@ class ConsoleWorkflowSetup(ModalScreen):
         self._sending = True
         event.button.disabled = True
         self.query_one("#workflow-notice").update("Preparing the plan…")
-        self.run_worker(self._submit(setup))
+        self.run_worker(self._submit(setup, self._safe_mount_generation))
 
-    async def _submit(self, setup):
+    async def _submit(self, setup, generation):
         try:
             snapshot = await asyncio.shield(
                 self.coordinator.start(setup, launch_id=self.launch_id)
             )
-            if self.is_mounted:
-                self.dismiss(snapshot)
-        except (ValueError, RuntimeError, PermissionError, OSError) as error:
-            if self.is_mounted:
-                self.query_one("#workflow-notice").update(str(error))
+            if self._safe_mount_generation == generation:
+                self.dismiss_safe_once_when_on_top(snapshot)
+        except WORKFLOW_VIEW_ERRORS as error:
+            message = workflow_view_error("Prepare plan", error)
+            if self.is_mounted and self._safe_mount_generation == generation:
+                self.query_one("#workflow-notice").update(message)
         finally:
-            self._sending = False
-            if self.is_mounted:
-                self._show_choices()
-
-    def action_close(self):
-        self.dismiss(None)
+            if self._safe_mount_generation == generation:
+                self._sending = False
+                if self.is_mounted and not self._safe_dismiss_committed:
+                    self._show_choices()

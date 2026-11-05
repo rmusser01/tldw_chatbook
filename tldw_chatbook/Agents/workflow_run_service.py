@@ -484,6 +484,15 @@ class WorkflowRunService:
     @goal_storage_operation
     def setup_choices(self, workspace_id: str) -> tuple:
         """Read passive ready folders, routing choices and existing capture readiness."""
+        from tldw_chatbook.Workspaces.models import DEFAULT_WORKSPACE_ID
+
+        # Default cannot grant a folder. Its registry lookup would repair legacy rows.
+        if (
+            isinstance(workspace_id, str)
+            and workspace_id.strip() == DEFAULT_WORKSPACE_ID
+        ):
+            return (), (), None
+
         from tldw_chatbook.Workspaces.change_review_consent import (
             ChangeReviewConsentService,
         )
