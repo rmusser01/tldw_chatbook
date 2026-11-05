@@ -107,15 +107,31 @@ WIDE_TIER_SOURCE = CSS_ROOT / "components/_agentic_terminal.tcss"
 #: The boot bundle the app parses (rebuilt from the modules by build_css).
 WIDE_TIER_BUNDLE = CSS_ROOT / "tldw_cli_modular.tcss"
 
-#: The hook-review rule left the boot bundle with the rest of that modal's
-#: CSS (1256af2d39, startup budget): it lives in the Settings source module
-#: and its built screen sheet, which the modal loads through ``CSS_PATH``.
-WIDE_TIER_SCREEN_SOURCE = CSS_ROOT / "features/_settings.tcss"
-WIDE_TIER_SCREEN_BUNDLE = CSS_ROOT / "screen_agentic_settings.tcss"
+#: Tier rules that left the boot bundle with the rest of their modal's CSS,
+#: as ``(source module, built split sheet, anchor)``. Each split claims the
+#: ``-wide-viewport`` token in ``build_css.py``, and the sheet loads with the
+#: modal: the hook review's through its ``CSS_PATH`` (1256af2d39, startup
+#: budget), the File Notes history dialog's through its ``CSS_PATH`` and the
+#: workflow run dialogs' on entry to the Workflows route (TASK-38719).
+WIDE_TIER_SPLITS = (
+    ("features/_settings.tcss", "screen_agentic_settings.tcss", "#console-hooks-review"),
+    (
+        "features/_notes.tcss",
+        "screen_modal_file_notes_history.tcss",
+        "#file-notes-history-dialog",
+    ),
+    ("features/_workflows.tcss", "screen_feature_workflows.tcss", ".workflow-run-dialog"),
+)
 
 #: Source modules, then the built sheets they produce.
-WIDE_TIER_SOURCES = (WIDE_TIER_SOURCE, WIDE_TIER_SCREEN_SOURCE)
-WIDE_TIER_BUILT = (WIDE_TIER_BUNDLE, WIDE_TIER_SCREEN_BUNDLE)
+WIDE_TIER_SOURCES = (
+    WIDE_TIER_SOURCE,
+    *(CSS_ROOT / source for source, _built, _anchor in WIDE_TIER_SPLITS),
+)
+WIDE_TIER_BUILT = (
+    WIDE_TIER_BUNDLE,
+    *(CSS_ROOT / built for _source, built, _anchor in WIDE_TIER_SPLITS),
+)
 
 #: One ``App.-wide-viewport <anchor> { width: $ds-percent-85; max-width: N }``.
 WIDE_RULE_RE = re.compile(
@@ -166,6 +182,17 @@ def test_every_registered_anchor_has_a_wide_tier_rule(paths: tuple[Path, ...]) -
         rules.update(found)
     expected = {anchor: cap for anchor, cap, _owner in MODAL_WIDE_TIER}
     assert rules == expected
+
+
+@pytest.mark.parametrize(
+    ("built", "anchor"),
+    [(built, anchor) for _source, built, anchor in WIDE_TIER_SPLITS],
+    ids=[anchor.lstrip("#.") for _source, _built, anchor in WIDE_TIER_SPLITS],
+)
+def test_split_modal_tier_rules_stay_off_the_boot_bundle(built: str, anchor: str) -> None:
+    """A modal whose CSS loads with it gets its tier from that sheet, not boot."""
+    assert anchor in _wide_rules((CSS_ROOT / built).read_text(encoding="utf-8"))
+    assert anchor not in _wide_rules(WIDE_TIER_BUNDLE.read_text(encoding="utf-8"))
 
 
 def test_every_wide_tier_rule_is_registered() -> None:

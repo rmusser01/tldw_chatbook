@@ -780,8 +780,8 @@ class FileNotesHistoryDialog(
 
     TASK-36386 / ADR-097: the ``file-notes-history*`` rules in ``features/_notes.tcss``
     leave the boot path: ``build_css.py`` splits them into the sheet this ``CSS_PATH``
-    loads on first open. Its ``App.-wide-viewport`` tier rule still rides the boot
-    bundle, with the rest of the tier block (``components/_agentic_terminal.tcss``).
+    loads on first open. Its ``App.-wide-viewport`` tier rule goes with them
+    (TASK-38719).
     """
 
     BINDINGS = [("escape", "request_safe_cancel", "Close")]

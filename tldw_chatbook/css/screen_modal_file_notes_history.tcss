@@ -335,8 +335,8 @@ $ds-portrait-review-lines: 13;
    centered through its own id, because a bare type selector carries no
    owner token and would stay on the boot bundle. The dialog's
    `App.-wide-viewport #file-notes-history-dialog` tier rule (TASK-36522)
-   rides the boot bundle with the rest of the tier block, in
-   components/_agentic_terminal.tcss. */
+   splits with it too (TASK-38719): the split claims the `-wide-viewport`
+   token, as the Settings split does. */
 #file-notes-history-dialog-screen {
     align: center middle;
 }
@@ -349,6 +349,12 @@ $ds-portrait-review-lines: 13;
     border: round $primary;
     background: $surface;
     padding: $ds-space-1 $ds-space-2;
+}
+
+/* The wide tier (viewport >= 150 columns, components/_agentic_terminal.tcss). */
+App.-wide-viewport #file-notes-history-dialog {
+  width: $ds-percent-85;
+  max-width: $ds-size-150;
 }
 
 #file-notes-history-title {

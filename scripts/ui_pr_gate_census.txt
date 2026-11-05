@@ -2404,3 +2404,8 @@ Tests/UI/test_library_file_notes_git.py::test_fixed_region_copy_refits_when_a_ch
 Tests/UI/test_library_file_notes_workspace.py::test_file_notes_narrow_views_lay_out_at_every_width_40_to_79[navigator]
 Tests/UI/test_library_file_notes_workspace.py::test_file_notes_narrow_views_lay_out_at_every_width_40_to_79[editor]
 Tests/UI/test_library_file_notes_workspace.py::test_file_notes_narrow_views_lay_out_at_every_width_40_to_79[after-back]
+# TASK-38719 (2026-11-05): the File Notes history and workflow run wide-tier
+# rules load with their modal's split sheet and stay off the boot bundle
+# (the hook review's too). Static text checks, well under 1 s. Appended at
+# the tail.
+Tests/UI/test_modal_wide_tier.py::test_split_modal_tier_rules_stay_off_the_boot_bundle

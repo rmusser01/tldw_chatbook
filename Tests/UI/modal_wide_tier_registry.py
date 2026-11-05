@@ -3,9 +3,12 @@
 Single source of truth for three consumers:
 
 * the coverage contract test (``test_modal_wide_tier.py``) -- every anchor
-  below must have an ``App.-wide-viewport`` rule in the built bundle (the
-  hook review's lives in its Settings screen sheet), and every rule in that
-  block must have an entry here;
+  below must have an ``App.-wide-viewport`` rule in the built bundle, and
+  every rule in that block must have an entry here. Three anchors' rules
+  live in the split sheet that loads with their modal instead
+  (``WIDE_TIER_SPLITS`` there): the hook review's in its Settings sheet,
+  and (TASK-38719) the File Notes history dialog's and the workflow run
+  dialogs' in their own sheets;
 * the spot geometry tests -- the ``WIDE_TIER_CAPS`` tier representatives;
 * the QA visual harness -- mount every surface, capture narrow/wide SVGs.
 

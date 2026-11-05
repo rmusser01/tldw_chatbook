@@ -808,6 +808,9 @@ MINIMUM_FILES = 1684
 # TASK-38757 (2026-11-05): append the File Notes narrow-view sweep's three
 # nodes at the tail. The floor is the measured entry count.
 MINIMUM_FILES = 1687
+# TASK-38719 (2026-11-05): append the split modal tier-rule pin at the
+# tail. The floor is the measured entry count.
+MINIMUM_FILES = 1688
 
 
 def read_census(path: Path) -> list[str]:
