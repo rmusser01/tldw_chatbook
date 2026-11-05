@@ -5,7 +5,7 @@ status: Done
 assignee:
 - '@claude'
 created_date: 2026-11-05 07:11
-updated_date: 2026-11-05 22:58
+updated_date: 2026-11-05 23:38
 labels:
 - follow-up
 - library
@@ -42,7 +42,7 @@ So between 40 and 79 columns the navigator shows a work pane too thin to use, an
 - [x] #3 In the narrow editor view (after opening a file, and after Back), the work pane and its controls still show and take focus as before
 - [x] #4 A width-sweep test over 40-79, in the navigator and editor views, pins #1-#3 and is red before the change
 - [x] #5 If the narrow layout changes, the File Notes User Guide page describes it
-- [x] #6 When the narrow navigator hides the work pane, anything that must be seen there brings it forward on the real Library screen too: a selected deleted note (Restore visible and focusable), New's path field, and an open or save that fails or is refused (its message and recovery painted)
+- [x] #6 When the narrow navigator hides the work pane, anything that must be seen there brings it forward on the real Library screen too: a selected deleted note (Restore visible and focusable), New's path field, and an open or save that fails or is refused (its message and recovery painted). Cancelling a New that brought the pane forward returns to the navigator with New focused, and a standing save failure or conflict stays in view through a resize
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -69,7 +69,7 @@ So between 40 and 79 columns the navigator shows a work pane too thin to use, an
 ### Review fixes (r8f-rev1)
 
 - **A deleted note selected at 40-59 columns showed nothing on the Library screen.** `select_deleted` switched to the editor view without asking the screen, which owns the external shell's layout, to re-resolve. Every narrow-view switch now goes through `_set_narrow_view`: open, deleted-note select, Back and Manage. When the shell is external, it re-syncs the body panes and posts `AdaptiveReaderShellResized`. The one remaining direct assignment is the enter-narrow transition inside `_apply_responsive_layout`; it now posts the message too.
-- **Failures showed nowhere while the work pane was hidden.** `_bring_work_forward` switches to the editor view when the navigator hides the work pane. It runs in four places:
+- **Failures showed nowhere while the work pane was hidden.** `_bring_work_forward` switches to the editor view when the navigator hides the work pane. It runs in three places:
   - when the save state enters `error` or `conflict` (an autosave that fails after Back);
   - in `open_path`, on a flush refusal, a refused path transition, or "Open failed";
   - when New opens its path form, which lives in the work pane. I found this one myself: New is reachable only from the navigator, and its form and focused field were hidden.
@@ -79,4 +79,14 @@ So between 40 and 79 columns the navigator shows a work pane too thin to use, an
   - The strengthened New check is red on the pre-fix source `29592ecc9b` at 120, 211 and 235 (`assert 0 == 16`), and green now.
 - Covering run after the fixes, `-n 4`, over the workspace, git, git_push, delete_safety, history, retention and search_debounce files, the riders, w4 and wave File Notes files, `test_non_obscuring_focus_contract.py` and `test_widget_css_consolidation.py`: 665 passed, 6 failed. The 6 are the same TASK-32185 known reds as before.
 - The four new nodes are appended at the census tail. The module-size row goes 9706 -> 9730. The User Guide bullet now says "until you open or select a file", and that New or a failed or refused open or save brings the work area forward.
+
+### Re-review fixes (r8f-rev2)
+
+- **Cancelling New left no focus at 40-59 columns.** `_open_path_task` records whether bringing the pane forward switched the view. A cancelled close (the Cancel button, the Library screen's Escape through `cancel_path_task`, or `_open_path_task("none")`) then calls `_set_narrow_view("navigator")`. After the refresh it focuses the opener, through `_focus_once_shown`, which retries until the screen has re-laid out its shell. A completed New opens the new file and stays in the editor (`cancelled` is False on that path).
+- **A resize could hide a standing failure.** `sync_reader_layout` no longer hides the work pane while the save state is `error` or `conflict`. It switches to the editor view instead, which re-resolves the layout. The same rule keeps **‹ Files** from hiding the failure below 60 columns until it is resolved; opening another file is refused then anyway.
+- **Optional recovery focus: not done.** Picking the recovery control (Save Copy or Reload) depends on the state and the mode, and each choice risks focusing a control that is hidden. The bring-forward leaves focus where it was.
+- **Tests.** The Library-screen test gains `[new-create]`, `[new-cancel]`, `[new-escape]`, `[new-cancel-open]` and `[resize-failure]`. `[resize-failure]` shows "Save failed" beside the navigator at 65 columns, resizes to 55, and also checks that Back keeps it in view; it passed 3 of 3 runs serially. All 9 cases pass in 15 s with `-n 4`.
+- **Red evidence on `85fb887559`.** `[new-cancel]`, `[new-escape]` and `[new-cancel-open]` fail with "cancelling New did not return to the navigator", and `[resize-failure]` fails with "'Save failed' did not come forward". The four rev1 cases pass there.
+- Covering run after these fixes (the same files as in rev1, `-n 4`): 670 passed, 6 failed. The 6 are TASK-32185's known reds, and they fail the same way on the exact-base worktree `fu-base29592`.
+- The five new nodes are appended at the census tail, with literal parametrize ids so the census checker can resolve them. The module-size row goes 9730 -> 9779. The User Guide bullet adds a conflict with the file on disk, a cancelled New, and a standing failure staying in view.
 

@@ -1690,6 +1690,7 @@ class LibraryFileNotesWorkspace(Vertical):
         self._path_task: FileNotesPathTask = "none"
         self._path_task_opener_id = ""
         self._path_task_editor_lease: _EditorReadOnlyLease | None = None
+        self._path_task_brought_work_forward = False
         self._git_observed_changes: tuple[SequencedSessionChange, ...] | None = None
         # task-11: the owner's session revision as of the last session
         # refresh. None forces the first refresh after every binding reset.
@@ -2047,6 +2048,14 @@ class LibraryFileNotesWorkspace(Vertical):
         manual_reopen: PaneName | None = None,
     ) -> None:
         """Patch the mounted shared shell without recomposing its roles."""
+        if self._navigator_hides_work(layout) and self._save_state in {
+            "conflict",
+            "error",
+        }:
+            # TASK-38757 re-review: a resize must not hide a failure; show the
+            # work pane through the editor view (this re-resolves the layout).
+            self._set_narrow_view("editor")
+            return
         if self._navigator_hides_work(layout):
             layout = replace(
                 layout,
@@ -2086,14 +2095,33 @@ class LibraryFileNotesWorkspace(Vertical):
             self._sync_body_panes()
             self.post_message(AdaptiveReaderShellResized())
 
-    def _bring_work_forward(self) -> None:
+    def _bring_work_forward(self) -> bool:
         """Show a hidden narrow work pane whose content must be seen.
 
         TASK-38757 review: below 60 columns the navigator hides the work pane,
         so a failure, a refusal or a path task written there showed nowhere.
+
+        Returns:
+            Whether the pane was hidden and is now brought forward.
         """
-        if self._navigator_hides_work(self._reader_layout):
-            self._set_narrow_view("editor")
+        if not self._navigator_hides_work(self._reader_layout):
+            return False
+        self._set_narrow_view("editor")
+        return True
+
+    def _focus_once_shown(self, widget: Widget, attempts: int = 20) -> None:
+        """Focus ``widget`` once its pane shows again.
+
+        The Library screen re-lays out an external shell a message later, so
+        the navigator a cancelled New returns to is not displayed yet.
+        """
+        if not self._active or not self.is_mounted:
+            return
+        shown = all(node.display for node in widget.ancestors_with_self)
+        if widget.focusable and shown:
+            widget.focus()
+        elif attempts:
+            self.call_after_refresh(self._focus_once_shown, widget, attempts - 1)
 
     def _ensure_standalone_reader_shell(self) -> LibraryAdaptiveReaderShell:
         """Supply the shared structure for direct workspace harnesses."""
@@ -2298,7 +2326,7 @@ class LibraryFileNotesWorkspace(Vertical):
     ) -> bool:
         """Open one guarded target-path task and remember its focus origin."""
         if task == "none":
-            self._close_path_task()
+            self._close_path_task(cancelled=True)
             return True
         if task not in {"new", "move", "save_copy"}:
             raise ValueError(f"Unsupported File Notes path task: {task}")
@@ -2354,14 +2382,21 @@ class LibraryFileNotesWorkspace(Vertical):
         path = self.query_one("#file-notes-path", Input)
         path.value = self._current_path if task == "move" else ""
         # New opens from the navigator; its form is in the work pane.
-        self._bring_work_forward()
+        self._path_task_brought_work_forward = self._bring_work_forward()
         self._sync_path_task_surface(focus_target=True)
         return True
 
-    def _close_path_task(self, *, restore_focus: bool = True) -> None:
+    def _close_path_task(
+        self,
+        *,
+        restore_focus: bool = True,
+        cancelled: bool = False,
+    ) -> None:
         """Close the named task and restore its actual invoking control."""
         closed_task = self._path_task
         opener_id = self._path_task_opener_id
+        brought_forward = self._path_task_brought_work_forward
+        self._path_task_brought_work_forward = False
         self._path_task = "none"
         self._path_task_opener_id = ""
         path_task_lease = self._path_task_editor_lease
@@ -2369,6 +2404,17 @@ class LibraryFileNotesWorkspace(Vertical):
         if path_task_lease is not None:
             path_task_lease.release()
         self._sync_path_task_surface()
+        returned = (
+            cancelled
+            and brought_forward
+            and self._active
+            and self._narrow
+            and self._narrow_view == "editor"
+        )
+        if returned:
+            # TASK-38757 re-review: the task brought the hidden work pane
+            # forward from the navigator, so a cancel goes back there.
+            self._set_narrow_view("navigator")
         if (
             not restore_focus
             or not opener_id
@@ -2380,6 +2426,9 @@ class LibraryFileNotesWorkspace(Vertical):
         if not matches:
             return
         opener = matches.first(Button)
+        if returned:
+            self.call_after_refresh(self._focus_once_shown, opener)
+            return
         opener_is_visible = opener.display and all(
             ancestor.display for ancestor in opener.ancestors if ancestor is not self
         )
@@ -2405,7 +2454,7 @@ class LibraryFileNotesWorkspace(Vertical):
         """Cancel a visible path task for the screen-level guarded Escape path."""
         if self._path_task == "none":
             return False
-        self._close_path_task(restore_focus=True)
+        self._close_path_task(restore_focus=True, cancelled=True)
         return True
 
     async def _submit_path_task(self) -> bool:
@@ -9019,7 +9068,7 @@ class LibraryFileNotesWorkspace(Vertical):
     @on(Button.Pressed, "#file-notes-path-cancel")
     def _cancel_named_path_task(self, event: Button.Pressed) -> None:
         event.stop()
-        self._close_path_task(restore_focus=True)
+        self._close_path_task(restore_focus=True, cancelled=True)
 
     @on(Button.Pressed, "#file-notes-edit")
     def _show_edit_mode(self, event: Button.Pressed) -> None:

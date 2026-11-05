@@ -2422,3 +2422,13 @@ Tests/UI/test_library_file_notes_workspace.py::test_file_notes_hidden_work_pane_
 Tests/UI/test_library_file_notes_workspace.py::test_file_notes_hidden_work_pane_comes_forward_on_the_library_screen[open-error]
 Tests/UI/test_library_file_notes_workspace.py::test_file_notes_hidden_work_pane_comes_forward_on_the_library_screen[save-error]
 Tests/UI/test_library_file_notes_workspace.py::test_file_notes_hidden_work_pane_comes_forward_on_the_library_screen[new]
+# TASK-38757 re-review (2026-11-05): at 50 columns on the Library screen a
+# created file stays in the editor, a cancelled New (button, Escape, or with a
+# file open) returns to the navigator with New focused, and a failure shown at
+# 65 columns stays in view after a resize to 55 (3-6 s each at load 8).
+# Appended at the tail.
+Tests/UI/test_library_file_notes_workspace.py::test_file_notes_hidden_work_pane_comes_forward_on_the_library_screen[new-create]
+Tests/UI/test_library_file_notes_workspace.py::test_file_notes_hidden_work_pane_comes_forward_on_the_library_screen[new-cancel]
+Tests/UI/test_library_file_notes_workspace.py::test_file_notes_hidden_work_pane_comes_forward_on_the_library_screen[new-escape]
+Tests/UI/test_library_file_notes_workspace.py::test_file_notes_hidden_work_pane_comes_forward_on_the_library_screen[new-cancel-open]
+Tests/UI/test_library_file_notes_workspace.py::test_file_notes_hidden_work_pane_comes_forward_on_the_library_screen[resize-failure]

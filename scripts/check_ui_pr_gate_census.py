@@ -818,6 +818,9 @@ MINIMUM_FILES = 1689
 # the hidden work pane coming forward at the tail. The floor is the measured
 # entry count.
 MINIMUM_FILES = 1693
+# TASK-38757 re-review (2026-11-05): append the five New-cancel, create and
+# resize-failure nodes at the tail. The floor is the measured entry count.
+MINIMUM_FILES = 1698
 
 
 def read_census(path: Path) -> list[str]:

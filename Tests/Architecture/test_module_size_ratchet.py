@@ -801,7 +801,10 @@ _BUDGETS: dict[str, int] = {
     # TASK-38757 review, 2026-11-05 (same waiver): 9706 -> 9730 (+24). Narrow
     # view switches re-resolve the screen-owned shell too, and a failure,
     # refusal or New brings the hidden work pane forward.
-    "tldw_chatbook/Widgets/Library/library_file_notes_workspace.py": 9730,
+    # TASK-38757 re-review, 2026-11-05 (same waiver): 9730 -> 9779 (+49). A
+    # cancelled New returns to the navigator and focuses New, and a standing
+    # failure keeps the work pane in view through a resize.
+    "tldw_chatbook/Widgets/Library/library_file_notes_workspace.py": 9779,
     # 2026-11-02: +3 shared store-error import (TASK-36949.5).
     # TASK-38714 re-review, 2026-11-05: 9429 -> 9436 (+7). A failed
     # connection build closes the connection it opened instead of leaking it.

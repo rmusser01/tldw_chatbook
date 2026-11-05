@@ -7123,7 +7123,23 @@ async def test_file_notes_narrow_views_lay_out_at_every_width_40_to_79(
     replica.close()
 
 
-@pytest.mark.parametrize("case", ["deleted", "open-error", "save-error", "new"])
+_NEW_CASES = ("new", "new-create", "new-cancel", "new-escape", "new-cancel-open")
+
+
+@pytest.mark.parametrize(
+    "case",
+    [
+        "deleted",
+        "open-error",
+        "save-error",
+        "new",
+        "new-create",
+        "new-cancel",
+        "new-escape",
+        "new-cancel-open",
+        "resize-failure",
+    ],
+)
 @pytest.mark.asyncio
 async def test_file_notes_hidden_work_pane_comes_forward_on_the_library_screen(
     tmp_path: Path,
@@ -7135,7 +7151,11 @@ async def test_file_notes_hidden_work_pane_comes_forward_on_the_library_screen(
     open that fails, an autosave that fails after Back, and New (whose path
     form is in the work pane) each write to the work pane, so each must bring
     it forward: Restore visible and focusable, "Open failed" and "Save
-    failed" painted, the path field painted and focused."""
+    failed" painted, the path field painted and focused. Creating the file
+    keeps the editor view; cancelling that New (button or Escape, with or
+    without a file open) returns to the navigator with New focused. A failure
+    shown beside the navigator at 65 columns stays shown after a resize to
+    55."""
     root = tmp_path / "notes"
     root.mkdir()
     (root / "one.md").write_text("first", encoding="utf-8")
@@ -7174,15 +7194,23 @@ async def test_file_notes_hidden_work_pane_comes_forward_on_the_library_screen(
         shell = workspace.query_one(
             "#library-file-notes-reader-shell", LibraryAdaptiveReaderShell
         )
+        new = workspace.query_one("#file-notes-new", Button)
 
-        async def wait_for_hidden_work() -> None:
+        async def back_to_navigator(*, work_shown: bool) -> None:
+            workspace.query_one("#file-notes-back", Button).press()
             await _wait_until(
                 pilot,
-                lambda: workspace.navigator_visible and not shell.work.display,
-                "the 50-column navigator did not hide its work pane",
+                lambda: (
+                    workspace.navigator_visible and shell.work.display is work_shown
+                ),
+                f"Back did not show the navigator (work pane shown: {work_shown})",
             )
 
-        await wait_for_hidden_work()
+        await _wait_until(
+            pilot,
+            lambda: workspace.navigator_visible and not shell.work.display,
+            "the 50-column navigator did not hide its work pane",
+        )
         service = workspace._service
         assert service is not None
         if case == "deleted":
@@ -7196,18 +7224,35 @@ async def test_file_notes_hidden_work_pane_comes_forward_on_the_library_screen(
             assert not await workspace.open_path("one.md")
             target = workspace.query_one("#file-notes-action-status", Static)
             expected = "Open failed"
-        elif case == "save-error":
+        elif case in {"save-error", "resize-failure"}:
+            if case == "resize-failure":
+                await pilot.resize_terminal(65, 24)
             assert await workspace.open_path("one.md")
             _replace_editor_text(workspace._editor_widget, "draft after Back")
-            workspace.query_one("#file-notes-back", Button).press()
-            await wait_for_hidden_work()
+            await back_to_navigator(work_shown=case == "resize-failure")
             assert workspace.save_state == "dirty"
             monkeypatch.setattr(service, "save_file", refuse)
             workspace._start_autosave()  # what the autosave timer runs
             target = workspace.query_one("#file-notes-save-status", Static)
             expected = "Save failed"
+            if case == "resize-failure":
+                # At 65 the failure shows beside the navigator; 55 would hide
+                # the work pane, so the failure keeps it in view instead.
+                await _wait_until(
+                    pilot,
+                    lambda: (
+                        workspace.navigator_visible
+                        and expected
+                        in _painted_text_in_region(pilot.app, target.region)
+                    ),
+                    "the failure did not show beside the 65-column navigator",
+                )
+                await pilot.resize_terminal(55, 24)
         else:
-            workspace.query_one("#file-notes-new", Button).press()
+            if case == "new-cancel-open":
+                assert await workspace.open_path("one.md")
+                await back_to_navigator(work_shown=False)
+            new.press()
             target = workspace.query_one("#file-notes-path", Input)
             expected = "relative/path.md"
 
@@ -7221,15 +7266,63 @@ async def test_file_notes_hidden_work_pane_comes_forward_on_the_library_screen(
             ),
             f"{case}: {expected!r} did not come forward",
         )
+        if case == "resize-failure":
+            # While the failure stands, Back cannot hide it either.
+            workspace.query_one("#file-notes-back", Button).press()
+            for _ in range(5):
+                await pilot.pause()
+            await _wait_until(
+                pilot,
+                lambda: (
+                    workspace.editor_visible
+                    and shell.work.display
+                    and not shell.effective_layout.items_open
+                    and expected in _painted_text_in_region(pilot.app, target.region)
+                ),
+                "Back hid the standing failure",
+            )
         if case == "deleted":
             assert target in screen.focus_chain
             target.focus()
             await pilot.pause()
             assert target.has_focus
-        elif case == "new":
+        elif case in _NEW_CASES:
             await _wait_until(
                 pilot, lambda: target.has_focus, "New did not focus its path field"
             )
+        if case == "new-create":
+            target.value = "made.md"
+            workspace.query_one("#file-notes-path-submit", Button).press()
+            await _wait_until(
+                pilot,
+                lambda: (
+                    workspace.current_path == "made.md"
+                    and workspace.path_task == "none"
+                    and workspace.editor_visible
+                    and shell.work.display
+                ),
+                "a created file did not stay in the editor view",
+            )
+        if case in {"new-cancel", "new-cancel-open"}:
+            workspace.query_one("#file-notes-path-cancel", Button).press()
+        elif case == "new-escape":
+            await pilot.press("escape")
+        if case in {"new-cancel", "new-escape", "new-cancel-open"}:
+            # TASK-38757 re-review: the cancel goes back to the navigator the
+            # New came from, with New focused, not to an empty work pane.
+            await _wait_until(
+                pilot,
+                lambda: (
+                    workspace.path_task == "none"
+                    and workspace.navigator_visible
+                    and not shell.work.display
+                    and new.has_focus
+                    and _seen_cells(new) > 0
+                ),
+                f"{case}: cancelling New did not return to the navigator",
+            )
+            if case == "new-cancel-open":
+                assert workspace.current_path == "one.md"
     await workspace.shutdown()
 
 
