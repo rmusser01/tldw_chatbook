@@ -133,8 +133,9 @@ class ConsoleWorkflowSetup(SafeModalDismissMixin, ModalScreen):
             ).value
             maximum = getattr(self.policy, field.name)
             if maximum == 0:
-                raise ValueError(
-                    f"{self.LIMIT_LABELS[field.name]} are disabled in Settings."
+                return (
+                    None,
+                    f"{self.LIMIT_LABELS[field.name]} are disabled in Settings.",
                 )
             if (
                 not raw.isascii()
@@ -142,20 +143,17 @@ class ConsoleWorkflowSetup(SafeModalDismissMixin, ModalScreen):
                 or len(raw) > 19
                 or not 1 <= int(raw) <= maximum
             ):
-                raise ValueError(
-                    f"{self.LIMIT_LABELS[field.name]} must be between 1 and {maximum}."
+                return (
+                    None,
+                    f"{self.LIMIT_LABELS[field.name]} must be between 1 and {maximum}.",
                 )
             values[field.name] = int(raw)
-        return type(self.policy)(**values)
+        return type(self.policy)(**values), ""
 
     def _update_submit(self):
         if not self.query("#workflow-plan"):
             return
-        reason = ""
-        try:
-            self._limits()
-        except ValueError as error:
-            reason = str(error)
+        _, reason = self._limits()
         self.query_one("#workflow-plan", Button).disabled = (
             bool(reason)
             or self._sending
@@ -205,6 +203,10 @@ class ConsoleWorkflowSetup(SafeModalDismissMixin, ModalScreen):
             return
         if event.button.id != "workflow-plan" or self._sending:
             return
+        limits, reason = self._limits()
+        if reason:
+            self.query_one("#workflow-notice").update(reason)
+            return
         try:
             binding = next(
                 b
@@ -215,7 +217,7 @@ class ConsoleWorkflowSetup(SafeModalDismissMixin, ModalScreen):
                 conversation_id=self.conversation_id,
                 objective=self.query_one("#workflow-objective", TextArea).text.strip(),
                 binding=binding,
-                policy=self._limits(),
+                policy=limits,
                 planner=self.planner,
                 targets=self.targets[self.query_one("#workflow-target", Select).value],
             )
@@ -223,7 +225,9 @@ class ConsoleWorkflowSetup(SafeModalDismissMixin, ModalScreen):
                 self.launch_id = str(uuid4())
             self._submitted = setup
         except ValueError as error:
-            self.query_one("#workflow-notice").update(str(error))
+            self.query_one("#workflow-notice").update(
+                workflow_view_error("Setup", error)
+            )
             return
         self._sending = True
         event.button.disabled = True

@@ -295,7 +295,8 @@ async def mounted_workflow(tmp_path, mode):
                     assert any(
                         "WorkspaceRegistryServiceError" in str(m)
                         and "OperationalError" in str(m)
-                        and "no such table" in str(m)
+                        and "sqlite_code=1" in str(m)
+                        and "no such table" not in str(m)
                         for m in diagnostics
                     )
                 finally:
@@ -422,6 +423,50 @@ async def mounted_workflow(tmp_path, mode):
                     pilot,
                     lambda: not modal.query_one("#workflow-plan", Button).disabled,
                 )
+                from loguru import logger
+
+                marker = "long-orchard-objective"
+                warnings = []
+                sink = logger.add(
+                    warnings.append,
+                    level="WARNING",
+                    format="{message}",
+                    filter="tldw_chatbook.UI.Console_Modules.workflows",
+                )
+                try:
+                    modal.query_one("#workflow-objective", TextArea).load_text(
+                        marker + "x" * 8192
+                    )
+                    await click(pilot, "#workflow-plan")
+                    await wait_until(
+                        pilot,
+                        lambda: (
+                            warnings
+                            and "objective/value_error"
+                            in str(modal.query_one("#workflow-notice").content)
+                        ),
+                    )
+                    assert marker not in str(
+                        modal.query_one("#workflow-notice").content
+                    )
+                    assert all(
+                        marker not in str(m) and marker not in repr(m.record)
+                        for m in warnings
+                    )
+                    assert (
+                        not provider.calls
+                        and not rig.service.db.workflow_runs.list_for_conversation(
+                            rig.workflow.request.conversation_id
+                        )
+                    )
+                    modal.query_one("#workflow-objective", TextArea).load_text(
+                        "Review the same form"
+                    )
+                    await pilot.pause()
+                    assert not modal.query_one("#workflow-plan", Button).disabled
+                    print("WORKFLOW_UI_PRIVATE_SETUP_FIELDS_ONLY", flush=True)
+                finally:
+                    logger.remove(sink)
                 await pilot.press("tab")
                 assert host.screen.focused is not host.screen.query_one(
                     "#workflow-plan"
@@ -630,6 +675,15 @@ async def mounted_workflow(tmp_path, mode):
                 ).id == workflow_id
                 assert [key for key, _ in provider.calls] == ["planning"]
                 return
+            if mode == "saved-privacy":
+                from Tests.UI.test_console_workflow_navigation import (
+                    check_private_saved_record,
+                )
+
+                await check_private_saved_record(
+                    rig, host, console, composer, pilot, click, wait_until, workflow_id
+                )
+                return
             if mode == "stale":
                 stale_decision = status.decision
                 (tmp_path / "project" / "input.txt").write_text("changed after display")
@@ -779,7 +833,9 @@ async def mounted_workflow(tmp_path, mode):
                     await wait_until(
                         pilot,
                         lambda: (
-                            "no such table"
+                            "OperationalError"
+                            in str(status.query_one("#workflow-notice").content)
+                            and "sqlite_code=1"
                             in str(status.query_one("#workflow-notice").content)
                         ),
                     )

@@ -6,8 +6,10 @@ import asyncio
 import sqlite3
 
 from loguru import logger
+from pydantic import ValidationError
 from textual.widgets import Button
 
+from tldw_chatbook.Agents.automatic_work_budget import AutomaticWorkRefused
 from tldw_chatbook.Workspaces.registry_service import WorkspaceRegistryServiceError
 
 WORKFLOW_VIEW_ERRORS = (
@@ -19,11 +21,124 @@ WORKFLOW_VIEW_ERRORS = (
 )
 
 
-def workflow_view_error(context, error):
-    """Retain the storage owner's chained diagnostic without changing its exception."""
-    cause = error.__cause__
-    logger.warning("Workflow {} unavailable: {!r} (cause: {!r})", context, error, cause)
-    return f"{context} unavailable · {error}"
+_VIEW_CONTEXTS = frozenset(
+    {
+        "History",
+        "Workflow history",
+        "Setup",
+        "Prepare plan",
+        "Review",
+        "Checkpoint",
+        "Approve",
+        "Accept",
+        "Revise",
+        "Resume",
+        "Pause",
+        "Stop",
+    }
+)
+_VIEW_REASONS = frozenset(
+    {
+        "Open a Console chat first.",
+        "Add a ready local folder in F4 Settings → Workspaces.",
+        "Workflow belongs to another chat.",
+        "workflow provider selection changed",
+        "Displayed planning provider or model changed. Reopen setup.",
+        "This review changed. Review the refreshed revision.",
+        "stale_workflow_decision",
+        "workflow_snapshot_superseded",
+        "remaining_requires_clean_checkpoint",
+        "Recovery required · uncertain_execution",
+        "revision_conflict",
+        "workflow_command_conflict",
+        "generation_budget",
+        "child_launch_budget",
+        "model_call_budget",
+        "tokens_budget",
+        "output_tokens_budget",
+        "wall_budget",
+        "clock_unknown",
+        "clock_reversed",
+    }
+)
+_ERROR_TYPES = (
+    sqlite3.OperationalError,
+    sqlite3.IntegrityError,
+    sqlite3.ProgrammingError,
+    sqlite3.DataError,
+    sqlite3.InterfaceError,
+    sqlite3.NotSupportedError,
+    sqlite3.InternalError,
+    sqlite3.DatabaseError,
+    sqlite3.Error,
+    WorkspaceRegistryServiceError,
+    AutomaticWorkRefused,
+    PermissionError,
+    OSError,
+    ValueError,
+    RuntimeError,
+)
+
+
+def _error_metadata(error: BaseException) -> str:
+    if isinstance(error, ValidationError):
+        details = error.errors(
+            include_url=False, include_context=False, include_input=False
+        )
+        if not details:
+            return "ValidationError"
+        first = details[0]
+        field = first["loc"][0] if first["loc"] else None
+        if field not in {
+            "objective",
+            "conversation_id",
+            "binding",
+            "policy",
+            "targets",
+            "planner",
+            "phases",
+            "evidence",
+        }:
+            field = "record"
+        code = first["type"]
+        if code not in {
+            "value_error",
+            "missing",
+            "extra_forbidden",
+            "string_type",
+            "string_too_short",
+            "string_too_long",
+            "int_type",
+            "tuple_type",
+            "literal_error",
+        }:
+            code = "invalid_value"
+        return f"ValidationError ({field}/{code})"
+    category = next(
+        (kind.__name__ for kind in _ERROR_TYPES if isinstance(error, kind)), "Exception"
+    )
+    if isinstance(error, sqlite3.Error):
+        code = getattr(error, "sqlite_errorcode", None)
+        if type(code) is int and 0 <= code <= 65535:
+            return f"{category} (sqlite_code={code})"
+    elif (
+        len(error.args) == 1
+        and type(error.args[0]) is str
+        and error.args[0] in _VIEW_REASONS
+    ):
+        return f"{category} · {error.args[0]}"
+    return category
+
+
+def workflow_view_error(context: str, error: BaseException) -> str:
+    """Describe an unavailable operation without copying private data out of its owner."""
+    operation = (
+        context if type(context) is str and context in _VIEW_CONTEXTS else "Workflow"
+    )
+    reason = _error_metadata(error)
+    cause = _error_metadata(error.__cause__) if error.__cause__ is not None else "none"
+    logger.warning("Workflow {} unavailable: {} (cause: {})", operation, reason, cause)
+    return f"{operation} unavailable · {reason}"
 
 
 def workflows_enabled() -> bool:
