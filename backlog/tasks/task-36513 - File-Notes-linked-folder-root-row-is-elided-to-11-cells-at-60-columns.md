@@ -5,7 +5,7 @@ status: Done
 assignee:
 - '@claude'
 created_date: 2026-10-23 23:37
-updated_date: 2026-11-03 23:36
+updated_date: 2026-11-04 01:44
 labels:
 - follow-up
 - library
@@ -72,3 +72,5 @@ Reason: Visibility rule for one existing control and the folder row's fit; no ar
 **Review round (fe0d40d6d9, Minor).** At 40x20 with a pairing pending, Details, Change… and "Review pairing…" took 39 cells and the status painted "." — the same symptom at a narrower width. The button is now "Review…" with the tooltip "Review the recovered folder pairing" and `min-width: 0`, since Button's 16-cell floor would otherwise apply to the short label. That leaves the status 9 cells at 40 columns, which hold the state word: when even "Offline · Warning" does not fit, Offline stays. New test `test_file_notes_root_row_keeps_state_word_beside_pairing_review_at_40_columns` covers Warning, and Offline, each with a pending pairing; it was red at fe0d40d6d9 (painted '.'). Negative control with the Offline-only fallback removed: 'Off...ing'. The user guide's narrow-fit copy now says "down to 40 columns".
 
 **Files.** `tldw_chatbook/Widgets/Library/library_file_notes_workspace.py`, `tldw_chatbook/Notes/file_notes_service.py`, `Tests/UI/test_library_file_notes_workspace.py`, `Tests/Architecture/test_module_size_ratchet.py`, `Docs/User_Guide/library/file-notes.md`.
+
+**Later race (2026-11-04).** The deferred `call_after_refresh` fit added here runs no layout pass. When it ran before the layout that seats "Review…", it fitted the old width and nothing fitted again; this was the 40-column test's load flake. Fixed under TASK-38710's PR: the folder-row status fits itself again when layout changes its width.

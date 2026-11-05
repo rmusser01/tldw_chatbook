@@ -2049,3 +2049,26 @@ Tests/UI/test_widget_css_consolidation.py::test_iter_blocks_emits_every_base_bef
 Tests/UI/test_console_prompt_mixins.py::test_mixin_save_writes_the_prompt_off_the_event_loop
 Tests/UI/test_console_prompt_mixins.py::test_press_during_contended_mixin_save_cannot_cancel_it
 Tests/UI/test_console_system_prompt.py::test_second_save_to_library_press_cannot_cancel_an_in_flight_save
+# TASK-38710 / TASK-38711 / TASK-38700 (2026-11-04): this branch's File Notes
+# regressions, one node id each (their files are not whole-file entries).
+# Serial call times at load average 8-14 on 18 CPUs: folder-row width sweep
+# 23-26 s, refit 16-17 s, Session Git sweep 15-18 s, the quit, rehydrate and
+# cancellation tests about 1 s. Appended at the tail, so no slot moves.
+Tests/UI/test_library_file_notes_workspace.py::test_file_notes_folder_row_states_lay_out_at_every_width_40_to_235[linked]
+Tests/UI/test_library_file_notes_workspace.py::test_file_notes_folder_row_states_lay_out_at_every_width_40_to_235[offline]
+Tests/UI/test_library_file_notes_workspace.py::test_file_notes_folder_row_states_lay_out_at_every_width_40_to_235[offline-warning]
+Tests/UI/test_library_file_notes_workspace.py::test_file_notes_folder_row_states_lay_out_at_every_width_40_to_235[pairing-pending]
+Tests/UI/test_library_file_notes_workspace.py::test_file_notes_root_row_refits_when_its_deferred_fit_beats_layout[Warning-False]
+Tests/UI/test_library_file_notes_workspace.py::test_file_notes_root_row_refits_when_its_deferred_fit_beats_layout[Offline-True]
+Tests/UI/test_library_file_notes_workspace.py::test_quit_closes_owned_replica_behind_a_search_in_flight
+Tests/UI/test_library_file_notes_workspace.py::test_read_started_after_quit_cannot_reopen_owned_replica
+Tests/UI/test_library_file_notes_git_push.py::test_workspace_rehydrate_keeps_review_admission_attention
+Tests/UI/test_library_file_notes_git_push.py::test_workspace_rehydrate_keeps_observer_failure_attention
+Tests/UI/test_library_file_notes_git_push.py::test_workspace_rehydrate_after_failure_back_observes_the_settlement
+Tests/UI/test_library_file_notes_git_push.py::test_workspace_push_observer_cancellation_publishes_nothing
+Tests/UI/test_library_file_notes_git_push.py::test_session_git_views_lay_out_at_every_width_40_to_61[list-24]
+Tests/UI/test_library_file_notes_git_push.py::test_session_git_views_lay_out_at_every_width_40_to_61[list-30]
+Tests/UI/test_library_file_notes_git_push.py::test_session_git_views_lay_out_at_every_width_40_to_61[list-44]
+Tests/UI/test_library_file_notes_git_push.py::test_session_git_views_lay_out_at_every_width_40_to_61[result-24]
+Tests/UI/test_library_file_notes_git_push.py::test_session_git_views_lay_out_at_every_width_40_to_61[result-30]
+Tests/UI/test_library_file_notes_git_push.py::test_session_git_views_lay_out_at_every_width_40_to_61[result-44]

@@ -776,7 +776,21 @@ _BUDGETS: dict[str, int] = {
     # replica opens and closes on one owner thread, so quit really closes it.
     # TASK-36513 review round, 2026-11-03 (same waiver): 9582 -> 9593 (+11).
     # "Review…" drops Button's 16-cell floor; Offline alone fits 40 columns.
-    "tldw_chatbook/Widgets/Library/library_file_notes_workspace.py": 9593,
+    # TASK-38710, 2026-11-04 (same waiver): 9593 -> 9599 (+6). One-row
+    # action buttons truncate instead of wrapping, so no width can raise.
+    # TASK-38711, 2026-11-04 (same waiver): 9599 -> 9615 (+16). Direct
+    # replica reads share the owner thread, so quit's close queues behind.
+    # TASK-38700, 2026-11-04 (same waiver): 9615 -> 9640 (+25). Attention
+    # only the workspace knows survives a rehydrate; a cancelled observer
+    # publishes nothing.
+    # TASK-38710 fold, 2026-11-04 (same waiver): 9640 -> 9663 (+23). The
+    # folder-row status fits again when layout changes its width.
+    # TASK-38710 review fold, 2026-11-04 (same waiver): 9663 -> 9670
+    # (+7). The unlinked width is recorded, and a relabelled
+    # folder-row button lays out again.
+    # TASK-38700 review fold, 2026-11-04 (same waiver): 9670 -> 9676 (+6).
+    # A rehydrate after Back from a failed observer attaches a new one.
+    "tldw_chatbook/Widgets/Library/library_file_notes_workspace.py": 9676,
     "tldw_chatbook/DB/Client_Media_DB_v2.py": 9429,  # 2026-11-02: +3 shared store-error import (TASK-36949.5)
     # TASK-37270: bounded template reads moved to local_reasoning_metadata.
     # 2026-10-29, TASK-33622.6 (owner decision: raise with a dated comment):
@@ -920,7 +934,9 @@ _BUDGETS: dict[str, int] = {
     # waiver: each workspace-reachable entry point and call_after_refresh
     # target opens with the two-line `_going_away()` guard: 4207 -> 4253.
     # Round 4, same waiver: each guard records its phase first: 4253 -> 4259.
-    "tldw_chatbook/Widgets/Library/library_file_notes_git_panel.py": 4259,
+    # TASK-38710 review fold, 2026-11-04 (same waiver): 4259 -> 4265 (+6).
+    # One-row Session Git buttons truncate instead of wrapping at width 0.
+    "tldw_chatbook/Widgets/Library/library_file_notes_git_panel.py": 4265,
     "tldw_chatbook/UI/MCP_Modules/mcp_inspector.py": 4174,
     "tldw_chatbook/Dreams/track_service.py": 4061,
     "tldw_chatbook/DB/private_sqlite.py": 4030,

@@ -367,6 +367,30 @@ _FILE_NOTES_WORKSPACE_BINDINGS = [
 ]
 
 
+class _FolderRowStatus(Static):
+    """Folder-row status that fits itself again once layout changes its width.
+
+    TASK-38710: the fit is deferred with ``call_after_refresh``, which runs no
+    layout pass. When it ran before the layout that seats "Review…", it fitted
+    the old width and nothing fitted again. Layout sets this width (``1fr``,
+    one row, no wrap), so a refit cannot resize it. The prompt's
+    ``-empty-root`` auto width is never fitted, but it is still recorded: a
+    relink back to the old width must refit.
+    """
+
+    def __init__(self, *args: Any, refit: Callable[[], None], **kwargs: Any) -> None:
+        super().__init__(*args, **kwargs)
+        self._refit = refit
+        self._seen_width = -1
+
+    def on_resize(self, event: Resize) -> None:
+        if event.size.width == self._seen_width:
+            return
+        self._seen_width = event.size.width
+        if not self.has_class("-empty-root"):
+            self._refit()
+
+
 class FileNotesEditorTextArea(TextArea):
     """The Folder files editor, with document-end and document-start keys.
 
@@ -1378,6 +1402,10 @@ class LibraryFileNotesWorkspace(Vertical):
         display: none;
     }
 
+    /* TASK-38710: one row, so never wrap. A stacked toolbar's grid measures
+       a label at its column width minus padding and Button's line-pad, and
+       a 4-cell column made that 0: Rich's fold raised and the app exited.
+       Truncation is defined at every width. */
     .file-notes-toolbar Button,
     #file-notes-back,
     #file-notes-session-changes {
@@ -1388,6 +1416,8 @@ class LibraryFileNotesWorkspace(Vertical):
         padding: 0 1;
         border: none;
         background: transparent;
+        text-wrap: nowrap;
+        text-overflow: ellipsis;
     }
 
     #file-notes-session-changes {
@@ -1674,6 +1704,8 @@ class LibraryFileNotesWorkspace(Vertical):
         self._push_review_projection: PushPanelReviewProjection | None = None
         self._push_result: object | None = None
         self._push_result_projection: PushPanelResultProjection | None = None
+        # TASK-38700: attention only this workspace knows (no owner record).
+        self._push_attention_projection: PushPanelResultProjection | None = None
         self._push_authorization_dialog_operation_id: int | None = None
         self._push_observer_task: asyncio.Task[None] | None = None
         self._push_settlement_tasks: set[asyncio.Task[None]] = set()
@@ -2406,10 +2438,11 @@ class LibraryFileNotesWorkspace(Vertical):
             markup=False,
         )
         with Horizontal(id="file-notes-root-row"):
-            root_status = Static(
+            root_status = _FolderRowStatus(
                 "Choose a notes folder.",
                 id="file-notes-root-status",
                 markup=False,
+                refit=self._fit_root_status,
             )
             # task-2850: match ``_update_root_surface``'s class so the very
             # first paint (before ``on_mount`` runs) already keeps the
@@ -3078,6 +3111,26 @@ class LibraryFileNotesWorkspace(Vertical):
             return f"Retention cleanup failed: {result.message or result.status}"
         return None
 
+    async def _read_replica(self, read: Callable[..., Any], *args: object) -> Any:
+        """Run one direct replica read that quit can close behind (TASK-38711).
+
+        These reads skip the service lock. ``_core_closing`` silently refuses
+        to close a file-backed replica while one is in flight, and a closed one
+        reopens on its next use. So an owned replica's reads share its owner
+        thread, where the close queues behind them, and a read that starts once
+        quit has begun returns None without touching the replica.
+        """
+
+        def run() -> Any:
+            return None if self._shutdown else read(*args)
+
+        owner = self._replica_thread
+        if self._shutdown:
+            return None
+        if owner is None:
+            return await asyncio.to_thread(run)
+        return await asyncio.get_running_loop().run_in_executor(owner, run)
+
     async def _load_deleted_paths(
         self,
         *,
@@ -3089,14 +3142,11 @@ class LibraryFileNotesWorkspace(Vertical):
         if replica is None or service is None:
             return ()
         try:
-            paths = await asyncio.to_thread(
-                replica.list_deleted,
-                service.root_key,
-            )
+            paths = await self._read_replica(replica.list_deleted, service.root_key)
         except Exception as error:
             self._runtime_warning = f"Recovery unavailable: {error}"
             return ()
-        return tuple(paths)
+        return tuple(paths or ())
 
     def _apply_scan(
         self,
@@ -3197,6 +3247,11 @@ class LibraryFileNotesWorkspace(Vertical):
             return
         if label is not None and str(button.label) != label:
             button.label = label
+            # A label write repaints without re-layout (lessons-textual,
+            # TASK-34000.22): "Change…" kept "Choose folder…"'s 18 cells.
+            button.refresh(layout=True)
+            if button.parent is not None:
+                button.parent.refresh(layout=True)
         button.display = visible
 
     def _structural_wait_line(self, wait: StructuralWait) -> str:
@@ -3380,8 +3435,9 @@ class LibraryFileNotesWorkspace(Vertical):
             status.set_class(False, "-warning")
             status.set_class(False, "-offline")
             details.display = False
-            choose.label = "Choose folder…"
-            choose.display = True
+            self._show_root_row_button(
+                "#file-notes-choose-root", True, label="Choose folder…"
+            )
             self._render_status_channels()
             if reason:
                 self.call_after_refresh(self._fit_root_status)
@@ -3416,8 +3472,7 @@ class LibraryFileNotesWorkspace(Vertical):
         status.tooltip = Text(detail)
         status.update(self._root_status_summary)
         details.display = True
-        choose.label = "Change…"
-        choose.display = True
+        self._show_root_row_button("#file-notes-choose-root", True, label="Change…")
         self._render_status_channels()
         self._apply_responsive_layout(self.size.width)
         self.call_after_refresh(self._fit_root_status)
@@ -4190,7 +4245,14 @@ class LibraryFileNotesWorkspace(Vertical):
                     self._render_session_git_label()
                     self._render_current_push_view()
             result = await operation.wait()
-        except (asyncio.CancelledError, Exception):
+        except asyncio.CancelledError:
+            task = asyncio.current_task()
+            if task is not None and task.cancelling():
+                raise  # TASK-38700: this observer was cancelled (loop teardown).
+            # A cancelled settlement is an observation failure like any other.
+            self._publish_push_observer_failure(operation, key, operation_id)
+            return
+        except Exception:
             self._publish_push_observer_failure(operation, key, operation_id)
             return
         if not self._push_operation_is_current(operation, key, operation_id):
@@ -4220,7 +4282,7 @@ class LibraryFileNotesWorkspace(Vertical):
             return
         pre_network = operation.kind in {"local_proof", "preflight"}
         self._push_phase = "needs_attention"
-        self._set_push_result_projection(
+        self._set_push_attention(
             PushPanelResultProjection(
                 title=(
                     "Push check needs attention"
@@ -4463,6 +4525,19 @@ class LibraryFileNotesWorkspace(Vertical):
         self._push_view_phase = "result"
         self._render_current_push_view()
 
+    def _set_push_attention(self, projection: PushPanelResultProjection) -> None:
+        """Show attention the owner has no record of (TASK-38700)."""
+        self._push_attention_projection = projection
+        self._set_push_result_projection(projection)
+
+    def _push_attention_shown(self) -> bool:
+        """Whether the panel still shows that attention, so rehydrate keeps it."""
+        return (
+            self._push_view_phase == "result"
+            and self._push_attention_projection is not None
+            and self._push_result_projection is self._push_attention_projection
+        )
+
     def _publish_push_review_admission_failure(self) -> None:
         """Replace a silent local-review start failure with safe copy."""
         if self._push_view_phase == "list":
@@ -4473,7 +4548,7 @@ class LibraryFileNotesWorkspace(Vertical):
             self._push_observer_task = None
             self._push_result = None
         self._push_phase = "needs_attention"
-        self._set_push_result_projection(
+        self._set_push_attention(
             PushPanelResultProjection(
                 title="Push review unavailable",
                 message=(
@@ -4784,7 +4859,9 @@ class LibraryFileNotesWorkspace(Vertical):
                 self._return_push_to_list()
             self._push_key = candidate_key
             self._push_phase = (
-                "needs_attention" if snapshot.push_recovery is not None else "idle"
+                "needs_attention"
+                if snapshot.push_recovery is not None or self._push_attention_shown()
+                else "idle"
             )
             self._render_session_git_label()
             return availability is not None or snapshot.push_recovery is not None
@@ -4826,14 +4903,21 @@ class LibraryFileNotesWorkspace(Vertical):
                 and self._push_operation_key == operation_key
                 and self._push_result is None
                 and not operation.settled
+                and not self._push_attention_shown()
             ):
-                self._push_key = operation_key
-                self._push_phase = (
-                    "pushing"
-                    if operation.kind == "push" and operation.child_started
-                    else "checking"
-                )
-                self._push_view_phase = self._push_view_for_operation(operation)
+                observer = self._push_observer_task
+                if observer is None or observer.done():
+                    # TASK-38700 review: after Back from a failed observer,
+                    # nothing would ever show this operation's settlement.
+                    self._start_push_observer(operation, operation_key)
+                else:
+                    self._push_key = operation_key
+                    self._push_phase = (
+                        "pushing"
+                        if operation.kind == "push" and operation.child_started
+                        else "checking"
+                    )
+                    self._push_view_phase = self._push_view_for_operation(operation)
             refreshed = self._refresh_push_recovery_readiness(snapshot)
             if (
                 not refreshed
@@ -7079,13 +7163,12 @@ class LibraryFileNotesWorkspace(Vertical):
     async def _run_search(self, query: str, generation: int) -> None:
         if self._replica is not None and self._service is not None:
             try:
-                paths = await asyncio.to_thread(
-                    self._replica.search,
-                    self._service.root_key,
-                    query,
+                paths = await self._read_replica(
+                    self._replica.search, self._service.root_key, query
                 )
             except Exception:
                 paths = []
+            paths = paths or []
         else:
             # TASK-34938: match against the pre-folded path list -- no
             # per-keystroke casefold over every entry.

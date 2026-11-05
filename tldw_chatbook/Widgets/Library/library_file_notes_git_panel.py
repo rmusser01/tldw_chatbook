@@ -748,6 +748,10 @@ class LibraryFileNotesGitPanel(Vertical):
         overflow: hidden hidden;
     }
 
+    /* TASK-38710: one row, so never wrap. A 1fr column measures a label at
+       its width minus padding and Button's line-pad; at 0 Rich's fold
+       raised and the app exited (49x24 list "Refresh", 50x44 result "Back
+       to session"). Truncation is defined at every width. */
     LibraryFileNotesGitPanel Button {
         width: auto;
         min-width: 0;
@@ -756,6 +760,8 @@ class LibraryFileNotesGitPanel(Vertical):
         padding: 0 1;
         border: none;
         background: transparent;
+        text-wrap: nowrap;
+        text-overflow: ellipsis;
     }
 
     LibraryFileNotesGitPanel Button.-style-default:focus {

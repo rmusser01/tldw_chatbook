@@ -8,7 +8,7 @@ import sqlite3
 import threading
 from collections.abc import Callable
 from concurrent.futures import Future, ThreadPoolExecutor
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager, contextmanager
 from dataclasses import replace
 from itertools import product
 from pathlib import Path
@@ -3322,9 +3322,21 @@ async def test_file_notes_linked_root_leads_with_friendly_folder_identity(
     replica.close()
 
 
-async def _settled_root_row(pilot, workspace: LibraryFileNotesWorkspace) -> str:
-    """Return the folder row's painted status once its deferred fit has run."""
+async def _settled_root_row(
+    pilot,
+    workspace: LibraryFileNotesWorkspace,
+    settled: Callable[[str], bool] | None = None,
+) -> str:
+    """Return the folder row's painted status once its deferred fit has run.
+
+    ``settled`` is the painted state the caller asserts. With it the wait ends
+    on that state rather than on any text that happens to fit (TASK-38710).
+    """
     status = workspace.query_one("#file-notes-root-status", Static)
+
+    def painted() -> str:
+        return _painted_text_in_region(pilot.app, status.region)
+
     await pilot.pause()
     await _wait_until(
         pilot,
@@ -3332,11 +3344,12 @@ async def _settled_root_row(pilot, workspace: LibraryFileNotesWorkspace) -> str:
             0
             < cell_len(_static_text(workspace, "#file-notes-root-status"))
             <= status.content_region.width
-        ),
-        "folder row status was not fitted to its width",
+        )
+        and (settled is None or settled(painted())),
+        "folder row status was not fitted to its width, or not to the asserted state",
     )
     await pilot.pause()
-    return _painted_text_in_region(pilot.app, status.region)
+    return painted()
 
 
 def _is_middle_elision_of(fitted: str, full: str) -> bool:
@@ -3432,8 +3445,12 @@ async def test_file_notes_root_row_keeps_state_word_beside_pairing_review_at_40_
             ),
             (),
         )
-        painted = await _settled_root_row(pilot, workspace)
-        assert painted == state or painted.startswith(f"{state} · "), painted
+
+        def shows_state(painted: str) -> bool:
+            return painted == state or painted.startswith(f"{state} · ")
+
+        painted = await _settled_root_row(pilot, workspace, shows_state)
+        assert shows_state(painted), painted
         review = workspace.query_one("#file-notes-recovery-review", Button)
         assert review.display
         assert "pairing" in str(review.tooltip)
@@ -3448,6 +3465,198 @@ async def test_file_notes_root_row_keeps_state_word_beside_pairing_review_at_40_
                 selector,
                 button.region,
             )
+
+    replica.close()
+
+
+@pytest.mark.parametrize(
+    ("state", "offline"), (("Warning", False), ("Offline", True))
+)
+@pytest.mark.asyncio
+async def test_file_notes_root_row_refits_when_its_deferred_fit_beats_layout(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    state: str,
+    offline: bool,
+) -> None:
+    """TASK-38710: the folder row fits again once layout narrows it.
+
+    TASK-36513 defers the fit with ``call_after_refresh``, which runs no
+    layout pass. Here every fit that reconcile defers runs before the layout
+    that seats "Review…". On the base build the row stayed fitted to the old
+    18 cells inside 9.
+    """
+    fits = 0
+    fit = LibraryFileNotesWorkspace._fit_root_status
+
+    def counted(self: LibraryFileNotesWorkspace) -> None:
+        nonlocal fits
+        fits += 1
+        fit(self)
+
+    monkeypatch.setattr(LibraryFileNotesWorkspace, "_fit_root_status", counted)
+    root = tmp_path / "deep" / "nested" / "Research Notes"
+    root.mkdir(parents=True)
+    replica = FileNotesReplica(":memory:")
+    workspace = LibraryFileNotesWorkspace(
+        root=root, replica=replica, poll_interval=3600
+    )
+
+    async with _WorkspaceHarness(workspace).run_test(size=(40, 20)) as pilot:
+        await _wait_until(pilot, lambda: workspace.initialized, "scan did not finish")
+        await _settled_root_row(pilot, workspace)
+        status = workspace.query_one("#file-notes-root-status", Static)
+        before = status.content_region.width
+        after_refresh = workspace.call_after_refresh
+
+        def before_layout(callback, *args, **kwargs):
+            if callback == workspace._fit_root_status:
+                callback(*args, **kwargs)
+                return True
+            return after_refresh(callback, *args, **kwargs)
+
+        monkeypatch.setattr(workspace, "call_after_refresh", before_layout)
+        workspace._apply_reconcile(
+            ReconcileResult(
+                status="offline" if offline else "ok",
+                offline=offline,
+                replica_warning=ACTIVATION_WARNING,
+            ),
+            (),
+        )
+        monkeypatch.setattr(workspace, "call_after_refresh", after_refresh)
+        stale = _static_text(workspace, "#file-notes-root-status")
+        assert status.content_region.width == before
+        assert cell_len(stale) > len(state), stale
+
+        def shows_state(painted: str) -> bool:
+            return painted == state or painted.startswith(f"{state} · ")
+
+        painted = await _settled_root_row(pilot, workspace, shows_state)
+        linked_width = status.content_region.width
+        assert linked_width < before
+        assert shows_state(painted), painted
+        # It settles: a refit cannot resize a 1fr, one-row status.
+        settled_fits = fits
+        for _ in range(10):
+            await pilot.pause()
+        assert fits == settled_fits
+
+        # Unlink: the prompt's auto width. Relink with the fit before layout:
+        # it fits the prompt's width, and layout restores the linked width.
+        workspace._root = None
+        workspace._update_root_surface()
+        await _wait_until(
+            pilot,
+            lambda: status.content_region.width != linked_width,
+            "the unlinked prompt kept the linked width",
+        )
+        # Reading ``region`` can arrange the map before the screen's own
+        # layout posts Resize. One pause ends in that layout; the next waits
+        # until the status has handled its Resize.
+        await pilot.pause()
+        await pilot.pause()
+        monkeypatch.setattr(workspace, "call_after_refresh", before_layout)
+        workspace._root = root
+        workspace._update_root_surface()
+        monkeypatch.setattr(workspace, "call_after_refresh", after_refresh)
+        assert status.content_region.width != linked_width
+        painted = await _settled_root_row(pilot, workspace, shows_state)
+        assert status.content_region.width == linked_width
+        assert shows_state(painted), painted
+
+    replica.close()
+
+
+# TASK-38710: every column from 40 to 61 (the crash sat at 48 and 50), then
+# the narrow/wide boundary and a sample up to a full-screen MacBook.
+_ROW_STATE_SWEEP_WIDTHS = (
+    *range(40, 62),
+    64,
+    70,
+    76,
+    79,
+    80,
+    81,
+    90,
+    100,
+    120,
+    150,
+    170,
+    211,
+    235,
+)
+
+
+@pytest.mark.parametrize(
+    ("result", "pairing"),
+    (
+        (ReconcileResult(status="ok"), False),
+        (ReconcileResult(status="offline", offline=True), False),
+        (
+            ReconcileResult(
+                status="offline",
+                offline=True,
+                replica_warning="Recovery unavailable: replica locked",
+            ),
+            False,
+        ),
+        (ReconcileResult(status="ok", replica_warning=ACTIVATION_WARNING), True),
+    ),
+    ids=("linked", "offline", "offline-warning", "pairing-pending"),
+)
+@pytest.mark.asyncio
+async def test_file_notes_folder_row_states_lay_out_at_every_width_40_to_235(
+    tmp_path: Path,
+    result: ReconcileResult,
+    pairing: bool,
+) -> None:
+    """TASK-38710: no folder-row state can make a layout pass raise.
+
+    At 50x20 Offline, the narrow navigator left the work pane 8 cells, two
+    nested scrollbars left the stacked toolbar a 4-cell grid column, and
+    "More file actions" asked Rich to wrap its label at width 0
+    (``ValueError: range() arg 3 must not be zero``), which ends the app.
+    The first sweep is that navigator view; the second opens a file in
+    Manage, where the control is used, and checks it is still reachable.
+    """
+    root = tmp_path / "deep" / "nested" / "Research Notes"
+    root.mkdir(parents=True)
+    (root / "note.md").write_text("body", encoding="utf-8")
+    replica = FileNotesReplica(":memory:")
+    workspace = LibraryFileNotesWorkspace(
+        root=root, replica=replica, poll_interval=3600
+    )
+
+    async with _CssTrueWorkspaceHarness(workspace).run_test(size=(120, 20)) as pilot:
+        await _wait_until(pilot, lambda: workspace.initialized, "scan did not finish")
+        workspace._apply_reconcile(result, ())
+        review = workspace.query_one("#file-notes-recovery-review", Button)
+        toggle = workspace.query_one("#file-notes-maintenance-toggle", Button)
+        for opened in (False, True):
+            if opened:
+                assert await workspace.open_path("note.md")
+                workspace.query_one("#file-notes-manage", Button).press()
+            for width in _ROW_STATE_SWEEP_WIDTHS:
+                await pilot.resize_terminal(width, 20)
+                await pilot.pause()
+                await pilot.pause()
+                assert pilot.app._exception is None, (width, pilot.app._exception)
+                assert review.display is pairing, width
+                if not opened:
+                    continue
+                assert toggle.display and not toggle.disabled, width
+                assert toggle in pilot.app.screen.focus_chain, width
+                toggle.focus()
+                await pilot.pause()
+                assert pilot.app.focused is toggle, width
+                assert 0 <= toggle.region.x and toggle.region.right <= width, (
+                    width,
+                    toggle.region,
+                )
+                assert "More" in _painted_text_in_region(pilot.app, toggle.region), (
+                    width
+                )
 
     replica.close()
 
@@ -7630,6 +7839,159 @@ async def test_library_database_files_switch_retains_workspace_and_database_canv
     assert owned_replica._connection is None
     with pytest.raises(sqlite3.ProgrammingError):
         owned_connection.execute("SELECT 1")
+
+
+@pytest.mark.asyncio
+async def test_quit_closes_owned_replica_behind_a_search_in_flight(
+    tmp_path: Path,
+) -> None:
+    """TASK-38711: a direct replica read in flight at quit cannot leak it.
+
+    ``_core_closing`` refuses, silently, to close a file-backed replica while
+    any core operation on it is in flight. The search is submitted before
+    quit and enters its replica operation once quit's retention pass is done
+    (that pass needs the replica's lock), and quit waits for it to be inside.
+    It is released once the close has run (and was refused, on the base
+    build) or is queued behind it on the replica's one owner thread.
+    """
+    asyncio.get_running_loop().set_default_executor(_ThreadPerCallExecutor())
+    root = tmp_path / "notes"
+    root.mkdir()
+    (root / "note.md").write_text("findable body", encoding="utf-8")
+    workspace = LibraryFileNotesWorkspace(
+        root=root,
+        replica_path=tmp_path / "owned.sqlite",
+        poll_interval=3600,
+    )
+    retention_done = threading.Event()
+    search_started = threading.Event()
+    read_held = threading.Event()
+    release_read = threading.Event()
+    close_submitted = threading.Event()
+    close_returned = threading.Event()
+    holding = threading.local()
+    held_on_owner_thread = False
+
+    async with _WorkspaceHarness(workspace).run_test(size=(120, 40)) as pilot:
+        await _wait_until(
+            pilot,
+            lambda: workspace.initialized and workspace._replica is not None,
+            "owned-replica workspace did not initialize",
+        )
+        owned_replica = workspace._replica
+        service = workspace._service
+        owner = workspace._replica_thread
+        assert owned_replica is not None and service is not None
+        assert owner is not None
+        owned_connection = owned_replica._connection
+        assert owned_connection is not None
+        locked_connection = owned_replica._locked_connection
+        search = owned_replica.search
+        close = owned_replica.close
+        retention = service.enforce_retention
+        submit = owner.submit
+
+        @contextmanager
+        def held_connection():
+            nonlocal held_on_owner_thread
+            with locked_connection():
+                if getattr(holding, "search", False):
+                    held_on_owner_thread = threading.current_thread().name.startswith(
+                        "file-notes-replica"
+                    )
+                    read_held.set()
+                    assert release_read.wait(5)
+                yield
+
+        def held_search(*args, **kwargs):
+            search_started.set()
+            assert retention_done.wait(5)
+            holding.search = True
+            try:
+                return search(*args, **kwargs)
+            finally:
+                holding.search = False
+
+        def observed_retention():
+            try:
+                return retention()
+            finally:
+                retention_done.set()
+                assert read_held.wait(5)
+
+        def observed_close():
+            try:
+                close()
+            finally:
+                close_returned.set()
+
+        def observed_submit(fn, /, *args, **kwargs):
+            if fn == workspace._close_owned_replica:
+                close_submitted.set()
+            return submit(fn, *args, **kwargs)
+
+        owned_replica._locked_connection = held_connection
+        owned_replica.search = held_search
+        owned_replica.close = observed_close
+        service.enforce_retention = observed_retention
+        owner.submit = observed_submit
+
+        workspace._start_search("findable")
+        # Quit only once the read is running; a read submitted after quit
+        # began would be skipped, and the test would prove nothing.
+        await _wait_until(pilot, search_started.is_set, "the search never started")
+        shutdown_task = asyncio.create_task(workspace.shutdown())
+        await _wait_until(pilot, read_held.is_set, "the search never held")
+        await _wait_until(
+            pilot,
+            lambda: close_returned.is_set()
+            or (close_submitted.is_set() and held_on_owner_thread),
+            "quit neither closed nor queued its close",
+        )
+        release_read.set()
+        await shutdown_task
+
+    assert owned_replica._connection is None
+    with pytest.raises(sqlite3.ProgrammingError):
+        owned_connection.execute("SELECT 1")
+
+
+@pytest.mark.asyncio
+async def test_read_started_after_quit_cannot_reopen_owned_replica(
+    tmp_path: Path,
+) -> None:
+    """TASK-38711: a closed file-backed replica reopens on its next use.
+
+    A deleted-files read that captured the replica before quit (as
+    ``_initialize`` does across its scan) must not be the one that reopens it.
+    """
+    root = tmp_path / "notes"
+    root.mkdir()
+    (root / "note.md").write_text("body", encoding="utf-8")
+    workspace = LibraryFileNotesWorkspace(
+        root=root,
+        replica_path=tmp_path / "owned.sqlite",
+        poll_interval=3600,
+    )
+
+    async with _WorkspaceHarness(workspace).run_test(size=(120, 40)) as pilot:
+        await _wait_until(
+            pilot,
+            lambda: workspace.initialized and workspace._replica is not None,
+            "owned-replica workspace did not initialize",
+        )
+        owned_replica = workspace._replica
+        service = workspace._service
+        assert owned_replica is not None and service is not None
+        await workspace.shutdown()
+        assert owned_replica._connection is None
+
+        deleted = await workspace._load_deleted_paths(
+            replica=owned_replica, service=service
+        )
+
+    assert deleted == ()
+    assert owned_replica._connection is None
 
 
 @pytest.mark.asyncio
