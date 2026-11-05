@@ -102,6 +102,59 @@ async def test_a_draft_sent_after_a_non_append_edit_says_it_was_sent():
 
 
 @pytest.mark.asyncio
+async def test_a_press_held_on_a_non_append_edit_of_a_sent_draft_is_not_sent():
+    """AC#2: a press captured before the commit retired its draft sends nothing.
+
+    Enter, a tab round trip, then Home, "x" and Enter while the first send is
+    admitted. The round trip reloaded the draft with a new generation, so the
+    second press is not taken for the running capture: it is held, with
+    "x" + the sent draft. The first send's commit cannot take its text out of
+    that edit, so it retires every capture of the draft
+    (``retire_captured_drafts``), and the held press is dropped instead of
+    sending the text a second time inside the "x" (TASK-38718 review).
+    """
+    host, gateway, _timeline = build()
+    _allow_second_turns(host)
+    async with host.run_test(size=(160, 45)) as pilot:
+        with eager_tasks():
+            console, composer = await ready_console(host, pilot, gateway)
+            session_a, session_b = await _second_tab(console, pilot, ready=True)
+            notices = _record_notices(host)
+            tail = _hold_first_send_tail(console)
+            hold = HeldMcpRead(host.app_instance.unified_mcp_service)
+            gateway.validation_release.set()
+            try:
+                press(host, "enter", "\r")
+                await until(hold.entered.is_set, timeout=ENTRY_SECONDS)
+                press(host, "alt+2")
+                await until(
+                    lambda: console._console_visible_draft_session_id == session_b
+                )
+                press(host, "alt+1")
+                await until(
+                    lambda: console._console_visible_draft_session_id == session_a
+                )
+                await until(lambda: composer.draft_text() == DRAFT)
+                press(host, "home")
+                press(host, "x", "x")
+                await until(lambda: composer.draft_text() == "x" + DRAFT, timeout=10)
+                press(host, "enter", "\r")
+                await until(lambda: _held(console), timeout=10)
+            finally:
+                hold.release.set()
+            try:
+                await until(lambda: _first_turn_done(host, console))
+            finally:
+                tail.set()
+            await _idle(host, console, pilot, session_a)
+            await pilot.pause(0.5)
+            assert _sent_or_queued(console, session_a) == [DRAFT]
+            assert gateway.stream_calls == 1
+            assert composer.draft_text() == "x" + DRAFT
+            assert [n for n in notices if "was sent" in n], notices
+
+
+@pytest.mark.asyncio
 async def test_a_draft_sent_from_a_tab_left_during_admission_does_not_come_back():
     """AC#2: the sent draft comes off the chat it was sent from.
 

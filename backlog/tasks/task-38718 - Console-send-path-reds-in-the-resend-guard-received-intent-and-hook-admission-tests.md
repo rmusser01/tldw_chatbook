@@ -5,7 +5,7 @@ status: Done
 assignee:
   - '@claude'
 created_date: 2026-11-04 00:59
-updated_date: 2026-11-05 07:14
+updated_date: 2026-11-05 11:05
 labels:
 - follow-up
 - console
@@ -51,6 +51,7 @@ No open task names any of the seven nodes above.
 <!-- AC:BEGIN -->
 - [x] #1 Each of the seven nodes passes on dev, or is rewritten or retired with the reason recorded in the task notes (for example, a product change it predates)
 - [x] #2 For each node, the task notes record whether the cause was test drift or a product defect, and a product defect has a test that fails before its fix
+- [x] #3 The send acknowledgement detects its laid-out status line, so an acknowledged send dispatches without waiting out every paint hop
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -77,6 +78,20 @@ No open task names any of the seven nodes above.
 
 **Not in scope, seen on the way.** `Tests/Performance/test_console_skill_trust_stock_owned.py::test_stock_console_skill_setup_has_original_owned_lifetime[send_enter|send_button]` share `_NaturalPreparingFrame`. They fail on the base and at the head with the same assertion, "Cold Send did not reach original configuration SQL", which is unrelated to the chip query.
 
-**Files:** `Tests/UI/test_console_send_resend_guard.py`, `Tests/UI/test_console_received_intent_feedback.py`, `Tests/Chat/test_console_hook_admission.py`.
+**Files:** `Tests/UI/test_console_send_resend_guard.py`, `Tests/UI/test_console_received_intent_feedback.py`, `Tests/Chat/test_console_hook_admission.py`; review follow-ups: `UI/Console_Modules/send_acknowledgement.py`, `Tests/UI/test_console_send_acknowledgement.py`.
+**Review follow-ups (AC#3, added by the coordinator from the branch review).**
+- **Product defect from the same drift.** `send_acknowledgement._acknowledgement_laid_out` still looked for `#console-run-chip`, the widget TASK-35160 retired. It always hit `NoMatches` and returned False, so every acknowledged Enter waited out all `_PAINT_HOPS` (6) frame-length hops, about 100 ms, before it dispatched. It now checks the status line (`#console-status-text`) has a region and that its `run` segment is shown.
+  - New test: `Tests/UI/test_console_send_acknowledgement.py::test_an_acknowledged_enter_dispatches_once_its_status_line_is_laid_out` (a census whole-file entry). It records each hop and whether the acknowledgement was laid out.
+  - Red before the fix: `[(0, False), (1, False), ... (6, False)]`.
+  - Green with it: `[(0, True)]` in 3 of 3 runs, so the send dispatches after the first refresh.
+- **Re-measured the 100 ms node**, `test_actual_send_paints_sending_and_accepts_input_within_100ms`, at `-n 2`, head against base (base = this file before the fix).
+  - Load 7-8, 12 cases each: the Sending frame median was 21.3 ms on head against 29.7 ms on base. The Preparing frame median was 60.7 ms against 174.7 ms.
+  - Eight-way parallel, load up to 12, 16 cases each: Sending 32.9 ms against 33.4 ms, none over 100 ms on either side. Preparing 73.8 ms against 167.4 ms; 2 of 16 over 100 ms on head, 16 of 16 on base.
+  - The fix removes the hop wait before dispatch, so the Preparing frame comes about 100 ms sooner. The Sending frame is painted before the hops, so its earlier 117 ms misses at load about 22 are not explained by this defect.
+- **`retire_captured_drafts` is pinned again.** New test: `test_a_press_held_on_a_non_append_edit_of_a_sent_draft_is_not_sent` in the resend-guard file. The sequence is Enter, a tab round trip, Home, "x", then Enter again during admission.
+  - The round trip gives the draft a new generation, so the second press is held rather than refused. The first send's commit cannot take its text out, so it retires the draft, and the held press is dropped.
+  - With `_spent_generations.append(self._draft_generation)` removed from `retire_captured_drafts`, it was red 2 of 2: the held press sent `'xacknowledge this send'` a second time.
+  - Green with the line, and the whole file passed 18/18. No PR lane runs this file.
+- **Not mine.** Four `Tests/UI/test_console_send_acknowledgement_extended.py` nodes fail on base and head alike: refused_admission_rolls_back, turn_refused_before_its_echo, failed_durable_commit, and second_enter_during_admission.
 <!-- SECTION:NOTES:END -->
 
