@@ -1256,6 +1256,34 @@ async def test_initial_snapshot_id_disambiguates_two_windows_on_same_path(
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("available", [True, False])
+async def test_workflow_snapshot_link_selects_only_its_recorded_window(
+    same_root_windows_fixture, available
+):
+    provider, _root, run_id, ids = same_root_windows_fixture
+    selected = ids[1] if available else max(ids) + 1
+    app = _Harness(provider, initial_run_id=run_id, initial_snapshot_id=selected)
+    async with app.run_test(size=(120, 36)) as pilot:
+        await _wait_for(
+            pilot,
+            lambda: isinstance(app.screen, ChangeReviewScreen) and app.screen._leaves,
+            "original recorded windows",
+        )
+        screen = app.screen
+        if available:
+            await _wait_for(
+                pilot,
+                lambda: "BRAVO_ONLY_MARKER" in screen.diff_pane_text(),
+                "second snapshot",
+            )
+            assert screen._leaves[screen._focused_leaf][0]["id"] == selected
+        else:
+            assert screen._focused_leaf == -1
+            assert "selected snapshot is unavailable" in screen.diff_pane_text()
+        assert screen._initial_snapshot_id is None
+
+
+@pytest.mark.asyncio
 async def test_undo_all_refuses_same_root_windows_before_preflight(
     same_root_windows_fixture, monkeypatch
 ):

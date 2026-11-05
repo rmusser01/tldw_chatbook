@@ -283,6 +283,7 @@ from ...Chat.console_command_grammar import (
     KIND_UNKNOWN,
     PREFILL_COMMAND_HANDLER_ID,
     GOAL_COMMAND_HANDLER_ID,
+    WORKFLOW_COMMAND_HANDLER_ID,
     RESEARCH_COMMAND_HANDLER_ID,
     HELP_COMMAND_HANDLER_ID,
     CONSOLE_ACTION_COMMAND_HANDLER_ID,
@@ -15220,6 +15221,13 @@ class ChatScreen(BaseAppScreen):
             status_chips_position = resolve_status_chips_position(
                 getattr(self.app_instance, "app_config", {}) or {}
             )
+            from ..Console_Modules.workflows import (
+                ConsoleWorkflowLine,
+                workflows_enabled,
+            )
+
+            if workflows_enabled():
+                yield ConsoleWorkflowLine()
             temporary, temporary_capture_on = temporary_segment_state(self)
             status_chips = ConsoleStatusChips(
                 control_state,
@@ -15853,6 +15861,9 @@ class ChatScreen(BaseAppScreen):
 
     async def on_unmount(self) -> None:
         """Release Console-native resources owned by this screen."""
+        workflow_ui = self.__dict__.pop("_workflow_ui", None)
+        if workflow_ui is not None:
+            await workflow_ui.detach()
         self._hooks.cancel_pending()
         self._release_claimed_conversation_settings_return()
         runtime = self._console_runtime()
@@ -18010,6 +18021,11 @@ class ChatScreen(BaseAppScreen):
                         store = self._ensure_console_chat_store()
                         sessions = store.sessions()
                         active_session_id = store.active_session_id
+                    if (
+                        self.query("#console-workflow-line")
+                        and self._console_runtime().chat_controller is not None
+                    ):
+                        self._workflows.select_chat(active_session)
                     membership = tuple((session.id, session) for session in sessions)
                     controller = getattr(self, "_console_chat_controller", None)
                     streaming_session_id = (
@@ -18641,6 +18657,7 @@ class ChatScreen(BaseAppScreen):
             STOP_COMMAND_HANDLER_ID: partial(run_controls.stop_command, self),
             RESEARCH_COMMAND_HANDLER_ID: self._console_command_research,
             GOAL_COMMAND_HANDLER_ID: self._console_command_goal,
+            WORKFLOW_COMMAND_HANDLER_ID: self._console_command_workflow,
             HELP_COMMAND_HANDLER_ID: self._console_command_help,
             DOCTOR_COMMAND_HANDLER_ID: self._console_command_doctor,
             CONSOLE_ACTION_COMMAND_HANDLER_ID: self._console_command_run_action,
@@ -18942,6 +18959,17 @@ class ChatScreen(BaseAppScreen):
                 "prefilled sends."
             )
         return
+
+    @property
+    def _workflows(self):
+        from ..Console_Modules.workflows import ConsoleWorkflowsController
+
+        if "_workflow_ui" not in self.__dict__:
+            self._workflow_ui = ConsoleWorkflowsController(self)
+        return self._workflow_ui
+
+    async def _console_command_workflow(self, parse: CommandParse) -> None:
+        self._workflows.command(parse.args)
 
     @property
     def _goals(self):
@@ -19963,9 +19991,10 @@ class ChatScreen(BaseAppScreen):
                 pressed row's file so the screen opens focused on it
                 instead of the turn's first leaf. ``None`` for every other
                 (pre-existing) caller -- byte-compatible default.
-            initial_snapshot_id: Paired with ``initial_path`` -- disambiguates
-                two windows of the SAME run covering the same path (spec
-                §2). ``None`` when the caller has no snapshot row to pin to.
+            initial_snapshot_id: Open that exact recorded window. With
+                ``initial_path``, disambiguate two windows covering the same
+                path. Without a path, focus the window's first file or show
+                its empty/unavailable state. ``None`` uses the ordinary turn view.
             initial_current_mode: task-13. Open straight onto the WORKING
                 TREE rather than a recorded turn (Task 12's screen param).
                 Set only by the Environment panel's "Commit or push" row,

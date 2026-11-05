@@ -114,10 +114,20 @@ class WorkflowModel(BaseModel):
         return self
 
 
-class WorkflowRequest(WorkflowModel):
+class _WorkflowLaunchInput(WorkflowModel):
     conversation_id: Identity
     objective: Annotated[str, StringConstraints(min_length=1)]
     binding: GoalBindingRef
+
+    @field_validator("objective")
+    @classmethod
+    def bounded_objective(cls, value: str) -> str:
+        if not value.strip() or len(value.encode()) > 8192:
+            raise ValueError("objective requires 1..8192 UTF-8 bytes")
+        return value
+
+
+class WorkflowRequest(_WorkflowLaunchInput):
     targets: tuple[GoalProviderRef, ...] = Field(min_length=1, max_length=16)
     policy: AutomaticWorkLimits = Field(
         default_factory=lambda: AutomaticWorkLimits(generations=8, child_launches=12)
@@ -125,8 +135,22 @@ class WorkflowRequest(WorkflowModel):
 
     @model_validator(mode="after")
     def request_contract(self) -> Self:
-        if not self.objective.strip() or len(self.objective.encode()) > 8192:
-            raise ValueError("objective requires 1..8192 UTF-8 bytes")
+        if len(set(self.targets)) != len(self.targets):
+            raise ValueError("duplicate target")
+        return self
+
+
+class WorkflowSetup(_WorkflowLaunchInput):
+    """Captured UI selections; only the original planning producer resolves authority."""
+
+    planner: tuple[Identity, Annotated[str, StringConstraints(max_length=256)]]
+    targets: tuple[tuple[Identity, Identity], ...] = Field(default=(), max_length=16)
+    policy: AutomaticWorkLimits = Field(
+        default_factory=lambda: AutomaticWorkLimits(generations=8, child_launches=12)
+    )
+
+    @model_validator(mode="after")
+    def setup_contract(self) -> Self:
         if len(set(self.targets)) != len(self.targets):
             raise ValueError("duplicate target")
         return self

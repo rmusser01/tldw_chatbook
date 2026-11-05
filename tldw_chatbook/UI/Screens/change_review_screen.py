@@ -633,7 +633,8 @@ class ChangeReviewScreen(Screen):
                 tail, then cleared, so a later turn switch reverts to the
                 first leaf. An unmatched path degrades to the first leaf
                 rather than an empty pane.
-            initial_snapshot_id: When given alongside ``initial_path``,
+            initial_snapshot_id: Without a path, open the first file in this exact
+                snapshot or show its empty/unavailable state. With ``initial_path``,
                 prefer the leaf whose owning ``change_snapshots`` row id
                 equals this -- disambiguates two windows of the SAME run
                 that cover the same path (spec §2's same-run
@@ -1314,6 +1315,20 @@ class ChangeReviewScreen(Screen):
         self._initial_path = None
         self._initial_snapshot_id = None
 
+        if initial_path is None and initial_snapshot_id is not None:
+            for index, (row, _change) in enumerate(self._leaves):
+                if row.get("id") == initial_snapshot_id:
+                    self._focus_leaf(index)
+                    return
+            self._focused_leaf = -1
+            present = any(row.get("id") == initial_snapshot_id for row in turn.rows)
+            self._show_empty(
+                "No file changes in the selected snapshot."
+                if present
+                else "The selected snapshot is unavailable in this turn."
+            )
+            self._refresh_notes_strip()
+            return
         if self._leaves:
             # A path that doesn't exist in this turn (stale rail cache, a
             # revert since) degrades to the first leaf rather than an empty

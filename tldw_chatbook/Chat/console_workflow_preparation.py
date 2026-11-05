@@ -3755,26 +3755,45 @@ async def _finish_native_preparation(prepared):
     return prepared
 
 
-async def _resolve_workflow_targets(controller, session, targets, *, selected=None):
+async def _resolve_workflow_targets(
+    controller, session, targets, *, selected=None, setup=None
+):
     """Resolve passive references through native settings, without donating routing."""
     from dataclasses import replace
+
+    from tldw_chatbook.Agents.goal_models import GoalProviderRef
+    from tldw_chatbook.Agents.workflow_models import WorkflowSetup
 
     from .console_chat_controller import build_console_provider_selection_from_settings
     from .console_received_dispatch import resolve_received_provider
 
+    if setup is None:
+        if any(type(ref) is not GoalProviderRef for ref in targets):
+            raise PermissionError("original frozen workflow target required")
+    elif type(setup) is not WorkflowSetup or targets is not setup.targets:
+        raise PermissionError("original workflow setup choices required")
     original = controller._provider_selection_for_session(session.id)
     settings = controller.store.effective_session_settings(session.id)
+
+    def matches(resolution, target):
+        if setup is not None:
+            return (resolution.provider, resolution.model) == target
+        return goal_provider_ref(resolution) == target
+
     results = []
     for target in targets:
-        if selected is not None and goal_provider_ref(selected) == target:
+        provider, model = (
+            target if setup is not None else (target.provider, target.model)
+        )
+        if selected is not None and matches(selected, target):
             resolution = selected
         else:
             resolution = None
-            if original.provider == target.provider:
+            if original.provider == provider:
                 candidate = selected or await resolve_received_provider(
                     controller, original
                 )
-                if candidate.ready and goal_provider_ref(candidate) == target:
+                if candidate.ready and matches(candidate, target):
                     resolution = candidate
             if resolution is not None:
                 results.append(resolution)
@@ -3782,8 +3801,8 @@ async def _resolve_workflow_targets(controller, session, targets, *, selected=No
             selection = build_console_provider_selection_from_settings(
                 replace(
                     settings,
-                    provider=target.provider,
-                    model=target.model,
+                    provider=provider,
+                    model=model,
                     base_url=None,
                 ),
                 app_config=controller._provider_config()
@@ -3794,7 +3813,7 @@ async def _resolve_workflow_targets(controller, session, targets, *, selected=No
                 global_user_name=controller._global_user_display_name,
             )
             resolution = await resolve_received_provider(controller, selection)
-        if not resolution.ready or goal_provider_ref(resolution) != target:
+        if not resolution.ready or not matches(resolution, target):
             raise PermissionError("workflow requested target unavailable")
         results.append(resolution)
     if original != controller._provider_selection_for_session(session.id):
@@ -3824,9 +3843,9 @@ async def prepare_workflow_planning(
     actual provider resolution, acceptance, catalog and instruction consent.
     """
     from tldw_chatbook.Agents.automatic_work_budget import AutomaticWorkLimits
-    from tldw_chatbook.Agents.goal_models import GoalBindingRef
+    from tldw_chatbook.Agents.goal_models import GoalBindingRef, GoalProviderRef
     from tldw_chatbook.Agents.local_tool_provider import RunAdmittedWorkspaceRoot
-    from tldw_chatbook.Agents.workflow_models import WorkflowRequest
+    from tldw_chatbook.Agents.workflow_models import WorkflowRequest, WorkflowSetup
 
     from .console_chat_models import ConsoleSubmissionOrigin
     from .console_provider_gateway import _CONSOLE_PROVIDER_RESOLUTION_NATIVE_METHODS
@@ -3881,8 +3900,15 @@ async def prepare_workflow_planning(
         raise ValueError("initial planning requires an objective and policy")
     if workflow_id is not None and (objective is not None or policy is not None):
         raise ValueError("repair cannot replace the immutable request")
+    setup = type(_request) is WorkflowSetup
+    if setup and (_pending_run is None or _pending_run.planning_input is not _request):
+        raise PermissionError("original pending workflow setup required")
+    if type(_request) is WorkflowRequest and any(
+        type(ref) is not GoalProviderRef for ref in _request.targets
+    ):
+        raise PermissionError("original frozen workflow target required")
     if _request is not None and (
-        type(_request) is not WorkflowRequest
+        type(_request) not in (WorkflowRequest, WorkflowSetup)
         or workflow_id is not None
         or _request.objective != objective
         or _request.policy != policy
@@ -3952,6 +3978,13 @@ async def prepare_workflow_planning(
             if not binding.guard(False):
                 raise PermissionError("workflow native binding changed")
             selection = controller._provider_selection_for_session(session_id)
+            if setup and _request.planner != (
+                selection.provider,
+                selection.explicit_model or selection.configured_model or "",
+            ):
+                raise PermissionError(
+                    "Displayed planning provider or model changed. Reopen setup."
+                )
             resolved = await resolve_received_provider(controller, selection)
             if not resolved.ready or not resolved.model:
                 raise PermissionError("workflow provider unavailable")
@@ -3959,9 +3992,15 @@ async def prepare_workflow_planning(
                 raise PermissionError("workflow provider selection changed")
             prepared.resolution = prepared._planning_resolution = resolved
             prepared.planning_selection = selection
-            if _request is not None:
+            if setup and not _request.targets:
+                prepared.execution_resolutions = (resolved,)
+            elif _request is not None:
                 prepared.execution_resolutions = await _resolve_workflow_targets(
-                    controller, session, _request.targets, selected=resolved
+                    controller,
+                    session,
+                    _request.targets,
+                    selected=resolved,
+                    setup=_request if setup else None,
                 )
             from .console_session_settings import ConsoleSessionSettings
 
@@ -4034,7 +4073,11 @@ async def prepare_workflow_planning(
                     conversation_id=conversation,
                     objective=objective,
                     binding=reference,
-                    targets=_request.targets
+                    targets=tuple(
+                        goal_provider_ref(r) for r in prepared.execution_resolutions
+                    )
+                    if setup
+                    else _request.targets
                     if _request is not None
                     else (goal_provider_ref(prepared.resolution),),
                     policy=policy,

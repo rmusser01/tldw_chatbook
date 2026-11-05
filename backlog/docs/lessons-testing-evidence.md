@@ -25063,3 +25063,10 @@ the tracked reader's actual worker return, permits proven retirement before
 rethrowing cancellation. This is neither cancellation reset nor permission to
 retire an unknown handle. The original diagnostic1F32.86 and final uninstrumented
 shutdown positive are separate receipts.
+
+
+## Repeat the physical click after a control changes (TASK-38532, 2026-11-04)
+
+Two mounted workflow tests clicked the original approval position twice while the first phase was starting. In both real SQLite histories, revision 2 contained approval and revision 3 contained a separate `pause` with reason `user_request`. The action row had hidden approval and moved Pause into its place before the second click. Looking up the approving button again, or calling the handler twice, tests a different interaction.
+
+Keep decisions with different consequences in stable cells. Capture the visible button's actual screen coordinate, click it again after the state transition, and inspect the durable decisions. The repair's one- and two-phase cases recorded exactly one approval and one separate quality acceptance per phase.

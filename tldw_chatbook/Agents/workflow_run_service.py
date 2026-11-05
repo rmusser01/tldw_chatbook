@@ -430,6 +430,11 @@ class WorkflowRunService:
 
         allowed = (
             WorkflowRunService.get,
+            WorkflowRunService.list_history,
+            WorkflowRunService.setup_choices,
+            WorkflowRunService.read_checkpoint,
+            WorkflowRunService.change_windows,
+            WorkflowRunService.active_seconds,
             WorkflowRunService.runtime_snapshot,
             WorkflowRunService.set_status,
             WorkflowRunService.phase_task_ids,
@@ -466,6 +471,109 @@ class WorkflowRunService:
     def get(self, workflow_id: str, *, _accounting=None) -> WorkflowSnapshot:
         """Read saved workflow state without dispatch or startup recovery."""
         return self.db.workflow_runs.get(workflow_id, _accounting=_accounting)
+
+    @goal_storage_operation
+    def list_history(
+        self, conversation_id: str, *, offset: int = 0
+    ) -> tuple[dict, ...]:
+        """Return up to 50 saved headers for this exact chat."""
+        return self.db.workflow_runs.list_for_conversation(
+            conversation_id, limit=50, offset=offset
+        )
+
+    @goal_storage_operation
+    def setup_choices(self, workspace_id: str) -> tuple:
+        """Read passive ready folders, routing choices and existing capture readiness."""
+        from tldw_chatbook.Workspaces.change_review_consent import (
+            ChangeReviewConsentService,
+        )
+        from tldw_chatbook.Workspaces.registry_service import binding_exclusion_entries
+
+        from .goal_models import GoalBindingRef
+
+        registry = self.persistence.workspace_registry
+        bindings = tuple(
+            (
+                GoalBindingRef(
+                    workspace_id=row.workspace_id,
+                    binding_id=row.binding_id,
+                    locator=row.locator,
+                    access=row.metadata.get("access", "ro"),
+                ),
+                len(binding_exclusion_entries(row)),
+            )
+            for row in registry.list_runtime_bindings(workspace_id)
+            if row.workspace_id == workspace_id
+            and row.status.value == "ready"
+            and row.binding_kind.value == "local-filesystem"
+        )
+        with self.db.connection() as conn:
+            presets = tuple(
+                (
+                    name,
+                    provider,
+                    model,
+                    tuple(tuple(pair) for pair in json.loads(fallbacks or "[]")),
+                )
+                for name, provider, model, fallbacks in conn.execute(
+                    "SELECT name, provider, model, fallback_models_json FROM agent_definitions "
+                    "WHERE enabled=1 AND deleted=0 ORDER BY name LIMIT 50"
+                )
+            )
+        owner = getattr(registry, "_change_review_binding_owner", None)
+        capture = (
+            owner.status(workspace_id)
+            if type(owner) is ChangeReviewConsentService
+            else None
+        )
+        return bindings, presets, capture
+
+    @goal_storage_operation
+    def read_checkpoint(self, workflow_id: str, attempt_id: str) -> WorkflowCheckpoint:
+        """Read integrity-checked private evidence for the selected result."""
+        checkpoint = self._checkpoint(workflow_id, attempt_id)
+        if checkpoint.workflow_id != workflow_id or checkpoint.attempt_id != attempt_id:
+            raise ValueError("native_checkpoint_result_changed")
+        return checkpoint
+
+    @goal_storage_operation
+    def active_seconds(self, workflow_id: str) -> tuple[float | None, str | None]:
+        """Read passive active-time accounting, preserving genuine clock uncertainty."""
+        from .automatic_work_budget import AutomaticWorkRefused
+
+        try:
+            return self.db.automatic_work.workflow_active_seconds(workflow_id), None
+        except AutomaticWorkRefused as error:
+            if error.reason not in {"clock_unknown", "clock_reversed"}:
+                raise
+            return None, error.reason
+
+    @goal_storage_operation
+    def change_windows(self, workflow_id: str, *, offset: int = 0) -> tuple[dict, ...]:
+        """Read up to fifty native phase capture dispositions and exact snapshot links."""
+        if type(offset) is not int or not 0 <= offset < 2**63:
+            raise ValueError("invalid_workflow_page")
+        with self.db.connection() as conn:
+            rows = conn.execute(
+                "SELECT w.id,w.ordinal,p.phase_id,w.state,w.baseline,w.ending FROM workflow_change_windows w "
+                "JOIN workflow_phase_attempts p ON p.id=w.phase_attempt_id AND p.workflow_id=w.workflow_id "
+                "WHERE w.workflow_id=? ORDER BY w.ordinal DESC LIMIT 50 OFFSET ?",
+                (workflow_id, offset),
+            )
+            return tuple(
+                {
+                    **dict(row),
+                    "snapshots": tuple(
+                        (snap[0], snap[1])
+                        for snap in conn.execute(
+                            "SELECT s.run_id,s.id FROM workflow_change_window_refs r JOIN change_snapshots s "
+                            "ON s.id=r.snapshot_id WHERE r.window_id=? ORDER BY s.id LIMIT 64",
+                            (row["id"],),
+                        )
+                    ),
+                }
+                for row in rows
+            )
 
     @goal_storage_operation
     def set_status(self, workflow_id, *, status, expected_control_revision):

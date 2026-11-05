@@ -29,6 +29,7 @@ if TYPE_CHECKING:
         WorkflowDecision,
         WorkflowRequest,
         WorkflowRuntimeSnapshot,
+        WorkflowSetup,
         WorkflowSnapshot,
     )
 
@@ -2121,18 +2122,25 @@ class ConsoleWorkflowCoordinator:
             raise cancellation
 
     async def start(
-        self, request: WorkflowRequest, *, launch_id: str
+        self, request: WorkflowRequest | WorkflowSetup, *, launch_id: str
     ) -> WorkflowSnapshot:
         """Accept the exact immutable request through original native planning."""
         from tldw_chatbook.Agents.workflow_models import (
             WorkflowPhaseAttempt,
             WorkflowRequest,
+            WorkflowSetup,
         )
 
         from .console_workflow_preparation import prepare_workflow_planning
 
-        if type(request) is not WorkflowRequest:
-            raise TypeError("WorkflowRequest required")
+        if type(request) not in (WorkflowRequest, WorkflowSetup):
+            raise TypeError("WorkflowRequest or WorkflowSetup required")
+
+        if (
+            type(request) is WorkflowSetup
+            and WorkflowSetup.model_validate_json(request.canonical_json()) != request
+        ):
+            raise ValueError("invalid_workflow_setup")
 
         async def accept():
             import asyncio

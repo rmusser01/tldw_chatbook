@@ -10732,6 +10732,20 @@ ConsoleConversationActionMenu { width: $ds-conversation-menu-width; }
     ConsoleGoalHistory .goal-dialog-actions { height: $ds-control-height; }
     ConsoleGoalHistory .goal-dialog-action { width: $ds-width-fill; min-width: $ds-size-10; }
 
+
+ConsoleWorkflowSetup, ConsoleWorkflowStatus, ConsoleWorkflowHistory { align: center middle; }
+.workflow-dialog { width: $ds-size-90; max-width: $ds-width-full; height: $ds-percent-95; background: $ds-surface-raised; border: solid $ds-control-edge; padding: $ds-space-0 $ds-space-inset; }
+ConsoleWorkflowHistory > .workflow-dialog { width: $ds-size-76; height: $ds-height-auto; max-height: $ds-percent-90; }
+.workflow-dialog Static, .workflow-dialog Label { height: $ds-height-auto; }
+.workflow-scroll { height: $ds-height-fill; }
+.workflow-dialog .workflow-title { height: $ds-control-height-compact; text-overflow: ellipsis; text-style: $ds-text-strong; }
+#workflow-state { color: $ds-text-muted; }
+#workflow-accounting, #workflow-capture, #workflow-evidence { margin-bottom: $ds-space-stack; }
+.workflow-editor { height: $ds-textarea-min-height; }
+.workflow-actions { height: $ds-control-height; }
+.workflow-actions Button { width: $ds-width-fill; min-width: $ds-size-9; }
+#console-workflow-line { height: $ds-control-height-compact; width: $ds-width-full; border: none; text-align: left; }
+
 /* ===== MODULE: features/_console_prompts.tcss ===== */
 
 
