@@ -343,6 +343,11 @@ _BUDGETS: dict[str, tuple[str, int, int]] = {
     # rebase onto dev.
     # 2026-11-12, same waiver: re-measured on dev 4b90eb860b (24,524 lines);
     # this branch adds 44 lines and the one method above.
+    # TASK-36571.1, 2026-11-05: same waiver. The Agent section reads its open
+    # flag (the stored preference, then the fleet force-open) instead of the
+    # whole rail state, and the rail reads the workspace label alone: +17
+    # lines over dev 29592ecc9b's 24604 and two methods (the shared
+    # stored-preference read and the flag): 24616/741 -> 24621/743.
     "tldw_chatbook/UI/Screens/chat_screen.py": ("ChatScreen", 24568, 742),
     #: Added 2026-09 by the Library decomposition plan (PR 0b): this row was
     #: missing for the entire month in which library_screen.py tripled from
