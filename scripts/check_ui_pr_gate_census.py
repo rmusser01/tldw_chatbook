@@ -789,6 +789,9 @@ MINIMUM_FILES = 1396
 # files' test functions (by parameter where one ran over the 30 s per-entry
 # budget) at the tail. The floor is the measured entry count.
 MINIMUM_FILES = 1660
+# TASK-38740 (2026-11-05): append the narrow Settings sweep's six
+# (category, height) nodes at the tail.
+MINIMUM_FILES = 1666
 
 
 def read_census(path: Path) -> list[str]:

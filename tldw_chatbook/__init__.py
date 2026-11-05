@@ -112,6 +112,55 @@ def _install_textual_compatibility_shims() -> None:
             lambda self: self.content,
             lambda self, value: self.update(value),
         )
+    _install_zero_width_fold_guard()
+
+
+#: Marks the guarded ``Content._wrap_and_format`` (idempotent, detectable).
+ZERO_WIDTH_FOLD_GUARD = "_tldw_zero_width_fold_guard"
+
+
+def _install_zero_width_fold_guard() -> None:
+    """Crop instead of folding text at a zero fold width (TASK-38740).
+
+    Textual 8.2.8 folds a line with ``range(0, length, width)`` (no wrap) or
+    Rich's ``chop_cells`` (wrap), and both raise ``ValueError`` when the fold
+    width is 0. A Button's label hits it when its content box is exactly its
+    two ``line-pad`` cells, an OptionList option when its box is 0. In layout
+    that exits the app, and no stylesheet rule can rule the width out: a
+    grid's auto row ignores ``min-width`` and ``max-width: 100%`` follows a
+    2-cell parent. Every height and paint of a ``Content`` goes through this
+    one method, so only that exact width changes: it renders as
+    ``text-wrap: nowrap; text-overflow: clip``, one line cropped to the box.
+    ``text-overflow: ellipsis`` everywhere would also stop the raise, but in
+    this Textual a wrapped line then paints two cells wider than its widget
+    and shifts the rest of the row.
+    """
+    from textual.content import Content
+
+    upstream = Content._wrap_and_format
+    if getattr(upstream, ZERO_WIDTH_FOLD_GUARD, False):
+        return
+
+    def _wrap_and_format(
+        self,
+        width,
+        align="left",
+        overflow="fold",
+        no_wrap=False,
+        line_pad=0,
+        *args,
+        **kwargs,
+    ):
+        if overflow == "fold" and width == (0 if no_wrap else 2 * line_pad):
+            # One cropped line: a wrapped crop would add the line-pad on top.
+            overflow, no_wrap = "clip", True
+        return upstream(
+            self, width, align, overflow, no_wrap, line_pad, *args, **kwargs
+        )
+
+    setattr(_wrap_and_format, ZERO_WIDTH_FOLD_GUARD, True)
+    _wrap_and_format.__wrapped__ = upstream  # type: ignore[attr-defined]
+    Content._wrap_and_format = _wrap_and_format  # type: ignore[method-assign]
 
 
 __version__ = "0.2.3"

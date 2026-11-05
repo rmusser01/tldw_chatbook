@@ -2482,3 +2482,19 @@ The same current-dev integration retained a newer U report shortcut but initiall
 - In a test, wait for a settled condition rather than a fixed number of pauses: no batch open, no reconcile pending, and the witness unchanged across two pauses.
 - To test a "before the first paint" claim, queue the screen's tick ahead of the change with `loop.call_soon(screen._on_timer_update)`, instead of hoping load produces the interleaving.
 - A frame recorder patched onto `Screen._compositor_refresh` sees two calls for each tick that has both a layout and a repaint pending.
+
+## A Button label raises at two content cells, and no CSS rule fixes it without moving labels (TASK-38740, 2026-11-05)
+
+**Incident.** TASK-38710 crashed File Notes with `ValueError: range() arg 3 must not be zero`. Button's `line-pad: 1` a side leaves a fold width of 0 when the content box is 2 cells, and both Textual's no-wrap fold (`range(0, length, width)`) and Rich's `chop_cells` raise at 0. The audit first looked for Button rules with `min-width: 0`. The two crashes it then found on dev had no such rule: Settings' Workspaces row at 44 columns and Console behavior's jump button at 46. Both keep Textual's `min-width: 16`, but `max-width: 100%` of a 2-cell parent won, because max is applied after min. A grid's auto row ignores `min-width` as well. The Settings Theme list (an OptionList) raised the same way at a zero-width box.
+
+Two app-wide CSS fixes were then measured against dev:
+- `Button { text-overflow: ellipsis; }` stopped every raise. But in the wrap path Textual truncates a line that is not folded to the full content width and only then adds the line-pad. A word longer than the label budget painted two cells wider than its Button and shifted the rest of its row. The Research pane handles (`<---` in 4 cells) did this at every width, and 13 Settings buttons did below 62 columns.
+- Adding `text-wrap: nowrap` stopped that, but no-wrap ignores line-pad, so 2,013 of 4,610 painted labels at 211x44 and 235x52 moved one cell.
+
+The first overflow probe reported no overflow at all. `Strip.cell_length` gave the region width (4) for a strip whose text was 6 cells; `cell_len(strip.text)` found the overflows.
+
+**What to do.**
+- Do not fix this per rule or in CSS. The package's Textual shims guard `Content._wrap_and_format`, which every height and paint calls. At the zero fold width it renders one no-wrap, clipped line; every other width renders as upstream does (`Tests/Architecture/test_zero_width_fold_guard.py`).
+- To find a narrow-width crash, sweep each sub-view (each Settings category, each Library rail view) from about 100 columns down to 40, at heights 20 and 30. The default view of every destination, at heights 16 to 44, never reached it.
+- To check how wide a widget paints, measure `cell_len(line.text)` over its `render_lines` output, not `Strip.cell_length`.
+- Compare painted labels at wide sizes (211x44, 235x52). At 100x30 and 80x24, two dev runs of the same capture differed in 1,163 of 4,563 labels.
