@@ -2390,3 +2390,6 @@ Tests/UI/test_console_send_resend_guard.py::test_an_escaped_bang_chat_send_leave
 Tests/UI/test_console_send_resend_guard.py::test_a_held_enter_is_still_sent_when_the_composer_is_cleared_after_it
 Tests/UI/test_console_send_resend_guard.py::test_an_enter_is_still_sent_when_the_composer_is_cleared_before_it_starts
 Tests/UI/test_console_send_resend_guard.py::test_an_enter_never_resends_a_draft_a_spoken_send_took_before_a_clear
+# TASK-38745: the pending-fragment display-owner refusals, after a rail sync
+# that rendered (the setup retries a deferred one); ~20-26 s serially.
+Tests/UI/test_console_pending_display_owner_controls.py
