@@ -34,6 +34,7 @@ from .local_control_service import (
 )
 from .local_control_service import (
     LocalMCPControlService,
+    _default_manifest_provider,
 )
 from .local_store import (
     _CONSOLE_STANDARD_BODY_BINDINGS as _local_store_bodies,
@@ -705,6 +706,139 @@ async def capture_console_definition_maximum(
                 type(exc).__name__,
             )
             return {}
+
+
+#: The stock readers a run-start catalog fingerprint calls (TASK-33620.15.38).
+_FINGERPRINT_READERS = (
+    (LocalMCPControlService, ("catalog_fingerprint", "_catalog_fingerprint_sources")),
+    (LocalMCPStore, ("catalog_fingerprint",)),
+    (MCPPermissionStore, ("catalog_fingerprint",)),
+)
+_LISTING_ACTIONS = ("mcp.external_profiles.list.local", "mcp.inventory.list.local")
+
+
+def _stock_fingerprint_sources(service, local, store, permission) -> bool:
+    """Only the stock readers leave the loop; custom ones keep their route."""
+    receivers = {
+        LocalMCPControlService: local,
+        LocalMCPStore: store,
+        MCPPermissionStore: permission,
+    }
+    return (
+        type(service) is UnifiedMCPControlPlaneService
+        and type(local) is LocalMCPControlService
+        and type(store) is LocalMCPStore
+        and type(permission) is MCPPermissionStore
+        and local.manifest_provider is _default_manifest_provider
+        and all(
+            _original_class_member(owner, name)
+            and _original_bound_method(receivers[owner], name, owner)
+            for owner, names in _FINGERPRINT_READERS
+            for name in names
+        )
+    )
+
+
+class _CapturedFingerprint:
+    """One run start's exact fingerprint sources, for one worker read.
+
+    The worker runs the loop route's own reads (each store's admission-checked
+    ``catalog_fingerprint`` and the built-in manifest's source) on the
+    receivers captured here. While it reads, the loop runs, so the loop checks
+    after the hop that the service still selects exactly these receivers: a
+    replaced or rebound source fails the check, as a changed store selection
+    fails a read.
+    """
+
+    def __init__(self, service, local, store, permission):
+        self.service = service
+        self.local = local
+        self.store = store
+        self.permission = permission
+        self.policy = local.policy_enforcer
+        self.identities = self._identities()
+
+    def _identities(self):
+        return (_source_identity(self.store), _source_identity(self.permission))
+
+    def require_current(self):
+        if not (
+            self.service.local_service is self.local
+            and self.service._permission_store is self.permission
+            and self.local.store is self.store
+            and self.local.policy_enforcer is self.policy
+            and _stock_fingerprint_sources(
+                self.service, self.local, self.store, self.permission
+            )
+            and self._identities() == self.identities
+        ):
+            raise RecoveryRequired("mcp_source_selection_changed")
+
+    def read_fingerprint_sources(self):
+        """The permission store's identity, then the local service's reads."""
+        return (
+            self.permission.catalog_fingerprint(),
+            self.local._catalog_fingerprint_sources(),
+        )
+
+
+def _capture_fingerprint(service, local, permission) -> _CapturedFingerprint | None:
+    """The stock, installed sources' capture; None keeps the loop route."""
+    store = getattr(local, "store", None)
+    if not _stock_fingerprint_sources(service, local, store, permission):
+        return None
+    try:
+        return _CapturedFingerprint(service, local, store, permission)
+    except RecoveryRequired:  # A store with no installed binding.
+        return None
+
+
+def _require_listing(local) -> None:
+    for action in _LISTING_ACTIONS:
+        local._require_allowed(action)
+
+
+async def read_run_catalog_fingerprint(service, profiles: tuple = ()) -> tuple:
+    """``UnifiedMCPControlPlaneService.run_catalog_fingerprint``'s reads.
+
+    TASK-33620.15.38: at load1 99-127 the fingerprint's recovery-activation
+    checks (storage admission and generation witnesses inside each store
+    read's binding check) held run start's longest UI-loop callback for
+    100-200 ms on 8-12 ms of CPU: the loop waited to be scheduled again after
+    each syscall. Stock, installed sources are now read on one owned worker,
+    the reads unchanged. The governance checks and the connection states stay
+    on the loop: governance before the hop (a refused listing reads nothing,
+    as before) and again after it, and the receivers are re-checked, so the
+    reuse decision that follows in the same loop turn sees what it saw when
+    the whole check ran on the loop.
+
+    Custom readers (a plugin or test double) and uninstalled stores keep the
+    loop route: each store read in its own loop turn (TASK-33620.15.5). Both
+    routes yield first: a Console provider entry reads the response rules'
+    bindings just before this (TASK-33620.15.8).
+
+    Args:
+        service: The unified MCP service.
+        profiles: ``(profile_id, plugin_owned)`` pairs whose connection
+            state to include.
+
+    Returns:
+        ``(permission identity, (store identity, manifest identity,
+        connection states))``, as the loop route returns it.
+    """
+    await asyncio.sleep(0)
+    permission = service.permission_store
+    local = service.local_service
+    captured = _capture_fingerprint(service, local, permission)
+    if captured is None:
+        fingerprint = None if permission is None else permission.catalog_fingerprint()
+        await asyncio.sleep(0)
+        return (fingerprint, local.catalog_fingerprint(profiles))
+    _require_listing(local)
+    fingerprint, sources = await _owned_worker(captured.read_fingerprint_sources)
+    captured.require_current()
+    _require_listing(local)
+    return (fingerprint, (*sources, local.connection_states(profiles)))
 
 
 def _capture_controller_inputs(function):

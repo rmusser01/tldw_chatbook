@@ -2490,21 +2490,18 @@ class UnifiedMCPControlPlaneService:
         permission store's and the local service's admission-checked
         identities (a refusal raises, as the composition's reads would).
 
-        Each store read is its own storage-admission scope, and a Console run
-        start makes them on the UI loop, so the loop gets a turn between them
-        (TASK-33620.15.5), and before the first: a Console provider entry
-        reads the response rules' bindings just before it calls this, and the
-        two reads shared run start's longest callback (TASK-33620.15.8).
+        Stock sources are read on one owned worker, off the UI loop
+        (TASK-33620.15.38); custom readers keep the loop, a turn between the
+        store reads (TASK-33620.15.5). See
+        ``console_snapshot.read_run_catalog_fingerprint``.
 
         Args:
             profiles: ``(profile_id, plugin_owned)`` pairs whose connection
                 state to include (the servers a cached composition used).
         """
-        await asyncio.sleep(0)
-        store = self.permission_store
-        permission = None if store is None else store.catalog_fingerprint()
-        await asyncio.sleep(0)
-        return (permission, self.local_service.catalog_fingerprint(profiles))
+        from .console_snapshot import read_run_catalog_fingerprint
+
+        return await read_run_catalog_fingerprint(self, profiles)
 
     # ---- Typed tool-execution seam (Phase 3) ---------------------------
     # Shared by the Hub Tools mode now and by the Phase 5 chat bridge /
