@@ -741,6 +741,62 @@ async def test_console_system_prompt_modal_save_to_library_missing_name_shows_in
         )
 
 
+@pytest.mark.asyncio
+async def test_second_save_to_library_press_cannot_cancel_an_in_flight_save():
+    """A second Save to Library press while the first save runs is ignored.
+
+    The scope service runs a local write in a thread (TASK-38686), so the
+    save worker suspends mid-write. Its exclusive restart used to cancel it
+    after the write landed, dropping its outcome copy and saving again. Both
+    presses show "Saving…", and when the name field changed meanwhile, the
+    outcome names the prompt that was saved.
+    """
+    import asyncio
+
+    from textual.app import App
+
+    from tldw_chatbook.Widgets.Console.console_system_prompt_modal import (
+        ConsoleSystemPromptModal,
+    )
+
+    entered, release = asyncio.Event(), asyncio.Event()
+    calls = []
+
+    async def held_save(name, text):
+        calls.append(name)
+        entered.set()
+        await release.wait()
+        return "Saved."
+
+    modal = ConsoleSystemPromptModal(
+        system_prompt="Be formal.", save_to_library=held_save
+    )
+
+    class Host(App):
+        def on_mount(self):
+            self.push_screen(modal)
+
+    async with Host().run_test() as pilot:
+        await pilot.pause()
+        name = modal.query_one(f"#{NAME_INPUT_ID}", Input)
+        name.value = "Formal Tone"
+        button = modal.query_one(f"#{SAVE_LIBRARY_BUTTON_ID}", Button)
+        status = modal.query_one(f"#{SAVE_STATUS_ID}", Static)
+        button.press()
+        await asyncio.wait_for(entered.wait(), 5)
+        assert _static_plain_text(status) == "Saving…"
+        name.value = "Formal Tone v2"
+        button.press()
+        await pilot.pause()
+        assert _static_plain_text(status) == "Saving…"
+        release.set()
+        await pilot.app.workers.wait_for_complete()
+        await pilot.pause()
+        assert calls == ["Formal Tone"]
+        # The field now names another prompt, so the outcome names what saved.
+        assert _static_plain_text(status) == 'Prompt "Formal Tone": Saved.'
+
+
 # ---------------------------------------------------------------------------
 # Persistence: applying to an already-saved conversation persists it.
 # ---------------------------------------------------------------------------

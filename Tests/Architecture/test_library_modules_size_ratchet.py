@@ -820,7 +820,14 @@ _BUDGETS: dict[str, int] = {
     # cousin" framing (the getattr/focused escape is that shape's own
     # sub-case -- the seventh instance counted under it -- not an eighth/
     # new shape), +3 lines. Net 3140 -> 3142.
-    "tldw_chatbook/UI/Library_Modules/library_skills_controller.py": 3142,
+    #
+    # 2026-11-04, TASK-38699 (owner size waiver, 2026-10-31): re-pinned to the
+    # measured size. Three commits of 2026-10-31 grew it with the row left at
+    # 3142: a61b917479 (reviewed plugin lifecycle UI, +23), c450b0d351
+    # (refresh blocked Skills rows after a trust Retry, +3) and c7b80bbf5a
+    # (keep the pending Skills filter when that Retry completes, +3). No lane
+    # ran this row, so dev carried the red. 3142 -> 3171.
+    "tldw_chatbook/UI/Library_Modules/library_skills_controller.py": 3171,
 }
 
 #: Loose on purpose (see `test_screen_size_ratchet.py`'s own 200-line

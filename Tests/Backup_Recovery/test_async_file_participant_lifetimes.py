@@ -384,7 +384,10 @@ async def test_startup_native_exclusion_and_pending_cover_event_loop_bookkeeping
 async def test_actual_composer_recall_cancels_warm_load_without_retiring_native(
     installed_history, monkeypatch
 ):
+    from types import SimpleNamespace
+
     from textual.app import App
+    from tldw_chatbook.Chat import prompt_history
     from tldw_chatbook.Widgets.Console.console_composer_bar import ConsoleComposerBar
 
     history = installed_history
@@ -400,7 +403,9 @@ async def test_actual_composer_recall_cancels_warm_load_without_retiring_native(
             assert finish.wait(8)
         return original(value, *args, **kwargs)
 
-    monkeypatch.setattr(json, "loads", gated)
+    monkeypatch.setattr(
+        prompt_history, "json", SimpleNamespace(**{**vars(json), "loads": gated})
+    )
     composer = ConsoleComposerBar()
     composer.set_prompt_history(history)
 

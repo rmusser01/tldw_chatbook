@@ -587,7 +587,8 @@ def _ordering_problems(
     return problems
 
 
-def test_base_class_blocks_precede_their_subclasses():
+@private_profile_test
+def test_base_class_blocks_precede_their_subclasses(request):
     """Base-class CSS must be emitted before a subclass's, as Textual ordered it.
 
     Textual gave each class's own ``DEFAULT_CSS`` tie-breaker 0 and its bases
@@ -616,6 +617,31 @@ def test_base_class_blocks_precede_their_subclasses():
         pairs, [("self", self_order), ("scoped", scoped_order)]
     )
     assert not problems, "\n".join(problems)
+
+
+@private_profile_test
+def test_iter_blocks_emits_every_base_before_its_subclasses(request, tmp_path):
+    """The build orders blocks base-first, not only by module path (TASK-38697).
+
+    Path order put ``UI/Kanban/kanban_board_screen.py``'s KanbanBoardScreen
+    ahead of its base in ``UI/Navigation/base_app_screen.py``. ``Sub`` reaches
+    ``Base`` through ``Mid``, which bundles no CSS; ``Other`` is unrelated and
+    keeps its path slot.
+    """
+    (tmp_path / "a_sub.py").write_text(
+        "from b_base import Base\n\n"
+        "class Mid(Base):\n    pass\n\n"
+        "class Sub(Mid):\n    BUNDLED_CSS = 'Sub { width: 1; }'\n",
+        encoding="utf-8",
+    )
+    (tmp_path / "a_unrelated.py").write_text(
+        "class Other:\n    BUNDLED_CSS = 'Other { width: 2; }'\n", encoding="utf-8"
+    )
+    (tmp_path / "b_base.py").write_text(
+        "class Base:\n    BUNDLED_CSS = 'Base { width: 3; }'\n", encoding="utf-8"
+    )
+    blocks = widget_css.iter_blocks(tmp_path, widget_css.WIDGET_ATTR)
+    assert [block.class_name for block in blocks] == ["Other", "Base", "Sub"]
 
 
 def test_ordering_check_catches_a_cross_stream_conflation_the_old_index_missed():

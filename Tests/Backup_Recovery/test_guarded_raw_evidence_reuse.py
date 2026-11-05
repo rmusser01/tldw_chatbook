@@ -16,6 +16,7 @@ from Tests.Backup_Recovery.test_admission_evidence_reuse import (
     _Tracer,
 )
 from Tests.Backup_Recovery.test_bootstrap import local_scope  # noqa: F401
+from Tests.Backup_Recovery.test_mcp_source_lifetimes import _scope_loads
 from Tests.Backup_Recovery.test_mcp_source_lifetimes import mcp_sources  # noqa: F401
 from Tests.Backup_Recovery.test_participant_lifetimes import local_root  # noqa: F401
 from tldw_chatbook.Backup_Recovery import bootstrap, generation_witnesses
@@ -896,7 +897,7 @@ def test_actual_permission_parse_pause_matches_original_refusal(
 
     before = source.path.read_bytes()
     monkeypatch.setattr(storage, "_EVIDENCE_REUSE", reuse)
-    monkeypatch.setattr(json, "loads", parse_then_pause)
+    _scope_loads(monkeypatch, parse_then_pause)
     try:
         with pytest.raises(bootstrap.RecoveryRequired) as refusal:
             source.set_kill_switch(True)

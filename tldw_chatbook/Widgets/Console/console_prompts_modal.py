@@ -256,6 +256,7 @@ class ConsolePromptsModal(
         super().__init__(**kwargs)
         self._mixin_generation = 0
         self._mixin_flow = mixin_flow
+        self._mixin_save_worker = None
         self._capabilities = capabilities
         self._list_page = list_page
         self._search = search
@@ -526,11 +527,28 @@ class ConsolePromptsModal(
             if preferences is not None:
                 view.restore_enabled(preferences)
 
+    def _mixin_save_in_flight(self) -> bool:
+        """Whether a mix-in Save is still running (TASK-38686).
+
+        Its write runs in a thread. Save and Preview start exclusive
+        "console-mixins" workers, which would cancel it after the write lands
+        and skip the preference reconcile and the editor's saved state.
+        """
+        worker = self._mixin_save_worker
+        return worker is not None and not worker.is_finished
+
+    def _show_mixin_saving(self) -> None:
+        views = self.query(ConsolePromptMixinsView)
+        if views:
+            views.first().show_status("Saving Library changes…")
+
     @on(ConsolePromptMixinsView.SaveRequested)
     def _mixins_save(self) -> None:
-        self.run_worker(
-            self._save_mixin_editor(), exclusive=True, group="console-mixins"
-        )
+        if not self._mixin_save_in_flight():
+            self._mixin_save_worker = self.run_worker(
+                self._save_mixin_editor(), exclusive=True, group="console-mixins"
+            )
+        self._show_mixin_saving()
 
     async def _save_mixin_editor(self) -> None:
         from ..Prompts.prompt_mixin_editor import PromptMixinEditor
@@ -574,6 +592,9 @@ class ConsolePromptsModal(
 
     @on(ConsolePromptMixinsView.PreviewRequested)
     def _mixins_preview(self) -> None:
+        if self._mixin_save_in_flight():
+            self._show_mixin_saving()
+            return
         self.run_worker(self._preview_mixins(), exclusive=True, group="console-mixins")
 
     async def _preview_mixins(self) -> None:

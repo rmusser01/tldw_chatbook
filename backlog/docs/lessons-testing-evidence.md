@@ -1,5 +1,24 @@
 # Lessons: what counts as evidence a change works
 
+## Two overlapping SQLite writers get a lock error before any version check runs (TASK-38686, 2026-11-04)
+
+**Incident.** `test_concurrent_updates_to_same_prompt` started two threads behind a barrier and expected one of them to hit a version conflict. Its rewrite passed both writers the same `expected_version`. Even so, a 300-round probe at load 34 gave a version conflict in only 106 rounds. In 186 rounds the loser got `DatabaseError: ... database is locked` instead.
+- `update_prompt_by_id` used a deferred `BEGIN`, which takes its read snapshot at the SELECT.
+- The upgrade to write while the winner held the lock then returned plain SQLITE_BUSY (5).
+- The product mapped only SQLITE_BUSY_SNAPSHOT (517, 8 rounds) to `ConflictError`.
+
+The 2025 test had passed only because it counted "locked" as a conflict. The fix made the update `BEGIN IMMEDIATE`, so the loser waits on the 10 s busy timeout and then fails the version check: 300 of 300 rounds gave one success and one `ExpectedVersionConflictError`.
+
+**What to do.**
+- In a race test against a WAL database with deferred transactions, the barrier decides which mechanism refuses the loser, the lock or the version check, so the test pins neither.
+- A version-checked read-modify-write needs an IMMEDIATE transaction for its check to decide the race.
+- A read-modify-write without a caller-supplied version, such as `add_prompt(overwrite=True)`, becomes last-writer-wins under IMMEDIATE: both overlapping saves land in order. Write that outcome, not a conflict, into its criteria.
+- To pin that, hold the first writer inside its transaction after its write while the second starts. `test_overlapping_saves_of_one_opened_version_end_in_one_conflict` wraps `_log_sync_event` to do this. It is red every time with a deferred BEGIN.
+- Probe a few hundred rounds under load before trusting 10 green runs.
+- Expect a test that injects a second writer from a trace callback inside the first writer's transaction to wait out the busy timeout once the first holds the lock from BEGIN.
+- IMMEDIATE turns an instant SQLITE_BUSY into a wait of up to the 10 s busy timeout (in review, 2.08 s behind a 2 s holder). Move any caller that runs the write on the UI event loop to a worker thread, as the Console mix-in Save needed (AC#5).
+- Once the write runs in a thread, its worker suspends mid-write. An exclusive worker group restarted by a second press then cancels it after the write lands, skipping the follow-up steps. Ignore the press while the save runs.
+
 ## A real key during an armed unknown-command send disarms it, so the send never reaches the checks after the skill await (TASK-38689, 2026-11-03)
 
 **Incident.** To pin that a spoken "Console, send." edited after its capture is sent, not refused with "Draft changed; Send again.", the first test held the second send of an armed `/nosuchcommand` in its skill-context read and pressed "x" through the driver. On dev it was red, `['Not sent.'] == ['Sent.']`, so it looked like the refusal. But its notices list was empty. The key changed the composer's hidden compatibility `Input` (`#console-command-input`), whose `Input.Changed` ran `ChatScreen._on_console_composer_draft_changed` while the read was still pending. That handler clears `_console_unknown_send_armed` on every draft change. So the send showed the unknown-command hint again and returned before `wiring.receive_console_visible_intent`. The fix could not have turned it green. Landing the edit with `composer.insert_text("x")` as the held read returns (no await before the wiring check, so that handler has not run) reached the check: red on dev with `['Draft changed; Send again.']`, green with the fix.
@@ -1205,6 +1224,8 @@ Separately, a diagnostic wrapper on `ChatScreen._sync_native_console_chat_ui` ma
 **Incident.** `test_probe_handles_recursive_json_as_bounded_failure` did `monkeypatch.setattr(local_discovery_module.json, "loads", stub)`. `local_discovery_module.json` is the stdlib module, so that replaced `json.loads` for the whole process. The probe's storage admission then read its control records with `json.loads(data, object_pairs_hook=...)` and failed with `TypeError` before the probe body ran. Replacing the module's own name (`monkeypatch.setattr(module, "json", SimpleNamespace(loads=stub))`) scoped the fake to the code under test. Four other suites used the same global pattern, with one-argument stubs; TASK-36533 moved them and `Tests/LLM_Provider_Catalog/test_model_discovery_disk_cache.py` to the module-scoped form (2026-11-03). Following this entry literally there, `SimpleNamespace(loads=stub)` in `test_sync_crypto.py` failed with `AttributeError: ... no attribute 'JSONDecodeError'`: `crypto.py`'s `except (..., json.JSONDecodeError, ...)` is evaluated when the stub's `RuntimeError` passes through it.
 
 **What to do.** Fake a stdlib function a module imported as a module by replacing the module's binding, not an attribute on the shared stdlib module. The fake stands in for the whole module there, so give it every other name that module reads from it (`grep -o 'json\.[A-Za-z_]*' module.py`), `JSONDecodeError` included.
+
+TASK-38685 (2026-11-03) moved the last nine sites. Two of them, the execution-log "no reparse" counters, had been red on dev the whole time: the process-wide counter also counted 115 storage-admission parses from other modules (`assert 115 == 0`). Scoped to `execution_log`, both passed. `SimpleNamespace(**{**vars(json), "loads": stub})` carries every `json` name, so there is no list to get wrong. `Tests/CI/test_json_loads_patch_guard.py` (fast PR lane) now fails on any new process-wide `json.loads` patch under `Tests/`.
 
 ## A Console focus precondition can hold only because the activation restore got there first (TASK-33620.15.8, 2026-10-23)
 

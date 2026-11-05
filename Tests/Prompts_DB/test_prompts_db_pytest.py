@@ -367,7 +367,12 @@ class TestPromptOperations:
     def test_busy_snapshot_from_a_second_writer_is_reported_as_conflict(
         self, temp_db_path
     ):
-        """A WAL snapshot race raises ConflictError and leaves the winner intact."""
+        """A WAL snapshot race raises ConflictError and leaves the winner intact.
+
+        update_prompt_by_id begins IMMEDIATE (TASK-38686), so on its own a
+        second writer waits for it instead. The race remains inside a caller's
+        own deferred transaction, which the update joins without a BEGIN.
+        """
         first = PromptsDatabase(temp_db_path, client_id="writer-one")
         second = PromptsDatabase(temp_db_path, client_id="writer-two")
         try:
@@ -397,11 +402,15 @@ class TestPromptOperations:
             )
             try:
                 with pytest.raises(ConflictError, match="version race"):
-                    first.update_prompt_by_id(
-                        prompt_id,
-                        {"details": "stale writer", "user_prompt": "must not persist"},
-                        expected_version=expected_version,
-                    )
+                    with first.transaction():
+                        first.update_prompt_by_id(
+                            prompt_id,
+                            {
+                                "details": "stale writer",
+                                "user_prompt": "must not persist",
+                            },
+                            expected_version=expected_version,
+                        )
             finally:
                 first.get_connection().set_trace_callback(None)
 

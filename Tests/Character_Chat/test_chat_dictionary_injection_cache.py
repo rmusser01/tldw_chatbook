@@ -20,8 +20,10 @@ Three layers of evidence, mirroring the world-info cache tests:
 """
 
 import asyncio
+import json
 import re
 from datetime import datetime, timedelta
+from types import SimpleNamespace
 
 import pytest
 
@@ -859,14 +861,16 @@ def test_apply_entries_none_keeps_the_collecting_path(dict_db, monkeypatch):
 def _spy_entries_json_loads(monkeypatch):
     """Count json.loads calls whose payload is an entries JSON array."""
     spy = _Spy()
-    orig = cdl.json.loads
+    orig = json.loads
 
     def wrapper(s, *a, **k):
         if isinstance(s, str) and s[:1] == "[":
             spy.count += 1
         return orig(s, *a, **k)
 
-    monkeypatch.setattr(cdl.json, "loads", wrapper)
+    monkeypatch.setattr(
+        cdl, "json", SimpleNamespace(**{**vars(json), "loads": wrapper})
+    )
     return spy
 
 
