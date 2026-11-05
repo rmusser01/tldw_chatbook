@@ -35,6 +35,20 @@ from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
 
 pytestmark = [pytest.mark.asyncio, pytest.mark.bootstrap_profile]
 
+#: TASK-38718: run feedback is the status line's "run" segment since
+#: TASK-35160 (c5ceca1247) retired the run chip and the Status collapsible.
+_RUN_FEEDBACK = "#console-status-text"
+
+
+def _run_segment(console) -> tuple[bool, str]:
+    """Whether the status line shows the run segment, and its text."""
+    from tldw_chatbook.Widgets.Console.console_status_chips import (
+        ConsoleStatusChips,
+    )
+
+    strip = console.query_one("#console-status-chips", ConsoleStatusChips)
+    return strip.segment_visible("run"), strip.segment_text("run")
+
 
 @pytest.mark.parametrize("route", ["enter", "send-button"])
 async def test_actual_send_receives_intent_before_original_configuration_read(
@@ -79,7 +93,7 @@ class _NaturalPreparingFrame:
         if parent is None:
             return
         button = self.case.console.query_one("#console-send-message", Button)
-        chip = self.case.console.query_one("#console-run-chip")
+        chip = self.case.console.query_one(_RUN_FEEDBACK)
         if self.feedback_frame_at is None and _update_contains(
             frame.f_locals.get("renderable"), chip.region, "Sending"
         ):
@@ -772,29 +786,24 @@ class _NaturalRunFeedbackFrames(_NaturalPreparingFrame):
             parent = parent.f_back
         if parent is None:
             return
-        for selector in ("#console-run-chip", "#console-status-collapsed-copy"):
-            widget = self.case.console.query_one(selector)
-            for marker in ("Sending", "Waiting for reply", "Thinking", "Streaming"):
-                if _update_contains(
-                    frame.f_locals.get("renderable"), widget.region, marker
-                ):
-                    entry = (marker, selector)
-                    if not self.frames or self.frames[-1] != entry:
-                        self.frames.append(entry)
+        widget = self.case.console.query_one(_RUN_FEEDBACK)
+        for marker in ("Sending", "Waiting for reply", "Thinking", "Streaming"):
+            if _update_contains(frame.f_locals.get("renderable"), widget.region, marker):
+                entry = (marker, _RUN_FEEDBACK)
+                if not self.frames or self.frames[-1] != entry:
+                    self.frames.append(entry)
 
 
-@pytest.mark.parametrize("route,collapsed", [("enter", False), ("send-button", True)])
-async def test_send_feedback_survives_preparation_and_provider_wait(
-    route, collapsed, monkeypatch
-):
-    """Only the external adapter is held; admission and saving stay real."""
-    from tldw_chatbook.Widgets.Console.console_status_chips import ConsoleStatusChips
+@pytest.mark.parametrize("route", ["enter", "send-button"])
+async def test_send_feedback_survives_preparation_and_provider_wait(route, monkeypatch):
+    """Only the external adapter is held; admission and saving stay real.
 
+    TASK-38718: the collapsed-Status arm is retired with the Status
+    collapsible (TASK-35160); the status line is always shown.
+    """
     async with _received_console_case(
         monkeypatch, f"progress-{route}", durable=True
     ) as case:
-        chips = case.console.query_one("#console-status-chips", ConsoleStatusChips)
-        chips.set_collapsed(collapsed)
         entered, release = threading.Event(), threading.Event()
 
         def reply(**kwargs):
@@ -816,9 +825,7 @@ async def test_send_feedback_survives_preparation_and_provider_wait(
 
         monkeypatch.setattr("tldw_chatbook.Chat.Chat_Functions.chat_api_call", reply)
         frames = _NaturalRunFeedbackFrames(case)
-        selector = (
-            "#console-status-collapsed-copy" if collapsed else "#console-run-chip"
-        )
+        selector = _RUN_FEEDBACK
         with frames.installed():
             try:
                 _send(case, route)
@@ -831,16 +838,15 @@ async def test_send_feedback_survives_preparation_and_provider_wait(
                 ), frames.frames
                 feedback = case.console.query_one(selector)
                 assert feedback.display and feedback.parent.display
-                assert "Waiting for reply" in str(feedback.render())
+                shown, text = _run_segment(case.console)
+                assert shown and "Waiting for reply" in text, text
                 assert not release.is_set()
                 assert case.composer.draft_text() == ""
                 release.set()
                 assert await _until(
                     lambda: not case.runtime.has_custodied_turns(case.session.id), 15
                 )
-                assert await _until(
-                    lambda: not case.console.query_one("#console-run-chip").display, 5
-                )
+                assert await _until(lambda: not _run_segment(case.console)[0], 5)
                 assert len(case.provider_calls) == 1
                 assert any(
                     message.role.value == "assistant"
@@ -849,14 +855,6 @@ async def test_send_feedback_survives_preparation_and_provider_wait(
                     for message in case.store.messages_for_session(case.session.id)
                 )
                 assert case.store.received_turn_for_session(case.session.id) is None
-                assert (
-                    str(
-                        case.console.query_one(
-                            "#console-status-collapsed-copy"
-                        ).render()
-                    )
-                    == "Status hidden"
-                )
             finally:
                 release.set()
                 case.probe.release.set()
@@ -868,17 +866,13 @@ async def test_stopping_received_send_clears_feedback_and_keeps_draft(monkeypatc
         with frames.installed():
             _send(case, "enter")
             await _held_received_record(case)
-            assert await _until(
-                lambda: ("Sending", "#console-run-chip") in frames.frames, 2
-            )
+            assert await _until(lambda: ("Sending", _RUN_FEEDBACK) in frames.frames, 2)
             case.controller.stop_active_run()
             case.probe.release.set()
             assert await _until(
                 lambda: not case.runtime.has_custodied_turns(case.session.id), 15
             )
-            assert await _until(
-                lambda: not case.console.query_one("#console-run-chip").display, 5
-            )
+            assert await _until(lambda: not _run_segment(case.console)[0], 5)
             assert case.composer.draft_text() == case.draft
             assert case.store.session_draft(case.session.id) == case.draft
             assert case.provider_calls == []

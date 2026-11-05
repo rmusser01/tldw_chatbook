@@ -376,6 +376,87 @@ async def test_opening_after_a_collapsed_refresh_shows_its_chats_without_refresh
         assert rail._active_section_id == "character"
 
 
+async def test_a_screen_tick_queued_before_the_opening_paints_no_old_chats(
+    monkeypatch,
+) -> None:
+    """TASK-38698: the deferred render lands before the opening's first paint.
+
+    The disclosure starts the render as an asyncio task and shows the body at
+    once. A screen tick already woken in the same loop pass (TASK-38650: the
+    screen's idle resumed the update timer, and ``Timer.pause()`` cannot stop
+    a woken tick) runs before that task enters its recompose's batch. The
+    ``call_soon`` below queues that tick, with a layout pending.
+    """
+    from Tests.UI.test_console_composer_run_controls import _wait_for
+    from Tests.UI.test_console_left_rail import make_console_pilot
+
+    revision = [7]
+    _install_loading_controller(monkeypatch, revision)
+    async with make_console_pilot(size=(160, 45)) as pilot:
+        screen = pilot.app.screen
+        controller = screen._character_context
+        await _collapse_loaded_character_section(pilot)
+        browser = screen.query_one(ConsoleCharacterContext)
+        revision[0] = 8
+        assert await character_presentation_work(controller, screen) is True
+        await pilot.pause(0.3)
+        assert browser._render_deferred, "precondition: a snapshot waits to render"
+
+        painted: list[list[str]] = []
+        paint = Screen._compositor_refresh
+
+        def recorded_paint(painting: Screen) -> None:
+            if painting is screen:
+                painted.append(
+                    [
+                        str(widget.label)
+                        for widget in painting._compositor.widgets
+                        if isinstance(widget, CharacterConversationButton)
+                    ]
+                )
+            return paint(painting)
+
+        monkeypatch.setattr(Screen, "_compositor_refresh", recorded_paint)
+        asyncio.get_running_loop().call_soon(screen._on_timer_update)
+        screen.refresh(layout=True)
+        screen._toggle_console_rail_section("character", next_open=True)
+        await _wait_for(
+            pilot,
+            lambda: any(
+                "Chat r8-2" in str(button.label)
+                for button in browser.query(".console-character-row")
+            ),
+            "the opened section never showed the newest chats",
+        )
+        await pilot.pause(0.1)
+        opened = [frame for frame in painted if frame]
+        assert opened, "the opening painted no Character rows"
+        stale = [frame for frame in opened if any("Chat r7-" in t for t in frame)]
+        assert stale == [], f"{len(stale)} of {len(opened)} frames painted old chats"
+        assert screen.app._batch_count == 0, "the opening left paints held"
+
+
+async def test_opening_with_nothing_deferred_holds_no_paints(monkeypatch) -> None:
+    """TASK-38698 review: an opening with no deferred snapshot releases at once.
+
+    The disclosure takes its paint hold before it knows whether a render
+    starts. When none does (the common case), it must end the hold before it
+    returns, not leave every paint waiting for the 1 s net.
+    """
+    from Tests.UI.test_console_composer_run_controls import _wait_for
+    from Tests.UI.test_console_left_rail import make_console_pilot
+
+    _install_loading_controller(monkeypatch, [7])
+    async with make_console_pilot(size=(160, 45)) as pilot:
+        screen = pilot.app.screen
+        await _collapse_loaded_character_section(pilot)
+        browser = screen.query_one(ConsoleCharacterContext)
+        assert not browser._render_deferred, "precondition: nothing waits to render"
+        await _wait_for(pilot, lambda: not pilot.app._batch_count, "a batch stayed open")
+        screen._toggle_console_rail_section("character", next_open=True)
+        assert pilot.app._batch_count == 0, "the opening left paints held"
+
+
 async def test_return_from_roleplay_keeps_focus_on_search_over_a_deferred_render(
     monkeypatch,
 ) -> None:

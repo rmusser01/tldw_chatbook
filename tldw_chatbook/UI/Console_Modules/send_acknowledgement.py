@@ -830,10 +830,12 @@ def _acknowledgement_laid_out(screen: Any, session_id: str) -> bool:
         if not screen.query_one(f"#console-message-{row_id}").region.area:
             return False
         chips = screen.query_one("#console-status-chips")
-        chip = chips.query_one("#console-run-chip")
+        line = chips.query_one("#console-status-text")
     except NoMatches:
         return False
-    return bool(chip.region.area) or bool(getattr(chips, "collapsed", False))
+    # TASK-38718: the run chip is the status line's "run" segment since
+    # TASK-35160; looking for the retired chip waited out every hop.
+    return bool(line.region.area) and chips.segment_visible("run")
 
 
 async def paint_acknowledgement(screen: Any, session_id: str) -> None:

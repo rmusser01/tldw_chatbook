@@ -2370,3 +2370,23 @@ Tests/UI/test_settings_category_sweep.py::test_narrow_settings_categories_lay_ou
 # TASK-38714: the owned AgentRunsDB keeps no worker-thread connection open
 # after the Settings ▸ Agents panel unmounts. Appended at the tail.
 Tests/UI/test_settings_agents_offloop_read.py::test_owned_runs_db_retires_every_worker_connection_at_unmount
+# TASK-38718 review (2026-11-05): the Console send resend guard (TASK-33620.15.2),
+# including the retire_captured_drafts pin, ran in no PR lane. The whole file
+# took 113-118 s serially (three runs, load 5-6), over the 30 s per-file budget,
+# so it enters as fifteen node entries, one per test: 5-15 s each serially
+# (a parametrized test's cases together). Appended at the tail, so no slot moves.
+Tests/UI/test_console_send_resend_guard.py::test_a_draft_sent_after_a_non_append_edit_says_it_was_sent
+Tests/UI/test_console_send_resend_guard.py::test_a_press_held_on_a_non_append_edit_of_a_sent_draft_is_not_sent
+Tests/UI/test_console_send_resend_guard.py::test_a_draft_sent_from_a_tab_left_during_admission_does_not_come_back
+Tests/UI/test_console_send_resend_guard.py::test_a_held_enter_never_resends_a_draft_a_spoken_send_took
+Tests/UI/test_console_send_resend_guard.py::test_an_enter_never_resends_a_draft_a_spoken_send_committed_meanwhile
+Tests/UI/test_console_send_resend_guard.py::test_enter_after_a_tab_round_trip_during_admission_sends_the_draft_once
+Tests/UI/test_console_send_resend_guard.py::test_a_press_refused_for_a_send_held_in_another_tab_names_that_tab
+Tests/UI/test_console_send_resend_guard.py::test_a_send_refused_while_another_tab_sends_names_that_tab
+Tests/UI/test_console_send_resend_guard.py::test_a_bare_second_enter_during_a_refused_send_is_not_refused_again
+Tests/UI/test_console_send_resend_guard.py::test_a_draft_cleared_while_it_is_sent_draws_no_was_sent_notice
+Tests/UI/test_console_send_resend_guard.py::test_a_hidden_chat_whose_draft_was_replaced_draws_no_was_sent_notice
+Tests/UI/test_console_send_resend_guard.py::test_an_escaped_bang_chat_send_leaves_the_composer
+Tests/UI/test_console_send_resend_guard.py::test_a_held_enter_is_still_sent_when_the_composer_is_cleared_after_it
+Tests/UI/test_console_send_resend_guard.py::test_an_enter_is_still_sent_when_the_composer_is_cleared_before_it_starts
+Tests/UI/test_console_send_resend_guard.py::test_an_enter_never_resends_a_draft_a_spoken_send_took_before_a_clear

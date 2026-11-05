@@ -43,6 +43,7 @@ from tldw_chatbook.Widgets.Console.console_bounded_section import (
 )
 from tldw_chatbook.Widgets.Console.console_inspector_section import (
     ConsoleInspectorSection,
+    ConsoleInspectorSectionRow,
     ConsoleInspectorSectionState,
     InspectorSectionRow,
 )
@@ -321,6 +322,69 @@ async def test_the_held_rebuild_lands_before_the_openings_first_paint(
     assert rebuilt != held_rows
     assert opening, "the opening painted no frame"
     assert set(opening) == {rebuilt}, opening
+
+
+async def test_the_inspectors_first_opening_paints_the_environment_rows_it_holds(
+    monkeypatch,
+) -> None:
+    """TASK-38698: the first opening paints the captured Environment rows at once.
+
+    No worker landing paints an unbound first open, so the opening lands the
+    controller's captured snapshot itself, after the rail's cascade has shown
+    the section. A changed row set queues a rebuild there. Nothing held paints
+    for it, so a screen tick queued before the opening (TASK-38650) painted the
+    section's compose-time body: its header and no rows. The section may not
+    carry the cascade's mark at all: under load the first rail sync can run
+    before the rail mounts its sections. Every frame here must paint exactly
+    the rows the section holds.
+    """
+    from Tests.UI.test_console_left_rail import make_console_pilot
+
+    async with make_console_pilot(size=(160, 45)) as pilot:
+        screen = pilot.app.screen
+        assert not screen.query_one("#console-right-rail").display, (
+            "precondition: the Inspector starts collapsed"
+        )
+        section = screen.query_one(
+            "#console-environment-section", ConsoleInspectorSection
+        )
+        # Only the opening's own landing may change the rows in this window:
+        # its refresh is skipped, and a poll landing (a later snapshot) ends
+        # the recording, since that one updates a section already shown.
+        environment = screen._console_environment
+        monkeypatch.setattr(environment, "notify_rail_opened", lambda: None)
+        captured = environment.snapshot
+        frames: list[tuple[tuple[str, ...], tuple[str, ...]]] = []
+        paint = Screen._compositor_refresh
+
+        def painted(painting) -> None:
+            shown = painting._compositor.widgets
+            if (
+                painting is screen
+                and section in shown
+                and environment.snapshot is captured
+            ):
+                frames.append(
+                    (
+                        tuple(
+                            row.row_id
+                            for row in section.query(ConsoleInspectorSectionRow)
+                            if row in shown
+                        ),
+                        tuple(r.row_id for r in section.rows[: section.max_visible_rows]),
+                    )
+                )
+            return paint(painting)
+
+        monkeypatch.setattr(Screen, "_compositor_refresh", painted)
+        asyncio.get_running_loop().call_soon(screen._on_timer_update)
+        await screen.action_toggle_console_inspector_rail()
+        for _ in range(10):
+            await pilot.pause(0.05)
+        assert screen.app._batch_count == 0, "the opening left paints held"
+    assert frames, "the opening never painted the Environment section"
+    assert frames[-1][1], "precondition: the captured snapshot has rows"
+    assert all(shown == held for shown, held in frames), frames
 
 
 class _KeepAliveRailHost(_RailHost):

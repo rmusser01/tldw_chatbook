@@ -396,6 +396,44 @@ async def check_sending_row_before_admission(size: tuple[int, int]) -> None:
     assert len(gaps) <= 1, {"gaps": gaps, "context": timeline.gap_context}
 
 
+@pytest.mark.asyncio
+async def test_an_acknowledged_enter_dispatches_once_its_status_line_is_laid_out(
+    monkeypatch,
+):
+    """TASK-38718 review: the send waits for its acknowledgement, not every hop.
+
+    ``_acknowledgement_laid_out`` looked for the run chip TASK-35160 retired,
+    always missed it, and so every acknowledged Enter waited out all
+    ``_PAINT_HOPS`` frame-length hops before it dispatched. It now reads the
+    status line's run segment.
+    """
+    from tldw_chatbook.UI.Console_Modules import send_acknowledgement as module
+
+    checks: list[tuple[int, bool]] = []
+    laid_out = module._acknowledgement_laid_out
+    hop = module._dispatch_once_laid_out
+
+    def counted_hop(screen, session_id, dispatch, hops):
+        checks.append((hops, laid_out(screen, session_id)))
+        return hop(screen, session_id, dispatch, hops)
+
+    monkeypatch.setattr(module, "_dispatch_once_laid_out", counted_hop)
+    host, gateway, _timeline = build()
+    async with host.run_test(size=(160, 45)) as pilot:
+        with eager_tasks():
+            _console, _composer = await ready_console(host, pilot, gateway)
+            try:
+                press(host, "enter", "\r")
+                await until(gateway.validation_started.is_set)
+            finally:
+                gateway.validation_release.set()
+            await until(lambda: gateway.stream_calls == 1)
+            await pilot.pause()
+    assert checks, "the send never waited for its acknowledgement's layout"
+    hops, shown = checks[-1]
+    assert shown and hops < module._PAINT_HOPS, checks
+
+
 # -- the acknowledgement's own rules (no app) ---------------------------------
 
 

@@ -591,6 +591,7 @@ from ...Widgets.Console.console_inspector_section import (
     ConsoleInspectorSectionRow,
     ConsoleInspectorSectionState,
     hidden_by_console_rail,
+    hold_paints_until_rebuilt,
     set_display_under_console_rail,
 )
 from ...Widgets.Console.console_command_popup import ConsoleCommandPopup
@@ -12618,34 +12619,19 @@ class ChatScreen(BaseAppScreen):
             if controller is not None:
                 # With no workspace there will be no worker landing to paint
                 # the first-open empty state. Paint the captured state now.
+                # TASK-38698: a changed row set (a first open's compose-time
+                # rows) rebuilds now, after the cascade; paints wait for it.
+                sections = list(self.query(ConsoleInspectorSection))
+                rebuilds = [section.recompose_count for section in sections]
                 self._land_console_environment(controller.snapshot)
+                for section, count in zip(sections, rebuilds):
+                    if section.recompose_count != count:
+                        hold_paints_until_rebuilt(section)
                 controller.notify_rail_opened()
 
     @staticmethod
     def _sync_console_rail_descendant_visibility(widget: Any, visible: bool) -> None:
         """Cascade rail display state while preserving child display preferences."""
-
-        def hold_paints_until_rebuilt(child: Any) -> None:
-            # TASK-38650: a screen tick queued before this opening painted the
-            # held rows, so paints wait for the rebuild; the child's pump ends
-            # the hold right after it. A raising callback on that pump drops the
-            # release (TldwCli keeps the app alive), and a pump whose mount
-            # raised never runs, so asyncio's call_later also ends it after 1 s
-            # (a Textual one-shot timer can skip its tick). ponytail: worst case
-            # a 1 s pause, or one stale frame past it; never a freeze.
-            app = child.app
-            app._begin_batch()
-            ended = False
-
-            def release() -> None:
-                nonlocal ended
-                if not ended:
-                    ended = True
-                    app._end_batch()
-
-            child.call_next(release)
-            asyncio.get_running_loop().call_later(1.0, release)
-
         for child in widget.query("*"):
             if visible:
                 prior_display = getattr(child, CONSOLE_RAIL_PRIOR_DISPLAY, None)
@@ -12655,6 +12641,8 @@ class ChatScreen(BaseAppScreen):
                 child.styles.display = "block" if prior_display else "none"
                 delattr(child, CONSOLE_RAIL_PRIOR_DISPLAY)
                 # TASK-37000: the rebuild a hidden child held for this opening.
+                # TASK-38650: paints wait for it, or a screen tick queued
+                # before the opening paints the held rows.
                 rebuild = getattr(child, "rebuild_if_deferred", None)
                 if callable(rebuild) and rebuild():
                     hold_paints_until_rebuilt(child)
