@@ -1,0 +1,16 @@
+{
+  "file": "rulings-final-progress-22f52b8e22845eace2d0b3230966f0a88ce512eee26235fbcbc53601e700748d.snapshot.md",
+  "sha256": "22f52b8e22845eace2d0b3230966f0a88ce512eee26235fbcbc53601e700748d",
+  "bytes": 1094090,
+  "lines": 3292,
+  "captured_utc": "2026-11-05T06:33:13.571789+00:00",
+  "two_full_reads_identical": true,
+  "complete_newline": true,
+  "last_nonempty_paragraph": "Ruling: Freeze the final chronological disclosure once after this paragraph and delegate the complete final census/archival closeout to the existing documentation helper using root-final-disclosure-brief.md \u2014 all substantive implementation/review/adjudication decisions are now made; old631 disclosure excludes accepted Task9fix2/Task10/final work and must not be the final handoff \u2014 cost if wrong: omitted late decisions or altered old cost/history could hide agent choices; require exact old631 raw objects/body/prefix preservation, every new literal and nonempty context line, immutable one-cut source, complete human-readable Rulings artifact and independent root audit before any cleanup. After acceptance, perform only the already-authorized mechanical task Done/canonical status/link checks, exact owned-path archival commit with gc.auto0, staged61/protected279 audits and removal of ONLY this plan scratch after durable copies are verified. No new native/source gate or runtime work. If a new substantive decision becomes necessary, disclose it explicitly rather than silently calling the frozen cutoff complete. FINAL_CENSUS_CUTOFF_READY",
+  "old_prefix_file": "rulings-task9-fix1-progress-f9ea4bf3b2bf31fcb5ab2fb644c7d022feaa3e8665c3148bc0df29db992288fb.snapshot.md",
+  "old_prefix_sha256": "f9ea4bf3b2bf31fcb5ab2fb644c7d022feaa3e8665c3148bc0df29db992288fb",
+  "old_prefix_bytes": 1030783,
+  "old_prefix_lines": 3114,
+  "old_complete_prefix_exact": true,
+  "capture_rule": "One final immutable cutoff; later mechanical root audits/status/Git/archive/cleanup are outside this census; no later capture."
+}

@@ -15,7 +15,7 @@ references:
 documentation:
 - Docs/superpowers/specs/2026-11-01-native-phased-agent-workflows-design.md
 - backlog/decisions/285-native-phased-agent-workflows.md
-updated_date: 2026-11-05 05:24
+updated_date: 2026-11-05 06:46
 ---
 
 ## Description
@@ -74,7 +74,7 @@ Known evidence caveat M1: the functional live run also emitted `RuntimeWarning: 
 
 <!-- SECTION:FINAL_SUMMARY:BEGIN -->
 
-Implemented and independently accepted the native shared-worktree qualification slice at bea503a7e3e64dffe313b2bc5b22196a3b8da5aa. Real local-provider correction and exact failed/passing verifier evidence, native race/accounting controls, true process recovery and full-profile backup/restore/rebackup are retained in the qualification index. All three task acceptance criteria are satisfied within their documented source/platform limits. The feature remains disabled by default. Final whole-execution review and root disclosure/archive closure follow this task gate.
+Implemented and independently reviewed native shared-worktree workflows through final correction8fc0274486. The final scoped spec/quality gate89efdf9c approves joint capacity, same-chat admission and exact-target Console handling with zero blocking findings.149 targeted checks pass on the correction source. Actual local-provider correction/review, crash/restart and complete profile backup/restore/rebackup retain their separate exact-source limits. Root archival byte audit is complete and all acceptance criteria are checked. The feature remains disabled by default; M1 and historical adverse/platform/source/static limits remain disclosed. Complete chronology and governing reports resolve through the durable qualification archive. No full suite or single all-final clean provider-run claim.
 
 <!-- SECTION:FINAL_SUMMARY:END -->
 
@@ -111,3 +111,26 @@ Qualification retains the original two-store cache regression before correction,
 ## Task 10 qualification addendum — available failed-check evidence, 2026-11-04
 
 The Console check detail displays each stored check reason. A complete fresh native nonzero exit previously retained the correct failed status and exit but inherited native_evidence_unavailable. For newly published checks, derive native_evidence from the same strict verified_exit predicate already used for conclusive native evidence. This includes both expected and unexpected integer exits with complete output, proven cleanup and current exact manifests/executable/shell. Other evidence states retain native_evidence_unavailable. Preserve native and workflow status handling, full proof, original submitted_digest, exact replay and FULL transaction. Existing historical records retain their old reason label. This narrowly supersedes the earlier keep-check-fields ruling only for future reason publication, with no history rewrite or additional execution authority.
+
+
+## Final whole-execution correction plan
+
+Reopened after the single final whole-execution review found two Important omissions against the approved contract; the individual Task10 qualification evidence remains source-qualified. ADR required: no new ADR. ADR path: backlog/decisions/285-native-phased-agent-workflows.md. Reason: enforce existing bounded admission and one-nonterminal-workflow-per-chat requirements through their current native transaction and Console owners.
+
+1. Correct joint decision-plus-result-reservation capacity admission inside the existing FULL approval transaction; prove exact-fit, over-limit and rollback behavior for initial/remaining approvals and both storage ceilings, preserving inert duplicates.
+2. Enforce saved same-chat nonterminal-workflow admission atomically at native creation, retain same-launch lookup semantics and expose the existing workflow through the public/Console refusal boundary. Preserve imported/history rows and accounting.
+3. Correct obsolete integration-stage sentences in the living agent-runtime architecture reference. Keep the unexplained restart9 UI-coroutine warning explicitly disclosed.
+4. Run only covering real SQLite/public/UI tests and scoped static checks; preserve original staged61/protected279 bytes. Commit exact owned paths, then obtain the one scoped final rereview and adjudicate any residual findings. No provider replay or full suite.
+5. Record the exact correction/review and source limits, complete root archival/disclosure closure, then mark Done. Initial whole-review FAIL is retained separately from the correction verdict.
+
+
+## Final whole-execution correction notes
+
+Correction `8fc02744869122f961cb92af0b069fccb7b7d6f2` accounts for the decision and all new payload reservations together in the original FULL approval transaction, and atomically refuses a second saved nonterminal workflow in a chat after inert same-launch equality. The body-free refusal carries the exact existing workflow ID through the existing safe Console dismissal/detail path. Historical/imported rows and accounting remain intact. The living runtime architecture now describes the delivered owners. Existing ADR-285 applies; no migration, dependency, scheduler or permission owner was added.
+
+The single scoped final review `89efdf9c44c505ad309a0c9577b0e8b110efe42d654b72526cb2d546aaf8bf29` is SPEC PASS/QUALITY APPROVED: I1/I2/M2 addressed, zero new findings, one retained nonblocking M1. Covering verification passed149 targeted checks with exact committed Python bytes; independent root audits verified all11 correction paths,8326 current source hashes, original staged61/protected279 preservation and four child-copy hashes. Whole-file inherited Ruff/format debt remains qualified; modified range and other checked files pass. Native failure/source/cleanup limits are retained. Full reports and source hashes resolve through [the durable lookup](../../Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/rulings/index.md).
+
+M1 also recurred in the mounted no-provider covering child at line1176. Neither allocation origin, introduction nor harmlessness is established. No provider replay or full suite. Original whole-review failure and later scoped approval remain separate records. Root archival/disclosure byte validation precedes the final Done status.
+
+
+Root mechanical closeout: final707-record chronology and all233 archived source identities passed independent byte/hash/coverage/navigation checks; old631 bodies/raw metadata and both deterministic evidence bundles remain exact. [Complete rulings and costs](../../Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/rulings/complete-rulings.md) and [root archive audit](../../Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/rulings/root-final-disclosure-audit.json) are durable. Status set Done through Backlog MCP after acceptance; source code remains at the reviewed8fc027 correction. The original all-named-checks-green Task8step7 condition stays explicitly qualified as an unchecked historical execution deviation in the plan.

@@ -1,0 +1,15 @@
+{
+  "captured_at": "2026-11-05T01:47:53.354637+00:00",
+  "head": "45901024790ce3e6ef353baaddcc0d4f52e0afd9",
+  "parent": "09cd423516f806ae18e7e480a9e41fc9cacc548d",
+  "postcommit_manifest_sha256": "8183d4add04b577f3a8bc453c469940b42fe846fee24cd7d0500c785c7a6b93f",
+  "exact26_commit_index_worktree_equal": true,
+  "cached61_c5_equal": true,
+  "protected279_equal": true,
+  "full_support13_original_frozen_equal": true,
+  "review_package_sha256": "6d9504b02fe0528436abb70da1693f5eb7794ddb2ceeb452607480d95b0539d5",
+  "review_package_bytes": 244585,
+  "whole_task9_base": "7dc71ac16c3daf736b70d035e1888f6dd00965a6",
+  "native_8323_maps_static_and_18cases": "writer-attributed metadata; not root native/test rerun",
+  "report": "pending full implementer report; this audit is only current Git/byte protection, no task gate advanced"
+}

@@ -1,5 +1,7 @@
 # Native phased agent workflows in a shared worktree
 
+Indexed historical proposal/report filenames and full hashes resolve through the [durable source lookup](../qa/2026-11-01-native-phased-agent-workflows/rulings/index.md). Chronological amendments retain their original identities and qualifications.
+
 - Date: 2026-11-01
 - Status: Approved 2026-11-01; implementation planning authorized, execution not started
 - Design task: [TASK-38493](../../../backlog/tasks/task-38493%20-%20Design-native-phased-agent-workflows-in-a-shared-worktree.md)

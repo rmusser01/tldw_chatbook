@@ -1,0 +1,2661 @@
+{
+  "scope": "Read-only independent Task10 artifact/source audit. No tests, provider calls or Git commands executed; no source/index/HEAD mutation. Initial line-addition comparison discarded because Git no-newline markers and binary patches require blob identities. The corrected check below uses all new-blob identities.",
+  "base": "7d1a5ef849dfadb73cbdf16a3813cb583c8695ca",
+  "head": "bea503a7e3e64dffe313b2bc5b22196a3b8da5aa",
+  "package_sha256": "d0c10d072ec9f201b60cb0a04ee49a0ed40ac6714751a9729b9a5bac759e27f0",
+  "package_paths": 489,
+  "all_new_blob_identities_match": true,
+  "source_maps_verified": 100,
+  "test_cohorts": [
+    {
+      "name": "affected1",
+      "wait": 0,
+      "source_deltas": [],
+      "junit": {
+        "tests": "150",
+        "failures": "0",
+        "errors": "0",
+        "skipped": "0"
+      },
+      "modules": [
+        "Tests.Agents.test_workflow_run_service",
+        "Tests.Backup_Recovery.test_workflow_recovery_schema",
+        "Tests.DB.test_automatic_work_deadlines",
+        "Tests.DB.test_workflow_active_time",
+        "Tests.DB.test_workflow_attempts",
+        "Tests.DB.test_workflow_evidence_retention",
+        "Tests.DB.test_workflow_runs_migration",
+        "Tests.Tools.test_edit_patch_preconditions"
+      ]
+    },
+    {
+      "name": "backup1",
+      "wait": 0,
+      "source_deltas": [],
+      "junit": {
+        "tests": "2",
+        "failures": "0",
+        "errors": "0",
+        "skipped": "0"
+      },
+      "modules": [
+        "Tests.Chat.test_workflow_native_journeys",
+        "Tests.DB.test_workflow_restart_process"
+      ]
+    },
+    {
+      "name": "controls1",
+      "wait": 0,
+      "source_deltas": [
+        "Tests/Tools/test_edit_patch_preconditions.py"
+      ],
+      "junit": {
+        "tests": "10",
+        "failures": "0",
+        "errors": "0",
+        "skipped": "0"
+      },
+      "modules": [
+        "Tests.Agents.test_workflow_run_service",
+        "Tests.Chat.test_workflow_native_journeys"
+      ]
+    },
+    {
+      "name": "current1",
+      "wait": 1,
+      "source_deltas": [],
+      "junit": {
+        "tests": "10",
+        "failures": "1",
+        "errors": "0",
+        "skipped": "0"
+      },
+      "modules": [
+        "Tests.Chat.test_workflow_native_journeys",
+        "Tests.DB.test_workflow_restart_process"
+      ]
+    },
+    {
+      "name": "final_native",
+      "wait": 0,
+      "source_deltas": [],
+      "junit": {
+        "tests": "11",
+        "failures": "0",
+        "errors": "0",
+        "skipped": "0"
+      },
+      "modules": [
+        "Tests.Chat.test_workflow_native_journeys",
+        "Tests.Chat.test_workflow_phase_wave_native",
+        "Tests.Chat.test_workflow_recovery",
+        "Tests.DB.test_workflow_restart_process"
+      ]
+    },
+    {
+      "name": "hook_controls",
+      "wait": 1,
+      "source_deltas": [],
+      "junit": {
+        "tests": "102",
+        "failures": "1",
+        "errors": "0",
+        "skipped": "0"
+      },
+      "modules": [
+        "Tests.Agents.test_native_legacy_hooks",
+        "Tests.Agents.test_workflow_task_scope",
+        "Tests.Chat.test_workflow_native_journeys"
+      ]
+    },
+    {
+      "name": "hook_green",
+      "wait": 0,
+      "source_deltas": [],
+      "junit": {
+        "tests": "2",
+        "failures": "0",
+        "errors": "0",
+        "skipped": "0"
+      },
+      "modules": [
+        "Tests.Chat.test_workflow_native_journeys"
+      ]
+    },
+    {
+      "name": "hook_native_final",
+      "wait": 0,
+      "source_deltas": [],
+      "junit": {
+        "tests": "3",
+        "failures": "0",
+        "errors": "0",
+        "skipped": "0"
+      },
+      "modules": [
+        "Tests.Agents.test_native_legacy_hooks",
+        "Tests.Chat.test_workflow_native_journeys"
+      ]
+    },
+    {
+      "name": "hook_ordinals",
+      "wait": 1,
+      "source_deltas": [],
+      "junit": {
+        "tests": "2",
+        "failures": "2",
+        "errors": "0",
+        "skipped": "0"
+      },
+      "modules": [
+        "Tests.Agents.test_native_legacy_hooks"
+      ]
+    },
+    {
+      "name": "hook_red",
+      "wait": 1,
+      "source_deltas": [],
+      "junit": {
+        "tests": "2",
+        "failures": "2",
+        "errors": "0",
+        "skipped": "0"
+      },
+      "modules": [
+        "Tests.Chat.test_workflow_native_journeys"
+      ]
+    },
+    {
+      "name": "hook_red2",
+      "wait": 1,
+      "source_deltas": [],
+      "junit": {
+        "tests": "2",
+        "failures": "1",
+        "errors": "0",
+        "skipped": "0"
+      },
+      "modules": [
+        "Tests.Chat.test_workflow_native_journeys"
+      ]
+    },
+    {
+      "name": "journey1",
+      "wait": 1,
+      "source_deltas": [],
+      "junit": {
+        "tests": "1",
+        "failures": "1",
+        "errors": "0",
+        "skipped": "0"
+      },
+      "modules": [
+        "Tests.Chat.test_workflow_native_journeys"
+      ]
+    },
+    {
+      "name": "journey2",
+      "wait": 1,
+      "source_deltas": [],
+      "junit": {
+        "tests": "1",
+        "failures": "1",
+        "errors": "0",
+        "skipped": "0"
+      },
+      "modules": [
+        "Tests.Chat.test_workflow_native_journeys"
+      ]
+    },
+    {
+      "name": "journey3",
+      "wait": 1,
+      "source_deltas": [],
+      "junit": {
+        "tests": "1",
+        "failures": "1",
+        "errors": "0",
+        "skipped": "0"
+      },
+      "modules": [
+        "Tests.Chat.test_workflow_native_journeys"
+      ]
+    },
+    {
+      "name": "journey4",
+      "wait": 1,
+      "source_deltas": [],
+      "junit": {
+        "tests": "1",
+        "failures": "1",
+        "errors": "0",
+        "skipped": "0"
+      },
+      "modules": [
+        "Tests.Chat.test_workflow_native_journeys"
+      ]
+    },
+    {
+      "name": "logs_off",
+      "wait": 0,
+      "source_deltas": [],
+      "junit": {
+        "tests": "1",
+        "failures": "0",
+        "errors": "0",
+        "skipped": "0"
+      },
+      "modules": [
+        "Tests.Chat.test_workflow_native_journeys"
+      ]
+    },
+    {
+      "name": "native_compat1",
+      "wait": 0,
+      "source_deltas": [],
+      "junit": {
+        "tests": "16",
+        "failures": "0",
+        "errors": "0",
+        "skipped": "0"
+      },
+      "modules": [
+        "Tests.Agents.test_workflow_launch_freshness",
+        "Tests.Chat.test_console_workflow_dispatch",
+        "Tests.Chat.test_console_workflow_scheduling",
+        "Tests.Chat.test_workflow_settlement_delivery",
+        "Tests.Workspaces.test_worktree_activity"
+      ]
+    },
+    {
+      "name": "reason_green",
+      "wait": 0,
+      "source_deltas": [],
+      "junit": {
+        "tests": "7",
+        "failures": "0",
+        "errors": "0",
+        "skipped": "0"
+      },
+      "modules": [
+        "Tests.Agents.test_workflow_run_service"
+      ]
+    },
+    {
+      "name": "reason_red",
+      "wait": 1,
+      "source_deltas": [],
+      "junit": {
+        "tests": "1",
+        "failures": "1",
+        "errors": "0",
+        "skipped": "0"
+      },
+      "modules": [
+        "Tests.Agents.test_workflow_run_service"
+      ]
+    },
+    {
+      "name": "restart1",
+      "wait": 1,
+      "source_deltas": [],
+      "junit": {
+        "tests": "9",
+        "failures": "5",
+        "errors": "0",
+        "skipped": "0"
+      },
+      "modules": [
+        "Tests.DB.test_workflow_restart_process"
+      ]
+    },
+    {
+      "name": "retention_green",
+      "wait": 0,
+      "source_deltas": [],
+      "junit": {
+        "tests": "26",
+        "failures": "0",
+        "errors": "0",
+        "skipped": "0"
+      },
+      "modules": [
+        "Tests.Backup_Recovery.test_finite_library_workers",
+        "Tests.DB.test_sync_log_retention"
+      ]
+    },
+    {
+      "name": "retention_red",
+      "wait": 1,
+      "source_deltas": [],
+      "junit": {
+        "tests": "1",
+        "failures": "1",
+        "errors": "0",
+        "skipped": "0"
+      },
+      "modules": [
+        "Tests.DB.test_sync_log_retention"
+      ]
+    }
+  ],
+  "live_processes": [
+    {
+      "name": "inspect1",
+      "wait": 0,
+      "source_deltas": [],
+      "frozen_driver": {
+        "bytes": 27137,
+        "pre_map_key": "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.superpowers/sdd/2026-11-01-native-phased-agent-workflows-implementation/task-10-media-diagnostic.py",
+        "sha256": "0bcd10ed1a6832a91ae6bc8432991e353324c25cb36a600c8b832ff79976dd46"
+      },
+      "creator_returned": true,
+      "bound": 360
+    },
+    {
+      "name": "inspect2",
+      "wait": 1,
+      "source_deltas": [],
+      "frozen_driver": {
+        "bytes": 27809,
+        "pre_map_key": "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.superpowers/sdd/2026-11-01-native-phased-agent-workflows-implementation/task-10-media-diagnostic.py",
+        "sha256": "cc870400bd8281710ac25df173068ed2d9151fa1e59e9cc91614bfba8970e7d4"
+      },
+      "creator_returned": false,
+      "bound": 360
+    },
+    {
+      "name": "inspect3",
+      "wait": 0,
+      "source_deltas": [],
+      "frozen_driver": {
+        "bytes": 27809,
+        "pre_map_key": "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.superpowers/sdd/2026-11-01-native-phased-agent-workflows-implementation/task-10-media-diagnostic.py",
+        "sha256": "cc870400bd8281710ac25df173068ed2d9151fa1e59e9cc91614bfba8970e7d4"
+      },
+      "creator_returned": true,
+      "bound": 360
+    },
+    {
+      "name": "plan1",
+      "wait": 1,
+      "source_deltas": [],
+      "frozen_driver": null,
+      "creator_returned": false,
+      "bound": 360
+    },
+    {
+      "name": "plan10",
+      "wait": 0,
+      "source_deltas": [],
+      "frozen_driver": {
+        "bytes": 24642,
+        "pre_map_key": "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.superpowers/sdd/2026-11-01-native-phased-agent-workflows-implementation/task-10-live.py",
+        "sha256": "cb0a8f36328b36db85834b17fb2fcd0c0366d2cfcd5b681aaebeced45670a356"
+      },
+      "creator_returned": true,
+      "bound": 360
+    },
+    {
+      "name": "plan2",
+      "wait": 1,
+      "source_deltas": [],
+      "frozen_driver": null,
+      "creator_returned": false,
+      "bound": 360
+    },
+    {
+      "name": "plan3",
+      "wait": 1,
+      "source_deltas": [],
+      "frozen_driver": null,
+      "creator_returned": false,
+      "bound": 360
+    },
+    {
+      "name": "plan4",
+      "wait": 1,
+      "source_deltas": [],
+      "frozen_driver": null,
+      "creator_returned": true,
+      "bound": 360
+    },
+    {
+      "name": "plan5",
+      "wait": 0,
+      "source_deltas": [],
+      "frozen_driver": null,
+      "creator_returned": true,
+      "bound": 360
+    },
+    {
+      "name": "plan6",
+      "wait": 0,
+      "source_deltas": [],
+      "frozen_driver": null,
+      "creator_returned": true,
+      "bound": 360
+    },
+    {
+      "name": "plan7",
+      "wait": 0,
+      "source_deltas": [],
+      "frozen_driver": null,
+      "creator_returned": true,
+      "bound": 360
+    },
+    {
+      "name": "plan8",
+      "wait": 0,
+      "source_deltas": [],
+      "frozen_driver": {
+        "bytes": 23161,
+        "pre_map_key": "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.superpowers/sdd/2026-11-01-native-phased-agent-workflows-implementation/task-10-live.py",
+        "sha256": "d237b40c95adc481aa4a7c42da78d0800fc5ebd05d59cfdcb93dc14999172f83"
+      },
+      "creator_returned": true,
+      "bound": 360
+    },
+    {
+      "name": "plan9",
+      "wait": 0,
+      "source_deltas": [],
+      "frozen_driver": {
+        "bytes": 23486,
+        "pre_map_key": "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.superpowers/sdd/2026-11-01-native-phased-agent-workflows-implementation/task-10-live.py",
+        "sha256": "a2ecfd89e5c34710314c08c197e3a3c2d6ec24e5176bc03831a486f2f6997512"
+      },
+      "creator_returned": true,
+      "bound": 360
+    },
+    {
+      "name": "read1",
+      "wait": 1,
+      "source_deltas": [],
+      "frozen_driver": {
+        "bytes": 25628,
+        "pre_map_key": "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.superpowers/sdd/2026-11-01-native-phased-agent-workflows-implementation/task-10-read-diagnostic.py",
+        "sha256": "f627bca2534a17c3135cdf11b9544d60e3d16b6423a21a977b39bc8d22911157"
+      },
+      "creator_returned": true,
+      "bound": 360
+    },
+    {
+      "name": "read2",
+      "wait": 1,
+      "source_deltas": [
+        "Tests/Chat/test_workflow_native_journeys.py"
+      ],
+      "frozen_driver": {
+        "bytes": 26262,
+        "pre_map_key": "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.superpowers/sdd/2026-11-01-native-phased-agent-workflows-implementation/task-10-read-diagnostic.py",
+        "sha256": "291390166ebfe3f59620e24a2ae079a045bc8b5482ddc649e5996513494107cb"
+      },
+      "creator_returned": false,
+      "bound": 360
+    },
+    {
+      "name": "read3",
+      "wait": 1,
+      "source_deltas": [],
+      "frozen_driver": {
+        "bytes": 27419,
+        "pre_map_key": "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.superpowers/sdd/2026-11-01-native-phased-agent-workflows-implementation/task-10-read-diagnostic.py",
+        "sha256": "8ee4d87a615990522fff2bc4ec0436af67d86f6fdfc60584530bdccff6e6f44c"
+      },
+      "creator_returned": false,
+      "bound": 360
+    },
+    {
+      "name": "read4",
+      "wait": 0,
+      "source_deltas": [],
+      "frozen_driver": {
+        "bytes": 28951,
+        "pre_map_key": "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.superpowers/sdd/2026-11-01-native-phased-agent-workflows-implementation/task-10-read-diagnostic.py",
+        "sha256": "21225ff682e0a37880d859f45ce9cbbcd0de7fecb2c23fa1e1c45662c92eafb4"
+      },
+      "creator_returned": true,
+      "bound": 360
+    },
+    {
+      "name": "read5",
+      "wait": 1,
+      "source_deltas": [],
+      "frozen_driver": {
+        "bytes": 30885,
+        "pre_map_key": "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.superpowers/sdd/2026-11-01-native-phased-agent-workflows-implementation/task-10-read-diagnostic.py",
+        "sha256": "1b6d77341b8b6b31f558c2ad85b912dd53a11fa0834f5e7114d7bda9eaf2815b"
+      },
+      "creator_returned": false,
+      "bound": 360
+    },
+    {
+      "name": "read6",
+      "wait": 0,
+      "source_deltas": [],
+      "frozen_driver": {
+        "bytes": 31275,
+        "pre_map_key": "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.superpowers/sdd/2026-11-01-native-phased-agent-workflows-implementation/task-10-read-diagnostic.py",
+        "sha256": "09148383606a143d68acc78edff0326c4726e860a40f1a0d5284bd55fa310274"
+      },
+      "creator_returned": true,
+      "bound": 360
+    },
+    {
+      "name": "restart1",
+      "wait": 1,
+      "source_deltas": [],
+      "frozen_driver": null,
+      "creator_returned": true,
+      "bound": 720
+    },
+    {
+      "name": "restart2",
+      "wait": 1,
+      "source_deltas": [],
+      "frozen_driver": null,
+      "creator_returned": true,
+      "bound": 720
+    },
+    {
+      "name": "restart3",
+      "wait": -9,
+      "source_deltas": [
+        "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.superpowers/sdd/2026-11-01-native-phased-agent-workflows-implementation/task-10-live.py",
+        "Tests/Chat/test_workflow_native_journeys.py"
+      ],
+      "frozen_driver": null,
+      "creator_returned": false,
+      "bound": 720
+    },
+    {
+      "name": "restart4",
+      "wait": -9,
+      "source_deltas": [
+        "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.superpowers/sdd/2026-11-01-native-phased-agent-workflows-implementation/task-10-live.py"
+      ],
+      "frozen_driver": null,
+      "creator_returned": false,
+      "bound": 720
+    },
+    {
+      "name": "restart5",
+      "wait": -9,
+      "source_deltas": [
+        "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.superpowers/sdd/2026-11-01-native-phased-agent-workflows-implementation/task-10-live.py"
+      ],
+      "frozen_driver": null,
+      "creator_returned": false,
+      "bound": 720
+    },
+    {
+      "name": "restart6",
+      "wait": 1,
+      "source_deltas": [],
+      "frozen_driver": {
+        "bytes": 23161,
+        "pre_map_key": "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.superpowers/sdd/2026-11-01-native-phased-agent-workflows-implementation/task-10-live.py",
+        "sha256": "d237b40c95adc481aa4a7c42da78d0800fc5ebd05d59cfdcb93dc14999172f83"
+      },
+      "creator_returned": false,
+      "bound": 720
+    },
+    {
+      "name": "restart7",
+      "wait": 1,
+      "source_deltas": [],
+      "frozen_driver": {
+        "bytes": 23486,
+        "pre_map_key": "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.superpowers/sdd/2026-11-01-native-phased-agent-workflows-implementation/task-10-live.py",
+        "sha256": "a2ecfd89e5c34710314c08c197e3a3c2d6ec24e5176bc03831a486f2f6997512"
+      },
+      "creator_returned": false,
+      "bound": 720
+    },
+    {
+      "name": "restart8",
+      "wait": 1,
+      "source_deltas": [],
+      "frozen_driver": {
+        "bytes": 24642,
+        "pre_map_key": "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.superpowers/sdd/2026-11-01-native-phased-agent-workflows-implementation/task-10-live.py",
+        "sha256": "cb0a8f36328b36db85834b17fb2fcd0c0366d2cfcd5b681aaebeced45670a356"
+      },
+      "creator_returned": true,
+      "bound": 720
+    },
+    {
+      "name": "restart9",
+      "wait": 1,
+      "source_deltas": [
+        "Tests/Agents/test_native_legacy_hooks.py",
+        "Tests/Chat/test_workflow_native_journeys.py"
+      ],
+      "frozen_driver": {
+        "bytes": 24750,
+        "pre_map_key": "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.superpowers/sdd/2026-11-01-native-phased-agent-workflows-implementation/task-10-live.py",
+        "sha256": "c129af64bd4c016388376fc1783071826620593ba73d2965dc59fb0956169d32"
+      },
+      "creator_returned": false,
+      "bound": 720
+    }
+  ],
+  "live_functional_facts": {
+    "complete": {
+      "event": "completed",
+      "pid": 94902,
+      "result_count": 3,
+      "spend": {
+        "child_launch": 3,
+        "generation": 5,
+        "model_call": 10,
+        "tokens": 21959
+      },
+      "time": 1793853565.823943
+    },
+    "failed": {
+      "arguments_digest": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "cleanup_proven": true,
+      "complete": true,
+      "exit_code": 7,
+      "fresh": true,
+      "input_manifest": "b03f49abb28c669a2cc8791264264850fa42833c437ebe9aaa74fb4a2f1302b0",
+      "invocation_id": "turn-1-call-0",
+      "output_digest": "5e253af543acda876922e6ea0e60324eefe1c66fc349eebb57251ebff525cc1e",
+      "output_manifest": "a4bf9f6893c340bfb28a301f63b39b0c7f35fd208d75919390bbd1e23aed9933",
+      "shell_manifest": "acdd09971213dc7f8e4d976880467adc3a25198551b2fec5b84d5f9100a22136",
+      "shell_path": "/bin/bash",
+      "stderr": "",
+      "stdout": "",
+      "verifier_id": "value-check",
+      "verifier_sha256": "33725290e878b5f1c29077b83296f2673583445c2cd9efc8faa462b87ffe0cf4"
+    },
+    "passed": {
+      "arguments_digest": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "cleanup_proven": true,
+      "complete": true,
+      "exit_code": 0,
+      "fresh": true,
+      "input_manifest": "1057d5edc362493836b242efb5eac04c81dc14d34cb5b243dc8fc85a3c9ce0ea",
+      "invocation_id": "turn-3-call-0",
+      "output_digest": "2727d1e6708bb29f2b89ef354f6ec3ddf59e19d4f054486e26461d226ebf93f0",
+      "output_manifest": "1057d5edc362493836b242efb5eac04c81dc14d34cb5b243dc8fc85a3c9ce0ea",
+      "shell_manifest": "acdd09971213dc7f8e4d976880467adc3a25198551b2fec5b84d5f9100a22136",
+      "shell_path": "/bin/bash",
+      "stderr": "",
+      "stdout": "verified\n",
+      "verifier_id": "value-check",
+      "verifier_sha256": "33725290e878b5f1c29077b83296f2673583445c2cd9efc8faa462b87ffe0cf4"
+    },
+    "creator_returned": false
+  },
+  "later_cleanup_facts": {
+    "same_thread_connection": 4725943632,
+    "thread": "asyncio_6",
+    "creator_returned": true,
+    "separate_source": true
+  },
+  "native_archive_facts_equal": true,
+  "native_archive_required_payload_hashes_valid": 10,
+  "changed_static_file_hashes_equal": true,
+  "runtime_warning": "qualification/live/restart9/process-tail.txt:13 unawaited ChatScreen._sync_native_console_chat_ui; no original allocation traceback; causal attribution remains unknown",
+  "paths": [
+    {
+      "path": "Docs/Architecture/agent-runtime.md",
+      "new_blob": "88a5bf809ff01c85dd037309ac2d1fcc5e9fab0d"
+    },
+    {
+      "path": "Docs/Architecture/backup-recovery.md",
+      "new_blob": "7d16ed12a70d1d32f22cfab3436127ab185d6d43"
+    },
+    {
+      "path": "Docs/Architecture/console.md",
+      "new_blob": "378d25598628a663efaa2765714bf64d33f385ff"
+    },
+    {
+      "path": "Docs/Architecture/database-layer.md",
+      "new_blob": "beba0a0090171976d3b9dba3d71ddfd814e61f33"
+    },
+    {
+      "path": "Docs/Architecture/tool-catalog.md",
+      "new_blob": "a5711d029708405a0ade5a4a2cb084e0183c9c1d"
+    },
+    {
+      "path": "Docs/User_Guide/console/agent-runs-and-tools.md",
+      "new_blob": "41758d8a10751859c0e0d8e44ffdb8b6849c3e0d"
+    },
+    {
+      "path": "Docs/User_Guide/settings.md",
+      "new_blob": "8895233fcd53a028b4f0f9dd0497050668a76d29"
+    },
+    {
+      "path": "Docs/superpowers/plans/2026-11-01-native-phased-agent-workflows-implementation.md",
+      "new_blob": "0372a56eaf48dfdb2a7c8c599adf08bb54fda359"
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/README.md",
+      "new_blob": "3f35e2fa5c895067853f138adf96a7eb2c0ced71"
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/README.md",
+      "new_blob": "2de36aea53f29f38cfb18946dff904a9400071d8"
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/affected1/maps.json",
+      "new_blob": "2cde2c4f06ea889f4fd81a24e8f78bc145851d39"
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/affected1/native-receipts/archives.json",
+      "new_blob": "34ac7f2a5a979d608add0cb862aab2650a08ff5d"
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/affected1/native-receipts/pytest/test_complete_backup_restore_a0/restored/home/restored.json",
+      "new_blob": "492ca0488e515f9168ba27bec5c401ce4412189b"
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/affected1/native-receipts/pytest__test_complete_backup_restore_a0__original__source-home-removed__retained-temporary.tldw-backup.zip.manifest.json",
+      "new_blob": "424045bb9122f8c2b3dc2b71a34bc9bb8f51c044"
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/affected1/native-receipts/pytest__test_complete_backup_restore_a0__restored__home__second.tldw-backup.zip.manifest.json",
+      "new_blob": "e6dafd707506ce8bbbe1d201cca677e2a9849c3f"
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/affected1/post.json.gz",
+      "new_blob": "f79773bbc3c87691bec2e400d67957811bb060c1"
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/affected1/pre.json.gz",
+      "new_blob": "f79773bbc3c87691bec2e400d67957811bb060c1"
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/affected1/process.json",
+      "new_blob": "e8cce86ea88ae72bc1a2a93be8dee79632d92d3b"
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/affected1/pytest-tail.txt",
+      "new_blob": "c29ae1396ac6664a54317fa834eb71c4b034e95c"
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/affected1/start.json",
+      "new_blob": "816ab8a94b8d906a7f7dfa1fa4f133fa7fc834e7"
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/affected1/tests.xml",
+      "new_blob": "ffa8b33f97de5aa20d507fb6377a9fa32a241a0f"
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/backup1/maps.json",
+      "new_blob": "6ce657bd83c2d99a95706c7aa83d6bd937d56485"
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/backup1/native-receipts/archives.json",
+      "new_blob": "d01790c039765670d32ca1abfd8dcee85b73896d"
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/backup1/native-receipts/pytest/test_fresh_process_recovery_ne0/boundary.json",
+      "new_blob": "4793f47241fb6a6c83e6826103d2ef14010d0be7"
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/backup1/native-receipts/pytest/test_fresh_process_recovery_ne0/process.json",
+      "new_blob": "2bba542f66319cb00609aef2287d0a84097e0afe"
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/backup1/native-receipts/pytest/test_fresh_process_recovery_ne0/restarted.json",
+      "new_blob": "68a0e454e690083768fc98cb1b5cbb7bb8ff5783"
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/backup1/native-receipts/pytest/test_native_correction_keeps_f0/original/native-journey.json",
+      "new_blob": "1526c27ffc1c3cf637625a9ce1cf3e6d90747904"
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/backup1/native-receipts/pytest/test_native_correction_keeps_f0/original/source-home-removed/wave.json",
+      "new_blob": "90eb8c466534bf89d7ac548d60b54ebff20a15ea"
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/backup1/native-receipts/pytest/test_native_correction_keeps_f0/restored/home/restored.json",
+      "new_blob": "2cfe28c8c7b7af1a00bfb864c3e740594e375452"
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/backup1/native-receipts/pytest/test_native_correction_keeps_f0/restored/home/wave.json",
+      "new_blob": "90eb8c466534bf89d7ac548d60b54ebff20a15ea"
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/backup1/native-receipts/pytest__test_native_correction_keeps_f0__original__source-home-removed__retained-temporary.tldw-backup.zip.manifest.json",
+      "new_blob": "82a4140181a17ca9f91c0288bb89512c27bbd660"
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/backup1/native-receipts/pytest__test_native_correction_keeps_f0__restored__home__second.tldw-backup.zip.manifest.json",
+      "new_blob": "a79f3f4915c2ff6252542e4661ed5ba60a13ff41"
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/backup1/post.json.gz",
+      "new_blob": "ea563bc08b68118c8fdf4f3a0fcafe7f3660d893"
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/backup1/pre.json.gz",
+      "new_blob": "ea563bc08b68118c8fdf4f3a0fcafe7f3660d893"
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/backup1/process.json",
+      "new_blob": "3a47a8f29ccdda8e3051559f28e3c898cdded8fc"
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/backup1/pytest-tail.txt",
+      "new_blob": "a76792fe405481c0d60aff683de39d7686258305"
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/backup1/start.json",
+      "new_blob": "e21b53d7b91afbfcf1e7c08fc528c7dea9ebf2dc"
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/backup1/tests.xml",
+      "new_blob": "8b30c2cac7a1337f07d030a0b4e99343c789c432"
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/controls1/maps.json",
+      "new_blob": "5fd1453079bdf6df4692edb1cce6368c7e45f8a4"
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/controls1/post.json.gz",
+      "new_blob": "f79773bbc3c87691bec2e400d67957811bb060c1"
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/controls1/pre.json.gz",
+      "new_blob": "7c26fe373e3a0a215e0165434f32426359657730"
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/controls1/process.json",
+      "new_blob": "7e994b0a7f3038e228eade4a336f7f59d632e5ad"
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/controls1/pytest-tail.txt",
+      "new_blob": "4615a87b554ad66de2b047cef788c1ba200fd2c9"
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/controls1/start.json",
+      "new_blob": "e1987a2db8d08700e94f5e21135bd5b24af8f6f1"
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/controls1/tests.xml",
+      "new_blob": "9c3a9f1649e077a17e73d70337cb28b8af03e269"
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/current1/maps.json",
+      "new_blob": "f78105eebba4f2c84b4f5339b5d237fc229272f9"
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/current1/native-receipts/pytest/test_fresh_process_recovery_ne0/boundary.json",
+      "new_blob": "672b70e0746366cff4166340249e572d63487ba9"
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/current1/native-receipts/pytest/test_fresh_process_recovery_ne0/process.json",
+      "new_blob": "5ccdab6eef20f4a6f50cacec816e43416bd6d890"
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/current1/native-receipts/pytest/test_fresh_process_recovery_ne0/restarted.json",
+      "new_blob": "61c58b2e1cce30436062690398be9f39866c8f70"
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/current1/native-receipts/pytest/test_fresh_process_recovery_ne1/boundary.json",
+      "new_blob": "460f124fc2bb83f5981957fc604766ef2dec06a4"
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/current1/native-receipts/pytest/test_fresh_process_recovery_ne1/process.json",
+      "new_blob": "6d0c3511c14c3918500d5d2fed94c19196ea7c60"
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/current1/native-receipts/pytest/test_fresh_process_recovery_ne1/restarted.json",
+      "new_blob": "51a4dd758f80fb641d99b60c6e1f73c48129df40"
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/current1/native-receipts/pytest/test_fresh_process_recovery_ne2/boundary.json",
+      "new_blob": "9e4b680a547170488c1ce56dcbabb66cd7a301a1"
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/current1/native-receipts/pytest/test_fresh_process_recovery_ne2/process.json",
+      "new_blob": "965d287dc5d6452e3381dc5220b68d3254dee576"
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/current1/native-receipts/pytest/test_fresh_process_recovery_ne2/restarted.json",
+      "new_blob": "87eb1f678f02564c8f64a5bb92eedb292cdff3e5"
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/current1/native-receipts/pytest/test_fresh_process_recovery_ne3/boundary.json",
+      "new_blob": "a3b83cf0cf5715a72ce13f8d4c1e0bdf3b4e328b"
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/current1/native-receipts/pytest/test_fresh_process_recovery_ne3/process.json",
+      "new_blob": "b8afa3dc5b7be8f371b6141d0498d207fa8272d7"
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/current1/native-receipts/pytest/test_fresh_process_recovery_ne3/restarted.json",
+      "new_blob": "4d642d96e2d72b59e97faf935c1d67aef82bb4aa"
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/current1/native-receipts/pytest/test_fresh_process_recovery_ne4/boundary.json",
+      "new_blob": "aecda0f7243bfba691a8ac0309b3a428ceaaa9a2"
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/current1/native-receipts/pytest/test_fresh_process_recovery_ne4/process.json",
+      "new_blob": "26baa296e4ed8b7c447b22daf7f24fa5cbb7e2ca"
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/current1/native-receipts/pytest/test_fresh_process_recovery_ne4/restarted.json",
+      "new_blob": "4f4294c2078afa99bd2f3c295b5141775f1ca83d"
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/current1/native-receipts/pytest/test_fresh_process_recovery_ne6/boundary.json",
+      "new_blob": "5750d6fcf622763218a0d1ad75163e06e5187d19"
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/current1/native-receipts/pytest/test_fresh_process_recovery_ne6/process.json",
+      "new_blob": "56d42f917a4454b72690ce8d51c45799eb491724"
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/current1/native-receipts/pytest/test_fresh_process_recovery_ne6/restarted.json",
+      "new_blob": "ee25d4727b41596a9c316be0fe2942c6332d4622"
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/current1/native-receipts/pytest/test_fresh_process_recovery_ne7/boundary.json",
+      "new_blob": "e8ff6bfc09860d660894c699a1ba3487d37d39cb"
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/current1/native-receipts/pytest/test_fresh_process_recovery_ne7/process.json",
+      "new_blob": "43e8ba832d50588bc2675e9b4e13a27b3d47472a"
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/current1/native-receipts/pytest/test_fresh_process_recovery_ne7/restarted.json",
+      "new_blob": "c4b8df6a7057db48ec135a62957a18aea05edd94"
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/current1/native-receipts/pytest/test_fresh_process_recovery_ne8/boundary.json",
+      "new_blob": "cfbd3651f7fa395f5e5bae4a0867233e6fa163af"
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/current1/native-receipts/pytest/test_fresh_process_recovery_ne8/process.json",
+      "new_blob": "a8922ab52456a17e233a8f26c585fab822184d97"
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/current1/native-receipts/pytest/test_fresh_process_recovery_ne8/restarted.json",
+      "new_blob": "9610d66b9e7eb3dc0859699650b1cbd1661c7572"
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/current1/native-receipts/pytest/test_native_correction_keeps_f0/native-journey.json",
+      "new_blob": "2de40c525c89974a7dd1592d4f1d04d6e7690f90"
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/current1/post.json.gz",
+      "new_blob": "adcef9e66463d6274b8dbaaeb8c4ab6c1e394461"
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/current1/pre.json.gz",
+      "new_blob": "adcef9e66463d6274b8dbaaeb8c4ab6c1e394461"
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/current1/process.json",
+      "new_blob": "f2c059c9a5f79ec5372e5e807bf416086187c4eb"
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/current1/pytest-tail.txt",
+      "new_blob": "a26022c703707ee45a3533acf799eae486120a44"
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/current1/start.json",
+      "new_blob": "32f47142c74307109847ef29e811dacf167c6668"
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/current1/tests.xml",
+      "new_blob": "a4be7d07daf328d4f56c9751c044d06f2fe50d45"
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/dirty-source-manifest.json",
+      "new_blob": "cc8ce6ae1f0f01f1debce80f1ba3f5be0c045050"
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/final_native/maps.json",
+      "new_blob": "242cfecd7ec3d8571de4c07ae8a892555b80a1d5"
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/final_native/native-receipts/archives.json",
+      "new_blob": "8de102c33ff44a84c60f01d872d04f3d137d892a"
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/final_native/native-receipts/pytest/test_fresh_process_recovery_ne0/boundary.json",
+      "new_blob": "0df857140d0a5c65d68444a5c92dd4e83aad707c"
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/final_native/native-receipts/pytest/test_fresh_process_recovery_ne0/process.json",
+      "new_blob": "ed063898a998c2fe9847bf14ca07fd813fee15bf"
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/final_native/native-receipts/pytest/test_fresh_process_recovery_ne0/restarted.json",
+      "new_blob": "2d417e2c50fb2e37aad3894342334b9c802c00fa"
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/final_native/native-receipts/pytest/test_native_correction_keeps_f0/original/native-journey.json",
+      "new_blob": "a66854695080b4cfd0dbe3b25621da7e1cda0589"
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/final_native/native-receipts/pytest/test_native_correction_keeps_f0/original/source-home-removed/wave.json",
+      "new_blob": "9414c9fbc2c3601a175f8d628ac72cf0f5d1d5e5"
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/final_native/native-receipts/pytest/test_native_correction_keeps_f0/restored/home/restored.json",
+      "new_blob": "0177235c62d31b22fc373db0199a56a501e2a033"
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/final_native/native-receipts/pytest/test_native_correction_keeps_f0/restored/home/wave.json",
+      "new_blob": "9414c9fbc2c3601a175f8d628ac72cf0f5d1d5e5"
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/final_native/native-receipts/pytest/test_native_wave_complete_arch0/original/source-home-removed/wave.json",
+      "new_blob": "0eb7fc5327d1effe51c05538a6937b1660fe32e4"
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/final_native/native-receipts/pytest/test_native_wave_complete_arch0/restored/home/restored.json",
+      "new_blob": "b1672ed54a41183e9733ca53f4cca387e7143480"
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/final_native/native-receipts/pytest/test_native_wave_complete_arch0/restored/home/wave.json",
+      "new_blob": "0eb7fc5327d1effe51c05538a6937b1660fe32e4"
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/final_native/native-receipts/pytest__test_native_correction_keeps_f0__original__source-home-removed__retained-temporary.tldw-backup.zip.manifest.json",
+      "new_blob": "d61ceede79764faeabb600a8ac3b5d77a54f08e6"
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/final_native/native-receipts/pytest__test_native_correction_keeps_f0__restored__home__second.tldw-backup.zip.manifest.json",
+      "new_blob": "b636a1c3161eca4909d0d15281611fd0c93e4650"
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/final_native/native-receipts/pytest__test_native_wave_complete_arch0__original__source-home-removed__retained-temporary.tldw-backup.zip.manifest.json",
+      "new_blob": "6468a95a3092bc55161102930dcd942fd9c71035"
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/final_native/native-receipts/pytest__test_native_wave_complete_arch0__restored__home__second.tldw-backup.zip.manifest.json",
+      "new_blob": "0199ef3fc79cabb8709e35ec8140b2e7467a658b"
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/final_native/post.json.gz",
+      "new_blob": "884b631baea14b8f6f0cacee689cc8666c37f859"
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/final_native/pre.json.gz",
+      "new_blob": "884b631baea14b8f6f0cacee689cc8666c37f859"
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/final_native/process.json",
+      "new_blob": "8a525d68a16bc530bf54022867f93b4d34b86e5d"
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/final_native/pytest-tail.txt",
+      "new_blob": "7fa183b52d7849018f723e3f07ff1a8d33a02772"
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/final_native/start.json",
+      "new_blob": "e4d1c89c6dcbcbe9cf83945a56d30564dd867d21"
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/final_native/tests.xml",
+      "new_blob": "e00aa587031fd912c359fb61e1580af271b2ee59"
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/hook_controls/maps.json",
+      "new_blob": "22e86441aa57eb3da6bd1113ab3cba8543cf1837"
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/hook_controls/post.json.gz",
+      "new_blob": "08ae37c123f1e8b9e4681b6c2d1e06a4703eb3c3"
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/hook_controls/pre.json.gz",
+      "new_blob": "08ae37c123f1e8b9e4681b6c2d1e06a4703eb3c3"
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/hook_controls/process.json",
+      "new_blob": "170960ff23f3092531cbc13d1521a7e0be97575b"
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/hook_controls/pytest-tail.txt",
+      "new_blob": "cc72292226c6e5f19c0636b3a18feecf2e9b11d9"
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/hook_controls/start.json",
+      "new_blob": "3383b53aaf18dc8da6891a6553f2392bc9f42d12"
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/hook_controls/tests.xml",
+      "new_blob": "ca2baef202222d077698a7a2553a7110423e7a25"
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/hook_green/maps.json",
+      "new_blob": "9e68740f3474b0a4139460d357b1775ec0ba945a"
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/hook_green/post.json.gz",
+      "new_blob": "4f6182511d972e4ffb4291b8ffe4b2ca8c5e6af5"
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/hook_green/pre.json.gz",
+      "new_blob": "4f6182511d972e4ffb4291b8ffe4b2ca8c5e6af5"
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/hook_green/process.json",
+      "new_blob": "189f86531913c4bedd7069c8addd5f347a250456"
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/hook_green/pytest-tail.txt",
+      "new_blob": "6064cc99d001c458c34e9f3f60f531e327de31b0"
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/hook_green/start.json",
+      "new_blob": "41de5041dd2e3a61d5188682ca119438bbcc0d0f"
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/hook_green/tests.xml",
+      "new_blob": "b2283b8a830d9ae9dd71d22d04a053d617339c7c"
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/hook_native_final/maps.json",
+      "new_blob": "dd583a656817afff9d1ac276b5e1600c576bbcc5"
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/hook_native_final/native-receipts/archives.json",
+      "new_blob": "71d38fc1c25134332aee6cbda2947ffd0c989b9d"
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/hook_native_final/native-receipts/pytest/test_native_correction_keeps_f0/original/native-journey.json",
+      "new_blob": "f90305ce304eb436bf0515a5e7114ce98114eab6"
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/hook_native_final/native-receipts/pytest/test_native_correction_keeps_f0/original/source-home-removed/wave.json",
+      "new_blob": "2891e1b336793fa8f8a96eea255e9d3af93c4601"
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/hook_native_final/native-receipts/pytest/test_native_correction_keeps_f0/restored/home/restored.json",
+      "new_blob": "60c0d8abf76da34538e050162715b5ff28c8298d"
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/hook_native_final/native-receipts/pytest/test_native_correction_keeps_f0/restored/home/wave.json",
+      "new_blob": "2891e1b336793fa8f8a96eea255e9d3af93c4601"
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/hook_native_final/native-receipts/pytest__test_native_correction_keeps_f0__original__source-home-removed__retained-temporary.tldw-backup.zip.manifest.json",
+      "new_blob": "312442dd6dcc047402f7d850a39983fc6fb45354"
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/hook_native_final/native-receipts/pytest__test_native_correction_keeps_f0__restored__home__second.tldw-backup.zip.manifest.json",
+      "new_blob": "e8ecaa92fccdcce761a8520accdef93fd292f6c1"
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/hook_native_final/post.json.gz",
+      "new_blob": "7d3f9969f762a8816a516aa4c0f227548dcfa2f6"
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/hook_native_final/pre.json.gz",
+      "new_blob": "7d3f9969f762a8816a516aa4c0f227548dcfa2f6"
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/hook_native_final/process.json",
+      "new_blob": "99146120522722911f46aa50507ed7be76fab691"
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/hook_native_final/pytest-tail.txt",
+      "new_blob": "aa68e1cbd38febea24620be518761cd4fc0a192d"
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/hook_native_final/start.json",
+      "new_blob": "59759ca9b900fd8ff153a5d5d36e0bb9c5ce9acb"
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/hook_native_final/tests.xml",
+      "new_blob": "d51c33e02c7dcc43c856c6f6f769cd373bd2e147"
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/hook_ordinals/maps.json",
+      "new_blob": "bfa13c0cd0b503d8ec565319d1dac66e91523351"
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/hook_ordinals/post.json.gz",
+      "new_blob": "757a0cf8e0196d192e8424697c5e687970a33e75"
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/hook_ordinals/pre.json.gz",
+      "new_blob": "757a0cf8e0196d192e8424697c5e687970a33e75"
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/hook_ordinals/process.json",
+      "new_blob": "892ac4aa047266f8cc9f0a80ca5be6518d1b82d2"
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/hook_ordinals/pytest-tail.txt",
+      "new_blob": "7a58c4c747e260c4130a8032fe8cdb3c2db7e531"
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/hook_ordinals/start.json",
+      "new_blob": "9a5fa885f3189aa1883f5af4c1cfcd2325fb4d7b"
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/hook_ordinals/tests.xml",
+      "new_blob": "216e0c72b9c6cd8077b3c5ead4908da6713358e8"
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/hook_red/maps.json",
+      "new_blob": "1cba47019571f38bbf54b33d765801b475fb5bf3"
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/hook_red/post.json.gz",
+      "new_blob": "d3f3e570e0afce996c3aa09222b61fc5784656e1"
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/hook_red/pre.json.gz",
+      "new_blob": "d3f3e570e0afce996c3aa09222b61fc5784656e1"
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/hook_red/process.json",
+      "new_blob": "36f428681b683bed698aa4e7e7cac350952c75f7"
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/hook_red/pytest-tail.txt",
+      "new_blob": "2765c6f49f6ebe9e516d52d936169460ac9331fe"
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/hook_red/start.json",
+      "new_blob": "5406a9a509fedfd6bbd4a54b3db4dbd19c1083ec"
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/hook_red/tests.xml",
+      "new_blob": "232ec3bf8f2fee8bfc9809cb6a08c78ea6a6315a"
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/hook_red2/maps.json",
+      "new_blob": "dad1e408f300da3f2b6712fa5546e5c7e058ca65"
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/hook_red2/post.json.gz",
+      "new_blob": "33733c477e3b140020045b62cc440aeaf68cdd7b"
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/hook_red2/pre.json.gz",
+      "new_blob": "33733c477e3b140020045b62cc440aeaf68cdd7b"
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/hook_red2/process.json",
+      "new_blob": "86de335a4811b985112339f3661031af06a25a3d"
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/hook_red2/pytest-tail.txt",
+      "new_blob": "2205bd5cb45ab3134841cff22113f00cacbb6651"
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/hook_red2/start.json",
+      "new_blob": "1d634852e49145391ebf107004bacfd7c5c7c0a8"
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/hook_red2/tests.xml",
+      "new_blob": "f81d7ade42d0681bd1e4de7e61d02c0b92024e65"
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/journey1/maps.json",
+      "new_blob": "f655ada20a1cc124fde40bdf640dca5743dc3c76"
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/journey1/post.json.gz",
+      "new_blob": "4eeb795ec7f8827a734d6b8123dd24b06b29eabb"
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/journey1/pre.json.gz",
+      "new_blob": "4eeb795ec7f8827a734d6b8123dd24b06b29eabb"
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/journey1/process.json",
+      "new_blob": "cec99c079b289668b4690d8ba909fbb8a4169c3d"
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/journey1/pytest-tail.txt",
+      "new_blob": "d9bdd64953510e17d31b792351afbd77f28c99d0"
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/journey1/start.json",
+      "new_blob": "f561d05ecf3afa557515058408e26d7e4cd71980"
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/journey1/tests.xml",
+      "new_blob": "a1ab80f05c5ba5f941c99e4fbcba815459d07307"
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/journey2/maps.json",
+      "new_blob": "bd3cbcb802153a5c783578249545b07dcdf4e39b"
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/journey2/post.json.gz",
+      "new_blob": "11465204962b66cbbefadf8972a6d7130b5dcf14"
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/journey2/pre.json.gz",
+      "new_blob": "11465204962b66cbbefadf8972a6d7130b5dcf14"
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/journey2/process.json",
+      "new_blob": "2f37503e7200e0b74e7011290b0d8fba9f7dd637"
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/journey2/pytest-tail.txt",
+      "new_blob": "87d7298eda7db0fdce4b19d026d9e0a465dcab9f"
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/journey2/start.json",
+      "new_blob": "4af44d0779bf3d381ba35e040ddbcd9acb1d83e5"
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/journey2/tests.xml",
+      "new_blob": "b0eb86384345c02d3f6ee0c43b9f4df503d10775"
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/journey3/maps.json",
+      "new_blob": "0871ac3d9e93c714988fbbcb84d95430173e750a"
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/journey3/post.json.gz",
+      "new_blob": "4e14b32530121ab6875be9a5b84548833bf61373"
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/journey3/pre.json.gz",
+      "new_blob": "4e14b32530121ab6875be9a5b84548833bf61373"
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/journey3/process.json",
+      "new_blob": "aba8ea36a6d736d9f8fbd6b57ab75e58793dcc00"
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/journey3/pytest-tail.txt",
+      "new_blob": "974db149836c3466f7910ffc23bb8ab903ed8095"
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/journey3/start.json",
+      "new_blob": "33322b21a439844b1ac340b93dbff53e898c66ec"
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/journey3/tests.xml",
+      "new_blob": "bcfca629a2320180bdc1099ccddd9b999d2d32b8"
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/journey4/maps.json",
+      "new_blob": "6f102e9bef109b966931546dad614838e604b304"
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/journey4/post.json.gz",
+      "new_blob": "0f0332e66f6cb7e1f17fdc2dcffeb8d2a00649a4"
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/journey4/pre.json.gz",
+      "new_blob": "0f0332e66f6cb7e1f17fdc2dcffeb8d2a00649a4"
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/journey4/process.json",
+      "new_blob": "08d645558a27c4f0e5ae70db68bacc4acf3bb52d"
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/journey4/pytest-tail.txt",
+      "new_blob": "e8551710fba905872bbb708546447b8303d8ea47"
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/journey4/start.json",
+      "new_blob": "51ef4e91a0e4395a3978c78e806464b3d1f6ed99"
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/journey4/tests.xml",
+      "new_blob": "273ac529ae124640a9f63acc9a80ac0c74bda6ea"
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/legacy-reason-receipt.json",
+      "new_blob": "cf31804d56dacd619d1a4f467b17e46d3c5cceea"
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/live-receipts.json",
+      "new_blob": "40cf6cb041abaafd694929de715e158e7d73becc"
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/live/inspect1/driver.py",
+      "new_blob": "5bc85cd67f34265663dffdff51390b68a90f61d3"
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/live/inspect1/events.jsonl",
+      "new_blob": "c15d0753c513dbeffeab8f7c87fb25f11be89d32"
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/live/inspect1/maps.json",
+      "new_blob": "6edb69bdeb4814f9f1f73b294de0081fdde8cfab"
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/live/inspect1/post.json.gz",
+      "new_blob": "236540e6a8359d53a8c6472c991316f23a5d165d"
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/live/inspect1/pre.json.gz",
+      "new_blob": "236540e6a8359d53a8c6472c991316f23a5d165d"
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/live/inspect1/process-tail.txt",
+      "new_blob": "8649065082cb104dab5347bc60ff97d88214e71c"
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/live/inspect1/receipt.json",
+      "new_blob": "45061445ffa9dadc6275d8787a656cb73ba7b50c"
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/live/inspect1/start.json",
+      "new_blob": "cd8e799badb626ee80e840bbbcf3e55f3506d449"
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/live/inspect2/driver.py",
+      "new_blob": "9e4cf4bc92c66d0ccca47bbad5ca75261a9ad66a"
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/live/inspect2/events.jsonl",
+      "new_blob": "baaa8bab37b5214fb4d797139caa74e698a59b0c"
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/live/inspect2/maps.json",
+      "new_blob": "00bb179e1bb9e218182d05c6a50d37d1399e41d3"
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/live/inspect2/post.json.gz",
+      "new_blob": "a5ddd6c0591db37a211300c834e3c806308a64c2"
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/live/inspect2/pre.json.gz",
+      "new_blob": "a5ddd6c0591db37a211300c834e3c806308a64c2"
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/live/inspect2/process-tail.txt",
+      "new_blob": "2034c62b6a77eea8d12ebfe75b3e84f47619287b"
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/live/inspect2/receipt.json",
+      "new_blob": "397fd44c4ccc4dcf82f2420f65016ab317242fe5"
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/live/inspect2/start.json",
+      "new_blob": "bc2210a92ede643f90d84725069f71dcbe9cd5b4"
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/live/inspect3/driver.py",
+      "new_blob": "9e4cf4bc92c66d0ccca47bbad5ca75261a9ad66a"
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/live/inspect3/events.jsonl",
+      "new_blob": "0d9c51f399132d99d8887dfbcd0222e993cc5d4f"
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/live/inspect3/maps.json",
+      "new_blob": "604f36c90a152e9408d107ad0978551fc51ecc27"
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/live/inspect3/post.json.gz",
+      "new_blob": "3403611acbc2e04abdd5d5f2e612ad75e9943aa4"
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/live/inspect3/pre.json.gz",
+      "new_blob": "3403611acbc2e04abdd5d5f2e612ad75e9943aa4"
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/live/inspect3/process-tail.txt",
+      "new_blob": "bac73b30b27cbf3cf02bd950b19a069e94bcb25c"
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/live/inspect3/receipt.json",
+      "new_blob": "0d426e39f8de288acb46d2eb4607748544dbb8f7"
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/live/inspect3/start.json",
+      "new_blob": "0b14b955fa76e17a199ada5524909eb32505cc92"
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/live/plan1/events.jsonl",
+      "new_blob": "e69de29bb2d1d6434b8b29ae775ad8c2e48c5391"
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/live/plan1/maps.json",
+      "new_blob": "49f0d1cc485d1f102b83a074c19436aebe2d0c9e"
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/live/plan1/post.json.gz",
+      "new_blob": "4dc3bf9a7324f2609ce6c362eeebf5d18d68d79a"
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/live/plan1/pre.json.gz",
+      "new_blob": "4dc3bf9a7324f2609ce6c362eeebf5d18d68d79a"
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/live/plan1/process-tail.txt",
+      "new_blob": "ac0ea6a691a871d984dc0c4817b550b3d68ab9ab"
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/live/plan1/receipt.json",
+      "new_blob": "1bbfd5a0318738cd5dcfa5adad226e14e2eda07e"
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/live/plan1/start.json",
+      "new_blob": "944e6ea1f2a6942159fea22206cea5bda076fb66"
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/live/plan10/driver.py",
+      "new_blob": "37f0bc86d20a9ed7b06013c332ea650eb0001bdf"
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/live/plan10/events.jsonl",
+      "new_blob": "a807ad83d6ec648e0340c18a86cc8bd8bb5a29f9"
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/live/plan10/maps.json",
+      "new_blob": "e929999fefca7d762f0916055e7d801a7d14ad67"
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/live/plan10/post.json.gz",
+      "new_blob": "2c24434dc72895768ae585930ddfbf6725951fc8"
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/live/plan10/pre.json.gz",
+      "new_blob": "2c24434dc72895768ae585930ddfbf6725951fc8"
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/live/plan10/process-tail.txt",
+      "new_blob": "62e56e45d63bc3dfc84f1428743c2de7cd7abae7"
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/live/plan10/receipt.json",
+      "new_blob": "2ca2a27508ec1b242870bba52a1223a50809513b"
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/live/plan10/start.json",
+      "new_blob": "252a4d54c0429651ab7fcd32fbaae5db026b0ede"
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/live/plan2/events.jsonl",
+      "new_blob": "868398582bf8ed1c713d10bb2af3c5ef65ac2e1c"
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/live/plan2/maps.json",
+      "new_blob": "824a87abe6abf02b23aca4278d1a8735f42cdd70"
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/live/plan2/post.json.gz",
+      "new_blob": "e6dc129b1c32755957f4059f90d1c751bf729b78"
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/live/plan2/pre.json.gz",
+      "new_blob": "e6dc129b1c32755957f4059f90d1c751bf729b78"
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/live/plan2/process-tail.txt",
+      "new_blob": "d1a4cfdb452ba3368d4234b2ede8453e1a4b5f4b"
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/live/plan2/receipt.json",
+      "new_blob": "92ba374b89ce4524160fa2d3ceee50b254533c11"
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/live/plan2/start.json",
+      "new_blob": "48d4700fbf5361b40820b9397fb133970405174e"
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/live/plan3/events.jsonl",
+      "new_blob": "0182014faff13fdd8272c81ca25e6ccd109ea570"
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/live/plan3/maps.json",
+      "new_blob": "4b9b9ac355d41918dad92266db321087eefdbb3f"
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/live/plan3/post.json.gz",
+      "new_blob": "13a8e7a06dd543be1ae2cdcd48259e0ae7ba1ee3"
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/live/plan3/pre.json.gz",
+      "new_blob": "13a8e7a06dd543be1ae2cdcd48259e0ae7ba1ee3"
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/live/plan3/process-tail.txt",
+      "new_blob": "94e186e10d3796d7087bb00f7e503ec0e8ccd1a2"
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/live/plan3/receipt.json",
+      "new_blob": "fbba7d2d36be95527757a28bc92888b6bde73ed6"
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/live/plan3/start.json",
+      "new_blob": "409fd4c83d03bec282de2ab1c47d1d9f6823ebda"
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/live/plan4/events.jsonl",
+      "new_blob": "5244695e080101fbf0a8659a3510c38c20e1f03f"
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/live/plan4/maps.json",
+      "new_blob": "f3586716d1a9e056841f4eaa209465f8db63b3f8"
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/live/plan4/post.json.gz",
+      "new_blob": "3baa60597142209abf7cc711df84ec711bc4bed4"
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/live/plan4/pre.json.gz",
+      "new_blob": "3baa60597142209abf7cc711df84ec711bc4bed4"
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/live/plan4/process-tail.txt",
+      "new_blob": "406effbc0b2042e6383b310663cb4da106fd862a"
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/live/plan4/receipt.json",
+      "new_blob": "3666be85dea940416c954a212d455fd047994a53"
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/live/plan4/start.json",
+      "new_blob": "eb3ccea13bb9e2e9bf9fb7c87b49b183957e9872"
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/live/plan5/events.jsonl",
+      "new_blob": "14b3ac28da9ee84e79269df5cb24227c4748b4a9"
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/live/plan5/maps.json",
+      "new_blob": "346f2d68d7f80f3fce02eaa9daeccf0b5bb0ac17"
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/live/plan5/post.json.gz",
+      "new_blob": "27aed5a58759a4c1d88c1d2bf590d3d94d5cbb78"
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/live/plan5/pre.json.gz",
+      "new_blob": "27aed5a58759a4c1d88c1d2bf590d3d94d5cbb78"
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/live/plan5/process-tail.txt",
+      "new_blob": "885b64e84842b93d3eef19914f76a194f9b89fc6"
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/live/plan5/receipt.json",
+      "new_blob": "65657a25e5fd1728702d3447c92c013359e40113"
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/live/plan5/start.json",
+      "new_blob": "1e8c1e871ff5764ad99b1eaae8491b67cbb64d46"
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/live/plan6/events.jsonl",
+      "new_blob": "25e086dd596270ab373694f0405eee06e4a7e9d8"
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/live/plan6/maps.json",
+      "new_blob": "8b443e5b5060a1adb441a6f3342fd67d4e6857f0"
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/live/plan6/post.json.gz",
+      "new_blob": "d01e0a5fff0e2a94caa7115101c1997392b8deec"
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/live/plan6/pre.json.gz",
+      "new_blob": "d01e0a5fff0e2a94caa7115101c1997392b8deec"
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/live/plan6/process-tail.txt",
+      "new_blob": "7bd7178fbdfc548ebe336a9e6178b63aafc76909"
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/live/plan6/receipt.json",
+      "new_blob": "90bf1f77bafa5575cc6cb1967e88ce3eb1fcfc8b"
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/live/plan6/start.json",
+      "new_blob": "d4ce16a556565e96cceb749d6ec611f63bf31eb7"
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/live/plan7/events.jsonl",
+      "new_blob": "ebfda5e96f5db5329d33a383dff3db0c0f7d1d80"
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/live/plan7/maps.json",
+      "new_blob": "a512984843986ebe2119aa045c035e82310768b6"
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/live/plan7/post.json.gz",
+      "new_blob": "ce59db26a9fcdddab4bbacea8553dbf036614f14"
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/live/plan7/pre.json.gz",
+      "new_blob": "ce59db26a9fcdddab4bbacea8553dbf036614f14"
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/live/plan7/process-tail.txt",
+      "new_blob": "f1485c61e218a37cbcea002c6b62134e745d6e1a"
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/live/plan7/receipt.json",
+      "new_blob": "464c1263331f9f17e74f61cac10a99ddce7f55a0"
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/live/plan7/start.json",
+      "new_blob": "dbb069d3082e29b9df43a38e3582969465d3bd3f"
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/live/plan8/driver.py",
+      "new_blob": "b71340462826e95083d1e1209231c07e0cca48bb"
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/live/plan8/events.jsonl",
+      "new_blob": "196ba8a07d87b43094404cbeed1dc712e6ffeb46"
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/live/plan8/maps.json",
+      "new_blob": "4ced36447c8d92101e0b115bfdbc1a8d89cff74f"
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/live/plan8/post.json.gz",
+      "new_blob": "cea249485cce54dbe619b6dc04e0a5989daed12c"
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/live/plan8/pre.json.gz",
+      "new_blob": "cea249485cce54dbe619b6dc04e0a5989daed12c"
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/live/plan8/process-tail.txt",
+      "new_blob": "09420ec414518573a8521f09a82787dd40fa88d0"
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/live/plan8/receipt.json",
+      "new_blob": "3d343e5662da130023a4e789c1d3480997103fe0"
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/live/plan8/start.json",
+      "new_blob": "24be20557bad388f7726faf3fe1b1eb29a769335"
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/live/plan9/driver.py",
+      "new_blob": "0697c471de1781b4f34d3a29a53683efbee8a30a"
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/live/plan9/events.jsonl",
+      "new_blob": "e8b14328345b7cace3df47a09c10056454468517"
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/live/plan9/maps.json",
+      "new_blob": "fc24fe50ac80095a7b9b398bbf8dfd6be10efa20"
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/live/plan9/post.json.gz",
+      "new_blob": "0886607ca189fe0bd3a196ec7c95d375176c2669"
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/live/plan9/pre.json.gz",
+      "new_blob": "0886607ca189fe0bd3a196ec7c95d375176c2669"
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/live/plan9/process-tail.txt",
+      "new_blob": "06718934a7c9dceb97de757044a4565df78b9764"
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/live/plan9/receipt.json",
+      "new_blob": "2b8884e2cc47152de17b78ddca6bff3059e8584d"
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/live/plan9/start.json",
+      "new_blob": "2a43f4da49c1c8df275d8ac1ebeaf65a6041d746"
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/live/read1/driver.py",
+      "new_blob": "1ef960acd4589041a3028fb193cc06e0569e9703"
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/live/read1/events.jsonl",
+      "new_blob": "04529ab0f65db0235da12aa9cb03493a8253c772"
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/live/read1/maps.json",
+      "new_blob": "a5865a0b6f37f9244e31426873a82fd1219fe6d0"
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/live/read1/post.json.gz",
+      "new_blob": "b5a909df24c42ffe8e89b9adcad9410efd621114"
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/live/read1/pre.json.gz",
+      "new_blob": "b5a909df24c42ffe8e89b9adcad9410efd621114"
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/live/read1/process-tail.txt",
+      "new_blob": "22200e555b201b1208d8600b04ccf7ce39bd132f"
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/live/read1/receipt.json",
+      "new_blob": "f115a8363392d68a46bb01a0df466284401fc776"
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/live/read1/start.json",
+      "new_blob": "97ce6597b74b9d3e481e20d7d834ee0c97d7e45f"
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/live/read2/driver.py",
+      "new_blob": "1eb319151b1f1b091cbc515c343aad023200c477"
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/live/read2/events.jsonl",
+      "new_blob": "bff384cfa111b7b3c37be1403950e713484a21e2"
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/live/read2/maps.json",
+      "new_blob": "8854ab5f6838b2e993e9d3d3222c07824f446c1d"
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/live/read2/post.json.gz",
+      "new_blob": "f5f6d6757854c9c746c7dda109884d2b73cf747c"
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/live/read2/pre.json.gz",
+      "new_blob": "17eaf5b52c31bca5f353237365a4472c5a7fa50e"
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/live/read2/process-tail.txt",
+      "new_blob": "5d7f79540cb520dcc059918434f0dbabfb0fc130"
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/live/read2/receipt.json",
+      "new_blob": "107ebd8eb7f5389861fcf2b85747cf58279c03c0"
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/live/read2/start.json",
+      "new_blob": "d83c04015947d25c7c50c66e3d32b4643156262d"
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/live/read3/driver.py",
+      "new_blob": "bc42abde2cf3214115d72926eed16c5a42191da2"
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/live/read3/events.jsonl",
+      "new_blob": "a2267ce6dc7f34abc9c5417584758c56fe301ef1"
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/live/read3/maps.json",
+      "new_blob": "9b686374c97ebab4e6c5fafaae37e0d73eb72ed1"
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/live/read3/post.json.gz",
+      "new_blob": "492a9a94a3892656df1e88f89ccd80d96df8d185"
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/live/read3/pre.json.gz",
+      "new_blob": "492a9a94a3892656df1e88f89ccd80d96df8d185"
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/live/read3/process-tail.txt",
+      "new_blob": "6c9b1e69a2c523a47b71f405b92b840bdbcd6c84"
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/live/read3/receipt.json",
+      "new_blob": "5f97c28422d1161687bfa5fede0f49a4439a7b23"
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/live/read3/start.json",
+      "new_blob": "3fb88e335d03ce0f974d410b3024bde28a663f4b"
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/live/read4/driver.py",
+      "new_blob": "dade9fcb50bca72a2ec7ec3fdb3dc9a9954424f8"
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/live/read4/events.jsonl",
+      "new_blob": "059b238564b3879e3907aed8238f453f51d16fe6"
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/live/read4/maps.json",
+      "new_blob": "c19a9f1399e039d260bbd9b8a783c1e89a9438f9"
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/live/read4/post.json.gz",
+      "new_blob": "7060c0250e662410becd151597dddd4274d5f4a6"
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/live/read4/pre.json.gz",
+      "new_blob": "7060c0250e662410becd151597dddd4274d5f4a6"
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/live/read4/process-tail.txt",
+      "new_blob": "8c3599a15d938366d99a6adc2b15310e71eec8da"
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/live/read4/receipt.json",
+      "new_blob": "11a2e1b7dcef1e3c2fea59d6242d2a9e036e4526"
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/live/read4/start.json",
+      "new_blob": "78d9aa4d37d664bc977e53042e310eb804a8cc1b"
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/live/read5/driver.py",
+      "new_blob": "c4ba8d67aeacb14e8a76b68788ca441a645af496"
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/live/read5/events.jsonl",
+      "new_blob": "6ec856b45ad864af56309b9283ac5016713bea1c"
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/live/read5/maps.json",
+      "new_blob": "a091f37a0df59c5fe27b9a20b6d7a3dd6ecd5661"
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/live/read5/post.json.gz",
+      "new_blob": "f4647dcc841a30bc2f048922e22c375389f47e03"
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/live/read5/pre.json.gz",
+      "new_blob": "f4647dcc841a30bc2f048922e22c375389f47e03"
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/live/read5/process-tail.txt",
+      "new_blob": "351953349fa8ae601c719042504058ae07cb9ace"
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/live/read5/receipt.json",
+      "new_blob": "3ced59c1219830aaa9c60079e54f13bb538f9f6a"
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/live/read5/start.json",
+      "new_blob": "dd659b39b6f1ffcc2055c4537b02a19845353054"
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/live/read6/driver.py",
+      "new_blob": "4e1e01b2b43683577c58dd2e3928451fb3d14b71"
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/live/read6/events.jsonl",
+      "new_blob": "ae9ac43406e8fd63726a0937713fa5344c4c83a2"
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/live/read6/maps.json",
+      "new_blob": "38e4da7c7aa59e20581df8a161703028742fd633"
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/live/read6/post.json.gz",
+      "new_blob": "790e9d8fa1686c2672bda5159c25f3e985e5e549"
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/live/read6/pre.json.gz",
+      "new_blob": "790e9d8fa1686c2672bda5159c25f3e985e5e549"
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/live/read6/process-tail.txt",
+      "new_blob": "cfb03ab4dd5a7d1515deabe3aa13624bd66cabcd"
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/live/read6/receipt.json",
+      "new_blob": "ff451b5612b33c8054d79427cee3e6900c872c96"
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/live/read6/start.json",
+      "new_blob": "10dbda0d614971c888bc4eba8ec93a5c377ca370"
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/live/restart1/events.jsonl",
+      "new_blob": "2639242f07fd2e3c8680114e182f54d5bb9240fb"
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/live/restart1/maps.json",
+      "new_blob": "2155ba02c233b73659984a4b0ef1f5db2d484875"
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/live/restart1/post.json.gz",
+      "new_blob": "f2c3841f2e4a3fccd2739520ad5999930cac4c00"
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/live/restart1/pre.json.gz",
+      "new_blob": "f2c3841f2e4a3fccd2739520ad5999930cac4c00"
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/live/restart1/process-tail.txt",
+      "new_blob": "73b349e8e51be261bce4c4c74a5601f9ce7dc393"
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/live/restart1/receipt.json",
+      "new_blob": "bd8be12908f30920ab0a3162f9e3a2ba13dfd21d"
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/live/restart1/start.json",
+      "new_blob": "48010f23caa3e42842dae62ec268a632492b6233"
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/live/restart2/events.jsonl",
+      "new_blob": "a08c5f2a0370ffc07f76fec12b062779c1e42ba6"
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/live/restart2/maps.json",
+      "new_blob": "b793810ae55065015fe98d2b438576570cd19b0a"
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/live/restart2/post.json.gz",
+      "new_blob": "422a8858a24223105fe902930d1679e505a9c815"
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/live/restart2/pre.json.gz",
+      "new_blob": "422a8858a24223105fe902930d1679e505a9c815"
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/live/restart2/process-tail.txt",
+      "new_blob": "0b2a791376fe8797d34d2ebd5fb6887902395412"
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/live/restart2/receipt.json",
+      "new_blob": "098ed718ab7fcfc77b1d729ca147fee43a22e95d"
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/live/restart2/start.json",
+      "new_blob": "a3f37b6c02f0dd76c4c0e232ef8a9709e29b725b"
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/live/restart3/events.jsonl",
+      "new_blob": "6700c2ee2090b0e33c6d6f7931f9ab45c13f6f3d"
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/live/restart3/maps.json",
+      "new_blob": "4175bad278f4dbdaffb928f0131e0dd791ad6fa1"
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/live/restart3/post.json.gz",
+      "new_blob": "ce59db26a9fcdddab4bbacea8553dbf036614f14"
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/live/restart3/pre.json.gz",
+      "new_blob": "f2c3841f2e4a3fccd2739520ad5999930cac4c00"
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/live/restart3/process-tail.txt",
+      "new_blob": "d8419e001368aa17bf3a4f9e78e5c316833baa03"
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/live/restart3/receipt.json",
+      "new_blob": "4c076d08c8c68bcf844868e679b21140cbaa0b7a"
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/live/restart3/start.json",
+      "new_blob": "b75918dac16c797b84a088d980c15c2563b2bf17"
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/live/restart4/events.jsonl",
+      "new_blob": "ce70f9c5b591d96420d953293bfd8f71878006fc"
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/live/restart4/maps.json",
+      "new_blob": "04f8a812ecd7f8229c75a9c14fb7e3d3242a8f03"
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/live/restart4/post.json.gz",
+      "new_blob": "cea249485cce54dbe619b6dc04e0a5989daed12c"
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/live/restart4/pre.json.gz",
+      "new_blob": "81970a5ea663f69b9a6d4d85c7e811cca704db41"
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/live/restart4/process-tail.txt",
+      "new_blob": "7bc150fafdad58f004cc671f1169118e5a3e3a79"
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/live/restart4/receipt.json",
+      "new_blob": "63bf2f4e73dea3c50674714efc188ec25e45c780"
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/live/restart4/start.json",
+      "new_blob": "2d7bf0219341f2498bfe6ac3a0177577f3011b4c"
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/live/restart5/events.jsonl",
+      "new_blob": "87d00c84e90aeb526e94bc78c1eae06d82f76586"
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/live/restart5/maps.json",
+      "new_blob": "b2f055e74a87d0bd6f262466addf6e209724b32c"
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/live/restart5/post.json.gz",
+      "new_blob": "0886607ca189fe0bd3a196ec7c95d375176c2669"
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/live/restart5/pre.json.gz",
+      "new_blob": "ce59db26a9fcdddab4bbacea8553dbf036614f14"
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/live/restart5/process-tail.txt",
+      "new_blob": "f9b4ba5bbceaae76a52cae273c86b717c83255d1"
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/live/restart5/receipt.json",
+      "new_blob": "09c12e16c2f2c903bcb79773d0345c5ecb550150"
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/live/restart5/start.json",
+      "new_blob": "00b6aa654eb054f1ba6519f474c930a23411ecd4"
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/live/restart6/driver.py",
+      "new_blob": "b71340462826e95083d1e1209231c07e0cca48bb"
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/live/restart6/events.jsonl",
+      "new_blob": "4c09ce57efd68a822e6ddef966618e955ffa628b"
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/live/restart6/maps.json",
+      "new_blob": "4ced36447c8d92101e0b115bfdbc1a8d89cff74f"
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/live/restart6/post.json.gz",
+      "new_blob": "cea249485cce54dbe619b6dc04e0a5989daed12c"
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/live/restart6/pre.json.gz",
+      "new_blob": "cea249485cce54dbe619b6dc04e0a5989daed12c"
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/live/restart6/process-tail.txt",
+      "new_blob": "4eea8409c1b6d31dfb4e604fdc168ed1622fed7e"
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/live/restart6/receipt.json",
+      "new_blob": "e8451c171c8feea758859594dd2773557ec59996"
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/live/restart6/start.json",
+      "new_blob": "0850ec4884e6cb1df111ba5ed2c1131d4aaa8e21"
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/live/restart7/driver.py",
+      "new_blob": "0697c471de1781b4f34d3a29a53683efbee8a30a"
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/live/restart7/events.jsonl",
+      "new_blob": "80d36039ce96259c07aa29b8223d2467ca4d778e"
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/live/restart7/maps.json",
+      "new_blob": "fc24fe50ac80095a7b9b398bbf8dfd6be10efa20"
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/live/restart7/post.json.gz",
+      "new_blob": "0886607ca189fe0bd3a196ec7c95d375176c2669"
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/live/restart7/pre.json.gz",
+      "new_blob": "0886607ca189fe0bd3a196ec7c95d375176c2669"
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/live/restart7/process-tail.txt",
+      "new_blob": "1e9157ba6f832846ee49c88f542f869237390e50"
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/live/restart7/receipt.json",
+      "new_blob": "a46165ddd63ea286994dc9d549a7de2e41592a07"
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/live/restart7/start.json",
+      "new_blob": "f6da97f92028334dee66cd7aa0feed109e81df85"
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/live/restart8/driver.py",
+      "new_blob": "37f0bc86d20a9ed7b06013c332ea650eb0001bdf"
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/live/restart8/events.jsonl",
+      "new_blob": "9a2017487de56ef03eaae423dcc3c0d0de55d242"
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/live/restart8/maps.json",
+      "new_blob": "e929999fefca7d762f0916055e7d801a7d14ad67"
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/live/restart8/post.json.gz",
+      "new_blob": "2c24434dc72895768ae585930ddfbf6725951fc8"
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/live/restart8/pre.json.gz",
+      "new_blob": "2c24434dc72895768ae585930ddfbf6725951fc8"
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/live/restart8/process-tail.txt",
+      "new_blob": "8c49746bfeaa54a85f1dec68d85cc3629678d6df"
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/live/restart8/receipt.json",
+      "new_blob": "b9820b03352a73280166c3426ac5641246e87232"
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/live/restart8/start.json",
+      "new_blob": "67602f3b9c9a659f74cb3c5e299bde4f7e63fb30"
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/live/restart9/driver.py",
+      "new_blob": "bf2f89ae5dfc731ca1b0096180e7163d1b711972"
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/live/restart9/events.jsonl",
+      "new_blob": "341c40689e746c0e6bf8e5a57d070f78001544c5"
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/live/restart9/maps.json",
+      "new_blob": "d10b0550700c40807707b8eafd2fe00064737c3d"
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/live/restart9/post.json.gz",
+      "new_blob": "aed2c70a0d843791e1d92d3bf9acae5f109b94af"
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/live/restart9/pre.json.gz",
+      "new_blob": "8013ca974b0d29f83fa5afb2c385a12d001f6d5d"
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/live/restart9/process-tail.txt",
+      "new_blob": "61cd895880506617b536c9f9d642d47c013585a7"
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/live/restart9/receipt.json",
+      "new_blob": "6cbd74be62be04fcdfc54bfa6536d3444547250a"
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/live/restart9/start.json",
+      "new_blob": "7f0c16877e7635a09acf37fb7840ed94db235aba"
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/logs_off/maps.json",
+      "new_blob": "68dabbeba15fcfb3f54e6cdc14543d24fece5f0d"
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/logs_off/native-receipts/archives.json",
+      "new_blob": "f9aa6457b4b2fa861ef0fd6f96ef06a037fccbe4"
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/logs_off/native-receipts/pytest/test_native_correction_keeps_f0/original/native-journey.json",
+      "new_blob": "f92d05069de0da7127c6a5cd095246f6085cd65e"
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/logs_off/native-receipts/pytest/test_native_correction_keeps_f0/original/source-home-removed/wave.json",
+      "new_blob": "8c922713a4cb1fff485191cbc505fffdd391fa17"
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/logs_off/native-receipts/pytest/test_native_correction_keeps_f0/restored/home/restored.json",
+      "new_blob": "4afb56f2ef3595918b164785cf55da0dcff571a0"
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/logs_off/native-receipts/pytest/test_native_correction_keeps_f0/restored/home/wave.json",
+      "new_blob": "8c922713a4cb1fff485191cbc505fffdd391fa17"
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/logs_off/native-receipts/pytest__test_native_correction_keeps_f0__original__source-home-removed__retained-temporary.tldw-backup.zip.manifest.json",
+      "new_blob": "488549a48e80007a422bafa5d3fb4cf6cce214d4"
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/logs_off/native-receipts/pytest__test_native_correction_keeps_f0__restored__home__second.tldw-backup.zip.manifest.json",
+      "new_blob": "5dd719f4c9af2c7e33e87fa3c3b6f9f0c57d8994"
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/logs_off/post.json.gz",
+      "new_blob": "bd979f584ffc1ef2023823f8708cc0a97a028dd9"
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/logs_off/pre.json.gz",
+      "new_blob": "bd979f584ffc1ef2023823f8708cc0a97a028dd9"
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/logs_off/process.json",
+      "new_blob": "73f7cc6d173f9fe6b535d3511c544f4e02e86199"
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/logs_off/pytest-tail.txt",
+      "new_blob": "af62b833bebe5ca2f8059097b36c8475f300dc80"
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/logs_off/start.json",
+      "new_blob": "b7d6494aa95112037535f34861737c6adb4e3c86"
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/logs_off/tests.xml",
+      "new_blob": "b40b60c9c28135e074061778fe28fda731d775d4"
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/native_compat1/maps.json",
+      "new_blob": "7e8f95eb22f680cb83e74de8bc4ce7f521418e68"
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/native_compat1/post.json.gz",
+      "new_blob": "de36fbca448867d888c8e2b5c13a4c14673b4b25"
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/native_compat1/pre.json.gz",
+      "new_blob": "de36fbca448867d888c8e2b5c13a4c14673b4b25"
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/native_compat1/process.json",
+      "new_blob": "49bf1b2f7afc5281325ed723bc1eeaf177531eeb"
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/native_compat1/pytest-tail.txt",
+      "new_blob": "885be6eaecadfd1eb62f0ac23d99b9e6c338aa30"
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/native_compat1/start.json",
+      "new_blob": "170a4d256d08f342a03e12969194275dfcb9c027"
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/native_compat1/tests.xml",
+      "new_blob": "fe80c50056e4528d114403d6738dc651b370ecb6"
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/privacy-scan.json",
+      "new_blob": "c38f5935a71c66ca0b2fbf01f2a3ff6836b6d2d3"
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/reason_green/maps.json",
+      "new_blob": "d1d731430f0e7fadfa8262d6c9c43f364443db9d"
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/reason_green/post.json.gz",
+      "new_blob": "5692b322566cddb73e4e8c5ff4713dc4aa0938a9"
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/reason_green/pre.json.gz",
+      "new_blob": "5692b322566cddb73e4e8c5ff4713dc4aa0938a9"
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/reason_green/process.json",
+      "new_blob": "1c561769a3c58b80a9ab99d881bf6108e5e37d2b"
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/reason_green/pytest-tail.txt",
+      "new_blob": "05d845fc36eacd89d9bdb30118a7a9c7b1b2abda"
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/reason_green/start.json",
+      "new_blob": "c324e029e18b298315941e56b9e39f68bd4062c0"
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/reason_green/tests.xml",
+      "new_blob": "0bc050bdc7e8892100274c44e108390b5c2a9c95"
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/reason_red/maps.json",
+      "new_blob": "7cffe2d72bbe5f65900d1fbc6dc6e4e877f525ce"
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/reason_red/post.json.gz",
+      "new_blob": "b0ab6e03340b684ff2c8e5b788c6f32c9d0c9635"
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/reason_red/pre.json.gz",
+      "new_blob": "b0ab6e03340b684ff2c8e5b788c6f32c9d0c9635"
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/reason_red/process.json",
+      "new_blob": "f229de1074ac3a076b5aeb4509e69d780bdc2a42"
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/reason_red/pytest-tail.txt",
+      "new_blob": "801a45dbb0ed5cdad6302160a521e7f583882a3a"
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/reason_red/start.json",
+      "new_blob": "e07ad167efc4ab3a0fbc3fb17c63f1bf3ade570a"
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/reason_red/tests.xml",
+      "new_blob": "634dadfee48afe16477d6bdced9b39cf172fe772"
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/restart1/maps.json",
+      "new_blob": "a9e51cd060cc5c6bda4ffc7ba79fbd963cae217c"
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/restart1/native-receipts/pytest/test_fresh_process_recovery_ne0/boundary.json",
+      "new_blob": "3572363b15f139381ba701d659277ebabddf68fb"
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/restart1/native-receipts/pytest/test_fresh_process_recovery_ne0/process.json",
+      "new_blob": "ea1cf23b09912810e27cc3bfe7a5b5c7529d732a"
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/restart1/native-receipts/pytest/test_fresh_process_recovery_ne0/restarted.json",
+      "new_blob": "5e9754f602e8ea187a50851de0a1361bd539c8dd"
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/restart1/native-receipts/pytest/test_fresh_process_recovery_ne1/boundary.json",
+      "new_blob": "0e548ba03ee839c10679d96286d238709266ddc8"
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/restart1/native-receipts/pytest/test_fresh_process_recovery_ne2/boundary.json",
+      "new_blob": "166126e33af727656acc492351a287f4f2c333d8"
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/restart1/native-receipts/pytest/test_fresh_process_recovery_ne2/process.json",
+      "new_blob": "863c46512a8e8afe9609b05a4be528405cee571d"
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/restart1/native-receipts/pytest/test_fresh_process_recovery_ne2/restarted.json",
+      "new_blob": "535e8f007e2a3bb357bf1291b18f26de7160944d"
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/restart1/native-receipts/pytest/test_fresh_process_recovery_ne3/boundary.json",
+      "new_blob": "a6d51508796750b9335d971032d899fb77e04e85"
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/restart1/native-receipts/pytest/test_fresh_process_recovery_ne3/process.json",
+      "new_blob": "0e8f90a3619cdc9604fad3d38ea835f8901591d8"
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/restart1/native-receipts/pytest/test_fresh_process_recovery_ne3/restarted.json",
+      "new_blob": "c62851e202c1a4ccd0069e139d5419beb5628b68"
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/restart1/native-receipts/pytest/test_fresh_process_recovery_ne4/boundary.json",
+      "new_blob": "e638eea90a20ba5ab3f5e218fe06b7c578d2fc3a"
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/restart1/native-receipts/pytest/test_fresh_process_recovery_ne5/boundary.json",
+      "new_blob": "6f5ab506184b3ec4b5e9e1df2edef9857947be3e"
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/restart1/native-receipts/pytest/test_fresh_process_recovery_ne6/boundary.json",
+      "new_blob": "82cc88a3a23ec3ce8fba80af4c036023fc7a361e"
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/restart1/native-receipts/pytest/test_fresh_process_recovery_ne7/boundary.json",
+      "new_blob": "dcd0bcdde8eb64771ed59073e132345c016aecd6"
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/restart1/native-receipts/pytest/test_fresh_process_recovery_ne8/boundary.json",
+      "new_blob": "8f70657075e432243fdc8277c19b3a977944e488"
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/restart1/native-receipts/pytest/test_fresh_process_recovery_ne8/process.json",
+      "new_blob": "708812c1b42f2416fc110a2240783b846cf4fef8"
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/restart1/native-receipts/pytest/test_fresh_process_recovery_ne8/restarted.json",
+      "new_blob": "36c14b67f399d75f4bb978a5606c4f86341f10d0"
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/restart1/post.json.gz",
+      "new_blob": "2bf577c55ccb88d4d2f1d6e963b68b40b8763867"
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/restart1/pre.json.gz",
+      "new_blob": "2bf577c55ccb88d4d2f1d6e963b68b40b8763867"
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/restart1/process.json",
+      "new_blob": "530f0fbc95c257e4506357af2065b4ff6c83f77b"
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/restart1/pytest-tail.txt",
+      "new_blob": "2319388a7f500616b9c9ffdc88f19d76da0cd01f"
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/restart1/start.json",
+      "new_blob": "461bad8ea48ac74c4f45e18d75fa1260eb4d064c"
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/restart1/tests.xml",
+      "new_blob": "3581db180fb187f8a9f0768703c570672504524a"
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/retention_green/maps.json",
+      "new_blob": "4d2288d4effab1f8d5a2a58c9965350f25a5f017"
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/retention_green/post.json.gz",
+      "new_blob": "40d2103fbdec56c0c3c33f8b4b49776b38756de1"
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/retention_green/pre.json.gz",
+      "new_blob": "40d2103fbdec56c0c3c33f8b4b49776b38756de1"
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/retention_green/process.json",
+      "new_blob": "d24642bbbd343fd89a8ebb1399cbef8f7d6b1ec9"
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/retention_green/pytest-tail.txt",
+      "new_blob": "1817d1004e3f119cbdbcf25de276522ba86519bf"
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/retention_green/start.json",
+      "new_blob": "bc270e90c6fffb7f1f209b136dda4a79825fa74d"
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/retention_green/tests.xml",
+      "new_blob": "26d7e5cbdb3c744f4f1ce9b1e35f99045900a5ba"
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/retention_red/maps.json",
+      "new_blob": "6343e2d81d559811a7dba738c108d255c795fc98"
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/retention_red/post.json.gz",
+      "new_blob": "923b37110afb77423de6ff146be75355ed42967c"
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/retention_red/pre.json.gz",
+      "new_blob": "923b37110afb77423de6ff146be75355ed42967c"
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/retention_red/process.json",
+      "new_blob": "37a295bb1ef068ddb348477c7b37b6764eed7671"
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/retention_red/pytest-tail.txt",
+      "new_blob": "1e9a45a5b176c6fd5330bd40f19e37392874b588"
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/retention_red/start.json",
+      "new_blob": "075b7b1c7573bde2553dfdfcd4a0aa83a5a6fabb"
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/retention_red/tests.xml",
+      "new_blob": "3ca565ac564c32a3e239c24bb830c1bad3de9b84"
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/scope-checks.json",
+      "new_blob": "183afa9572861d53f385adbe145126f972405554"
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/static-checks.json",
+      "new_blob": "c679c5d009b3e0f942bf857e07830da585d5432d"
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/test-receipts.json",
+      "new_blob": "b704b9569659a224e102ab83fe144e29379a94b0"
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/versions.json",
+      "new_blob": "7fdd77b34dfbecb08adcb69255359490885e6ca3"
+    },
+    {
+      "path": "Docs/superpowers/specs/2026-11-01-native-phased-agent-workflows-design.md",
+      "new_blob": "127bcc8e0118e7e2ebb8d4b9b9fe4f752f0900fb"
+    },
+    {
+      "path": "Tests/Agents/test_native_legacy_hooks.py",
+      "new_blob": "daa80af9e37de0496584430b09a4296af23b470f"
+    },
+    {
+      "path": "Tests/Agents/test_workflow_run_service.py",
+      "new_blob": "c5278dfddd6657a0cc100dc865846c6ed52cd473"
+    },
+    {
+      "path": "Tests/Chat/test_workflow_native_journeys.py",
+      "new_blob": "3becbef030f5b213590660df28d98279c98c68a7"
+    },
+    {
+      "path": "Tests/Chat/test_workflow_phase_wave_native.py",
+      "new_blob": "4a27db4f49f2988bc185ff2135dc5c399da27364"
+    },
+    {
+      "path": "Tests/Chat/test_workflow_recovery.py",
+      "new_blob": "3f22dd8c31e5a7f8998fbd5db818a11c7092866a"
+    },
+    {
+      "path": "Tests/Chat/workflow_wave_archive.py",
+      "new_blob": "71ab36952239f28d02c81084925e3272a142aa31"
+    },
+    {
+      "path": "Tests/DB/test_sync_log_retention.py",
+      "new_blob": "ec9a4944beca4a743ceeb26eb620df7105bfea83"
+    },
+    {
+      "path": "Tests/DB/test_workflow_restart_process.py",
+      "new_blob": "2e5cf55e002876c08887eda49f8278cb5eb71bf4"
+    },
+    {
+      "path": "Tests/DB/workflow_restart_child.py",
+      "new_blob": "09f388a3e2cd47581d9a4fd6d05ffa32c6deb2e0"
+    },
+    {
+      "path": "Tests/Tools/test_edit_patch_preconditions.py",
+      "new_blob": "5d6799412f35123f13a185cd2aa933cc9710ab15"
+    },
+    {
+      "path": "backlog/decisions/285-native-phased-agent-workflows.md",
+      "new_blob": "b393a4b5971ccdf974c555f37a6ec5b066f36546"
+    },
+    {
+      "path": "backlog/docs/lessons-testing-evidence.md",
+      "new_blob": "11b91fa3ecea1fd6049db849d50e476e938fb1ee"
+    },
+    {
+      "path": "backlog/tasks/task-38533 - Qualify-shared-worktree-workflows-across-execution-and-restart.md",
+      "new_blob": "4b56439b93ba025fd1c054fa7c7dd4290672903d"
+    },
+    {
+      "path": "tldw_chatbook/Agents/legacy_hook_ownership.py",
+      "new_blob": "923292652ee47cc7abbd0d49f15dc4dc6c52d0e7"
+    },
+    {
+      "path": "tldw_chatbook/Agents/workflow_run_service.py",
+      "new_blob": "70738b43d9192c8ff4b28218ddd9456601a2ec3c"
+    },
+    {
+      "path": "tldw_chatbook/Agents/workflow_task_scope.py",
+      "new_blob": "5404ae3a2c8638b003522f29534d92f15f08d8ae"
+    },
+    {
+      "path": "tldw_chatbook/Chat/console_workflow_preparation.py",
+      "new_blob": "d580e5367798289d97fba8fc933087b2dd49696f"
+    },
+    {
+      "path": "tldw_chatbook/DB/automatic_work.py",
+      "new_blob": "fa461b4387fb0728130cb3cfc25a400612d9260b"
+    },
+    {
+      "path": "tldw_chatbook/app_lifecycle.py",
+      "new_blob": "74c37405e7be57da12652d46a2d7fb101541ff4f"
+    }
+  ]
+}

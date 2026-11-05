@@ -1,6 +1,6 @@
 # Native phased workflow qualification
 
-Task 38533 remains In Progress pending independent review. The feature defaults off. Qualification uses the existing native Console, workflow coordinator, workers, SQLite and profile backup owners in the shared dirty `dev` checkout.
+Tasks 1–10 are Done. The final scoped correction code gate and root archival byte audit are approved. The feature defaults off. Qualification uses the existing native Console, workflow coordinator, workers, SQLite and profile backup owners in the shared dirty `dev` checkout.
 
 ## Evidence boundaries
 
@@ -51,3 +51,17 @@ Prior source-qualified adverse results remain in the root archive, including the
 ## Independent task-review caveat
 
 The functional local-provider run also emitted `RuntimeWarning: coroutine 'ChatScreen._sync_native_console_chat_ui' was never awaited` ([retained log](qualification/live/restart9/process-tail.txt):13). No allocation traceback was retained, so its cause and lifetime consequence remain unexplained. This warning is separate from the attributed MediaDB cache refusal and its later timer/cleanup proof. Independent Task10 review approved spec compliance and quality with this Minor carried to final whole-execution triage.
+
+
+## Final correction gate
+
+The initial final whole-execution review found joint decision/reservation capacity and same-chat nonterminal-admission omissions. Correction `8fc0274486` enforces both through their original FULL transaction and opens the existing workflow through Console setup. It also corrects obsolete architecture-stage text. The final scoped review `89efdf9c44c505ad309a0c9577b0e8b110efe42d654b72526cb2d546aaf8bf29` approves spec compliance and quality: no remaining Critical/Important findings, one disclosed nonblocking Minor. Full earlier and scoped reports resolve through the [source lookup](rulings/index.md).
+
+Final covering verification passed 149 targeted checks on its exact committed Python source. This is separate from the earlier provider/cleanup cohorts and the intermediate RED/fixture attempts. Whole-file static checks retain one inherited SIM117 and three unchanged formatter expressions; the edited range and other checked files pass. Source-delta, raw output and exact command records are in the [correction evidence manifest](rulings/final-correction-evidence-manifest.json). No full suite or provider journey was repeated for this correction.
+
+The unawaited `ChatScreen._sync_native_console_chat_ui` warning recurred in the mounted no-provider covering child at line1176. It remains the same unresolved Minor: cause, introduction and lifetime consequence are unknown. The public/mounted fixtures' “retired and reopened” marker proves their fixture retirement boundary; it does not establish a literal application reopen. Separate original/restored backup children retain their own evidence. All historical source/platform/driver/static and adverse-cohort limits above remain.
+
+
+## Final local delivery
+
+The [complete decision record](rulings/complete-rulings.md) preserves707 records:434 literal rulings and273 explicitly nonindependent contexts at the frozen final cutoff. The [independent root audit](rulings/root-final-disclosure-audit.json) verifies every rendered body, old raw metadata/prefix preservation, all233 readable archive records/205 distinct full bodies and276 current navigation links. Both raw evidence bundles retain their independently verified bytes. Post-cutoff task/status/Git/cleanup steps are mechanical closeout, not additional hidden rulings or native qualification.

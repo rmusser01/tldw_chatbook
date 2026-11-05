@@ -1,0 +1,1329 @@
+{
+  "inventory_created_utc": "2026-11-05T00:28:18.322816+00:00",
+  "scope": "One captured version of ADR285/spec/plan; no new disclosure freeze/trio/progress/task gate. Canonical supplementary extraction used byte-identical same initial SHA versions; later changes excluded. Inventory only this plan workspace, no copying/deletion/archiving.",
+  "canonical_inputs": [
+    {
+      "file": "backlog/decisions/285-native-phased-agent-workflows.md",
+      "captured_utc": "2026-11-05T00:25:02.187881+00:00",
+      "sha256": "6e6549a335233199e4e6fa8b8433fb0a8ee70f74d98aebd3138f7ae1be4ba63b",
+      "bytes": 229704,
+      "lines": 1268
+    },
+    {
+      "file": "Docs/superpowers/specs/2026-11-01-native-phased-agent-workflows-design.md",
+      "captured_utc": "2026-11-05T00:25:02.191247+00:00",
+      "sha256": "d14f7ea885c40e30c894a77abcbe17c7c95b232452dacd765eb4d77730895035",
+      "bytes": 214012,
+      "lines": 1201
+    },
+    {
+      "file": "Docs/superpowers/plans/2026-11-01-native-phased-agent-workflows-implementation.md",
+      "captured_utc": "2026-11-05T00:25:02.195205+00:00",
+      "sha256": "af96423e70b1617bef5be356fcd43c8e7cd9a43e91c169c9d520c58d2f084fa0",
+      "bytes": 253517,
+      "lines": 1203
+    }
+  ],
+  "canonical_capture_file": "rulings-durable-archive-canonical-capture.json",
+  "canonical_capture_sha256": "0bbec99121507acb3007e5e3bfd21bb246275b717911f94f365537e3135d761b",
+  "hash_reference_capture_file": "rulings-durable-archive-hash-reference-candidates.json",
+  "hash_reference_capture_sha256": "738fee6d68995d6111b9920898a4fadffdd27097112281e8b04de3cee29efed1",
+  "adopted_map": {
+    "file": "rulings-combined-map.json",
+    "sha256": "851575cd7a97903649ecefc8ac50b6fccac81c16c8c5526453c3394da2ebffd7",
+    "total_records": 587,
+    "read_only": true
+  },
+  "governing_proposals": [
+    {
+      "id": "proposal:task-8d2-ordinary-integration-fix1-source.md",
+      "canonical_cited_filename": "task-8d2-ordinary-integration-fix1-source.md",
+      "canonical_references": [
+        {
+          "canonical_file": "backlog/decisions/285-native-phased-agent-workflows.md",
+          "line": 677,
+          "exact_line": "WHY: FIX_BASE actual runtime/received survivor RED (1F/20.08s) and native late SubagentStop RED (1F/11.46s) show the onboarding generation change occurs while original admitted physical work still needs its original config identity. Stop-only semantic retirement does not cover those other original consumers. The exact producer/carrier/consumer and cancellation table is recorded in `task-8d2-ordinary-integration-fix1-source.md`.",
+          "line_sha256": "57335a9046dc78653cff3229e06542d5c9429749226cd3647e9d26d964ed292a"
+        },
+        {
+          "canonical_file": "Docs/superpowers/specs/2026-11-01-native-phased-agent-workflows-design.md",
+          "line": 677,
+          "exact_line": "WHY: FIX_BASE actual runtime/received survivor RED (1F/20.08s) and native late SubagentStop RED (1F/11.46s) show the onboarding generation change occurs while original admitted physical work still needs its original config identity. Stop-only semantic retirement does not cover those other original consumers. The exact producer/carrier/consumer and cancellation table is recorded in `task-8d2-ordinary-integration-fix1-source.md`.",
+          "line_sha256": "57335a9046dc78653cff3229e06542d5c9429749226cd3647e9d26d964ed292a"
+        },
+        {
+          "canonical_file": "Docs/superpowers/plans/2026-11-01-native-phased-agent-workflows-implementation.md",
+          "line": 675,
+          "exact_line": "WHY: FIX_BASE actual runtime/received survivor RED (1F/20.08s) and native late SubagentStop RED (1F/11.46s) show the onboarding generation change occurs while original admitted physical work still needs its original config identity. Stop-only semantic retirement does not cover those other original consumers. The exact producer/carrier/consumer and cancellation table is recorded in `task-8d2-ordinary-integration-fix1-source.md`.",
+          "line_sha256": "57335a9046dc78653cff3229e06542d5c9429749226cd3647e9d26d964ed292a"
+        }
+      ],
+      "canonical_cited_sha256": null,
+      "expected_hash_inference": "No expected SHA stated; none inferred.",
+      "actual_current": {
+        "file": "task-8d2-ordinary-integration-fix1-source.md",
+        "sha256": "02bd33ea2d04861561bdf496fb1b9164b988e2877deb5b3d89342e9b24d7bf4c",
+        "bytes": 27970
+      },
+      "explicit_frozen_variants": [],
+      "matching_cited_versions": [],
+      "version_status": "historical version unpinned: only current name-addressed body identified; cannot certify original cited bytes",
+      "archive_primary": {
+        "file": "task-8d2-ordinary-integration-fix1-source.md",
+        "sha256": "02bd33ea2d04861561bdf496fb1b9164b988e2877deb5b3d89342e9b24d7bf4c",
+        "bytes": 27970
+      },
+      "historical_limit": "Canonical filename has no stated content hash; current mutable source does not identify historical bytes. No reconstructed historical version or summary substitution.",
+      "optional_later_full_body": null
+    },
+    {
+      "id": "proposal:task-8d2-ordinary-integration-fix2-source.md",
+      "canonical_cited_filename": "task-8d2-ordinary-integration-fix2-source.md",
+      "canonical_references": [
+        {
+          "canonical_file": "backlog/decisions/285-native-phased-agent-workflows.md",
+          "line": 687,
+          "exact_line": "FIX2 ruling: WHAT — extend the same first-send metadata counter to exact original RawCLI and confirmed-Undo pending membership. Gate native capture before selecting generation, atomically overlap capture/admission with pending count, and release/wake only after original physical/required/host/operation-finish/storage/scratch/root/claim return. Gate only trusted RAW classification through the SAME captured draft commit/start; normal slash/unknown/escaped routes retain their existing availability. WHY — actual unchanged FIX1 native transaction hold admitted a RawCLI call with the old generation (RED1F12.63s, normal original cleanup), and the directly connected Undo source has the same generation-sensitive pending lifetime outside ordinary trees. COST — reuse one existing per-runtime metadata count; no new owner/claim/registry/poller/waiver or source adoption. Lost original membership keeps its count conservatively. Unadmitted Undo confirmation metadata may become stale between user actions and then refuses before effects. Model/Task7 RawCLI keeps its existing single operation/tree. ADR required: no new ADR; existing ADR-285. Source/caller/physical table: task-8d2-ordinary-integration-fix2-source.md.",
+          "line_sha256": "422617c935662b92e10afee237b44d07a653223e6d10ffbddc07cdd3d0ef5701"
+        },
+        {
+          "canonical_file": "Docs/superpowers/specs/2026-11-01-native-phased-agent-workflows-design.md",
+          "line": 687,
+          "exact_line": "FIX2 ruling: WHAT — extend the same first-send metadata counter to exact original RawCLI and confirmed-Undo pending membership. Gate native capture before selecting generation, atomically overlap capture/admission with pending count, and release/wake only after original physical/required/host/operation-finish/storage/scratch/root/claim return. Gate only trusted RAW classification through the SAME captured draft commit/start; normal slash/unknown/escaped routes retain their existing availability. WHY — actual unchanged FIX1 native transaction hold admitted a RawCLI call with the old generation (RED1F12.63s, normal original cleanup), and the directly connected Undo source has the same generation-sensitive pending lifetime outside ordinary trees. COST — reuse one existing per-runtime metadata count; no new owner/claim/registry/poller/waiver or source adoption. Lost original membership keeps its count conservatively. Unadmitted Undo confirmation metadata may become stale between user actions and then refuses before effects. Model/Task7 RawCLI keeps its existing single operation/tree. ADR required: no new ADR; existing ADR-285. Source/caller/physical table: task-8d2-ordinary-integration-fix2-source.md.",
+          "line_sha256": "422617c935662b92e10afee237b44d07a653223e6d10ffbddc07cdd3d0ef5701"
+        },
+        {
+          "canonical_file": "Docs/superpowers/plans/2026-11-01-native-phased-agent-workflows-implementation.md",
+          "line": 685,
+          "exact_line": "FIX2 ruling: WHAT — extend the same first-send metadata counter to exact original RawCLI and confirmed-Undo pending membership. Gate native capture before selecting generation, atomically overlap capture/admission with pending count, and release/wake only after original physical/required/host/operation-finish/storage/scratch/root/claim return. Gate only trusted RAW classification through the SAME captured draft commit/start; normal slash/unknown/escaped routes retain their existing availability. WHY — actual unchanged FIX1 native transaction hold admitted a RawCLI call with the old generation (RED1F12.63s, normal original cleanup), and the directly connected Undo source has the same generation-sensitive pending lifetime outside ordinary trees. COST — reuse one existing per-runtime metadata count; no new owner/claim/registry/poller/waiver or source adoption. Lost original membership keeps its count conservatively. Unadmitted Undo confirmation metadata may become stale between user actions and then refuses before effects. Model/Task7 RawCLI keeps its existing single operation/tree. ADR required: no new ADR; existing ADR-285. Source/caller/physical table: task-8d2-ordinary-integration-fix2-source.md.",
+          "line_sha256": "422617c935662b92e10afee237b44d07a653223e6d10ffbddc07cdd3d0ef5701"
+        }
+      ],
+      "canonical_cited_sha256": null,
+      "expected_hash_inference": "No expected SHA stated; none inferred.",
+      "actual_current": {
+        "file": "task-8d2-ordinary-integration-fix2-source.md",
+        "sha256": "004836e50be15da6a72d3d3f80a386ca5af93adcd22dfc6d1b1a822bc1af52c1",
+        "bytes": 10929
+      },
+      "explicit_frozen_variants": [],
+      "matching_cited_versions": [],
+      "version_status": "historical version unpinned: only current name-addressed body identified; cannot certify original cited bytes",
+      "archive_primary": {
+        "file": "task-8d2-ordinary-integration-fix2-source.md",
+        "sha256": "004836e50be15da6a72d3d3f80a386ca5af93adcd22dfc6d1b1a822bc1af52c1",
+        "bytes": 10929
+      },
+      "historical_limit": "Canonical filename has no stated content hash; current mutable source does not identify historical bytes. No reconstructed historical version or summary substitution.",
+      "optional_later_full_body": null
+    },
+    {
+      "id": "proposal:task-8e-fix1-source.md",
+      "canonical_cited_filename": "task-8e-fix1-source.md",
+      "canonical_references": [
+        {
+          "canonical_file": "backlog/decisions/285-native-phased-agent-workflows.md",
+          "line": 843,
+          "exact_line": "COST: bounded original-state/handle/function records and checks, plus replacing the already-required terminal offload with the existing tracked read seam while retaining SAME owner/cell. No new worker engine/owner/registry/schema/retry, generic disposed/revision bypass, raw SQLite API, or broadened default caller. Failed/unknown/cancelled terminal return retains custody and charges. ADR required: no new ADR; existing ADR285/084 apply. Source: ignored task-8e-fix1-source.md; final report will retain exact warning/receipt limits. Task38531 remains In Progress/all acceptance criteria unchecked; E review, F/G/WHOLE remain.",
+          "line_sha256": "f3d7a1a8c60bd8bc03f99a3eb0a29bfa4555d7dd887c631d0c82b44991fb99d8"
+        },
+        {
+          "canonical_file": "Docs/superpowers/specs/2026-11-01-native-phased-agent-workflows-design.md",
+          "line": 776,
+          "exact_line": "COST: bounded original-state/handle/function records and checks, plus replacing the already-required terminal offload with the existing tracked read seam while retaining SAME owner/cell. No new worker engine/owner/registry/schema/retry, generic disposed/revision bypass, raw SQLite API, or broadened default caller. Failed/unknown/cancelled terminal return retains custody and charges. ADR required: no new ADR; existing ADR285/084 apply. Source: ignored task-8e-fix1-source.md; final report will retain exact warning/receipt limits. Task38531 remains In Progress/all acceptance criteria unchecked; E review, F/G/WHOLE remain.",
+          "line_sha256": "f3d7a1a8c60bd8bc03f99a3eb0a29bfa4555d7dd887c631d0c82b44991fb99d8"
+        },
+        {
+          "canonical_file": "Docs/superpowers/plans/2026-11-01-native-phased-agent-workflows-implementation.md",
+          "line": 778,
+          "exact_line": "COST: bounded original-state/handle/function records and checks, plus replacing the already-required terminal offload with the existing tracked read seam while retaining SAME owner/cell. No new worker engine/owner/registry/schema/retry, generic disposed/revision bypass, raw SQLite API, or broadened default caller. Failed/unknown/cancelled terminal return retains custody and charges. ADR required: no new ADR; existing ADR285/084 apply. Source: ignored task-8e-fix1-source.md; final report will retain exact warning/receipt limits. Task38531 remains In Progress/all acceptance criteria unchecked; E review, F/G/WHOLE remain.",
+          "line_sha256": "f3d7a1a8c60bd8bc03f99a3eb0a29bfa4555d7dd887c631d0c82b44991fb99d8"
+        }
+      ],
+      "canonical_cited_sha256": null,
+      "expected_hash_inference": "No expected SHA stated; none inferred.",
+      "actual_current": {
+        "file": "task-8e-fix1-source.md",
+        "sha256": "801d6cbf4cc30f08c7e8618edb5b6a52c2db3d4a898618a3b595c0b72efd6855",
+        "bytes": 14436
+      },
+      "explicit_frozen_variants": [],
+      "matching_cited_versions": [],
+      "version_status": "historical version unpinned: only current name-addressed body identified; cannot certify original cited bytes",
+      "archive_primary": {
+        "file": "task-8e-fix1-source.md",
+        "sha256": "801d6cbf4cc30f08c7e8618edb5b6a52c2db3d4a898618a3b595c0b72efd6855",
+        "bytes": 14436
+      },
+      "historical_limit": "Canonical filename has no stated content hash; current mutable source does not identify historical bytes. No reconstructed historical version or summary substitution.",
+      "optional_later_full_body": null
+    },
+    {
+      "id": "proposal:task-8f-fix1-source.md",
+      "canonical_cited_filename": "task-8f-fix1-source.md",
+      "canonical_references": [
+        {
+          "canonical_file": "backlog/decisions/285-native-phased-agent-workflows.md",
+          "line": 920,
+          "exact_line": "WHAT: retain and shield the SAME original run_owned_db_call coroutine at all four existing legacy-maintenance callbacks through repeated cancellation, consuming actual callback, operation and handle return before redelivering cancellation. Runtime disposal consumes the SAME maintenance task even when already done, preserves original errors/unknown return and caller cancellation; ordinary restart-safe retry remains outside disposal/cancellation. WHY: identity-bound original native control failed1F20.99s with31 equal pre/post pins: runtime.dispose returned while its pre-planning maintenance operation remained live; exact worker release/return retired that operation and original creators. This proves this separate runtime gap, not historical intermittent-tail attribution. COST: one temporary asyncio Task per existing callback and local cancellation handling; no global DB-helper change, new worker/owner/queue/registry or global-idle predicate. Existing shutdown deadline governs other cleanup; unknown physical return cannot become successful disposal. ADR required: existing ADR285. Source: task-8f-fix1-source.md; exact held-worker and minimum cancellation/error/default verification, static/protection/report and scoped review remain required.",
+          "line_sha256": "ebba26b0fa0df3c3a131d3d71a5d656081e556c8926f2756ee2a12c6c61e6512"
+        },
+        {
+          "canonical_file": "Docs/superpowers/specs/2026-11-01-native-phased-agent-workflows-design.md",
+          "line": 853,
+          "exact_line": "WHAT: retain and shield the SAME original run_owned_db_call coroutine at all four existing legacy-maintenance callbacks through repeated cancellation, consuming actual callback, operation and handle return before redelivering cancellation. Runtime disposal consumes the SAME maintenance task even when already done, preserves original errors/unknown return and caller cancellation; ordinary restart-safe retry remains outside disposal/cancellation. WHY: identity-bound original native control failed1F20.99s with31 equal pre/post pins: runtime.dispose returned while its pre-planning maintenance operation remained live; exact worker release/return retired that operation and original creators. This proves this separate runtime gap, not historical intermittent-tail attribution. COST: one temporary asyncio Task per existing callback and local cancellation handling; no global DB-helper change, new worker/owner/queue/registry or global-idle predicate. Existing shutdown deadline governs other cleanup; unknown physical return cannot become successful disposal. ADR required: existing ADR285. Source: task-8f-fix1-source.md; exact held-worker and minimum cancellation/error/default verification, static/protection/report and scoped review remain required.",
+          "line_sha256": "ebba26b0fa0df3c3a131d3d71a5d656081e556c8926f2756ee2a12c6c61e6512"
+        },
+        {
+          "canonical_file": "Docs/superpowers/plans/2026-11-01-native-phased-agent-workflows-implementation.md",
+          "line": 855,
+          "exact_line": "WHAT: retain and shield the SAME original run_owned_db_call coroutine at all four existing legacy-maintenance callbacks through repeated cancellation, consuming actual callback, operation and handle return before redelivering cancellation. Runtime disposal consumes the SAME maintenance task even when already done, preserves original errors/unknown return and caller cancellation; ordinary restart-safe retry remains outside disposal/cancellation. WHY: identity-bound original native control failed1F20.99s with31 equal pre/post pins: runtime.dispose returned while its pre-planning maintenance operation remained live; exact worker release/return retired that operation and original creators. This proves this separate runtime gap, not historical intermittent-tail attribution. COST: one temporary asyncio Task per existing callback and local cancellation handling; no global DB-helper change, new worker/owner/queue/registry or global-idle predicate. Existing shutdown deadline governs other cleanup; unknown physical return cannot become successful disposal. ADR required: existing ADR285. Source: task-8f-fix1-source.md; exact held-worker and minimum cancellation/error/default verification, static/protection/report and scoped review remain required.",
+          "line_sha256": "ebba26b0fa0df3c3a131d3d71a5d656081e556c8926f2756ee2a12c6c61e6512"
+        }
+      ],
+      "canonical_cited_sha256": null,
+      "expected_hash_inference": "No expected SHA stated; none inferred.",
+      "actual_current": {
+        "file": "task-8f-fix1-source.md",
+        "sha256": "998b84c27813f377d0eb2ac315c54f8591425a42d42aeb3b887a12842fc5ed75",
+        "bytes": 26307
+      },
+      "explicit_frozen_variants": [],
+      "matching_cited_versions": [],
+      "version_status": "historical version unpinned: only current name-addressed body identified; cannot certify original cited bytes",
+      "archive_primary": {
+        "file": "task-8f-fix1-source.md",
+        "sha256": "998b84c27813f377d0eb2ac315c54f8591425a42d42aeb3b887a12842fc5ed75",
+        "bytes": 26307
+      },
+      "historical_limit": "Canonical filename has no stated content hash; current mutable source does not identify historical bytes. No reconstructed historical version or summary substitution.",
+      "optional_later_full_body": null
+    },
+    {
+      "id": "proposal:task-8g-fix1-source.md",
+      "canonical_cited_filename": "task-8g-fix1-source.md",
+      "canonical_references": [
+        {
+          "canonical_file": "backlog/decisions/285-native-phased-agent-workflows.md",
+          "line": 975,
+          "exact_line": "ADR required: no new ADR; existing ADR285 applies. FIX_BASE bb983093456803f006774435f7384924d923fc34. Independent review found five Important issues; Task38531 stays In Progress with all three AC unchecked. I2 active-clock accounting and I5 real survivor notification remain separately gated/pending; this amendment does not certify either or erase original155P28F5E and historical killed/unknown evidence. Exact source, prospective hashes, rulings and diagnostic receipts: ignored task-8g-fix1-source.md/task-8g-fix1-pre-edit.json.",
+          "line_sha256": "c97a9db3a8192f8f751e0a6e573cbdf1fcd37a79ebcac58d2382bd50c20889c2"
+        },
+        {
+          "canonical_file": "backlog/decisions/285-native-phased-agent-workflows.md",
+          "line": 986,
+          "exact_line": "ADR required: no new ADR or migration; existing ADR285. WHAT: implement the exact return contract and cleanup constraints read in root-i2-accounting-ruling.md and root-i2-cleanup-accounting-ruling.md, with the complete receiver inventory in task-8g-fix1-source.md. G may close the existing active interval only after SAME prior finite preparation/source/storage/owner/claim/worker and actual wave/B/E/receipt return proof. Its original FULL quiesce transaction leaves the accepted phase retirement=unknown. No committed drained marker or second acknowledgment transaction proves outer return. One bounded passive record on SAME original phase/run identifies the interval/transaction, issuer/callback/read/producer/retired and prior physical records; it becomes positive only after the original whole wrapper and all source/handle returns are positive. No new global registry, actor, execution owner or ID-derived capability.",
+          "line_sha256": "e1be24700412ffd4ec42d154659645c372f529a28a8ab3219c35017eed1b69ac"
+        },
+        {
+          "canonical_file": "Docs/superpowers/specs/2026-11-01-native-phased-agent-workflows-design.md",
+          "line": 908,
+          "exact_line": "ADR required: no new ADR; existing ADR285 applies. FIX_BASE bb983093456803f006774435f7384924d923fc34. Independent review found five Important issues; Task38531 stays In Progress with all three AC unchecked. I2 active-clock accounting and I5 real survivor notification remain separately gated/pending; this amendment does not certify either or erase original155P28F5E and historical killed/unknown evidence. Exact source, prospective hashes, rulings and diagnostic receipts: ignored task-8g-fix1-source.md/task-8g-fix1-pre-edit.json.",
+          "line_sha256": "c97a9db3a8192f8f751e0a6e573cbdf1fcd37a79ebcac58d2382bd50c20889c2"
+        },
+        {
+          "canonical_file": "Docs/superpowers/specs/2026-11-01-native-phased-agent-workflows-design.md",
+          "line": 919,
+          "exact_line": "ADR required: no new ADR or migration; existing ADR285. WHAT: implement the exact return contract and cleanup constraints read in root-i2-accounting-ruling.md and root-i2-cleanup-accounting-ruling.md, with the complete receiver inventory in task-8g-fix1-source.md. G may close the existing active interval only after SAME prior finite preparation/source/storage/owner/claim/worker and actual wave/B/E/receipt return proof. Its original FULL quiesce transaction leaves the accepted phase retirement=unknown. No committed drained marker or second acknowledgment transaction proves outer return. One bounded passive record on SAME original phase/run identifies the interval/transaction, issuer/callback/read/producer/retired and prior physical records; it becomes positive only after the original whole wrapper and all source/handle returns are positive. No new global registry, actor, execution owner or ID-derived capability.",
+          "line_sha256": "e1be24700412ffd4ec42d154659645c372f529a28a8ab3219c35017eed1b69ac"
+        },
+        {
+          "canonical_file": "Docs/superpowers/plans/2026-11-01-native-phased-agent-workflows-implementation.md",
+          "line": 910,
+          "exact_line": "ADR required: no new ADR; existing ADR285 applies. FIX_BASE bb983093456803f006774435f7384924d923fc34. Independent review found five Important issues; Task38531 stays In Progress with all three AC unchecked. I2 active-clock accounting and I5 real survivor notification remain separately gated/pending; this amendment does not certify either or erase original155P28F5E and historical killed/unknown evidence. Exact source, prospective hashes, rulings and diagnostic receipts: ignored task-8g-fix1-source.md/task-8g-fix1-pre-edit.json.",
+          "line_sha256": "c97a9db3a8192f8f751e0a6e573cbdf1fcd37a79ebcac58d2382bd50c20889c2"
+        },
+        {
+          "canonical_file": "Docs/superpowers/plans/2026-11-01-native-phased-agent-workflows-implementation.md",
+          "line": 921,
+          "exact_line": "ADR required: no new ADR or migration; existing ADR285. WHAT: implement the exact return contract and cleanup constraints read in root-i2-accounting-ruling.md and root-i2-cleanup-accounting-ruling.md, with the complete receiver inventory in task-8g-fix1-source.md. G may close the existing active interval only after SAME prior finite preparation/source/storage/owner/claim/worker and actual wave/B/E/receipt return proof. Its original FULL quiesce transaction leaves the accepted phase retirement=unknown. No committed drained marker or second acknowledgment transaction proves outer return. One bounded passive record on SAME original phase/run identifies the interval/transaction, issuer/callback/read/producer/retired and prior physical records; it becomes positive only after the original whole wrapper and all source/handle returns are positive. No new global registry, actor, execution owner or ID-derived capability.",
+          "line_sha256": "e1be24700412ffd4ec42d154659645c372f529a28a8ab3219c35017eed1b69ac"
+        }
+      ],
+      "canonical_cited_sha256": null,
+      "expected_hash_inference": "No expected SHA stated; none inferred.",
+      "actual_current": {
+        "file": "task-8g-fix1-source.md",
+        "sha256": "f16bf6d76c8906945a45935d748f9e45141d36178004cc14f782d1f6aefea038",
+        "bytes": 409395
+      },
+      "explicit_frozen_variants": [],
+      "matching_cited_versions": [],
+      "version_status": "historical version unpinned: only current name-addressed body identified; cannot certify original cited bytes",
+      "archive_primary": {
+        "file": "task-8g-fix1-source.md",
+        "sha256": "f16bf6d76c8906945a45935d748f9e45141d36178004cc14f782d1f6aefea038",
+        "bytes": 409395
+      },
+      "historical_limit": "Canonical filename has no stated content hash; current mutable source does not identify historical bytes. No reconstructed historical version or summary substitution.",
+      "optional_later_full_body": null
+    },
+    {
+      "id": "proposal:task-8g-fix2-repeat-close-v2-source.md",
+      "canonical_cited_filename": "task-8g-fix2-repeat-close-v2-source.md",
+      "canonical_references": [
+        {
+          "canonical_file": "backlog/decisions/285-native-phased-agent-workflows.md",
+          "line": 1209,
+          "exact_line": "**WHAT.** Adopt only the exact reviewed source `task-8g-fix2-repeat-close-v2-source.md` (SHA256 `7aafe9d051163167bb3a833fee7bfd69003ebf128e83ab23a4df50d8a466ad4b`). The existing `_release_configuration` returns a passive `(SAME preparation, SAME original scope, SAME original runtime registry)` tuple only after its actual original scope `__exit__` and registry discard both return normally. Existing planning and nonterminal consent callers ignore that private return value. The existing direct execution close and the existing W release call site receive the SAME actual original result and bind it to the actual positive last finite closing record and exact finite-read sequence. These are the two original result receivers; no generic helper/registry or new cleanup pass is added.",
+          "line_sha256": "a38f063f77094cc9c6e75179f08cd32204c352c91605727bc05b1811e2d2a6bd"
+        },
+        {
+          "canonical_file": "Docs/superpowers/specs/2026-11-01-native-phased-agent-workflows-design.md",
+          "line": 1142,
+          "exact_line": "**WHAT.** Adopt only the exact reviewed source `task-8g-fix2-repeat-close-v2-source.md` (SHA256 `7aafe9d051163167bb3a833fee7bfd69003ebf128e83ab23a4df50d8a466ad4b`). The existing `_release_configuration` returns a passive `(SAME preparation, SAME original scope, SAME original runtime registry)` tuple only after its actual original scope `__exit__` and registry discard both return normally. Existing planning and nonterminal consent callers ignore that private return value. The existing direct execution close and the existing W release call site receive the SAME actual original result and bind it to the actual positive last finite closing record and exact finite-read sequence. These are the two original result receivers; no generic helper/registry or new cleanup pass is added.",
+          "line_sha256": "a38f063f77094cc9c6e75179f08cd32204c352c91605727bc05b1811e2d2a6bd"
+        },
+        {
+          "canonical_file": "Docs/superpowers/plans/2026-11-01-native-phased-agent-workflows-implementation.md",
+          "line": 1144,
+          "exact_line": "**WHAT.** Adopt only the exact reviewed source `task-8g-fix2-repeat-close-v2-source.md` (SHA256 `7aafe9d051163167bb3a833fee7bfd69003ebf128e83ab23a4df50d8a466ad4b`). The existing `_release_configuration` returns a passive `(SAME preparation, SAME original scope, SAME original runtime registry)` tuple only after its actual original scope `__exit__` and registry discard both return normally. Existing planning and nonterminal consent callers ignore that private return value. The existing direct execution close and the existing W release call site receive the SAME actual original result and bind it to the actual positive last finite closing record and exact finite-read sequence. These are the two original result receivers; no generic helper/registry or new cleanup pass is added.",
+          "line_sha256": "a38f063f77094cc9c6e75179f08cd32204c352c91605727bc05b1811e2d2a6bd"
+        }
+      ],
+      "canonical_cited_sha256": "7aafe9d051163167bb3a833fee7bfd69003ebf128e83ab23a4df50d8a466ad4b",
+      "expected_hash_inference": "Exact explicitly cited full SHA only.",
+      "actual_current": {
+        "file": "task-8g-fix2-repeat-close-v2-source.md",
+        "sha256": "7aafe9d051163167bb3a833fee7bfd69003ebf128e83ab23a4df50d8a466ad4b",
+        "bytes": 9806
+      },
+      "explicit_frozen_variants": [],
+      "matching_cited_versions": [
+        {
+          "file": "task-8g-fix2-repeat-close-v2-source.md",
+          "sha256": "7aafe9d051163167bb3a833fee7bfd69003ebf128e83ab23a4df50d8a466ad4b",
+          "bytes": 9806
+        }
+      ],
+      "version_status": "exact cited full-hash body available",
+      "archive_primary": {
+        "file": "task-8g-fix2-repeat-close-v2-source.md",
+        "sha256": "7aafe9d051163167bb3a833fee7bfd69003ebf128e83ab23a4df50d8a466ad4b",
+        "bytes": 9806
+      },
+      "historical_limit": null,
+      "optional_later_full_body": null
+    },
+    {
+      "id": "proposal:task-8g-fix2-source.md",
+      "canonical_cited_filename": "task-8g-fix2-source.md",
+      "canonical_references": [
+        {
+          "canonical_file": "backlog/decisions/285-native-phased-agent-workflows.md",
+          "line": 1184,
+          "exact_line": "WHAT: Controller accepted the complete fixed source proposal `task-8g-fix2-source.md` SHA256 1d361ff6ea0434abbc09c4a1582593943047abd10edee72727c01bf080948d4a, including the notifier-context appendix, after FULL root source review140bee71744bd92c78c5c517ffe615a73ea5002b316af35d8ea28f6027fbc562. Product changes are restricted to original console_workflow_preparation finite-read/return/close receivers and their existing source records. Existing native-return test hunks and precise private-probe routes qualify both findings; native reader, capacity, activity, source/activation/storage implementations and fixtures remain read-only. Original c6389 HEAD, staged c5/61 and279 foreign worktree bytes are preserved. Thirteen complete root support bodies are byte-archived and indexed in `task-8g-fix2-full-supports.json`, extending the twelve unchanged FIX1 bodies with FULL140bee. The fixed source and exact original records govern implementation; a shorthand reference never replaces those bodies.",
+          "line_sha256": "5d0cfa3f39d6e23a26554a479f8535c06e98d7ecd4d5034736c3cc63f10a296a"
+        },
+        {
+          "canonical_file": "Docs/superpowers/specs/2026-11-01-native-phased-agent-workflows-design.md",
+          "line": 1117,
+          "exact_line": "WHAT: Controller accepted the complete fixed source proposal `task-8g-fix2-source.md` SHA256 1d361ff6ea0434abbc09c4a1582593943047abd10edee72727c01bf080948d4a, including the notifier-context appendix, after FULL root source review140bee71744bd92c78c5c517ffe615a73ea5002b316af35d8ea28f6027fbc562. Product changes are restricted to original console_workflow_preparation finite-read/return/close receivers and their existing source records. Existing native-return test hunks and precise private-probe routes qualify both findings; native reader, capacity, activity, source/activation/storage implementations and fixtures remain read-only. Original c6389 HEAD, staged c5/61 and279 foreign worktree bytes are preserved. Thirteen complete root support bodies are byte-archived and indexed in `task-8g-fix2-full-supports.json`, extending the twelve unchanged FIX1 bodies with FULL140bee. The fixed source and exact original records govern implementation; a shorthand reference never replaces those bodies.",
+          "line_sha256": "5d0cfa3f39d6e23a26554a479f8535c06e98d7ecd4d5034736c3cc63f10a296a"
+        },
+        {
+          "canonical_file": "Docs/superpowers/plans/2026-11-01-native-phased-agent-workflows-implementation.md",
+          "line": 1119,
+          "exact_line": "WHAT: Controller accepted the complete fixed source proposal `task-8g-fix2-source.md` SHA256 1d361ff6ea0434abbc09c4a1582593943047abd10edee72727c01bf080948d4a, including the notifier-context appendix, after FULL root source review140bee71744bd92c78c5c517ffe615a73ea5002b316af35d8ea28f6027fbc562. Product changes are restricted to original console_workflow_preparation finite-read/return/close receivers and their existing source records. Existing native-return test hunks and precise private-probe routes qualify both findings; native reader, capacity, activity, source/activation/storage implementations and fixtures remain read-only. Original c6389 HEAD, staged c5/61 and279 foreign worktree bytes are preserved. Thirteen complete root support bodies are byte-archived and indexed in `task-8g-fix2-full-supports.json`, extending the twelve unchanged FIX1 bodies with FULL140bee. The fixed source and exact original records govern implementation; a shorthand reference never replaces those bodies.",
+          "line_sha256": "5d0cfa3f39d6e23a26554a479f8535c06e98d7ecd4d5034736c3cc63f10a296a"
+        }
+      ],
+      "canonical_cited_sha256": "1d361ff6ea0434abbc09c4a1582593943047abd10edee72727c01bf080948d4a",
+      "expected_hash_inference": "Exact explicitly cited full SHA only.",
+      "actual_current": {
+        "file": "task-8g-fix2-source.md",
+        "sha256": "1d361ff6ea0434abbc09c4a1582593943047abd10edee72727c01bf080948d4a",
+        "bytes": 50692
+      },
+      "explicit_frozen_variants": [
+        {
+          "file": "task-8g-fix2-source.frozen-1d361ff6ea0434abbc09c4a1582593943047abd10edee72727c01bf080948d4a.md",
+          "sha256": "1d361ff6ea0434abbc09c4a1582593943047abd10edee72727c01bf080948d4a",
+          "bytes": 50692
+        },
+        {
+          "file": "task-8g-fix2-source.frozen-4d0f64d5331f6b587df583882c1a51bec6239768a488e8e5ec58bdea828c64ed.md",
+          "sha256": "4d0f64d5331f6b587df583882c1a51bec6239768a488e8e5ec58bdea828c64ed",
+          "bytes": 32754
+        },
+        {
+          "file": "task-8g-fix2-source.frozen-f871d7eeb765b919974ac4c877bfdd50797c1ea70184a9c08aae9300ffa9aaf0.md",
+          "sha256": "f871d7eeb765b919974ac4c877bfdd50797c1ea70184a9c08aae9300ffa9aaf0",
+          "bytes": 36231
+        }
+      ],
+      "matching_cited_versions": [
+        {
+          "file": "task-8g-fix2-source.md",
+          "sha256": "1d361ff6ea0434abbc09c4a1582593943047abd10edee72727c01bf080948d4a",
+          "bytes": 50692
+        },
+        {
+          "file": "task-8g-fix2-source.frozen-1d361ff6ea0434abbc09c4a1582593943047abd10edee72727c01bf080948d4a.md",
+          "sha256": "1d361ff6ea0434abbc09c4a1582593943047abd10edee72727c01bf080948d4a",
+          "bytes": 50692
+        }
+      ],
+      "version_status": "exact cited full-hash body available",
+      "archive_primary": {
+        "file": "task-8g-fix2-source.frozen-1d361ff6ea0434abbc09c4a1582593943047abd10edee72727c01bf080948d4a.md",
+        "sha256": "1d361ff6ea0434abbc09c4a1582593943047abd10edee72727c01bf080948d4a",
+        "bytes": 50692
+      },
+      "historical_limit": null,
+      "optional_later_full_body": null
+    },
+    {
+      "id": "proposal:task-8g-fix3-source.md",
+      "canonical_cited_filename": "task-8g-fix3-source.md",
+      "canonical_references": [
+        {
+          "canonical_file": "backlog/decisions/285-native-phased-agent-workflows.md",
+          "line": 1224,
+          "exact_line": "**WHAT.** Apply the controller-approved complete source `task-8g-fix3-source.md` frozen at b7e80fb9ba581205539e0ddf49318a8f56ec1397db7d4def02a719c11fd87402, with its pre-behavior original-W-scope audit. This is an execution-only correction to the two actual independent FIX2 review findings. Every execution already-closed no-op must prove the SAME original terminal configuration return, actual last closing read/producer/retired result and exact original source/receiver/record sequence, regardless of whether any prior read used the no-issue alternative. A flag, empty scope/set/capacity, closed generator, copied result or unrelated successful read never substitutes for actual return. A failed original scope exit/release receiving return retains uncertainty and cannot be rescued by another close, scope exit, finite finish or callback.",
+          "line_sha256": "97ceee10fbe309554f25c2f8ac999033c7a11f6af17dffc44443989cde0098b3"
+        },
+        {
+          "canonical_file": "Docs/superpowers/specs/2026-11-01-native-phased-agent-workflows-design.md",
+          "line": 1157,
+          "exact_line": "**WHAT.** Apply the controller-approved complete source `task-8g-fix3-source.md` frozen at b7e80fb9ba581205539e0ddf49318a8f56ec1397db7d4def02a719c11fd87402, with its pre-behavior original-W-scope audit. This is an execution-only correction to the two actual independent FIX2 review findings. Every execution already-closed no-op must prove the SAME original terminal configuration return, actual last closing read/producer/retired result and exact original source/receiver/record sequence, regardless of whether any prior read used the no-issue alternative. A flag, empty scope/set/capacity, closed generator, copied result or unrelated successful read never substitutes for actual return. A failed original scope exit/release receiving return retains uncertainty and cannot be rescued by another close, scope exit, finite finish or callback.",
+          "line_sha256": "97ceee10fbe309554f25c2f8ac999033c7a11f6af17dffc44443989cde0098b3"
+        },
+        {
+          "canonical_file": "Docs/superpowers/plans/2026-11-01-native-phased-agent-workflows-implementation.md",
+          "line": 1159,
+          "exact_line": "**WHAT.** Apply the controller-approved complete source `task-8g-fix3-source.md` frozen at b7e80fb9ba581205539e0ddf49318a8f56ec1397db7d4def02a719c11fd87402, with its pre-behavior original-W-scope audit. This is an execution-only correction to the two actual independent FIX2 review findings. Every execution already-closed no-op must prove the SAME original terminal configuration return, actual last closing read/producer/retired result and exact original source/receiver/record sequence, regardless of whether any prior read used the no-issue alternative. A flag, empty scope/set/capacity, closed generator, copied result or unrelated successful read never substitutes for actual return. A failed original scope exit/release receiving return retains uncertainty and cannot be rescued by another close, scope exit, finite finish or callback.",
+          "line_sha256": "97ceee10fbe309554f25c2f8ac999033c7a11f6af17dffc44443989cde0098b3"
+        }
+      ],
+      "canonical_cited_sha256": "b7e80fb9ba581205539e0ddf49318a8f56ec1397db7d4def02a719c11fd87402",
+      "expected_hash_inference": "Exact explicitly cited full SHA only.",
+      "actual_current": {
+        "file": "task-8g-fix3-source.md",
+        "sha256": "785a13fa5e58c01253781539f80e9e8cbd359a1c95e196da6764aa893b0e2618",
+        "bytes": 44149
+      },
+      "explicit_frozen_variants": [
+        {
+          "file": "task-8g-fix3-source.frozen-0bb8098dcb87548a98c9acc67742806507e2aad51dd0fb33b7dcd677c00ce39f.md",
+          "sha256": "0bb8098dcb87548a98c9acc67742806507e2aad51dd0fb33b7dcd677c00ce39f",
+          "bytes": 27897
+        },
+        {
+          "file": "task-8g-fix3-source.frozen-785a13fa5e58c01253781539f80e9e8cbd359a1c95e196da6764aa893b0e2618.md",
+          "sha256": "785a13fa5e58c01253781539f80e9e8cbd359a1c95e196da6764aa893b0e2618",
+          "bytes": 44149
+        },
+        {
+          "file": "task-8g-fix3-source.frozen-b7e80fb9ba581205539e0ddf49318a8f56ec1397db7d4def02a719c11fd87402.md",
+          "sha256": "b7e80fb9ba581205539e0ddf49318a8f56ec1397db7d4def02a719c11fd87402",
+          "bytes": 41126
+        }
+      ],
+      "matching_cited_versions": [
+        {
+          "file": "task-8g-fix3-source.frozen-b7e80fb9ba581205539e0ddf49318a8f56ec1397db7d4def02a719c11fd87402.md",
+          "sha256": "b7e80fb9ba581205539e0ddf49318a8f56ec1397db7d4def02a719c11fd87402",
+          "bytes": 41126
+        }
+      ],
+      "version_status": "exact cited full-hash body available",
+      "archive_primary": {
+        "file": "task-8g-fix3-source.frozen-b7e80fb9ba581205539e0ddf49318a8f56ec1397db7d4def02a719c11fd87402.md",
+        "sha256": "b7e80fb9ba581205539e0ddf49318a8f56ec1397db7d4def02a719c11fd87402",
+        "bytes": 41126
+      },
+      "historical_limit": null,
+      "optional_later_full_body": {
+        "file": "task-8g-fix3-source.md",
+        "sha256": "785a13fa5e58c01253781539f80e9e8cbd359a1c95e196da6764aa893b0e2618",
+        "bytes": 44149
+      }
+    },
+    {
+      "id": "proposal:task-8g-fix1-direct-cancel-identity-source.md",
+      "canonical_cited_filename": null,
+      "resolved_filename_by_exact_content_hash": "task-8g-fix1-direct-cancel-identity-source.md",
+      "canonical_references": [
+        {
+          "canonical_file": "backlog/decisions/285-native-phased-agent-workflows.md",
+          "line": 1132,
+          "exact_line": "WHY: HEAD and the first ordering correction stored a Boolean and raised a fresh exception class; the earlier 1P3.71s control proved ordering, not caught/propagated identity. The ordering correction had four-file readback but OMITTED the separately fixed controller source/Ruling gate: writer interpreted root's “not a new gate” direction as authorization, while it meant no additional root/user contract approval. Preserve that explicit deviation and all earlier bytes/raw; do not retroactively claim controller approval before that edit. The subsequent fixed identity proposal a6121d8551b1c9fc6d618a333f855a6bf6efec80b8b72e3f764871f0a58a8f03 received controller Ruling before this identity correction.",
+          "line_sha256": "c94c938ffc49f8a7d00a1743312ba0dd7b72c6435efa2475a6e6df90766e9a8b"
+        },
+        {
+          "canonical_file": "Docs/superpowers/specs/2026-11-01-native-phased-agent-workflows-design.md",
+          "line": 1065,
+          "exact_line": "WHY: HEAD and the first ordering correction stored a Boolean and raised a fresh exception class; the earlier 1P3.71s control proved ordering, not caught/propagated identity. The ordering correction had four-file readback but OMITTED the separately fixed controller source/Ruling gate: writer interpreted root's “not a new gate” direction as authorization, while it meant no additional root/user contract approval. Preserve that explicit deviation and all earlier bytes/raw; do not retroactively claim controller approval before that edit. The subsequent fixed identity proposal a6121d8551b1c9fc6d618a333f855a6bf6efec80b8b72e3f764871f0a58a8f03 received controller Ruling before this identity correction.",
+          "line_sha256": "c94c938ffc49f8a7d00a1743312ba0dd7b72c6435efa2475a6e6df90766e9a8b"
+        },
+        {
+          "canonical_file": "Docs/superpowers/plans/2026-11-01-native-phased-agent-workflows-implementation.md",
+          "line": 1067,
+          "exact_line": "WHY: HEAD and the first ordering correction stored a Boolean and raised a fresh exception class; the earlier 1P3.71s control proved ordering, not caught/propagated identity. The ordering correction had four-file readback but OMITTED the separately fixed controller source/Ruling gate: writer interpreted root's “not a new gate” direction as authorization, while it meant no additional root/user contract approval. Preserve that explicit deviation and all earlier bytes/raw; do not retroactively claim controller approval before that edit. The subsequent fixed identity proposal a6121d8551b1c9fc6d618a333f855a6bf6efec80b8b72e3f764871f0a58a8f03 received controller Ruling before this identity correction.",
+          "line_sha256": "c94c938ffc49f8a7d00a1743312ba0dd7b72c6435efa2475a6e6df90766e9a8b"
+        }
+      ],
+      "canonical_cited_sha256": "a6121d8551b1c9fc6d618a333f855a6bf6efec80b8b72e3f764871f0a58a8f03",
+      "actual_current": {
+        "file": "task-8g-fix1-direct-cancel-identity-source.md",
+        "sha256": "a6121d8551b1c9fc6d618a333f855a6bf6efec80b8b72e3f764871f0a58a8f03",
+        "bytes": 6838
+      },
+      "matching_cited_versions": [
+        {
+          "file": "task-8g-fix1-direct-cancel-identity-source.md",
+          "sha256": "a6121d8551b1c9fc6d618a333f855a6bf6efec80b8b72e3f764871f0a58a8f03",
+          "bytes": 6838
+        }
+      ],
+      "version_status": "exact full-hash-only governing proposal resolved to full body",
+      "archive_primary": {
+        "file": "task-8g-fix1-direct-cancel-identity-source.md",
+        "sha256": "a6121d8551b1c9fc6d618a333f855a6bf6efec80b8b72e3f764871f0a58a8f03",
+        "bytes": 6838
+      },
+      "historical_limit": null
+    },
+    {
+      "id": "proposal:task-8g-fix1-direct-storage-freshness-adoption-source.md",
+      "canonical_cited_filename": null,
+      "resolved_filename_by_exact_content_hash": "task-8g-fix1-direct-storage-freshness-adoption-source.md",
+      "canonical_references": [
+        {
+          "canonical_file": "backlog/decisions/285-native-phased-agent-workflows.md",
+          "line": 1157,
+          "exact_line": "Governance: FULL root-direct-original-storage-admission-ruling (6971ebf7…923c6) and FULL root-freshness-refusal-boundary-ruling (4d297377…66063), fixed literal source ed5376455217fe6c2d92083c98324286285b3927b9dc084f3f0658c7261272d3 and controller source/hunk Ruling precede this amendment. Both FULL root bodies were archived byte-exact beside all prior seven full contracts and both full reviews. This amendment/readback must precede product/oracle edits; it does not cure or rewrite the earlier cancellation ordering-gate omission, certify unknown return or declare Task8/FIX1/WHOLE complete.",
+          "line_sha256": "bc293d25c9e4561f6688a7a114f69d6da2e6c6b04abda98ac6a29066fce81c20"
+        },
+        {
+          "canonical_file": "Docs/superpowers/specs/2026-11-01-native-phased-agent-workflows-design.md",
+          "line": 1090,
+          "exact_line": "Governance: FULL root-direct-original-storage-admission-ruling (6971ebf7…923c6) and FULL root-freshness-refusal-boundary-ruling (4d297377…66063), fixed literal source ed5376455217fe6c2d92083c98324286285b3927b9dc084f3f0658c7261272d3 and controller source/hunk Ruling precede this amendment. Both FULL root bodies were archived byte-exact beside all prior seven full contracts and both full reviews. This amendment/readback must precede product/oracle edits; it does not cure or rewrite the earlier cancellation ordering-gate omission, certify unknown return or declare Task8/FIX1/WHOLE complete.",
+          "line_sha256": "bc293d25c9e4561f6688a7a114f69d6da2e6c6b04abda98ac6a29066fce81c20"
+        },
+        {
+          "canonical_file": "Docs/superpowers/plans/2026-11-01-native-phased-agent-workflows-implementation.md",
+          "line": 1092,
+          "exact_line": "Governance: FULL root-direct-original-storage-admission-ruling (6971ebf7…923c6) and FULL root-freshness-refusal-boundary-ruling (4d297377…66063), fixed literal source ed5376455217fe6c2d92083c98324286285b3927b9dc084f3f0658c7261272d3 and controller source/hunk Ruling precede this amendment. Both FULL root bodies were archived byte-exact beside all prior seven full contracts and both full reviews. This amendment/readback must precede product/oracle edits; it does not cure or rewrite the earlier cancellation ordering-gate omission, certify unknown return or declare Task8/FIX1/WHOLE complete.",
+          "line_sha256": "bc293d25c9e4561f6688a7a114f69d6da2e6c6b04abda98ac6a29066fce81c20"
+        }
+      ],
+      "canonical_cited_sha256": "ed5376455217fe6c2d92083c98324286285b3927b9dc084f3f0658c7261272d3",
+      "actual_current": {
+        "file": "task-8g-fix1-direct-storage-freshness-adoption-source.md",
+        "sha256": "ed5376455217fe6c2d92083c98324286285b3927b9dc084f3f0658c7261272d3",
+        "bytes": 14219
+      },
+      "matching_cited_versions": [
+        {
+          "file": "task-8g-fix1-direct-storage-freshness-adoption-source.md",
+          "sha256": "ed5376455217fe6c2d92083c98324286285b3927b9dc084f3f0658c7261272d3",
+          "bytes": 14219
+        }
+      ],
+      "version_status": "exact full-hash-only governing proposal resolved to full body",
+      "archive_primary": {
+        "file": "task-8g-fix1-direct-storage-freshness-adoption-source.md",
+        "sha256": "ed5376455217fe6c2d92083c98324286285b3927b9dc084f3f0658c7261272d3",
+        "bytes": 14219
+      },
+      "historical_limit": null
+    }
+  ],
+  "full_required_supports": [
+    {
+      "id": "support:root-direct-native-launch-return-ruling.md",
+      "classification": "contract",
+      "original": {
+        "file": "root-direct-native-launch-return-ruling.md",
+        "sha256": "267163ae7913875bd9322ee2edf57340d1934da1fac57fc100d27afc625bf077",
+        "bytes": 8517
+      },
+      "frozen": {
+        "file": "root-direct-native-launch-return-ruling.frozen-267163ae7913875bd9322ee2edf57340d1934da1fac57fc100d27afc625bf077.md",
+        "sha256": "267163ae7913875bd9322ee2edf57340d1934da1fac57fc100d27afc625bf077",
+        "bytes": 8517
+      },
+      "full_original_frozen_equal": true,
+      "manifest_sha256": "267163ae7913875bd9322ee2edf57340d1934da1fac57fc100d27afc625bf077",
+      "direct_canonical_filename_references": [],
+      "canonical_hash_or_extensionless_references": [],
+      "required_via": "adopted587 map support references and canonical task-8g-fix2-full-supports.json index",
+      "no_thirteen_contracts_label": true
+    },
+    {
+      "id": "support:root-direct-native-terminal-return-ruling.md",
+      "classification": "contract",
+      "original": {
+        "file": "root-direct-native-terminal-return-ruling.md",
+        "sha256": "ffcd413191f7a6e548683a2ba270880b6f8c6da89ea97d5735d6707613d0e5a0",
+        "bytes": 9533
+      },
+      "frozen": {
+        "file": "root-direct-native-terminal-return-ruling.frozen-ffcd413191f7a6e548683a2ba270880b6f8c6da89ea97d5735d6707613d0e5a0.md",
+        "sha256": "ffcd413191f7a6e548683a2ba270880b6f8c6da89ea97d5735d6707613d0e5a0",
+        "bytes": 9533
+      },
+      "full_original_frozen_equal": true,
+      "manifest_sha256": "ffcd413191f7a6e548683a2ba270880b6f8c6da89ea97d5735d6707613d0e5a0",
+      "direct_canonical_filename_references": [],
+      "canonical_hash_or_extensionless_references": [],
+      "required_via": "adopted587 map support references and canonical task-8g-fix2-full-supports.json index",
+      "no_thirteen_contracts_label": true
+    },
+    {
+      "id": "support:root-direct-nonwait-transport-review.md",
+      "classification": "source review",
+      "original": {
+        "file": "root-direct-nonwait-transport-review.md",
+        "sha256": "67af7cfbaeeea34a14a0def60007bf5600bc1b7fe2a01413e577fa0eb5a10afa",
+        "bytes": 7690
+      },
+      "frozen": {
+        "file": "root-direct-nonwait-transport-review.frozen-67af7cfbaeeea34a14a0def60007bf5600bc1b7fe2a01413e577fa0eb5a10afa.md",
+        "sha256": "67af7cfbaeeea34a14a0def60007bf5600bc1b7fe2a01413e577fa0eb5a10afa",
+        "bytes": 7690
+      },
+      "full_original_frozen_equal": true,
+      "manifest_sha256": "67af7cfbaeeea34a14a0def60007bf5600bc1b7fe2a01413e577fa0eb5a10afa",
+      "direct_canonical_filename_references": [],
+      "canonical_hash_or_extensionless_references": [],
+      "required_via": "adopted587 map support references and canonical task-8g-fix2-full-supports.json index",
+      "no_thirteen_contracts_label": true
+    },
+    {
+      "id": "support:root-direct-original-storage-admission-ruling.md",
+      "classification": "contract",
+      "original": {
+        "file": "root-direct-original-storage-admission-ruling.md",
+        "sha256": "6971ebf76297e28f665408609a54933968796b6de646c79ec368ebd46ee923c6",
+        "bytes": 7327
+      },
+      "frozen": {
+        "file": "root-direct-original-storage-admission-ruling.frozen-6971ebf76297e28f665408609a54933968796b6de646c79ec368ebd46ee923c6.md",
+        "sha256": "6971ebf76297e28f665408609a54933968796b6de646c79ec368ebd46ee923c6",
+        "bytes": 7327
+      },
+      "full_original_frozen_equal": true,
+      "manifest_sha256": "6971ebf76297e28f665408609a54933968796b6de646c79ec368ebd46ee923c6",
+      "direct_canonical_filename_references": [],
+      "canonical_hash_or_extensionless_references": [
+        {
+          "canonical_file": "backlog/decisions/285-native-phased-agent-workflows.md",
+          "line": 1157,
+          "exact_line": "Governance: FULL root-direct-original-storage-admission-ruling (6971ebf7…923c6) and FULL root-freshness-refusal-boundary-ruling (4d297377…66063), fixed literal source ed5376455217fe6c2d92083c98324286285b3927b9dc084f3f0658c7261272d3 and controller source/hunk Ruling precede this amendment. Both FULL root bodies were archived byte-exact beside all prior seven full contracts and both full reviews. This amendment/readback must precede product/oracle edits; it does not cure or rewrite the earlier cancellation ordering-gate omission, certify unknown return or declare Task8/FIX1/WHOLE complete.",
+          "line_sha256": "bc293d25c9e4561f6688a7a114f69d6da2e6c6b04abda98ac6a29066fce81c20",
+          "stated_hash_prefix": "6971ebf7",
+          "stated_hash_suffix": "923c6"
+        },
+        {
+          "canonical_file": "Docs/superpowers/specs/2026-11-01-native-phased-agent-workflows-design.md",
+          "line": 1090,
+          "exact_line": "Governance: FULL root-direct-original-storage-admission-ruling (6971ebf7…923c6) and FULL root-freshness-refusal-boundary-ruling (4d297377…66063), fixed literal source ed5376455217fe6c2d92083c98324286285b3927b9dc084f3f0658c7261272d3 and controller source/hunk Ruling precede this amendment. Both FULL root bodies were archived byte-exact beside all prior seven full contracts and both full reviews. This amendment/readback must precede product/oracle edits; it does not cure or rewrite the earlier cancellation ordering-gate omission, certify unknown return or declare Task8/FIX1/WHOLE complete.",
+          "line_sha256": "bc293d25c9e4561f6688a7a114f69d6da2e6c6b04abda98ac6a29066fce81c20",
+          "stated_hash_prefix": "6971ebf7",
+          "stated_hash_suffix": "923c6"
+        },
+        {
+          "canonical_file": "Docs/superpowers/plans/2026-11-01-native-phased-agent-workflows-implementation.md",
+          "line": 1092,
+          "exact_line": "Governance: FULL root-direct-original-storage-admission-ruling (6971ebf7…923c6) and FULL root-freshness-refusal-boundary-ruling (4d297377…66063), fixed literal source ed5376455217fe6c2d92083c98324286285b3927b9dc084f3f0658c7261272d3 and controller source/hunk Ruling precede this amendment. Both FULL root bodies were archived byte-exact beside all prior seven full contracts and both full reviews. This amendment/readback must precede product/oracle edits; it does not cure or rewrite the earlier cancellation ordering-gate omission, certify unknown return or declare Task8/FIX1/WHOLE complete.",
+          "line_sha256": "bc293d25c9e4561f6688a7a114f69d6da2e6c6b04abda98ac6a29066fce81c20",
+          "stated_hash_prefix": "6971ebf7",
+          "stated_hash_suffix": "923c6"
+        }
+      ],
+      "required_via": "adopted587 map support references and canonical task-8g-fix2-full-supports.json index",
+      "no_thirteen_contracts_label": true
+    },
+    {
+      "id": "support:root-direct-start-ambiguity-ruling.md",
+      "classification": "contract",
+      "original": {
+        "file": "root-direct-start-ambiguity-ruling.md",
+        "sha256": "13fc6c079141728dcedfedecbf4c7772fc5601dd494829ced8fb3c0c214d1ebc",
+        "bytes": 6226
+      },
+      "frozen": {
+        "file": "root-direct-start-ambiguity-ruling.frozen-13fc6c079141728dcedfedecbf4c7772fc5601dd494829ced8fb3c0c214d1ebc.md",
+        "sha256": "13fc6c079141728dcedfedecbf4c7772fc5601dd494829ced8fb3c0c214d1ebc",
+        "bytes": 6226
+      },
+      "full_original_frozen_equal": true,
+      "manifest_sha256": "13fc6c079141728dcedfedecbf4c7772fc5601dd494829ced8fb3c0c214d1ebc",
+      "direct_canonical_filename_references": [],
+      "canonical_hash_or_extensionless_references": [],
+      "required_via": "adopted587 map support references and canonical task-8g-fix2-full-supports.json index",
+      "no_thirteen_contracts_label": true
+    },
+    {
+      "id": "support:root-external-preentry-cleanup-review.md",
+      "classification": "source review",
+      "original": {
+        "file": "root-external-preentry-cleanup-review.md",
+        "sha256": "2bbbdecc4c013939dc53a4cbbf68a4e5dd1b71bb268ac094486f21da0580d0bd",
+        "bytes": 5870
+      },
+      "frozen": {
+        "file": "root-external-preentry-cleanup-review.frozen-2bbbdecc4c013939dc53a4cbbf68a4e5dd1b71bb268ac094486f21da0580d0bd.md",
+        "sha256": "2bbbdecc4c013939dc53a4cbbf68a4e5dd1b71bb268ac094486f21da0580d0bd",
+        "bytes": 5870
+      },
+      "full_original_frozen_equal": true,
+      "manifest_sha256": "2bbbdecc4c013939dc53a4cbbf68a4e5dd1b71bb268ac094486f21da0580d0bd",
+      "direct_canonical_filename_references": [],
+      "canonical_hash_or_extensionless_references": [],
+      "required_via": "adopted587 map support references and canonical task-8g-fix2-full-supports.json index",
+      "no_thirteen_contracts_label": true
+    },
+    {
+      "id": "support:root-freshness-refusal-boundary-ruling.md",
+      "classification": "contract",
+      "original": {
+        "file": "root-freshness-refusal-boundary-ruling.md",
+        "sha256": "4d297377a5aefe924ab2d9382b0d6a1128955ba0aefc2d8c014fa60972b66063",
+        "bytes": 6930
+      },
+      "frozen": {
+        "file": "root-freshness-refusal-boundary-ruling.frozen-4d297377a5aefe924ab2d9382b0d6a1128955ba0aefc2d8c014fa60972b66063.md",
+        "sha256": "4d297377a5aefe924ab2d9382b0d6a1128955ba0aefc2d8c014fa60972b66063",
+        "bytes": 6930
+      },
+      "full_original_frozen_equal": true,
+      "manifest_sha256": "4d297377a5aefe924ab2d9382b0d6a1128955ba0aefc2d8c014fa60972b66063",
+      "direct_canonical_filename_references": [],
+      "canonical_hash_or_extensionless_references": [
+        {
+          "canonical_file": "backlog/decisions/285-native-phased-agent-workflows.md",
+          "line": 1157,
+          "exact_line": "Governance: FULL root-direct-original-storage-admission-ruling (6971ebf7…923c6) and FULL root-freshness-refusal-boundary-ruling (4d297377…66063), fixed literal source ed5376455217fe6c2d92083c98324286285b3927b9dc084f3f0658c7261272d3 and controller source/hunk Ruling precede this amendment. Both FULL root bodies were archived byte-exact beside all prior seven full contracts and both full reviews. This amendment/readback must precede product/oracle edits; it does not cure or rewrite the earlier cancellation ordering-gate omission, certify unknown return or declare Task8/FIX1/WHOLE complete.",
+          "line_sha256": "bc293d25c9e4561f6688a7a114f69d6da2e6c6b04abda98ac6a29066fce81c20",
+          "stated_hash_prefix": "4d297377",
+          "stated_hash_suffix": "66063"
+        },
+        {
+          "canonical_file": "Docs/superpowers/specs/2026-11-01-native-phased-agent-workflows-design.md",
+          "line": 1090,
+          "exact_line": "Governance: FULL root-direct-original-storage-admission-ruling (6971ebf7…923c6) and FULL root-freshness-refusal-boundary-ruling (4d297377…66063), fixed literal source ed5376455217fe6c2d92083c98324286285b3927b9dc084f3f0658c7261272d3 and controller source/hunk Ruling precede this amendment. Both FULL root bodies were archived byte-exact beside all prior seven full contracts and both full reviews. This amendment/readback must precede product/oracle edits; it does not cure or rewrite the earlier cancellation ordering-gate omission, certify unknown return or declare Task8/FIX1/WHOLE complete.",
+          "line_sha256": "bc293d25c9e4561f6688a7a114f69d6da2e6c6b04abda98ac6a29066fce81c20",
+          "stated_hash_prefix": "4d297377",
+          "stated_hash_suffix": "66063"
+        },
+        {
+          "canonical_file": "Docs/superpowers/plans/2026-11-01-native-phased-agent-workflows-implementation.md",
+          "line": 1092,
+          "exact_line": "Governance: FULL root-direct-original-storage-admission-ruling (6971ebf7…923c6) and FULL root-freshness-refusal-boundary-ruling (4d297377…66063), fixed literal source ed5376455217fe6c2d92083c98324286285b3927b9dc084f3f0658c7261272d3 and controller source/hunk Ruling precede this amendment. Both FULL root bodies were archived byte-exact beside all prior seven full contracts and both full reviews. This amendment/readback must precede product/oracle edits; it does not cure or rewrite the earlier cancellation ordering-gate omission, certify unknown return or declare Task8/FIX1/WHOLE complete.",
+          "line_sha256": "bc293d25c9e4561f6688a7a114f69d6da2e6c6b04abda98ac6a29066fce81c20",
+          "stated_hash_prefix": "4d297377",
+          "stated_hash_suffix": "66063"
+        }
+      ],
+      "required_via": "adopted587 map support references and canonical task-8g-fix2-full-supports.json index",
+      "no_thirteen_contracts_label": true
+    },
+    {
+      "id": "support:root-i2-accounting-ruling.md",
+      "classification": "contract",
+      "original": {
+        "file": "root-i2-accounting-ruling.md",
+        "sha256": "20050c57490d3865c47bf9488ffc01f059232a61f517dc7a932ce59807d226d6",
+        "bytes": 6774
+      },
+      "frozen": {
+        "file": "root-i2-accounting-ruling.frozen-20050c57490d3865c47bf9488ffc01f059232a61f517dc7a932ce59807d226d6.md",
+        "sha256": "20050c57490d3865c47bf9488ffc01f059232a61f517dc7a932ce59807d226d6",
+        "bytes": 6774
+      },
+      "full_original_frozen_equal": true,
+      "manifest_sha256": "20050c57490d3865c47bf9488ffc01f059232a61f517dc7a932ce59807d226d6",
+      "direct_canonical_filename_references": [
+        {
+          "canonical_file": "backlog/decisions/285-native-phased-agent-workflows.md",
+          "line": 986,
+          "exact_line": "ADR required: no new ADR or migration; existing ADR285. WHAT: implement the exact return contract and cleanup constraints read in root-i2-accounting-ruling.md and root-i2-cleanup-accounting-ruling.md, with the complete receiver inventory in task-8g-fix1-source.md. G may close the existing active interval only after SAME prior finite preparation/source/storage/owner/claim/worker and actual wave/B/E/receipt return proof. Its original FULL quiesce transaction leaves the accepted phase retirement=unknown. No committed drained marker or second acknowledgment transaction proves outer return. One bounded passive record on SAME original phase/run identifies the interval/transaction, issuer/callback/read/producer/retired and prior physical records; it becomes positive only after the original whole wrapper and all source/handle returns are positive. No new global registry, actor, execution owner or ID-derived capability.",
+          "line_sha256": "e1be24700412ffd4ec42d154659645c372f529a28a8ab3219c35017eed1b69ac"
+        },
+        {
+          "canonical_file": "Docs/superpowers/specs/2026-11-01-native-phased-agent-workflows-design.md",
+          "line": 919,
+          "exact_line": "ADR required: no new ADR or migration; existing ADR285. WHAT: implement the exact return contract and cleanup constraints read in root-i2-accounting-ruling.md and root-i2-cleanup-accounting-ruling.md, with the complete receiver inventory in task-8g-fix1-source.md. G may close the existing active interval only after SAME prior finite preparation/source/storage/owner/claim/worker and actual wave/B/E/receipt return proof. Its original FULL quiesce transaction leaves the accepted phase retirement=unknown. No committed drained marker or second acknowledgment transaction proves outer return. One bounded passive record on SAME original phase/run identifies the interval/transaction, issuer/callback/read/producer/retired and prior physical records; it becomes positive only after the original whole wrapper and all source/handle returns are positive. No new global registry, actor, execution owner or ID-derived capability.",
+          "line_sha256": "e1be24700412ffd4ec42d154659645c372f529a28a8ab3219c35017eed1b69ac"
+        },
+        {
+          "canonical_file": "Docs/superpowers/plans/2026-11-01-native-phased-agent-workflows-implementation.md",
+          "line": 921,
+          "exact_line": "ADR required: no new ADR or migration; existing ADR285. WHAT: implement the exact return contract and cleanup constraints read in root-i2-accounting-ruling.md and root-i2-cleanup-accounting-ruling.md, with the complete receiver inventory in task-8g-fix1-source.md. G may close the existing active interval only after SAME prior finite preparation/source/storage/owner/claim/worker and actual wave/B/E/receipt return proof. Its original FULL quiesce transaction leaves the accepted phase retirement=unknown. No committed drained marker or second acknowledgment transaction proves outer return. One bounded passive record on SAME original phase/run identifies the interval/transaction, issuer/callback/read/producer/retired and prior physical records; it becomes positive only after the original whole wrapper and all source/handle returns are positive. No new global registry, actor, execution owner or ID-derived capability.",
+          "line_sha256": "e1be24700412ffd4ec42d154659645c372f529a28a8ab3219c35017eed1b69ac"
+        }
+      ],
+      "canonical_hash_or_extensionless_references": [],
+      "required_via": "adopted587 map support references and canonical task-8g-fix2-full-supports.json index",
+      "no_thirteen_contracts_label": true
+    },
+    {
+      "id": "support:root-i2-cleanup-accounting-ruling.md",
+      "classification": "contract",
+      "original": {
+        "file": "root-i2-cleanup-accounting-ruling.md",
+        "sha256": "d2b6bdef04ffb09ace3c41277fe62444daaa6278b2827e3262ee13186001912d",
+        "bytes": 4416
+      },
+      "frozen": {
+        "file": "root-i2-cleanup-accounting-ruling.frozen-d2b6bdef04ffb09ace3c41277fe62444daaa6278b2827e3262ee13186001912d.md",
+        "sha256": "d2b6bdef04ffb09ace3c41277fe62444daaa6278b2827e3262ee13186001912d",
+        "bytes": 4416
+      },
+      "full_original_frozen_equal": true,
+      "manifest_sha256": "d2b6bdef04ffb09ace3c41277fe62444daaa6278b2827e3262ee13186001912d",
+      "direct_canonical_filename_references": [
+        {
+          "canonical_file": "backlog/decisions/285-native-phased-agent-workflows.md",
+          "line": 986,
+          "exact_line": "ADR required: no new ADR or migration; existing ADR285. WHAT: implement the exact return contract and cleanup constraints read in root-i2-accounting-ruling.md and root-i2-cleanup-accounting-ruling.md, with the complete receiver inventory in task-8g-fix1-source.md. G may close the existing active interval only after SAME prior finite preparation/source/storage/owner/claim/worker and actual wave/B/E/receipt return proof. Its original FULL quiesce transaction leaves the accepted phase retirement=unknown. No committed drained marker or second acknowledgment transaction proves outer return. One bounded passive record on SAME original phase/run identifies the interval/transaction, issuer/callback/read/producer/retired and prior physical records; it becomes positive only after the original whole wrapper and all source/handle returns are positive. No new global registry, actor, execution owner or ID-derived capability.",
+          "line_sha256": "e1be24700412ffd4ec42d154659645c372f529a28a8ab3219c35017eed1b69ac"
+        },
+        {
+          "canonical_file": "Docs/superpowers/specs/2026-11-01-native-phased-agent-workflows-design.md",
+          "line": 919,
+          "exact_line": "ADR required: no new ADR or migration; existing ADR285. WHAT: implement the exact return contract and cleanup constraints read in root-i2-accounting-ruling.md and root-i2-cleanup-accounting-ruling.md, with the complete receiver inventory in task-8g-fix1-source.md. G may close the existing active interval only after SAME prior finite preparation/source/storage/owner/claim/worker and actual wave/B/E/receipt return proof. Its original FULL quiesce transaction leaves the accepted phase retirement=unknown. No committed drained marker or second acknowledgment transaction proves outer return. One bounded passive record on SAME original phase/run identifies the interval/transaction, issuer/callback/read/producer/retired and prior physical records; it becomes positive only after the original whole wrapper and all source/handle returns are positive. No new global registry, actor, execution owner or ID-derived capability.",
+          "line_sha256": "e1be24700412ffd4ec42d154659645c372f529a28a8ab3219c35017eed1b69ac"
+        },
+        {
+          "canonical_file": "Docs/superpowers/plans/2026-11-01-native-phased-agent-workflows-implementation.md",
+          "line": 921,
+          "exact_line": "ADR required: no new ADR or migration; existing ADR285. WHAT: implement the exact return contract and cleanup constraints read in root-i2-accounting-ruling.md and root-i2-cleanup-accounting-ruling.md, with the complete receiver inventory in task-8g-fix1-source.md. G may close the existing active interval only after SAME prior finite preparation/source/storage/owner/claim/worker and actual wave/B/E/receipt return proof. Its original FULL quiesce transaction leaves the accepted phase retirement=unknown. No committed drained marker or second acknowledgment transaction proves outer return. One bounded passive record on SAME original phase/run identifies the interval/transaction, issuer/callback/read/producer/retired and prior physical records; it becomes positive only after the original whole wrapper and all source/handle returns are positive. No new global registry, actor, execution owner or ID-derived capability.",
+          "line_sha256": "e1be24700412ffd4ec42d154659645c372f529a28a8ab3219c35017eed1b69ac"
+        }
+      ],
+      "canonical_hash_or_extensionless_references": [],
+      "required_via": "adopted587 map support references and canonical task-8g-fix2-full-supports.json index",
+      "no_thirteen_contracts_label": true
+    },
+    {
+      "id": "support:root-i2-open-cleanup-accounting-ruling.md",
+      "classification": "contract",
+      "original": {
+        "file": "root-i2-open-cleanup-accounting-ruling.md",
+        "sha256": "4ca12699b91a525293d9544519bbf5b10a7435c67f08146419b4f833df39b167",
+        "bytes": 5015
+      },
+      "frozen": {
+        "file": "root-i2-open-cleanup-accounting-ruling.frozen-4ca12699b91a525293d9544519bbf5b10a7435c67f08146419b4f833df39b167.md",
+        "sha256": "4ca12699b91a525293d9544519bbf5b10a7435c67f08146419b4f833df39b167",
+        "bytes": 5015
+      },
+      "full_original_frozen_equal": true,
+      "manifest_sha256": "4ca12699b91a525293d9544519bbf5b10a7435c67f08146419b4f833df39b167",
+      "direct_canonical_filename_references": [],
+      "canonical_hash_or_extensionless_references": [],
+      "required_via": "adopted587 map support references and canonical task-8g-fix2-full-supports.json index",
+      "no_thirteen_contracts_label": true
+    },
+    {
+      "id": "support:root-queued-wake-release-ruling.md",
+      "classification": "contract",
+      "original": {
+        "file": "root-queued-wake-release-ruling.md",
+        "sha256": "94540bf33567a4f590ca42516cda7ec5c001fc0ff5240d449d7eda922e98e5f3",
+        "bytes": 8308
+      },
+      "frozen": {
+        "file": "root-queued-wake-release-ruling.frozen-94540bf33567a4f590ca42516cda7ec5c001fc0ff5240d449d7eda922e98e5f3.md",
+        "sha256": "94540bf33567a4f590ca42516cda7ec5c001fc0ff5240d449d7eda922e98e5f3",
+        "bytes": 8308
+      },
+      "full_original_frozen_equal": true,
+      "manifest_sha256": "94540bf33567a4f590ca42516cda7ec5c001fc0ff5240d449d7eda922e98e5f3",
+      "direct_canonical_filename_references": [],
+      "canonical_hash_or_extensionless_references": [],
+      "required_via": "adopted587 map support references and canonical task-8g-fix2-full-supports.json index",
+      "no_thirteen_contracts_label": true
+    },
+    {
+      "id": "support:root-queued-wake-source-v2-review.md",
+      "classification": "source review",
+      "original": {
+        "file": "root-queued-wake-source-v2-review.md",
+        "sha256": "9fdc1c692aaf9a39b096690c3e683fc352c410923a0cbbc9c1d350d19d42d614",
+        "bytes": 6951
+      },
+      "frozen": {
+        "file": "root-queued-wake-source-v2-review.frozen-9fdc1c692aaf9a39b096690c3e683fc352c410923a0cbbc9c1d350d19d42d614.md",
+        "sha256": "9fdc1c692aaf9a39b096690c3e683fc352c410923a0cbbc9c1d350d19d42d614",
+        "bytes": 6951
+      },
+      "full_original_frozen_equal": true,
+      "manifest_sha256": "9fdc1c692aaf9a39b096690c3e683fc352c410923a0cbbc9c1d350d19d42d614",
+      "direct_canonical_filename_references": [],
+      "canonical_hash_or_extensionless_references": [],
+      "required_via": "adopted587 map support references and canonical task-8g-fix2-full-supports.json index",
+      "no_thirteen_contracts_label": true
+    },
+    {
+      "id": "support:root-fix2-source-review.md",
+      "classification": "source review",
+      "original": {
+        "file": "root-fix2-source-review.md",
+        "sha256": "140bee71744bd92c78c5c517ffe615a73ea5002b316af35d8ea28f6027fbc562",
+        "bytes": 4049
+      },
+      "frozen": {
+        "file": "root-fix2-source-review.frozen-140bee71744bd92c78c5c517ffe615a73ea5002b316af35d8ea28f6027fbc562.md",
+        "sha256": "140bee71744bd92c78c5c517ffe615a73ea5002b316af35d8ea28f6027fbc562",
+        "bytes": 4049
+      },
+      "full_original_frozen_equal": true,
+      "manifest_sha256": "140bee71744bd92c78c5c517ffe615a73ea5002b316af35d8ea28f6027fbc562",
+      "direct_canonical_filename_references": [],
+      "canonical_hash_or_extensionless_references": [
+        {
+          "canonical_file": "backlog/decisions/285-native-phased-agent-workflows.md",
+          "line": 1184,
+          "exact_line": "WHAT: Controller accepted the complete fixed source proposal `task-8g-fix2-source.md` SHA256 1d361ff6ea0434abbc09c4a1582593943047abd10edee72727c01bf080948d4a, including the notifier-context appendix, after FULL root source review140bee71744bd92c78c5c517ffe615a73ea5002b316af35d8ea28f6027fbc562. Product changes are restricted to original console_workflow_preparation finite-read/return/close receivers and their existing source records. Existing native-return test hunks and precise private-probe routes qualify both findings; native reader, capacity, activity, source/activation/storage implementations and fixtures remain read-only. Original c6389 HEAD, staged c5/61 and279 foreign worktree bytes are preserved. Thirteen complete root support bodies are byte-archived and indexed in `task-8g-fix2-full-supports.json`, extending the twelve unchanged FIX1 bodies with FULL140bee. The fixed source and exact original records govern implementation; a shorthand reference never replaces those bodies.",
+          "line_sha256": "5d0cfa3f39d6e23a26554a479f8535c06e98d7ecd4d5034736c3cc63f10a296a"
+        },
+        {
+          "canonical_file": "Docs/superpowers/specs/2026-11-01-native-phased-agent-workflows-design.md",
+          "line": 1117,
+          "exact_line": "WHAT: Controller accepted the complete fixed source proposal `task-8g-fix2-source.md` SHA256 1d361ff6ea0434abbc09c4a1582593943047abd10edee72727c01bf080948d4a, including the notifier-context appendix, after FULL root source review140bee71744bd92c78c5c517ffe615a73ea5002b316af35d8ea28f6027fbc562. Product changes are restricted to original console_workflow_preparation finite-read/return/close receivers and their existing source records. Existing native-return test hunks and precise private-probe routes qualify both findings; native reader, capacity, activity, source/activation/storage implementations and fixtures remain read-only. Original c6389 HEAD, staged c5/61 and279 foreign worktree bytes are preserved. Thirteen complete root support bodies are byte-archived and indexed in `task-8g-fix2-full-supports.json`, extending the twelve unchanged FIX1 bodies with FULL140bee. The fixed source and exact original records govern implementation; a shorthand reference never replaces those bodies.",
+          "line_sha256": "5d0cfa3f39d6e23a26554a479f8535c06e98d7ecd4d5034736c3cc63f10a296a"
+        },
+        {
+          "canonical_file": "Docs/superpowers/plans/2026-11-01-native-phased-agent-workflows-implementation.md",
+          "line": 1119,
+          "exact_line": "WHAT: Controller accepted the complete fixed source proposal `task-8g-fix2-source.md` SHA256 1d361ff6ea0434abbc09c4a1582593943047abd10edee72727c01bf080948d4a, including the notifier-context appendix, after FULL root source review140bee71744bd92c78c5c517ffe615a73ea5002b316af35d8ea28f6027fbc562. Product changes are restricted to original console_workflow_preparation finite-read/return/close receivers and their existing source records. Existing native-return test hunks and precise private-probe routes qualify both findings; native reader, capacity, activity, source/activation/storage implementations and fixtures remain read-only. Original c6389 HEAD, staged c5/61 and279 foreign worktree bytes are preserved. Thirteen complete root support bodies are byte-archived and indexed in `task-8g-fix2-full-supports.json`, extending the twelve unchanged FIX1 bodies with FULL140bee. The fixed source and exact original records govern implementation; a shorthand reference never replaces those bodies.",
+          "line_sha256": "5d0cfa3f39d6e23a26554a479f8535c06e98d7ecd4d5034736c3cc63f10a296a"
+        }
+      ],
+      "required_via": "adopted587 map support references and canonical task-8g-fix2-full-supports.json index",
+      "no_thirteen_contracts_label": true
+    }
+  ],
+  "external_preentry_options": [
+    {
+      "file": "root-external-preentry-options.superseded-release-wording.frozen-f1c1be394642f9f930362793a15dd6e4b9383ca415a623e01c9cd21c54869d60.md",
+      "sha256": "f1c1be394642f9f930362793a15dd6e4b9383ca415a623e01c9cd21c54869d60",
+      "status": "original release wording superseded before ruling",
+      "actual": {
+        "file": "root-external-preentry-options.superseded-release-wording.frozen-f1c1be394642f9f930362793a15dd6e4b9383ca415a623e01c9cd21c54869d60.md",
+        "sha256": "f1c1be394642f9f930362793a15dd6e4b9383ca415a623e01c9cd21c54869d60",
+        "bytes": 7071
+      },
+      "required_via": "adopted587 map.post_external_options",
+      "role": "superseded original full option"
+    },
+    {
+      "file": "root-external-preentry-options.corrected.frozen-21f639cdf0a6afb30cebf52b7e11f1959bf44a05fcd37284881e912060ade759.md",
+      "sha256": "21f639cdf0a6afb30cebf52b7e11f1959bf44a05fcd37284881e912060ade759",
+      "status": "corrected option A selected by bound review",
+      "actual": {
+        "file": "root-external-preentry-options.corrected.frozen-21f639cdf0a6afb30cebf52b7e11f1959bf44a05fcd37284881e912060ade759.md",
+        "sha256": "21f639cdf0a6afb30cebf52b7e11f1959bf44a05fcd37284881e912060ade759",
+        "bytes": 9958
+      },
+      "required_via": "adopted587 map.post_external_options",
+      "role": "corrected selected full option"
+    }
+  ],
+  "bounded_cited_metadata": [
+    {
+      "cited_filename": "task-8g-fix1-live-bind-readback.json",
+      "canonical_references": [
+        {
+          "canonical_file": "backlog/decisions/285-native-phased-agent-workflows.md",
+          "line": 1177,
+          "exact_line": "Validation: exact actual committed live before-lookup and post-helper descriptor controls require separately reviewed source/harness that distinguishes real physical return from retained uncertainty; no claim before execution. Qualify current genuine D/W/N and unchanged public binding routes with the smallest source-relevant named nodes, preserving prior receipts as byte-scoped and all failed/killed/retained-exit limits. No broad suite, source swap, guard reset or other runtime boundary. FOUR-file byte-exact append/readback receipt task-8g-fix1-live-bind-readback.json precedes product edit. Task38531 remains In Progress.",
+          "line_sha256": "774ef651d0cb2cde60cd75f267ab4d568e87aff2c9baf48551785aff1a6691e5"
+        },
+        {
+          "canonical_file": "Docs/superpowers/specs/2026-11-01-native-phased-agent-workflows-design.md",
+          "line": 1110,
+          "exact_line": "Validation: exact actual committed live before-lookup and post-helper descriptor controls require separately reviewed source/harness that distinguishes real physical return from retained uncertainty; no claim before execution. Qualify current genuine D/W/N and unchanged public binding routes with the smallest source-relevant named nodes, preserving prior receipts as byte-scoped and all failed/killed/retained-exit limits. No broad suite, source swap, guard reset or other runtime boundary. FOUR-file byte-exact append/readback receipt task-8g-fix1-live-bind-readback.json precedes product edit. Task38531 remains In Progress.",
+          "line_sha256": "774ef651d0cb2cde60cd75f267ab4d568e87aff2c9baf48551785aff1a6691e5"
+        },
+        {
+          "canonical_file": "Docs/superpowers/plans/2026-11-01-native-phased-agent-workflows-implementation.md",
+          "line": 1112,
+          "exact_line": "Validation: exact actual committed live before-lookup and post-helper descriptor controls require separately reviewed source/harness that distinguishes real physical return from retained uncertainty; no claim before execution. Qualify current genuine D/W/N and unchanged public binding routes with the smallest source-relevant named nodes, preserving prior receipts as byte-scoped and all failed/killed/retained-exit limits. No broad suite, source swap, guard reset or other runtime boundary. FOUR-file byte-exact append/readback receipt task-8g-fix1-live-bind-readback.json precedes product edit. Task38531 remains In Progress.",
+          "line_sha256": "774ef651d0cb2cde60cd75f267ab4d568e87aff2c9baf48551785aff1a6691e5"
+        }
+      ],
+      "canonical_cited_sha256": null,
+      "expected_hash_inference": "None: canonical references do not specify this JSON body SHA.",
+      "actual_current": {
+        "file": "task-8g-fix1-live-bind-readback.json",
+        "sha256": "a673bf2e98e12bbdfed48963b19ad9642318b6a0f2a2571af95f18f415b1e8e2",
+        "bytes": 1668
+      },
+      "classification": "bounded governance/protection receipt, not full governing source contract",
+      "archive_scope": "Retain this bounded directly cited metadata; no indiscriminate dynamic logs/process maps."
+    },
+    {
+      "cited_filename": "task-8g-fix1-pre-edit.json",
+      "canonical_references": [
+        {
+          "canonical_file": "backlog/decisions/285-native-phased-agent-workflows.md",
+          "line": 975,
+          "exact_line": "ADR required: no new ADR; existing ADR285 applies. FIX_BASE bb983093456803f006774435f7384924d923fc34. Independent review found five Important issues; Task38531 stays In Progress with all three AC unchecked. I2 active-clock accounting and I5 real survivor notification remain separately gated/pending; this amendment does not certify either or erase original155P28F5E and historical killed/unknown evidence. Exact source, prospective hashes, rulings and diagnostic receipts: ignored task-8g-fix1-source.md/task-8g-fix1-pre-edit.json.",
+          "line_sha256": "c97a9db3a8192f8f751e0a6e573cbdf1fcd37a79ebcac58d2382bd50c20889c2"
+        },
+        {
+          "canonical_file": "Docs/superpowers/specs/2026-11-01-native-phased-agent-workflows-design.md",
+          "line": 908,
+          "exact_line": "ADR required: no new ADR; existing ADR285 applies. FIX_BASE bb983093456803f006774435f7384924d923fc34. Independent review found five Important issues; Task38531 stays In Progress with all three AC unchecked. I2 active-clock accounting and I5 real survivor notification remain separately gated/pending; this amendment does not certify either or erase original155P28F5E and historical killed/unknown evidence. Exact source, prospective hashes, rulings and diagnostic receipts: ignored task-8g-fix1-source.md/task-8g-fix1-pre-edit.json.",
+          "line_sha256": "c97a9db3a8192f8f751e0a6e573cbdf1fcd37a79ebcac58d2382bd50c20889c2"
+        },
+        {
+          "canonical_file": "Docs/superpowers/plans/2026-11-01-native-phased-agent-workflows-implementation.md",
+          "line": 910,
+          "exact_line": "ADR required: no new ADR; existing ADR285 applies. FIX_BASE bb983093456803f006774435f7384924d923fc34. Independent review found five Important issues; Task38531 stays In Progress with all three AC unchecked. I2 active-clock accounting and I5 real survivor notification remain separately gated/pending; this amendment does not certify either or erase original155P28F5E and historical killed/unknown evidence. Exact source, prospective hashes, rulings and diagnostic receipts: ignored task-8g-fix1-source.md/task-8g-fix1-pre-edit.json.",
+          "line_sha256": "c97a9db3a8192f8f751e0a6e573cbdf1fcd37a79ebcac58d2382bd50c20889c2"
+        }
+      ],
+      "canonical_cited_sha256": null,
+      "expected_hash_inference": "None: canonical references do not specify this JSON body SHA.",
+      "actual_current": {
+        "file": "task-8g-fix1-pre-edit.json",
+        "sha256": "f5039e4ea83192afd0dd879a0e60e257bb59a96330943c0e97d267ebe2e0df6e",
+        "bytes": 84155
+      },
+      "classification": "bounded governance/protection receipt, not full governing source contract",
+      "archive_scope": "Retain this bounded directly cited metadata; no indiscriminate dynamic logs/process maps."
+    },
+    {
+      "cited_filename": "task-8g-fix2-full-supports.json",
+      "canonical_references": [
+        {
+          "canonical_file": "backlog/decisions/285-native-phased-agent-workflows.md",
+          "line": 1184,
+          "exact_line": "WHAT: Controller accepted the complete fixed source proposal `task-8g-fix2-source.md` SHA256 1d361ff6ea0434abbc09c4a1582593943047abd10edee72727c01bf080948d4a, including the notifier-context appendix, after FULL root source review140bee71744bd92c78c5c517ffe615a73ea5002b316af35d8ea28f6027fbc562. Product changes are restricted to original console_workflow_preparation finite-read/return/close receivers and their existing source records. Existing native-return test hunks and precise private-probe routes qualify both findings; native reader, capacity, activity, source/activation/storage implementations and fixtures remain read-only. Original c6389 HEAD, staged c5/61 and279 foreign worktree bytes are preserved. Thirteen complete root support bodies are byte-archived and indexed in `task-8g-fix2-full-supports.json`, extending the twelve unchanged FIX1 bodies with FULL140bee. The fixed source and exact original records govern implementation; a shorthand reference never replaces those bodies.",
+          "line_sha256": "5d0cfa3f39d6e23a26554a479f8535c06e98d7ecd4d5034736c3cc63f10a296a"
+        },
+        {
+          "canonical_file": "Docs/superpowers/specs/2026-11-01-native-phased-agent-workflows-design.md",
+          "line": 1117,
+          "exact_line": "WHAT: Controller accepted the complete fixed source proposal `task-8g-fix2-source.md` SHA256 1d361ff6ea0434abbc09c4a1582593943047abd10edee72727c01bf080948d4a, including the notifier-context appendix, after FULL root source review140bee71744bd92c78c5c517ffe615a73ea5002b316af35d8ea28f6027fbc562. Product changes are restricted to original console_workflow_preparation finite-read/return/close receivers and their existing source records. Existing native-return test hunks and precise private-probe routes qualify both findings; native reader, capacity, activity, source/activation/storage implementations and fixtures remain read-only. Original c6389 HEAD, staged c5/61 and279 foreign worktree bytes are preserved. Thirteen complete root support bodies are byte-archived and indexed in `task-8g-fix2-full-supports.json`, extending the twelve unchanged FIX1 bodies with FULL140bee. The fixed source and exact original records govern implementation; a shorthand reference never replaces those bodies.",
+          "line_sha256": "5d0cfa3f39d6e23a26554a479f8535c06e98d7ecd4d5034736c3cc63f10a296a"
+        },
+        {
+          "canonical_file": "Docs/superpowers/plans/2026-11-01-native-phased-agent-workflows-implementation.md",
+          "line": 1119,
+          "exact_line": "WHAT: Controller accepted the complete fixed source proposal `task-8g-fix2-source.md` SHA256 1d361ff6ea0434abbc09c4a1582593943047abd10edee72727c01bf080948d4a, including the notifier-context appendix, after FULL root source review140bee71744bd92c78c5c517ffe615a73ea5002b316af35d8ea28f6027fbc562. Product changes are restricted to original console_workflow_preparation finite-read/return/close receivers and their existing source records. Existing native-return test hunks and precise private-probe routes qualify both findings; native reader, capacity, activity, source/activation/storage implementations and fixtures remain read-only. Original c6389 HEAD, staged c5/61 and279 foreign worktree bytes are preserved. Thirteen complete root support bodies are byte-archived and indexed in `task-8g-fix2-full-supports.json`, extending the twelve unchanged FIX1 bodies with FULL140bee. The fixed source and exact original records govern implementation; a shorthand reference never replaces those bodies.",
+          "line_sha256": "5d0cfa3f39d6e23a26554a479f8535c06e98d7ecd4d5034736c3cc63f10a296a"
+        }
+      ],
+      "canonical_cited_sha256": null,
+      "expected_hash_inference": "None: canonical references do not specify this JSON body SHA.",
+      "actual_current": {
+        "file": "task-8g-fix2-full-supports.json",
+        "sha256": "cf36575b1b611e2aeecc113764df2313b6c095b79a0240da56bdb66d7f36ca20",
+        "bytes": 3626
+      },
+      "classification": "support manifest index",
+      "archive_scope": "Retain this bounded directly cited metadata; no indiscriminate dynamic logs/process maps."
+    }
+  ],
+  "hash_only_reference_adjudication": [
+    {
+      "canonical_file": "backlog/decisions/285-native-phased-agent-workflows.md",
+      "line": 807,
+      "source_line_text": "Task8 D2 wave review fix1 (FIX_BASE c441672e4cffeb0310df9c133bd527ef883438f8): retain the actual native local provider base specs, admitted roots, alias-specific receiving specs and native handler function records after composition using the existing ordinary capture/check helpers. Revalidate through the existing post-permission/final task provider checks; replacement refuses before effects, without a fabricated ordinary tree, pruning, permission change or post-admission widening.",
+      "source_line_sha256": "2fdc26ae8934548022060adae3e560293c0cc81486869b7f0c34db6b23c3be86",
+      "hash_tokens": [
+        "c441672e4cffeb0310df9c133bd527ef883438f8"
+      ],
+      "explicit_filenames": [],
+      "disposition": "exclude as commit/baseline/probe-commit identity, not a cited ignored governing document body",
+      "resolved_proposals": [],
+      "reason": "No expected document hash inferred from Git commit/probe identity."
+    },
+    {
+      "canonical_file": "backlog/decisions/285-native-phased-agent-workflows.md",
+      "line": 816,
+      "source_line_text": "Task8 D2 wave review fix2 (FIX_BASE c8dd34ef29255b153fcde9593acba098191d757b), N1: the original FULL no-commit outcome does not prove later source/storage retirement. Only that exact original _WindowUnpublished/store/phase/reservation/wave/preparation/source association selects an additional private close-worker guard. Before the outer owned_goal_storage/execution and frame/source scopes, capture each original native database thread-local object and incoming handle without acquiring a connection. After ALL those original scopes return on the same worker, require the SAME original local/handle values: borrowed handles stay borrowed; newly owned handles must retire. An unreturned handle, changed local, body/unwind/cleanup uncertainty retains the original wave/fence/runtime/config/source protection regardless of early _closed/_native_closed flags. No retry, replay, fresh source/owner or current-pointer adoption certifies an uncertain earlier return. This applies only to the new unpublished-window cleanup; ordinary pinned helpers and global DB close behavior stay unchanged. WHAT: actual original unused storage return before release. WHY: native WorkspaceDB close can suppress failure while its cache/lease/participant remain live. COST: a small worker-local original-handle tuple and conservative retention. ADR required: existing ADR285/084 apply; no new ADR/schema/public flag/registry/framework. A genuine reached original WorkspaceDB/native-close negative and actual rollback→ordinary-send positive qualify this rule; isolated retained exit is not drain. Task38531 remains In Progress, all Task8E/F/G/WHOLE requirements remain pending.",
+      "source_line_sha256": "62cf86068855ab90615a73cb8573eac50d4b2cbf3190561303a37a22f56e7f7c",
+      "hash_tokens": [
+        "c8dd34ef29255b153fcde9593acba098191d757b"
+      ],
+      "explicit_filenames": [],
+      "disposition": "exclude as commit/baseline/probe-commit identity, not a cited ignored governing document body",
+      "resolved_proposals": [],
+      "reason": "No expected document hash inferred from Git commit/probe identity."
+    },
+    {
+      "canonical_file": "backlog/decisions/285-native-phased-agent-workflows.md",
+      "line": 929,
+      "source_line_text": "Task8F FIX2 residual I1 (before behavior; FIX_BASE baf4d26d8435eea6774cbb8acd1801ea24049224): in the existing planning finite reader check, bind the actual workspace_tool_executor.resolve_workspace_path imported receiver to its retained defining original in local_tool_impls._NATIVE_PLANNING_READERS, preserving defining alias/code/default/closure checks. The same original guard runs before executor construction/factory callbacks and final native dispatch. WHY: scoped review proved four marker writes through this changed alias while original two-MODEL/plan/terminal/creator assertions passed (46 identical pins); earlier instance/reader controls do not cover it. COST: one pure identity predicate and one native no-effect mode; no executor body, registry, owner, read, callback or authority addition. Promote the exact write-then-original-delegate negative, require canonical failed/no-plan/one-MODEL/zero-child plus actual physical/terminal/claim/creator return, and qualify native tools positive plus bounded ordinary read/CAS/default controls. Existing ADR285 applies, no new ADR. Preserve prior evidence, protection and ordinary/execution/SSH/virtual/CAS behavior. Scoped FIX2 review then publicG/WHOLE/root9/10 remain; Task38531 stays In Progress/all AC unchecked.",
+      "source_line_sha256": "348ff585fd83a62751bb414cc2f9609da7b466986f85dca8df2ba9acbd427ace",
+      "hash_tokens": [
+        "baf4d26d8435eea6774cbb8acd1801ea24049224"
+      ],
+      "explicit_filenames": [],
+      "disposition": "exclude as commit/baseline/probe-commit identity, not a cited ignored governing document body",
+      "resolved_proposals": [],
+      "reason": "No expected document hash inferred from Git commit/probe identity."
+    },
+    {
+      "canonical_file": "backlog/decisions/285-native-phased-agent-workflows.md",
+      "line": 1132,
+      "source_line_text": "WHY: HEAD and the first ordering correction stored a Boolean and raised a fresh exception class; the earlier 1P3.71s control proved ordering, not caught/propagated identity. The ordering correction had four-file readback but OMITTED the separately fixed controller source/Ruling gate: writer interpreted root's “not a new gate” direction as authorization, while it meant no additional root/user contract approval. Preserve that explicit deviation and all earlier bytes/raw; do not retroactively claim controller approval before that edit. The subsequent fixed identity proposal a6121d8551b1c9fc6d618a333f855a6bf6efec80b8b72e3f764871f0a58a8f03 received controller Ruling before this identity correction.",
+      "source_line_sha256": "c94c938ffc49f8a7d00a1743312ba0dd7b72c6435efa2475a6e6df90766e9a8b",
+      "hash_tokens": [
+        "a6121d8551b1c9fc6d618a333f855a6bf6efec80b8b72e3f764871f0a58a8f03"
+      ],
+      "explicit_filenames": [],
+      "disposition": "include exact full-hash governing proposal; separately include already-required full root supports",
+      "resolved_proposals": [
+        "task-8g-fix1-direct-cancel-identity-source.md"
+      ],
+      "reason": "Exact full SHA matches complete local proposal body; no reconstruction."
+    },
+    {
+      "canonical_file": "backlog/decisions/285-native-phased-agent-workflows.md",
+      "line": 1157,
+      "source_line_text": "Governance: FULL root-direct-original-storage-admission-ruling (6971ebf7…923c6) and FULL root-freshness-refusal-boundary-ruling (4d297377…66063), fixed literal source ed5376455217fe6c2d92083c98324286285b3927b9dc084f3f0658c7261272d3 and controller source/hunk Ruling precede this amendment. Both FULL root bodies were archived byte-exact beside all prior seven full contracts and both full reviews. This amendment/readback must precede product/oracle edits; it does not cure or rewrite the earlier cancellation ordering-gate omission, certify unknown return or declare Task8/FIX1/WHOLE complete.",
+      "source_line_sha256": "bc293d25c9e4561f6688a7a114f69d6da2e6c6b04abda98ac6a29066fce81c20",
+      "hash_tokens": [
+        "6971ebf7",
+        "4d297377",
+        "ed5376455217fe6c2d92083c98324286285b3927b9dc084f3f0658c7261272d3"
+      ],
+      "explicit_filenames": [],
+      "disposition": "include exact full-hash governing proposal; separately include already-required full root supports",
+      "resolved_proposals": [
+        "task-8g-fix1-direct-storage-freshness-adoption-source.md"
+      ],
+      "reason": "Exact full SHA matches complete local proposal body; no reconstruction."
+    },
+    {
+      "canonical_file": "backlog/decisions/285-native-phased-agent-workflows.md",
+      "line": 1265,
+      "source_line_text": "**WHY.** The independent 7dc71ac1 native direct probe deliberately replaced only the planning manager's gen with a second already-entered stock generator on the same runtime. F returned and notified with its original generator still suspended, the second closed and one first-send source active. Only a later fixture exit returned the original generator. This demonstrated a false positive receipt, without evidence of spontaneous substitution, a coordinated run, pending children, extra charges or an actually blocked writer.",
+      "source_line_sha256": "e7c0ad6d2c03c6dcaf11d51a33eaac92bce91209b0e3e46af3b22fc1d3f03604",
+      "hash_tokens": [
+        "7dc71ac1"
+      ],
+      "explicit_filenames": [],
+      "disposition": "exclude as commit/baseline/probe-commit identity, not a cited ignored governing document body",
+      "resolved_proposals": [],
+      "reason": "No expected document hash inferred from Git commit/probe identity."
+    },
+    {
+      "canonical_file": "Docs/superpowers/specs/2026-11-01-native-phased-agent-workflows-design.md",
+      "line": 740,
+      "source_line_text": "Task8 D2 wave review fix1 (FIX_BASE c441672e4cffeb0310df9c133bd527ef883438f8): retain the actual native local provider base specs, admitted roots, alias-specific receiving specs and native handler function records after composition using the existing ordinary capture/check helpers. Revalidate through the existing post-permission/final task provider checks; replacement refuses before effects, without a fabricated ordinary tree, pruning, permission change or post-admission widening.",
+      "source_line_sha256": "2fdc26ae8934548022060adae3e560293c0cc81486869b7f0c34db6b23c3be86",
+      "hash_tokens": [
+        "c441672e4cffeb0310df9c133bd527ef883438f8"
+      ],
+      "explicit_filenames": [],
+      "disposition": "exclude as commit/baseline/probe-commit identity, not a cited ignored governing document body",
+      "resolved_proposals": [],
+      "reason": "No expected document hash inferred from Git commit/probe identity."
+    },
+    {
+      "canonical_file": "Docs/superpowers/specs/2026-11-01-native-phased-agent-workflows-design.md",
+      "line": 749,
+      "source_line_text": "Task8 D2 wave review fix2 (FIX_BASE c8dd34ef29255b153fcde9593acba098191d757b), N1: the original FULL no-commit outcome does not prove later source/storage retirement. Only that exact original _WindowUnpublished/store/phase/reservation/wave/preparation/source association selects an additional private close-worker guard. Before the outer owned_goal_storage/execution and frame/source scopes, capture each original native database thread-local object and incoming handle without acquiring a connection. After ALL those original scopes return on the same worker, require the SAME original local/handle values: borrowed handles stay borrowed; newly owned handles must retire. An unreturned handle, changed local, body/unwind/cleanup uncertainty retains the original wave/fence/runtime/config/source protection regardless of early _closed/_native_closed flags. No retry, replay, fresh source/owner or current-pointer adoption certifies an uncertain earlier return. This applies only to the new unpublished-window cleanup; ordinary pinned helpers and global DB close behavior stay unchanged. WHAT: actual original unused storage return before release. WHY: native WorkspaceDB close can suppress failure while its cache/lease/participant remain live. COST: a small worker-local original-handle tuple and conservative retention. ADR required: existing ADR285/084 apply; no new ADR/schema/public flag/registry/framework. A genuine reached original WorkspaceDB/native-close negative and actual rollback→ordinary-send positive qualify this rule; isolated retained exit is not drain. Task38531 remains In Progress, all Task8E/F/G/WHOLE requirements remain pending.",
+      "source_line_sha256": "62cf86068855ab90615a73cb8573eac50d4b2cbf3190561303a37a22f56e7f7c",
+      "hash_tokens": [
+        "c8dd34ef29255b153fcde9593acba098191d757b"
+      ],
+      "explicit_filenames": [],
+      "disposition": "exclude as commit/baseline/probe-commit identity, not a cited ignored governing document body",
+      "resolved_proposals": [],
+      "reason": "No expected document hash inferred from Git commit/probe identity."
+    },
+    {
+      "canonical_file": "Docs/superpowers/specs/2026-11-01-native-phased-agent-workflows-design.md",
+      "line": 862,
+      "source_line_text": "Task8F FIX2 residual I1 (before behavior; FIX_BASE baf4d26d8435eea6774cbb8acd1801ea24049224): in the existing planning finite reader check, bind the actual workspace_tool_executor.resolve_workspace_path imported receiver to its retained defining original in local_tool_impls._NATIVE_PLANNING_READERS, preserving defining alias/code/default/closure checks. The same original guard runs before executor construction/factory callbacks and final native dispatch. WHY: scoped review proved four marker writes through this changed alias while original two-MODEL/plan/terminal/creator assertions passed (46 identical pins); earlier instance/reader controls do not cover it. COST: one pure identity predicate and one native no-effect mode; no executor body, registry, owner, read, callback or authority addition. Promote the exact write-then-original-delegate negative, require canonical failed/no-plan/one-MODEL/zero-child plus actual physical/terminal/claim/creator return, and qualify native tools positive plus bounded ordinary read/CAS/default controls. Existing ADR285 applies, no new ADR. Preserve prior evidence, protection and ordinary/execution/SSH/virtual/CAS behavior. Scoped FIX2 review then publicG/WHOLE/root9/10 remain; Task38531 stays In Progress/all AC unchecked.",
+      "source_line_sha256": "348ff585fd83a62751bb414cc2f9609da7b466986f85dca8df2ba9acbd427ace",
+      "hash_tokens": [
+        "baf4d26d8435eea6774cbb8acd1801ea24049224"
+      ],
+      "explicit_filenames": [],
+      "disposition": "exclude as commit/baseline/probe-commit identity, not a cited ignored governing document body",
+      "resolved_proposals": [],
+      "reason": "No expected document hash inferred from Git commit/probe identity."
+    },
+    {
+      "canonical_file": "Docs/superpowers/specs/2026-11-01-native-phased-agent-workflows-design.md",
+      "line": 1065,
+      "source_line_text": "WHY: HEAD and the first ordering correction stored a Boolean and raised a fresh exception class; the earlier 1P3.71s control proved ordering, not caught/propagated identity. The ordering correction had four-file readback but OMITTED the separately fixed controller source/Ruling gate: writer interpreted root's “not a new gate” direction as authorization, while it meant no additional root/user contract approval. Preserve that explicit deviation and all earlier bytes/raw; do not retroactively claim controller approval before that edit. The subsequent fixed identity proposal a6121d8551b1c9fc6d618a333f855a6bf6efec80b8b72e3f764871f0a58a8f03 received controller Ruling before this identity correction.",
+      "source_line_sha256": "c94c938ffc49f8a7d00a1743312ba0dd7b72c6435efa2475a6e6df90766e9a8b",
+      "hash_tokens": [
+        "a6121d8551b1c9fc6d618a333f855a6bf6efec80b8b72e3f764871f0a58a8f03"
+      ],
+      "explicit_filenames": [],
+      "disposition": "include exact full-hash governing proposal; separately include already-required full root supports",
+      "resolved_proposals": [
+        "task-8g-fix1-direct-cancel-identity-source.md"
+      ],
+      "reason": "Exact full SHA matches complete local proposal body; no reconstruction."
+    },
+    {
+      "canonical_file": "Docs/superpowers/specs/2026-11-01-native-phased-agent-workflows-design.md",
+      "line": 1090,
+      "source_line_text": "Governance: FULL root-direct-original-storage-admission-ruling (6971ebf7…923c6) and FULL root-freshness-refusal-boundary-ruling (4d297377…66063), fixed literal source ed5376455217fe6c2d92083c98324286285b3927b9dc084f3f0658c7261272d3 and controller source/hunk Ruling precede this amendment. Both FULL root bodies were archived byte-exact beside all prior seven full contracts and both full reviews. This amendment/readback must precede product/oracle edits; it does not cure or rewrite the earlier cancellation ordering-gate omission, certify unknown return or declare Task8/FIX1/WHOLE complete.",
+      "source_line_sha256": "bc293d25c9e4561f6688a7a114f69d6da2e6c6b04abda98ac6a29066fce81c20",
+      "hash_tokens": [
+        "6971ebf7",
+        "4d297377",
+        "ed5376455217fe6c2d92083c98324286285b3927b9dc084f3f0658c7261272d3"
+      ],
+      "explicit_filenames": [],
+      "disposition": "include exact full-hash governing proposal; separately include already-required full root supports",
+      "resolved_proposals": [
+        "task-8g-fix1-direct-storage-freshness-adoption-source.md"
+      ],
+      "reason": "Exact full SHA matches complete local proposal body; no reconstruction."
+    },
+    {
+      "canonical_file": "Docs/superpowers/specs/2026-11-01-native-phased-agent-workflows-design.md",
+      "line": 1198,
+      "source_line_text": "**WHY.** The independent 7dc71ac1 native direct probe deliberately replaced only the planning manager's gen with a second already-entered stock generator on the same runtime. F returned and notified with its original generator still suspended, the second closed and one first-send source active. Only a later fixture exit returned the original generator. This demonstrated a false positive receipt, without evidence of spontaneous substitution, a coordinated run, pending children, extra charges or an actually blocked writer.",
+      "source_line_sha256": "e7c0ad6d2c03c6dcaf11d51a33eaac92bce91209b0e3e46af3b22fc1d3f03604",
+      "hash_tokens": [
+        "7dc71ac1"
+      ],
+      "explicit_filenames": [],
+      "disposition": "exclude as commit/baseline/probe-commit identity, not a cited ignored governing document body",
+      "resolved_proposals": [],
+      "reason": "No expected document hash inferred from Git commit/probe identity."
+    },
+    {
+      "canonical_file": "Docs/superpowers/plans/2026-11-01-native-phased-agent-workflows-implementation.md",
+      "line": 17,
+      "source_line_text": "**Baseline:** finalized design commit `8f989edc9f`. Source mapping was inspected in the current dirty checkout; unrelated staged additions are not implied to be committed prerequisites. Recheck the integrated source, symbols and schema before execution.",
+      "source_line_sha256": "73c3217eff8df922284d67edc1be39bbaa69068ca39426b0e297bfe5ea52dae5",
+      "hash_tokens": [
+        "8f989edc9f"
+      ],
+      "explicit_filenames": [],
+      "disposition": "exclude as commit/baseline/probe-commit identity, not a cited ignored governing document body",
+      "resolved_proposals": [],
+      "reason": "No expected document hash inferred from Git commit/probe identity."
+    },
+    {
+      "canonical_file": "Docs/superpowers/plans/2026-11-01-native-phased-agent-workflows-implementation.md",
+      "line": 742,
+      "source_line_text": "Task8 D2 wave review fix1 (FIX_BASE c441672e4cffeb0310df9c133bd527ef883438f8): retain the actual native local provider base specs, admitted roots, alias-specific receiving specs and native handler function records after composition using the existing ordinary capture/check helpers. Revalidate through the existing post-permission/final task provider checks; replacement refuses before effects, without a fabricated ordinary tree, pruning, permission change or post-admission widening.",
+      "source_line_sha256": "2fdc26ae8934548022060adae3e560293c0cc81486869b7f0c34db6b23c3be86",
+      "hash_tokens": [
+        "c441672e4cffeb0310df9c133bd527ef883438f8"
+      ],
+      "explicit_filenames": [],
+      "disposition": "exclude as commit/baseline/probe-commit identity, not a cited ignored governing document body",
+      "resolved_proposals": [],
+      "reason": "No expected document hash inferred from Git commit/probe identity."
+    },
+    {
+      "canonical_file": "Docs/superpowers/plans/2026-11-01-native-phased-agent-workflows-implementation.md",
+      "line": 751,
+      "source_line_text": "Task8 D2 wave review fix2 (FIX_BASE c8dd34ef29255b153fcde9593acba098191d757b), N1: the original FULL no-commit outcome does not prove later source/storage retirement. Only that exact original _WindowUnpublished/store/phase/reservation/wave/preparation/source association selects an additional private close-worker guard. Before the outer owned_goal_storage/execution and frame/source scopes, capture each original native database thread-local object and incoming handle without acquiring a connection. After ALL those original scopes return on the same worker, require the SAME original local/handle values: borrowed handles stay borrowed; newly owned handles must retire. An unreturned handle, changed local, body/unwind/cleanup uncertainty retains the original wave/fence/runtime/config/source protection regardless of early _closed/_native_closed flags. No retry, replay, fresh source/owner or current-pointer adoption certifies an uncertain earlier return. This applies only to the new unpublished-window cleanup; ordinary pinned helpers and global DB close behavior stay unchanged. WHAT: actual original unused storage return before release. WHY: native WorkspaceDB close can suppress failure while its cache/lease/participant remain live. COST: a small worker-local original-handle tuple and conservative retention. ADR required: existing ADR285/084 apply; no new ADR/schema/public flag/registry/framework. A genuine reached original WorkspaceDB/native-close negative and actual rollback→ordinary-send positive qualify this rule; isolated retained exit is not drain. Task38531 remains In Progress, all Task8E/F/G/WHOLE requirements remain pending.",
+      "source_line_sha256": "62cf86068855ab90615a73cb8573eac50d4b2cbf3190561303a37a22f56e7f7c",
+      "hash_tokens": [
+        "c8dd34ef29255b153fcde9593acba098191d757b"
+      ],
+      "explicit_filenames": [],
+      "disposition": "exclude as commit/baseline/probe-commit identity, not a cited ignored governing document body",
+      "resolved_proposals": [],
+      "reason": "No expected document hash inferred from Git commit/probe identity."
+    },
+    {
+      "canonical_file": "Docs/superpowers/plans/2026-11-01-native-phased-agent-workflows-implementation.md",
+      "line": 864,
+      "source_line_text": "Task8F FIX2 residual I1 (before behavior; FIX_BASE baf4d26d8435eea6774cbb8acd1801ea24049224): in the existing planning finite reader check, bind the actual workspace_tool_executor.resolve_workspace_path imported receiver to its retained defining original in local_tool_impls._NATIVE_PLANNING_READERS, preserving defining alias/code/default/closure checks. The same original guard runs before executor construction/factory callbacks and final native dispatch. WHY: scoped review proved four marker writes through this changed alias while original two-MODEL/plan/terminal/creator assertions passed (46 identical pins); earlier instance/reader controls do not cover it. COST: one pure identity predicate and one native no-effect mode; no executor body, registry, owner, read, callback or authority addition. Promote the exact write-then-original-delegate negative, require canonical failed/no-plan/one-MODEL/zero-child plus actual physical/terminal/claim/creator return, and qualify native tools positive plus bounded ordinary read/CAS/default controls. Existing ADR285 applies, no new ADR. Preserve prior evidence, protection and ordinary/execution/SSH/virtual/CAS behavior. Scoped FIX2 review then publicG/WHOLE/root9/10 remain; Task38531 stays In Progress/all AC unchecked.",
+      "source_line_sha256": "348ff585fd83a62751bb414cc2f9609da7b466986f85dca8df2ba9acbd427ace",
+      "hash_tokens": [
+        "baf4d26d8435eea6774cbb8acd1801ea24049224"
+      ],
+      "explicit_filenames": [],
+      "disposition": "exclude as commit/baseline/probe-commit identity, not a cited ignored governing document body",
+      "resolved_proposals": [],
+      "reason": "No expected document hash inferred from Git commit/probe identity."
+    },
+    {
+      "canonical_file": "Docs/superpowers/plans/2026-11-01-native-phased-agent-workflows-implementation.md",
+      "line": 1067,
+      "source_line_text": "WHY: HEAD and the first ordering correction stored a Boolean and raised a fresh exception class; the earlier 1P3.71s control proved ordering, not caught/propagated identity. The ordering correction had four-file readback but OMITTED the separately fixed controller source/Ruling gate: writer interpreted root's “not a new gate” direction as authorization, while it meant no additional root/user contract approval. Preserve that explicit deviation and all earlier bytes/raw; do not retroactively claim controller approval before that edit. The subsequent fixed identity proposal a6121d8551b1c9fc6d618a333f855a6bf6efec80b8b72e3f764871f0a58a8f03 received controller Ruling before this identity correction.",
+      "source_line_sha256": "c94c938ffc49f8a7d00a1743312ba0dd7b72c6435efa2475a6e6df90766e9a8b",
+      "hash_tokens": [
+        "a6121d8551b1c9fc6d618a333f855a6bf6efec80b8b72e3f764871f0a58a8f03"
+      ],
+      "explicit_filenames": [],
+      "disposition": "include exact full-hash governing proposal; separately include already-required full root supports",
+      "resolved_proposals": [
+        "task-8g-fix1-direct-cancel-identity-source.md"
+      ],
+      "reason": "Exact full SHA matches complete local proposal body; no reconstruction."
+    },
+    {
+      "canonical_file": "Docs/superpowers/plans/2026-11-01-native-phased-agent-workflows-implementation.md",
+      "line": 1092,
+      "source_line_text": "Governance: FULL root-direct-original-storage-admission-ruling (6971ebf7…923c6) and FULL root-freshness-refusal-boundary-ruling (4d297377…66063), fixed literal source ed5376455217fe6c2d92083c98324286285b3927b9dc084f3f0658c7261272d3 and controller source/hunk Ruling precede this amendment. Both FULL root bodies were archived byte-exact beside all prior seven full contracts and both full reviews. This amendment/readback must precede product/oracle edits; it does not cure or rewrite the earlier cancellation ordering-gate omission, certify unknown return or declare Task8/FIX1/WHOLE complete.",
+      "source_line_sha256": "bc293d25c9e4561f6688a7a114f69d6da2e6c6b04abda98ac6a29066fce81c20",
+      "hash_tokens": [
+        "6971ebf7",
+        "4d297377",
+        "ed5376455217fe6c2d92083c98324286285b3927b9dc084f3f0658c7261272d3"
+      ],
+      "explicit_filenames": [],
+      "disposition": "include exact full-hash governing proposal; separately include already-required full root supports",
+      "resolved_proposals": [
+        "task-8g-fix1-direct-storage-freshness-adoption-source.md"
+      ],
+      "reason": "Exact full SHA matches complete local proposal body; no reconstruction."
+    },
+    {
+      "canonical_file": "Docs/superpowers/plans/2026-11-01-native-phased-agent-workflows-implementation.md",
+      "line": 1200,
+      "source_line_text": "**WHY.** The independent 7dc71ac1 native direct probe deliberately replaced only the planning manager's gen with a second already-entered stock generator on the same runtime. F returned and notified with its original generator still suspended, the second closed and one first-send source active. Only a later fixture exit returned the original generator. This demonstrated a false positive receipt, without evidence of spontaneous substitution, a coordinated run, pending children, extra charges or an actually blocked writer.",
+      "source_line_sha256": "e7c0ad6d2c03c6dcaf11d51a33eaac92bce91209b0e3e46af3b22fc1d3f03604",
+      "hash_tokens": [
+        "7dc71ac1"
+      ],
+      "explicit_filenames": [],
+      "disposition": "exclude as commit/baseline/probe-commit identity, not a cited ignored governing document body",
+      "resolved_proposals": [],
+      "reason": "No expected document hash inferred from Git commit/probe identity."
+    }
+  ],
+  "historical_metadata_gap_carried": {
+    "file": "rulings-refresh-current-snapshot.json",
+    "expected_historical_sha256": "65560db4bd93d0a871c89c079c8a3f5a58cacc8e5d403a8ec9d243a8b9aac1ce",
+    "current_sha256": "c3a092fc2319a96ca633bb6e69b811d100e5ae33544e1c4b07be33aa937ccb0c",
+    "status": "Original historical metadata input unavailable per prior37-file content-hash search; carried only, not a newly cited governing source gap",
+    "source": "adopted587 map.input_sha256 and prior preserved input-verification search record",
+    "no_new_search_or_reconstruction": true
+  },
+  "counts": {
+    "canonical_inputs": 3,
+    "direct_citation_lines": 30,
+    "direct_unique_filenames": 13,
+    "direct_filename_occurrences": 42,
+    "governing_proposal_bodies": 10,
+    "exact_full_hash_governing_proposals": 5,
+    "name_only_historical_unpinned_proposals": 5,
+    "explicitly_cited_full_hash_missing": 0,
+    "required_full_supports": 13,
+    "support_contracts": 9,
+    "support_source_reviews": 4,
+    "external_options": 2,
+    "bounded_cited_metadata": 3,
+    "unique_primary_full_contract_option_content_hashes": 25,
+    "additional_available_later_full_bodies": 1,
+    "unique_with_later_body_hashes": 26,
+    "supplemental_hash_context_lines_adjudicated": 19
+  },
+  "limits": [
+    "Five name-only canonical proposal citations are historically unpinned; preserve current full bodies without claiming original historical identity.",
+    "G FIX3 explicitly cited b7e80 historical body is available frozen; current785a13 full body differs and is separately labeled later original-W-scope addendum, never substituted.",
+    "Other available frozen versions are catalogued but not declared canonically selected.",
+    "No active Task9 writer files/product/native process states read; broad all-logs archive not proposed.",
+    "No recursive citation closure or summaries-as-full-source claim; inventory covers canonical concrete citations/full-hash proposal references and required13+2.",
+    "No archive performed or new implementation/provenance gate; root audits before already-required Task10 durable archive."
+  ]
+}

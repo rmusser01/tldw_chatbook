@@ -1,11 +1,12 @@
 # ADR-285: Native phased agent workflows in a shared worktree
 
-- Status: Accepted 2026-11-01 (Tasks 1–10 individually reviewed; final whole-execution review pending)
+- Status: Accepted 2026-11-01 (Tasks 1–10 reviewed; final correction spec/quality gate approved with one disclosed Minor)
 - Date: 2026-11-01
 - Task: [TASK-38493](../tasks/task-38493%20-%20Design-native-phased-agent-workflows-in-a-shared-worktree.md)
 - Spec: [Shared-worktree workflow design](../../Docs/superpowers/specs/2026-11-01-native-phased-agent-workflows-design.md)
-- Plan: [Native shared-worktree workflows](../../Docs/superpowers/plans/2026-11-01-native-phased-agent-workflows-implementation.md) (task implementation complete; final whole-execution review pending)
-- Implementation: Tasks 1–10 independently reviewed. [Qualification evidence](../../Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/README.md) retains the source-specific native, live-provider, recovery and cleanup results and their limits; final whole-execution review remains pending.
+- Plan: [Native shared-worktree workflows](../../Docs/superpowers/plans/2026-11-01-native-phased-agent-workflows-implementation.md) (implementation and final code review complete)
+- Implementation: Tasks 1–10 independently reviewed; final correction `8fc0274486` closes joint capacity and same-chat admission omissions. Final scoped spec/quality review `89efdf9c44c505ad309a0c9577b0e8b110efe42d654b72526cb2d546aaf8bf29` is approved with the unexplained UI-coroutine Minor retained. [Qualification evidence](../../Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/README.md) preserves the separate source-specific results and limits.
+- Historical source lookup: [complete filename/hash archive](../../Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/rulings/index.md). Indexed scratch sources resolve there by basename and full hash; original text, bounded selection and historical gaps are retained.
 - Governing contracts: [project instructions](069-console-project-instruction-local-state-and-preflight.md),
   [Change Review consent](084-change-review-consent-and-asynchronous-finalization.md),
   [per-turn review ownership](089-console-per-turn-change-review-ownership.md),

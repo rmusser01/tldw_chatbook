@@ -1,0 +1,24 @@
+{
+  "captured_utc": "2026-11-05T03:02:52.669095+00:00",
+  "head": "7d1a5ef849dfadb73cbdf16a3813cb583c8695ca",
+  "parent": "81ec86d2c854795274557e1bdd4725a317e7ba2a",
+  "exact_owned_paths": {
+    "Docs/superpowers/plans/2026-11-01-native-phased-agent-workflows-implementation.md": {
+      "sha256": "1f45e403578db17139849ad73eeda9824c19488e281449db660e66261047fc33",
+      "bytes": 254202
+    },
+    "backlog/decisions/285-native-phased-agent-workflows.md": {
+      "sha256": "f5fc656e9f1e4af5ed687188681d15519393242b27c4af5dbca3ec40ae9f8379",
+      "bytes": 232413
+    },
+    "backlog/tasks/task-38532 - Expose-workflow-setup-and-phase-controls-in-Console.md": {
+      "sha256": "6106428548e44711b4ce01c8d8e076589ebecc6ad916566ceedb151ea7a18696",
+      "bytes": 11401
+    }
+  },
+  "original_staged_61_preserved": true,
+  "cached_sha256": "c5fcb00eab4ea09c49d1797567cbd4cc9f0eb9bb8d99cc2355f764638aaa7248",
+  "protected_279_preserved": true,
+  "scope": "root Git/byte audit only; no duplicate product/native/static rerun",
+  "review_sha256": "dcc0509039f63cd87524e48b35458bfe057852cc7aab4622c68a410e57ba3d88"
+}
