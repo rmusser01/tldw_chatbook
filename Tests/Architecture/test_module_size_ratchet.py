@@ -956,9 +956,9 @@ _BUDGETS: dict[str, int] = {
     # Round 4, same waiver: each guard records its phase first: 4253 -> 4259.
     # TASK-38710 review fold, 2026-11-04 (same waiver): 4259 -> 4265 (+6).
     # One-row Session Git buttons truncate instead of wrapping at width 0.
-    # TASK-38755, 2026-11-05 (same waiver): 4265 -> 4276 (+11). Fixed-region
+    # TASK-38755, 2026-11-05 (same waiver): 4265 -> 4278 (+13). Fixed-region
     # lines refit on their own Resize when a child scrollbar narrows them.
-    "tldw_chatbook/Widgets/Library/library_file_notes_git_panel.py": 4276,
+    "tldw_chatbook/Widgets/Library/library_file_notes_git_panel.py": 4278,
     "tldw_chatbook/UI/MCP_Modules/mcp_inspector.py": 4174,
     "tldw_chatbook/Dreams/track_service.py": 4061,
     "tldw_chatbook/DB/private_sqlite.py": 4030,

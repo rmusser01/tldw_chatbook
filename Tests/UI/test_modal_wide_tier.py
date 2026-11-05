@@ -114,13 +114,21 @@ WIDE_TIER_BUNDLE = CSS_ROOT / "tldw_cli_modular.tcss"
 #: budget), the File Notes history dialog's through its ``CSS_PATH`` and the
 #: workflow run dialogs' on entry to the Workflows route (TASK-38719).
 WIDE_TIER_SPLITS = (
-    ("features/_settings.tcss", "screen_agentic_settings.tcss", "#console-hooks-review"),
+    (
+        "features/_settings.tcss",
+        "screen_agentic_settings.tcss",
+        "#console-hooks-review",
+    ),
     (
         "features/_notes.tcss",
         "screen_modal_file_notes_history.tcss",
         "#file-notes-history-dialog",
     ),
-    ("features/_workflows.tcss", "screen_feature_workflows.tcss", ".workflow-run-dialog"),
+    (
+        "features/_workflows.tcss",
+        "screen_feature_workflows.tcss",
+        ".workflow-run-dialog",
+    ),
 )
 
 #: Source modules, then the built sheets they produce.
@@ -189,7 +197,9 @@ def test_every_registered_anchor_has_a_wide_tier_rule(paths: tuple[Path, ...]) -
     [(built, anchor) for _source, built, anchor in WIDE_TIER_SPLITS],
     ids=[anchor.lstrip("#.") for _source, _built, anchor in WIDE_TIER_SPLITS],
 )
-def test_split_modal_tier_rules_stay_off_the_boot_bundle(built: str, anchor: str) -> None:
+def test_split_modal_tier_rules_stay_off_the_boot_bundle(
+    built: str, anchor: str
+) -> None:
     """A modal whose CSS loads with it gets its tier from that sheet, not boot."""
     assert anchor in _wide_rules((CSS_ROOT / built).read_text(encoding="utf-8"))
     assert anchor not in _wide_rules(WIDE_TIER_BUNDLE.read_text(encoding="utf-8"))

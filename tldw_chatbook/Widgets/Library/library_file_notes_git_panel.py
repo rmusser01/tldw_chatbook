@@ -1291,7 +1291,9 @@ class LibraryFileNotesGitPanel(Vertical):
                 id="file-notes-git-title",
                 markup=False,
             )
-            yield _FixedRegionLine("Repository: not checked", id="file-notes-git-repository")
+            yield _FixedRegionLine(
+                "Repository: not checked", id="file-notes-git-repository"
+            )
             yield Static(
                 "Review and commit only notes changed during this Chatbook session.",
                 id="file-notes-git-scope",
