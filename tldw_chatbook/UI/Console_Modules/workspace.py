@@ -574,7 +574,9 @@ class ConsoleTickWorkspaceBuilds:
     awaits keep building live -- a mutation followed by a push can never be
     masked. Inputs outside the fingerprint changing DURING one tick are
     repainted by the next tick, at most 0.2 s later -- the same cadence
-    every other tick-driven surface repaints at.
+    every other tick-driven surface repaints at. TASK-36511.2:
+    ``_sync_console_control_bar`` and ``_sync_console_rail_and_controls``
+    open the scope too, so one such sync pays for one build, for that sync.
     """
 
     __slots__ = ("_controller", "_task", "_fingerprint", "_state", "_building")
@@ -6974,7 +6976,9 @@ class ConsoleWorkspaceController:
         interleaving during the tick's awaits, every build is live exactly
         as before. Re-entrant (an inner scope keeps the outer cache) and
         always torn down, so a raising tick cannot leave a stale build
-        cached for the next one.
+        cached for the next one. ``config_sync.settle_stopped_poll`` and,
+        since TASK-36511.2, ``_sync_console_control_bar`` and
+        ``_sync_console_rail_and_controls`` open it for one synchronous pass.
         """
         if getattr(self, "_console_tick_builds", None) is not None:
             yield
@@ -7006,6 +7010,9 @@ class ConsoleWorkspaceController:
         no run poll, or any other owner, the reads stay live as before. So
         do they during a send's start (``config_sync.send_start_in_progress``):
         each re-read opens its own connection, whose CPU delayed first sends.
+        TASK-36511.2: the control-bar syncs open the tick scope too, so during
+        a run a user-triggered sync after a registry mutation is served the
+        previous snapshot until the off-loop re-read publishes.
         """
         from .config_sync import send_start_in_progress
 

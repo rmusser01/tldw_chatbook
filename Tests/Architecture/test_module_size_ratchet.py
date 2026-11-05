@@ -799,7 +799,9 @@ _BUDGETS: dict[str, int] = {
     # so the two can no longer disagree.
     # 2026-10-30: re-measured after rebasing onto dev 134108dd84 (owner rule: the row is the exact measurement): 8747 -> 8763.
     # 2026-10-31, PR #3173: user size-limit waiver; exact current-base measurement.
-    "tldw_chatbook/UI/Console_Modules/workspace.py": 8935,
+    # TASK-36511.2 review, 2026-11-05: size waiver (owner waiver 2026-10-31).
+    # Three scope docstrings name the control-bar syncs as openers (+7 lines).
+    "tldw_chatbook/UI/Console_Modules/workspace.py": 8942,
     # 2026-10-31, PR #3293: explicit user size-limit waiver; final review entry
     # credential/readiness repair, exact integrated measurement (8181 -> 8183).
     # PR3304, 2026-11-01: user size waiver; exact integration measurement.
