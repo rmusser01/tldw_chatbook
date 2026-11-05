@@ -30,6 +30,7 @@ from Tests.UI.consolidated_css import (
 from textual.color import Color
 from textual.containers import Horizontal, Vertical
 from textual.css.query import NoMatches
+from textual.errors import NoWidget
 from textual.widgets import Button, Input, Static, TextArea, Tree
 
 import Tests.UI._optional_module_stubs  # noqa: F401
@@ -7049,7 +7050,7 @@ async def test_file_notes_narrow_views_lay_out_at_every_width_40_to_79(
             """Cells of ``widget`` inside its clip and the screen, across."""
             try:
                 clip = screen.find_widget(widget).clip
-            except Exception:
+            except NoWidget:
                 return 0
             region = widget.region
             return min(region.right, clip.right, width) - max(region.x, clip.x, 0)
