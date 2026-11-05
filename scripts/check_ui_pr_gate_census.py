@@ -1279,6 +1279,8 @@ MINIMUM_FILES = 2546
 
 # TASK-36769: the roster also includes both conversation-row P0 selectors.
 # Retain the post-attach native-read responsiveness case.
+# PR #3345: retain every relocated MCP workbench selector.
+MINIMUM_FILES = 2198
 
 
 MINIMUM_FILES = 2038
