@@ -5,7 +5,7 @@ status: Done
 assignee:
 - '@claude'
 created_date: 2026-11-03 11:40
-updated_date: 2026-11-04 03:26
+updated_date: 2026-11-05 07:30
 labels:
 - follow-up
 - tests
@@ -96,3 +96,12 @@ Branch fu/r6-fntests, on top of TASK-38693 and TASK-38694; base c2cdb6b82e. On 2
   - Job wall time in those runs was pytest time plus 1.0-2.9 min (median per run), with outliers up to 7 min on light shards. So the projected heaviest shard is about 15 min against the 20-min cap, under the 17-min target. All 264 entries fit, so none waits on TASK-38716.
 - Files: `scripts/ui_pr_gate_census.txt`, `scripts/check_ui_pr_gate_census.py`, `Tests/UI/test_library_file_notes_workspace.py`.
 - 2026-11-04, review round 1: the gated `test_file_notes_root_row_keeps_state_word_beside_pairing_review_at_40_columns` flaked 1 of 5 in the lane's serial setup, from a lost deferred root-row fit. TASK-38710 (branch fu/r6-fnprod, commit 8d1e1c56f3) fixes that refit and merges first. The entry stays, and the census comment records that dependency. The git test renamed in review keeps its census slot under its new name.
+- 2026-11-05, first Linux run of the lane (run 41784220603, shard 21): `test_folder_files_automatic_items_priority_does_not_steal_focus_or_persist` failed with `screen.focused` on `#file-notes-new`, not the editor.
+  - **Reproduced** locally in 2 of 72 repeats (6 runs at a time, `-n 4`, load about 18). A `set_focus` spy showed the order of events:
+    1. The 79-column resize crosses the compact breakpoint, and that transition restores the focus identity it captured (the Items grip) twice. The second restore is queued a few turns later.
+    2. The test focused the editor between the two restores, so `_restore_library_notes_focus_identity` moved focus back to the grip.
+    3. The automatic Items reopen at 78 columns then took focus from the grip to New (`AdaptivePaneShell.sync_layout`).
+  - **Fix (test).** The test now waits for the compact transition's settled restore (`_restore_library_notes_settled_focus`, seen through a spy) before it focuses the editor. After the 78-column resize it waits for the settled state: Items open and the editor focused. 72 of 72 passed under the same load.
+  - **Red.** A temporary change made the automatic Items reopen take focus whenever Items opens (dropping its `focused is grip` condition). Focus then landed on New, and the test failed on its wait.
+  - **Proposed follow-up (product, not fixed here).** For the Folder files source, a focus change does not advance `focus_intent_generation`: `relevant` is false outside the Database Notes workflow and the rail. So a compact transition's deferred restore can replace a user's newer focus inside the File Notes workspace, if the user moves focus within those few turns.
+
