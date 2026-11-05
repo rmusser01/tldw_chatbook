@@ -3564,3 +3564,13 @@ Tests/UI/test_screen_navigation.py::test_library_completions_after_the_exit_fenc
 # 2 passed in 3.2 s serially with the lane's flags (load ~10).
 Tests/UI/test_screen_navigation.py::test_focus_library_list_entry_prefers_still_checked_row_in_select_mode
 Tests/UI/test_screen_navigation.py::test_focus_library_list_entry_checked_row_preference_is_media_only
+# TASK-40308 (2026-11-13): restored plugins recover from the Plugins screen with
+# the backup's passphrase and per-folder rebinds, and a lost passphrase falls
+# back to a reset that sets them aside and reattaches kept saved data.
+Tests/UI/test_console_run_tick_workspace_carry.py::test_a_run_tick_projection_builds_no_workspace_context
+Tests/UI/test_console_run_tick_workspace_carry.py::test_a_control_bar_sync_builds_no_workspace_context
+Tests/UI/test_console_run_tick_workspace_carry.py::test_the_label_read_matches_the_build_in_every_registry_state
+Tests/UI/test_console_run_tick_workspace_carry.py::test_the_agent_section_sync_builds_no_rail_state
+Tests/UI/test_console_run_tick_workspace_carry.py::test_a_poll_tick_reuses_the_build_its_predecessor_made
+Tests/UI/test_console_run_tick_workspace_carry.py::test_a_push_made_outside_the_tick_is_not_overwritten_by_the_carried_build
+Tests/UI/test_console_run_tick_workspace_carry.py::test_a_carried_build_is_taken_once_and_only_by_the_next_tick

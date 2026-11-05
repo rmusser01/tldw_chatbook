@@ -350,6 +350,11 @@ _BUDGETS: dict[str, tuple[str, int, int]] = {
     # Raised again for TASK-41307, 2026-11-17: +1 method (the held-slots
     # segment opens its list; Console_Modules/agent.py) and +11 lines.
     # 2026-11-18: rebased onto dev 45b1949ca3 (dev's row + this branch's growth, measured): 24592.
+    # TASK-36571.1, 2026-11-05: same waiver. The Agent section reads its open
+    # flag (the stored preference, then the fleet force-open) instead of the
+    # whole rail state, and the rail reads the workspace label alone: +17
+    # lines over dev 29592ecc9b's 24604 and two methods (the shared
+    # stored-preference read and the flag): 24616/741 -> 24621/743.
     "tldw_chatbook/UI/Screens/chat_screen.py": ("ChatScreen", 24592, 743),
     #: Added 2026-09 by the Library decomposition plan (PR 0b): this row was
     #: missing for the entire month in which library_screen.py tripled from
