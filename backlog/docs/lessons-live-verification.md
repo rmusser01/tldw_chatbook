@@ -71,6 +71,16 @@ Enter and the POST than dev: the profiles' history, not their code.
   so that each arm meets each profile equally often. Swapping pairs of profiles
   between halves is not enough.
 
+## Another session's load generator can start the moment yours stops: count busy children before each block (TASK-33620.15.47, 2026-11-05)
+
+**Incident.** TASK-33620.15.47's dev calibration stopped its 88-child generator at 13:31:10, then waited for load1 to fall below 12. After 420 s it was still at 127 and the wait timed out. Another session (TASK-33620.15.38) had started its own 1500 s generator at 13:30:40. Later, the paired round's low-load block waited 7 minutes for quiet for the same reason: that session started a generator a minute after this one stopped. Meanwhile this round's high-load launches had already finished. Running both generators at once would have pushed load1 past 200 and spoiled both sessions' low-load sends.
+
+**What to do.**
+- Before a high-load launch, count the busy children (`signal.alarm(int(T)+5)` in the command line) by parent pid. Start your own generator only if fewer than 60 belong to someone else.
+- Before a low-load launch, stop yours and wait for load1 < 12.
+- When another session already holds the host loaded, run your high-load block on its load and move your low-load block to later. Do not sit waiting for quiet.
+- Record load1 at every Enter, and bin each send by that reading, not by the block it ran in.
+
 ## A live harness that builds the controller itself misses UI-layer attach steps; keep its evidence out of /tmp (TASK-37653, 2026-11-02)
 
 **Incident.** TASK-37653's first owner-approved live run spent 40 requests and 2 children, and its verifier never started. Every spawn returned `original_reports_not_presented`. The gated harness built its own `ConsoleChatController` and set `controller.app = app`. That was the attach step before PR #3286 moved review presentation into the UI wiring. The Console screen now attaches through `wiring.attach_review_presenter`, which is what installs the original-report presenter. With that one-line change, the second run (50 requests) sealed the verifier and expanded every finding. The run also failed twice before it started:
