@@ -1587,6 +1587,24 @@ def test_perf_guard_runs_when_a_file_its_steps_load_changes() -> None:
         )
 
 
+#: TASK-36511.3 review: the compact-setup gates are a 100 ms wall-clock gate.
+#: GitHub skips every step after a failed one, so a flake there must not hide
+#: the census steps; they run in the job's last step and nowhere else.
+PERF_GUARD_LAST_STEP_TARGETS = (
+    "Tests/Performance/test_compact_setup_ownership.py",
+    "Tests/Performance/test_compact_model_original_checked_read.py",
+)
+
+
+def test_perf_guard_runs_its_wall_clock_compact_gates_last() -> None:
+    (job,) = _workflow("perf-guard.yml")["jobs"].values()
+    *earlier, last = [step for step in job["steps"] if "pytest" in step.get("run", "")]
+    assert _pytest_targets(last["run"]) == PERF_GUARD_LAST_STEP_TARGETS, last["name"]
+    for step in earlier:
+        shared = set(_pytest_targets(step["run"])) & set(PERF_GUARD_LAST_STEP_TARGETS)
+        assert not shared, f"{step['name']} runs {sorted(shared)}"
+
+
 def test_pull_request_workflows_are_never_cancelled_in_progress() -> None:
     """Prevent base-branch churn from cancelling pull-request gate runs."""
     for workflow_name in STANDALONE_WORKFLOWS:

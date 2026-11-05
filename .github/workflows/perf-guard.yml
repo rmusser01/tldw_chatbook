@@ -118,11 +118,12 @@ jobs:
   ui-latency-guardrails:
     name: UI latency guardrails
     runs-on: ubuntu-latest
-    # TASK-36511.3: 20, not 15 (owner-approved). The compact-setup gates add
-    # about 3 min (175-185 s serial, measured locally); TASK-38703's idle-loop
-    # fix brought the latency step from a 179 s median to 85-117 s on CI.
-    # Applied to the 40 green runs before both (median 618 s, max 883 s), the
-    # job comes to median ~730 s, max ~1000 s: over 15 minutes at the max.
+    # TASK-36511.3: 20, not 15 (owner-approved). CI, measured: the 40 green
+    # runs before the gates had a median of 618 s and a max of 883 s, and
+    # TASK-38703's idle-loop fix took the latency step from a 179 s median to
+    # 85-117 s. Local, scaled: the compact-setup gates take 115-132 s
+    # locally, about 240-280 s on CI at its ~2.1x. Estimate: a median of
+    # about 800 s and a max of about 1060-1100 s, 100-140 s under this limit.
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
@@ -189,15 +190,11 @@ jobs:
       # The completed-pair history node is a strict xfail until TASK-36510:
       # eight message-locator columns have no leading index, so promotion
       # scans them. Its XPASS fails this step, so the fix removes the marker.
-      # TASK-36511.3: the compact-setup gates hold a compact config read and
-      # require the UI loop to answer a probe within 100 ms meanwhile; their
-      # 17 nodes add about 3 min (175-185 s serial, measured locally).
+      # The compact-setup gates run in the last step (TASK-36511.3).
       - name: Run Console tab-publication and voice gates
         run: |
           pytest Tests/Performance/test_console_tab_sync_source_ownership.py \
             Tests/Performance/test_speculative_voice_latency.py \
-            Tests/Performance/test_compact_setup_ownership.py \
-            Tests/Performance/test_compact_model_original_checked_read.py \
             -v --timeout=300
 
       # TASK-36390: typing must not snapshot the transcript (TASK-24300) or
@@ -230,3 +227,14 @@ jobs:
           cat "$TLDW_STORAGE_UNIT_CENSUS_LOG" 2>/dev/null || echo "(no census written)"
           echo "::endgroup::"
           exit "$status"
+
+      # TASK-36511.3: the compact-setup gates hold a compact config read and
+      # require the UI loop to answer a probe within 100 ms meanwhile.
+      # Last on purpose: a wall-clock gate, so a flake here must not skip
+      # the census steps above (Tests/CI pins this). 17 nodes, about 115-132 s
+      # locally, about 240-280 s on CI.
+      - name: Run Console compact-setup gates
+        run: |
+          pytest Tests/Performance/test_compact_setup_ownership.py \
+            Tests/Performance/test_compact_model_original_checked_read.py \
+            -v --timeout=300
