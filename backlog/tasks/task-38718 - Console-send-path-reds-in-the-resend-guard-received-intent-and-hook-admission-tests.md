@@ -1,9 +1,11 @@
 ---
 id: TASK-38718
 title: "Console send-path reds in the resend-guard, received-intent and hook-admission tests"
-status: To Do
-assignee: []
+status: Done
+assignee:
+  - '@claude'
 created_date: 2026-11-04 00:59
+updated_date: 2026-11-05 07:14
 labels:
 - follow-up
 - console
@@ -47,6 +49,34 @@ No open task names any of the seven nodes above.
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 Each of the seven nodes passes on dev, or is rewritten or retired with the reason recorded in the task notes (for example, a product change it predates)
-- [ ] #2 For each node, the task notes record whether the cause was test drift or a product defect, and a product defect has a test that fails before its fix
+- [x] #1 Each of the seven nodes passes on dev, or is rewritten or retired with the reason recorded in the task notes (for example, a product change it predates)
+- [x] #2 For each node, the task notes record whether the cause was test drift or a product defect, and a product defect has a test that fails before its fix
 <!-- AC:END -->
+
+## Implementation Plan
+
+<!-- SECTION:PLAN:BEGIN -->
+1. Run the seven nodes on the base and trace each failure to the product change behind it (git history of the asserted surface, a temporary probe where the trace is not obvious).
+2. Resend guard `[typed_in_b]`: find what now clears tab A's composer and decide drift or defect against the lead ruling (TASK-33620.15).
+3. Received-intent feedback: the run chip and the Status collapsible were retired by TASK-35160; move the frame recorders and display checks to the status line's `run` segment, and retire the collapsed arm.
+4. Hook admission: find why the resumed turn never reaches the gateway, and fix the fake or the product.
+5. Re-run the three files at `-n 4`, and record the cause per node in the notes.
+<!-- SECTION:PLAN:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+**All seven were test drift; no product defect.** On the base (b8608e4cdb) the seven nodes failed as filed in one `-n 4` run of the three files. The fixes are test-only.
+
+- **Resend guard `[typed_in_b]` (drift).** A temporary probe that logged every composer draft change showed what clears tab A. At acceptance, `publish_received_acceptance` commits the store draft with a CAS on A's per-chat draft revision. `_project_console_saved_input` then spends the reloaded capture and loads A's now-empty draft ("A tab reload creates a new capture of the same accepted draft", 077e5bfa09, 2026-10-31). The test's old expectation (the sent text stays, with a "was sent" notice) came from the composer's widget-wide edit serial, which a key typed in tab B moves. The store's per-chat revision does not move, and A's draft did not change, so clearing it is what the lead ruling asks for. Both params now assert that A's composer and saved draft are empty, that no "was sent" notice appears, that B keeps its draft (plus the "q"), and that one message is sent.
+- **Received-intent feedback, 5 nodes (drift).** TASK-35160 (c5ceca1247, 2026-10-16) replaced the boxed status chips with one status line and removed the Status collapsible. The test file came from a branch cut before that (3e618d7119), so it still queried `#console-run-chip`, `#console-status-collapsed-copy` and `ConsoleStatusChips.set_collapsed`. The frame recorders now read the status line's cells (`#console-status-text`), and the display checks read the `run` segment through `ConsoleStatusChips.segment_visible/segment_text`.
+  - `test_send_feedback_survives_preparation_and_provider_wait` is now parametrized on route only (`[enter]`, `[send-button]`). The collapsed arm and its final "Status hidden" check are retired with the collapsible.
+- **Hook admission (drift).** A probe of the resume result showed the turn blocked with "Mix-in attempt could not be saved; response was not sent." Since 7970fbcada (2026-11-01), a persisted chat's turn saves its mix-in attempt before the provider, and `accept_attempt` refuses a persistence without `save_conversation_mixin_attempt` and `db` (`mixin_persistence_unavailable`). The shared `FakePersistence` predates that. The test now uses a local subclass that has both, and the resumed turn reaches the gateway. The shared fake is unchanged; its other users were not checked.
+
+**Evidence (`-n 4`).** The three files together: 59/59, 58/59 and 59/59 at load 11-22. The received-intent file alone, 4 runs at load 21-24: 3 clean, and 1 failure of `test_actual_send_paints_sending_and_accepts_input_within_100ms[send-button]` at 117 ms against its 100 ms Sending-frame budget. The other failure in the three-file runs was the `[enter]` case, on the same budget. The budget is unchanged. It is a timing assertion that loaded hosts miss (TASK-33621.22 recorded a 161 ms miss for the earlier Preparing variant), and no lane runs it. The new frame recorder is not vacuous: each test asserts that the recorder saw the `Sending` or `Waiting for reply` cells.
+
+**Not in scope, seen on the way.** `Tests/Performance/test_console_skill_trust_stock_owned.py::test_stock_console_skill_setup_has_original_owned_lifetime[send_enter|send_button]` share `_NaturalPreparingFrame`. They fail on the base and at the head with the same assertion, "Cold Send did not reach original configuration SQL", which is unrelated to the chip query.
+
+**Files:** `Tests/UI/test_console_send_resend_guard.py`, `Tests/UI/test_console_received_intent_feedback.py`, `Tests/Chat/test_console_hook_admission.py`.
+<!-- SECTION:NOTES:END -->
+

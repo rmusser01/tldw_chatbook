@@ -285,11 +285,13 @@ async def test_enter_after_a_tab_round_trip_during_admission_sends_the_draft_onc
     Enter was held as a new press, the first send's commit failed closed,
     and the replay sent the draft a second time.
 
-    With nothing typed since the first capture the reloaded draft is that
-    capture, and it leaves the composer. With a key typed in tab B the
-    composer cannot tell the reload from a new draft: the sent text stays,
-    the user is told it was sent, and the held press, captured before that,
-    is not sent.
+    Either way the reloaded draft is the first capture, so it leaves tab A's
+    composer and the held press is not sent. A key typed in tab B stays in
+    B's draft. TASK-38718: this once expected the sent text to stay in A
+    with a "was sent" notice when a key was typed in B, because the
+    composer's widget-wide edit serial could not tell the reload from a new
+    draft. Since 077e5bfa09 the store's per-chat draft revision decides
+    (``_project_console_saved_input``), and A's draft did not change.
     """
     host, gateway, _timeline = build()
     _allow_second_turns(host)
@@ -330,15 +332,10 @@ async def test_enter_after_a_tab_round_trip_during_admission_sends_the_draft_onc
             await pilot.pause(0.5)
             assert _sent_or_queued(console, session_a) == [DRAFT]
             assert gateway.stream_calls == 1
-            told = [n for n in notices if "was sent" in n]
-            if typed_in_b:
-                assert composer.draft_text() == DRAFT
-                assert told, notices
-                assert store.session_draft(session_b) == B_DRAFT + "q"
-            else:
-                assert composer.draft_text() == ""
-                assert not told, notices
-                assert store.session_draft(session_b) == B_DRAFT
+            assert composer.draft_text() == ""
+            assert store.session_draft(session_a) == ""
+            assert not [n for n in notices if "was sent" in n], notices
+            assert store.session_draft(session_b) == B_DRAFT + ("q" if typed_in_b else "")
 
 
 @pytest.mark.asyncio
