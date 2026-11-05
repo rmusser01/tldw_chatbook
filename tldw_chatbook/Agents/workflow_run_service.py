@@ -194,7 +194,9 @@ def _dependency_read_scopes_result(db, snapshot, tasks, binding):
                 None,
             )
             if spec is None or native is None:
-                return _TaskInputResult(None, ValueError("native_check_missing_or_stale"))
+                return _TaskInputResult(
+                    None, ValueError("native_check_missing_or_stale")
+                )
             paths.extend(
                 (str(Path(spec.verifier_path).relative_to(root)), *spec.input_paths)
             )
@@ -208,7 +210,9 @@ def _dependency_read_scopes_result(db, snapshot, tasks, binding):
                 or shell.resolve(strict=True) != shell
                 or not shell.is_file()
             ):
-                return _TaskInputResult(None, ValueError("freshness_shell_identity_changed"))
+                return _TaskInputResult(
+                    None, ValueError("freshness_shell_identity_changed")
+                )
             if shell.is_relative_to(root):
                 scope = _read_scope_result(binding, root, str(shell.relative_to(root)))
                 if scope.error is not None:
@@ -736,7 +740,9 @@ class WorkflowRunService:
                     status=state,
                     phase_id=phase["phase_id"] if phase else None,
                     tasks=tasks,
-                    accounting=self.db.automatic_work._snapshot(conn, row["chain_id"], _accounting=_accounting),
+                    accounting=self.db.automatic_work._snapshot(
+                        conn, row["chain_id"], _accounting=_accounting
+                    ),
                 )
 
             if conn.in_transaction:
@@ -1073,7 +1079,9 @@ class WorkflowRunService:
         if reads.error is not None:
             return reads
         if authorization._freshness_reads != reads.value:
-            return _TaskInputResult(None, ValueError("freshness_source_identity_changed"))
+            return _TaskInputResult(
+                None, ValueError("freshness_source_identity_changed")
+            )
         paths = tuple(path.split(":", 1)[-1] for path in authorization.task.inputs)
         actual = _manifest(
             snapshot.request.binding.locator, paths, authorization=authorization
@@ -1186,6 +1194,7 @@ class WorkflowRunService:
             return self.get(result.workflow_id)
         root = self.get(result.workflow_id).request.binding.locator
         checks = []
+        verified_failure = False
         for check_id in auth.task.expected_checks:
             spec = next((v for v in auth.task.verifiers if v.id == check_id), None)
             evidence = next(
@@ -1204,12 +1213,14 @@ class WorkflowRunService:
                 and evidence.shell_manifest == _shell_manifest(evidence.shell_path)
                 and verifier_digest(spec) == spec.verifier_sha256
             )
-            passed = bool(
+            verified_exit = bool(
                 fresh
                 and evidence.complete
                 and evidence.cleanup_proven
-                and evidence.exit_code == spec.expected_exit_code
+                and type(evidence.exit_code) is int
             )
+            passed = verified_exit and evidence.exit_code == spec.expected_exit_code
+            verified_failure |= verified_exit and not passed
             status = "passed" if passed else "missing"
             if evidence is not None and not passed:
                 if not fresh:
@@ -1226,11 +1237,16 @@ class WorkflowRunService:
                     output_manifest=evidence.output_manifest if evidence else None,
                     exit_code=evidence.exit_code if evidence else None,
                     reason="native_evidence"
-                    if passed
+                    if verified_exit
                     else "native_evidence_unavailable",
                 )
             )
-        result = result.model_copy(update={"checks": tuple(checks)})
+        status = (
+            "failed"
+            if verified_failure and result.status == "completed"
+            else result.status
+        )
+        result = result.model_copy(update={"checks": tuple(checks), "status": status})
         with self.db.connection() as conn:
             windows = tuple(
                 row[0]
@@ -1703,12 +1719,15 @@ class WorkflowRunService:
             )
             conclusive = conclusive and actual is not None
             if checkpoint.input_manifest != actual:
-                return _TaskInputResult(None, ValueError("stale_task_input"), conclusive)
+                return _TaskInputResult(
+                    None, ValueError("stale_task_input"), conclusive
+                )
         for check_id in task.expected_checks if result.status == "completed" else ():
             spec = next((v for v in task.verifiers if v.id == check_id), None)
             native = next(
                 (
-                    v for v in reversed(checkpoint.verifiers)
+                    v
+                    for v in reversed(checkpoint.verifiers)
                     if v.verifier_id == check_id
                 ),
                 None,

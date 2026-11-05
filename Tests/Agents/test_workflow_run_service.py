@@ -318,8 +318,11 @@ def test_file_inputs_are_references_and_changed_seed_or_source_cannot_launch(tas
 
 
 @pytest.mark.parametrize("changed_before_checkpoint", [False, True])
+@pytest.mark.parametrize(
+    "exit_code,output_size", [(0, 40_000), (7, 40_000), (7, 150_000)]
+)
 def test_native_verifier_checkpoint_reopens_with_complete_private_output(
-    task_host, monkeypatch, changed_before_checkpoint
+    task_host, monkeypatch, changed_before_checkpoint, exit_code, output_size
 ):
     import hashlib
     import shlex
@@ -342,7 +345,9 @@ def test_native_verifier_checkpoint_reopens_with_complete_private_output(
 
     def edit(data, root):
         wrapper = root / "verify.sh"
-        wrapper.write_text("#!/bin/bash\nprintf '%040000d' 1\n")
+        wrapper.write_text(
+            f"#!/bin/bash\nprintf '%0{output_size}d' 1\nexit {exit_code}\n"
+        )
         wrapper.chmod(0o700)
         task = data["phases"][0]["tasks"][0]
         task.update(expected_checks=["unit-tests"], inputs=["source.py"])
@@ -407,10 +412,33 @@ def test_native_verifier_checkpoint_reopens_with_complete_private_output(
         if changed_before_checkpoint:
             (host.root / "source.py").write_text("changed after verifier")
         saved = service.checkpoint_task(result, drained=True)
+        assert host.db.get_run(receipt.run_id)["status"] == "done"
+        assert service.checkpoint_task(result, drained=True) == saved
+        assert saved.results[0].checks[0].reason == (
+            "native_evidence_unavailable"
+            if changed_before_checkpoint or output_size == 150_000
+            else "native_evidence"
+        )
+        with pytest.raises(ValueError, match="result_identity_conflict"):
+            service.checkpoint_task(
+                result.model_copy(update={"handoff": "changed"}), drained=True
+            )
+        if changed_before_checkpoint or output_size == 150_000:
+            assert saved.results[0].status == "completed"
         if changed_before_checkpoint:
             assert saved.results[0].checks[0].status == "stale"
             with pytest.raises(ValueError, match="native_check_missing_or_stale"):
                 service._fresh_task_result(saved, host.authorization.task)
+            return
+        if exit_code:
+            evidence = service.read_checkpoint(saved.id, result.attempt_id).verifiers[0]
+            assert evidence.exit_code == exit_code
+            assert saved.results[0].checks[0].status == "failed"
+            assert evidence.complete is (output_size == 40_000)
+            assert saved.results[0].status == (
+                "failed" if evidence.complete else "completed"
+            )
+            assert evidence.cleanup_proven and evidence.fresh
             return
         assert saved.results[0].checks[0].status == "passed"
         reopened = AgentRunsDB(host.db.db_path_str)
@@ -925,6 +953,7 @@ def test_native_done_without_approved_verifier_stays_missing_and_blocks_quality_
         saved = service.checkpoint_task(result, drained=True)
         check = saved.results[0].checks[0]
         assert check.status == "missing" and check.exit_code is None
+        assert check.reason == "native_evidence_unavailable"
         assert service._checkpoint(saved.id, receipt.attempt_id).verifiers == ()
         host.db.automatic_work.settle_workflow_phase(
             host.phase.attempt.id, owner_id="owner", drained=True

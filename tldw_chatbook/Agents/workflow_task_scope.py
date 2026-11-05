@@ -60,7 +60,7 @@ def _runtime(phase):
 
 
 def _check_hooks(runtime, session_id: str) -> None:
-    # Hook notification workers currently lack the native activity drain contract.
+    # Effectful or unfinished hooks cannot enter a workflow task.
     from tldw_chatbook import config
 
     from .run_hooks import load_hooks_config
@@ -80,20 +80,34 @@ def _check_hooks(runtime, session_id: str) -> None:
         if (
             type(engine) is not RunHooksEngine
             or type(issuer) is not _NativeLegacyHookSource
-            or issuer.engine is not engine
-            or issuer.runtime is not runtime
-            or not engine._native_attached
-            or issuer.cleanup_pending
-            or issuer.permissions._published_targets
         ):
             _refuse("effectful_hooks_unsupported")
-        try:
-            # capture checks its original source before extending the native
-            # execution observation. No hook callback is run in this scope.
-            with issuer.capture(session_id):
-                pass
-        except RuntimeError:
-            _refuse("effectful_hooks_unsupported")
+        # Another workflow's source-only capture must actually return before
+        # inspecting cleanup. Real event producers retain their own admission.
+        with issuer._workflow_check_lock:
+            with config.locked_hooks_config_snapshot() as snapshot:
+                configured = load_hooks_config(
+                    {"hooks": snapshot.section} if snapshot.section_present else {}
+                )
+            if configured.enabled and (configured.hooks or configured.v2_handlers):
+                _refuse("effectful_hooks_unsupported")
+            if (
+                runtime.run_hooks_engine is not engine
+                or getattr(runtime, "_legacy_hooks_source", None) is not issuer
+                or issuer.engine is not engine
+                or issuer.runtime is not runtime
+                or not engine._native_attached
+                or issuer.cleanup_pending
+                or issuer.permissions._published_targets
+            ):
+                _refuse("effectful_hooks_unsupported")
+            try:
+                # The original capture checks its source and retains recovery
+                # admission through its return. No hook callback runs here.
+                with issuer.capture(session_id):
+                    pass
+            except RuntimeError:
+                _refuse("effectful_hooks_unsupported")
     engines = getattr(runtime, "_hooks_v2_engines", {})
     engine = engines.get(session_id)
     if engine is not None and engine.definitions:

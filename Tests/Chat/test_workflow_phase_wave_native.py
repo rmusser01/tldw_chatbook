@@ -93,12 +93,7 @@ def test_actual_native_window_archive_rejects_missing_required_reference(tmp_pat
 
 
 def test_native_wave_complete_archive_restore_and_rebackup(tmp_path):
-    import os
-    import subprocess
-    import sys
-
-    from Tests.Backup_Recovery.test_temporary_media_capture import _RESTORE
-    from Tests.Chat.workflow_wave_archive import REOPEN
+    from Tests.Chat.workflow_wave_archive import restore_and_rebackup
 
     original = tmp_path / "original"
     original.mkdir()
@@ -109,43 +104,7 @@ def test_native_wave_complete_archive_restore_and_rebackup(tmp_path):
         script=Path(__file__).with_name("workflow_wave_probe.py").read_text(),
         timeout=90,
     )
-    restored = tmp_path / "restored"
-    restored.mkdir()
-    restore = _RESTORE.replace(
-        "source.rename(source.with_name('source-home-removed'))",
-        "(home/'wave.json').write_bytes((source/'wave.json').read_bytes())\nsource.rename(source.with_name('source-home-removed'))",
-    )
-    restore = restore.replace(
-        "'agents.history':'tool_sandbox'",
-        "'workspaces.change_tracking':'change_review','tokenizers.custom':'tokenizers','agents.history':'tool_sandbox'",
-    )
-    restore = restore.replace(
-        "mapping[f'profile:{profile}:paths.data_dir']",
-        "(home / '.config/tldw_cli/tokenizers').mkdir(parents=True, mode=0o700, exist_ok=True)\nfor row in doc.directories:\n    if row.parent_id is None and not row.synthetic and producer[row.logical_id].owner_id == 'tokenizers.custom':\n        mapping[row.logical_id] = home / '.config/tldw_cli/tokenizers'\nmapping[f'profile:{profile}:paths.data_dir']",
-    )
-    _run(restored, str(original / "home"), "isolated", script=restore, timeout=60)
-    environment = dict(
-        os.environ,
-        HOME=str(restored / "home"),
-        USERPROFILE=str(restored / "home"),
-        XDG_CONFIG_HOME=str(restored / "config"),
-        XDG_DATA_HOME=str(restored / "data"),
-        TLDW_CONFIG_PATH=str(restored / "config/config.toml"),
-        TLDW_TEST_MODE="1",
-        TLDW_DISABLE_CONFIG_WATCH="1",
-    )
-    result = subprocess.run(
-        [sys.executable, "-c", REOPEN],
-        cwd=Path(__file__).resolve().parents[2],
-        env=environment,
-        capture_output=True,
-        text=True,
-        timeout=60,
-        check=False,
-    )
-    (tmp_path / "wave-rebackup.log").write_text(result.stdout + result.stderr)
-    assert result.returncode == 0, result.stdout[-1000:] + result.stderr[-4000:]
-    assert (restored / "home/second.tldw-backup.zip").is_file()
+    restore_and_rebackup(original)
 
 
 def test_failed_actual_native_creation_returns_original_close_obligation(tmp_path):

@@ -2419,6 +2419,62 @@ class _PreparedWorkflowReply:
             self.assistant_message_id = assistant.id
             self.generation_token = self.store.begin_generation_attempt(assistant.id)
         kwargs = dict(self.kwargs)
+        if (
+            task is not None
+            and task.execution_mode == "exclusive"
+            and "shell_exec" in task.allowed_tools
+            and "raw_shell_provider" not in kwargs
+        ):
+            from tldw_chatbook.Agents.raw_shell_tool_provider import (
+                RawShellToolProvider,
+            )
+
+            from . import console_ordinary_tree
+            from .console_chat_controller import build_combined_review_hook
+            from .console_raw_cli_custody import NativeRawCliSource
+
+            source = self.runtime._raw_cli_source
+            metadata = console_ordinary_tree._NATIVE_RAW_SHELL_METADATA
+
+            def shell_source():
+                if (
+                    not self.local_native
+                    or console_ordinary_tree._raw_shell_metadata is not metadata[0]
+                    or not console_ordinary_tree._function_unchanged(metadata)
+                    or type(source) is not NativeRawCliSource
+                    or self.runtime._raw_cli_source is not source
+                    or source.runtime is not self.runtime
+                    or source.app is not self.app
+                    or source.raw is not self.app.raw_cli_runtime
+                ):
+                    raise PermissionError("original workflow shell source required")
+                raw, reachable, values = metadata[0](self)
+                if raw is not source.raw or not reachable or values[:1] == ("unknown",):
+                    raise PermissionError("workflow shell unavailable")
+                return values
+
+            shell_inputs = shell_source()
+            shell, shell_review = self.controller._compose_raw_shell_provider(
+                session_id=self.session.id,
+                turn_context=self.configuration,
+                project_root=self.binding.root,
+            )
+            self.check_local_sources()
+            if (
+                shell_source() != shell_inputs
+                or type(shell) is not RawShellToolProvider
+                or shell._runtime is not source.raw
+                or shell.console_session_id != self.session.id
+                or shell_review is None
+            ):
+                raise PermissionError("workflow shell unavailable")
+            review = kwargs.get("review_tool_calls")
+            kwargs["raw_shell_provider"] = shell
+            kwargs["review_tool_calls"] = (
+                build_combined_review_hook([review, shell_review])
+                if review
+                else shell_review
+            )
         if task is None:
             from functools import partial
 

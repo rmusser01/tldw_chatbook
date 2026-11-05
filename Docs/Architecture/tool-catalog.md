@@ -91,7 +91,11 @@ still apply. Whole-root glob/grep/Git discovery needs the corresponding read
 scope. Alternate builtin file writers and recursive skills/chat spawning refuse.
 
 Exclusive tasks require the runtime-wide opaque claim and retain normal shell
-arming/MCP permissions. They are not confined by that claim. Effectful hooks and
+arming/MCP permissions. A task explicitly allowing `shell_exec` uses the original
+Console raw-shell factory at finite native task entry, with its captured binding,
+current session and matching approval hook. Original source identity, arm,
+permission, session grant or exact call approval and invocation checks still
+govern the effect. The opaque claim coordinates admission across the runtime. Effectful hooks and
 skill scripts currently refuse workflow preparation/dispatch because their
 physical lifetime or typed cleanup proof is not yet sufficient (ADR-285).
 

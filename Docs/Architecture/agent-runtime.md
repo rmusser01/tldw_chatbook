@@ -440,6 +440,13 @@ planning-result capacity, and changes neither current plan nor workflow control
 revision. Unknown usage keeps the attempt open. Successful planning still requires
 atomic plan publication with the original control-revision CAS.
 
+Workflow hook-source validations serialize on the original legacy issuer's
+private validation lock. Each waiter rereads saved hook policy and the current
+runtime/engine/issuer identity before checking pending cleanup and entering the
+original source capture. That capture returns before the next validator checks
+cleanup. Actual event admission and required physical retirement retain their
+existing gates.
+
 ## Native phased workflow evidence
 
 `Agents/workflow_run_service.py` is the passive history/checkpoint service for
@@ -621,7 +628,9 @@ use the original tracked offloaded reader and a same-run return Event, which als
 fences planning root release. Resume requires fresh review and either original
 clean awaiting-resume state or the actual latest positively drained planning
 attempt with its saved latest plan; a later execution attempt cannot masquerade
-as that planning state. Failed/stale results require explicit `revise`, preserving
+as that planning state. A positively verified failed command produces a failed workflow task even when
+the model finished normally. Its immutable native exit, manifests and original
+submitted digest survive the explicit repair. Failed/stale results require explicit `revise`, preserving
 request, history, spend and exact repair instruction. Completed execution remains
 awaiting result review until a matching native quality decision accepts it.
 
@@ -649,9 +658,9 @@ specific paths, not mounted UI, remote providers, performance or whole-system
 reliability.
 
 
-### Ordinary tree integration contract under implementation
+### Ordinary tree integration and qualification boundary
 
-AgentService will consume one original early Console owner at the real primary
+AgentService consumes one original early Console owner at the real primary
 row, attach actual ordinary children immediately after native reservation and
 before precreated rows/clients/models/threads, and report original canonical
 row/step write outcomes to private activity settlement. Existing retries and
@@ -659,4 +668,6 @@ readback remain; False, RunOutcome, Fleet terminal state and optional logging
 do not prove durable settlement. Survivors retain the originating tree. Genuine
 late child/tool/lifecycle holds follow original required/optional policy before
 causing effects. The gated storage-source and SSH request contracts above remain
-unchanged; full ordinary-tree qualification and public workflows are pending.
+governed by ADR285. The Console coordinator and mounted controls are present.
+[Qualification receipts](../superpowers/qa/2026-11-01-native-phased-agent-workflows/README.md)
+separate deterministic native, fresh-process and real-provider results.

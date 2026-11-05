@@ -2801,6 +2801,9 @@ class AutomaticWorkLedger:
         )
         if not rows:
             return False
+        # A recovered unknown needs no live Console witness inside this DB read.
+        if all(row["native_state"] == "review_required" for row in rows):
+            return True
         from tldw_chatbook.Chat.console_workflow_runs import _quiescence_evidence
 
         return any(

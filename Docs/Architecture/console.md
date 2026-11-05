@@ -465,7 +465,8 @@ The first committed member binds the durable anchor; no coordinator AgentRun is
 created. At quiescence each child drains and checkpoints before the same
 coordinator captures and publishes E. A later wave takes a fresh B, including
 intervening manual effects as its baseline. Original consent-disabled preparation
-keeps capture off. The public coordinator remains separate integration work.
+keeps capture off. The app-owned ConsoleWorkflowCoordinator composes these waves
+behind explicit phase approvals.
 
 The fence grants no file access or capacity. Conflicting ordinary intake refuses
 before acquiring a physical claim, and the existing ready manual queue wins
@@ -480,8 +481,9 @@ required publications fail; that does not make the missing E durable.
 Final Task7 launch freshness reads run under the actual
 native owner and complete host-only footprint before child row creation,
 dispatch or allowance commit (see [agent-runtime.md](./agent-runtime.md#native-workflow-admission-adr-285)).
-Human approval/review and phase settlement admission remain coordinator work. These private seams do not
-enable the public workflow coordinator or complete Task38531.
+Human approval, result review and phase settlement belong to the app-owned public
+coordinator. Mounted Console setup/detail views consume its bounded read and
+command APIs. Full qualification receipts retain their source and platform scope.
 
 ## Run states and gating
 
@@ -869,9 +871,9 @@ return bounded disable/remove/refresh guidance without unexpected-error tracebac
 unexpected failures retain their diagnostic path. Ordinary server Browse checks
 snapshot capability before entering Mix-ins and retains its server view on refusal.
 
-### Ordinary integration contract under implementation (Task8D2)
+### Ordinary integration and qualification boundary
 
-The next internal integration moves complete metadata/source/physical admission
+The native integration moves complete metadata/source/physical admission
 ahead of reference expansion, initializer/plugin/guidance effects and actual
 attachment consumption. Existing received and accepted-turn records retain exact
 inputs and private live custody; accepted-turn registration itself remains
@@ -880,5 +882,6 @@ actual borrowers/children. First persistence maps only through the original
 store's committed publication. Required child writes, preheld late callbacks
 and original worker/host/finish return retain the tree through disposal.
 Existing optional omissions and manual/automatic busy/input restoration remain.
-This is the governing implementation contract, not completed qualification;
-ADR285 records costs and the still-pending public workflow successors.
+ADR285 records the native source and retirement contract. Source-specific
+qualification and historical adverse outcomes remain in the
+[workflow evidence index](../superpowers/qa/2026-11-01-native-phased-agent-workflows/README.md).

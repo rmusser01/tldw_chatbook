@@ -5,7 +5,7 @@ from __future__ import annotations
 from collections.abc import Iterator
 from contextlib import contextmanager
 from contextvars import ContextVar
-from threading import Condition, Lock
+from threading import Condition, Lock, RLock
 from typing import Any
 
 from tldw_chatbook.Workspaces.worktree_activity import WorktreeFootprint
@@ -68,6 +68,7 @@ class _NativeLegacyHookSource(_EventCustodyRegistry):
 
     def __init__(self, runtime, engine, permissions):
         self.runtime, self.engine, self.permissions = runtime, engine, permissions
+        self._workflow_check_lock = RLock()
         self.app = runtime._app
         self.capacity = runtime._execution_capacity
         self.activity = runtime._worktree_activity

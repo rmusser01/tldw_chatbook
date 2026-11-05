@@ -9,25 +9,35 @@ from types import SimpleNamespace
 
 import pytest
 
+from Tests import real_profile_guard
+
+real_profile_guard.install()
+
 from tldw_chatbook.Agents.workflow_run_service import WorkflowRunService
 from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
 
 root, mode, boundary = Path(sys.argv[1]), sys.argv[2], sys.argv[3]
 
 
-def stamp(snapshot, path):
+def stamp(snapshot, path, **facts):
     data = {
         "id": snapshot.id,
+        "pid": os.getpid(),
+        "pgid": os.getpgid(0) if hasattr(os, "getpgid") else None,
+        "boundary": boundary,
+        "wall_limit": snapshot.request.policy.wall_seconds,
+        **facts,
         "path": str(path),
         "status": snapshot.status,
         "used": dict(snapshot.accounting.used),
         "reserved": dict(snapshot.accounting.reserved),
         "results": [result.canonical_json() for result in snapshot.results],
     }
-    with (root / "boundary.json").open("w") as file:
+    with (root / "boundary.tmp").open("w") as file:
         json.dump(data, file)
         file.flush()
         os.fsync(file.fileno())
+    (root / "boundary.tmp").replace(root / "boundary.json")
     threading.Event().wait(60)
 
 
@@ -106,6 +116,14 @@ if mode == "produce":
         native, _ = _prepared_service(host, chat, seed=seed)
         receipt = _launch(native, host)
         service.bind_native_receipt(host.authorization, receipt)
+        if boundary in {"thread_start", "effect"}:
+            # The parent kills the process while the original provider is held.
+            # A normal five-second drain assertion would race that rendezvous.
+            for worker in host.authorization._native_preparation[0].threads.values():
+                worker.join(30)
+            raise AssertionError(
+                "producer exited before the requested provider boundary"
+            )
         _join(host)
         result = WorkflowTaskResult(
             workflow_id=workflow_id,
@@ -115,6 +133,32 @@ if mode == "produce":
             summary="settled",
             handoff="durable required handoff",
         )
+        if boundary == "during_result_commit":
+            # After the result INSERT, stop inside the original FULL transaction before
+            # the checkpoint row is inserted. The parent's kill must roll both back.
+            before = service.get(workflow_id)
+            with db.connection() as connection:
+
+                def interrupt_checkpoint():
+                    stamp(
+                        before,
+                        path,
+                        full_sync=connection.execute("PRAGMA synchronous").fetchone()[
+                            0
+                        ],
+                        uncommitted_results=connection.execute(
+                            "SELECT count(*) FROM workflow_results WHERE workflow_id=?",
+                            (workflow_id,),
+                        ).fetchone()[0],
+                    )
+
+                connection.create_function(
+                    "interrupt_checkpoint", 0, interrupt_checkpoint
+                )
+                connection.execute(
+                    "CREATE TEMP TRIGGER interrupt_checkpoint BEFORE INSERT ON workflow_checkpoints "
+                    "BEGIN SELECT interrupt_checkpoint(); END"
+                )
         service.checkpoint_task(result, drained=True)
         if boundary == "quiesced_result":
             db.automatic_work.quiesce_workflow_phase(
@@ -135,6 +179,7 @@ else:
         ).WorkflowTaskResult.model_validate_json(value)
         for value in saved["results"]
     )
+    runs_before = len(db.list_runs(service.get(saved["id"]).request.conversation_id))
     db.automatic_work.recover(current_owner_id="new")
     service.project_recovery(db.automatic_work.recovery_result)
     current = service.get(saved["id"])
@@ -146,7 +191,29 @@ else:
     )
     assert current.status == expected, current
     assert [result.canonical_json() for result in current.results] == saved["results"]
+    with db.connection() as connection:
+        checkpoint_count = connection.execute(
+            "SELECT count(*) FROM workflow_checkpoints WHERE workflow_id=?",
+            (current.id,),
+        ).fetchone()[0]
+        unresolved_charge = connection.execute(
+            "SELECT coalesce(sum(charged_seconds),0) FROM workflow_active_intervals "
+            "WHERE workflow_id=? AND ended_at IS NULL",
+            (current.id,),
+        ).fetchone()[0]
     (root / "restarted.json").write_text(
-        json.dumps({"status": current.status, "used": dict(current.accounting.used)})
+        json.dumps(
+            {
+                "pid": os.getpid(),
+                "pgid": os.getpgid(0) if hasattr(os, "getpgid") else None,
+                "status": current.status,
+                "used": dict(current.accounting.used),
+                "results": len(current.results),
+                "checkpoints": checkpoint_count,
+                "unresolved_charge": unresolved_charge,
+                "runs_before_audit": runs_before,
+                "runs_after_audit": len(db.list_runs(current.request.conversation_id)),
+            }
+        )
     )
     db.close()

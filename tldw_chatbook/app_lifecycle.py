@@ -1590,6 +1590,7 @@ class LifecycleMixin:
             from datetime import timedelta
 
             from .DB.base_db import operation_owned_connection
+            from .Backup_Recovery.participants import run_finite_local_worker
             from .Utils.timestamps import to_utc_iso, utc_now
 
             # Shared UTC helper (ADR-173 ratchet): same canonical
@@ -1605,7 +1606,7 @@ class LifecycleMixin:
                 db = getattr(self, attr, None)
                 if db is None:
                     continue
-                pruned = await asyncio.to_thread(prune, db)
+                pruned = await asyncio.to_thread(run_finite_local_worker, prune, db)
                 if pruned:
                     self.loguru_logger.info(
                         f"Sync-log retention pruned {pruned} rows older than "

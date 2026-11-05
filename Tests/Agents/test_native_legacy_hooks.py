@@ -285,8 +285,9 @@ def test_first_deny_does_not_retire_running_sibling(native_hooks):
     wait_until(lambda: not h.runtime.execution_capacity.snapshot().executions)
 
 
+@pytest.mark.parametrize("held_ordinal", [0, 1])
 def test_parallel_finalization_joins_each_original_operation_return(
-    native_hooks, monkeypatch
+    native_hooks, monkeypatch, held_ordinal
 ):
     from tldw_chatbook.Agents.execution_capacity import OwnedOperation
 
@@ -294,14 +295,16 @@ def test_parallel_finalization_joins_each_original_operation_return(
     h.configure("import sys; sys.exit(2)", held_script(h.tmp_path))
     entered, release = threading.Event(), threading.Event()
     original = OwnedOperation.finish
-    held = []
+    entries, returned = [], []
 
     def held_finish(operation):
-        if not held:
-            held.append(operation)
+        entries.append(operation)
+        if len(entries) - 1 == held_ordinal:
             entered.set()
             assert release.wait(5)
-        return original(operation)
+        result = original(operation)
+        returned.append(operation)
+        return result
 
     monkeypatch.setattr(OwnedOperation, "finish", held_finish)
     outcomes = []
@@ -312,10 +315,11 @@ def test_parallel_finalization_joins_each_original_operation_return(
     )
     worker.start()
     try:
-        assert entered.wait(3)
         wait_until((h.tmp_path / "started").exists)
         (h.tmp_path / "release").touch()
-        wait_until(lambda: h.runtime.execution_capacity.snapshot().tool_workers == 1)
+        assert entered.wait(3)
+        assert len(returned) == held_ordinal
+        assert h.runtime.execution_capacity.snapshot().tool_workers == 2 - held_ordinal
         assert opaque_busy(h.runtime), (
             "sibling settled before original release returned"
         )
@@ -323,8 +327,12 @@ def test_parallel_finalization_joins_each_original_operation_return(
     finally:
         release.set()
         worker.join(5)
+    assert not worker.is_alive()
+    wait_until(lambda: len(returned) == 2)
+    assert returned == entries
     assert outcomes[0].blocked
     wait_until(lambda: not h.runtime.execution_capacity.snapshot().executions)
+    wait_until(lambda: not h.runtime._legacy_hooks_source.cleanup_pending)
     assert not opaque_busy(h.runtime)
 
 

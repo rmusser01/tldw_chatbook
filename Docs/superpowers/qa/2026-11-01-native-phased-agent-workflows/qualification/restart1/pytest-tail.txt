@@ -1,0 +1,154 @@
+: openai
+E     2026-11-04 19:16:41.011 | DEBUG    | tldw_chatbook.config:<module>:11858 - CRITICAL DEBUG: Database initialization is now lazy - will initialize on first access
+E     2026-11-04 19:16:41.099 | INFO     | tldw_chatbook.DB.base_db:__init__:1016 - AgentRunsDB initialized with path: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/t10-restart1-vkwcl9dp/pytest/test_fresh_process_recovery_ne6/runs-0.db [Client: default]
+E     Traceback (most recent call last):
+E       File "<frozen runpy>", line 198, in _run_module_as_main
+E       File "<frozen runpy>", line 88, in _run_code
+E       File "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/Tests/DB/workflow_restart_child.py", line 176, in <module>
+E         service.project_recovery(db.automatic_work.recovery_result)
+E       File "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/tldw_chatbook/Agents/goal_storage_lifetime.py", line 36, in invoke
+E         return function(service, *args, **kwargs)
+E                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E       File "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/tldw_chatbook/Agents/workflow_run_service.py", line 1870, in project_recovery
+E         return tuple(self.get(workflow_id) for workflow_id, _, _ in audit.workflows)
+E                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E       File "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/tldw_chatbook/Agents/workflow_run_service.py", line 1870, in <genexpr>
+E         return tuple(self.get(workflow_id) for workflow_id, _, _ in audit.workflows)
+E                      ^^^^^^^^^^^^^^^^^^^^^
+E       File "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/tldw_chatbook/Agents/goal_storage_lifetime.py", line 36, in invoke
+E         return function(service, *args, **kwargs)
+E                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E       File "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/tldw_chatbook/Agents/workflow_run_service.py", line 473, in get
+E         return self.db.workflow_runs.get(workflow_id, _accounting=_accounting)
+E                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E       File "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/tldw_chatbook/DB/workflow_runs.py", line 246, in get
+E         return self._snapshot(conn, self._row(conn, workflow_id), _accounting=_accounting)
+E                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E       File "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/tldw_chatbook/DB/workflow_runs.py", line 214, in _snapshot
+E         accounting=self.db.automatic_work._snapshot(conn, row["chain_id"], _accounting=_accounting),
+E                    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E       File "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/tldw_chatbook/DB/automatic_work.py", line 512, in _snapshot
+E         uncertain |= self._workflow_clock_unknown(
+E                      ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E       File "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/tldw_chatbook/DB/automatic_work.py", line 2573, in _workflow_clock_unknown
+E         from tldw_chatbook.Chat.console_workflow_runs import _quiescence_evidence
+E       File "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/tldw_chatbook/Chat/console_workflow_runs.py", line 3586, in <module>
+E         from .console_fleet_wake import _WORKFLOW_WAKE_SOURCE as _EXECUTION_WAKE_SOURCE
+E       File "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/tldw_chatbook/Chat/console_fleet_wake.py", line 27, in <module>
+E         from tldw_chatbook.Agents.agent_service import (
+E       File "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/tldw_chatbook/Agents/agent_service.py", line 156, in <module>
+E         from .agent_runtime import (
+E       File "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/tldw_chatbook/Agents/agent_runtime.py", line 129, in <module>
+E         from .project_instruction_runtime import (
+E       File "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/tldw_chatbook/Agents/project_instruction_runtime.py", line 40, in <module>
+E         from .tool_catalog import PathAwareToolProvider, ToolCatalogRegistry
+E       File "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/tldw_chatbook/Agents/tool_catalog.py", line 44, in <module>
+E         from .library_rag_tool_provider import LibraryRagToolProvider, RAG_TOOL_NAME
+E       File "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/tldw_chatbook/Agents/library_rag_tool_provider.py", line 48, in <module>
+E         from tldw_chatbook.Library.library_local_rag_search_service import (
+E       File "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/tldw_chatbook/Library/library_local_rag_search_service.py", line 43, in <module>
+E         from tldw_chatbook.RAG_Search.search_modes import (
+E       File "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/tldw_chatbook/RAG_Search/__init__.py", line 4, in <module>
+E         admit_startup()
+E       File "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/tldw_chatbook/Backup_Recovery/storage_admission.py", line 1524, in admit_startup
+E         _admit_startup(attempt)
+E       File "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/tldw_chatbook/Backup_Recovery/storage_admission.py", line 1533, in _admit_startup
+E         attempt.check()
+E       File "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/tldw_chatbook/Backup_Recovery/storage_admission.py", line 213, in check
+E         raise bootstrap.RecoveryRequired("operation_path_outside_scope")
+E     tldw_chatbook.Backup_Recovery.bootstrap.RecoveryRequired: operation_path_outside_scope
+E     
+E   assert 1 == 0
+E    +  where 1 = CompletedProcess(args=['/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python', '-m', 'Tests.DB.workflow_...2nykh0000gn/T/t10-restart1-vkwcl9dp/pytest/test_fresh_process_recovery_ne6', 'restart', 'result_commit'], returncode=1).returncode
+_ test_fresh_process_recovery_never_replays_native_work[during_result_commit] __
+Tests/DB/test_workflow_restart_process.py:80: in test_fresh_process_recovery_never_replays_native_work
+    assert restart.returncode == 0, (tmp_path / "child.log").read_text()[-7000:]
+E   AssertionError: l', 'zenmux', 'kilo', 'siliconflow', 'baseten', 'gmi', 'ollama_cloud', 'upstage', 'arcee', 'qianfan', 'nous', 'venice', 'meta', 'azure', 'wandb', 'cloudflare', 'opencode_zen', 'commandcode', 'llama_cpp', 'oobabooga', 'koboldcpp', 'ollama', 'vllm', 'aphrodite', 'tabbyapi', 'custom', 'custom_2', 'local-llm', 'local_llamafile', 'local_llamacpp', 'local_vllm', 'local_ollama', 'local_onnx', 'local_transformers', 'local_mlx_lm']
+E     2026-11-04 19:16:44.781 | INFO     | tldw_chatbook.config:_load_settings_uncached:2301 - Determined ACTUAL_PROJECT_ROOT for general paths: /Users/macbook-dev/Documents/GitHub/tldw_chatbook/tldw_chatbook
+E     2026-11-04 19:16:44.781 | INFO     | tldw_chatbook.config:_load_settings_uncached:2304 - Determined APP_COMPONENT_ROOT for config files: /Users/macbook-dev/Documents/GitHub/tldw_chatbook/tldw_chatbook
+E     2026-11-04 19:16:44.782 | DEBUG    | tldw_chatbook.config:_load_settings_uncached:2327 - load_settings: Configuration loaded from disk (cache miss or forced reload)
+E     2026-11-04 19:16:44.783 | DEBUG    | tldw_chatbook.config:_load_settings_uncached:2645 - Darwin platform-preferred STT provider resolved to: faster-whisper
+E     2026-11-04 19:16:44.792 | DEBUG    | tldw_chatbook.config:_load_settings_uncached:3887 - Ensured chat dictionaries folder exists: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/t10-restart1-vkwcl9dp/pytest/test_fresh_process_recovery_ne7/profile/.local/share/tldw_cli/default_user/chat_dicts
+E     2026-11-04 19:16:44.792 | DEBUG    | tldw_chatbook.config:_load_settings_uncached:3918 - load_settings: Configuration cached for future use
+E     2026-11-04 19:16:44.793 | INFO     | tldw_chatbook.config:<module>:11835 - Default API Endpoint (from config.py global scope): openai
+E     2026-11-04 19:16:44.793 | DEBUG    | tldw_chatbook.config:<module>:11858 - CRITICAL DEBUG: Database initialization is now lazy - will initialize on first access
+E     2026-11-04 19:16:44.882 | INFO     | tldw_chatbook.DB.base_db:__init__:1016 - AgentRunsDB initialized with path: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/t10-restart1-vkwcl9dp/pytest/test_fresh_process_recovery_ne7/runs-0.db [Client: default]
+E     Traceback (most recent call last):
+E       File "<frozen runpy>", line 198, in _run_module_as_main
+E       File "<frozen runpy>", line 88, in _run_code
+E       File "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/Tests/DB/workflow_restart_child.py", line 176, in <module>
+E         service.project_recovery(db.automatic_work.recovery_result)
+E       File "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/tldw_chatbook/Agents/goal_storage_lifetime.py", line 36, in invoke
+E         return function(service, *args, **kwargs)
+E                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E       File "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/tldw_chatbook/Agents/workflow_run_service.py", line 1870, in project_recovery
+E         return tuple(self.get(workflow_id) for workflow_id, _, _ in audit.workflows)
+E                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E       File "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/tldw_chatbook/Agents/workflow_run_service.py", line 1870, in <genexpr>
+E         return tuple(self.get(workflow_id) for workflow_id, _, _ in audit.workflows)
+E                      ^^^^^^^^^^^^^^^^^^^^^
+E       File "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/tldw_chatbook/Agents/goal_storage_lifetime.py", line 36, in invoke
+E         return function(service, *args, **kwargs)
+E                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E       File "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/tldw_chatbook/Agents/workflow_run_service.py", line 473, in get
+E         return self.db.workflow_runs.get(workflow_id, _accounting=_accounting)
+E                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E       File "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/tldw_chatbook/DB/workflow_runs.py", line 246, in get
+E         return self._snapshot(conn, self._row(conn, workflow_id), _accounting=_accounting)
+E                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E       File "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/tldw_chatbook/DB/workflow_runs.py", line 214, in _snapshot
+E         accounting=self.db.automatic_work._snapshot(conn, row["chain_id"], _accounting=_accounting),
+E                    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E       File "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/tldw_chatbook/DB/automatic_work.py", line 512, in _snapshot
+E         uncertain |= self._workflow_clock_unknown(
+E                      ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E       File "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/tldw_chatbook/DB/automatic_work.py", line 2573, in _workflow_clock_unknown
+E         from tldw_chatbook.Chat.console_workflow_runs import _quiescence_evidence
+E       File "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/tldw_chatbook/Chat/console_workflow_runs.py", line 3586, in <module>
+E         from .console_fleet_wake import _WORKFLOW_WAKE_SOURCE as _EXECUTION_WAKE_SOURCE
+E       File "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/tldw_chatbook/Chat/console_fleet_wake.py", line 27, in <module>
+E         from tldw_chatbook.Agents.agent_service import (
+E       File "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/tldw_chatbook/Agents/agent_service.py", line 156, in <module>
+E         from .agent_runtime import (
+E       File "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/tldw_chatbook/Agents/agent_runtime.py", line 129, in <module>
+E         from .project_instruction_runtime import (
+E       File "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/tldw_chatbook/Agents/project_instruction_runtime.py", line 40, in <module>
+E         from .tool_catalog import PathAwareToolProvider, ToolCatalogRegistry
+E       File "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/tldw_chatbook/Agents/tool_catalog.py", line 44, in <module>
+E         from .library_rag_tool_provider import LibraryRagToolProvider, RAG_TOOL_NAME
+E       File "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/tldw_chatbook/Agents/library_rag_tool_provider.py", line 48, in <module>
+E         from tldw_chatbook.Library.library_local_rag_search_service import (
+E       File "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/tldw_chatbook/Library/library_local_rag_search_service.py", line 43, in <module>
+E         from tldw_chatbook.RAG_Search.search_modes import (
+E       File "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/tldw_chatbook/RAG_Search/__init__.py", line 4, in <module>
+E         admit_startup()
+E       File "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/tldw_chatbook/Backup_Recovery/storage_admission.py", line 1524, in admit_startup
+E         _admit_startup(attempt)
+E       File "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/tldw_chatbook/Backup_Recovery/storage_admission.py", line 1533, in _admit_startup
+E         attempt.check()
+E       File "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/tldw_chatbook/Backup_Recovery/storage_admission.py", line 213, in check
+E         raise bootstrap.RecoveryRequired("operation_path_outside_scope")
+E     tldw_chatbook.Backup_Recovery.bootstrap.RecoveryRequired: operation_path_outside_scope
+E     
+E   assert 1 == 0
+E    +  where 1 = CompletedProcess(args=['/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python', '-m', 'Tests.DB.workflow_...00gn/T/t10-restart1-vkwcl9dp/pytest/test_fresh_process_recovery_ne7', 'restart', 'during_result_commit'], returncode=1).returncode
+- generated xml file: /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.superpowers/sdd/2026-11-01-native-phased-agent-workflows-implementation/task-10-restart1/tests.xml -
+============================= slowest 25 durations =============================
+3.82s call     Tests/DB/test_workflow_restart_process.py::test_fresh_process_recovery_never_replays_native_work[during_result_commit]
+3.73s call     Tests/DB/test_workflow_restart_process.py::test_fresh_process_recovery_never_replays_native_work[result_commit]
+3.69s call     Tests/DB/test_workflow_restart_process.py::test_fresh_process_recovery_never_replays_native_work[effect]
+3.62s call     Tests/DB/test_workflow_restart_process.py::test_fresh_process_recovery_never_replays_native_work[quiesced_result]
+3.52s call     Tests/DB/test_workflow_restart_process.py::test_fresh_process_recovery_never_replays_native_work[settled]
+2.68s call     Tests/DB/test_workflow_restart_process.py::test_fresh_process_recovery_never_replays_native_work[thread_start]
+2.22s call     Tests/DB/test_workflow_restart_process.py::test_fresh_process_recovery_never_replays_native_work[accepted]
+1.94s call     Tests/DB/test_workflow_restart_process.py::test_fresh_process_recovery_never_replays_native_work[quiesced]
+1.11s call     Tests/DB/test_workflow_restart_process.py::test_fresh_process_recovery_never_replays_native_work[prepared]
+
+(16 durations < 1s hidden.)
+=========================== short test summary info ============================
+FAILED Tests/DB/test_workflow_restart_process.py::test_fresh_process_recovery_never_replays_native_work[accepted]
+FAILED Tests/DB/test_workflow_restart_process.py::test_fresh_process_recovery_never_replays_native_work[thread_start]
+FAILED Tests/DB/test_workflow_restart_process.py::test_fresh_process_recovery_never_replays_native_work[effect]
+FAILED Tests/DB/test_workflow_restart_process.py::test_fresh_process_recovery_never_replays_native_work[result_commit]
+FAILED Tests/DB/test_workflow_restart_process.py::test_fresh_process_recovery_never_replays_native_work[during_result_commit]
+5 failed, 4 passed in 26.81s

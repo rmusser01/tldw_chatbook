@@ -1,0 +1,49 @@
+FF                                                                       [100%]
+=================================== FAILURES ===================================
+______ test_parallel_finalization_joins_each_original_operation_return[0] ______
+Tests/Agents/test_native_legacy_hooks.py:331: in test_parallel_finalization_joins_each_original_operation_return
+    assert len(returned) == 2 and returned == entries
+E   assert (1 == 2)
+E    +  where 1 = len([<tldw_chatbook.Agents.execution_capacity.OwnedOperation object at 0x11aaaba40>])
+---------------------------- Captured stderr setup -----------------------------
+2026-11-04 20:38:22.724 | DEBUG    | tldw_chatbook.Utils.optional_deps:check_dependency:642 - ✅ huggingface_hub dependency found. Feature 'huggingface_hub' is enabled.
+2026-11-04 20:38:22.888 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:52 - PyAudio not available. Install with: pip install pyaudio
+2026-11-04 20:38:22.942 | INFO     | tldw_chatbook.Audio.recording_service:<module>:58 - Sounddevice backend available
+2026-11-04 20:38:22.965 | INFO     | tldw_chatbook.Audio.recording_service:<module>:73 - WebRTC VAD available for voice activity detection
+----------------------------- Captured stderr call -----------------------------
+2026-11-04 20:38:24.480 | INFO     | tldw_chatbook.Agents.run_hooks:_execute_hook:862 - run-hooks: event=PreToolUse session_id=35731b78-566e-43e7-a7cc-5d5104f5ca1a run_id=None hook=ee4bb056a34b exit=2 timed_out=False stdout='' stderr='' took_ms=179
+--------------------------- Captured stderr teardown ---------------------------
+2026-11-04 20:38:24.587 | INFO     | tldw_chatbook.Agents.run_hooks:_execute_hook:862 - run-hooks: event=PreToolUse session_id=35731b78-566e-43e7-a7cc-5d5104f5ca1a run_id=None hook=67c701396a18 exit=0 timed_out=False stdout='' stderr='' took_ms=235
+2026-11-04 20:38:24.785 | INFO     | tldw_chatbook.Chat.console_runtime:_dispose_owned:6913 - Console trace compatibility totals: normalized_write=0 normalized_read=0 legacy_read=0 fallback_read=0 incomplete=0
+2026-11-04 20:38:24.893 | INFO     | tldw_chatbook.config:_load_settings_uncached:2301 - Determined ACTUAL_PROJECT_ROOT for general paths: /Users/macbook-dev/Documents/GitHub/tldw_chatbook/tldw_chatbook
+2026-11-04 20:38:24.895 | INFO     | tldw_chatbook.config:_load_settings_uncached:2304 - Determined APP_COMPONENT_ROOT for config files: /Users/macbook-dev/Documents/GitHub/tldw_chatbook/tldw_chatbook
+2026-11-04 20:38:24.899 | DEBUG    | tldw_chatbook.config:_load_settings_uncached:2327 - load_settings: Configuration loaded from disk (cache miss or forced reload)
+2026-11-04 20:38:24.901 | DEBUG    | tldw_chatbook.config:_load_settings_uncached:2645 - Darwin platform-preferred STT provider resolved to: faster-whisper
+2026-11-04 20:38:25.040 | DEBUG    | tldw_chatbook.config:_load_settings_uncached:3887 - Ensured chat dictionaries folder exists: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/tldw_test_config_h5b6srnn/home/.local/share/tldw_cli/default_user/chat_dicts
+2026-11-04 20:38:25.041 | DEBUG    | tldw_chatbook.config:_load_settings_uncached:3918 - load_settings: Configuration cached for future use
+______ test_parallel_finalization_joins_each_original_operation_return[1] ______
+Tests/Agents/test_native_legacy_hooks.py:331: in test_parallel_finalization_joins_each_original_operation_return
+    assert len(returned) == 2 and returned == entries
+E   assert (1 == 2)
+E    +  where 1 = len([<tldw_chatbook.Agents.execution_capacity.OwnedOperation object at 0x11adb18b0>])
+----------------------------- Captured stderr call -----------------------------
+2026-11-04 20:38:26.630 | INFO     | tldw_chatbook.Agents.run_hooks:_execute_hook:862 - run-hooks: event=PreToolUse session_id=fad3f9d8-6af8-40ac-91b2-dd8e5d400f3b run_id=None hook=ee4bb056a34b exit=2 timed_out=False stdout='' stderr='' took_ms=196
+2026-11-04 20:38:26.725 | INFO     | tldw_chatbook.Agents.run_hooks:_execute_hook:862 - run-hooks: event=PreToolUse session_id=fad3f9d8-6af8-40ac-91b2-dd8e5d400f3b run_id=None hook=69bcaa36b7cc exit=0 timed_out=False stdout='' stderr='' took_ms=273
+--------------------------- Captured stderr teardown ---------------------------
+2026-11-04 20:38:26.776 | INFO     | tldw_chatbook.Chat.console_runtime:_dispose_owned:6913 - Console trace compatibility totals: normalized_write=0 normalized_read=0 legacy_read=0 fallback_read=0 incomplete=0
+2026-11-04 20:38:26.910 | INFO     | tldw_chatbook.config:_load_settings_uncached:2301 - Determined ACTUAL_PROJECT_ROOT for general paths: /Users/macbook-dev/Documents/GitHub/tldw_chatbook/tldw_chatbook
+2026-11-04 20:38:26.913 | INFO     | tldw_chatbook.config:_load_settings_uncached:2304 - Determined APP_COMPONENT_ROOT for config files: /Users/macbook-dev/Documents/GitHub/tldw_chatbook/tldw_chatbook
+2026-11-04 20:38:26.924 | DEBUG    | tldw_chatbook.config:_load_settings_uncached:2327 - load_settings: Configuration loaded from disk (cache miss or forced reload)
+2026-11-04 20:38:26.932 | DEBUG    | tldw_chatbook.config:_load_settings_uncached:2645 - Darwin platform-preferred STT provider resolved to: faster-whisper
+2026-11-04 20:38:27.133 | DEBUG    | tldw_chatbook.config:_load_settings_uncached:3887 - Ensured chat dictionaries folder exists: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/tldw_test_config_h5b6srnn/home/.local/share/tldw_cli/default_user/chat_dicts
+2026-11-04 20:38:27.134 | DEBUG    | tldw_chatbook.config:_load_settings_uncached:3918 - load_settings: Configuration cached for future use
+- generated xml file: /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.superpowers/sdd/2026-11-01-native-phased-agent-workflows-implementation/task-10-hook_ordinals/tests.xml -
+============================= slowest 25 durations =============================
+1.48s call     Tests/Agents/test_native_legacy_hooks.py::test_parallel_finalization_joins_each_original_operation_return[1]
+1.42s call     Tests/Agents/test_native_legacy_hooks.py::test_parallel_finalization_joins_each_original_operation_return[0]
+
+(4 durations < 1s hidden.)
+=========================== short test summary info ============================
+FAILED Tests/Agents/test_native_legacy_hooks.py::test_parallel_finalization_joins_each_original_operation_return[0]
+FAILED Tests/Agents/test_native_legacy_hooks.py::test_parallel_finalization_joins_each_original_operation_return[1]
+2 failed in 6.58s

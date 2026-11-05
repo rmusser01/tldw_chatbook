@@ -256,3 +256,38 @@ def test_patch_worker_read_io_failure_reports_only_real_prior_effects(
         assert "earlier effects retained: patched a.txt" in frames[-1].error
         assert (tmp_path / "a.txt").read_bytes() == b"new\n"
     assert (tmp_path / "b.txt").read_bytes() == b"old\n"
+
+
+def test_simultaneous_native_edit_and_patch_preserve_one_complete_winner(
+    tmp_path, monkeypatch
+):
+    from threading import Barrier
+
+    target = tmp_path / "a.txt"
+    target.write_bytes(b"old\n")
+    ready = Barrier(2)
+    original = local_tool_impls._atomic_write_target
+
+    def both_observed(*args, **kwargs):
+        ready.wait(timeout=5)
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(local_tool_impls, "_atomic_write_target", both_observed)
+    monkeypatch.setattr(patch_tool_impls, "_atomic_write_target", both_observed)
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        edit = pool.submit(
+            _worker,
+            tmp_path,
+            "fs_edit",
+            {"path": "a.txt", "old_string": "old", "new_string": "edited"},
+        )
+        patch = pool.submit(
+            _worker, tmp_path, "fs_patch", {"diff": _diff("a.txt", new="patched")}
+        )
+        results = [edit.result(10)[-1], patch.result(10)[-1]]
+    assert sorted(result.outcome for result in results) == ["failure", "success"]
+    assert all(result.cleanup_proven for result in results)
+    assert target.read_bytes() in {b"edited\n", b"patched\n"}
+    assert "precondition failed" in next(
+        result.error for result in results if result.outcome == "failure"
+    )
