@@ -416,3 +416,37 @@ async def test_a_registry_read_that_keeps_failing_off_loop_publishes_once(regist
         assert not view.install(view._generation, {("workspaces",): shown})
     finally:
         await _settle(screen)
+
+
+@pytest.mark.asyncio
+async def test_a_control_bar_sync_reads_a_moved_registry_live_during_a_run(
+    registry, monkeypatch
+):
+    """TASK-36511.2 review: the control-bar syncs' shared build reads live.
+
+    They share one context build the way a run tick does, but a workspace
+    the user just created or switched to must show in the sync that follows
+    it, not on a later tick after an off-loop re-read lands.
+    """
+    from tldw_chatbook.UI.Screens.chat_screen import _workspace_build_scope
+
+    screen = _RunScreen()
+    workspace = _workspace_controller(
+        screen=screen,
+        app_instance=SimpleNamespace(workspace_registry_service=registry),
+    )
+    screen._workspace = workspace
+    view = workspace._console_registry_reads_view()
+    view.list_workspaces()
+    registry.create_workspace(workspace_id="beta", name="Beta")
+    monkeypatch.setattr(
+        workspace, "_build_console_workspace_context_state", view.list_workspaces
+    )
+    monkeypatch.setattr(workspace, "_console_workspace_build_fingerprint", lambda: None)
+    try:
+        with _workspace_build_scope(screen):
+            shown = workspace._console_tick_builds.state()
+        assert "beta" in {item.workspace_id for item in shown}
+        assert not screen.workers, "the control-bar build started an off-loop re-read"
+    finally:
+        await _settle(screen)

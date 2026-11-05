@@ -349,3 +349,176 @@ async def test_the_acceptance_projection_clears_now_and_restyles_send_after(
         assert send.disabled
         assert send.has_class("console-send-inactive")
         assert not send.has_class("console-send-ready")
+
+
+@pytest.mark.asyncio
+async def test_a_focus_change_restyles_the_bar_and_its_draft_text_only(monkeypatch):
+    """TASK-36511.2: a focus change restyles the bar and its draft text, not its subtree.
+
+    Textual's ``Widget.watch_has_focus`` restyles the focused widget's whole
+    subtree. On origin/dev bb80905eb3 each focus move onto or off the bar
+    restyled its 27 nodes: 8-13 ms of CPU in the compact gates' attach, up
+    to 98 ms of wall at load 17-34, and the 135 ms gate failure TASK-36511
+    recorded.
+    """
+    host = _ready_host()
+    async with host.run_test(size=(160, 45)) as pilot:
+        composer = await _mounted_composer(host, pilot)
+        screen = host.screen_stack[-1]
+        await pilot.pause()
+        outside = next(
+            widget
+            for widget in screen.focus_chain
+            if widget is not composer and composer not in widget.ancestors
+        )
+        draft_text = composer.query_one("#console-command-visible-text")
+        others = {
+            id(node) for node in composer.walk_children() if node is not draft_text
+        }
+        assert len(others) > 10
+
+        def moved(focused: bool):
+            # The Console's activation focus restore can hand focus back to
+            # the bar after it leaves, so move it again until it stays.
+            def check() -> bool:
+                if composer.has_focus is not focused:
+                    screen.set_focus(composer if focused else outside)
+                return composer.has_focus is focused
+
+            return check
+
+        await _wait_until(pilot, moved(True), "the bar to take focus")
+        applied = _spy_restyles(host, monkeypatch)
+        for focused in (False, True, False):
+            applied.clear()
+            await _wait_until(pilot, moved(focused), f"focus={focused}")
+            restyled = [
+                f"{type(n).__name__}#{n.id}" for n in applied if id(n) in others
+            ]
+            assert not restyled, (
+                f"a focus change restyled {len(restyled)} composer descendants "
+                f"no focus rule styles: {sorted(set(restyled))}"
+            )
+            assert any(node is composer for node in applied)
+            targeted = _composer_styles(composer)
+            host.update_styles(composer)
+            assert _composer_styles(composer) == targeted, f"focused={focused}"
+
+
+def _compounds(selectors: list) -> list[list]:
+    """Split a selector into its compound selectors, left to right."""
+    compounds: list[list] = [[]]
+    for part in selectors:
+        if compounds[-1] and part.combinator != CombinatorType.SAME:
+            compounds.append([])
+        compounds[-1].append(part)
+    return compounds
+
+
+def _could_match(parts: list, node, classes: set[str]) -> bool:
+    """Whether a compound's type, id and class parts can all match ``node``."""
+    for part in parts:
+        if part.type == SelectorType.TYPE and part.name not in node._css_type_names:
+            return False
+        if part.type == SelectorType.ID and part.name != node.id:
+            return False
+        if part.type == SelectorType.CLASS and part.name not in classes:
+            return False
+    return True
+
+
+#: Pseudo-classes a focus change on the bar flips on the bar itself.
+_BAR_FOCUS_PSEUDO = frozenset({"focus", "focus-within", "blur"})
+
+
+@pytest.mark.asyncio
+async def test_rules_keyed_on_the_bars_focus_style_only_the_declared_nodes():
+    """Guard for the scoped focus restyle above (TASK-36511.2).
+
+    The bar's focus watcher restyles only the bar and
+    ``INTERACTION_STYLED_DESCENDANTS``. That is exact only while:
+
+    * every rule keyed on the bar's ``:focus``, ``:focus-within`` or
+      ``:blur`` above its subject styles one of those nodes. The bar is
+      matched with every class it can carry: its own, its state classes,
+      and any class a rule pairs with its id or type;
+    * no rule keyed on an ancestor's ``:focus-within`` styles another
+      composer descendant (Textual's focus-within pass restyles the
+      subtree of the topmost ancestor of the focused or blurred widget
+      that is the subject of a ``:focus-within`` rule, which never
+      contains a composer descendant subject);
+    * a focus rule on the bar itself sets no property its descendants read
+      from it.
+    """
+    from Tests.UI.test_console_projection_restyles import _ANCESTOR_READ_RULES
+
+    host = _ready_host()
+    async with host.run_test(size=(160, 45)) as pilot:
+        composer = await _mounted_composer(host, pilot)
+        rules = list(host.stylesheet.rules)
+        bar_classes = set(composer.classes) | set(
+            ConsoleComposerBar.INTERACTION_CLASSES
+        )
+        for rule in rules:
+            for selector_set in rule.selector_set:
+                for parts in _compounds(selector_set.selectors):
+                    if any(
+                        (part.type == SelectorType.ID and part.name == composer.id)
+                        or (
+                            part.type == SelectorType.TYPE
+                            and part.name == "ConsoleComposerBar"
+                        )
+                        for part in parts
+                    ):
+                        bar_classes |= {
+                            p.name for p in parts if p.type == SelectorType.CLASS
+                        }
+        allowed = {
+            selector.lstrip("#")
+            for selector in ConsoleComposerBar.INTERACTION_STYLED_DESCENDANTS
+        }
+        others = [n for n in composer.walk_children() if n.id not in allowed]
+        ancestors = list(composer.ancestors)
+        keyed, offenders, inherited = 0, [], []
+        for rule in rules:
+            declared = set(rule.styles.get_rules()) & _ANCESTOR_READ_RULES
+            for selector_set in rule.selector_set:
+                compounds = _compounds(selector_set.selectors)
+                subject = compounds[-1]
+                text = " ".join(part.css for part in selector_set.selectors)
+                for parts in compounds:
+                    pseudo = {name for part in parts for name in part.pseudo_classes}
+                    on_bar = bool(pseudo & _BAR_FOCUS_PSEUDO) and _could_match(
+                        parts, composer, bar_classes
+                    )
+                    on_ancestor = (
+                        parts is not subject
+                        and "focus-within" in pseudo
+                        and any(
+                            _could_match(parts, node, set(node.classes))
+                            for node in ancestors
+                        )
+                    )
+                    if not (on_bar or on_ancestor):
+                        continue
+                    keyed += 1
+                    if parts is subject:
+                        if declared:
+                            inherited.append(
+                                f"{text} {{{', '.join(sorted(declared))}}}"
+                            )
+                    elif on_bar:
+                        ids = {s.name for s in subject if s.type == SelectorType.ID}
+                        if not ids & allowed:
+                            offenders.append(text)
+                    elif any(_could_match(subject, n, set(n.classes)) for n in others):
+                        offenders.append(text)
+        assert keyed, "No rule keys on the composer's focus."
+        assert not offenders, (
+            "These rules style a composer node from its focus that the scoped "
+            f"focus restyle skips; add it to INTERACTION_STYLED_DESCENDANTS: {offenders}"
+        )
+        assert not inherited, (
+            "These composer focus rules set a property its descendants read "
+            f"from it: {inherited}"
+        )

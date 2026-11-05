@@ -322,6 +322,12 @@ expiry can happen inside the cache TTL without a new completion revision.
 Coverage: `Tests/UI/test_personas_subscription_readiness.py` and
 `Tests/UI/test_settings_subscription_readiness.py`.
 
+## A gate committed after a "changed?" early return keeps the poll hot (TASK-36511.4, 2026-11-05)
+
+**Incident.** The 0.25 s credential poll skips its readiness build when a cheap pre-gate (background status, revision, evidence version) is unchanged, and commits the pre-gate only "from a completed pass". The commit sat after `if snapshot == last_rendered: return`, so a pass that built readiness and found nothing to render never committed it. Whenever the pre-gate moved and the rendered snapshot did not (the snapshot carries the readiness status, not the background one), every later tick rebuilt readiness. A mounted probe found it only by letting the real timer run idle with an unparseable config: 9 UI-loop config rebuilds in 2.5 s on dev. The cold-read deferral being added did not change that (10).
+
+**What to do.** In a two-level gate, an unchanged inner result is a completed pass: commit the outer gate on that path too. Measure an idle poll with its real timer for a few seconds after one gate change, not only forced single ticks, which reset the gate themselves and so hide this.
+
 ## Start the transcript sync timer only after an active run status is set
 
 **TASK-33661, 2026-10-01.** Resend on a refused echo ran in a `console-run-*`

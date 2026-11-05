@@ -30,6 +30,7 @@ from tldw_chatbook.Widgets.Console.console_inspector_ownership import (
 )
 from tldw_chatbook.Widgets.Console.console_bounded_section import (
     ConsoleBoundedSection,
+    set_height_class,
 )
 from tldw_chatbook.Widgets.Console.console_inspector_section import (
     CONSOLE_RAIL_PRIOR_DISPLAY,
@@ -160,9 +161,8 @@ class ConsoleInspectorMore(Vertical):
         body = bodies.first(Vertical)
         body.display = self.open
         body.styles.display = "block" if self.open else "none"
-        self.remove_class(*(name for name in self.classes if name.startswith("h-")))
         self.set_styles(height=None)
-        self.add_class("h-auto" if self.open else "h-2")
+        set_height_class(self, "h-auto" if self.open else "h-2")
         for heading in body.query(".console-inspector-group-heading"):
             heading.can_focus = self.open
 

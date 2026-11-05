@@ -491,6 +491,73 @@ def test_a_mount_refresh_defers_a_cold_live_read_and_warms_it_off_the_loop(monke
     assert not screen._console_cold_read_deferrals, "a stale cold-episode entry"
 
 
+def test_the_credential_poll_defers_a_cold_read_once_and_then_stays_idle(monkeypatch):
+    """TASK-36511.4: the 0.25 s credential poll warms cold config off the loop.
+
+    A poll tick that found config cold rebuilt it on the UI loop through
+    ``run_console_config_sync`` (147-192 ms in a mounted Console at load 8).
+    Its first cold read per episode now defers and starts the readiness
+    projection's off-loop read, leaving the pre-gate open so the next tick
+    renders. A config that stays cold (an unparseable file) reads live on the
+    next tick and commits the pre-gate, and idle ticks then do nothing. That
+    held only when the snapshot changed: a pass whose snapshot was unchanged
+    returned before committing the pre-gate, so a background status change
+    the readiness snapshot does not carry rebuilt cold config every tick
+    (10 UI-loop rebuilds in 2.5 s, mounted, dev and the deferral alone).
+    """
+    from types import SimpleNamespace
+
+    from Tests.UI.test_console_credential_poll_gate import _screen
+    from tldw_chatbook import config
+    from tldw_chatbook.LLM_Calls import anthropic_subscription as subscription
+
+    screen, builds, _syncs, _state, _revision = _screen(monkeypatch)
+    screen._sync_console_control_bar = lambda: True  # The snapshot commits.
+    screen.app_instance = SimpleNamespace(app_config={"disk-loaded": True})
+    screen._console_config_snapshot_is_disk_loaded = bool
+    warm = {"settings": None}
+    monkeypatch.setattr(config, "_settings_cache_hit", lambda _path: warm["settings"])
+    monkeypatch.setattr(config, "_warm_config_cache_hit", dict)
+    live, kicked = [], []
+
+    def live_sync(sync, **_kwargs):  # The UI-loop rebuild route.
+        live.append(True)
+        sync()
+        return True
+
+    monkeypatch.setattr(config_sync, "run_console_config_sync", live_sync)
+    monkeypatch.setattr(
+        spend.ConsoleReadinessConfigProjection,
+        "for_screen",
+        classmethod(lambda cls, s: SimpleNamespace(run=lambda body: kicked.append(s))),
+    )
+
+    screen._poll_console_credential_readiness()
+    assert (len(builds), live) == (0, []), "the poll rebuilt cold config on the UI loop"
+    assert kicked == [screen], "the poll did not start the off-loop config read"
+    warm["settings"] = {}  # The projection's off-loop read warmed config.
+    screen._poll_console_credential_readiness()
+    assert (len(builds), live) == (1, []), "the warm retry did not render"
+
+    # An unparseable config.toml stays cold for good: one deferral per episode.
+    warm["settings"] = None
+    # A background status change reopens the pre-gate; the snapshot keeps it.
+    monkeypatch.setattr(
+        subscription,
+        "subscription_credential_status",
+        lambda *, background=False: "pending",
+    )
+    screen._poll_console_credential_readiness()
+    assert (len(builds), live, kicked) == (1, [], [screen] * 2)
+    screen._poll_console_credential_readiness()
+    assert (len(builds), live) == (2, [True]), "a still-cold tick deferred again"
+    for _ in range(3):
+        screen._poll_console_credential_readiness()
+    assert (len(builds), live, kicked) == (2, [True], [screen] * 2), (
+        "idle ticks kept reading cold config"
+    )
+
+
 class _UiLoopStarts:
     """Count starts of named code objects on the UI loop's thread (observed only).
 
@@ -947,3 +1014,42 @@ def test_a_closing_console_arms_no_replay_and_counts_no_refusal():
     ChatScreen._request_console_control_bar_sync(screen, delayed=delay)
     ChatScreen._request_console_control_bar_sync(screen)
     assert scheduled == [], "a closing Console armed a replay"
+
+
+@pytest.mark.asyncio
+async def test_a_control_bar_sync_builds_the_workspace_context_once(monkeypatch):
+    """TASK-36511.2: a control-bar sync shares one workspace-context build.
+
+    Outside a run tick, the sync's Inspector leg and its rail-state leg each
+    built the workspace context from the same inputs: 2 builds per sync,
+    5.8-6.9 ms of its 27-31 ms of CPU (mounted, load 15). The sync now opens
+    the tick's fingerprint-validated build scope, as ``settle_stopped_poll``
+    does, so the second leg reuses the first build. Each sync still builds
+    afresh: the scope ends with the sync.
+    """
+    from Tests.UI.test_console_native_chat_flow import _sync_console_control_bar_now
+    from tldw_chatbook.UI.Console_Modules import workspace
+
+    host, gateway, _timeline = build()
+    async with host.run_test(size=(160, 45)) as pilot:
+        console, _composer = await ready_console(host, pilot, gateway)
+        await _sync_console_control_bar_now(console)
+        builds = []
+        real = workspace.build_console_workspace_state
+
+        def counted(*args, **kwargs):
+            builds.append(True)
+            return real(*args, **kwargs)
+
+        monkeypatch.setattr(workspace, "build_console_workspace_state", counted)
+        syncs = (
+            console._sync_console_control_bar,
+            console._sync_console_rail_and_controls,
+        )
+        for sync in syncs:
+            for _ in range(2):
+                builds.clear()
+                assert sync() is not False, f"{sync.__name__} deferred"
+                assert len(builds) == 1, (
+                    f"{sync.__name__} built the workspace context {len(builds)} times"
+                )

@@ -1603,6 +1603,8 @@ Alt+I. The fix is the same two-node update, now one shared helper in
 scope one cue, grep the same helper for its siblings, and route a fourth through that
 helper rather than writing the pattern by hand again.
 
+**Fourth instance: geometry utility classes (TASK-36511.1, 2026-11-05).** The Console attach's allocation batch restyled 158 nodes. Each `add_class("h-auto")` on a just-mounted rail section restyled its subtree, and `ConsoleInspectorMore._apply_open` removed its `h-*` class and added the same one back: two subtree restyles for no change. A remove-then-add of one class always pays twice, even when the classes end where they started. `set_height_class` (`Widgets/Console/console_bounded_section.py`) swaps an `h-*` class in one batch and restyles only the node. Use it for `h-*` flips; its rule guard is in `Tests/UI/test_console_projection_restyles.py`.
+
 ## A batch of new widgets is laid out two or three times; pace by settled layout, not by size (TASK-33628.5.1, 2026-10-09)
 
 **Incident.** After the Console stopped mounting every later row, Undo of a

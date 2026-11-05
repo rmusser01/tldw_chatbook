@@ -22,6 +22,25 @@ MAX_SECTION_CONTENT_LINES = 20
 LOCAL_SCROLL_HINT = "▼ more — scroll"
 
 
+def set_height_class(node: Widget, name: str) -> None:
+    """Make ``name`` the node's only ``h-*`` class, restyling the node alone.
+
+    A class change restyles the node's whole subtree. The ``h-*`` rules set
+    only the node's own height (pinned by
+    ``Tests/UI/test_console_projection_restyles.py``), so only the node
+    restyles, and only when its classes change (TASK-36511.1).
+
+    Args:
+        node: The widget whose ``h-*`` class is swapped.
+        name: The ``h-*`` class to leave as the node's only height class.
+    """
+    before = node.classes
+    swap = {c: False for c in before if c.startswith("h-")}
+    node.update_classes({**swap, name: True}, update=False)
+    if node.classes != before and node.is_attached:
+        node.app.stylesheet.update_nodes([node], animate=True)
+
+
 class BoundedSectionViewport(VerticalScroll):
     """Native Textual viewport with a scroll-position observation seam."""
 

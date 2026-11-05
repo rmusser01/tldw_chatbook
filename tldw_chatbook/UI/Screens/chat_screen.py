@@ -1582,6 +1582,12 @@ def _send_acknowledgement() -> Any:
     return send_acknowledgement
 
 
+def _workspace_build_scope(screen: Any) -> Any:
+    """One shared, live-read workspace-context build (TASK-36511.2); bare surfaces have none."""
+    workspace = getattr(screen, "_workspace", None)
+    return getattr(workspace, "live_workspace_build_scope", contextlib.nullcontext)()
+
+
 def _console_screen_is_torn_down(screen: Any) -> bool:
     """Whether the screen or its app-owned Console runtime is closing.
 
@@ -10793,11 +10799,11 @@ class ChatScreen(BaseAppScreen):
                     readiness.subscription_status,
                     version,
                 )
-                if snapshot == self._console_credential_snapshot:
-                    return
-                self._sync_console_settings_summary()
-                if self._sync_console_control_bar():
-                    self._console_credential_snapshot = snapshot
+                if snapshot != self._console_credential_snapshot:
+                    self._sync_console_settings_summary()
+                    if self._sync_console_control_bar():
+                        self._console_credential_snapshot = snapshot
+                # TASK-36511.4: an unchanged snapshot is a completed pass too.
                 # Commit the pre-gate only from a completed pass (review
                 # finding): lock contention, a dropped deferred sync, or a
                 # build failure must leave it unset so the next tick
@@ -10809,6 +10815,12 @@ class ChatScreen(BaseAppScreen):
                 if not lock.acquire(blocking=False):
                     return  # The next credential tick retries with fresh state.
                 acquired.callback(lock.release)
+            if spend.defer_cold_live_read(self, "_poll_console_credential_readiness"):
+                # TASK-36511.4: warm config off the loop; the next tick renders.
+                spend.ConsoleReadinessConfigProjection.for_screen(self).run(
+                    lambda: None
+                )
+                return
             if config._settings_cache_hit(config._get_effective_config_path()) is None:
                 run_console_config_sync(
                     sync,
@@ -20935,9 +20947,11 @@ class ChatScreen(BaseAppScreen):
         """
         from ..Console_Modules.config_sync import run_console_presentation_sync
 
-        result = run_console_presentation_sync(
-            self, lambda: self._sync_console_control_bar_under_config(rail_state)
-        )
+        def sync() -> None:
+            with _workspace_build_scope(self):  # One context build, as on a tick.
+                self._sync_console_control_bar_under_config(rail_state)
+
+        result = run_console_presentation_sync(self, sync)
         if result is False:
             inspector_data._sync_console_pending_display(self)
         return result
@@ -20947,8 +20961,9 @@ class ChatScreen(BaseAppScreen):
         from ..Console_Modules.config_sync import run_console_presentation_sync
 
         def sync() -> None:
-            self._sync_console_settings_summary()
-            self._sync_console_control_bar_under_config(None)
+            with _workspace_build_scope(self):
+                self._sync_console_settings_summary()
+                self._sync_console_control_bar_under_config(None)
 
         result = run_console_presentation_sync(self, sync)
         if result is False:
