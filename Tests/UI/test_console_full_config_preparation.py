@@ -271,3 +271,68 @@ async def test_cancelled_full_keeps_original_config_read_owned_until_retirement(
     finally:
         await asyncio.gather(*tasks, return_exceptions=True)
         database.close()
+
+
+@pytest.mark.asyncio
+async def test_post_attach_full_keeps_screen_messages_moving_during_native_read(
+    monkeypatch, record_property
+):
+    from Tests.UI.test_console_attach_completion import _mounted_console
+    from Tests.UI.test_console_session_tab_close import ProductionConsoleHarness
+    from Tests.UI.test_console_tab_publication_maintenance import _awaiting, _loop_wait
+    from Tests.UI.test_destination_shells import _build_test_app
+    from tldw_chatbook.UI.Console_Modules.console_spend_projection import (
+        ConsoleReadinessConfigProjection,
+    )
+
+    app = _build_test_app()
+    app.app_config = config.load_settings()
+    app.chat_api_provider_value = "llama_cpp"
+    app.chat_api_model_value = "test-model"
+    host = ProductionConsoleHarness(app)
+    original = ConsoleReadinessConfigProjection.warm
+    gate = None
+    held = False
+
+    async def cold_post_attach(projection):
+        nonlocal gate, held
+        screen = projection.screen
+        if screen._console_attach_view_started and not held:
+            held = True
+            # A replacement App config snapshot needs its own checked display read.
+            app.app_config = dict(app.app_config)
+            with _held_original_config_read() as current:
+                gate = current
+                return await original(projection)
+        return await original(projection)
+
+    monkeypatch.setattr(ConsoleReadinessConfigProjection, "warm", cold_post_attach)
+    async with _mounted_console(host) as pilot:
+        try:
+            assert await _loop_wait(lambda: gate is not None and gate[0].is_set()), {
+                "held": held,
+                "gate": gate,
+                "attached": getattr(host.screen, "_console_attach_reconciled", None),
+                "sections": tuple(app.app_config),
+            }
+            screen = host.screen
+            state = gate[2][0]
+            assert state.active, "the original checked read must still own its leases"
+            record_property("held_screen_await_chain", _awaiting(screen._task))
+            delivered = []
+            screen.call_later(delivered.append, True)
+            assert await _loop_wait(lambda: delivered == [True], timeout=1), (
+                "post-attach FULL parked the screen message pump on a native read",
+                _awaiting(screen._task),
+            )
+            assert state.active, "screen responsiveness was measured after release"
+        finally:
+            if gate is not None:
+                gate[1].set()
+                assert await _loop_wait(
+                    lambda: (
+                        all(not state.active for state in gate[2])
+                        and not host.screen._console_sync_in_progress
+                    )
+                )
+                await pilot.pause()

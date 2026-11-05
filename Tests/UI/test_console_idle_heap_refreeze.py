@@ -16,6 +16,7 @@ collector calls.
 from __future__ import annotations
 
 import asyncio
+import contextvars
 import gc
 import weakref
 from types import SimpleNamespace
@@ -41,25 +42,37 @@ pytestmark = pytest.mark.bootstrap_profile
 
 
 class BusySampler:
-    """Reads the Console's busy check on every loop turn until stopped.
+    """Observe every actual loop turn without scheduling additional turns."""
 
-    Two probes can miss a gap between hand-offs (press to admission,
-    admission to custody, custody to the transcript poll); a re-freeze that
-    found one would land inside the send window.
-    """
+    _MISSING = object()
 
     def __init__(self, console) -> None:
         self.samples: list[bool] = []
-        self._console = console
-        self._task = asyncio.get_running_loop().create_task(self._run())
+        self._loop = asyncio.get_running_loop()
+        self._previous = self._loop.__dict__.get("_run_once", self._MISSING)
+        original = self._loop._run_once
+        context = contextvars.copy_context()
+        self._active = True
 
-    async def _run(self) -> None:
-        while True:
-            self.samples.append(console_transcript._console_heap_busy(self._console))
-            await asyncio.sleep(0)
+        def sample():
+            self.samples.append(console_transcript._console_heap_busy(console))
+
+        def observe():
+            if self._active:
+                context.run(sample)
+            original()
+
+        self._observe = observe
+        sample()
+        self._loop._run_once = observe
 
     def stop(self) -> None:
-        self._task.cancel()
+        self._active = False
+        if self._loop._run_once is self._observe:
+            if self._previous is self._MISSING:
+                del self._loop._run_once
+            else:
+                self._loop._run_once = self._previous
 
 
 def sending(console) -> bool:
@@ -318,8 +331,10 @@ async def test_mounted_received_custody_blocks_completion_and_idle_timer_reclaim
             # A prior run-settled timer can reclaim the cycle before this
             # warmup request fires. Observe both outcomes within the same bound.
             await until(
-                lambda: reference() is None
-                and ("refreeze", "first_send_preimport") in refreezer.actions,
+                lambda: (
+                    reference() is None
+                    and ("refreeze", "first_send_preimport") in refreezer.actions
+                ),
                 timeout=10,
             )
             assert ("refreeze", "first_send_preimport") in refreezer.actions
@@ -451,6 +466,89 @@ def test_a_new_chat_gaining_its_conversation_id_is_not_a_switch(
 
     screen.conversation = "c2"  # a real switch in the same tab
     console_transcript.note_console_conversation_painted(screen)
-    assert (
-        refreezer.compaction_due()
-    ), "the rows frozen while the new chat was shown were left stranded"
+    assert refreezer.compaction_due(), (
+        "the rows frozen while the new chat was shown were left stranded"
+    )
+
+
+def test_busy_sampler_observes_idle_loop_turns_without_making_work(
+    monkeypatch, record_property
+):
+    async def probe():
+        loop = asyncio.get_running_loop()
+        select = loop._selector.select
+        blocking_waits = polls = 0
+
+        def observe_select(timeout=None):
+            nonlocal blocking_waits, polls
+            polls += 1
+            if timeout is None or timeout > 0:
+                blocking_waits += 1
+            return select(timeout)
+
+        monkeypatch.setattr(loop._selector, "select", observe_select)
+        sampler = BusySampler(BusyScreen())
+        try:
+            await asyncio.sleep(0.03)
+        finally:
+            sampler.stop()
+        record_property("selector_polls", polls)
+        record_property("blocking_waits", blocking_waits)
+        assert sampler.samples
+        assert blocking_waits, f"sampler manufactured {polls} continuously ready turns"
+
+    # Own a real selector loop on every platform, including Windows Proactor hosts.
+    with asyncio.Runner(loop_factory=asyncio.SelectorEventLoop) as runner:
+        runner.run(probe())
+
+
+async def test_busy_sampler_retains_a_real_turn_gap_and_stops_observing():
+    screen = BusyScreen()
+    flight = object()
+    screen._console_send_flight.tasks.add(flight)
+    sampler = BusySampler(screen)
+    try:
+        await asyncio.sleep(0)
+        assert sampler.samples and all(sampler.samples)
+        screen._console_send_flight.tasks.remove(flight)
+        await asyncio.sleep(0)
+        await asyncio.sleep(0)
+        assert False in sampler.samples, "a real idle turn between owners was missed"
+        screen._console_pending_send = object()
+        await asyncio.sleep(0)
+        await asyncio.sleep(0)
+        assert sampler.samples[-1] is True
+    finally:
+        sampler.stop()
+    stopped = len(sampler.samples)
+    await asyncio.sleep(0)
+    await asyncio.sleep(0)
+    assert len(sampler.samples) == stopped
+
+
+async def test_busy_sampler_restores_its_hook_without_clobbering_a_later_owner():
+    loop = asyncio.get_running_loop()
+    previous = loop.__dict__.get("_run_once", BusySampler._MISSING)
+    sampler = BusySampler(BusyScreen())
+    sampler.stop()
+    assert loop.__dict__.get("_run_once", BusySampler._MISSING) is previous
+
+    sampler = BusySampler(BusyScreen())
+    observed = loop._run_once
+
+    def later_owner():
+        observed()
+
+    loop._run_once = later_owner
+    try:
+        sampler.stop()
+        assert loop._run_once is later_owner
+        stopped = len(sampler.samples)
+        await asyncio.sleep(0)
+        await asyncio.sleep(0)
+        assert len(sampler.samples) == stopped
+    finally:
+        if previous is BusySampler._MISSING:
+            del loop._run_once
+        else:
+            loop._run_once = previous

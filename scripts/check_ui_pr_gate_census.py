@@ -826,6 +826,8 @@ MINIMUM_FILES = 1698
 MINIMUM_FILES = 1700
 # Shared Console integration retains all upstream and feature entries.
 MINIMUM_FILES = 1705
+# Keep the post-attach native-read regression and every incoming dev entry.
+MINIMUM_FILES = 1706
 
 
 def read_census(path: Path) -> list[str]:

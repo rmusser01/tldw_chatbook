@@ -287,8 +287,6 @@ class FeatureGlueMixin:
             worker = None  # direct calls in tests/harnesses run un-cancellable
         should_abort = (lambda: worker.is_cancelled) if worker is not None else None
 
-        from tldw_chatbook import config as config_module
-
         try:
             # Use the App-selected database; an absent owner must not create one.
             db = getattr(self, "chachanotes_db", None)
