@@ -3009,6 +3009,9 @@ def build_console_controllers(
             lambda: screen._character._current_console_rail_conversation_id()
         ),
         current_rail_state_accessor=lambda: screen._current_console_rail_state(),
+        current_agent_section_open_accessor=(
+            lambda: screen._current_console_agent_section_open()
+        ),
         reveal_agent_detail=_reveal_agent_detail,
         # `getattr` with a default, matching the pre-move body: the fleet
         # summary line is reachable on a screen that has never built a chat
