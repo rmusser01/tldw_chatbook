@@ -1001,6 +1001,8 @@ MINIMUM_FILES = 2034
 
 # TASK-36769: the roster also includes both conversation-row P0 selectors.
 # Retain the post-attach native-read responsiveness case.
+# PR #3345: retain every relocated MCP workbench selector.
+MINIMUM_FILES = 2198
 
 
 def read_census(path: Path) -> list[str]:
