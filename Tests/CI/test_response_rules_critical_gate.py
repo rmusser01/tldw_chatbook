@@ -110,6 +110,7 @@ INHERITED = {
     ],
     "Run Dreams and Guardian boundary contracts": [
         "pytest",
+        "Tests/Backup_Recovery/test_async_file_participant_lifetimes.py",  # TASK-38759, first
         "Tests/Dreams/test_dispatch_currentness.py",
         "Tests/Dreams/test_cycle_service.py::test_mixed_profile_cycle_keeps_topic_and_goal_stories_without_changing_budgets",
         "Tests/Dreams/test_cycle_service.py::test_no_goal_mark_or_list_marker_ever_reaches_the_search",
@@ -134,6 +135,7 @@ INHERITED = {
         "Tests/Architecture/test_guarded_modal_quit_census.py",  # TASK-38747
         "Tests/Chat/test_console_rail_state_prune.py",  # TASK-38722
         "Tests/Backup_Recovery/test_guarded_raw_evidence_reuse.py",  # TASK-38758
+        "Tests/LLM_Management/test_vllm_profiles.py",  # TASK-38759
         "--timeout=180",
         "--tb=short",
     ],

@@ -18,6 +18,12 @@
 
 **What to do.** In a test that holds a send before acceptance, expect the draft to still be in the composer and in the estimate. Compare with the pre-press value, not with 0. To prove a timer did not fire, mock the timer's own callback, not the syncs it calls. Everything else calls those syncs too.
 
+## A local-pause test passes alone and fails in a shared lane step that leaks storage leases (TASK-38759, 2026-11-05)
+
+**Incident.** `Tests/Backup_Recovery/test_async_file_participant_lifetimes.py` passed 3 of 3 under `-n 4` and serially alone. Appended to dreams-boundary's sandboxed step, it lost 3 nodes, all at `assert pause.drain(...)`. A local pause drains every live lease in the process. A probe that printed `len(storage_admission._live_leases)` after each test (a `pytest.main(..., plugins=[...])` wrapper, so no file in the tree) found five Guardian nodes earlier in the step that leave one lease each. Bisecting the step's prefix got to one of them in five runs.
+
+**What to do.** A test that pauses or drains process-wide storage cannot share a pytest process with earlier tests that leak leases. Run it in the step's exact order before calling it laned, and if it fails there, either lead the step with it or fix the leak. The live-lease count per test points to the leaking tests faster than bisecting.
+
 ## A counter that wraps a reader turns off a cache that checks its readers' identity (TASK-38758, 2026-11-05)
 
 **Incident.** 40 of the 54 nodes in `Tests/Backup_Recovery/test_guarded_raw_evidence_reuse.py` were red on dev for three weeks with "oracle cache never engaged" and "still derives". The cache was fine. To count derivations, the test replaced `bootstrap.startup_permission`, `Admission._read` and five other seams with call-through wrappers. Since 3e618d7119 (2026-10-15), the witness and pause reuse paths decline reuse when any reader they would skip is not the stock function (`_witness_metadata_current`, `_pause_metadata_current` compare `__code__`, globals and closures). So installing the counter turned the cache off, and the counter then counted the fallback. Forcing either guard to return False reproduced the dev counts exactly. Counting the same seams by code identity with `sys.monitoring` PY_START, without replacing them, made all 54 pass, and disabling reuse turned them red again.
