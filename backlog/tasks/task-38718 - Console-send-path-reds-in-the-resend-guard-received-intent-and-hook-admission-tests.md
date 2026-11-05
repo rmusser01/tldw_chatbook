@@ -5,7 +5,7 @@ status: Done
 assignee:
   - '@claude'
 created_date: 2026-11-04 00:59
-updated_date: 2026-11-05 11:05
+updated_date: 2026-11-05 11:40
 labels:
 - follow-up
 - console
@@ -91,7 +91,11 @@ No open task names any of the seven nodes above.
 - **`retire_captured_drafts` is pinned again.** New test: `test_a_press_held_on_a_non_append_edit_of_a_sent_draft_is_not_sent` in the resend-guard file. The sequence is Enter, a tab round trip, Home, "x", then Enter again during admission.
   - The round trip gives the draft a new generation, so the second press is held rather than refused. The first send's commit cannot take its text out, so it retires the draft, and the held press is dropped.
   - With `_spent_generations.append(self._draft_generation)` removed from `retire_captured_drafts`, it was red 2 of 2: the held press sent `'xacknowledge this send'` a second time.
-  - Green with the line, and the whole file passed 18/18. No PR lane runs this file.
+  - Green with the line, and the whole file passed 18/18.
+  - The file is now on the UI PR lane as 15 node entries at the census tail, one per test, with `MINIMUM_FILES` raised to 1386.
+    - Serially, the whole file took 113-118 s in three runs at load 5-6, over the 30 s per-file budget.
+    - Each test takes 5-15 s serially, a parametrized test's cases together.
+    - The census checker, the Tests/CI census tests (423 passed) and preflight all passed.
 - **Not mine.** Four `Tests/UI/test_console_send_acknowledgement_extended.py` nodes fail on base and head alike: refused_admission_rolls_back, turn_refused_before_its_echo, failed_durable_commit, and second_enter_during_admission.
 <!-- SECTION:NOTES:END -->
 

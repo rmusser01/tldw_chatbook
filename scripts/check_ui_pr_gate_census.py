@@ -795,6 +795,10 @@ MINIMUM_FILES = 1666
 # TASK-38714 (2026-11-05): append the Settings ▸ Agents worker-connection
 # node at the tail. The floor is the measured entry count.
 MINIMUM_FILES = 1667
+# TASK-38718 review (2026-11-05): append the Console resend guard's fifteen
+# tests as node entries at the tail (the file runs 113-118 s serially).
+# The floor is the measured entry count.
+MINIMUM_FILES = 1682
 
 
 def read_census(path: Path) -> list[str]:
