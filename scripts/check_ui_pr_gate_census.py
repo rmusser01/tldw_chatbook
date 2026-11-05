@@ -1000,6 +1000,7 @@ MINIMUM_FILES = 2029
 MINIMUM_FILES = 2034
 
 # TASK-36769: the roster also includes both conversation-row P0 selectors.
+# Retain the post-attach native-read responsiveness case.
 
 
 def read_census(path: Path) -> list[str]:
