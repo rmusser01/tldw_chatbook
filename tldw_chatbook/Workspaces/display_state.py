@@ -302,6 +302,43 @@ class LibraryWorkspaceDepthState:
     recovery_copy: str = ""
 
 
+#: TASK-36571.1: the workspace labels ``build_console_workspace_state`` gives
+#: a missing or unreadable registry, and a registry with no active workspace.
+CONSOLE_WORKSPACE_LABEL_UNAVAILABLE = "No workspace selected"
+CONSOLE_WORKSPACE_LABEL_LOCAL_DEFAULT = "Workspace: Local Default"
+
+
+def _console_active_workspace_label(active_workspace: WorkspaceRecord) -> str:
+    return f"Workspace: {active_workspace.name}"
+
+
+def console_workspace_label(registry_service: Any) -> str:
+    """Return ``build_console_workspace_state``'s workspace label alone.
+
+    TASK-36571.1: the label depends only on the registry's active workspace,
+    so the surfaces that show nothing else of the build (the rail badge and
+    the Inspector's conversation rows) read it with one display read instead
+    of the whole Conversations browser build. A raised read gets the
+    build's unreadable-registry label; the build logs that failure.
+
+    Args:
+        registry_service: The same registry service (or display-read view)
+            the build reads.
+
+    Returns:
+        The label the build would show for this registry right now.
+    """
+    if registry_service is None:
+        return CONSOLE_WORKSPACE_LABEL_UNAVAILABLE
+    try:
+        active_workspace = registry_service.get_active_workspace()
+    except Exception:  # noqa: BLE001 - the build's degraded label; it logs.
+        return CONSOLE_WORKSPACE_LABEL_UNAVAILABLE
+    if active_workspace is None:
+        return CONSOLE_WORKSPACE_LABEL_LOCAL_DEFAULT
+    return _console_active_workspace_label(active_workspace)
+
+
 def build_console_workspace_state(
     *,
     registry_service: Any,
@@ -348,7 +385,7 @@ def build_console_workspace_state(
         acp_state = _acp_handoff_state(acp_handoff_state)
         return ConsoleWorkspaceContextState(
             heading="Convos & Workspaces",
-            workspace_label="No workspace selected",
+            workspace_label=CONSOLE_WORKSPACE_LABEL_UNAVAILABLE,
             workspace_name="",
             scope_label=scope_label,
             scope_detail=scope_detail,
@@ -384,7 +421,7 @@ def build_console_workspace_state(
         acp_state = _acp_handoff_state(acp_handoff_state)
         return ConsoleWorkspaceContextState(
             heading="Convos & Workspaces",
-            workspace_label="No workspace selected",
+            workspace_label=CONSOLE_WORKSPACE_LABEL_UNAVAILABLE,
             workspace_name="",
             scope_label=scope_label,
             scope_detail=scope_detail,
@@ -417,7 +454,7 @@ def build_console_workspace_state(
         acp_state = _acp_handoff_state(acp_handoff_state)
         return ConsoleWorkspaceContextState(
             heading="Convos & Workspaces",
-            workspace_label="Workspace: Local Default",
+            workspace_label=CONSOLE_WORKSPACE_LABEL_LOCAL_DEFAULT,
             workspace_name="Local Default",
             scope_label=scope_label,
             scope_detail=scope_detail,
@@ -471,7 +508,7 @@ def build_console_workspace_state(
     acp_state = _acp_handoff_state(acp_handoff_state)
     return ConsoleWorkspaceContextState(
         heading="Convos & Workspaces",
-        workspace_label=f"Workspace: {active_workspace.name}",
+        workspace_label=_console_active_workspace_label(active_workspace),
         workspace_name=active_workspace.name,
         active_workspace_id=str(active_workspace.workspace_id),
         workspace_id=active_workspace.workspace_id,
