@@ -1278,6 +1278,7 @@ MINIMUM_FILES = 2528
 MINIMUM_FILES = 2546
 
 # TASK-36769: the roster also includes both conversation-row P0 selectors.
+# Retain the post-attach native-read responsiveness case.
 
 
 MINIMUM_FILES = 2038
