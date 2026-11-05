@@ -33,6 +33,9 @@ from tldw_chatbook.UI.Watchlists_Modules.bulk_sources_modal import BulkSourcesMo
 from tldw_chatbook.Widgets.Console.console_exchange_export_dialog import (
     ConsoleExchangeExportDialog,
 )
+from tldw_chatbook.Widgets.Console.console_goal_setup_modal import (
+    ConsoleGoalSetupModal,
+)
 from tldw_chatbook.Widgets.Console.console_message_delete_receipt import (
     ConsoleMessageDeleteReceiptModal,
 )
@@ -40,10 +43,14 @@ from tldw_chatbook.Widgets.Console.console_model_popover import ConsoleModelPopo
 from tldw_chatbook.Widgets.Console.console_session_switcher_modal import (
     ConsoleSessionSwitcherModal,
 )
+from tldw_chatbook.Widgets.Console.response_rules_modal import ResponseRulesModal
 from tldw_chatbook.Widgets.Console.trace_export_dialog import TraceExportDialog
 from tldw_chatbook.Widgets.Console.trace_export_profile_ui import EXPORT_STILL_WRITING
 from tldw_chatbook.Widgets.Persona_Widgets.buddy_character_review import (
     BuddyCharacterReviewDialog,
+)
+from tldw_chatbook.Widgets.Persona_Widgets.portrait_region_editor import (
+    PortraitRegionEditor,
 )
 from tldw_chatbook.Widgets.quit_while_working import (
     QUIT_AGAIN_HINT,
@@ -78,6 +85,9 @@ _IN_FLIGHT = [
     (BulkSourcesModal, "_batch_posted", "sources"),
     # TASK-33628.5: a large message Delete (or its Undo) saving off the loop.
     (ConsoleMessageDeleteReceiptModal, "_working", "delete"),
+    # TASK-38747: a goal launch, and a portrait-region save.
+    (ConsoleGoalSetupModal, "_busy", "goal"),
+    (PortraitRegionEditor, "_saving", "portrait regions"),
 ]
 _IDS = [modal.__name__ for modal, _flag, _what in _IN_FLIGHT]
 
@@ -269,3 +279,25 @@ async def test_model_popover_with_nothing_to_lose_quits_without_asking(asked, st
 
     assert await ConsoleModelPopover.confirm_quit(screen) is True
     assert asked == []
+
+
+@pytest.mark.asyncio
+async def test_response_rules_ctrl_q_waits_for_a_test_and_asks_before_dropping_edits(
+    asked,
+):
+    """TASK-38747: Escape stays while a rule test or save runs, and asks
+    before it discards unsaved rule text, so Ctrl+Q does both too."""
+    busy, notices = _stand_in(_busy=True, _has_unsaved=lambda: True)
+    assert await ResponseRulesModal.confirm_quit(busy) is False
+    assert len(notices) == 1 and "response rule" in notices[0][0].lower()
+    assert asked == []
+
+    edited, notices = _stand_in(_busy=False, _has_unsaved=lambda: True)
+    assert await ResponseRulesModal.confirm_quit(edited) is False
+    assert asked == [(edited, "Your edits to this response rule are not saved.")]
+    assert notices == []
+
+    clean, notices = _stand_in(_busy=False, _has_unsaved=lambda: False)
+    assert await ResponseRulesModal.confirm_quit(clean) is True
+    assert notices == [] and len(asked) == 1
+

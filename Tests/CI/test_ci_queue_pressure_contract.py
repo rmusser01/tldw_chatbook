@@ -334,6 +334,10 @@ FAST_LANE_TARGETS = (
     # (pure AST, whole files). They were red on dev for weeks in no PR lane.
     "Tests/Chat/test_console_fork_transition_census.py",
     "Tests/Chat/test_console_semantic_mutation_inventory.py",
+    # TASK-38747: every modal that guards its own close has a Ctrl+Q decision
+    # (pure AST scan of the modal family, under 10 s serial, 3 of 3). It was
+    # red on dev in no PR lane.
+    "Tests/Architecture/test_guarded_modal_quit_census.py",
 )
 
 # PR2921: source-bound additions leave the original fast/admission argv intact.

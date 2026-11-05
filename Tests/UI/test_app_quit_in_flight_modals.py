@@ -35,6 +35,7 @@ import threading
 import pytest
 from textual.widgets import Button
 
+from Tests.Chat.test_response_rules_runtime import native as _native_fixture
 from Tests.UI.app_factory import _build_test_app
 from Tests.UI.test_app_quit_under_modal import (
     _dialogs_titled,
@@ -47,6 +48,9 @@ from Tests.UI.test_console_native_chat_flow import _configure_native_ready_conso
 from tldw_chatbook.Widgets.confirmation_dialog import ConfirmationDialog
 
 pytestmark = [pytest.mark.bootstrap_profile, pytest.mark.asyncio]
+
+# The real response-rule runtime over a temp store (TASK-38747's rule test).
+native = _native_fixture
 
 #: What the walk says when a modal is still working (TASK-33622.15).
 _STILL_WORKING = "Quit again once it finishes."
@@ -941,3 +945,180 @@ async def test_an_interview_discard_finishing_under_the_quit_question_closes_aft
         )
         assert cleanups == []
         assert app._exception is None
+
+
+# --- The census's later modals (TASK-38747) ------------------------------------
+# The guarded-modal census found five more modals that guard their own close.
+# These three hold work while they do, so Ctrl+Q answers as Escape does; the
+# census records why the other two lose nothing.
+
+
+async def test_ctrl_q_waits_for_a_goal_that_is_starting(monkeypatch):
+    """Escape and Cancel are refused while the goal setup's launch runs."""
+    from Tests.Agents.test_goal_models import request
+    from tldw_chatbook.Widgets.Console.console_goal_setup_modal import (
+        ConsoleGoalSetupModal,
+    )
+
+    starting, release = asyncio.Event(), asyncio.Event()
+    results: list[object] = []
+
+    async def held_start(_request, _launch_id):
+        starting.set()
+        await release.wait()
+        return "started"
+
+    app = _build_test_app(configured_default="chat")
+    _configure_native_ready_console(app)
+    cleanups = _recording_cleanup(app, monkeypatch)
+    async with app.run_test(size=(140, 44)) as pilot:
+        await _mounted_console(app, pilot)
+        modal = ConsoleGoalSetupModal(request(), start=held_start)
+        await app.push_screen(modal, callback=results.append)
+        await _until(pilot, lambda: app.screen is modal, "the goal setup")
+        modal.query_one("#goal-start", Button).press()
+        await _until(pilot, starting.is_set, "the goal launch to start")
+        assert modal._busy
+
+        await _assert_ctrl_q_waits_for(app, pilot, modal, cleanups, "goal")
+
+        release.set()
+        await _until(pilot, lambda: results == ["started"], "the setup to close")
+        await _assert_ctrl_q_quits(
+            app, pilot, cleanups, "Ctrl+Q to quit once the goal started"
+        )
+
+
+async def test_ctrl_q_waits_for_portrait_regions_being_saved(monkeypatch):
+    """Escape and Cancel are refused while the region editor saves.
+
+    The editor awaits its save inside the Save button's handler, so the
+    modal's message queue is busy for the whole save. Pilot waits for that
+    queue on every press and pause, so this test sends Ctrl+Q through the
+    app's own key path and polls with plain sleeps until the save ends.
+    Ctrl+Q is the app's priority binding: the app's queue handles it.
+    """
+    from Tests.Character_Chat.test_portrait_compositing import scene
+    from tldw_chatbook.Widgets.Persona_Widgets.portrait_region_editor import (
+        PortraitRegionEditor,
+    )
+
+    base, recipe, _components = scene()
+    saving, release = asyncio.Event(), asyncio.Event()
+    results: list[object] = []
+
+    async def held_save(_recipe) -> bool:
+        saving.set()
+        await release.wait()
+        return True
+
+    async def until(predicate, what: str) -> None:
+        try:
+            async with asyncio.timeout(5.0):
+                while not predicate():
+                    await asyncio.sleep(0.02)
+        except TimeoutError as exc:
+            raise AssertionError(f"timed out waiting for {what}") from exc
+
+    app = _build_test_app(configured_default="chat")
+    _configure_native_ready_console(app)
+    cleanups = _recording_cleanup(app, monkeypatch)
+    async with app.run_test(size=(140, 44)) as pilot:
+        await _mounted_console(app, pilot)
+        modal = PortraitRegionEditor(
+            base,
+            width=recipe.width,
+            height=recipe.height,
+            pixel_sha256=recipe.base_pixel_sha256,
+            recipe=recipe,
+            save=held_save,
+            is_current=lambda: True,
+        )
+        await app.push_screen(modal, callback=results.append)
+        save = modal.query_one("#portrait-regions-save", Button)
+        await _until(pilot, lambda: not save.disabled, "the three regions to validate")
+        save.press()
+        try:
+            await until(saving.is_set, "the regions to start saving")
+            assert modal._saving
+
+            await app._press_keys(["ctrl+q"])
+            await until(
+                lambda: bool(_still_working_notices(app)) or bool(cleanups),
+                "Ctrl+Q over the region editor mid-save to answer",
+            )
+            assert cleanups == [], (
+                "Ctrl+Q quit straight past PortraitRegionEditor while its "
+                "regions were still being saved"
+            )
+            notices = _still_working_notices(app)
+            assert len(notices) == 1 and "portrait regions" in notices[0].lower()
+            await until(
+                lambda: app._quit_in_progress is False,
+                "the quit guard to clear after the still-working answer",
+            )
+            assert app.screen is modal
+            assert not [
+                screen
+                for screen in app.screen_stack
+                if isinstance(screen, ConfirmationDialog)
+            ]
+            assert app._shutting_down is False
+        finally:
+            # Held, the save would keep the app from shutting down after a
+            # failure: the modal's queue never finishes the handler.
+            release.set()
+        await _until(pilot, lambda: results == [True], "the editor to close")
+        await _assert_ctrl_q_quits(
+            app, pilot, cleanups, "Ctrl+Q to quit once the regions were saved"
+        )
+
+
+async def test_ctrl_q_waits_for_a_rule_test_then_asks_before_discarding_edits(
+    monkeypatch, native
+):
+    """Escape stays while a rule test runs and asks before dropping edits."""
+    from textual.widgets import Input
+
+    from Tests.Chat.test_response_rules_runtime import seed
+    from Tests.UI.test_app_quit_under_modal import _ask_stay_then_quit
+    from tldw_chatbook.Widgets.Console.response_rules_modal import ResponseRulesModal
+
+    _owner, rules, _chats, session, gateway, _controller = native
+    seed(native)
+    gateway.reply = "Evidence: repaired"
+    learned = await rules.learn(session.id, "The answer omitted evidence")
+    assert learned.state == "active", learned.reason
+    testing, release = asyncio.Event(), asyncio.Event()
+    validate = rules.builder.validate_edit
+
+    async def held_validate(*args, **kwargs):
+        testing.set()
+        await release.wait()
+        return await validate(*args, **kwargs)
+
+    rules.builder.validate_edit = held_validate
+    app = _build_test_app(configured_default="chat")
+    _configure_native_ready_console(app)
+    cleanups = _recording_cleanup(app, monkeypatch)
+    async with app.run_test(size=(140, 44)) as pilot:
+        await _mounted_console(app, pilot)
+        modal = ResponseRulesModal(rules.scopes(session.id)[0], rules.store, rules)
+        await app.push_screen(modal)
+        await _until(pilot, lambda: modal._selected is not None, "the rule to load")
+        modal.query_one("#rr-title", Input).value = "Evidence required"
+        modal.query_one("#rr-test", Button).press()
+        await _until(pilot, testing.is_set, "the rule test to start")
+        assert modal._busy
+
+        await _assert_ctrl_q_waits_for(app, pilot, modal, cleanups, "response rule")
+
+        release.set()
+        await _until(pilot, lambda: not modal._busy, "the rule test to settle")
+
+        def kept() -> None:
+            assert modal.query_one("#rr-title", Input).value == "Evidence required"
+
+        await _ask_stay_then_quit(
+            app, pilot, modal, "Discard changes and quit?", cleanups, kept
+        )

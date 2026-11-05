@@ -460,6 +460,20 @@ class PortraitRegionEditor(SafeModalDismissMixin, ModalScreen[bool]):
         if not self._saving:
             self.retire()
 
+    async def confirm_quit(self) -> bool:
+        """Refuse Ctrl+Q while the regions save, as Cancel does (TASK-38747).
+
+        Returns:
+            True to let the quit proceed; False to stay.
+        """
+        if not self._saving:
+            return True
+        from ..quit_while_working import refuse_quit_while_working
+
+        return await refuse_quit_while_working(
+            self, "The portrait regions are still being saved."
+        )
+
     def retire(self) -> None:
         """Fence asynchronous preview completion before retiring its exact owner."""
         self._retired = True

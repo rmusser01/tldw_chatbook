@@ -434,6 +434,7 @@ jobs:
             Tests/Wizards/test_first_run_setup_state.py::TestSummaryThreeState::test_tools_row_off_detail_names_where_to_enable \
             Tests/Chat/test_console_fork_transition_census.py \
             Tests/Chat/test_console_semantic_mutation_inventory.py \
+            Tests/Architecture/test_guarded_modal_quit_census.py \
             --timeout=180 \
             --tb=short
 
