@@ -462,3 +462,127 @@ def test_the_variant_watcher_the_batched_restyle_mirrors_is_textuals():
     assert ast.dump(actual, include_attributes=False) == ast.dump(
         expected, include_attributes=False
     )
+
+
+def _height_classes(rules) -> set[str]:
+    """Every ``h-*`` utility class a rule's selector names."""
+    return {
+        part.name
+        for rule in rules
+        for selector_set in rule.selector_set
+        for part in selector_set.selectors
+        if part.type == SelectorType.CLASS and part.name.startswith("h-")
+    }
+
+
+@pytest.mark.asyncio
+async def test_an_allocation_pass_restyles_only_the_sections_it_reclasses(monkeypatch):
+    """TASK-36511.1: the left rail's prepare pass restyles each section, not its subtree.
+
+    The attach's first allocation pass adds ``h-auto`` to five bounded
+    sections; on origin/dev each add restyled the section's whole subtree,
+    about 110 nodes and 20-30 ms of CPU in the compact gates' batch. A
+    pass with nothing to reclass restyles nothing.
+    """
+    host = _ready_host()
+    async with host.run_test(size=(160, 45)) as pilot:
+        rail = await _mounted(host, pilot, "#console-left-rail")
+        await pilot.pause()
+        sections = [
+            section
+            for section in rail.query(".console-bounded-section")
+            if section.native_scroll_owner is None and section.has_class("h-auto")
+        ]
+        assert len(sections) >= 3, "too few auto-height sections to reclass"
+        for section in sections:  # The state a just-mounted section starts in.
+            section.remove_class("h-auto", update=False)
+        descendants = {id(node) for s in sections for node in s.walk_children()}
+        applied = _spy_restyles(host, monkeypatch)
+
+        rail._prepare_allocation_reconcile()
+
+        assert all(section.has_class("h-auto") for section in sections)
+        restyled = [node for node in applied if id(node) in descendants]
+        assert not restyled, (
+            f"the prepare pass restyled {len(restyled)} section descendants "
+            f"for {len(sections)} class changes"
+        )
+        assert sorted(map(id, applied)) == sorted(map(id, sections))
+        for section in sections:
+            targeted = _styles(section)
+            host.update_styles(section)
+            assert _styles(section) == targeted
+        applied.clear()
+        rail._prepare_allocation_reconcile()
+        assert not applied, "an unchanged prepare pass restyled nodes"
+
+
+@pytest.mark.asyncio
+async def test_an_unchanged_inspector_disclosure_restyles_nothing(monkeypatch):
+    """TASK-36511.1: ``ConsoleInspectorMore._apply_open`` restyles only on a change.
+
+    On origin/dev it removed its ``h-*`` class and added the same one back,
+    restyling its subtree twice (44 nodes) in every attach's allocation batch.
+    """
+    from tldw_chatbook.Widgets.Console.console_run_inspector import (
+        ConsoleInspectorMore,
+    )
+
+    host = _ready_host()
+    async with host.run_test(size=(235, 52)) as pilot:
+        more = await _mounted(host, pilot, "#console-inspector-more")
+        assert isinstance(more, ConsoleInspectorMore)
+        await pilot.pause()
+        descendants = {id(node) for node in more.walk_children()}
+        assert descendants
+        applied = _spy_restyles(host, monkeypatch)
+
+        more._apply_open()
+        assert not applied, f"an unchanged disclosure restyled {len(applied)} nodes"
+
+        for _ in range(2):
+            more.set_open(not more.open)
+            assert more.has_class("h-auto" if more.open else "h-2")
+            assert len([c for c in more.classes if c.startswith("h-")]) == 1
+            assert not [node for node in applied if id(node) in descendants]
+            assert [node for node in applied if node is more] == [more]
+            targeted = _styles(more)
+            host.update_styles(more)
+            assert _styles(more) == targeted
+            applied.clear()
+
+
+@pytest.mark.asyncio
+async def test_no_rule_styles_a_descendant_from_a_height_utility_class():
+    """Guard for the two node-only restyles above (TASK-36511.1).
+
+    Swapping a node's ``h-*`` utility class restyles that node alone, which
+    is exact only while no rule keys another node on an ``h-*`` class and no
+    ``h-*`` rule sets a property descendants read from the node. Today each
+    is a bare ``.h-<n> { height: ... }``.
+    """
+    host = _ready_host()
+    async with host.run_test(size=(235, 52)) as pilot:
+        await _mounted(host, pilot, "#console-inspector-more")
+        rules = list(host.stylesheet.rules)
+        variables = dict(host.stylesheet._variables)
+    classes = _height_classes(rules)
+    assert {"h-auto", "h-2"} <= classes
+    keyed, offenders, inherited = _ancestor_keyed(rules, classes)
+    for sheet in sorted(_CSS_DIR.glob("*.tcss")):
+        text = sheet.read_text(encoding="utf-8")
+        if ".h-" not in text:
+            continue
+        stylesheet = Stylesheet(variables=variables)
+        stylesheet.add_source(text, read_from=(str(sheet), ""))
+        stylesheet.parse()
+        sheet_classes = _height_classes(stylesheet.rules)
+        sheet_keyed, sheet_offenders, sheet_inherited = _ancestor_keyed(
+            stylesheet.rules, sheet_classes
+        )
+        keyed += sheet_keyed
+        offenders += [f"{sheet.name}: {selector}" for selector in sheet_offenders]
+        inherited += [f"{sheet.name}: {selector}" for selector in sheet_inherited]
+    assert keyed
+    assert not offenders, f"rules key a descendant on an h-* class: {offenders}"
+    assert not inherited, f"h-* rules set an ancestor-read property: {inherited}"

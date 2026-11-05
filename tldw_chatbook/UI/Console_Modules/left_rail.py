@@ -82,6 +82,7 @@ from ...Widgets.Console import (
     WorkspaceTreeExpansionChanged,
     WorkspaceTreeFocusRecoveryRequested,
 )
+from ...Widgets.Console.console_bounded_section import set_height_class
 from ...Widgets.Console.console_agent_steering_bar import (
     STEERING_BAR_ID,
     ConsoleAgentSteeringBar,
@@ -1513,7 +1514,7 @@ class ConsoleLeftRail(Vertical):
                 section.max_content_lines = adaptive_budget
             section.set_allocation(None)
             if section.native_scroll_owner is None:
-                section.add_class("h-auto")
+                set_height_class(section, "h-auto")
             section.request_reconcile()
         self.call_after_refresh(self._run_allocation_reconcile)
 
