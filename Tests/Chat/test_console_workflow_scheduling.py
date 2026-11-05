@@ -6877,6 +6877,8 @@ async def planning_release_integrity_journey(tmp_path, monkeypatch):
     )
 
     mode = sys.argv[2]
+    if mode in {"generator-preparation", "generator-terminal", "generator-sibling"}:
+        return await _planning_generator_journey(tmp_path, monkeypatch, mode)
     assert mode in {"source", "partial", "membership"}
     rig = await build_workflow_rig(
         tmp_path,
@@ -7325,3 +7327,320 @@ def test_planning_permanent_shutdown_fences_original_ordinary_notification(
         script=Path(__file__).with_name("workflow_coordinator_probe.py").read_text(),
         timeout=60,
     )
+
+
+async def _planning_generator_journey(tmp_path, monkeypatch, mode):
+    """Keep the actual first-send body distinct from a second same-runtime body."""
+    import inspect
+    import os
+    import sys
+    import traceback
+
+    from tldw_chatbook.Chat.console_chat_controller import (
+        capture_run_admitted_workspace_roots,
+    )
+    from tldw_chatbook.Chat.console_workflow_preparation import (
+        _planning_release_source,
+        _PreparedWorkflowReply,
+        prepare_workflow_planning,
+    )
+
+    rig = await build_workflow_rig(
+        tmp_path,
+        monkeypatch,
+        WorkflowProvider(),
+        public_coordinator=False,
+        native_fleet_consumers=True,
+    )
+    runtime, session = rig.runtime, rig.store.sessions()[0]
+    wake = rig.controller.fleet_wake
+    prepared = scope = original = other = None
+    primary = None
+    errors, notifications, retries = [], [], []
+    retry_code = type(wake).retry_soon.__code__
+    notify_code = _PreparedWorkflowReply._notify_planning_release.__code__
+    read_code = _PreparedWorkflowReply._read.__code__
+    source_code = _planning_release_source.__code__
+    print("PLANNING_GENERATOR_PROCESS", os.getpid(), os.getpgrp(), flush=True)
+
+    def enter_other(item, *, substitute):
+        nonlocal scope, original, other
+        assert other is None
+        scope = item._source_scope
+        original = scope.gen
+        acquisition = item._planning_configuration_acquisition
+        assert (
+            acquisition[0] is runtime
+            and acquisition[1] is runtime._workflow_preparations
+        )
+        assert acquisition[2] is scope and acquisition[3] is original
+        before = runtime._first_send_sources
+        other = runtime._first_send_source_scope()
+        other.__enter__()
+        assert other.gen is not original and other.gen.gi_code is original.gi_code
+        assert (
+            other.gen.gi_frame.f_locals["self"]
+            is original.gi_frame.f_locals["self"]
+            is runtime
+        )
+        assert (
+            inspect.getgeneratorstate(original)
+            == inspect.getgeneratorstate(other.gen)
+            == inspect.GEN_SUSPENDED
+        )
+        assert runtime._first_send_sources == before + 1
+        if substitute:
+            scope.gen = other.gen
+
+    def observe(frame, event, value):
+        if event != "call":
+            return
+        try:
+            if (
+                mode == "generator-preparation"
+                and frame.f_code is read_code
+                and other is None
+            ):
+                item = frame.f_locals["self"]
+                assert item.phase is None and item._planning_release_binding is None
+                assert frame.f_back.f_code is prepare_workflow_planning.__code__
+                assert frame.f_locals["callback"].__name__ == "select_native"
+                enter_other(item, substitute=True)
+            elif (
+                mode == "generator-terminal"
+                and frame.f_code is source_code
+                and prepared is not None
+                and prepared._planning_terminal_returned
+                and other is None
+            ):
+                assert frame.f_locals["binding"] is prepared._planning_release_binding
+                assert (
+                    frame.f_locals["slots_live"] is frame.f_locals["scope_live"] is True
+                )
+                assert (
+                    prepared.primary_owner.is_admitted
+                    and prepared._planning_intake is not None
+                )
+                enter_other(prepared, substitute=True)
+            elif frame.f_code is notify_code and frame.f_locals["self"] is prepared:
+                notifications.append(frame.f_locals["returned"])
+            elif frame.f_code is retry_code and frame.f_back.f_code is notify_code:
+                assert frame.f_locals["self"] is wake
+                assert (
+                    frame.f_back.f_locals["returned"]
+                    is prepared._planning_release_return
+                )
+                assert inspect.getgeneratorstate(original) == inspect.GEN_CLOSED
+                assert inspect.getgeneratorstate(other.gen) == inspect.GEN_SUSPENDED
+                assert runtime._first_send_sources > 0
+                retries.append(frame)
+        except BaseException as error:  # noqa: BLE001 - retain observer failures separately.
+            errors.append(error)
+
+    def retained_root():
+        owner, claim = prepared.primary_owner, prepared.primary_claim
+        assert owner.is_admitted and not owner._root_finished
+        assert runtime._worktree_activity._claims[claim.id].custody is claim
+        assert (
+            prepared._source_scope is scope
+            and prepared in runtime._workflow_preparations
+        )
+        assert not prepared._closed and not prepared._planning_settled
+        assert inspect.getgeneratorstate(original) == inspect.GEN_SUSPENDED
+        assert prepared._planning_token is wake._automatic_primary_claims[session.id]
+        assert prepared._planning_intake is rig.store.received_turn_for_session(
+            session.id
+        )
+        assert prepared._planning_release_return is None
+
+    try:
+        assert rig.coordinator is None and not hasattr(runtime, "_workflow_coordinator")
+        request = rig.workflow.request
+        binding = capture_run_admitted_workspace_roots(
+            session=session, registry=rig.service.persistence.workspace_registry
+        )[0]
+        assert sys.getprofile() is None
+        sys.setprofile(observe)
+        prepared = await prepare_workflow_planning(
+            rig.controller,
+            session_id=session.id,
+            binding=binding,
+            command_id=mode,
+            objective=request.objective,
+            policy=request.policy,
+            _request=request,
+        )
+        if mode == "generator-sibling":
+            enter_other(prepared, substitute=False)
+            result = await prepared.run_planning()
+            assert result.status == "awaiting_approval"
+            returned = prepared._planning_release_return
+            assert (
+                len(notifications) == len(retries) == 1 and notifications[0] is returned
+            )
+            assert (
+                returned[4][3]
+                is returned[0][21]
+                is prepared._planning_configuration_acquisition
+            )
+            assert returned[4][1] is scope and scope.gen is original
+            assert inspect.getgeneratorstate(original) == inspect.GEN_CLOSED
+            assert inspect.getgeneratorstate(other.gen) == inspect.GEN_SUSPENDED
+            print(
+                "ORIGINAL_PLANNING_GENERATOR_RETURNED_WITH_ACTIVE_SIBLING", flush=True
+            )
+        else:
+            with pytest.raises(
+                PermissionError,
+                match="^original planning configuration association changed$",
+            ) as refused:
+                await prepared.run_planning()
+            tb = refused.value.__traceback__
+            while tb.tb_next is not None:
+                tb = tb.tb_next
+            assert (
+                tb.tb_frame.f_code
+                is _PreparedWorkflowReply._planning_configuration_source.__code__
+            )
+            assert tb.tb_frame.f_locals["self"] is prepared
+            assert tb.tb_frame.f_locals["body"] is original
+            assert tb.tb_frame.f_locals["scope"] is scope and scope.gen is other.gen
+            release = prepared._planning_release_binding
+            assert release[21] is prepared._planning_configuration_acquisition
+            assert (
+                release[17] is prepared._source_scope is scope
+                and prepared in release[18]
+            )
+            assert (
+                release[13]
+                is prepared._planning_intake
+                is rig.store.received_turn_for_session(session.id)
+            )
+            assert (
+                release[14]
+                is prepared._planning_token
+                is wake._automatic_primary_claims[session.id]
+            )
+            assert (
+                inspect.getgeneratorstate(original)
+                == inspect.getgeneratorstate(other.gen)
+                == inspect.GEN_SUSPENDED
+            )
+            assert (
+                not notifications
+                and not retries
+                and prepared._planning_release_return is None
+            )
+            if mode == "generator-preparation":
+                assert (
+                    prepared.primary_owner is prepared.primary_claim is None
+                    and not rig.provider.calls
+                )
+                scope.gen = original  # Undo only the fixture assignment before the first unused close.
+                await prepared.close()
+                assert inspect.getgeneratorstate(original) == inspect.GEN_CLOSED
+                assert inspect.getgeneratorstate(other.gen) == inspect.GEN_SUSPENDED
+                assert (
+                    prepared._source_scope
+                    is prepared._planning_intake
+                    is prepared._planning_token
+                    is None
+                )
+                assert (
+                    prepared not in runtime._workflow_preparations
+                    and prepared._planning_release_return is None
+                )
+                print(
+                    "ORIGINAL_PREPHASE_GENERATOR_REFUSED_UNUSED_CLOSE_RETURNED",
+                    flush=True,
+                )
+            else:
+                read, producer, retired, callback = prepared._planning_read_return
+                assert (
+                    read.callback is callback
+                    and read.task is release[3]
+                    and read.source is prepared
+                )
+                assert read._producer is producer and read.retired is retired
+                assert (
+                    producer.done()
+                    and not producer.cancelled()
+                    and producer.exception() is None
+                )
+                assert (
+                    retired.done()
+                    and not retired.cancelled()
+                    and retired.result() is None
+                )
+                retained_root()
+                print("ORIGINAL_TERMINAL_GENERATOR_REFUSED", flush=True)
+        assert not hasattr(runtime, "_workflow_coordinator")
+        if errors:
+            raise errors[0]
+    except BaseException as error:
+        primary = error
+        raise
+    finally:
+        if sys.getprofile() is observe:
+            sys.setprofile(None)
+        try:
+            if other is not None:
+                if scope.gen is other.gen:
+                    scope.gen = original  # Restore the fixture field, never close the retained planner.
+                assert other.__exit__(None, None, None) is False
+                assert inspect.getgeneratorstate(other.gen) == inspect.GEN_CLOSED
+        finally:
+            try:
+                await rig.close()
+            except BaseException as cleanup_error:
+                if primary is not None:
+                    traceback.print_exception(cleanup_error)
+                    primary.add_note("Planning generator fixture cleanup also failed")
+                elif (
+                    mode == "generator-terminal"
+                    and type(cleanup_error) is AssertionError
+                ):
+                    tb = cleanup_error.__traceback__
+                    while tb.tb_next is not None:
+                        tb = tb.tb_next
+                    assert (
+                        tb.tb_frame.f_code is type(rig).close.__code__
+                        and tb.tb_frame.f_locals["self"] is rig
+                    )
+                    assert runtime._disposed
+                    retained_root()
+                    (execution,) = runtime.execution_capacity.snapshot().executions
+                    assert (
+                        execution.execution_id == prepared.primary_owner.execution_id
+                        and not execution.root_finished
+                    )
+                    traceback.print_exception(cleanup_error)
+                    print(
+                        "ORIGINAL_GENERATOR_ROOT_RETAINED_NO_CREATOR_RETURN", flush=True
+                    )
+                else:
+                    raise
+            else:
+                assert mode != "generator-terminal", (
+                    "unexpected retirement of retained original root"
+                )
+
+
+@pytest.mark.parametrize(
+    "mode", ["generator-preparation", "generator-terminal", "generator-sibling"]
+)
+def test_planning_configuration_returns_only_the_original_generator(tmp_path, mode):
+    args = tmp_path, "planning-integrity", mode
+    kwargs = {
+        "script": Path(__file__).with_name("workflow_coordinator_probe.py").read_text(),
+        "timeout": 60,
+    }
+    if mode == "generator-terminal":
+        _expect_retained_planning_child(
+            args,
+            kwargs,
+            "ORIGINAL_TERMINAL_GENERATOR_REFUSED",
+            "ORIGINAL_GENERATOR_ROOT_RETAINED_NO_CREATOR_RETURN",
+        )
+    else:
+        _run(*args, **kwargs)

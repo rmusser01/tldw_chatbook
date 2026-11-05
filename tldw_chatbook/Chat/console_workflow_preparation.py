@@ -104,7 +104,7 @@ def _planning_release_source(prepared, binding, *, scope_live=False, slots_live=
             for name, descriptor, records in _PLANNING_PREPARATION_METHODS
         )
         or type(binding) is not tuple
-        or len(binding) != 21
+        or len(binding) != 22
         or prepared._planning_release_binding is not binding
     ):
         raise PermissionError("original planning release source changed")
@@ -130,6 +130,7 @@ def _planning_release_source(prepared, binding, *, scope_live=False, slots_live=
         registry,
         received_lock,
         activity,
+        acquisition,
     ) = binding
     if (
         original is not prepared
@@ -190,30 +191,7 @@ def _planning_release_source(prepared, binding, *, scope_live=False, slots_live=
     _PLANNING_WAKE_SOURCE[0](wake)
     prepared._planning_read_sources()
     if (
-        type(runtime) is not _CONFIGURATION_RUNTIME
-        or _configuration_runtime.ConsoleRuntime is not _CONFIGURATION_RUNTIME
-        or any(
-            inspect.getattr_static(runtime, name, None) is not descriptor
-            or inspect.getattr_static(_CONFIGURATION_RUNTIME, name, None)
-            is not descriptor
-            or any(not checker(record) for record in records)
-            for name, descriptor, records in _CONFIGURATION_RUNTIME_METHODS
-        )
-        or any(
-            vars(module).get(name) is not record[0] or not checker(record)
-            for module, name, record in _CONFIGURATION_FUNCTIONS
-        )
-        or contextlib._GeneratorContextManager is not _CONFIGURATION_SCOPE
-        or type(scope) is not _CONFIGURATION_SCOPE
-        or not inspect.isgenerator(scope.gen)
-        or scope.gen.gi_code is not _CONFIGURATION_BODY
-        or any(
-            inspect.getattr_static(_CONFIGURATION_SCOPE, name, None) is not record[0]
-            or inspect.getattr_static(scope, name, None) is not record[0]
-            or not checker(record)
-            for name, record in _CONFIGURATION_SCOPE_METHODS
-        )
-        or type(activity) is not _PLANNING_ACTIVITY_CLASS
+        type(activity) is not _PLANNING_ACTIVITY_CLASS
         or _planning_activity.WorktreeActivity is not _PLANNING_ACTIVITY_CLASS
         or _planning_activity.WorktreeActivityClaim is not _PLANNING_CLAIM_CLASS
         or _finite_capacity.ExecutionOwner is not _FINITE_OWNER_CLASS
@@ -277,11 +255,21 @@ def _planning_release_source(prepared, binding, *, scope_live=False, slots_live=
             )
         ):
             raise PermissionError("original planning coordinator association changed")
+    if (
+        acquisition is not prepared._planning_configuration_acquisition
+        or type(acquisition) is not tuple
+        or len(acquisition) != 4
+        or acquisition[0] is not runtime
+        or acquisition[1] is not registry
+        or acquisition[2] is not scope
+    ):
+        raise PermissionError("original planning configuration association changed")
+    prepared._planning_configuration_source(
+        acquisition, inspect.GEN_SUSPENDED if scope_live else inspect.GEN_CLOSED
+    )
     if scope_live and (
         prepared._source_scope is not scope
         or prepared not in registry
-        or scope.gen.gi_frame is None
-        or scope.gen.gi_frame.f_locals.get("self") is not runtime
         or store._sessions.get(session.id) is not session
     ):
         raise PermissionError("original planning configuration association changed")
@@ -355,6 +343,7 @@ class _PreparedWorkflowReply:
         self._planning_terminal_returned = False
         self._planning_provider_failure = False
         self._planning_read_return = None
+        self._planning_configuration_acquisition = None
         self._planning_release_binding = None
         self._planning_release_return = None
         self._planning_reads = []
@@ -834,6 +823,60 @@ class _PreparedWorkflowReply:
             and prepared.catalog.turn_id == self.phase.attempt.id
         )
 
+    def _planning_configuration_source(self, acquisition, state):
+        """Validate the native planning manager and its originally acquired body."""
+        runtime, registry, scope, body = acquisition
+        checker = _storage_unchanged
+        if (
+            checker is not _STORAGE_CHECKER[0]
+            or checker.__code__ is not _STORAGE_CHECKER[1]
+            or checker.__defaults__ is not _STORAGE_CHECKER[2]
+            or checker.__kwdefaults__ is not _STORAGE_CHECKER[3]
+            or tuple((checker.__kwdefaults__ or {}).items()) != _STORAGE_CHECKER[4]
+            or checker.__closure__ is not _STORAGE_CHECKER[5]
+        ):
+            raise PermissionError("original planning configuration checker changed")
+        if (
+            self.runtime is not runtime
+            or self.controller._hooks_v2_runtime is not runtime
+            or runtime._workflow_preparations is not registry
+            or type(registry) is not set
+            or type(runtime) is not _CONFIGURATION_RUNTIME
+            or _configuration_runtime.ConsoleRuntime is not _CONFIGURATION_RUNTIME
+            or any(
+                inspect.getattr_static(runtime, name, None) is not descriptor
+                or inspect.getattr_static(_CONFIGURATION_RUNTIME, name, None)
+                is not descriptor
+                or any(not checker(record) for record in records)
+                for name, descriptor, records in _CONFIGURATION_RUNTIME_METHODS
+            )
+            or any(
+                vars(module).get(name) is not record[0] or not checker(record)
+                for module, name, record in _CONFIGURATION_FUNCTIONS
+            )
+            or contextlib._GeneratorContextManager is not _CONFIGURATION_SCOPE
+            or state is not None
+            and type(scope) is not _CONFIGURATION_SCOPE
+            or any(
+                inspect.getattr_static(_CONFIGURATION_SCOPE, name, None)
+                is not record[0]
+                or scope is not None
+                and inspect.getattr_static(scope, name, None) is not record[0]
+                or not checker(record)
+                for name, record in _CONFIGURATION_SCOPE_METHODS
+            )
+        ):
+            raise PermissionError("original planning scope source changed")
+        if scope is not None and (
+            not inspect.isgenerator(body)
+            or scope.gen is not body
+            or body.gi_code is not _CONFIGURATION_BODY
+            or inspect.getgeneratorstate(body) != state
+            or state != inspect.GEN_CLOSED
+            and body.gi_frame.f_locals.get("self") is not runtime
+        ):
+            raise PermissionError("original planning configuration association changed")
+
     def _retain_configuration(self):
         if self.phase is not None and self.phase.attempt.purpose != "planning":
             self._configuration_sources()
@@ -873,10 +916,33 @@ class _PreparedWorkflowReply:
             self._configuration_transition = None
             return
         if self._source_scope is None:
-            scope = self.runtime._first_send_source_scope()
-            scope.__enter__()
+            if self._planning_configuration_acquisition is not None:
+                raise PermissionError(
+                    "original planning configuration already acquired"
+                )
+            check, code = _PLANNING_CONFIGURATION_CHECK
+            if (
+                inspect.getattr_static(self, "_planning_configuration_source")
+                is not check
+                or inspect.getattr_static(
+                    _PreparedWorkflowReply, "_planning_configuration_source"
+                )
+                is not check
+                or check.__code__ is not code
+                or check.__defaults__ is not None
+                or check.__kwdefaults__ is not None
+            ):
+                raise PermissionError("original planning configuration checker changed")
+            runtime, registry = self.runtime, self.runtime._workflow_preparations
+            check(self, (runtime, registry, None, None), None)
+            scope = _CONFIGURATION_RUNTIME_METHODS[0][1](runtime)
+            acquisition = (runtime, registry, scope, vars(scope).get("gen"))
+            check(self, acquisition, inspect.GEN_CREATED)
+            _CONFIGURATION_ENTER[0](scope)
             self._source_scope = scope
-            self.runtime._workflow_preparations.add(self)
+            self._planning_configuration_acquisition = acquisition
+            set.add(registry, self)
+            check(self, acquisition, inspect.GEN_SUSPENDED)
 
     def _release_configuration(self):
         execution_phase = (
@@ -886,27 +952,66 @@ class _PreparedWorkflowReply:
             self._configuration_sources(self._source_scope)
             if self._configuration_transition is not None:
                 raise RuntimeError("original configuration release unproven")
+        elif (
+            self._planning_configuration_acquisition is not None
+            or self._source_scope is not None
+            or self in self.runtime._workflow_preparations
+        ):
+            acquisition = self._planning_configuration_acquisition
+            if (
+                type(acquisition) is not tuple
+                or len(acquisition) != 4
+                or self._source_scope is None
+                or self._source_scope is not acquisition[2]
+                or type(acquisition[1]) is not set
+                or self not in acquisition[1]
+            ):
+                raise PermissionError(
+                    "original planning configuration association changed"
+                )
+            check, code = _PLANNING_CONFIGURATION_CHECK
+            if (
+                inspect.getattr_static(self, "_planning_configuration_source")
+                is not check
+                or inspect.getattr_static(
+                    _PreparedWorkflowReply, "_planning_configuration_source"
+                )
+                is not check
+                or check.__code__ is not code
+                or check.__defaults__ is not None
+                or check.__kwdefaults__ is not None
+            ):
+                raise PermissionError("original planning configuration checker changed")
+            check(self, acquisition, inspect.GEN_SUSPENDED)
+            scope, registry = acquisition[2], acquisition[1]
+            exited = _CONFIGURATION_EXIT[0](scope, None, None, None)
+            check(self, acquisition, inspect.GEN_CLOSED)
+            if (
+                exited is not False
+                or self._planning_configuration_acquisition is not acquisition
+                or self._source_scope is not scope
+                or self not in registry
+            ):
+                raise RuntimeError("original planning configuration exit unproven")
+            set.discard(registry, self)
+            self._source_scope = None
+            return self, scope, registry, acquisition
         if self._source_scope is not None:
             registry = self.runtime._workflow_preparations
             scope = self._source_scope
             returned = self, scope, registry
-            if execution_phase:
-                self._configuration_transition = (
-                    self,
-                    scope,
-                    registry,
-                    _CONFIGURATION_RELEASE_CODE,
-                )
+            self._configuration_transition = (
+                self,
+                scope,
+                registry,
+                _CONFIGURATION_RELEASE_CODE,
+            )
             self._source_scope = None
             try:
-                if execution_phase:
-                    _CONFIGURATION_EXIT[0](scope, None, None, None)
-                else:
-                    scope.__exit__(None, None, None)
+                _CONFIGURATION_EXIT[0](scope, None, None, None)
                 registry.discard(self)
             except BaseException as error:
-                if execution_phase:
-                    self._configuration_transition_error = error
+                self._configuration_transition_error = error
                 raise
             return returned
 
@@ -2791,7 +2896,11 @@ class _PreparedWorkflowReply:
             or self._planning_intake is not None
             or self._planning_token is not None
             or type(configuration) is not tuple
-            or len(configuration) != 3
+            or len(configuration) != 4
+            or configuration[3] is not binding[21]
+            or configuration[3] is not self._planning_configuration_acquisition
+            or scope.gen is not configuration[3][3]
+            or inspect.getgeneratorstate(scope.gen) != inspect.GEN_CLOSED
             or configuration[0] is not self
             or configuration[1] is not scope
             or configuration[2] is not registry
@@ -2897,13 +3006,17 @@ class _PreparedWorkflowReply:
                 or self.primary_claim._activity is not binding[20]
                 or self.primary_claim.id in binding[20]._claims
                 or type(_configuration_return) is not tuple
-                or len(_configuration_return) != 3
+                or len(_configuration_return) != 4
                 or any(
                     a is not b
                     for a, b in zip(
-                        _configuration_return, (self, binding[17], binding[18])
+                        _configuration_return,
+                        (self, binding[17], binding[18], binding[21]),
                     )
                 )
+                or binding[21] is not self._planning_configuration_acquisition
+                or binding[17].gen is not binding[21][3]
+                or inspect.getgeneratorstate(binding[21][3]) != inspect.GEN_CLOSED
                 or self._source_scope is not None
                 or self in binding[18]
             ):
@@ -3298,6 +3411,7 @@ class _PreparedWorkflowReply:
             self.runtime._workflow_preparations,
             self.store._preparation_lock,
             activity,
+            self._planning_configuration_acquisition,
         )
         self._planning_release_binding = release_binding
 
@@ -4049,6 +4163,10 @@ _FINITE_OWNER_METHODS = tuple(
 )
 _FINITE_OWNER_CHECK = _planning_function_record(_finite_owner_return)
 
+_PLANNING_CONFIGURATION_CHECK = (
+    _PreparedWorkflowReply._planning_configuration_source,
+    _PreparedWorkflowReply._planning_configuration_source.__code__,
+)
 _PLANNING_ENTRY_RECORD = _planning_function_record(prepare_workflow_planning)
 
 _PLANNING_PREPARATION_METHODS = tuple(
