@@ -33,6 +33,7 @@ paint") -- unrelated to N-24, and still true.
 
 from __future__ import annotations
 
+import asyncio
 import sqlite3
 
 import pytest
@@ -41,9 +42,9 @@ from textual.widgets import Button, Input, TextArea
 from Tests.UI.app_factory import _build_test_app
 from Tests.UI.library_quit_guard_support import SIZE, _NotesProfile, _open_notes, _until
 from Tests.UI.test_library_shell import (
-    _FakeSkillsScopeService,
     LibraryProductionCSSHarness,
     _active_library_screen,
+    _FakeSkillsScopeService,
     _seed_conversations,
     _wait_for_library_shell,
 )
@@ -217,27 +218,34 @@ async def _leave_text_fields(screen, pilot) -> None:
 
 
 async def _open_picker(host, pilot, button_id: str) -> LibraryNoteFolderTargetDialog:
-    # PR #3259 CI (UI Fast Lane 15, 2026-10-31): the opened note's snapshot
-    # lands before the canvas recomposes its placement actions, so a click
-    # made right after "the note to open" found no button on a loaded
-    # runner. Wait for the control itself, on screen and enabled.
+    # Pilot captures coordinates before yielding; a nonzero region may be stale.
     library = host.screen
-
-    def clickable() -> bool:
-        found = library.query(button_id)
-        if not found:
-            return False
-        button = found.first()
-        # TASK-42629: the press handlers re-read the selected tree row and
-        # return without a word when it is gone, so an enabled button alone
-        # does not mean a click opens the picker.
-        return (
-            not button.disabled
-            and button.region.area > 0
-            and library._selected_library_notes_tree_row() is not None
-        )
-
-    await _wait(pilot, clickable, f"{button_id} on screen and enabled")
+    try:
+        async with asyncio.timeout(WAIT):
+            while True:
+                await library.wait_for_refresh()
+                found = library.query(button_id)
+                if not found:
+                    continue
+                button = found.first()
+                if (
+                    button.is_attached
+                    and button.is_mounted
+                    and button.display
+                    and button.visible
+                    and not button.disabled
+                    and not button.loading
+                    and button.region.area > 0
+                    and library._selected_library_notes_tree_row() is not None
+                    and button.region.offset in host.screen.size.region
+                    and (host.mouse_captured is None or host.mouse_captured is button)
+                    and host.screen.get_widget_at(*button.region.offset)[0] is button
+                ):
+                    break
+    except TimeoutError:
+        raise AssertionError(
+            f"timed out waiting for {button_id} painted and enabled"
+        ) from None
     await pilot.click(button_id)
     await _wait(
         pilot,
@@ -284,8 +292,11 @@ async def _choose(
     return outcomes[-1]
 
 
+@pytest.mark.parametrize(
+    "pending_layout", [False, True], ids=["settled", "pending-layout"]
+)
 async def test_move_note_picker_offers_nested_folders_on_a_fresh_visit_and_narrows_by_typing(
-    tmp_path, monkeypatch
+    tmp_path, monkeypatch, pending_layout
 ) -> None:
     """AC#4: every active folder at any depth, a named title, type-to-filter."""
     host, tree = _mounted(tmp_path)
@@ -315,7 +326,30 @@ async def test_move_note_picker_offers_nested_folders_on_a_fresh_visit_and_narro
         )
         before = _memberships(tmp_path)
 
-        await _open_picker(host, pilot, "#library-notes-placement-move")
+        if pending_layout:
+            await _wait(
+                pilot,
+                lambda: (
+                    bool(screen.query("#library-notes-placement-move"))
+                    and not screen.query_one("#library-notes-placement-move").disabled
+                    and screen.query_one("#library-notes-placement-move").region.area
+                    > 0
+                ),
+                "the Move control before arming pending layout",
+            )
+            button = screen.query_one("#library-notes-placement-move", Button)
+            previous_offset = button.styles.offset
+            previous_region = button.region
+            # A nonzero region can still precede a queued layout frame.
+            button.styles.offset = (2, 0)
+            assert button.region == previous_region
+            try:
+                await _open_picker(host, pilot, "#library-notes-placement-move")
+                assert button.region.x == previous_region.x + 2
+            finally:
+                button.styles.offset = previous_offset
+        else:
+            await _open_picker(host, pilot, "#library-notes-placement-move")
         await _wait(
             pilot,
             lambda: _picker_rows(host) == ALL_FOLDERS and "5 folders" in _painted(host),
