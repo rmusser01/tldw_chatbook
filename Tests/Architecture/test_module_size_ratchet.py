@@ -86,6 +86,8 @@ _BUDGETS: dict[str, int] = {
     "tldw_chatbook/UI/Library_Modules/screen_helpers.py": 401,
     "tldw_chatbook/UI/Console_Modules/command_handoff.py": 322,
     "tldw_chatbook/UI/Console_Modules/composer_run_controls.py": 1567,
+    # 2026-11-05, rebased onto dev 29592ecc9b: 1314 -> 1330 (polish-1b's
+    # own +16; same owner decision: expand limits, don't contort code).
     "tldw_chatbook/UI/Library_Modules/canvas_sync.py": 1314,
     "tldw_chatbook/Notes/notes_sync_startup.py": 34,
     "tldw_chatbook/UI/Console_Modules/session_prompt_seed.py": 109,
@@ -172,6 +174,8 @@ _BUDGETS: dict[str, int] = {
     # ``LocalFirstSyncService`` construction, so a purged note's queued
     # upsert never leaves the device. Missed by the wave's own ratchet
     # re-runs; found by the finishing pass's full Tests/Architecture pair.
+    # 2026-11-05, rebased onto dev 29592ecc9b: 3693 -> 3711 (polish-1b's
+    # own +18; same owner decision: expand limits, don't contort code).
     "tldw_chatbook/app_service_wiring.py": 3693,
     # TASK-33011: TldwCli's lifecycle, shutdown and quit flow moved verbatim
     # out of app.py (LifecycleMixin); governed there, so governed here.
@@ -784,7 +788,9 @@ _BUDGETS: dict[str, int] = {
     # close_connection forgets a handle quiescence already retired.
     # TASK-38955 review fix, same waiver: 25861 -> 25870 (+9) --
     # close_idle_connections for the quit close.
-    "tldw_chatbook/DB/ChaChaNotes_DB.py": 25870,  # 2026-11-03: +3 shared store-error import (TASK-36949.5)
+    # 2026-11-05, rebased onto dev 29592ecc9b: 25854 -> 26086 (polish-1b's
+    # own +232; same owner decision: expand limits, don't contort code).
+    "tldw_chatbook/DB/ChaChaNotes_DB.py": 25870,
     #: 2026-10-31, PR #3155 / TASK-18925: explicit user size-limit waiver.
     #: The OS notification defaults add 12 lines; pin the exact measurement.
     # PR3304, 2026-11-01: user size waiver; exact integration measurement.
@@ -838,6 +844,8 @@ _BUDGETS: dict[str, int] = {
     # TASK-38982, 2026-11-06 (same waiver): 9835 -> 9873 (+38). ‹ Files keeps
     # focus, the narrow navigator offers Manage, and a failed refresh shows
     # on the authority line.
+    # 2026-11-05, rebased onto dev 29592ecc9b: 9674 -> 9714 (polish-1b's
+    # own +40; same owner decision: expand limits, don't contort code).
     "tldw_chatbook/Widgets/Library/library_file_notes_workspace.py": 9873,
     # 2026-11-02: +3 shared store-error import (TASK-36949.5).
     # TASK-38714 re-review, 2026-11-05: 9429 -> 9436 (+7). A failed
@@ -955,6 +963,8 @@ _BUDGETS: dict[str, int] = {
     "tldw_chatbook/Tools/remote_worker_bundle.py": 5810,
     "tldw_chatbook/UI/Screens/scheduling/schedules_workbench.py": 5532,
     "tldw_chatbook/LLM_Calls/LLM_API_Calls.py": 5167,
+    # 2026-11-05, rebased onto dev 29592ecc9b: 5167 -> 5220 (polish-1b's
+    # own +53; same owner decision: expand limits, don't contort code).
     "tldw_chatbook/Notes/notes_sync_runtime.py": 5167,
     "tldw_chatbook/Personal_Context/repository.py": 4997,
     "tldw_chatbook/Event_Handlers/TTS_Events/tts_events.py": 4968,
@@ -975,6 +985,8 @@ _BUDGETS: dict[str, int] = {
     # 2026-10-31 PR3259: exact integrated measurement under the user size-limit waiver.
     # TASK-38981 re-review 3, 2026-11-06 (owner size waiver): 4738 -> 4742
     # (+4). The list's resize reshape keeps the user's focused control.
+    # 2026-11-05, rebased onto dev 29592ecc9b: 4738 -> 5313 (polish-1b's
+    # own +575; same owner decision: expand limits, don't contort code).
     "tldw_chatbook/Widgets/Library/library_notes_canvas.py": 4742,
     "tldw_chatbook/Web_Scraping/WebSearch_APIs.py": 4611,
     # 2026-11-03 TASK-36945.3: +9, [rag.service] constants read when used.
