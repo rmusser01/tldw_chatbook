@@ -835,10 +835,29 @@ async def test_folder_files_automatic_items_priority_does_not_steal_focus_or_per
         )
         persisted.clear()
 
+        # TASK-38695: 79 columns crosses the compact breakpoint, and that
+        # transition restores the focus it captured (the Items grip) twice,
+        # the second time a few turns later. Focusing the editor before the
+        # second restore lands lets it move focus back to the grip, and the
+        # Items reopen at 78 then takes it to New (seen on a Linux CI runner).
+        # Wait for that settled restore before placing focus.
+        settled: list[object] = []
+        controller_type = type(screen._notes_controller)
+        restore_settled = controller_type._restore_library_notes_settled_focus
+
+        def record_settled_restore(controller, *args, **kwargs):
+            settled.append(args)
+            return restore_settled(controller, *args, **kwargs)
+
+        monkeypatch.setattr(
+            controller_type,
+            "_restore_library_notes_settled_focus",
+            record_settled_restore,
+        )
         await pilot.resize_terminal(79, 30)
         await _wait_until(
             pilot,
-            lambda: workspace.narrow,
+            lambda: workspace.narrow and bool(settled),
             "Folder Files did not enter narrow geometry",
         )
         workspace._narrow_view = "navigator"
@@ -851,10 +870,10 @@ async def test_folder_files_automatic_items_priority_does_not_steal_focus_or_per
                 workspace.narrow
                 and shell.effective_layout.priority_pane == "items"
                 and shell.effective_layout.items_open
+                and screen.focused is editor
             ),
-            "Automatic narrow Items priority did not settle",
+            "Automatic narrow Items priority did not settle with the editor focused",
         )
-        assert screen.focused is editor
         assert editor.has_focus
         assert persisted == []
 
@@ -8577,9 +8596,16 @@ async def test_disabled_file_notes_actions_carry_marker_and_visible_recovery(
     replica.close()
 
 
+# TASK-38695: all 72 themes took 105-123 s in one test, over the UI lane's
+# 30 s per-entry budget; each group checks every eighth theme.
+_CONTRAST_THEME_GROUPS = (0, 1, 2, 3, 4, 5, 6, 7)
+
+
 @pytest.mark.asyncio
+@pytest.mark.parametrize("group", _CONTRAST_THEME_GROUPS)
 async def test_disabled_file_notes_actions_meet_contrast_in_every_shipped_theme(
     tmp_path: Path,
+    group: int,
 ) -> None:
     root = tmp_path / "notes"
     root.mkdir()
@@ -8609,7 +8635,7 @@ async def test_disabled_file_notes_actions_meet_contrast_in_every_shipped_theme(
             workspace_reason = workspace.query_one("#file-notes-action-status")
             git_reason = panel.query_one("#file-notes-git-push-result-reason")
 
-            for theme_name in theme_names:
+            for theme_name in theme_names[group :: len(_CONTRAST_THEME_GROUPS)]:
                 pilot.app.theme = theme_name
                 workspace._navigator_mode = "files"
                 workspace._narrow_view = "editor"

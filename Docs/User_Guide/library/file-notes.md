@@ -327,6 +327,12 @@ where it stands:
 | BLOCKED · already staged outside Chatbook; manage this path in Git, then Refresh | Hands off — you staged it yourself |
 | BLOCKED · ignored by Git / Git conflict / Git unavailable | Fix the condition outside Chatbook, then **Refresh** |
 
+On a narrow pane the status line switches to a shorter recovery step and
+shortens the reason. When too little room is left for the reason, it is
+dropped: an ignored row reads "BLOCKED · fix ignore, then Refresh", a conflict
+row "BLOCKED · Conflict: use Git; Refresh", and a Git unavailable row
+"BLOCKED · Restore Git first; Refresh".
+
 With no session edits the panel says "No current-session Git changes."
 
 **Staging and committing.** Use **Stage** / **Unstage** on a row, or

@@ -1076,9 +1076,14 @@ async def _open_guarded_commit_form(
             "guarded commit entry did not receive focus",
         )
     commit.press()
+    # The panel shows the form before the workspace adopts the draft from its
+    # CommitStagedRequested message; callers read the key next (TASK-38693).
     await _wait_until(
         pilot,
-        lambda: workspace._git_panel_widget.commit_phase == "form",
+        lambda: (
+            workspace._git_panel_widget.commit_phase == "form"
+            and workspace._active_commit_key() is not None
+        ),
         "guarded commit form did not open",
     )
 
@@ -1727,7 +1732,8 @@ async def test_commit_footer_keeps_disclosure_edit_cancel_confirm_order_and_geom
         cancel = panel.query_one("#file-notes-git-commit-cancel", Button)
         confirm = panel.query_one("#file-notes-git-commit-confirm", Button)
         footer = panel.query_one("#file-notes-git-commit-footer")
-        assert edit.has_focus
+        # The review focuses Edit after a refresh; one pause need not cover it.
+        await _wait_until(pilot, lambda: edit.has_focus, "review did not focus Edit")
         assert not confirm.has_focus
 
         await pilot.press("shift+tab")
@@ -1817,16 +1823,22 @@ async def test_commit_review_enter_escape_cancel_and_execution_are_state_aware()
     app = _PanelHarness(panel)
     async with app.run_test() as pilot:
         panel.render_commit_availability(draft)
+        # The form opens when the panel handles the press and focuses its
+        # subject after a refresh. A key sent before that lands misses the
+        # form, and Review focused before it loses focus to it (TASK-38693).
+        subject = panel.query_one("#file-notes-git-commit-subject", Input)
+        review = panel.query_one("#file-notes-git-commit-review", Button)
         panel.query_one("#file-notes-git-commit-staged", Button).press()
-        await pilot.pause()
+        await _wait_until(pilot, lambda: subject.has_focus, "form did not focus")
         await pilot.press("escape")
         await pilot.pause()
         assert panel.commit_phase == "list"
         assert app.messages[-1].__class__.__name__ == "CancelCommitRequested"
         assert app.messages[-1].from_phase == "form"
         panel.query_one("#file-notes-git-commit-staged", Button).press()
-        await pilot.pause()
-        panel.query_one("#file-notes-git-commit-review", Button).focus()
+        await _wait_until(pilot, lambda: subject.has_focus, "form did not focus")
+        review.focus()
+        await _wait_until(pilot, lambda: review.has_focus, "Review not focused")
         await pilot.press("enter")
         await pilot.pause()
         assert panel.commit_phase == "checking"
@@ -2618,6 +2630,39 @@ async def test_prepare_session_fixed_regions_remain_visible_at_40_by_20() -> Non
         assert len(multiline_action.splitlines()) >= 3
 
         await _assert_visible_panel_buttons_fit(panel, pilot)
+
+
+@pytest.mark.parametrize(
+    "state",
+    (
+        "external_staged",
+        "external_partial",
+        "ignored",
+        "conflict",
+        "unsupported",
+        "nested_repository",
+        "unsafe_closure",
+        "ambiguous_lineage",
+        "unavailable",
+        "error",
+    ),
+)
+def test_row_copy_never_runs_an_empty_or_dot_only_reason_into_its_recovery(
+    state: SessionGitRowState,
+) -> None:
+    """TASK-38693: at 40x20 the row is 37 cells, which once read
+    "BLOCKED · .Conflict: use Git; Refresh" and "BLOCKED · ; fix ignore, then
+    Refresh". After the state word comes a visible reason or the recovery
+    itself, never "." or ";", at every width the short recovery fits."""
+    row = _row(state, disabled_reason="index diagnostic " * 18)
+    prefix, _detail, _recovery, narrow = git_panel_module._row_secondary_parts(row)
+    for width in range(cell_len(prefix + narrow.removeprefix("; ")), 120):
+        copy = git_panel_module._row_secondary_copy(row, width)
+        assert cell_len(copy) <= width, (width, copy)
+        assert copy.startswith(prefix), (width, copy)
+        assert copy[len(prefix) : len(prefix) + 1].isalnum(), (width, copy)
+        # Every recovery, full or narrow, ends in "Refresh"; dropping it is wrong.
+        assert copy.endswith("Refresh"), (width, copy)
 
 
 @pytest.mark.asyncio
@@ -5002,13 +5047,20 @@ async def test_stage_draft_conflict_names_save_and_editor_recovery(
         await _wait_for_current_git_row_projection(workspace)
         workspace._set_save_state("conflict", "file changed on disk")
         workspace.query_one("#file-notes-git-stage-selected", Button).press()
-        await pilot.pause()
-
-        assert git_service.stage_calls == []
-        assert workspace._git_panel_widget._current_status_text == (
-            "Status: CURRENT · BLOCKED — Save conflict must be resolved "
-            "before staging. Return to the editor."
+        # The press reaches the workspace through two messages; wait for its
+        # refusal rather than one pause (TASK-38693).
+        await _wait_until(
+            pilot,
+            lambda: (
+                workspace._git_panel_widget._current_status_text
+                == (
+                    "Status: CURRENT · BLOCKED — Save conflict must be resolved "
+                    "before staging. Return to the editor."
+                )
+            ),
+            "Stage did not report the save conflict",
         )
+        assert git_service.stage_calls == []
         assert not workspace.query_one(
             "#file-notes-git-action-status",
             Static,
@@ -5842,9 +5894,26 @@ async def test_guarded_commit_success_renders_and_focuses_fresh_owner_status(
         )
         assert success_summary.display
         assert _is_effectively_displayed(success_summary)
+        # Wait until the copy matches its fit for the current width (28 or 27
+        # cells at 40x20, both middle-elided): the rows' scrollbar can take a
+        # cell after the first fit, and the copy is re-fitted soon after
+        # (TASK-38693).
+        await _wait_until(
+            pilot,
+            lambda: (
+                _text(success_summary)
+                == git_panel_module._fit_two_line_copy(
+                    workspace._git_panel_widget._last_action_text,
+                    success_summary.content_region.width,
+                )
+            ),
+            "success summary was not fitted to its width",
+        )
         rendered_summary = _flat_text(success_summary)
         if size == (40, 20):
-            assert rendered_summary.startswith("Committed 2 session notes")
+            # Both fits keep the copy's head and tail and elide its middle.
+            assert rendered_summary.startswith("Committed 2 session note")
+            assert rendered_summary.endswith("changes untouched.")
         else:
             assert rendered_summary == (
                 "Committed 2 session notes; unrelated changes untouched."
