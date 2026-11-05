@@ -477,3 +477,9 @@ cap. Existing replay plus exact roster conservation checks qualify this
 placement as a forecast. Original P0 commands and recipient shards still need
 current-source execution, and hosted final-head results remain required;
 these projections do not turn the retained assertion failures into passes.
+
+## 2026-11-05: retain complete MCP coverage within existing job budgets
+
+PR #3345 head `19fec5614b` automatic Derived job `127394826830` exceeded the unchanged 35-minute Fast Lane limit at 93% of 3,983 collected cases, confirmed by GitHub's annotation. Logs show advancing MCP progress, without an identified individual hang. The unchanged MCP workbench file passed 357 cases locally in 485.33 seconds. Its 279 unique function selectors move into the existing 32 UI shards; actual pytest collection proves all 357 parameter cases remain covered exactly once. The original 1,666-entry census prefix and positions stay intact, and floor 1,945 protects enrollment. A permanent membership Counter guard and missing, duplicate, whole-file and second-owner controls prevent a removed rider from becoming a coverage hole. Each relocated group also passes in isolation.
+
+Dependency installs, sandbox/profile rules, required aggregation and conditions are unchanged. The same 32 shards, maximum parallelism 17, 20-minute UI jobs and 180-second MCP/UI cases apply; Fast Lane remains 35 minutes and admission remains 35 minutes/300 seconds per case. Placement uses measured total setup/call/teardown costs. Local replay and isolation do not qualify hosted capacity: genuine new-head checks still decide landing. This redistributes required coverage under the existing decision, with no new runtime or ownership boundary.

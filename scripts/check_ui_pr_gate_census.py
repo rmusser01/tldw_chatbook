@@ -828,6 +828,8 @@ MINIMUM_FILES = 1700
 MINIMUM_FILES = 1705
 # Keep the post-attach native-read regression and every incoming dev entry.
 MINIMUM_FILES = 1706
+# Keep every native/UI entry and relocated MCP case, plus all 18 new dev entries.
+MINIMUM_FILES = 1985
 
 
 def read_census(path: Path) -> list[str]:

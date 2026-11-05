@@ -586,3 +586,52 @@ def test_pr3023_membership_rejects_actual_workflow_drift(monkeypatch, mutation):
     monkeypatch.setattr(f"{__name__}._workflow", lambda: workflow)
     with pytest.raises(AssertionError):
         test_pr3023_critical_targets_run_in_required_admission_step()
+
+
+def _assert_mcp_workbench_census_coverage(entries):
+    import ast
+    from collections import Counter
+
+    path = "Tests/UI/test_mcp_workbench.py"
+    source = ast.parse((PROJECT_ROOT / path).read_text())
+    expected = {
+        f"{path}::{node.name}"
+        for node in source.body
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+        and node.name.startswith("test_")
+    }
+    assert len(expected) == 279
+    selected = [entry for entry in entries if entry.split("::", 1)[0] == path]
+    assert Counter(selected) == Counter(expected)
+    overlaps = _census_checker().overlapping_targets
+    for name, targets in _pytest_step_targets():
+        assert not overlaps([*selected, *targets]), name
+
+
+def test_mcp_workbench_coverage_moves_whole_to_existing_ui_shards():
+    census = _census_checker()
+    _assert_mcp_workbench_census_coverage(census.read_census(census.CENSUS_PATH))
+
+
+@pytest.mark.parametrize(
+    "mutation", ("missing", "duplicate", "whole-file", "second-owner")
+)
+def test_mcp_workbench_relocation_rejects_coverage_loss_or_overlap(
+    monkeypatch, mutation
+):
+    census = _census_checker()
+    entries = census.read_census(census.CENSUS_PATH)
+    path = "Tests/UI/test_mcp_workbench.py"
+    target = next(entry for entry in entries if entry.startswith(path + "::"))
+    if mutation == "missing":
+        entries.remove(target)
+    elif mutation == "duplicate":
+        entries.append(target)
+    elif mutation == "whole-file":
+        entries.append(path)
+    else:
+        monkeypatch.setitem(
+            globals(), "_pytest_step_targets", lambda: [("second owner", (path,))]
+        )
+    with pytest.raises(AssertionError):
+        _assert_mcp_workbench_census_coverage(entries)

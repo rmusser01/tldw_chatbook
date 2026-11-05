@@ -43,7 +43,8 @@ FAST_LANE_TARGETS = (
     "Tests/DB/test_automatic_wake_attempts.py",
     "Tests/Model_Artifacts/test_operation_leases.py",
     "Tests/Model_Artifacts/test_operation_leases_process.py",
-    "Tests/UI/test_mcp_workbench.py",
+    # PR #3345: the complete MCP workbench rider now runs in the UI census;
+    # test_derived_artifacts_workflow pins all279 function selectors exactly once.
     "Tests/UI/test_mcp_tools_mode.py",
     "Tests/Widgets/test_detach_safe_text_area.py",
     "Tests/Web_Server/test_served_tab_isolation.py",

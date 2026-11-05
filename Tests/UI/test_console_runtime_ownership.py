@@ -1837,8 +1837,11 @@ def _post_reconciliation_admission_screen(monkeypatch, live_reason=None):
         workers.append((coroutine.cr_code.co_name, kwargs.get("group")))
         coroutine.close()
 
+    def after_refresh(callback, *args, **kwargs):
+        refreshed.append((callback, args, kwargs))
+
     screen.set_interval = interval
-    screen.call_after_refresh = refreshed.append
+    screen.call_after_refresh = after_refresh
     screen.run_worker = run_worker
     return screen, intervals, refreshed, workers
 
@@ -1897,9 +1900,9 @@ async def test_captured_attach_timer_overlap_rearms_real_sync_worker(monkeypatch
         callback for _, callback in intervals if callback.__name__ == "_poll_transcript"
     )
     after_refresh = next(
-        callback
-        for callback in refreshed
-        if callback.__name__ == "_sync_native_console_chat_ui"
+        args[0]
+        for callback, args, kwargs in refreshed
+        if callback is screen.run_worker and kwargs.get("group") == "console-sync"
     )
     entered, release = asyncio.Event(), asyncio.Event()
 
