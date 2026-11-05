@@ -5,7 +5,7 @@ status: Done
 assignee:
   - '@claude'
 created_date: 2026-11-03 11:40
-updated_date: '2026-11-04 01:27'
+updated_date: '2026-11-05 10:05'
 labels:
 - follow-up
 - ci
@@ -75,27 +75,23 @@ Settings was over budget in 20 of the 27 runs (the coordinator's 14-of-19 count 
 - cProfile of the idle window, plus a worker-start census, found 39-60 `console-readiness-config` refreshes and as many `console-readiness-publication` syncs per 2 s. A per-call trace showed the provider alternating between "OpenAI" and "openai".
 - Settings led the counts because it has the costliest press (about 2-3 s) and the most idle-time timers of its own, the MCP workbench save status and subscription readiness, both every 0.25 s. Its settle hit the ceiling most often: 4-6 of 6 pauses.
 
-**Fix.** `tokenizer_ready` normalizes the provider with `normalize_provider_config_key` before it compares or captures. That is the key the display path already matches labels by (`_active_console_provider_model_display`). The preparation only lowercases the provider for the tokenizer lookup, so behaviour is unchanged. After the fix (probe, load 27-53):
+**Fix: landed with TASK-38703 (#3396, dev 447628d08b).** That PR fixes the same loop. `tokenizer_ready` keys its preparations by `(model, normalize_provider_config_key(provider))` and keeps one slot per key, so "OpenAI" and "openai" share one preparation. It also covers two different models in one sync, which my single-slot normalization (24c8ccd8dd, dropped in the rebase) did not. Its unit pin is `test_provider_label_and_config_key_share_one_preparation`.
+
+Measured with my earlier, equivalent fix (probe, load 27-53):
 - idle CPU 0.8-5.3 % of a core
 - settle 0.46-1.37 s, with no idle wait at its ceiling
 - per-destination totals 1.2-4.5 s
-- no readiness refreshes while idle
 
-The 10 s budget is unchanged.
+**This branch adds the tour's idle-sync guard.** After the tour, `test_destination_tour_stays_under_switch_budgets` (Perf Guard) counts full Console syncs during 1 s of idle, with a limit of 1. It counts rather than times. With the loop present (dev before #3396) it fails: 16 syncs at load 30, 28 at load 17. With the fix it records 0.
 
-**Tests**
-- `Tests/UI/test_console_tokenizer_preparation.py::test_provider_spellings_share_one_preparation`: red on dev (`tokenizer_ready('model', 'openai')` returned False and captured a second request), green with the fix.
-- `test_destination_tour_stays_under_switch_budgets` (Perf Guard) now also counts full Console syncs during 1 s of idle after the tour, with a limit of 1. It counts rather than times. It fails on dev sources (16 syncs at load 30, 28 at load 17) and records 0 with the fix.
+**AC#2: 10 of 10 on this branch's HEAD** (47cc9a22ff, on dev 447628d08b, i.e. with #3396's fix). Command: the Perf Guard step, run serially as in the job (`pytest Tests/Performance/test_ui_latency_guardrails.py Tests/Utils/test_ui_responsiveness_stall_persist.py -v --timeout=300`), at load 6.8-10.5.
+- All 10 green, 13/13 tests each; the 10 s budget is unchanged.
+- Step 58-69 s; tour test 22.4-27.2 s.
+- A temporary, uncommitted probe printed what the test checks: 0 idle Console syncs in every run, and the slowest single switch was 1.58-2.18 s (`ctrl+9` or `ctrl+4`), against the 10 s budget.
 
-**AC#2: 10 of 10 local runs of the Perf Guard step command** (`pytest Tests/Performance/test_ui_latency_guardrails.py Tests/Utils/test_ui_responsiveness_stall_persist.py -v --timeout=300`, serial as in the job) were green, 13/13 tests each, at load 18.9-28.5. The step took 81-94 s and the tour test 29-37 s. The same command on dev sources took 199 s (load 17.8), with the tour test at 75 s.
+Before #3396, the same command on dev sources took 199 s (load 17.8), with the tour test at 75 s. On CI, #3396's own runs and the dev push 41994911006 took 85-117 s for the latency step; the median over the previous 40 green runs was 179 s.
 
-**Covering runs.** I ran the 22 test files that reach the tokenizer-readiness path on the fix and on dev sources, with the same command at `-n 4`.
-- Fix: 265 failed, 329 passed. Dev: 267 failed, 327 passed.
-- 246 of the failures are the known local `RecoveryRequired` trap, mostly in `test_console_native_chat_flow.py`.
-- One test failed on the fix only: `test_console_syncs_never_wait_for_a_config_rebuild[full-ui-held]`. Rerun 5 times on each arm, together with the dev-only failure `test_a_projection_rereads_an_aging_display_ahead_of_its_expiry`, both passed 5/5 on both arms (load 13-16), so both are load flakes.
-- The new unit test fails only on dev.
+No `/verify` live launch: the brief forbids launching the TUI, and this branch changes no product code.
 
-No `/verify` live launch: the brief forbids launching the TUI, and the change has no visual surface.
-
-**Files:** `tldw_chatbook/UI/Console_Modules/console_spend_projection.py`, `Tests/UI/test_console_tokenizer_preparation.py`, `Tests/Performance/test_ui_latency_guardrails.py`, `backlog/docs/lessons-testing-evidence.md`.
+**Files:** `Tests/Performance/test_ui_latency_guardrails.py`, `backlog/docs/lessons-testing-evidence.md`.
 <!-- SECTION:NOTES:END -->
