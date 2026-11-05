@@ -1639,7 +1639,7 @@ class ConsoleContextReadSnapshot:
             and self.refresh is not None
         ):
             self.schedule(
-                self.refresh(), exclusive=False, group="console-context-publication"
+                self.refresh, exclusive=False, group="console-context-publication"
             )
 
 
