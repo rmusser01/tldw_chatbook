@@ -133,21 +133,6 @@ _capture_service._review_digest = _observed_review_digest
 from tldw_chatbook.Backup_Recovery.capture_service import capture, preview_capture""",
 )
 
-
-# Reuse native snapshot-refusal diagnostics without changing the capture result.
-_RETAIN_PUBLIC = (
-    "from pathlib import Path\n"
-    "from Tests.Backup_Recovery.thread_diagnostics import observe_capture_review, stop_observer\n"
-    "_capture_review_log = Path.home() / 'capture-review.json'\n"
-    "_stop_capture_review = observe_capture_review(_capture_review_log)\n"
-    "try:\n" + indent(_RETAIN_PUBLIC, "    ") + "\nfinally:\n"
-    "    try:\n"
-    "        stop_observer(_stop_capture_review)\n"
-    "    finally:\n"
-    "        stop_observer(lambda: print('eval_capture_native_diagnostic=' + "
-    "(_capture_review_log.read_text(encoding='utf-8') if _capture_review_log.exists() else '[]'), flush=True))\n"
-)
-
 _RETAIN_RESTORE = _replace(
     _RESTORE,
     "source.rename(source.with_name('source-home-removed'))",
@@ -167,48 +152,6 @@ assert (journal.root / 'verified-manifest.json').is_file()
 assert (journal.root / 'restore-plan.json').is_file()
 shutil.rmtree(source)
 assert not source.exists()""",
-)
-# Temporary cost diagnostics use the existing staged callback, never a new deadline.
-_RETAIN_RESTORE = _replace(
-    _RETAIN_RESTORE,
-    "restored = restore_isolated(sealed, plan, home / 'control', Event())",
-    r"""import cProfile, time
-_restore_profile = cProfile.Profile()
-_restore_started = time.perf_counter()
-
-def _dump_restore_profile(phase):
-    rows = []
-    for entry in _restore_profile.getstats():
-        code = entry.code
-        rows.append({
-            'file': Path(code.co_filename).name[:128] if hasattr(code, 'co_filename') else '<native>',
-            'function': (code.co_name if hasattr(code, 'co_name') else str(code))[:128],
-            'line': code.co_firstlineno if hasattr(code, 'co_firstlineno') else 0,
-            'calls': entry.callcount,
-            'self_seconds': entry.inlinetime,
-            'cumulative_seconds': entry.totaltime,
-        })
-    print('eval_restore_profile=' + json.dumps({
-        'phase': phase,
-        'wall_seconds': time.perf_counter() - _restore_started,
-        'top_self': sorted(rows, key=lambda row: row['self_seconds'], reverse=True)[:20],
-        'top_cumulative': sorted(rows, key=lambda row: row['cumulative_seconds'], reverse=True)[:20],
-        'scope': 'instrumented diagnostic; phase/threads overlap; not qualification',
-    }), flush=True)
-
-def _staged_profile():
-    _restore_profile.disable()
-    try:
-        _dump_restore_profile('staged')
-    finally:
-        _restore_profile.enable()
-
-_restore_profile.enable()
-try:
-    restored = restore_isolated(sealed, plan, home / 'control', Event(), on_staged=_staged_profile)
-finally:
-    _restore_profile.disable()
-    stop_observer(lambda: _dump_restore_profile('returned'))""",
 )
 # The C watchdog can race interpreter frames; reuse the Python-owned observer.
 _RETAIN_RESTORE = (

@@ -97,6 +97,7 @@ jobs:
           Tests/test_subprocess_pipes.py
           Tests/Backup_Recovery/test_eval_retained_definitions.py
           Tests/Backup_Recovery/test_eval_restore_diagnostics.py
+          Tests/Backup_Recovery/test_schema_policy_work.py
           Tests/Backup_Recovery/test_eval_selective_retention.py
           Tests/Backup_Recovery/test_eval_rollback_retention.py
           Tests/Backup_Recovery/test_eval_later_snapshot.py
