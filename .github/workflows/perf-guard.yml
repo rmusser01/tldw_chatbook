@@ -118,9 +118,11 @@ jobs:
   ui-latency-guardrails:
     name: UI latency guardrails
     runs-on: ubuntu-latest
-    # TASK-36511.3: 20, not 15. The compact-setup gates add about 3 min
-    # (185 s serial, measured locally), and TASK-38687 took about 2 min off
-    # the latency step. 40 green runs before both: median 610 s, max 883 s.
+    # TASK-36511.3: 20, not 15 (owner-approved). The compact-setup gates add
+    # about 3 min (175-185 s serial, measured locally); TASK-38703's idle-loop
+    # fix brought the latency step from a 179 s median to 85-117 s on CI.
+    # Applied to the 40 green runs before both (median 618 s, max 883 s), the
+    # job comes to median ~730 s, max ~1000 s: over 15 minutes at the max.
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
@@ -189,7 +191,7 @@ jobs:
       # scans them. Its XPASS fails this step, so the fix removes the marker.
       # TASK-36511.3: the compact-setup gates hold a compact config read and
       # require the UI loop to answer a probe within 100 ms meanwhile; their
-      # 17 nodes add about 3 min (185 s serial, measured locally).
+      # 17 nodes add about 3 min (175-185 s serial, measured locally).
       - name: Run Console tab-publication and voice gates
         run: |
           pytest Tests/Performance/test_console_tab_sync_source_ownership.py \
