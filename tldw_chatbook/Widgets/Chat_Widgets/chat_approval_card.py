@@ -107,14 +107,17 @@ _DECISION_OPTIONS: list[tuple[str, str]] = [
 #: controls and re-rendered on every `Select.Changed`, because the labels
 #: above are far too short to carry it. Keyed by decision VALUE, so a row
 #: with a narrowed option set needs no separate table.
+#: TASK-36519: the undo places are Settings ▸ Tools & MCP modes (there is no
+#: MCP screen), and each line fits the 74 cells the row has at 80 columns.
 DECISION_SCOPE_COPY: dict[str, str] = {
     "approve_once": "This call only.",
     "approve_session": "Every call to this tool until Chatbook exits.",
     "allow_matching": (
-        "Remembered for exactly these arguments. Remove it under "
-        "MCP ▸ Tools ▸ this tool."
+        "Remembered for these args. Remove in Settings ▸ Tools & MCP ▸ Tools."
     ),
-    "always_allow": "Remembered for this tool. Change it under MCP ▸ Permissions.",
+    "always_allow": (
+        "Remembered for this tool. Edit in Settings ▸ Tools & MCP ▸ Permissions."
+    ),
     "deny": "This call only; the model is told not to retry.",
 }
 _DEFAULT_DECISION = "approve_once"

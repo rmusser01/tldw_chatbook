@@ -402,8 +402,8 @@ def _assert_states_the_refusal(copy: str, provider: str, tool: str) -> None:
         ("todo_update", "one of Chatbook's own tools, so please report it"),
         (
             "mcp__thirdparty__lookup",
-            "Turn off the MCP server that provides it on the MCP screen, "
-            "then send again.",
+            "Turn off the MCP server that provides it in Settings ▸ Tools & "
+            "MCP ▸ Servers, then send again.",
         ),
     ],
     ids=["chatbook-tool", "mcp-tool"],

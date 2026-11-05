@@ -137,6 +137,7 @@ def _tool_definition_rejection_copy(
     """
     if not tools:
         return None
+    from tldw_chatbook.Agents.builtin_tool_gate import TOOL_GATES_PANE_PATH
     from tldw_chatbook.Agents.native_tools import (
         blames_tool_definition,
         rejected_tool_name,
@@ -152,7 +153,8 @@ def _tool_definition_rejection_copy(
             "The provider rejected one of the tool definitions sent with this "
             "request before the model ran, so choosing another model is "
             "unlikely to help. A tool from an MCP server is the likeliest "
-            "cause: turn MCP servers off on the MCP screen, then send again."
+            "cause: turn MCP servers off in Settings ▸ Tools & MCP ▸ Servers, "
+            "then send again."
         )
     rejected = (
         f"The provider rejected the tool definition for {_owner.escape_markup(name)} "
@@ -160,12 +162,12 @@ def _tool_definition_rejection_copy(
     )
     if name.startswith("mcp__"):
         return (
-            f"{rejected} Turn off the MCP server that provides it on the MCP "
-            "screen, then send again."
+            f"{rejected} Turn off the MCP server that provides it in Settings ▸ "
+            "Tools & MCP ▸ Servers, then send again."
         )
     return (
         f"{rejected} It is one of Chatbook's own tools, so please report it. "
-        "If its tool group has a switch on the MCP screen, turning that off "
+        f"If its tool group has a switch in {TOOL_GATES_PANE_PATH}, turning that off "
         "lets you send meanwhile."
     )
 

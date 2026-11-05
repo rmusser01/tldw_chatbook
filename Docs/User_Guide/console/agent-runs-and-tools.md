@@ -502,11 +502,11 @@ The five decisions, with the scope line each one shows:
 |---|---|
 | **Once** | This call only. |
 | **This session** | Every call to this tool until Chatbook exits. |
-| **Always · these args** | Remembered for exactly these arguments. Remove it under MCP ▸ Tools ▸ this tool. |
-| **Always** | Remembered for this tool. Change it under MCP ▸ Permissions. |
+| **Always · these args** | Remembered for these args. Remove in Settings ▸ Tools & MCP ▸ Tools. |
+| **Always** | Remembered for this tool. Edit in Settings ▸ Tools & MCP ▸ Permissions. |
 | **Deny** | This call only; the model is told not to retry. |
 
-On these lines MCP is the Settings ▸ Tools & MCP category (**Ctrl+9** opens it).
+**Ctrl+9** opens Settings ▸ Tools & MCP.
 
 - Not every row offers all five. MCP tool rows do, except a high-risk tool
   (tagged `mutates` or `process`), whose row does **not** offer **Always ·
@@ -2910,11 +2910,12 @@ Enter). Tab-fleet keys (Ctrl+T, Alt+1…9, Ctrl+K) are covered in
   model ran, so the reply fails the same way on every model. Choosing another
   model will not help. What the message suggests depends on the tool:
   - A name starting `mcp__` is a tool from an MCP server: turn that server
-    off in [Settings ▸ Tools & MCP](../mcp.md), then send again.
+    off in [Settings ▸ Tools & MCP](../mcp.md) ▸ Servers, then send again.
   - Any other name is one of Chatbook's own tools, so the rejection is a
     Chatbook bug; please report it. If the tool's group has a switch in
-    Settings ▸ Tools & MCP (for built-in local tools, **Local workspace, web, and
-    Watchlists tools**), turning it off lets you send meanwhile.
+    Settings ▸ Tools & MCP ▸ Servers ▸ built-in row ▸ Tool gates (for built-in
+    local tools, **Local workspace, web, and Watchlists tools**), turning it
+    off lets you send meanwhile.
   - If the provider blames a tool without naming it, the message says "one
     of the tool definitions sent with this request" and that choosing
     another model is unlikely to help. A tool from an MCP server is the

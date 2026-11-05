@@ -244,12 +244,16 @@ async def test_the_scope_line_states_the_selected_decision_and_follows_it():
         scope = app.query_one(".approval-row-scope", Static)
         assert _text(scope) == DECISION_SCOPE_COPY["approve_once"]
 
-        app.query_one(".approval-row-decision", Select).value = "always_allow"
-        await pilot.pause()
-        assert _text(scope) == DECISION_SCOPE_COPY["always_allow"]
-        assert DECISION_SCOPE_COPY["always_allow"] in _painted(app), (
-            "the scope line is not painted at 80 columns"
-        )
+        # TASK-36519 AC#2: both persistent lines name a Settings place and
+        # must still fit one row (allow_matching used to wrap to two).
+        for decision in ("allow_matching", "always_allow"):
+            app.query_one(".approval-row-decision", Select).value = decision
+            await pilot.pause()
+            assert _text(scope) == DECISION_SCOPE_COPY[decision]
+            assert scope.region.height == 1, f"{decision} wraps at 80 columns"
+            assert DECISION_SCOPE_COPY[decision] in _painted(app), (
+                "the scope line is not painted at 80 columns"
+            )
 
 
 @pytest.mark.asyncio
