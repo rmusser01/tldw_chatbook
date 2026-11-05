@@ -967,6 +967,8 @@ async def test_full_log_probe_never_touches_the_bridge_while_collapsed():
         console._character._current_console_rail_conversation_id = lambda: "conv-A"
         console._agent._console_agent_drilldown_conversation_id = "conv-A"
         console._current_console_rail_state = _rail_state_with_agent(console, False)
+        # TASK-36571.1: the section reads its open flag, not the rail state.
+        console._current_console_agent_section_open = lambda: False
 
         # Several "ticks" while collapsed: not even the run-id resolution
         # -- let alone `run_log_available` -- may run.
@@ -1024,6 +1026,8 @@ async def test_full_log_probe_is_cached_per_run_id_while_open():
         console._character._current_console_rail_conversation_id = lambda: "conv-A"
         console._agent._console_agent_drilldown_conversation_id = "conv-A"
         console._current_console_rail_state = _rail_state_with_agent(console, True)
+        # TASK-36571.1: the section reads its open flag, not the rail state.
+        console._current_console_agent_section_open = lambda: True
 
         # Steady state (same target run id across ticks): probed once, then
         # every later tick is a cache hit.
