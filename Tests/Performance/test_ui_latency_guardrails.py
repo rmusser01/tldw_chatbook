@@ -33,6 +33,7 @@ from __future__ import annotations
 
 import asyncio
 import os
+import sys
 from pathlib import Path
 
 import pytest
@@ -74,6 +75,15 @@ DESTINATION_TOUR: tuple[tuple[str, str], ...] = (
 
 _SETTLE_PASSES = 6
 _SETTLE_INTERVAL = 0.05
+
+#: TASK-38687: how long the idle app is watched, once with Console active and
+#: once after the tour, and how many calls to ``_sync_native_console_chat_ui``
+#: it may start in each window. The readiness projection and the
+#: sync once fed each other ~20 times a second on every screen; each idle
+#: ``pilot.pause()`` then waited out its 1 s ceiling and the readings crossed
+#: the budget. A count, not a clock: the loop is many per second on any CPU.
+IDLE_WINDOW_SECONDS = 1.0
+IDLE_CONSOLE_SYNC_LIMIT = 1
 
 
 def _scratch_env(monkeypatch: pytest.MonkeyPatch) -> Path:
@@ -130,6 +140,26 @@ async def test_destination_tour_stays_under_switch_budgets(
             await asyncio.sleep(0.05)
             await pilot.pause()
 
+        chat_screen = sys.modules["tldw_chatbook.UI.Screens.chat_screen"].ChatScreen
+        sync = chat_screen._sync_native_console_chat_ui
+        syncs = 0
+
+        async def counted(self, *args, **kwargs):
+            nonlocal syncs
+            syncs += 1
+            return await sync(self, *args, **kwargs)
+
+        async def check_idle(where: str) -> None:
+            nonlocal syncs
+            syncs = 0
+            await asyncio.sleep(IDLE_WINDOW_SECONDS)
+            if syncs > IDLE_CONSOLE_SYNC_LIMIT:
+                failures.append(
+                    f"idle {where} made {syncs} _sync_native_console_chat_ui calls in "
+                    f"{IDLE_WINDOW_SECONDS}s (limit {IDLE_CONSOLE_SYNC_LIMIT}): a sync is re-arming itself"
+                )
+
+        monkeypatch.setattr(chat_screen, "_sync_native_console_chat_ui", counted)
         failures: list[str] = []
         for key, expected in DESTINATION_TOUR:
             t0 = asyncio.get_running_loop().time()
@@ -145,6 +175,10 @@ async def test_destination_tour_stays_under_switch_budgets(
                 )
             elif elapsed > SCREEN_SWITCH_BUDGET_SECONDS:
                 failures.append(f"{key} -> {expected}: {elapsed:.1f}s > budget")
+            if arrived and expected == "ChatScreen":
+                await check_idle("Console")
+
+        await check_idle("app after the tour")
         assert not failures, "Screen-switch latency guardrail tripped:\n" + "\n".join(
             failures
         )

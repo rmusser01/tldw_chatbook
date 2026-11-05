@@ -128,9 +128,16 @@ MAX_PASS_ADDED_MODULES = 558
 #: 2026-10-26 TASK-34000.28/.40 polish-1a (PR #3259): +1,188 LOC over dev, owner-approved
 #: 2026-10-29; re-measured after the rebase onto dev 38c9d2edcf (paired arms: dev
 #: 425,011 -> head 426,199, the same +1,188): 425,347 -> 426,199; ADR-097 ledger.
-MAX_PASS_ADDED_LOC = 426_199
+#: 426,199 -> 426,512 (2026-11-05, TASK-38765; owner size waiver 2026-10-31),
+#: pinned at the measurement, a LOC-only re-pin with modules still within 558.
+#: Three arch/p2 merges went in red past this guard (the tour failed first and
+#: skipped the step): #3368 +4 LOC, #3369 +21, #3375 +316. #3375 moved
+#: `Canvas.config_policy` (312 lines) out of `config.py`, which the census
+#: counts as baseline, into a module `settings_screen` imports, so the pass
+#: shows code that was already resident.
+MAX_PASS_ADDED_LOC = 426_512
 #: Historical B2b source pin only (TASK-33910.4): 425,347 -> 440,410;
-#: integration retains current dev 426,199 above. The old measurement at
+#: integration retains current dev 426,512 above. The old measurement at
 #: B2b's Task 5 (425,410) plus ADR-097's standard 15,000-line slack, modules
 #: unchanged (558). Task 5 is B2b's first commit over the ceiling, so the
 #: re-pin lands there (controller ruling, 2026-10-29: dev's own growth to

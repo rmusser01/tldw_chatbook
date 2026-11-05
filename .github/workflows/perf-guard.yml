@@ -15,8 +15,10 @@ on:
     branches: [dev]
     types: [opened, synchronize, reopened, ready_for_review]
     paths:
-      - 'tldw_chatbook/**.py'
-      - 'tldw_chatbook/css/**'
+      # TASK-38684: the whole package, not only its .py and css. The job
+      # installs editable, so the app reads its migrations, Config_Files
+      # and assets straight from this checkout.
+      - 'tldw_chatbook/**'
       - 'Tests/Performance/**'
       - 'Tests/Packaging/test_console_rename_import_closure.py'
       # The stall-persistence tests run in this workflow too, and the job
@@ -44,6 +46,15 @@ on:
       - 'Tests/UI/console_controller_stubs.py'
       - 'Tests/UI/css_cache.py'
       - 'Tests/Utils/__init__.py'
+      # TASK-36511.3: the compact-setup gates' child runner and its imports.
+      - 'Tests/windows_private_fixture_runner.py'
+      - 'Tests/Backup_Recovery/restart_observation.py'
+      - 'Tests/Backup_Recovery/test_home_citation_retirement.py'
+      - 'Tests/Chat/__init__.py'
+      - 'Tests/Chat/test_citation_artifact_ownership.py'
+      - 'Tests/Chat/test_citation_legacy_migration.py'
+      - 'Tests/Chat/test_citation_payload_lifecycle.py'
+      - 'Tests/Chat/test_citation_trace_repository.py'
       # The plugin fixture test_app_import_weight.py copies, and the second
       # in-tree package the app imports (TASK-36529 review).
       - 'Tests/Plugins/fixtures/native/**'
@@ -53,8 +64,7 @@ on:
   push:
     branches: [dev, main]
     paths:
-      - 'tldw_chatbook/**.py'
-      - 'tldw_chatbook/css/**'
+      - 'tldw_chatbook/**'
       - 'Tests/Performance/**'
       - 'Tests/Packaging/test_console_rename_import_closure.py'
       # The stall-persistence tests run in this workflow too, and the job
@@ -80,6 +90,15 @@ on:
       - 'Tests/UI/console_controller_stubs.py'
       - 'Tests/UI/css_cache.py'
       - 'Tests/Utils/__init__.py'
+      # TASK-36511.3: the compact-setup gates' child runner and its imports.
+      - 'Tests/windows_private_fixture_runner.py'
+      - 'Tests/Backup_Recovery/restart_observation.py'
+      - 'Tests/Backup_Recovery/test_home_citation_retirement.py'
+      - 'Tests/Chat/__init__.py'
+      - 'Tests/Chat/test_citation_artifact_ownership.py'
+      - 'Tests/Chat/test_citation_legacy_migration.py'
+      - 'Tests/Chat/test_citation_payload_lifecycle.py'
+      - 'Tests/Chat/test_citation_trace_repository.py'
       # The plugin fixture test_app_import_weight.py copies, and the second
       # in-tree package the app imports (TASK-36529 review).
       - 'Tests/Plugins/fixtures/native/**'
@@ -99,7 +118,13 @@ jobs:
   ui-latency-guardrails:
     name: UI latency guardrails
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    # TASK-36511.3: 20, not 15 (owner-approved). CI, measured: the 40 green
+    # runs before the gates had a median of 618 s and a max of 883 s, and
+    # TASK-38703's idle-loop fix took the latency step from a 179 s median to
+    # 85-117 s. Local, scaled: the compact-setup gates take 115-132 s
+    # locally, about 240-280 s on CI at its ~2.1x. Estimate: a median of
+    # about 800 s and a max of about 1060-1100 s, 100-140 s under this limit.
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -165,9 +190,7 @@ jobs:
       # The completed-pair history node is a strict xfail until TASK-36510:
       # eight message-locator columns have no leading index, so promotion
       # scans them. Its XPASS fails this step, so the fix removes the marker.
-      # Not here: the 14 compact-setup gate nodes. Their 100 ms loop probe
-      # fails while Console attach holds the UI thread 180-270 ms; they wait
-      # for TASK-36511 (owner ruling 2026-10-23: keep 100 ms, fix the attach).
+      # The compact-setup gates run in the last step (TASK-36511.3).
       - name: Run Console tab-publication and voice gates
         run: |
           pytest Tests/Performance/test_console_tab_sync_source_ownership.py \
@@ -204,3 +227,14 @@ jobs:
           cat "$TLDW_STORAGE_UNIT_CENSUS_LOG" 2>/dev/null || echo "(no census written)"
           echo "::endgroup::"
           exit "$status"
+
+      # TASK-36511.3: the compact-setup gates hold a compact config read and
+      # require the UI loop to answer a probe within 100 ms meanwhile.
+      # Last on purpose: a wall-clock gate, so a flake here must not skip
+      # the census steps above (Tests/CI pins this). 17 nodes, about 115-132 s
+      # locally, about 240-280 s on CI.
+      - name: Run Console compact-setup gates
+        run: |
+          pytest Tests/Performance/test_compact_setup_ownership.py \
+            Tests/Performance/test_compact_model_original_checked_read.py \
+            -v --timeout=300

@@ -1521,8 +1521,9 @@ def _in_tree_package_modules() -> set[str]:
 
 #: Files Perf Guard's steps read as data rather than import, kept by hand:
 #: test_app_import_weight.py copies this plugin fixture and checks its
-#: plugin.json.
-PERF_GUARD_DATA_DEPENDENCIES = ("Tests/Plugins/fixtures/native",)
+#: plugin.json. TASK-38684: the job installs the app editable, so it reads its
+#: package data (DB migrations, Config_Files, assets) from the checkout.
+PERF_GUARD_DATA_DEPENDENCIES = ("Tests/Plugins/fixtures/native", "tldw_chatbook")
 
 
 def _github_paths_match(pattern: str, path: str) -> bool:
@@ -1556,9 +1557,14 @@ def test_perf_guard_runs_when_a_file_its_steps_load_changes() -> None:
     } <= packages, packages
     loaded |= packages
     for data in PERF_GUARD_DATA_DEPENDENCIES:
-        files = [p for p in (PROJECT_ROOT / data).rglob("*") if p.is_file()]
+        files = [
+            p
+            for p in (PROJECT_ROOT / data).rglob("*")
+            if p.is_file() and "__pycache__" not in p.parts
+        ]
         assert files, f"data dependency {data} holds no files"
         loaded |= {p.relative_to(PROJECT_ROOT).as_posix() for p in files}
+    assert "tldw_chatbook/Config_Files/default_config.toml" in loaded
     triggers = _triggers(_workflow("perf-guard.yml"))
     for event in ("pull_request", "push"):
         unmodelled = [
@@ -1579,6 +1585,25 @@ def test_perf_guard_runs_when_a_file_its_steps_load_changes() -> None:
             f"perf-guard.yml's {event} paths miss files its steps load; add "
             f"each to both trigger lists: {missing}"
         )
+
+
+#: TASK-36511.3 review: the compact-setup gates are a 100 ms wall-clock gate.
+#: GitHub skips every step after a failed one, so a flake there must not hide
+#: the census steps; they run in the job's last step and nowhere else.
+PERF_GUARD_LAST_STEP_TARGETS = (
+    "Tests/Performance/test_compact_setup_ownership.py",
+    "Tests/Performance/test_compact_model_original_checked_read.py",
+)
+
+
+def test_perf_guard_runs_its_wall_clock_compact_gates_last() -> None:
+    """Perf Guard runs the Console compact-setup gates only in its last pytest step."""
+    (job,) = _workflow("perf-guard.yml")["jobs"].values()
+    *earlier, last = [step for step in job["steps"] if "pytest" in step.get("run", "")]
+    assert _pytest_targets(last["run"]) == PERF_GUARD_LAST_STEP_TARGETS, last["name"]
+    for step in earlier:
+        shared = set(_pytest_targets(step["run"])) & set(PERF_GUARD_LAST_STEP_TARGETS)
+        assert not shared, f"{step['name']} runs {sorted(shared)}"
 
 
 def test_pull_request_workflows_are_never_cancelled_in_progress() -> None:

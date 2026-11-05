@@ -1,5 +1,5 @@
 # tldw_chatbook.* modules resident after `import tldw_chatbook.app`.
-# 676 modules. Written ONLY by scripts/update_boot_budget_snapshots.py (ADR-097).
+# 687 modules. Written ONLY by scripts/update_boot_budget_snapshots.py (ADR-097).
 tldw_chatbook
 tldw_chatbook.ACP_Interop
 tldw_chatbook.ACP_Interop.runtime_process
@@ -79,7 +79,6 @@ tldw_chatbook.Chat.assistant_generation_state
 tldw_chatbook.Chat.chat_conversation_scope_service
 tldw_chatbook.Chat.chat_conversation_service
 tldw_chatbook.Chat.chat_handoff_models
-tldw_chatbook.Chat.chat_loop_scope_service
 tldw_chatbook.Chat.citation_artifact_ownership
 tldw_chatbook.Chat.citation_evidence_models
 tldw_chatbook.Chat.citation_legacy_migration
@@ -92,19 +91,28 @@ tldw_chatbook.Chat.citation_trace_identity
 tldw_chatbook.Chat.citation_trace_models
 tldw_chatbook.Chat.citation_trace_repository
 tldw_chatbook.Chat.console_appearance
+tldw_chatbook.Chat.console_attention_preparation
+tldw_chatbook.Chat.console_capture_policy
 tldw_chatbook.Chat.console_chat_models
 tldw_chatbook.Chat.console_context_policy
 tldw_chatbook.Chat.console_dispatch_checkpoint
 tldw_chatbook.Chat.console_display_state
 tldw_chatbook.Chat.console_endpoint_provenance
 tldw_chatbook.Chat.console_ephemeral
+tldw_chatbook.Chat.console_glyphs
+tldw_chatbook.Chat.console_hook_review
 tldw_chatbook.Chat.console_image_edit_operations
 tldw_chatbook.Chat.console_library_policy
 tldw_chatbook.Chat.console_live_work
+tldw_chatbook.Chat.console_memory_banner
 tldw_chatbook.Chat.console_onboarding_state
+tldw_chatbook.Chat.console_preparation_reads
 tldw_chatbook.Chat.console_project_instructions
+tldw_chatbook.Chat.console_prompt_mixin_models
+tldw_chatbook.Chat.console_prompt_mixins
 tldw_chatbook.Chat.console_provider_endpoints
 tldw_chatbook.Chat.console_provider_support
+tldw_chatbook.Chat.console_rail_state
 tldw_chatbook.Chat.console_raw_cli
 tldw_chatbook.Chat.console_roleplay_identity
 tldw_chatbook.Chat.console_runtime
@@ -128,7 +136,6 @@ tldw_chatbook.Chat.provider_test_evidence
 tldw_chatbook.Chat.provider_usage
 tldw_chatbook.Chat.rag_scope
 tldw_chatbook.Chat.server_chat_conversation_service
-tldw_chatbook.Chat.server_chat_loop_service
 tldw_chatbook.Chat_Grammars_Interop
 tldw_chatbook.Chat_Grammars_Interop.chat_grammars_scope_service
 tldw_chatbook.Chat_Grammars_Interop.local_chat_grammars_service
@@ -170,6 +177,7 @@ tldw_chatbook.DB.sql_identifier_core
 tldw_chatbook.DB.sql_logging
 tldw_chatbook.DB.sql_validation
 tldw_chatbook.DB.sqlite_datetime_fix
+tldw_chatbook.DB.store_errors
 tldw_chatbook.DB.store_kernel
 tldw_chatbook.DB.transaction_observer
 tldw_chatbook.Evals
@@ -352,7 +360,6 @@ tldw_chatbook.Prompt_Studio_Interop.server_prompt_studio_service
 tldw_chatbook.Provider_Contract
 tldw_chatbook.Provider_Contract.provider_continuation
 tldw_chatbook.Provider_Contract.provider_endpoint_contract
-tldw_chatbook.Provider_Contract.provider_setup_facts
 tldw_chatbook.Provider_Contract.sampling_params
 tldw_chatbook.Provider_Contract.thinking_blocks
 tldw_chatbook.RAG_Admin
@@ -627,6 +634,7 @@ tldw_chatbook.Web_Scraping_Interop.web_scraping_scope_service
 tldw_chatbook.Widgets
 tldw_chatbook.Widgets.AppFooterStatus
 tldw_chatbook.Widgets.confirmation_dialog
+tldw_chatbook.Widgets.destination_rail
 tldw_chatbook.Widgets.glyph_fallback
 tldw_chatbook.Widgets.modal_dismissal
 tldw_chatbook.Widgets.pausable_progress
@@ -644,6 +652,7 @@ tldw_chatbook.Writing_Interop.writing_markdown_adapter
 tldw_chatbook.Writing_Interop.writing_normalizers
 tldw_chatbook.Writing_Interop.writing_scope_service
 tldw_chatbook.app
+tldw_chatbook.app_collections_wiring
 tldw_chatbook.app_command_providers
 tldw_chatbook.app_feature_glue
 tldw_chatbook.app_ingest_queue
@@ -651,6 +660,8 @@ tldw_chatbook.app_keep_alive
 tldw_chatbook.app_lifecycle
 tldw_chatbook.app_navigation
 tldw_chatbook.app_service_wiring
+tldw_chatbook.app_shutdown
+tldw_chatbook.app_skill_wiring
 tldw_chatbook.chunking_engine_version
 tldw_chatbook.config
 tldw_chatbook.css
