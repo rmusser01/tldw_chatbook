@@ -443,8 +443,10 @@ async def test_rules_keyed_on_the_bars_focus_style_only_the_declared_nodes():
       matched with every class it can carry: its own, its state classes,
       and any class a rule pairs with its id or type;
     * no rule keyed on an ancestor's ``:focus-within`` styles another
-      composer descendant (Textual's own focus-within pass restyles only
-      the rule's subject when it is an ancestor of the focused widget);
+      composer descendant (Textual's focus-within pass restyles the
+      subtree of the topmost ancestor of the focused or blurred widget
+      that is the subject of a ``:focus-within`` rule, which never
+      contains a composer descendant subject);
     * a focus rule on the bar itself sets no property its descendants read
       from it.
     """
