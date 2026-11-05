@@ -1,5 +1,5 @@
 ---
-id: TASK-38702
+id: TASK-38900
 title: Keep retained Eval recovery within the existing Windows restore deadline
 status: In Progress
 created_date: 2026-11-04 22:48
@@ -14,7 +14,7 @@ priority: high
 documentation:
 - Docs/Architecture/backup-recovery.md
 - Docs/Architecture/evals.md
-updated_date: 2026-11-05 00:10
+updated_date: 2026-11-05 14:55
 ---
 
 ## Description
@@ -53,6 +53,7 @@ Source review identified a concrete queued constructor read: app_service_wiring 
 Final fixture regression evidence: corrected native stock read observation uses only off-thread/successful-tuple booleans, preserving all three actual fixture marks. The initial empty-projection/empty-return assumptions were wrong and their failures remain retained (epochs387–390); they are not production regressions or counted passes. Final exact regression391 failed on original pending-task ordering in3.56s; exact reviewed wait restored, epoch392 passed all10 original retained/rejection/native-lifetime/startup controls in74.60s (original retained journey47.22s; regression16.37s). Both runs physically reaped with source_changes[]. Epoch385 also passed95 original diagnostic/observer controls. Ruff check/format and diff checks pass on allthree changed Python files. Independent review accepted fixture/diagnostic correctness after both cleanup findings were fixed; Windows restore45 performance and final head review/CI remain open.
 Actual Windows b07 run41935498768/job126942809784 reproduced original restore45 timeout (1failed82passed1existingplatformskip559.72s). Retained staged profile wall30.5904: SchemaPolicy immutable4,948,151calls .955self/2.609cumulative; related generator4,968,877calls1.151self. File-write/I/O costs also dominate and remain disclosed. Select only independently assessed mechanical primitive-leaf inlining in SchemaPolicy.__post_init__, preserving exact type(item) in(str,int), exacttuple roots/nesting, validation order/short-circuit and all physical/ownership/durability/fees. No added materialization/caching/authority or buffer change. Not all cumulative2.609s is recoverable; actual uninstrumented Windows45 remains decisive. Before product edit: add frozen-old-predicate bounded property/rejection/short-circuit controls and a deterministic real-installed largest core policy profile-call regression requiring work to follow tuple containers rather than every primitive. Add this regression file to existing Eval workflow selection (no limit/deadline/skip changes). Then meaningful RED→GREEN, real SQLite/forged-policy controls, remove temporary capture/profile diagnostics before final qualification, targeted UAT/static and independent exact-head review. Larger buffering is not selected: shared rollback callers, no prepaid heap seam and pending-buffer disk pricing require separate design. Existing ADR125/126; no new boundary.
 Mechanical correction is implemented and independently source-reviewed. Epoch394 meaningfully failed only the real-installed work guard (27,592 calls for125 tuple containers;25semantic controls passed). Epoch395 then passed178 policy/core-owner/real-SQLite/forged-policy/migration/cancellation controls63.07s. After restoring the original retained test byte-exact37dSHA448edf11f4bd14905a78b48bc087439e96e820d971cf9eb927c5047ad5b97425 (removing the two temporary profiling/observer wrappers), exact affected Eval selection396 passed110 uninstrumented cases174.13s, original whole retained journey42.38s. All runs physically reaped/source_changes[]. No Mac timing is Windows proof. Static proof records zero introduced Ruff findings and preserves two inherited model warnings/public error contract; changed tests and all formatting pass. Only models.py differs among3488 production blobs/3050 Python files versus the prior exact37d whole-feature review. Architecture/incident lesson/datedQA describe scope, substantial remaining I/O costs, original limits and pending current-head hosted Windows/UAT. Final committed-head independent review, fresh whole15 mobile/browser and mounted software UAT, current-head Windows45/required/Perf checks and final DoD reconciliation remain open.
+Renumbered from this branch's former TASK-38702 before dev integration because the older upstream Console-census task owns that numeric ID. The installed Backlog renumber command preserved this recovery task's body, creation metadata, ACs and status; its prior source/history and hosted45-second evidence remain retained. Replacement ID was checked against local/remote refs and worktrees with a lead buffer. New-head dev integration and CI/UAT qualification remain pending.
 <!-- SECTION:IMPLEMENTATION_NOTES:END -->
 
 ## Final Summary
