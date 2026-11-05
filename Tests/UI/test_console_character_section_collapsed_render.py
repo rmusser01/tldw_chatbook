@@ -436,6 +436,27 @@ async def test_a_screen_tick_queued_before_the_opening_paints_no_old_chats(
         assert screen.app._batch_count == 0, "the opening left paints held"
 
 
+async def test_opening_with_nothing_deferred_holds_no_paints(monkeypatch) -> None:
+    """TASK-38698 review: an opening with no deferred snapshot releases at once.
+
+    The disclosure takes its paint hold before it knows whether a render
+    starts. When none does (the common case), it must end the hold before it
+    returns, not leave every paint waiting for the 1 s net.
+    """
+    from Tests.UI.test_console_composer_run_controls import _wait_for
+    from Tests.UI.test_console_left_rail import make_console_pilot
+
+    _install_loading_controller(monkeypatch, [7])
+    async with make_console_pilot(size=(160, 45)) as pilot:
+        screen = pilot.app.screen
+        await _collapse_loaded_character_section(pilot)
+        browser = screen.query_one(ConsoleCharacterContext)
+        assert not browser._render_deferred, "precondition: nothing waits to render"
+        await _wait_for(pilot, lambda: not pilot.app._batch_count, "a batch stayed open")
+        screen._toggle_console_rail_section("character", next_open=True)
+        assert pilot.app._batch_count == 0, "the opening left paints held"
+
+
 async def test_return_from_roleplay_keeps_focus_on_search_over_a_deferred_render(
     monkeypatch,
 ) -> None:

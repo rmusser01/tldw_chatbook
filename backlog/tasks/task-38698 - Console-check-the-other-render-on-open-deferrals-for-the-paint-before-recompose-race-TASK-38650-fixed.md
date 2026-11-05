@@ -5,7 +5,7 @@ status: Done
 assignee:
   - '@claude'
 created_date: 2026-11-03 11:40
-updated_date: 2026-11-05 10:12
+updated_date: 2026-11-05 11:06
 labels:
 - follow-up
 - console
@@ -98,6 +98,12 @@ Checked and not a held snapshot rendered on open:
 - `Tests/Architecture`, serial, head against base: the same 43 failures on both, 4098 passed.
 - Size ratchet green.
 - Preflight passed.
+
+**Review follow-ups.**
+- **Nothing-deferred release is pinned.** The disclosure takes its hold before it knows whether a render starts. New test: `test_opening_with_nothing_deferred_holds_no_paints` opens a collapsed Character section with no deferred snapshot and asserts the batch count is still 0 right after the toggle.
+  - With the `else: release()` branch deleted, it was red (`assert 1 == 0`). Every such opening, the common case, would otherwise have paused all painting for 1 s.
+  - Green with the branch.
+- **`hold_paints` hardening.** It now reads `asyncio.get_running_loop()` before `app._begin_batch()`. A call made without a running loop now raises before any batch opens, so it can no longer leave one open.
 
 **Not changed.**
 - The on_show path (TASK-37021).

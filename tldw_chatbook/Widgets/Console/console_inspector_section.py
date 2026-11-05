@@ -135,6 +135,7 @@ def hold_paints(app: Any) -> Callable[[], None]:
     Returns:
         The end-once release.
     """
+    loop = asyncio.get_running_loop()  # Raises before the batch opens.
     app._begin_batch()
     ended = False
 
@@ -144,7 +145,7 @@ def hold_paints(app: Any) -> Callable[[], None]:
             ended = True
             app._end_batch()
 
-    asyncio.get_running_loop().call_later(1.0, release)
+    loop.call_later(1.0, release)
     return release
 
 
