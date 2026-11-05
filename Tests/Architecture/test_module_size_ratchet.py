@@ -790,7 +790,9 @@ _BUDGETS: dict[str, int] = {
     # folder-row button lays out again.
     # TASK-38700 review fold, 2026-11-04 (same waiver): 9670 -> 9676 (+6).
     # A rehydrate after Back from a failed observer attaches a new one.
-    "tldw_chatbook/Widgets/Library/library_file_notes_workspace.py": 9676,
+    # TASK-38715 review, 2026-11-05: 9676 -> 9674 (-2). The app tier owns the
+    # Save failed fill; the widget rule keeps only its bold.
+    "tldw_chatbook/Widgets/Library/library_file_notes_workspace.py": 9674,
     "tldw_chatbook/DB/Client_Media_DB_v2.py": 9429,  # 2026-11-02: +3 shared store-error import (TASK-36949.5)
     # TASK-37270: bounded template reads moved to local_reasoning_metadata.
     # 2026-10-29, TASK-33622.6 (owner decision: raise with a dated comment):
