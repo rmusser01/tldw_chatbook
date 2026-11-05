@@ -763,9 +763,12 @@ async def test_fresh_mounted_screen_settles_late_h3_outcome_in_dom_and_controls(
                 settlement_events.append("transcript")
                 await original_transcript_sync()
 
-            def _record_control_sync():
-                settlement_events.append("controls")
-                original_control_sync()
+            def _record_control_sync(*args, **kwargs):
+                # TASK-38752: a deferred sync re-requests with ``delayed=``;
+                # forward it, and record only the settlement's own request.
+                if not args and not kwargs:
+                    settlement_events.append("controls")
+                original_control_sync(*args, **kwargs)
 
             fresh._image._reconcile_h3_image_edit_completions = _record_reconcile
             fresh._sync_native_console_chat_ui = _record_transcript_sync
@@ -781,8 +784,17 @@ async def test_fresh_mounted_screen_settles_late_h3_outcome_in_dom_and_controls(
                 ),
             }.get(terminal_kind)
 
+            def _settled_in_order() -> bool:
+                # TASK-38752: Console ticks also sync the transcript and
+                # reconcile, before and during the settlement; require the
+                # settlement's order, not the first occurrence of each.
+                events = iter(settlement_events)
+                return all(
+                    event in events for event in ("reconcile", "transcript", "controls")
+                )
+
             def _settled() -> bool:
-                if "controls" not in settlement_events:
+                if not _settled_in_order():
                     return False
                 if stop.styles.display != "none":
                     return False
@@ -806,12 +818,7 @@ async def test_fresh_mounted_screen_settles_late_h3_outcome_in_dom_and_controls(
             )
             assert fresh._native_run_status_copy() == ""
             assert stop.styles.display == "none"
-            assert settlement_events.index("reconcile") < settlement_events.index(
-                "transcript"
-            )
-            assert settlement_events.index("transcript") < settlement_events.index(
-                "controls"
-            )
+            assert _settled_in_order(), settlement_events
             if expected_content is None:
                 assert (
                     fresh._ensure_console_chat_store().messages_for_session(session.id)
@@ -863,10 +870,11 @@ async def test_fresh_mounted_screen_settles_late_h3_outcome_in_dom_and_controls(
                     transcript_syncs += 1
                     await newer_transcript_sync()
 
-                def _count_control_sync():
+                def _count_control_sync(*args, **kwargs):
                     nonlocal control_syncs
-                    control_syncs += 1
-                    newer_control_sync()
+                    if not args and not kwargs:
+                        control_syncs += 1
+                    newer_control_sync(*args, **kwargs)
 
                 fresh._sync_native_console_chat_ui = _count_transcript_sync
                 fresh._request_console_control_bar_sync = _count_control_sync
