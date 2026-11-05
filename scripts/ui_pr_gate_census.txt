@@ -2409,3 +2409,8 @@ Tests/UI/test_library_file_notes_workspace.py::test_file_notes_narrow_views_lay_
 # (the hook review's too). Static text checks, well under 1 s. Appended at
 # the tail.
 Tests/UI/test_modal_wide_tier.py::test_split_modal_tier_rules_stay_off_the_boot_bundle
+# TASK-38741 (2026-11-05): the 40x20 case of the Notes source choices keyboard
+# test. TASK-38757 took the hidden work-pane sliver's controls out of the 40x20
+# focus chain, so its Tab walks went from 32.6-33.7 s to 4.9-5.3 s (call,
+# serial, three runs at load 7-8). Appended at the tail.
+Tests/UI/test_library_file_notes_workspace.py::test_library_notes_source_choices_render_and_switch_by_keyboard[size0]

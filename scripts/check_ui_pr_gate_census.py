@@ -811,6 +811,9 @@ MINIMUM_FILES = 1687
 # TASK-38719 (2026-11-05): append the split modal tier-rule pin at the
 # tail. The floor is the measured entry count.
 MINIMUM_FILES = 1688
+# TASK-38741 (2026-11-05): append the 40x20 Notes source choices keyboard
+# case at the tail. The floor is the measured entry count.
+MINIMUM_FILES = 1689
 
 
 def read_census(path: Path) -> list[str]:
