@@ -1,0 +1,61 @@
+# TASK-38614 independent whole-fix review
+
+## Spec compliance
+
+**Issues found.** The confirmed origin is corrected, but an identical, live scheduling sibling remains through a stored callback alias. Acceptance criterion 2 and the brief's complete exact-sync caller scope are not yet met. See I1 below. Review scope is BASE `85cdf8f52972cb1b66770d0d19abedb1316cf803` through HEAD `5f03c716fe4b1356678a61d578c39d687b1a1fe0`, supplied package SHA256 `29c3aa555a23232f9467218ba9a28b3b477eba4922814d98b6000308c20ef001`.
+
+**Task quality: Needs fixes.** Counts: **0 Critical, 1 Important, 0 Minor, 2 CannotVerify qualifications**. The incomplete sibling correction blocks approval; the evidence qualifications below are not additional demonstrated product defects.
+
+## Strengths
+
+- The original allocation is established independently of the warning receiver: `/private/tmp/task38614-origin-red3/restart-output.log:1299` records completion of the mounted journey; `:1300` begins the RuntimeWarning, and `:1327`–`:1330` identify `chat_screen.py:17791` through both coroutine origin and tracemalloc. `textual/cache.py:226` is only the receiver. This supports the brief's investigation gate and AC1.
+- The corrected screen replay at `tldw_chatbook/UI/Screens/chat_screen.py:17791` passes a bound async callable while retaining group, exclusivity, teardown checks and coalescing. The maintenance replay at `:17548`, control-bar replay at `:20865`, settings refreshes at `:4208`/`:5474`, and drilldown at `:24185` use the same repair. Installed `.venv/lib/python3.12/site-packages/textual/worker.py:333` invokes async callable work inside `_run_async`; `:404` schedules the outer worker task, and `:417` cancels that task without closing a separately supplied coroutine. The implementation fixes the demonstrated lifetime mismatch without adding a scheduler or changing runtime ownership.
+- `tldw_chatbook/UI/Console_Modules/wiring.py:1288` uses an actual async function, not a synchronous lambda that Textual rejects. It resolves the screen method when executed and returns its actual result, including `False`. The workspace/session/message injections at `:1508`, `:2136`, and `:2468` all use it. Their property accessors return the injected callable (`workspace.py:1454`, `session.py:1452`, `message.py:513`). Agent accessors already return the screen method (`agent.py:1051`, wiring `:2775`); the changed agent scheduling remains valid.
+- The new real-worker regression exercises refusal, cancellation before entry and exclusive replacement, observing the original sync code object and task identity (`Tests/UI/test_console_sync_worker_admission.py:48`–`:91`). It also checks a real store-created session's tab (`:94`–`:99`), waits for natural idle, and verifies an actual awaited dependency error propagates before immediately restoring it (`:100`–`:117`). The native workflow regression captures every RuntimeWarning and performs GC **inside the child process** (`Tests/UI/test_workflow_existing_admission.py:23`–`:31`), preserving the original journey assertions.
+- Workspace synchronous-callback compatibility remains explicit at `workspace.py:2069`–`:2078`; direct await callers retain their await boundary. The readiness publication at `console_spend_projection.py:456`–`:465` no longer creates work before admission, preserves best-effort ordinary scheduling-error handling, and still rethrows non-Exception BaseExceptions. Removing its obsolete `publication.close()` is correct.
+
+## Issues
+
+### Critical
+
+None found.
+
+### Important
+
+**I1 — The context snapshot still eagerly creates the exact native synchronization coroutine.**
+
+- **Location:** `tldw_chatbook/UI/Console_Modules/console_spend_projection.py:1073`–`:1075`.
+- **Binding and reachability:** `ConsoleContextReadSnapshot.for_screen()` binds `schedule=screen.run_worker` and `refresh=screen._sync_native_console_chat_ui` at `:907`–`:908`. Normal Console wiring calls this snapshot's `inputs()` at `tldw_chatbook/UI/Console_Modules/wiring.py:1314`. A changed, successfully warmed context read reaches `_refresh()` and currently executes `self.schedule(self.refresh(), exclusive=False, group="console-context-publication")`.
+- **Defect and consequence:** `self.refresh()` allocates precisely the same native sync coroutine before Textual admits it. Cancellation before worker entry, including screen teardown, leaves it unawaited under the installed Worker behavior established above. This is an identical sibling hidden by an alias, in a production file already in the fix. The exact-name inventory misses it because the scheduling call spells the callback `self.refresh`.
+- **Required correction:** Defer this native refresh until worker entry using the existing callable API, preserving the publication group, exclusivity and callback compatibility actually required by callers. Add one focused regression that drives this stored-callback publication through real Textual cancellation before entry and retains an admitted-publication control. Do not broaden the fix to the separate context-reader coroutine merely because it appears nearby.
+- **Evidence sufficiency:** No new test was run for this finding. The concrete binding, live caller, eager call expression, and already-inspected installed Worker implementation establish the same defect; the recorded screen-only worker regression does not exercise this alias.
+
+### Minor
+
+None added. Existing failing tests and diagnostic noise are retained as evidence limits below rather than claimed clean or attributed to this change without proof.
+
+## Connected-risk checks
+
+- **Deferred lookup, return values, and direct awaits:** Read the full small forwarding function, its three constructor injections and corresponding properties. Read the complete original sync body because the supplied changed hunks cut it off: `chat_screen.py:17553`–`:17795` retains bool returns, currentness checks, coalescing, teardown-scoped exception handling and live exception propagation. Workspace stored-result direct awaits at `workspace.py:5518` and `:6462` remain unchanged. No new owner/interface/storage decision requires an ADR; this remains within ADR-094.
+- **Other exact-sync scheduling aliases:** Searched production references and followed the callable contracts rather than treating the inventory as proof. Image/video, library activity, character, fleet and prompt queue callbacks immediately await the sync; existing screen `call_after_refresh`/`call_later` entries already pass callable work. `app_speech.py:308`–`:311` directly awaits the selected method. Message speech repaint at `message.py:1411` uses an asyncio task directly, not a Textual worker containing an unstarted inner coroutine. The snapshot binding at `console_spend_projection.py:908` exposed I1. No blanket claim is made about unrelated coroutine scheduling.
+- **Spend exception policy and workspace compatibility:** Read the changed publication boundary and original workspace switch context. Native async callables now defer correctly; the workspace's legacy synchronous result/awaitable handling is retained. The readiness fake's one-line callable-or-awaitable adjustment at `Tests/UI/test_console_readiness_config_projection.py:29` retains its original published-result assertion.
+- **Child process and cleanup evidence:** Read the child script and `_run()` (`Tests/Backup_Recovery/test_home_citation_retirement.py:261`–`:333`), plus the original workflow journey's actual mounted interaction and final cleanup (`Tests/UI/test_workflow_existing_admission.py:110`–`:169`). The marker `retired and reopened` is not literal application restart/reopen proof. No such stronger proof is claimed here.
+
+## Verification evidence and qualifications
+
+Read the complete supplied diff, brief, report, plan, task, rulings, installed Worker code and the focused connected source listed above. Read raw RED/GREEN receipts and the static-check implementation/receipt. **No tests or Git commands were run during review.** No product, task, source, status, index or HEAD edits were made; this report is the only reviewer write.
+
+- `task-1-worker-red.log` fails on three unawaited native sync warnings; `task-1-worker-green.log` records 1 passed in 5.52s. The original RED test filtered the target warning; the committed version captures every RuntimeWarning.
+- `/private/tmp/task38614-origin-green/restart-output.log` reaches the journey cleanup marker without a `RAW_WARNING` or `JOURNEY_ERROR`; `task-1-origin-green.log:1` records 38.0987s. The diagnostic driver catches journey exceptions before printing them, so checking raw child output, not only parent exit, matters. This run predates the disclosed wiring formatting epoch.
+- `task-1-targeted-final.log:1`–`:11` records 14 passed in 44.07s; `task-1-live-control.log:1`–`:6` records the separately amended final error-control regression passing in 5.77s. The exact node selections and strict parent warning flags are in `task-1-commands.json`; child strictness comes from its explicit capture/assertion.
+- `task-1-static-final.json` records zero introduced per-file Ruff code/message multiplicities and zero changed-range formatter overlaps for all 11 paths. `task-1-static.py` actually performs those comparisons against retained before bytes. Existing lint/format debt remains; this is not a globally clean lint claim. Current commit/index/worktree/final-pin equality and preservation of the original 279 identities/staged61 are controller-owned checks recorded in `root-delivery-audit.json:5`–`:7`, not re-executed by this reviewer.
+
+**CannotVerify CV1 — Exact final14 execution source epoch.** The writer report says the 14-pass run followed the wiring blank-line formatting correction; `progress.md` says the formatting followed that run. The final source-pin/static files establish current bytes, not the exact launch-time bytes of that earlier run. The controller confirmed its ledger ordering is not a contemporaneous source capture. Preserve this temporal limit unless an existing capture resolves it; do not silently promote the 14-pass receipt to exact-final-byte proof. This is a whitespace-only disclosed uncertainty, separate from the final amended one-test receipt and the substantive missing sibling.
+
+**CannotVerify CV2 — Broad green/baseline claims for adverse cohorts.** The interrupted controller invocation records **55 failed / 157 passed**, not a completed suite (`task-1-controller-green.log`, final lines). Its 55-node inventory has 32 raw-source-selection refusals, 20 missing DB fake methods, one mode-bar fake error, one constructor-doc mismatch and the introduced readiness fake failure later repaired. Read representative original tracebacks; the DB failure occurs in constructor/wiring store initialization, before refresh scheduling. The separate native invocation records **7 failed / 12 passed**; the distinct supported-bootstrap seven-node invocation records **1 failed / 6 passed** (`task-1-originals-bootstrap.log:65`). Its exact allowlist changes only the existing `bootstrap_profile` marker, consistent with `Tests/conftest.py:1280`–`:1300`. The remaining `NoMatches` control injects at avatar refresh (`Tests/UI/test_console_sync_outlives_screen.py:176`–`:218`), after current tab publication (`chat_screen.py:17634` versus `:17673`), so that failure does not demonstrate lost live-error propagation. The new actual-tabs error control supplies a valid replacement observation without editing the old assertion. None of this proves historical baseline passes or makes the adverse cohorts green. Existing raw diagnostic warnings/errors are not concealed by the successful targeted receipts.
+
+## Assessment
+
+**Spec compliance: Issues found. Quality: Needs fixes.** Correct the one stored-callback publication path and obtain a scoped regression/review of that correction. The existing implementation otherwise follows the intended minimal Textual admission fix and provides meaningful native warning/publication evidence.
+
+Skipped: repeated successful cohorts, full suite, provider/network runs, and unrelated scheduling/architecture audits. Remaining risk: I1 still permits the target leak; broader adverse cohorts and final14 launch-time source identity retain the explicit qualifications above.

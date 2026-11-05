@@ -217,6 +217,14 @@ window in the shared resume operation used by the rail, Library handoff and Ctrl
 switcher. Enter and Send visibly refuse during that window, preserving the draft
 until activation settles (TASK-35310).
 
+Native Console view-refresh workers receive async callables through Textual's
+existing worker API. Creating the coroutine before worker entry can abandon it
+when work is refused, replaced or cancelled before starting. Controller proxy
+callbacks retain late lookup and the original completion result through their
+existing async wiring forwarder. This applies to view refresh; accepted turns
+retain their separate app-owned lifetime (ADR-094). See the
+[allocation and worker regression evidence](../superpowers/qa/2026-11-05-console-sync-coroutine-warning/README.md).
+
 ## Send lifecycle (dataflow)
 
 Runtime staging belongs to an exact session. `_on_active_session_changed`

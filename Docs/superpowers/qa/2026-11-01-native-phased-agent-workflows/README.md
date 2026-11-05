@@ -2,6 +2,14 @@
 
 Tasks 1–10 are Done. The final scoped correction code gate and root archival byte audit are approved. The feature defaults off. Qualification uses the existing native Console, workflow coordinator, workers, SQLite and profile backup owners in the shared dirty `dev` checkout.
 
+Follow-up: the UI coroutine warning class retained here was subsequently reproduced
+with allocation tracing and corrected in the current code. [Focused fix and
+independent review](../2026-11-05-console-sync-coroutine-warning/README.md) retain
+the new evidence. The particular historical provider event still lacks its own
+allocation traceback; its original source/process qualifications below remain
+historical.
+
+
 ## Evidence boundaries
 
 The starting metadata commit is `7d1a5ef849dfadb73cbdf16a3813cb583c8695ca`, with accepted Console product `81ec86d2c854795274557e1bdd4725a317e7ba2a`. Each cohort retains its own process receipt and pre/post filesystem source hashes. User-owned dependencies remain uncommitted. Commit identity alone cannot reproduce the tested checkout.
