@@ -77,6 +77,7 @@ Three things to know when reading the red Windows runs:
 AC#2 still needs 10 consecutive Windows passes in CI, counted from a head that has both this task's deadline and the TASK-38703 fix.
 
 **The 120 s Windows deadline stays for now.** TASK-38462 (claude/bd-38462, e08f7653a2) moves Windows Textual timer sleeps off the default executor. Waits of 0.25 s or more use `asyncio.sleep`, and shorter ones a dedicated pool. If Windows CI then shows the recompose wait back near macOS, under 1 s, the Windows branch can return to the shared 10 s budget. Pinning that needs Windows job timings. The time to decide is AC#2's 10-run streak: lower the budget only if those runs carry TASK-38462 and their recompose waits fit inside 10 s with margin.
+**Windows run 1 of 10 (AC#2):** passed in run 41784255481 at d0d26a6fdc (2026-11-04). The 7 full-app nodes took 13.4-23.8 s and the 31 backend tests passed, with no teardown errors. The head carries the TASK-38703 loop fix, the TASK-38462 timer fix and the 120 s Windows deadline. AC#2 needs 9 more consecutive passing Windows runs.
 <!-- SECTION:IMPLEMENTATION_NOTES:END -->
 
 ## Final Summary

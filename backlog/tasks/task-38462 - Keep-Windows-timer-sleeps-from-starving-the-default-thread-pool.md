@@ -96,6 +96,7 @@ On Windows, Textual runs every timer sleep, and every timer cancellation, as a b
 - **Tests.** `Tests/App/test_chachanotes_fts_backfill_worker.py`. RED: `assert ['open'] == []`. GREEN: 3 passed (skip, plus two controls: an existing file and an already-open DB).
 - **Integration RED/GREEN.** All three CI nodes on 8c1e43ab7a under proxy + timer fix + 5 s creation: passed then ERROR "uncertain", join 3.002 s. After the fix, all 7 nodes of that CI step pass with no DB creation and 0.0 s joins.
 - **Size ratchet.** The `app_feature_glue.py` row was raised 742 -> 753 (dated).
+**Windows confirmation:** in run 41784255481 at d0d26a6fdc (2026-11-04), after the FTS-backfill skip (fe1470d27c), the Windows GGUF job passed all 7 full-app nodes in 13.4-23.8 s. That is faster than dev's 36-78 s, and there were no teardown errors.
 <!-- SECTION:IMPLEMENTATION_NOTES:END -->
 
 ## Final Summary

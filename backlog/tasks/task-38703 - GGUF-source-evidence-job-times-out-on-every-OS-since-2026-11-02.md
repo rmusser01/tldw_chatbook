@@ -1,7 +1,7 @@
 ---
 id: TASK-38703
 title: GGUF source evidence job times out on every OS since 2026-11-02
-status: In Progress
+status: Done
 created_date: '2026-11-03 13:47'
 updated_date: '2026-11-03 14:30'
 labels:
@@ -24,7 +24,7 @@ The "TASK-2062.2 GGUF source evidence" workflow was green through 2026-10-31. Fr
 - [x] #2 The job's full-app node set, run exactly as the workflow runs it (one process per node, private profile, --timeout=60), passes at least 5 consecutive times locally on macOS, with per-node timings back in the range of the last green CI runs.
 - [x] #3 If the cause is a product bug, a test that fails without the fix and passes with it guards it.
 - [x] #4 No assertion is loosened, no wait is dropped, and no timeout or settle budget is raised.
-- [ ] #5 The job passes on ubuntu-latest and macos-latest in CI.
+- [x] #5 The job passes on ubuntu-latest and macos-latest in CI.
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -115,6 +115,7 @@ No GGUF run happened between that merge and 11-02 17:41Z, because the workflow i
   - ruff: no new findings.
 
 **Re-review round (2026-11-03).** Commit c13fd0ad13. (1) A slot whose screen moved to another model stayed in the dict, so every refresh and `warm()` re-ran its failed preparation (probe: A ran 5 times across 4 refreshes while only B was asked). `_TokenizerSlot.asked` is set by `tokenizer_ready`; `tokenizer_due` and the refresh snapshot consider only asked slots, and the refresh clears the mark, so an unasked slot is neither read nor waited on, and the alternating chip/session asks of one sync still stay prepared. (2) Eviction is now least recently asked: `tokenizer_ready` pops the key and re-inserts it on every hit or recapture. RED/GREEN: `test_slot_nobody_asks_for_is_not_prepared_again` (A ran 9 times before, 1 after) and `test_tokenizer_slots_evict_the_least_recently_asked` (wrong order before); `Tests/UI/test_console_tokenizer_preparation.py` 14 passed.
+**CI (AC#5):** the GGUF source evidence job passed on ubuntu, macOS and Windows in run 41784255481 at d0d26a6fdc (2026-11-04). Each OS ran 7 full-app nodes at 9.6-34 s apiece, against the 60 s per-node timeout, plus 31 backend tests.
 <!-- SECTION:IMPLEMENTATION_NOTES:END -->
 
 ## Final Summary
