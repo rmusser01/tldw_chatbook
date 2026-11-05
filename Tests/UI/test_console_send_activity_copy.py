@@ -37,6 +37,31 @@ def test_send_copy_tracks_current_stage_without_a_bridge(status, started, expect
     )
 
 
+@pytest.mark.parametrize(
+    "visible_copy,expected",
+    [
+        ("Searching Library…", "Searching Library…"),
+        ("Validating provider.", "Sending…"),
+        ("Initializing hooks.", "Sending…"),
+        ("", "Sending…"),
+    ],
+)
+def test_a_preparing_send_names_a_library_search_and_nothing_else(
+    visible_copy, expected
+):
+    """TASK-33620.15.41: the Library wait is the one preparation step named.
+
+    A first Automatic send on an embedding profile waits seconds to tens of
+    seconds while the Library builds its search runtime. The controller sets
+    "Searching Library…" for exactly that wait (TASK-33621.20); collapsing
+    every preparing state to "Sending…" hid it, so the user watched
+    "Sending…" with no reason given. Every other preparation copy still
+    reads "Sending…", which claims nothing about the provider.
+    """
+    state = SimpleNamespace(status="validating", visible_copy=visible_copy)
+    assert console_send_activity_copy(state) == expected
+
+
 def test_setup_and_live_primary_tool_keep_specific_copy():
     from tldw_chatbook.Agents.agent_models import AGENT_KIND_PRIMARY, STEP_TOOL_CALL
 
