@@ -361,6 +361,10 @@ DREAMS_BOUNDARY_TARGETS = (
     # pr-fast-lane: that job ran median 31.4 / max 34.7 min of its 35 over 37
     # PR runs (2026-11-03), this one median 6.2 / max 7.2 of its 20.
     "Tests/Chat/test_local_server_discovery.py",
+    # TASK-38717: its two sibling suites from TASK-34100.6, sandboxed too;
+    # ~9 s and ~44 s serial (3 of 3 each, load 43-59 on 18 CPUs).
+    "Tests/Chat/test_local_server_discovery_engines.py",
+    "Tests/Chat/test_provider_tls_failures.py",
 )
 #: TASK-34929: the Dreams tracking tests, gated whole in their own job.
 DREAMS_TRACKING_TARGET = "Tests/Dreams/test_track_service.py"
