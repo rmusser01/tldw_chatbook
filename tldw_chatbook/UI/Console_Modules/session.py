@@ -804,7 +804,7 @@ def request_console_repaint(screen: Any) -> None:
         screen._console_sync_requested = True
         return
     screen.run_worker(
-        screen._sync_native_console_chat_ui(), exclusive=True, group="console-sync"
+        screen._sync_native_console_chat_ui, exclusive=True, group="console-sync"
     )
 
 
@@ -2565,7 +2565,7 @@ class ConsoleSessionController:
             # must appear in the browser on the very next sync.
             self._invalidate_console_persisted_rows_cache()
             self.run_worker(
-                self._sync_native_console_chat_ui(),
+                self._sync_native_console_chat_ui,
                 exclusive=True,
                 group="console-sync",
             )
@@ -4962,7 +4962,7 @@ class ConsoleSessionController:
         # showing "Temporary" on an already-saved conversation.
         self._sync_console_temporary_chip()
         self.run_worker(
-            self._sync_native_console_chat_ui(), exclusive=False, group="console-sync"
+            self._sync_native_console_chat_ui, exclusive=False, group="console-sync"
         )
         self.app_instance.notify("Chat saved.", severity="information")
 

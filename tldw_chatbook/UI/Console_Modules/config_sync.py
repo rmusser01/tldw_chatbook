@@ -602,7 +602,7 @@ def run_coalesced_control_bar_sync(screen: Any, is_torn_down: Callable) -> None:
         screen._console_control_bar_replay_whole_sync = False
         screen._console_sync_requested = False
         screen.run_worker(
-            screen._sync_native_console_chat_ui(), exclusive=True, group="console-sync"
+            screen._sync_native_console_chat_ui, exclusive=True, group="console-sync"
         )
     else:
         screen._sync_console_control_bar()

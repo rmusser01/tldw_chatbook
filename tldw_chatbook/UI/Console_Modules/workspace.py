@@ -2124,8 +2124,10 @@ class ConsoleWorkspaceController:
         self._sync_console_chat_core_state()
         self._activate_console_session_for_workspace(target)
         self._sync_console_workspace_context()
-        native_sync = self._sync_native_console_chat_ui()
-        if inspect.isawaitable(native_sync):
+        native_sync = self._sync_native_console_chat_ui
+        if not inspect.iscoroutinefunction(native_sync):
+            native_sync = native_sync()
+        if inspect.iscoroutinefunction(native_sync) or inspect.isawaitable(native_sync):
             self.run_worker(
                 native_sync,
                 exclusive=True,
@@ -5063,7 +5065,7 @@ class ConsoleWorkspaceController:
                 if not _current():
                     return
                 self.run_worker(
-                    self._sync_native_console_chat_ui(),
+                    self._sync_native_console_chat_ui,
                     exclusive=True,
                     group="console-sync",
                 )
@@ -5163,7 +5165,7 @@ class ConsoleWorkspaceController:
             self._sync_console_chat_core_state()
             self._sync_console_workspace_context()
             self.run_worker(
-                self._sync_native_console_chat_ui(),
+                self._sync_native_console_chat_ui,
                 exclusive=True,
                 group="console-sync",
             )
@@ -5371,7 +5373,7 @@ class ConsoleWorkspaceController:
                         callback=_recovery,
                     )
                     self.run_worker(
-                        self._sync_native_console_chat_ui(),
+                        self._sync_native_console_chat_ui,
                         exclusive=True,
                         group="console-sync",
                     )
@@ -5500,7 +5502,7 @@ class ConsoleWorkspaceController:
         self._activate_console_session_for_workspace(result.workspace_id)
         self._sync_console_workspace_context()
         self.run_worker(
-            self._sync_native_console_chat_ui(), exclusive=True, group="console-sync"
+            self._sync_native_console_chat_ui, exclusive=True, group="console-sync"
         )
         # TASK-713: the whole sequence is invisible when the Workspace status
         # row is scrolled out of view -- keep the toast even with the modal.
@@ -6067,7 +6069,7 @@ class ConsoleWorkspaceController:
             self._activate_console_session_for_workspace(active.workspace_id)
         self._sync_console_workspace_context()
         self.run_worker(
-            self._sync_native_console_chat_ui(), exclusive=True, group="console-sync"
+            self._sync_native_console_chat_ui, exclusive=True, group="console-sync"
         )
 
     def _console_workspace_session_title(self, workspace_id: str) -> str:

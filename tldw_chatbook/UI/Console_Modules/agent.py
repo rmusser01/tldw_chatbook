@@ -2830,7 +2830,7 @@ class ConsoleAgentController:
         if callable(repaint):
             repaint()
         else:
-            self.run_worker(self._sync_native_console_chat_ui(), exclusive=False)
+            self.run_worker(self._sync_native_console_chat_ui, exclusive=False)
 
 
     @staticmethod
@@ -3013,7 +3013,7 @@ class ConsoleAgentController:
         state["at"] = time.monotonic()
         if changed:
             self.run_worker(
-                self._sync_native_console_chat_ui_accessor()(),
+                self._sync_native_console_chat_ui_accessor(),
                 exclusive=False,
                 group="console-subagent-count-publication",
             )

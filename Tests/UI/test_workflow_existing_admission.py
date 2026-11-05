@@ -14,7 +14,7 @@ def test_existing_workflow_is_the_actionable_refusal_target(tmp_path, mode):
         "workflow-existing",
         mode,
         script="""
-import asyncio, os, sys
+import asyncio, gc, os, sys, warnings
 from pathlib import Path
 from Tests import network_guard, real_profile_guard
 from Tests.windows_private_fixture_runner import user_fixture_default_owner
@@ -22,8 +22,13 @@ network_guard.install()
 real_profile_guard.install()
 os.environ.update(TLDW_AGENTS_WORKFLOW_RUNS_ENABLED="true", TLDW_AGENTS_AUTOWAKE_ENABLED="true", OPENAI_API_KEY="private-native-workflow-test")
 from Tests.UI.test_workflow_existing_admission import existing_journey
-with user_fixture_default_owner():
-    asyncio.run(existing_journey(Path(os.environ["XDG_DATA_HOME"]).parent, sys.argv[2]))
+with warnings.catch_warnings(record=True) as caught:
+    warnings.simplefilter("always", RuntimeWarning)
+    with user_fixture_default_owner():
+        asyncio.run(existing_journey(Path(os.environ["XDG_DATA_HOME"]).parent, sys.argv[2]))
+    gc.collect()
+runtime_warnings = [str(item.message) for item in caught if issubclass(item.category, RuntimeWarning)]
+assert not runtime_warnings, runtime_warnings
 """,
         timeout=60,
     )

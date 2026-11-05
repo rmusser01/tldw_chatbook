@@ -1443,6 +1443,10 @@ def build_console_controllers(
         None. The controllers are reachable as attributes of `screen`.
     """
     screen._approval_feedback = None
+
+    async def sync_native_console_chat_ui() -> bool:
+        return await screen._sync_native_console_chat_ui()
+
     screen._context_spend = ConsoleContextSpendController(
         screen,
         ensure_chat_store=lambda: screen._ensure_console_chat_store(),
@@ -1664,7 +1668,7 @@ def build_console_controllers(
             lambda: screen._session._bind_composer_to_active_session(focus=False)
         ),
         sync_chat_core_state=lambda: screen._sync_console_chat_core_state(),
-        sync_native_console_chat_ui=lambda: screen._sync_native_console_chat_ui(),
+        sync_native_console_chat_ui=sync_native_console_chat_ui,
         sync_temporary_chip=lambda: screen._sync_console_temporary_chip(),
         default_session_settings_accessor=(
             lambda: screen._session._default_console_session_settings()
@@ -2043,7 +2047,7 @@ def build_console_controllers(
         ),
         schedule_native_console_sync=(
             lambda: screen.run_worker(
-                screen._sync_native_console_chat_ui(),
+                screen._sync_native_console_chat_ui,
                 exclusive=True,
                 group="console-sync",
             )
@@ -2331,7 +2335,7 @@ def build_console_controllers(
         scratch_snapshot_provider=partial(_stock_console_scratch_snapshot, screen),
         rag_source_types_accessor=rag_source_types_accessor,
         rag_top_k_accessor=rag_top_k_accessor,
-        sync_native_console_chat_ui=lambda: screen._sync_native_console_chat_ui(),
+        sync_native_console_chat_ui=sync_native_console_chat_ui,
         sync_chat_core_state=lambda: screen._sync_console_chat_core_state(),
         sync_temporary_chip=lambda: screen._sync_console_temporary_chip(),
         sync_settings_summary=lambda: screen._sync_console_settings_summary(),
@@ -2687,7 +2691,7 @@ def build_console_controllers(
             controller.send_refusal_copy(session_id)
             or screen._console_provider_blocker_copy()
         ),
-        sync_native_console_chat_ui=lambda: screen._sync_native_console_chat_ui(),
+        sync_native_console_chat_ui=sync_native_console_chat_ui,
         # Session <-> message seam (design spec: "a named callable
         # between them; design it deliberately, never a back-door
         # through the screen"). `self._session` was constructed above;

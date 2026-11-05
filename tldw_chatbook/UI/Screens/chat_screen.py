@@ -4279,7 +4279,7 @@ class ChatScreen(BaseAppScreen):
         if store.active_session_id == session_id:
             self._sync_console_identity_surfaces()
             self.run_worker(
-                self._sync_native_console_chat_ui(),
+                self._sync_native_console_chat_ui,
                 exclusive=True,
                 group="console-sync",
             )
@@ -5566,7 +5566,7 @@ class ChatScreen(BaseAppScreen):
         if store.active_session_id == result.live_commit.session_id:
             self._sync_console_identity_surfaces()
             self.run_worker(
-                self._sync_native_console_chat_ui(),
+                self._sync_native_console_chat_ui,
                 exclusive=True,
                 group="console-sync",
             )
@@ -17710,7 +17710,7 @@ class ChatScreen(BaseAppScreen):
             self._console_sync_requested = False
             if not _console_screen_is_torn_down(self):
                 self.run_worker(
-                    self._sync_native_console_chat_ui(),
+                    self._sync_native_console_chat_ui,
                     exclusive=True,
                     group="console-sync",
                 )
@@ -17986,7 +17986,7 @@ class ChatScreen(BaseAppScreen):
                 # outlives the screen that owns it.
                 if not _console_screen_is_torn_down(self):
                     self.run_worker(
-                        self._sync_native_console_chat_ui(),
+                        self._sync_native_console_chat_ui,
                         exclusive=True,
                         group="console-sync",
                     )
@@ -24402,7 +24402,7 @@ class ChatScreen(BaseAppScreen):
             event.stop()
             self._console_agent_drilldown_run_id = None
             self.run_worker(
-                self._sync_native_console_chat_ui(),
+                self._sync_native_console_chat_ui,
                 exclusive=True,
                 group="console-sync",
             )
