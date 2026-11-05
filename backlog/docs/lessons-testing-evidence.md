@@ -4972,6 +4972,18 @@ can stay green while one callback monopolizes the loop far beyond the deadline.
 
 ## Pilot clicks can bind a widget that recomposition removes before hit-testing
 
+**TASK-38703, 2026-11-05.** PR3345 UI17 timed out after one Notes Move click.
+The hosted pointer phase was unobserved; a native pending-layout diagnostic
+proved the helper's separate hazard: its enabled/nonzero-region predicate
+passed at (43,21), then Pilot's first pause moved the same button to (45,21)
+and all three events hit the toolbar. Wait for a refresh inside the original
+readiness deadline, reacquire and hit-test the live control, then click once.
+Keep the unperturbed journey plus the pending-layout regression and all outcome
+assertions. A passing local control does not waive the hosted failure or prove
+its precise phase. Review also caught a test-arm lookup that preceded button
+composition; prepare only that arm boundedly, preserving the original path.
+
+
 **TASK-24403, 2026-08-29.** The clean fast-PR lane passed all 670 selected tests,
 then a second identical run failed one 100x30 MCP Workbench interaction:
 `Pilot.click()` returned false even though the checkbox was painted, on-screen,
