@@ -1000,6 +1000,10 @@ MINIMUM_FILES = 2036
 # TASK-36571.1 (2026-11-05): the run-status reuse pin and the unchanged
 # folder-availability re-read pin join them. The floor is the entry count.
 MINIMUM_FILES = 2038
+# folder-availability re-read pin join them, then the full-sync reuse, the
+# workspace state builder reuse and the view key pins. The floor is the
+# entry count.
+MINIMUM_FILES = 2041
 
 # TASK-34601.1 (2026-11-11): feedback handoff, Stop and actual image-reader
 # shutdown and held-read input join the gate without moving earlier shards.

@@ -153,7 +153,7 @@ CONSOLE_PERSISTED_ROWS_CACHE_TTL_SECONDS = 10.0
 # made elsewhere show up promptly, while the several merges inside one
 # state build share one read.
 CONSOLE_APPEARANCE_MAP_CACHE_TTL_SECONDS = 2.0
-#: TASK-36571.1: the oldest run-tick build the next poll tick may reuse. Two
+#: TASK-36571.1: the oldest run-tick build the next run tick may reuse. Two
 #: poll intervals: a tick the host delayed still reuses its predecessor's
 #: build, and a poll that stopped and restarted never reuses an old one.
 CONSOLE_TICK_BUILD_CARRY_MAX_AGE_SECONDS = 0.4
@@ -440,11 +440,17 @@ class _ConsoleRegistryDisplayReads:
       binding status straight from disk on every build.
     """
 
-    __slots__ = ("_service", "_generation", "_cache", "_calls", "_previous", "stale_reader")
+    __slots__ = (
+        "_service", "_generation", "_cache", "_calls", "_previous", "stale_reader",
+        "_revision",
+    )
 
     def __init__(self, service: Any) -> None:
         self._service = service
         self._generation: int | None = None
+        #: TASK-36571.1: moves whenever what a read can return moves (a new
+        #: generation, a cached read, an installed re-read); see display_key.
+        self._revision = 0
         self._cache: dict[tuple, Any] = {}
         #: TASK-33620.15.4: how each cached read was made, the last generation's
         #: reads, and (only while a run tick builds) who re-reads them off-loop.
@@ -470,7 +476,20 @@ class _ConsoleRegistryDisplayReads:
                 self._previous = self._cache
             self._cache = {}
             self._generation = generation
+            self._revision += 1
         return True
+
+    def display_key(self) -> tuple | None:
+        """What every read returns, as a token (TASK-36571.1).
+
+        Equal keys mean the same reads return the same values: a cached
+        read, the last generation's read while a run tick shows stale reads,
+        or a live read, which fills the cache and moves the key. ``None``
+        while caching does not apply (a double without a real generation).
+        """
+        if not self._cacheable():
+            return None
+        return (id(self), self._generation, self._revision, self.stale_reader is not None)
 
     def _read(self, key: tuple, method_name: str, *args: Any) -> Any:
         cacheable = self._cacheable()
@@ -486,6 +505,7 @@ class _ConsoleRegistryDisplayReads:
         if cacheable:
             self._cache[key] = value
             self._calls[key] = (method_name, args)
+            self._revision += 1
         return value
 
     def stale_calls(self) -> dict[tuple, tuple[str, tuple]]:
@@ -512,6 +532,8 @@ class _ConsoleRegistryDisplayReads:
             if key not in self._cache:
                 self._cache[key] = value
                 added = True
+        if added:
+            self._revision += 1
         return added
 
     def get_active_workspace(self) -> Any:
@@ -577,7 +599,7 @@ class ConsoleTickWorkspaceBuilds:
     for that sync, read live (``stale_reads=False``).
 
     TASK-36571.1: the Conversations tray push rebuilt the browser on every
-    0.2 s tick to find it unchanged. A poll tick (``carries``) reuses its
+    run tick to find it unchanged. A run tick (``carries``) reuses its
     predecessor's build once while the carry key matches (the fingerprint,
     with the run status read as the run markers and attention facts the
     build shows), so the inputs it leaves out (stars, unread and receipt
@@ -589,7 +611,7 @@ class ConsoleTickWorkspaceBuilds:
 
     __slots__ = (
         "_controller", "_task", "_fingerprint", "_state", "_building", "_stale_reads",
-        "_serial", "_carries",
+        "_serial", "_carries", "_label",
     )
 
     def __init__(
@@ -599,8 +621,9 @@ class ConsoleTickWorkspaceBuilds:
         self._controller = controller
         self._stale_reads = stale_reads
         # TASK-36571.1: the run tick's number (None: never carried) and
-        # whether this poll tick may reuse its predecessor's build.
+        # whether this tick may reuse its predecessor's build.
         self._serial, self._carries = serial, carries
+        self._label: tuple | None = None  # (view display key, label)
         try:
             self._task = asyncio.current_task()
         except RuntimeError:
@@ -660,11 +683,21 @@ class ConsoleTickWorkspaceBuilds:
         return state
 
     def workspace_label(self) -> str:
-        """The build's label: one display read under this build's read rule (TASK-36571.1)."""
+        """The build's label: one display read under this build's read rule (TASK-36571.1).
+
+        Read again only when the view's reads moved since this tick's last one.
+        """
         controller = self._controller
+        view = controller._console_registry_reads_view()
+        key = view.display_key() if view is not None else None
+        if key is not None and self._label is not None and self._label[0] == key:
+            return self._label[1]
         reads = controller._stale_display_reads() if self._stale_reads else nullcontext()
         with reads:
-            return console_workspace_label(controller._console_registry_reads_view())
+            label = console_workspace_label(view)
+        if view is not None and (key := view.display_key()) is not None:
+            self._label = (key, label)
+        return label
 
 
 def _availability_methods_current(owner, originals):
@@ -7029,14 +7062,10 @@ class ConsoleWorkspaceController:
             yield
             return
         serial = None
-        carries = False
-        if stale_reads:  # A run tick: number it; a poll tick may reuse (TASK-36571.1).
-            from .config_sync import poll_sync_running
-
+        if stale_reads:  # A run tick: number it, and let it reuse (TASK-36571.1).
             serial = self._console_run_tick_serial = self._console_run_tick_serial + 1
-            carries = poll_sync_running()
         self._console_tick_builds = ConsoleTickWorkspaceBuilds(
-            self, stale_reads=stale_reads, serial=serial, carries=carries
+            self, stale_reads=stale_reads, serial=serial, carries=stale_reads
         )
         try:
             yield
@@ -7049,9 +7078,11 @@ class ConsoleWorkspaceController:
     #: defaults, like ``_console_tick_builds``, for hand-built fixtures.
     _console_run_tick_serial: int = 0
     _console_carried_workspace_build: tuple | None = None
+    #: TASK-36571.1: (view display key, builder inputs, built workspace state).
+    _console_workspace_state_memo: tuple | None = None
 
     def _take_carried_workspace_build(self, fingerprint: tuple, serial: int | None) -> Any:
-        """Hand a poll tick its predecessor's build, at most once (TASK-36571.1).
+        """Hand a run tick its predecessor's build, at most once (TASK-36571.1).
 
         Returns:
             The previous run tick's own build when it is at most
@@ -7555,22 +7586,38 @@ class ConsoleWorkspaceController:
         # workspaces, runtime bindings, memberships) is served without SQL
         # while the registry is unchanged. ADR-028's from-disk binding
         # status recompute still runs per build inside the builder.
-        state = build_console_workspace_state(
-            registry_service=self._console_registry_reads_view(),
-            current_conversation=current_conversation,
-            conversations=(),
-            server_adapter_state=getattr(
-                self.app_instance,
-                "workspace_server_adapter_state",
-                None,
-            ),
-            acp_handoff_state=getattr(
-                self.app_instance,
-                "workspace_acp_handoff_state",
-                None,
-            ),
-            runtime_bindings_by_workspace=self._workspace_files_runtime_bindings_by_id,
+        view = self._console_registry_reads_view()
+        inputs = (
+            current_conversation,
+            getattr(self.app_instance, "workspace_server_adapter_state", None),
+            getattr(self.app_instance, "workspace_acp_handoff_state", None),
+            self._workspace_files_runtime_bindings_by_id,
         )
+        # TASK-36571.1: the builder is a pure function of those inputs and of
+        # what the view's reads return, so an unmoved view key reuses it.
+        memo = self._console_workspace_state_memo
+        view_key = view.display_key() if view is not None else None
+        if (
+            memo is not None
+            and view_key is not None
+            and memo[0] == view_key
+            and memo[1][0] == current_conversation
+            and all(now is then for now, then in zip(inputs[1:], memo[1][1:]))
+        ):
+            state = memo[2]
+        else:
+            state = build_console_workspace_state(
+                registry_service=view,
+                current_conversation=current_conversation,
+                conversations=(),
+                server_adapter_state=inputs[1],
+                acp_handoff_state=inputs[2],
+                runtime_bindings_by_workspace=inputs[3],
+            )
+            view_key = view.display_key() if view is not None else None
+            self._console_workspace_state_memo = (
+                None if view_key is None else (view_key, inputs, state)
+            )
         state = self._with_native_console_session_rows(state)
         state = self._with_console_conversation_browser_state(
             state,
@@ -7716,7 +7763,7 @@ class ConsoleWorkspaceController:
         no session's run marker or attention facts move, and each flip forced
         a rebuild that found the browser unchanged. The build reads runs only
         through those (and the queued counts the fingerprint keeps), so a
-        poll tick may reuse a build across such a flip.
+        run tick may reuse a build across such a flip.
 
         Returns:
             The key, or ``None`` (never reuse) when the run display is unreadable.
