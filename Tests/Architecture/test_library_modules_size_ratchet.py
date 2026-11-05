@@ -487,6 +487,8 @@ _BUDGETS: dict[str, int] = {
     # the analysis save guard is the token of the save that holds it, and a
     # worker clears it only while it still holds its own: 5316 -> 5321
     # (measured with ``_measure``).
+    # 2026-11-05, rebased onto dev 29592ecc9b: 5246 -> 5286 (polish-1b's
+    # own +40; same owner decision: expand limits, don't contort code).
     "tldw_chatbook/UI/Library_Modules/library_media_controller.py": 5275,
     # 2026-09-08, wave-8 task 2 (notes controller PR, notes series 2/N):
     # born governed. 185 moved methods carrying 3,934 source lines of body,
@@ -747,6 +749,8 @@ _BUDGETS: dict[str, int] = {
     # 2026-10-30, residual R-3 (same owner decision): that helper names the
     # action pressed last -- "Restore waits…" for a Restore, "Delete forever
     # waits…" otherwise: 8917 -> 8923 (measured).
+    # 2026-11-05, rebased onto dev 29592ecc9b: 7423 -> 8952 (polish-1b's
+    # own +1529; same owner decision: expand limits, don't contort code).
     "tldw_chatbook/UI/Library_Modules/library_notes_controller.py": 7425,
     # See the dev-side-controller note above the character-repair row. Dev
     # landed this file at 195 lines; the +3 is this merge's own port -- the
@@ -809,6 +813,8 @@ _BUDGETS: dict[str, int] = {
     # 2026-10-29, Task 10 fix round 1 (review R0 M-2/M-3; same decision): the
     # inert root action keeps staged choices, and one status-line derivation
     # puts a held Activate's reason ahead of them: 2524 -> 2548 (measured).
+    # 2026-11-05, rebased onto dev 29592ecc9b: 2468 -> 2555 (polish-1b's
+    # own +87; same owner decision: expand limits, don't contort code).
     "tldw_chatbook/UI/Library_Modules/library_notes_sync_controller.py": 2468,
     "tldw_chatbook/UI/Library_Modules/library_prompt_browse_controller.py": 281,
     # 2026-09-05, wave-6 task 2 (prompts controller PR, series 2/3): born
@@ -874,6 +880,8 @@ _BUDGETS: dict[str, int] = {
     # footer re-registers when a write starts and ends, so the Ctrl+S chip
     # never shows while Save is held: 5161 -> 5164 (measured with
     # ``_measure``).
+    # 2026-11-05, rebased onto dev 29592ecc9b: 5065 -> 5129 (polish-1b's
+    # own +64; same owner decision: expand limits, don't contort code).
     "tldw_chatbook/UI/Library_Modules/library_prompts_controller.py": 5068,
     # 2026-09-03, wave-3 task 3 (combined search+RAG controller PR, series
     # 2/3): born-governed by the glob above -- new file, pinned at its

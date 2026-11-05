@@ -1432,6 +1432,9 @@ _BUDGETS: dict[str, tuple[str, int, int]] = {
     #: appends the focus chip), and the Folder files Ctrl+S refusal answers a
     #: marker, never the raw state: 38891 -> 38912 lines, 1400 methods
     #: (measured with ``_measure``).
+    #: 2026-11-05, rebased onto dev 29592ecc9b: 38177 -> 38894 lines,
+    #: 1373 -> 1400 methods (polish-1b's own +717 lines, +27 methods;
+    #: same owner decision: expand limits, don't contort code).
     "tldw_chatbook/UI/Screens/library_screen.py": ("LibraryScreen", 38164, 1376),
 }
 
