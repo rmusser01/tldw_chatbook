@@ -5,7 +5,7 @@ status: Done
 assignee:
 - '@claude'
 created_date: 2026-11-04 06:34
-updated_date: '2026-11-05 23:22'
+updated_date: '2026-11-05 23:45'
 labels:
 - follow-up
 - console
@@ -57,6 +57,7 @@ Found in the review of PR #3402 (TASK-38686), which is not on dev yet. Checked o
 5. Review r8p-rev1 (2026-11-05): run the leave only when the save worker succeeded with True; keep a due leave until the modal is on top (`on_screen_resume`); refuse Ctrl+Q, Refresh and toggles during the save; add cases for each, plus unchanged-editor Close and Browse, each shown red with its line removed.
 6. Review r8p-rev2 (2026-11-05): drop a waiting leave when the editor draft changed since it was deferred, or when the guard is opened again; cases `discard-then-type` and `discard-then-escape`, red first.
 7. Review r8p-rev3 (2026-11-05): remove the guard-showing check (it dropped the newest clean press made over an open guard); pin with `reverted-close` that an undone edit's deferred Close asks once the save lands; correct the User Guide.
+8. Qodo on #3414 (2026-11-05): `_finish_mixin_leave` itself requires the save worker to have finished in SUCCESS with result True, so a resume that runs before the save's StateChanged cannot replay a leave after a failed save; case `covered-fail`, red at 07f8687800.
 
 ## Implementation Notes
 
@@ -70,6 +71,8 @@ Found in the review of PR #3402 (TASK-38686), which is not on dev yet. Checked o
 While the edit is unsaved, Back, Close, Escape and Browse still stop at the dirty guard, so only the guard's Discard reaches the deferral. A clean view (an unchanged editor saved) reaches it directly.
 
 **The deferred leave runs only after a successful save** (review ruling, AC#5). `_save_mixin_editor` returns True once the editor holds the saved record, including the "Earlier Library edit saved" path. `on_worker_state_changed` runs the leave only when the worker ended in `SUCCESS` with result `True`; otherwise it drops the leave, so the "Library changes were not saved… Your edit is kept." copy and the edit stay on screen.
+
+**One gate for both callers** (Qodo on #3414). `_finish_mixin_leave` is reached from the save worker's StateChanged and from `on_screen_resume`, in either order. It now checks the save itself: it waits while the worker is unfinished, and it drops the leave unless the worker finished in `SUCCESS` with result `True`. The order of the two callbacks no longer decides whether a failed save keeps the modal. `on_worker_state_changed` just calls it once the tracked save finishes.
 
 **A due leave waits for the modal to be on top** (AC#6). `_finish_mixin_leave` keeps the leave while another screen, such as Ctrl+Q's "Quit while still working?", covers the modal. `on_screen_resume` runs it after Wait. The SafeModalDismissMixin handler still runs too, because Textual dispatches along the MRO.
 
@@ -86,7 +89,7 @@ While the edit is unsaved, Back, Close, Escape and Browse still stop at the dirt
 - `_mixins_refresh` and `_mixins_intent` refuse with the Saving copy while the save runs (AC#8); a refused toggle calls `_restore_mixin_enabled`.
 - `Tests/UI/test_modal_quit_discard_guards.py`'s bare `__new__` modal helper now sets `_mixin_save_worker = None`, the one attribute `confirm_quit` gained.
 
-**Test (AC#3).** `Tests/UI/test_console_prompt_mixins.py::test_press_during_contended_mixin_save_cannot_cancel_it` is the lane-run node TASK-38686 added; it now has 17 cases, so the census needs no edit. In every case a raw connection holds `BEGIN IMMEDIATE` and a spy shows the save has reached its write. The cases:
+**Test (AC#3).** `Tests/UI/test_console_prompt_mixins.py::test_press_during_contended_mixin_save_cannot_cancel_it` is the lane-run node TASK-38686 added; it now has 18 cases, so the census needs no edit. In every case a raw connection holds `BEGIN IMMEDIATE` and a spy shows the save has reached its write. The cases:
 - `save` and `preview`, from TASK-38686.
 - `escape`, `back` and `close`: Discard in a modal opened on Mix-ins.
 - `reopen`: Discard from Back in a modal opened on Browse, then Mix-ins reopened.
@@ -99,6 +102,7 @@ While the edit is unsaved, Back, Close, Escape and Browse still stop at the dirt
 - `discard-then-type`: Discard, then a new name is typed; the modal stays with "Style typed" and the Earlier-saved copy.
 - `discard-then-escape`: Discard from Back in a modal opened on Browse, then Escape opens the guard again; the modal stays on Mix-ins with that guard after the save.
 - `reverted-close`: the edit is undone after Save, then Close; once the save lands, Close asks.
+- `covered-fail`: Discard, then the quit-anyway question; the save fails under it. `on_worker_state_changed` is patched to hold its events, so the resume after Wait runs before StateChanged. The modal must stay. Replaying the held events through the real handler afterwards must leave it in place too.
 
 Each case:
 - clears the status before the press and pins the Saving copy (`quit` checks its notice instead);
@@ -125,6 +129,7 @@ Each case:
 - Review r8p-rev2: at bdf27198c8's modal source, both new cases failed ("Mix-ins did not load" for `discard-then-type`: the leave closed the modal and the typed text; "the replaced Discard still left Mix-ins" for `discard-then-escape`: the old leave went back to Browse under the guard). Without the draft check, only `discard-then-type` was red; without the guard clear and the guard check, only `discard-then-escape` was red.
 - Green: 14 of 14 cases, 5 of 5 runs (`-n 4`, load 14-17); after rev2, 16 of 16 cases, 2 of 2 runs (load 34). `test_modal_quit_discard_guards.py` + `test_close_under_quit_question.py`: 41 passed.
 - Review r8p-rev3: `reverted-close` is green. With the `_holds_dirty_edit()` re-check skipped only while the deferred Close replays (a temporary edit; deleting the check outright would also skip the guard at the original press), it was red: "the undone edit's Close did not ask after the save", because the modal closed. After rev3: 17 of 17 cases, 2 of 2 runs (`-n 4`, load 14-22), and the two quit-guard files 41 passed.
+- Qodo on #3414: `covered-fail` was red at 07f8687800, on "the resume left Mix-ins after a failed save". After the fix: 18 of 18 cases, 2 of 2 runs (`-n 4`, load 10-13). The two quit-guard files: 41 passed.
 - The mix-in, prompts modal and Library mix-in files: 6 failed, 204 passed; the 6 are the four `test_console_prompts_modal.py` nodes that are red on dev and two load-flaky `test_literal_history_restore_…` cases.
 
 **Covering runs** (`-n 4`, scratch wrapper): the prompts modal, mix-ins, controller, workbench contract, modal dismissal and quit-guard files, `test_close_under_quit_question.py`, `test_app_quit_in_flight_modals.py`, the UI-ready census, the Library mix-ins file, the Console prompt draft workbench and the Chat mix-in files. Result: 30 failed, 831 passed.

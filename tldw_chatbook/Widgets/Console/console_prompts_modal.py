@@ -573,22 +573,24 @@ class ConsolePromptsModal(
         return self._mixin_editor_snapshot(views.first() if views else None)[1]
 
     async def on_worker_state_changed(self, event: Worker.StateChanged) -> None:
-        worker = event.worker
-        if worker is not self._mixin_save_worker or not worker.is_finished:
-            return
-        if worker.state is not WorkerState.SUCCESS or worker.result is not True:
-            # A failed save keeps the edit and its failure copy on screen.
-            self._mixin_leave_after_save = None
-            return
-        await self._finish_mixin_leave()
+        if event.worker is self._mixin_save_worker and event.worker.is_finished:
+            await self._finish_mixin_leave()
 
     def on_screen_resume(self) -> None:
         if self._mixin_leave_after_save is not None:
             self.call_next(self._finish_mixin_leave)
 
     async def _finish_mixin_leave(self) -> None:
+        """Run a held leave once its save succeeded; StateChanged and resume both call it."""
+        worker = self._mixin_save_worker
+        if worker is None or not worker.is_finished:
+            return
+        if worker.state is not WorkerState.SUCCESS or worker.result is not True:
+            # A failed save keeps the edit and its failure copy on screen.
+            self._mixin_leave_after_save = None
+            return
         # Covered (Ctrl+Q's question): keep the leave for on_screen_resume.
-        if self._mixin_save_in_flight() or self.app.screen is not self:
+        if self.app.screen is not self:
             return
         pending, self._mixin_leave_after_save = self._mixin_leave_after_save, None
         if pending is None:

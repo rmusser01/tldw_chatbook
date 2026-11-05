@@ -322,6 +322,7 @@ _SECOND_PRESSES = [
     "keep",
     "fail",
     "covered",
+    "covered-fail",
     "quit",
     "clean-close",
     "clean-browse",
@@ -335,7 +336,9 @@ _SECOND_PRESSES = [
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("second", _SECOND_PRESSES)
-async def test_press_during_contended_mixin_save_cannot_cancel_it(runtime, second):
+async def test_press_during_contended_mixin_save_cannot_cancel_it(
+    runtime, second, monkeypatch
+):
     """A press while a contended mix-in save waits cannot cancel it.
 
     The save's write runs in a worker thread (AC#5) and here waits for another
@@ -347,7 +350,9 @@ async def test_press_during_contended_mixin_save_cannot_cancel_it(runtime, secon
     modal opened on Browse it went back there, and reopening Mix-ins started
     an exclusive worker (TASK-38748). A leave now waits for a successful save
     (``fail``: a failed one keeps the edit; ``keep``: Keep editing cancels the
-    leave; ``covered``: one finished under Ctrl+Q's question runs after Wait).
+    leave; ``covered``: one finished under Ctrl+Q's question runs after Wait;
+    ``covered-fail``: one failed under it stays dropped even when the resume
+    runs before the save's StateChanged).
     Ctrl+Q refuses during the save (``quit``). ``clean-*`` save an unchanged
     editor and ``reverted-*`` undo the edit after Save, so Close, Browse,
     Refresh and a toggle skip the dirty guard; an undone edit's Close asks
@@ -369,7 +374,7 @@ async def test_press_during_contended_mixin_save_cannot_cancel_it(runtime, secon
     database, scope, _, origin, _, service = runtime
     await seed(scope)
     writing, released = threading.Event(), threading.Event()
-    failing = [True] if second == "fail" else []
+    failing = [True] if second in {"fail", "covered-fail"} else []
     update = database.update_prompt_by_id
 
     def entering_update(*args, **kwargs):
@@ -396,6 +401,7 @@ async def test_press_during_contended_mixin_save_cannot_cancel_it(runtime, secon
         "keep",
         "fail",
         "covered",
+        "covered-fail",
         "discard-then-type",
         "discard-then-escape",
     }
@@ -484,7 +490,15 @@ async def test_press_during_contended_mixin_save_cannot_cancel_it(runtime, secon
             if second == "discard-then-type":
                 app.modal.query_one("#mixin-name", Input).value = "Style typed"
                 await pilot.pause()
-            if second == "covered":
+            if second == "covered-fail":
+                # Hold the save's StateChanged so the resume after Wait runs first.
+                held, handler = [], ConsolePromptsModal.on_worker_state_changed
+
+                async def hold(_modal, event):
+                    held.append(event)
+
+                monkeypatch.setattr(ConsolePromptsModal, "on_worker_state_changed", hold)
+            if second in {"covered", "covered-fail"}:
                 assert await app.modal.confirm_quit() is False
                 asked = app.run_worker(app.modal.confirm_quit(), exit_on_error=False)
                 await until(
@@ -496,7 +510,23 @@ async def test_press_during_contended_mixin_save_cannot_cancel_it(runtime, secon
             blocker.execute("COMMIT")
             blocker.close()
             released.set()
-        if second == "fail":
+        if second == "covered-fail":
+            await until(
+                lambda: app.modal._mixin_save_worker.is_finished,
+                "the save to fail under the question",
+            )
+            await until(lambda: "not saved" in status_text(), "the failure copy")
+            assert app.screen is question and held, "StateChanged was not held"
+            await pilot.click("#cancel-button")  # Wait: the resume runs first
+            await until(lambda: asked.is_finished, "Wait to answer")
+            await pilot.pause(0.2)
+            assert app.screen is app.modal, "the resume left Mix-ins after a failed save"
+            monkeypatch.setattr(ConsolePromptsModal, "on_worker_state_changed", handler)
+            for event in held:  # the late StateChanged agrees
+                await handler(app.modal, event)
+            await pilot.pause()
+            assert app.screen is app.modal
+        if second in {"fail", "covered-fail"}:
             await until(lambda: "not saved" in status_text(), "the failure copy")
             await app.workers.wait_for_complete()
             assert app.screen is app.modal, "a failed save still left Mix-ins"
