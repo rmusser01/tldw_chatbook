@@ -783,6 +783,8 @@ MINIMUM_FILES = 1376
 # ids at the tail (width sweeps, refit, quit, push rehydrate). The floor is
 # the measured entry count.
 MINIMUM_FILES = 1394
+# TASK-38701 (2026-11-03): append two archive-recovery flow nodes at the tail.
+MINIMUM_FILES = 1396
 
 
 def read_census(path: Path) -> list[str]:

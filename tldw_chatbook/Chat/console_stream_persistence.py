@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import threading
+from collections.abc import Iterator
 
 from loguru import logger
 
@@ -39,6 +40,28 @@ def _fold_stream_buffer_without_persistence(
     self._stream_materialized_counts[message.id] = 1
     self._bump_message_speech_revision(message.id)
     return True
+
+
+def visible_message_texts(store, session_id: str) -> Iterator[str]:
+    """Yield a chat's visible message text lazily, copying no message.
+
+    TASK-38688: the text ``messages_for_session`` would show, for a reader that
+    needs only text: no fold, no deferred write, no per-message snapshot.
+    Buffered stream text is the joined buffer (the TASK-259 invariant), and a
+    quarantined message yields nothing, as its snapshot shows a placeholder.
+
+    Raises:
+        KeyError: If ``session_id`` does not identify a stored session.
+    """
+    store._session_or_raise(session_id)
+    for message in store._messages_by_session[session_id]:
+        if message.generation_projection_quarantined:
+            continue
+        buffer = store._stream_chunks_by_message.get(message.id)
+        if buffer and store._stream_materialized_counts.get(message.id) != len(buffer):
+            yield "".join(buffer)
+        else:
+            yield message.content
 
 
 def _materialize_stream_buffer(self, message: ConsoleChatMessage) -> None:
