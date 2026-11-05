@@ -101,8 +101,12 @@ def get_connection_pool(db_path: str, pool_size: int = 3) -> MediaDatabase:
 def pool_executor(pool: object) -> Optional[ThreadPoolExecutor]:
     """Return the one thread ``pool``'s searches must run on.
 
-    ``None`` (the loop's default executor) only for a pool this module never
-    built, such as a test double.
+    Args:
+        pool: A pool returned by ``get_connection_pool``.
+
+    Returns:
+        The pool's own one-thread executor, or ``None`` (the loop's default
+        executor) for a pool this module never built, such as a test double.
     """
     try:
         return _pool_threads.get(pool)

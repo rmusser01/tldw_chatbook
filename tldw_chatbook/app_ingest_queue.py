@@ -757,7 +757,8 @@ class LibraryIngestQueueMixin:
         if ingest_store is None or operation_store is None:
             return
         try:
-            rows = ingest_store.list_dispatch_held(limit=limit)  # UI thread: TASK-38714
+            # UI-thread-only store (TASK-38714); one scan a start, 12 ms at 100k jobs.
+            rows = ingest_store.list_dispatch_held(limit=limit)
         except Exception:
             logger.opt(exception=True).warning(
                 "Research source held-job startup scan failed; jobs remain held"

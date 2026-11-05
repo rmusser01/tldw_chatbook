@@ -5,7 +5,7 @@ status: Done
 assignee:
 - '@claude'
 created_date: 2026-11-04 00:59
-updated_date: 2026-11-05 09:45
+updated_date: '2026-11-05 15:56'
 labels:
 - follow-up
 - database
@@ -151,3 +151,9 @@ Covering runs this round (`-n 4`):
 
 **Files.** `tldw_chatbook/app_ingest_queue.py`, `tldw_chatbook/Widgets/settings_agents_panel.py`, `tldw_chatbook/RAG_Search/simplified/db_connection_pool.py`, `tldw_chatbook/RAG_Search/simplified/rag_service.py`, `tldw_chatbook/Evals/eval_orchestrator.py`, `tldw_chatbook/DB/Client_Media_DB_v2.py`, the four test files above, `Tests/DB/test_connection_liveness_ping_gate.py`, `Tests/Architecture/test_module_size_ratchet.py`, `scripts/ui_pr_gate_census.txt`, `scripts/check_ui_pr_gate_census.py`.
 
+
+**Qodo fold (2026-11-05).**
+- Qodo flagged the held-job scan, now on the UI loop, under the 100 ms worker rule. It stays there, because the store is UI-thread-only. Its measured cost is 0.36 ms median at 1k jobs, 1.3 ms at 10k and 11.8 ms at 100k. The probe put the held rows at the end of the table, the worst case: the plan is `SCAN ingest_jobs`, since no index covers the held flag. The scan runs once per start, and the call site records this.
+- `pool_executor` gained Args/Returns sections.
+- `_PoolThread` keeps its underscore, because it is module-private. The package has 1,258 `class _Name` definitions.
+- Ratchet: app_ingest_queue 5020 -> 5021 (same waiver).
