@@ -2,12 +2,25 @@
 
 Status: Accepted
 Date: 2026-11-04
+Amended: 2026-11-05 (integration with dev TASK-38462)
 Related Task: [TASK-38462](../tasks/task-38462%20-%20Keep-Windows-timer-sleeps-from-starving-the-default-thread-pool.md)
 Supersedes: N/A
 
 ## Decision
 
-Select `asyncio.sleep` for Textual's shared `timer.sleep` slot on Windows in the existing `ThreadWorkerContextGuard.on_load`, before its installed-executor early return.
+Retain dev's `install_windows_timer_sleep()` in the existing
+`ThreadWorkerContextGuard.on_load`, before its installed-executor early return.
+Windows waits of at least 0.25 seconds use `asyncio.sleep`. Short waits preserve
+Textual's high-resolution `time.sleep` behavior and early-wakeup allowances on
+dev's existing fixed 32-worker `textual-timer` pool. Neither waits nor cancellation
+use the application's default executor. Native Textual Timer lifecycle code stays
+unchanged. macOS/Linux leave the timer slot untouched.
+
+The initial PR #3345 decision selected `asyncio.sleep` for every wait. Dev had
+independently qualified the bounded short/coarse implementation by the time this
+branch rebased onto 3c39215749a96d5c1b8c05972fdd2aeb7588b002. The old five-line
+override would silently discard dev's short-wait precision; it is removed.
+This amendment adopts that existing implementation without raising its limits.
 
 ## Context
 
@@ -20,13 +33,20 @@ Textual 8.2.8 sends both Windows timer waits and cancellation signals through th
 | Option | Why rejected |
 | --- | --- |
 | Increase workers or deadlines | Retains the contention and grows resource requirements with long-lived timers. |
-| Separate timer pool | Adds another pool and shutdown contract while keeping one worker occupied per sleep. |
+| Separate pool for every timer | Long waits still occupy workers. Dev's accepted implementation uses its bounded pool only for sub-0.25-second precision waits. |
 | Special-case DB startup | Leaves recomposition, animation and other thread workers exposed to the same timer contention. |
 | Custom Windows wait-handle integration | Adds OS-handle and private event-loop lifecycle machinery already avoided by the standard library timer. |
 
 ## Consequences
 
-`asyncio.sleep` schedules a cancellable event-loop handle and consumes no executor worker. Textual's Windows high-resolution sleeper and its small early-wakeup compensation are no longer used; Windows cadence may follow the standard event-loop clock resolution. Existing timer semantics and deadlines remain the qualification target. No new pool, dependency, module, storage authority, profile action or resource-limit increase is introduced.
+Coarse waits use cancellable event-loop handles. A cancelled short wait returns
+immediately; its already-issued physical sleep retires within the unchanged short
+interval before its thread rejoins the existing pool. Cancellation submits no
+extra job. The process-wide pool retains the standard executor shutdown contract;
+fixture-created pools must be physically joined and the prior pool restored after
+native Timers stop. The application default executor, capacity, fresh job contexts,
+and replaced-pool shutdown are unchanged. No dependency, storage authority, profile
+action, resource-cap increase or deadline increase accompanies this integration.
 
 A controlled eight-worker proxy must reproduce the queued-wait failure before the change and demonstrate real Textual callback delivery plus long-timer cancellation while all workers remain held afterward. Owned jobs must be released and awaited. Existing executor/context-isolation tests, original startup assertions and current-head hosted Windows qualification remain mandatory; proxy results do not establish Windows kernel timing. Revisit this shim when the pinned Textual implementation stops routing Windows sleeps through the default executor.
 

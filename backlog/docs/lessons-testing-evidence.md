@@ -5278,7 +5278,7 @@ can stay green while one callback monopolizes the loop far beyond the deadline.
 
 ## Pilot clicks can bind a widget that recomposition removes before hit-testing
 
-**TASK-38703, 2026-11-05.** PR3345 UI17 timed out after one Notes Move click.
+**TASK-38901, 2026-11-05.** PR3345 UI17 timed out after one Notes Move click.
 The hosted pointer phase was unobserved; a native pending-layout diagnostic
 proved the helper's separate hazard: its enabled/nonzero-region predicate
 passed at (43,21), then Pilot's first pause moved the same button to (45,21)
@@ -25901,3 +25901,25 @@ empty projection or empty result was an invalid oracle. Do not replace native
 snapshot refusals with a retry, disable the read, or infer Windows restore speed
 from a Mac helper profile. The separate original 45-second restore gate still
 requires its own uninstrumented Windows evidence.
+
+
+## An every-turn observer must not manufacture the turns it measures (PR3345, 2026-11-05)
+
+UI18 timed out waiting for provider validation after its held permission read.
+The test's BusySampler used a perpetual `asyncio.sleep(0)` task, making the
+selector poll continuously while native guarded reads reacquired the GIL.
+The permanent RED412 wakeup control recorded 1864 zero-timeout polls in 30 ms;
+the passive control permits a blocking selector wait while still sampling each
+actual loop turn. The exact hosted scheduling cause was not captured. Preserve
+the original all-turn no-gap assertion and add a real one-turn-gap negative;
+do not replace the observer with paced or occasional samples. A test-owned
+`_run_once` observer must preserve copied context, initial sampling, prior
+instance-hook state and later hook owners, and become inert after stop.
+
+The same repair exposed a second mount callback still awaiting FULL on the
+screen pump after the initial attach had already moved to an owned worker.
+RED412 held the original checked config read and recorded the pump awaiting
+`prepare_console_presentation_sync` with native leases active. Dispatching that
+second refresh through the existing captured/drained worker group lets a real
+screen marker run before release. Pilot's idle fence was reporting a reachable
+pump stall; lengthening or bypassing that fence would not repair it.

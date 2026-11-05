@@ -15435,17 +15435,20 @@ class ChatScreen(BaseAppScreen):
         # live (e.g. a future above-screen bridge) must not stay frozen.
         # A no-op when nothing is live.
         self.set_timer(0.3, self._fleet._maybe_start_console_fleet_survivor_tick)
-        # Same hedge as the handoff timers above: the native composer is not
-        # guaranteed to exist in the DOM yet at `call_after_refresh` time
-        # either, and `_sync_console_dictation_availability` silently no-ops
-        # when it doesn't -- without this retry, a mount that loses that race
-        # would leave the mic showing its unmounted-default tooltip until the
-        # user's first activation attempt re-probes it.
+        # The composer may still be absent at the first after-refresh callback.
+        # Dictation readiness then silently no-ops; use the handoff mount hedge
+        # so the mic gets its tooltip before the user's first activation.
         self.call_after_refresh(self._sync_console_dictation_availability)
         self.set_timer(0.15, self._sync_console_dictation_availability)
         self.call_after_refresh(self._image._reconcile_h3_image_edit_completions)
         if not self._resume_navigation_startup_in_progress:
-            self.call_after_refresh(self._sync_native_console_chat_ui)
+            # FULL may await native preparation; keep the screen pump available.
+            self.call_after_refresh(
+                self.run_worker,
+                self._sync_native_console_chat_ui,
+                exclusive=False,
+                group="console-sync",
+            )
             self.call_after_refresh(self._restore_console_workbench_focus)
             self.set_timer(0.2, self._restore_console_workbench_focus)
         self.run_worker(

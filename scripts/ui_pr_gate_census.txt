@@ -2944,3 +2944,6 @@ Tests/UI/test_console_recovered_image_shutdown.py::test_control_loss_still_exits
 # TASK-36769: retain both conversation-row P0 sweep selectors in the UI lane.
 Tests/UI/test_console_row_menu_action_sweep.py::test_the_sweep_covers_every_declared_action_constant
 Tests/UI/test_console_row_menu_action_sweep.py::test_conversation_row_action_never_ends_the_app
+
+# Native config preparation must keep the post-attach screen message pump responsive.
+Tests/UI/test_console_full_config_preparation.py::test_post_attach_full_keeps_screen_messages_moving_during_native_read

@@ -23,14 +23,15 @@ This document describes the `TldwCli` Textual application: startup phases, the s
 
 `TldwCli` composes `TextualAppGuards` before `App`. The aggregate in `Utils/text_selection_crash_guard.py` includes the Textual 8.x text-selection crash guard, detached-focus recovery, input activity tracking, and thread-worker context isolation.
 
-On Windows, `ThreadWorkerContextGuard.on_load` selects `asyncio.sleep` for
-`textual.timer.sleep` before checking for an already-installed executor
-(ADR-354). Native Timer callback, interval, repeat, pause/reset and stop code
-remains in Textual; waits and cancellation no longer occupy default-executor
-workers. Executor capacity, fresh job contexts and replaced-pool cleanup remain
-unchanged. This sets the process-wide Textual timer policy on Windows and uses
-the standard event-loop clock resolution rather than Textual's high-resolution
-Windows sleeper. macOS/Linux leave the timer slot unchanged.
+On Windows, `ThreadWorkerContextGuard.on_load` installs dev's short/coarse
+`textual.timer.sleep` policy before checking for an already-installed executor
+(ADR-354, amended on dev integration). Waits of at least 0.25 seconds use
+`asyncio.sleep`; shorter precision waits use the existing fixed 32-worker timer
+pool and Textual's original timing allowances. Waits and cancellation do not use
+the default executor. A cancelled short wait returns immediately while its
+physical sleep retires in that pool. Native Timer callbacks, intervals, repeats,
+pause/reset and stop remain in Textual. Default-worker capacity, fresh contexts,
+and replaced-pool cleanup stay unchanged. macOS/Linux leave the timer slot alone.
 
 On native Windows, its `get_driver_class()` adapts Textual's default `WindowsDriver` to enable `ENABLE_WINDOW_INPUT` after every application-mode start, including resume (TASK-40260). Textual 8.2.8 enables VT input but omits this resize-reporting flag, leaving screens at their old dimensions after a terminal resize. The adapter preserves the remaining input flags and upstream console restoration; constructor-supplied and environment-selected drivers, including served transports, are unchanged. Unix does not import the Windows adapter path. Native before/after evidence and a reproducible Logs probe live in `qa/windows-terminal-resize-2026-10-28/`.
 

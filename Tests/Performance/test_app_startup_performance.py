@@ -1568,6 +1568,7 @@ async def test_windows_timer_delivery_and_stop_do_not_wait_for_default_workers(
     native_jobs = []
     proxy_wakes = []
     timers = []
+    monkeypatch.setattr(guard, "_windows_timer_pool", None)
 
     def hold_worker(started):
         started.set()
@@ -1626,6 +1627,10 @@ async def test_windows_timer_delivery_and_stop_do_not_wait_for_default_workers(
         await asyncio.gather(
             *(asyncio.wrap_future(job) for job in native_jobs), return_exceptions=True
         )
+        owned_timer_pool = guard._windows_timer_pool
+        if owned_timer_pool is not None:
+            owned_timer_pool.shutdown(wait=True)
+            assert all(not thread.is_alive() for thread in owned_timer_pool._threads)
         assert all(job.done() for job in native_jobs)
         assert all(job.cancelled() or job.exception() is None for job in native_jobs)
 
