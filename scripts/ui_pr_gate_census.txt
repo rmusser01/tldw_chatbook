@@ -2397,3 +2397,10 @@ Tests/UI/test_console_pending_display_owner_controls.py
 # when the list surface's scrollbar narrows it and the panel keeps its size
 # (3 s). Appended at the tail.
 Tests/UI/test_library_file_notes_git.py::test_fixed_region_copy_refits_when_a_child_scrollbar_narrows_it
+# TASK-38757 (2026-11-05): the File Notes narrow views at every width 40-79.
+# The navigator hides a work-pane sliver, nothing focusable sits outside its
+# clip, and the editor view still shows and focuses the work pane (6-12 s
+# each at load 23 on 18 CPUs). Appended at the tail.
+Tests/UI/test_library_file_notes_workspace.py::test_file_notes_narrow_views_lay_out_at_every_width_40_to_79[navigator]
+Tests/UI/test_library_file_notes_workspace.py::test_file_notes_narrow_views_lay_out_at_every_width_40_to_79[editor]
+Tests/UI/test_library_file_notes_workspace.py::test_file_notes_narrow_views_lay_out_at_every_width_40_to_79[after-back]

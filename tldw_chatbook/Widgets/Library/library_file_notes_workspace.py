@@ -336,6 +336,13 @@ FILE_NOTES_SEARCH_DEBOUNCE_SECONDS = 0.2
 #: pair of widths that alternated would otherwise re-arm each other forever.
 _PATH_FIT_ATTEMPT_LIMIT = 4
 
+#: TASK-38757: the narrowest work pane the narrow navigator keeps: what it
+#: leaves at 60 columns, where the save and recovery status is pinned to paint
+#: whole (the 60x20 authority tests). Below it (2 cells at 44, none at 42) the
+#: pane is a sliver whose controls Tab reached off screen, so it is hidden and
+#: the Files pane takes its columns.
+_NARROW_WORK_MIN_WIDTH = 18
+
 
 #: task-11: poll backoff for the reconcile timer. The vault signature gate
 #: makes quiet ticks nearly free (walk stats only), but the cadence itself
@@ -1225,6 +1232,13 @@ class LibraryFileNotesWorkspace(Vertical):
         min-height: 1;
     }
 
+    /* TASK-38757: the title took the whole row and Button's 16-cell floor
+       pushed New past the row's clip at every width, so Tab focused a
+       control nobody could see. */
+    #file-notes-tree-header .destination-section {
+        width: 1fr;
+    }
+
     #file-notes-search-row,
     #file-notes-search,
     #file-notes-path {
@@ -1405,6 +1419,7 @@ class LibraryFileNotesWorkspace(Vertical):
        a 4-cell column made that 0: Rich's fold raised and the app exited.
        Truncation is defined at every width. */
     .file-notes-toolbar Button,
+    #file-notes-new,
     #file-notes-back,
     #file-notes-session-changes {
         width: auto;
@@ -2032,6 +2047,12 @@ class LibraryFileNotesWorkspace(Vertical):
         manual_reopen: PaneName | None = None,
     ) -> None:
         """Patch the mounted shared shell without recomposing its roles."""
+        if self._navigator_hides_work(layout):
+            layout = replace(
+                layout,
+                items_width=layout.items_width + layout.reader_width,
+                reader_width=0,
+            )
         self._reader_layout = layout
         shell = self._reader_shell
         if shell is not None:
@@ -2042,6 +2063,15 @@ class LibraryFileNotesWorkspace(Vertical):
             # paint the file panes back into the empty state.
             self._sync_body_panes()
         self._schedule_editor_action_layout()
+
+    def _navigator_hides_work(self, layout: AdaptiveReaderEffectiveLayout) -> bool:
+        """Whether the narrow navigator's work pane would be a sliver."""
+        return (
+            self._narrow
+            and self._narrow_view == "navigator"
+            and layout.items_open
+            and layout.reader_width < _NARROW_WORK_MIN_WIDTH
+        )
 
     def _ensure_standalone_reader_shell(self) -> LibraryAdaptiveReaderShell:
         """Supply the shared structure for direct workspace harnesses."""
@@ -3321,7 +3351,9 @@ class LibraryFileNotesWorkspace(Vertical):
             shell.items.display = linked and shell.effective_layout.items_open
             shell.items_grip.display = linked
             shell.library_grip.display = linked
-            shell.work.display = linked
+            shell.work.display = linked and not self._navigator_hides_work(
+                shell.effective_layout
+            )
         try:
             body = self.query_one("#file-notes-body")
         except NoMatches:

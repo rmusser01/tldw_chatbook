@@ -6989,6 +6989,133 @@ async def test_poll_and_narrow_navigation_retain_the_text_area(
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("phase", ["navigator", "editor", "after-back"])
+async def test_file_notes_narrow_views_lay_out_at_every_width_40_to_79(
+    tmp_path: Path,
+    phase: str,
+) -> None:
+    """TASK-38757: the narrow navigator gave the work pane what the Files
+    pane and both 5-cell grips left (2 cells at 44, none at 42), and Tab
+    reached its controls off screen. In the navigator view the work pane is
+    hidden or at least ``_NARROW_WORK_MIN_WIDTH`` cells wide (what 60
+    columns leaves it), no focusable widget is outside its clip, Tab never
+    lands outside the screen, and the editor view still shows and focuses
+    the work pane."""
+    root = tmp_path / "notes"
+    root.mkdir()
+    (root / "one.md").write_text("first", encoding="utf-8")
+    (root / "two.md").write_text("second", encoding="utf-8")
+    replica = FileNotesReplica(":memory:")
+    workspace = LibraryFileNotesWorkspace(
+        root=root,
+        replica=replica,
+        poll_interval=10,
+        autosave_delay=30,
+    )
+
+    async with _WorkspaceHarness(workspace).run_test(size=(79, 24)) as pilot:
+        await _wait_until(
+            pilot,
+            lambda: workspace.initialized and workspace.narrow,
+            "workspace did not choose narrow mode from its width",
+        )
+        shell = workspace.query_one(LibraryAdaptiveReaderShell)
+        screen = workspace.screen
+
+        async def resize(width: int) -> None:
+            await pilot.resize_terminal(width, 24)
+
+            def settled() -> bool:
+                layout = shell.effective_layout
+                total = (
+                    layout.library_width
+                    + layout.items_width
+                    + layout.reader_width
+                    + 2 * layout.grip_width
+                )
+                return (
+                    shell.region.width == width
+                    and total == width
+                    and (
+                        not layout.items_open
+                        or shell.items.region.width == layout.items_width
+                    )
+                )
+
+            await _wait_until(pilot, settled, f"layout did not settle at {width}")
+            await pilot.pause()
+
+        def seen_width(widget, width: int) -> int:
+            """Cells of ``widget`` inside its clip and the screen, across."""
+            try:
+                clip = screen.find_widget(widget).clip
+            except Exception:
+                return 0
+            region = widget.region
+            return min(region.right, clip.right, width) - max(region.x, clip.x, 0)
+
+        def off_screen(width: int) -> list[tuple[str | None, int, int]]:
+            return [
+                (widget.id, widget.region.x, widget.region.width)
+                for widget in screen.focus_chain
+                if seen_width(widget, width) <= 0
+            ]
+
+        async def sweep_navigator() -> None:
+            tree = workspace.query_one("#file-notes-tree", Tree)
+            for width in range(40, 80):
+                await resize(width)
+                assert workspace.navigator_visible, width
+                work = shell.work
+                assert not work.display or (
+                    work.region.width >= workspace_module._NARROW_WORK_MIN_WIDTH
+                ), (
+                    width,
+                    work.region.width,
+                )
+                assert not off_screen(width), (width, off_screen(width))
+                tree.focus()
+                await pilot.press("tab")
+                await pilot.pause()
+                landing = screen.focused
+                assert landing is not None, width
+                assert seen_width(landing, width) > 0, (width, landing.id)
+
+        async def sweep_editor(widths: range | tuple[int, ...]) -> None:
+            back = workspace.query_one("#file-notes-back", Button)
+            for width in widths:
+                await resize(width)
+                assert workspace.editor_visible, width
+                assert shell.work.display, width
+                assert shell.work.region.width == width - 10, width
+                assert back.display and back in screen.focus_chain, width
+                assert not off_screen(width), (width, off_screen(width))
+            back.focus()
+            await pilot.pause()
+            assert back.has_focus
+
+        if phase == "navigator":
+            await sweep_navigator()
+        elif phase == "editor":
+            assert await workspace.open_path("one.md")
+            await sweep_editor(range(40, 80))
+        else:
+            assert await workspace.open_path("one.md")
+            workspace.query_one("#file-notes-back", Button).press()
+            await _wait_until(
+                pilot,
+                lambda: workspace.navigator_visible and not workspace.editor_visible,
+                "Back did not return to the navigator",
+            )
+            await sweep_navigator()
+            # The editor case sweeps every width; after Back, both ends.
+            assert await workspace.open_path("two.md")
+            await sweep_editor((79, 40))
+    await workspace.shutdown()
+    replica.close()
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("size", [(40, 20), (120, 40), (160, 45)])
 async def test_library_notes_source_choices_render_and_switch_by_keyboard(
     tmp_path: Path,

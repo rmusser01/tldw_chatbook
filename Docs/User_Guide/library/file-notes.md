@@ -118,6 +118,14 @@ goes.)
   file open there is no save state and no body box: the status line reads
   "No file open." rather than claiming a save, and the editor appears when
   there is a file to put in it.
+- **Narrow terminals (under 80 columns)** — Folder files switches between
+  the navigator and the file work area. Opening a file switches to the work
+  area, which takes the whole width, and its **‹ Files** returns to the
+  navigator. From 60 columns the navigator keeps a narrow work area beside
+  the **Files** pane. Below 60 the **Files** pane takes the whole width and
+  the work area stays hidden until you open a file, so **Tab** never lands
+  on a control you cannot see. **Manage**, and Session Git with it, is then
+  reached by opening a file first.
 - **Session Git panel** — **Manage** → **Review session changes (N)** opens
   the staging, commit, and guarded-push panel described below;
   from the row list, **Esc** or **‹ Files** returns to the files.

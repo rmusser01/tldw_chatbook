@@ -805,6 +805,9 @@ MINIMUM_FILES = 1683
 # TASK-38755 (2026-11-05): append the git panel fixed-region refit node at
 # the tail. The floor is the measured entry count.
 MINIMUM_FILES = 1684
+# TASK-38757 (2026-11-05): append the File Notes narrow-view sweep's three
+# nodes at the tail. The floor is the measured entry count.
+MINIMUM_FILES = 1687
 
 
 def read_census(path: Path) -> list[str]:
