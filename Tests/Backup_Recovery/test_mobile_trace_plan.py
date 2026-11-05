@@ -395,7 +395,9 @@ def test_captured_native_repeated_artifact_refuses_before_materialization(
     tmp_path, monkeypatch
 ):
     import json
+    from types import SimpleNamespace
 
+    from tldw_chatbook.Chat import console_trace_native_reader
     from tldw_chatbook.Chat.console_trace_models import (
         FrozenTracePolicy,
         TraceCallState,
@@ -503,7 +505,13 @@ def test_captured_native_repeated_artifact_refuses_before_materialization(
                 decoded.append(len(value))
             return original(value, *args, **kwargs)
 
-        monkeypatch.setattr(json, "loads", observed)
+        monkeypatch.setattr(
+            console_trace_native_reader,
+            "json",
+            SimpleNamespace(**{**vars(json), "loads": observed}),
+        )
+        assert json.loads is original
+        assert console_trace_native_reader.json.loads is observed
         with pytest.raises(Exception) as failure:
             reads.trace_inputs()
         assert str(failure.value) == "mobile_trace_input_limit"
