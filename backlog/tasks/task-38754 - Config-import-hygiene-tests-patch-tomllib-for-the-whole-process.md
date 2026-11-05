@@ -5,7 +5,7 @@ status: Done
 assignee:
 - '@claude'
 created_date: 2026-11-05 07:11
-updated_date: '2026-11-05 21:34'
+updated_date: '2026-11-05 23:12'
 labels:
 - follow-up
 - tests
@@ -51,6 +51,11 @@ No miscount has been seen yet. On this base, both tests fail earlier with `Recov
 **Approach.** Both hygiene tests now replace `tldw_chatbook.config`'s own `tomllib` name with `SimpleNamespace(**{**vars(tomllib), "loads"|"load": counter})`, the form TASK-38685 used for `json`. The stdlib module is left alone, so a parse from another module or thread is never counted. TASK-38685's syntax scan in `Tests/CI/test_json_loads_patch_guard.py` now takes a module name and an attribute set (`json`/`loads` by default), and the same file has a `tomllib` (`load`, `loads`) guard. The file pre-filter is `"tomllib" in source`, which every form the scan can see contains.
 
 **Tightened bound.** `test_forced_full_reload_does_not_reparse_embedded_default` asserted `len(calls) <= 1`, while its comment said "must not call tomllib.loads() again at all". Counted through config's own name, the forced reload makes 0 calls. With one re-parse of the embedded default added, the old bound still passed (count 1), so AC#1 could not hold. It now asserts `== 0`.
+
+**Review r8g-rev1.** The forced-reload counter now counts only parses of `config_mod.CONFIG_TOML_CONTENT`, the embedded default, so a reload that legitimately parses other TOML text cannot trip `== 0`. Checked under the same temporary private-profile setup:
+- no source edit: 0 calls, pass;
+- a temporary `tomllib.loads("a = 1")` through config's own name in `_load_settings_uncached`: 0 calls, pass;
+- a temporary `tomllib.loads(CONFIG_TOML_CONTENT)` there: 1 call, fail.
 
 **Evidence.** Plain runs of both tests stop at `RecoveryRequired: raw_source_selection_changed` before they count (6 of 13 in the file, at base and after; TASK-38111). So each check below ran the two tests under a temporary `@private_profile_test` marker, written to the profile's own selected config path instead of a tmp path. The temporary changes were then removed.
 - Scoped counts: forced reload 0 `loads`; startup pairing 1 `load`. Both pass.

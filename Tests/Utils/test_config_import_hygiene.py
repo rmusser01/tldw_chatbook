@@ -208,7 +208,10 @@ class TestEmbeddedDefaultParsedOnce:
         real_loads = config_mod.tomllib.loads
 
         def _counting_loads(s, *a, **kw):
-            calls.append(s)
+            # Only re-parses of the embedded default count (TASK-38754 review):
+            # a reload may legitimately parse other TOML text.
+            if s == config_mod.CONFIG_TOML_CONTENT:
+                calls.append(s)
             return real_loads(s, *a, **kw)
 
         # config.py's own `tomllib` name only (TASK-38754): the stdlib module
