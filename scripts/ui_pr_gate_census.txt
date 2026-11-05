@@ -2355,3 +2355,15 @@ Tests/UI/test_library_file_notes_workspace.py::test_file_notes_disclosed_actions
 Tests/UI/test_library_file_notes_workspace.py::test_folder_files_forced_recompose_recovers_inflight_autosave_once
 Tests/UI/test_library_file_notes_workspace.py::test_file_notes_combined_non_ready_authority_matrix_paints_at_60x20
 Tests/UI/test_library_file_notes_git.py::test_commit_operation_remount_rehydrates_ready_review
+# TASK-38740 (2026-11-05): Settings at 60 down to 40 columns, where the detail
+# pane is a few cells wide. On base the Workspaces row (44) and the Console
+# behavior jump button (46) folded a label at width 0 and the app exited; so
+# did the Theme list (OptionList). One private-profile node per (category,
+# height), 11-16 s (call) at load average 10-15 on 18 CPUs. Appended at the
+# tail, so no slot moves.
+Tests/UI/test_settings_category_sweep.py::test_narrow_settings_categories_lay_out_at_every_width_60_to_40[workspaces-20]
+Tests/UI/test_settings_category_sweep.py::test_narrow_settings_categories_lay_out_at_every_width_60_to_40[workspaces-30]
+Tests/UI/test_settings_category_sweep.py::test_narrow_settings_categories_lay_out_at_every_width_60_to_40[console-behavior-20]
+Tests/UI/test_settings_category_sweep.py::test_narrow_settings_categories_lay_out_at_every_width_60_to_40[console-behavior-30]
+Tests/UI/test_settings_category_sweep.py::test_narrow_settings_categories_lay_out_at_every_width_60_to_40[theme-20]
+Tests/UI/test_settings_category_sweep.py::test_narrow_settings_categories_lay_out_at_every_width_60_to_40[theme-30]

@@ -20,10 +20,13 @@ Each size's sweep is split across nodes over contiguous thirds of
 test checks that the thirds together are all of it.
 """
 
+from typing import ClassVar
+
 import pytest
 from textual.widgets import Button
 
 from Tests.private_profile import private_profile_test
+from Tests.UI.consolidated_css import APP_STYLESHEETS
 from Tests.UI.test_destination_shells import (
     DestinationHarness,
     _active_destination_screen,
@@ -158,3 +161,39 @@ async def test_every_settings_category_renders_and_restores_focus(size, group, r
             assert focused.id == expected, (
                 f"Expected focus on {expected}, got {focused!r} at {size}"
             )
+
+
+class _BundledSettingsHarness(DestinationHarness):
+    """Settings with the app's own stylesheets, so its panes narrow as in the app."""
+
+    CSS_PATH: ClassVar[list[str]] = [str(path) for path in APP_STYLESHEETS]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("height", (20, 30))
+@pytest.mark.parametrize("category", ("workspaces", "console-behavior", "theme"))
+@private_profile_test
+async def test_narrow_settings_categories_lay_out_at_every_width_60_to_40(
+    category, height, request
+):
+    """TASK-38740: no Settings category raises while its detail pane narrows.
+
+    Below about 60 columns the rail and inspector leave the detail pane a few
+    cells. On the base build the Workspaces row ("Default (active) - 0
+    folders") and Console behavior's "Conversation context and memory" button
+    were laid out at two content cells, both of them Button line-pad, and the
+    Theme list's options at zero. Folding a word at width 0 raised
+    ``ValueError: range() arg 3 must not be zero`` and the app exited.
+    """
+    app = _build_test_app()
+    host = _BundledSettingsHarness(app, "settings")
+
+    async with host.run_test(size=(100, height)) as pilot:
+        await _settle_settings(pilot)
+        await _click_settings_category(pilot, category)
+        for width in range(60, 39, -1):
+            await pilot.resize_terminal(width, height)
+            await pilot.pause()
+            await pilot.pause()
+            assert host._exception is None, (category, width, host._exception)
+        assert pilot.app.screen.active_category == category
