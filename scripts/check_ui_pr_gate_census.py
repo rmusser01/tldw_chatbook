@@ -1007,6 +1007,11 @@ MINIMUM_FILES = 2490
 # file and the Library Auto outcome file's six cases at the tail. The floor
 # is the measured entry count.
 MINIMUM_FILES = 2785
+# TASK-36571.1 (2026-11-05): append the run tick's workspace-build pins (the
+# projection's and control bar's label reads, the Agent section's flag read,
+# the poll tick's one reuse and its push and unit guards) as node entries at
+# the tail; the file runs about 60 s serially. The floor is the entry count.
+MINIMUM_FILES = 2792
 MINIMUM_FILES = 2785
 
 # TASK-34601.1 (2026-11-11): feedback handoff, Stop and actual image-reader
@@ -1363,6 +1368,8 @@ MINIMUM_FILES = 2811
 # 2026-11-27, TASK-42629: adds the command popup's paint-hold anchor node. The floor
 # is the measured entry count.
 MINIMUM_FILES = 2812
+# 2026-11-26: re-counted after rebasing onto dev 434eb71f95. The floor is the measured entry count.
+MINIMUM_FILES = 2819
 def read_census(path: Path) -> list[str]:
     """Read the census, dropping comments and blank lines.
 

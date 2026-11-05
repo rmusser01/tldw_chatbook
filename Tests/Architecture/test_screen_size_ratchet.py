@@ -388,6 +388,11 @@ _BUDGETS: dict[str, tuple[str, int, int]] = {
     #: 2026-11-24: re-measured after rebasing onto dev 9fa2bf1b1d (owner rule: exact, or dev's row + this branch's growth where dev exceeds it): 24595/742 -> 24599/742.
     #: 2026-11-25: re-measured after rebasing onto dev 1b9e3f8a55 (owner rule: exact, or dev's row + this branch's growth where dev exceeds it): 24626/742 -> 24630/742.
     #: 2026-11-26: re-measured after rebasing onto dev 9926834bc8 (owner rule: exact, or dev's row + this branch's growth where dev exceeds it): 24632/742 -> 24636/742.
+    # TASK-36571.1, 2026-11-05: same waiver. The Agent section reads its open
+    # flag (the stored preference, then the fleet force-open) instead of the
+    # whole rail state, and the rail reads the workspace label alone: +17
+    # lines over dev 29592ecc9b's 24604 and two methods (the shared
+    # stored-preference read and the flag): 24616/741 -> 24621/743.
     "tldw_chatbook/UI/Screens/chat_screen.py": ("ChatScreen", 24636, 742),
     #: Added 2026-09 by the Library decomposition plan (PR 0b): this row was
     #: missing for the entire month in which library_screen.py tripled from
