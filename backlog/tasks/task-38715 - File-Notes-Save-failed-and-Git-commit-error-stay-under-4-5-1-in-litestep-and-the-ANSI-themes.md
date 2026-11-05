@@ -5,7 +5,7 @@ status: Done
 assignee:
 - '@claude'
 created_date: 2026-11-04 00:59
-updated_date: 2026-11-05 08:45
+updated_date: 2026-11-05 09:22
 labels:
 - follow-up
 - accessibility
@@ -75,6 +75,8 @@ Reason: One app-tier colour pair and its pins; no architectural change.
   - Four of the five passed on rerun. A whole-file rerun of `test_library_file_notes_git.py` had 220 passed and 1 failed.
   - The one failure in every run is `test_prepare_session_fixed_regions_remain_visible_at_40_by_20`, which TASK-38693 owns.
   - The same set at base: 279 passed, 2 failed (that test and another whole-file flake).
+
+**Re-review (2026-11-05).** The legibility test now also checks paradise_virtua, the thinnest pass (4.87:1). It passes now. Under a temporary `$surface-lighten-1` base it failed `paradise_virtua: 'Save failed' paints at 3.90:1, below 4.5:1`.
 
 **Not covered.** The measurements use the CSS-true harness, where the workspace sits on the screen's `$background`. Because the base is now opaque, the production host's fill no longer changes the pair.
 

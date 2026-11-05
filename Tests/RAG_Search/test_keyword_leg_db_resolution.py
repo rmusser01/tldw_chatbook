@@ -373,3 +373,93 @@ async def test_keyword_search_leaves_no_executor_connection_after_close(
     for connection in worker_handles:
         with pytest.raises(sqlite3.ProgrammingError, match="closed database"):
             sqlite3.Connection.in_transaction.__get__(connection)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("ordering", ["queued_behind_close", "after_shutdown"])
+async def test_a_search_racing_close_all_pools_leaves_no_connection_open(
+    tmp_path, monkeypatch, ordering
+):
+    """TASK-38714 review: a search that meets ``close_all_pools()`` must not
+    reopen the closed pool's connection. Queued behind the close job, it is
+    refused on the pool thread; holding a pool whose thread is shut down, it
+    errors instead of running on the default executor. Either way its retry
+    gets the rebuilt pool, which the final close retires."""
+    import sqlite3
+    import threading
+
+    from tldw_chatbook.DB.Client_Media_DB_v2 import MediaDatabase
+    from tldw_chatbook.RAG_Search.simplified import db_connection_pool
+    from tldw_chatbook.RAG_Search.simplified import rag_service as rag_service_mod
+
+    db_path = tmp_path / "tldw_cli_media_v2.db"
+    seed = MediaDatabase(db_path=str(db_path), client_id="test_keyword_race")
+    media_id, _, message = seed.add_media_with_keywords(
+        title="Numbat Notes", content="Notes about numbat foraging.", media_type="article"
+    )
+    assert media_id is not None, f"seed failed: {message}"
+    seed.close_connection()
+
+    monkeypatch.setattr(db_connection_pool, "_connection_pools", {})
+    opened: list[sqlite3.Connection] = []
+    original = MediaDatabase._get_thread_connection
+
+    def recording(self):
+        connection = original(self)
+        if all(connection is not seen for seen in opened):
+            opened.append(connection)
+        return connection
+
+    monkeypatch.setattr(MediaDatabase, "_get_thread_connection", recording)
+    service = _make_service(tmp_path, media_db_path=db_path)
+    assert await service._keyword_search("numbat", top_k=5)
+    closed_pool = db_connection_pool.get_connection_pool(str(db_path))
+
+    if ordering == "queued_behind_close":
+        retired, release = threading.Event(), threading.Event()
+        real_close = MediaDatabase.close_connection
+
+        def gated_close(self):
+            real_close(self)
+            if self is closed_pool and not retired.is_set():
+                retired.set()
+                assert release.wait(5)
+
+        monkeypatch.setattr(MediaDatabase, "close_connection", gated_close)
+        submitted = []
+        real_pool_executor = rag_service_mod.pool_executor
+
+        def recording_pool_executor(*args):
+            submitted.append(args[-1])  # the pool, whatever the signature
+            return real_pool_executor(*args)
+
+        monkeypatch.setattr(rag_service_mod, "pool_executor", recording_pool_executor)
+        closer = threading.Thread(target=db_connection_pool.close_all_pools)
+        closer.start()
+        assert await asyncio.to_thread(retired.wait, 5)
+        search = asyncio.create_task(service._keyword_search("numbat", top_k=5))
+        while not submitted:
+            await asyncio.sleep(0)
+        assert submitted[0] is closed_pool  # queued on its thread, behind the close
+        release.set()
+        assert await search, "the retry must be served by the rebuilt pool"
+        await asyncio.to_thread(closer.join, 5)
+    else:
+        db_connection_pool.close_all_pools()
+        real_get = rag_service_mod.get_connection_pool
+        handed: list[object] = []
+
+        def stale_then_real(*args, **kwargs):
+            if not handed:  # read just before the close cleared the dict
+                handed.append(closed_pool)
+                return closed_pool
+            return real_get(*args, **kwargs)
+
+        monkeypatch.setattr(rag_service_mod, "get_connection_pool", stale_then_real)
+        assert await service._keyword_search("numbat", top_k=5)
+    service.close()
+
+    assert opened
+    for connection in opened:
+        with pytest.raises(sqlite3.ProgrammingError, match="closed database"):
+            sqlite3.Connection.in_transaction.__get__(connection)

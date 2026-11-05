@@ -5,7 +5,7 @@ status: Done
 assignee:
 - '@claude'
 created_date: 2026-11-04 00:59
-updated_date: 2026-11-05 08:45
+updated_date: 2026-11-05 09:22
 labels:
 - follow-up
 - database
@@ -129,6 +129,14 @@ Covering runs this round (`-n 4`):
 - The RAG files: the same failure set as base (all `RecoveryRequired`), plus the new test, which fails only through that error. The pool thread-safety tests pass.
 - The Evals files plus `Tests/Backup_Recovery/test_eval_maintenance.py`: 60 passed, the same 19 `RecoveryRequired` failures as base, and the maintenance cases pass.
 - `test_projection_generation.py`, which calls `close_all_pools`: 41 passed. Its 2 failures are the same at base (installation identity in the subprocess).
+
+**Re-review (2026-11-05): a search racing `close_all_pools()`.**
+- **The two leaks.** A search queued on the pool thread behind the close job ran after it and reopened the connection. A search still holding a pool whose thread was shut down fell back to the default executor (`pool_executor` returned `None`) and reopened it there.
+- **Refusal on the pool thread.** The pool thread (`_PoolThread`) now refuses work queued after `retire()`. `retire()` closes the connection and sets `retired`, which only the pool thread writes and reads, so it needs no lock.
+- **Executor lookup.** `pool_executor(pool)` finds the thread through a `WeakKeyDictionary` that outlives `close_all_pools()`, so a closed pool gets its shut-down thread and an error to retry on. `None` is left only for test doubles.
+- **Retries.** `_keyword_search` now re-fetches the pool on every retry attempt, so a retry after a close uses the rebuilt pool, on that pool's own thread. The `rag_service.py` change is line-neutral.
+- **Test.** `test_a_search_racing_close_all_pools_leaves_no_connection_open[queued_behind_close|after_shutdown]` forces each ordering and requires every connection it recorded to be closed at the end. Both cases failed `DID NOT RAISE` at 2fddbe3bbe and pass now, under a temporary `@private_profile_test` marker, since removed.
+- **Runs.** The RAG files (`-n 4`) show the base failure set plus the three new tests, all of them `RecoveryRequired` only. Under the marker, the three new tests and the pool thread-safety file give 6 passed. Module size ratchet: 201 passed.
 
 **Files.** `tldw_chatbook/app_ingest_queue.py`, `tldw_chatbook/Widgets/settings_agents_panel.py`, `tldw_chatbook/RAG_Search/simplified/db_connection_pool.py`, `tldw_chatbook/RAG_Search/simplified/rag_service.py`, `tldw_chatbook/Evals/eval_orchestrator.py`, the four test files above, `scripts/ui_pr_gate_census.txt`, `scripts/check_ui_pr_gate_census.py`.
 
