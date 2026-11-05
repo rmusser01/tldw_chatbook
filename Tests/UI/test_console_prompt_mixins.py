@@ -312,10 +312,26 @@ async def test_mixin_save_writes_the_prompt_off_the_event_loop(runtime):
     assert loop_thread not in writers, "the prompt write ran on the event loop"
 
 
+_SECOND_PRESSES = [
+    "save",
+    "preview",
+    "escape",
+    "back",
+    "close",
+    "reopen",
+    "keep",
+    "fail",
+    "covered",
+    "quit",
+    "clean-close",
+    "clean-browse",
+    "reverted-refresh",
+    "reverted-toggle",
+]
+
+
 @pytest.mark.asyncio
-@pytest.mark.parametrize(
-    "second", ["save", "preview", "escape", "back", "close", "reopen", "keep"]
-)
+@pytest.mark.parametrize("second", _SECOND_PRESSES)
 async def test_press_during_contended_mixin_save_cannot_cancel_it(runtime, second):
     """A press while a contended mix-in save waits cannot cancel it.
 
@@ -326,47 +342,61 @@ async def test_press_during_contended_mixin_save_cannot_cancel_it(runtime, secon
     Save was refused (TASK-38686 review). Discard from Escape, Back or Close
     used to dismiss a modal opened on Mix-ins, cancelling its workers; in a
     modal opened on Browse it went back there, and reopening Mix-ins started
-    an exclusive worker (TASK-38748). Discard now waits for the save, and
-    Keep editing afterwards cancels that pending leave.
+    an exclusive worker (TASK-38748). A leave now waits for a successful save
+    (``fail``: a failed one keeps the edit; ``keep``: Keep editing cancels the
+    leave; ``covered``: one finished under Ctrl+Q's question runs after Wait).
+    Ctrl+Q refuses during the save (``quit``). ``clean-*`` save an unchanged
+    editor and ``reverted-*`` undo the edit after Save, so Close, Browse,
+    Refresh and a toggle skip the dirty guard.
     """
     import asyncio
     import sqlite3
     import threading
     from contextlib import closing
 
-    from textual.widgets import Input, Static
+    from textual.widgets import Checkbox, Input, Static
 
+    from tldw_chatbook.DB.Prompts_DB import ExpectedVersionConflictError
+    from tldw_chatbook.Widgets.confirmation_dialog import ConfirmationDialog
     from tldw_chatbook.Widgets.Prompts.prompt_mixin_editor import PromptMixinEditor
 
     database, scope, _, origin, _, service = runtime
     await seed(scope)
-    writing = threading.Event()
+    writing, released = threading.Event(), threading.Event()
+    failing = [True] if second == "fail" else []
     update = database.update_prompt_by_id
 
     def entering_update(*args, **kwargs):
         writing.set()
+        if failing:
+            released.wait(10)
+            raise ExpectedVersionConflictError("changed", "Prompts", args[0])
         return update(*args, **kwargs)
 
     def status_text():
         return str(app.modal.query_one("#console-mixins-status", Static).render())
 
+    async def until(predicate, what):
+        await _wait_for_condition(pilot, predicate, message=what)
+
     database.update_prompt_by_id = entering_update
-    discard = second in {"escape", "back", "close", "reopen", "keep"}
+    clean = second.startswith("clean-")
+    reverted = second.startswith("reverted-")
+    discard = second in {"escape", "back", "close", "reopen", "keep", "fail", "covered"}
+    leaves = second in {"escape", "back", "close", "covered", "clean-close"}
+    to_browse = second in {"reopen", "clean-browse"}
+    name = "Style" if clean else "Style saved"
     app = WorkbenchHarness(runtime, "browse" if second == "reopen" else "mixins")
     async with app.run_test(size=(100, 30)) as pilot:
         app.pilot = pilot
         if second == "reopen":
-            await _wait_for_condition(
-                pilot,
-                lambda: bool(app.screen.query("#console-prompts-mixins")),
-                message="Browse did not load",
-            )
+            await until(lambda: bool(app.screen.query("#console-prompts-mixins")), "Browse")
             app.screen.query_one("#console-prompts-mixins", Button).press()
         await ready(app)
         await add(app, "Style")
         app.screen.query_one("#console-mixin-inspect-0", Button).press()
         await ready(app)
-        app.screen.query_one("#mixin-name", Input).value = "Style saved"
+        app.screen.query_one("#mixin-name", Input).value = name
         source = service.preferences(origin.id).entries[0].source
 
         def stored_version():
@@ -375,6 +405,7 @@ async def test_press_during_contended_mixin_save_cannot_cancel_it(runtime, secon
                     "SELECT version FROM Prompts WHERE uuid = ?", (source.record_uuid,)
                 ).fetchone()[0]
 
+        enabled = app.modal.query_one("#console-mixin-enabled-0", Checkbox).value
         blocker = sqlite3.connect(str(database.db_path), isolation_level=None)
         try:
             blocker.execute("BEGIN IMMEDIATE")  # another writer holds the lock
@@ -383,13 +414,33 @@ async def test_press_during_contended_mixin_save_cannot_cancel_it(runtime, secon
             assert await asyncio.to_thread(writing.wait, 10)
             # Clear the Save press's own copy: the second press must show it.
             app.modal.query_one("#console-mixins-status", Static).update("")
-            if second in {"save", "preview"}:
-                app.screen.query_one(f"#console-mixins-{second}", Button).press()
-            elif second in {"escape", "keep"}:
-                await pilot.press("escape")
+            if reverted:  # the view is clean again while the edit saves
+                app.modal.query_one("#mixin-name", Input).value = "Style"
+                await pilot.pause()
+            buttons = {
+                "save": "#console-mixins-save",
+                "preview": "#console-mixins-preview",
+                "back": "#console-prompts-back",
+                "reopen": "#console-prompts-back",
+                "close": "#console-prompts-close",
+                "clean-close": "#console-prompts-close",
+                "clean-browse": "#console-mixins-browse",
+                "reverted-refresh": "#console-mixins-search",
+            }
+            if second in buttons:
+                app.screen.query_one(buttons[second], Button).press()
+            elif second == "reverted-toggle":
+                app.modal.query_one("#console-mixin-enabled-0", Checkbox).toggle()
+            elif second == "quit":
+                asked = app.run_worker(app.modal.confirm_quit(), exit_on_error=False)
+                await until(lambda: asked.is_finished, "Ctrl+Q asked instead of refusing")
+                assert asked.result is False
+                assert any(
+                    "Still saving Library changes." in note.message
+                    for note in app._notifications
+                )
             else:
-                target = "close" if second == "close" else "back"
-                app.screen.query_one(f"#console-prompts-{target}", Button).press()
+                await pilot.press("escape")
             await pilot.pause()
             if discard:
                 assert app.screen.query_one("#console-prompts-dirty-guard").display
@@ -397,47 +448,83 @@ async def test_press_during_contended_mixin_save_cannot_cancel_it(runtime, secon
                 await pilot.pause()
             assert app.screen is app.modal and app.modal.query(
                 "#console-mixins-status"
-            ), "the leave did not wait for the save"
-            assert "Saving" in status_text()
+            ), "the press left Mix-ins while the save ran"
+            if second != "quit":
+                assert "Saving" in status_text()
+            if second == "reverted-toggle":
+                toggled = app.modal.query_one("#console-mixin-enabled-0", Checkbox)
+                assert toggled.value is enabled
             if second == "keep":
                 await pilot.press("escape")
                 await pilot.pause()
                 app.screen.query_one("#console-prompts-keep-editing", Button).press()
                 await pilot.pause()
+            if second == "covered":
+                assert await app.modal.confirm_quit() is False
+                asked = app.run_worker(app.modal.confirm_quit(), exit_on_error=False)
+                await until(
+                    lambda: isinstance(app.screen, ConfirmationDialog),
+                    "the quit-anyway question",
+                )
+                question = app.screen
         finally:
             blocker.execute("COMMIT")
             blocker.close()
-        if second in {"save", "preview", "keep"}:
+            released.set()
+        if second == "fail":
+            await until(lambda: "not saved" in status_text(), "the failure copy")
+            await app.workers.wait_for_complete()
+            assert app.screen is app.modal, "a failed save still left Mix-ins"
+            assert app.modal.query_one("#mixin-name", Input).value == name
+            assert (stored_version(), service.preferences(origin.id).entries[0].name) == (
+                1,
+                "Style",
+            )
+            failing.clear()
+            app.modal.query_one("#console-mixins-save", Button).press()
             await ready(app)
-            assert app.screen is app.modal
-            assert not app.modal.query(PromptMixinEditor), "the editor kept version 1"
-        elif second == "reopen":
-            await _wait_for_condition(
-                pilot,
+        if second == "covered":
+            # Not workers.wait_for_complete(): the question's worker waits for Wait.
+            await until(
+                lambda: app.modal._mixin_save_worker.is_finished,
+                "the save to finish under the question",
+            )
+            await pilot.pause(0.2)
+            assert app.screen is question and app.modal in app.screen_stack
+            await pilot.click("#cancel-button")  # Wait
+            await until(lambda: asked.is_finished, "Wait to answer")
+            assert asked.result is False
+        if leaves:
+            await until(
+                lambda: app.modal not in app.screen_stack,
+                "the leave did not run after the save",
+            )
+        elif to_browse:
+            await until(
                 lambda: bool(app.screen.query("#console-prompts-mixins")),
-                message="Discard did not go back to Browse after the save",
+                "the leave did not go back to Browse after the save",
             )
         else:
-            await _wait_for_condition(
-                pilot,
-                lambda: app.screen is not app.modal,
-                message="Discard did not close the modal after the save",
-            )
-        await _wait_for_condition(
-            pilot, lambda: stored_version() == 2, message="the write did not land"
-        )
+            await ready(app)
+            assert app.screen is app.modal
+            if reverted:
+                assert "Earlier Library edit saved" in status_text()
+            else:
+                assert not app.modal.query(PromptMixinEditor), "the editor kept version 1"
+        await until(lambda: stored_version() == 2, "the write did not land")
         await app.workers.wait_for_complete()
         # Checked before any reopen: a reopened projection reconciles on its own.
-        assert service.preferences(origin.id).entries[0].name == "Style saved"
-        if second == "reopen":
+        assert service.preferences(origin.id).entries[0].name == name
+        if to_browse:
             app.screen.query_one("#console-prompts-mixins", Button).press()
             await ready(app)
-        elif discard and second != "keep":
+        elif leaves:
             app.open_workbench()
             await ready(app)
 
-        app.screen.query_one("#console-mixin-inspect-0", Button).press()
-        await ready(app)
+        if not app.modal.query(PromptMixinEditor):  # reverted-* keep it open
+            app.screen.query_one("#console-mixin-inspect-0", Button).press()
+            await ready(app)
         app.screen.query_one("#mixin-name", Input).value = "Style again"
         app.screen.query_one("#console-mixins-save", Button).press()
         await ready(app)

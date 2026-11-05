@@ -202,6 +202,7 @@ def _prompts_modal(dirty: bool, mode: str = "edit", *, applying: bool = False):
     modal = ConsolePromptsModal.__new__(ConsolePromptsModal)
     modal.state = SimpleNamespace(mode=mode, dirty=dirty)
     modal._apply_in_progress = applying
+    modal._mixin_save_worker = None  # no mix-in Library save in flight
     return modal
 
 

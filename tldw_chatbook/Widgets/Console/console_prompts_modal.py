@@ -17,6 +17,7 @@ from textual.events import DescendantFocus
 from textual.screen import ModalScreen
 from textual.timer import Timer
 from textual.widgets import Button, Checkbox, Input, Select, Static, TextArea
+from textual.worker import Worker, WorkerState
 
 from tldw_chatbook.Prompt_Management.prompt_artifact_codec import (
     decode_prompt_artifact,
@@ -61,8 +62,6 @@ from .console_prompts_state import (
 )
 
 if TYPE_CHECKING:
-    from textual.worker import Worker
-
     from .console_prompt_draft_editor import ConsolePromptDraftEditor
 
 _PER_PAGE = 10
@@ -450,6 +449,9 @@ class ConsolePromptsModal(
         if self._holds_dirty_edit():
             self._show_dirty_guard()
             return
+        if self._mixin_save_in_flight():
+            self._show_mixin_saving()
+            return
         self.run_worker(
             self._refresh_mixins(query=event.query, page=event.page),
             exclusive=True,
@@ -458,11 +460,15 @@ class ConsolePromptsModal(
 
     @on(ConsolePromptMixinsView.IntentRequested)
     def _mixins_intent(self, event) -> None:
-        if self._holds_dirty_edit():
+        dirty = self._holds_dirty_edit()
+        if dirty or self._mixin_save_in_flight():
             views = self.query(ConsolePromptMixinsView)
             if views:
                 self._restore_mixin_enabled(views.first())
-            self._show_dirty_guard()
+            if dirty:
+                self._show_dirty_guard()
+            else:
+                self._show_mixin_saving()
             return
         self.run_worker(
             self._apply_mixin_intent(event.intent),
@@ -535,9 +541,10 @@ class ConsolePromptsModal(
     def _mixin_save_in_flight(self) -> bool:
         """Whether a mix-in Save is still running (TASK-38686).
 
-        Its write runs in a thread. Save and Preview start exclusive
-        "console-mixins" workers, which would cancel it after the write lands
-        and skip the preference reconcile and the editor's saved state.
+        Its write runs in a thread. Save, Preview, Refresh and a toggle start
+        exclusive "console-mixins" workers, which would cancel it after the
+        write lands and skip the preference reconcile and the editor's saved
+        state.
         """
         worker = self._mixin_save_worker
         return worker is not None and not worker.is_finished
@@ -561,7 +568,22 @@ class ConsolePromptsModal(
         return True
 
     async def on_worker_state_changed(self, event: Worker.StateChanged) -> None:
-        if event.worker is not self._mixin_save_worker or not event.worker.is_finished:
+        worker = event.worker
+        if worker is not self._mixin_save_worker or not worker.is_finished:
+            return
+        if worker.state is not WorkerState.SUCCESS or worker.result is not True:
+            # A failed save keeps the edit and its failure copy on screen.
+            self._mixin_leave_after_save = None
+            return
+        await self._finish_mixin_leave()
+
+    def on_screen_resume(self) -> None:
+        if self._mixin_leave_after_save is not None:
+            self.call_next(self._finish_mixin_leave)
+
+    async def _finish_mixin_leave(self) -> None:
+        # Covered (Ctrl+Q's question): keep the leave for on_screen_resume.
+        if self._mixin_save_in_flight() or self.app.screen is not self:
             return
         leave, self._mixin_leave_after_save = self._mixin_leave_after_save, None
         if leave is not None:
@@ -575,12 +597,13 @@ class ConsolePromptsModal(
             )
         self._show_mixin_saving()
 
-    async def _save_mixin_editor(self) -> None:
+    async def _save_mixin_editor(self) -> bool:
+        """Save the open mix-in editor; True once the editor holds the saved record."""
         from ..Prompts.prompt_mixin_editor import PromptMixinEditor
 
         views = self.query(ConsolePromptMixinsView)
         if not self._mixin_ui_current(self._mixin_generation) or not views:
-            return
+            return False
         view = views.first()
         generation = self._mixin_generation
         editor = view.query_one(PromptMixinEditor)
@@ -594,7 +617,7 @@ class ConsolePromptsModal(
                 not self._mixin_ui_current(generation, view)
                 or self._mixin_editor_snapshot(view)[0] is not editor
             ):
-                return
+                return False
             view.editor_record = saved
             view.editor_initial = submitted
             preferences = self._mixin_flow.service.preferences(intent.session_id)
@@ -603,17 +626,19 @@ class ConsolePromptsModal(
                 view.show_status(
                     "Earlier Library edit saved. Newer changes are kept and unsaved; Save Library changes to keep them."
                 )
-                return
+                return True
             await self._refresh_mixins()
+            return True
         except Exception:  # noqa: BLE001 - validation/conflict keeps the dirty draft.
             if (
                 not self._mixin_ui_current(generation, view)
                 or self._mixin_editor_snapshot(view)[0] is not editor
             ):
-                return
+                return False
             view.show_status(
                 "Library changes were not saved. Check Name and Instructions, or reopen after a source/version change. Your edit is kept."
             )
+            return False
 
     @on(ConsolePromptMixinsView.PreviewRequested)
     def _mixins_preview(self) -> None:
@@ -2194,7 +2219,8 @@ class ConsolePromptsModal(
         open modal first, and quitting must not skip what Escape honours.
         An apply in flight refuses, as Close does: quitting under it would
         drop the reviewed prompt before it reaches the Console (a repeated
-        Ctrl+Q asks instead, ``refuse_quit_while_working``). An
+        Ctrl+Q asks instead, ``refuse_quit_while_working``). A mix-in Library
+        save in flight refuses the same way, since a leave waits for it. An
         improvement request needs no stop -- Close cancels it unasked, which
         is what quitting does.
 
@@ -2209,6 +2235,12 @@ class ConsolePromptsModal(
             return await refuse_quit_while_working(
                 self, "Still applying changes to the Console."
             )
+        if self._mixin_save_in_flight():
+            from tldw_chatbook.Widgets.quit_while_working import (
+                refuse_quit_while_working,
+            )
+
+            return await refuse_quit_while_working(self, "Still saving Library changes.")
         if not self._holds_dirty_edit():
             return True
         from tldw_chatbook.Widgets.confirmation_dialog import (
