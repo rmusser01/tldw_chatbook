@@ -338,6 +338,9 @@ FAST_LANE_TARGETS = (
     # (pure AST scan of the modal family, under 10 s serial, 3 of 3). It was
     # red on dev in no PR lane.
     "Tests/Architecture/test_guarded_modal_quit_census.py",
+    # TASK-38722: the launch-time Console rail-preference prune (TASK-36518's
+    # key filter and dispatch; whole file, pure, under 4 s serial, 3 of 3).
+    "Tests/Chat/test_console_rail_state_prune.py",
 )
 
 # PR2921: source-bound additions leave the original fast/admission argv intact.

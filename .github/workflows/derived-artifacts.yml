@@ -435,6 +435,7 @@ jobs:
             Tests/Chat/test_console_fork_transition_census.py \
             Tests/Chat/test_console_semantic_mutation_inventory.py \
             Tests/Architecture/test_guarded_modal_quit_census.py \
+            Tests/Chat/test_console_rail_state_prune.py \
             --timeout=180 \
             --tb=short
 
