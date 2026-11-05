@@ -576,13 +576,19 @@ class ConsoleTickWorkspaceBuilds:
     repainted by the next tick, at most 0.2 s later -- the same cadence
     every other tick-driven surface repaints at. TASK-36511.2:
     ``_sync_console_control_bar`` and ``_sync_console_rail_and_controls``
-    open the scope too, so one such sync pays for one build, for that sync.
+    open the scope too (``live_workspace_build_scope``), so one such sync
+    pays for one build, for that sync, read live (``stale_reads=False``).
     """
 
-    __slots__ = ("_controller", "_task", "_fingerprint", "_state", "_building")
+    __slots__ = (
+        "_controller", "_task", "_fingerprint", "_state", "_building", "_stale_reads"
+    )
 
-    def __init__(self, controller: "ConsoleWorkspaceController") -> None:
+    def __init__(
+        self, controller: "ConsoleWorkspaceController", *, stale_reads: bool = True
+    ) -> None:
         self._controller = controller
+        self._stale_reads = stale_reads
         try:
             self._task = asyncio.current_task()
         except RuntimeError:
@@ -616,7 +622,8 @@ class ConsoleTickWorkspaceBuilds:
             return self._state
         self._building = True
         try:
-            with controller._stale_display_reads():
+            reads = controller._stale_display_reads() if self._stale_reads else nullcontext()
+            with reads:
                 state = controller._build_console_workspace_context_state()
         finally:
             self._building = False
@@ -6963,7 +6970,7 @@ class ConsoleWorkspaceController:
     _console_tick_builds: "ConsoleTickWorkspaceBuilds | None" = None
 
     @contextmanager
-    def tick_workspace_build_scope(self):
+    def tick_workspace_build_scope(self, *, stale_reads: bool = True):
         """Share ONE fingerprint-validated context build across a run tick.
 
         Opened by ``_sync_native_console_chat_ui`` around its sync body
@@ -6976,18 +6983,32 @@ class ConsoleWorkspaceController:
         interleaving during the tick's awaits, every build is live exactly
         as before. Re-entrant (an inner scope keeps the outer cache) and
         always torn down, so a raising tick cannot leave a stale build
-        cached for the next one. ``config_sync.settle_stopped_poll`` and,
-        since TASK-36511.2, ``_sync_console_control_bar`` and
-        ``_sync_console_rail_and_controls`` open it for one synchronous pass.
+        cached for the next one. ``config_sync.settle_stopped_poll`` opens
+        it for one synchronous pass.
+
+        Args:
+            stale_reads: Serve the build's registry display reads from their
+                last snapshot while the run poll ticks (TASK-33620.15.4).
+                False reads them live.
         """
         if getattr(self, "_console_tick_builds", None) is not None:
             yield
             return
-        self._console_tick_builds = ConsoleTickWorkspaceBuilds(self)
+        self._console_tick_builds = ConsoleTickWorkspaceBuilds(self, stale_reads=stale_reads)
         try:
             yield
         finally:
             self._console_tick_builds = None
+
+    def live_workspace_build_scope(self):
+        """One shared context build for a user-triggered sync, read live.
+
+        TASK-36511.2: the control-bar syncs share one build across their
+        Inspector and rail-state legs. Unlike a run tick's build, it never
+        serves a stale registry snapshot, so a workspace change the user just
+        made shows in the sync that follows it (TASK-36511.2 review).
+        """
+        return self.tick_workspace_build_scope(stale_reads=False)
 
     #: TASK-33620.15.4: True only inside a run tick's shared context build.
     _stale_display_reads_on = False
@@ -7010,9 +7031,7 @@ class ConsoleWorkspaceController:
         no run poll, or any other owner, the reads stay live as before. So
         do they during a send's start (``config_sync.send_start_in_progress``):
         each re-read opens its own connection, whose CPU delayed first sends.
-        TASK-36511.2: the control-bar syncs open the tick scope too, so during
-        a run a user-triggered sync after a registry mutation is served the
-        previous snapshot until the off-loop re-read publishes.
+        Nor do they in ``live_workspace_build_scope`` (the control-bar syncs).
         """
         from .config_sync import send_start_in_progress
 

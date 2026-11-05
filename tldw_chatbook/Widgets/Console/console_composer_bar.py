@@ -2238,6 +2238,10 @@ class ConsoleComposerBar(Horizontal):
         TASK-36511.2: Textual's focus watcher restyled the bar's whole subtree
         (27 nodes, 8-13 ms of CPU per focus change in an attach). The focus
         rules keyed on the bar style only those nodes too.
+
+        Args:
+            _has_focus: Textual's new focus state. Unused: the restyle reads
+                ``self.has_focus`` through the stylesheet.
         """
         nodes: list[Widget] = [self]
         for selector in self.INTERACTION_STYLED_DESCENDANTS:

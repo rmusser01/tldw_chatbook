@@ -1583,9 +1583,9 @@ def _send_acknowledgement() -> Any:
 
 
 def _workspace_build_scope(screen: Any) -> Any:
-    """One shared workspace-context build (TASK-36511.2); bare surfaces have none."""
+    """One shared, live-read workspace-context build (TASK-36511.2); bare surfaces have none."""
     workspace = getattr(screen, "_workspace", None)
-    return getattr(workspace, "tick_workspace_build_scope", contextlib.nullcontext)()
+    return getattr(workspace, "live_workspace_build_scope", contextlib.nullcontext)()
 
 
 def _console_screen_is_torn_down(screen: Any) -> bool:

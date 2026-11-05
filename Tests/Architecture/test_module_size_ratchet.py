@@ -801,7 +801,9 @@ _BUDGETS: dict[str, int] = {
     # 2026-10-31, PR #3173: user size-limit waiver; exact current-base measurement.
     # TASK-36511.2 review, 2026-11-05: size waiver (owner waiver 2026-10-31).
     # Three scope docstrings name the control-bar syncs as openers (+7 lines).
-    "tldw_chatbook/UI/Console_Modules/workspace.py": 8942,
+    # TASK-36511.2 Qodo fold, 2026-11-05 (same waiver): 8942 -> 8961 (+19).
+    # The control-bar syncs' shared build reads the registry live.
+    "tldw_chatbook/UI/Console_Modules/workspace.py": 8961,
     # 2026-10-31, PR #3293: explicit user size-limit waiver; final review entry
     # credential/readiness repair, exact integrated measurement (8181 -> 8183).
     # PR3304, 2026-11-01: user size waiver; exact integration measurement.
@@ -833,7 +835,9 @@ _BUDGETS: dict[str, int] = {
     # TASK-36511.2, 2026-11-05: size waiver (owner waiver 2026-10-31; a fix over
     # a size ratchet raises the row with a dated comment). The bar's focus
     # watcher restyles the bar and its draft text, not its subtree: +9 lines.
-    "tldw_chatbook/Widgets/Console/console_composer_bar.py": 7198,
+    # TASK-36511.2 Qodo fold, 2026-11-05 (same waiver): 7198 -> 7202 (+4).
+    # The focus watcher's docstring gains its Args section.
+    "tldw_chatbook/Widgets/Console/console_composer_bar.py": 7202,
     # TASK-33628.1 moves tab-close loss projection/copy into shared loss_inventory.
     # PR3303, 2026-10-31: explicit user size waiver; exact integrated measurement.
     # PR3312 integration: explicit user size waiver; measured 2026-11-01.
