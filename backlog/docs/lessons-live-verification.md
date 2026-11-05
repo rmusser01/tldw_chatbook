@@ -5662,3 +5662,19 @@ the window that send was planned against.
 ## A Select constructor choice is not yet its reactive value (TASK-38542)
 
 **2026-11-01.** The new Library type filter recorded `Select.value` before mount as its initial choice. Textual still returned `Select.NULL`; mounting the retained All-types page then emitted a change that superseded the user's pending Mix-ins request. Retain the requested constructor choice itself when distinguishing mount events. The real-DB production-style regression now verifies 22 filtered mix-ins stay on a 20-row first page and a two-row second page.
+
+## Find stale guide screenshots by their painted nav row, not by one label (TASK-36521, 2026-11-05)
+
+**Incident.** The task listed 11 User Guide SVGs with retired nav labels, found by
+searching for the `⌃9 MCP` form. Extracting each SVG's painted rows (join the
+`<text>` runs per `y`) found 25: fourteen older captures use the
+`1 Home … 4 Artifacts … 9 MCP … More: Ctrl+P` form, which that search never
+matched. Five of the 25 were not referenced by any page at all.
+
+**What to do.** Survey every image by its painted text and compare the nav row with
+the shipped bar exactly, after joining the runs. Check each image's references before
+recapturing it; delete an image no page uses. A real-`TldwCli` capture in
+`run_test` can sit for 300 s at interpreter exit after `save_screenshot` (the
+executor joining a worker thread). End a capture script with `os._exit(0)` after
+saving. Give runs that can overlap different run.sh labels: they share a label's
+HOME, and a capture that resets its profile wipes the other run's.

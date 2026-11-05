@@ -521,11 +521,6 @@ The five decisions, with the scope line each one shows:
   is its own shape again — **Run once**, **All shell · session**, **Deny** —
   and it starts on **Deny** rather than on the usual Once.
 - Bulk controls: **Approve all** sets every row to **Once**, **Submit**
-- Each pending tool call gets a row with a decision select: **Approve once**
-  (the default), **Approve for session**, **Always allow**, or **Deny**.
-  Built-in tools don't offer "Always allow" — decisions for them last at most
-  the session.
-- Bulk controls: **Approve all** sets every row to Approve once, **Submit**
   applies each row's selected decision and resumes the run, **Deny all** sets
   every row to Deny.
 - When exactly one tool call is pending, the row also gets fast **Approve
@@ -555,9 +550,6 @@ only or may also be published to external MCP. Authorization is still the
 per-tool permission state, definition-hash guard, and master kill switch. Risk
 tags enforce permission-store floors; approval effects are human-facing call
 explanations only.
-  flags reads that could exfiltrate file contents; and a path warning —
-  "path outside allowed folders; will fail even if approved" — means the file
-  path will be rejected regardless of your decision.
 
 An armed approval card does not expire — the run waits for your decision
 however long you take. Stopping the run or closing the session withdraws a
@@ -638,12 +630,6 @@ Permissions**; **Always · these args** stores a narrower rule instead — the
 same tool with different arguments still asks — and is removed from the
 tool's row in [Settings ▸ Tools & MCP ▸ Tools](../mcp.md#exact-input-allow-rules). A **This
 session** grant is listed there too, with a **Revoke** beside it.
-install and run-script confirm cards follow the same rule).
-
-**Always allow** (MCP tools only) is remembered per tool, tied to the tool's
-current definition — if the server later changes the tool, the approval card
-comes back with a "(definition changed)" badge. Review or change a remembered
-allow from the tool's row in [Settings ▸ Tools & MCP](../mcp.md) 🚧.
 
 With sub-agents running in parallel (see below), more than one approval card
 can be pending at once — cards aren't merged across sub-agents: each is

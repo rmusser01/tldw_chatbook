@@ -30,7 +30,7 @@ choice.
 Open **Settings** — press **F4**, click "F4 Settings" in the nav bar, or
 press **Ctrl+P** and pick "Tab Navigation: Switch to Settings". Then pick
 **RAG** in the
-category rail: click **Domain Defaults ▸ (10)** to expand the group (it is
+category rail: click **Domain Defaults ▸ (12)** to expand the group (it is
 collapsed by default), then **RAG** — or skip the expanding entirely: press
 `/`, type `rag`, press Enter (the filter reveals collapsed rows).
 
