@@ -10793,11 +10793,11 @@ class ChatScreen(BaseAppScreen):
                     readiness.subscription_status,
                     version,
                 )
-                if snapshot == self._console_credential_snapshot:
-                    return
-                self._sync_console_settings_summary()
-                if self._sync_console_control_bar():
-                    self._console_credential_snapshot = snapshot
+                if snapshot != self._console_credential_snapshot:
+                    self._sync_console_settings_summary()
+                    if self._sync_console_control_bar():
+                        self._console_credential_snapshot = snapshot
+                # TASK-36511.4: an unchanged snapshot is a completed pass too.
                 # Commit the pre-gate only from a completed pass (review
                 # finding): lock contention, a dropped deferred sync, or a
                 # build failure must leave it unset so the next tick
@@ -10809,6 +10809,12 @@ class ChatScreen(BaseAppScreen):
                 if not lock.acquire(blocking=False):
                     return  # The next credential tick retries with fresh state.
                 acquired.callback(lock.release)
+            if spend.defer_cold_live_read(self, "_poll_console_credential_readiness"):
+                # TASK-36511.4: warm config off the loop; the next tick renders.
+                spend.ConsoleReadinessConfigProjection.for_screen(self).run(
+                    lambda: None
+                )
+                return
             if config._settings_cache_hit(config._get_effective_config_path()) is None:
                 run_console_config_sync(
                     sync,
