@@ -114,7 +114,10 @@ def test_prompt_management_lazy_public_exports_preserve_class_identities():
     assert PromptChatbookBackend is DirectPromptChatbookBackend
     assert PromptChatbookScopeService is DirectPromptChatbookScopeService
     assert ServerPromptService is DirectServerPromptService
+    # The Draft Shelf limits joined the facade on purpose (9bd65942df).
     assert prompt_management.__all__ == [
+        "PROMPT_DRAFT_SHELF_CAPACITY",
+        "PROMPT_DRAFT_SHELF_MAX_PAGE_SIZE",
         "LocalPromptService",
         "PromptChatbookBackend",
         "PromptChatbookScopeService",
