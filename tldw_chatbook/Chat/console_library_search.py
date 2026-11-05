@@ -29,6 +29,7 @@ from typing import Any
 
 from loguru import logger
 
+from tldw_chatbook.Chat.console_chat_models import CONSOLE_LIBRARY_SEARCHING_COPY
 from tldw_chatbook.Chat.console_turn_preparation import (
     LIBRARY_INITIALIZATION_TIMEOUT_SECONDS,
 )
@@ -91,8 +92,8 @@ async def run_bounded_library_search(
 
 
 #: The run chip's copy while an automatic Library search (or the Library's
-#: first-use build ahead of it) runs.
-LIBRARY_SEARCHING_COPY = "Searching Library…"
+#: first-use build ahead of it) runs; defined with the run state models.
+LIBRARY_SEARCHING_COPY = CONSOLE_LIBRARY_SEARCHING_COPY
 
 
 async def automatic_search_outcome(

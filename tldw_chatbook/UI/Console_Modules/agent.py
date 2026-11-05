@@ -156,6 +156,7 @@ from ...Agents.agent_models import (
 )
 from ...Chat.cost_display import format_token_count
 from ...Chat.console_chat_models import (
+    CONSOLE_LIBRARY_SEARCHING_COPY,
     ConsoleMessageRole,
     console_pending_round_copy_for,
 )
@@ -653,6 +654,13 @@ def console_send_activity_copy(
     """Project current send feedback without implying remote receipt."""
     status = getattr(run_state.status, "value", run_state.status)
     if status == "validating":
+        # TASK-33620.15.41: the automatic Library search -- and, on an
+        # embedding profile, the Library's first-use runtime build ahead of
+        # it (seconds to tens of seconds) -- is the one preparation wait the
+        # user is told about by name (TASK-33621.20). Every other
+        # preparation step reads "Sending…".
+        if getattr(run_state, "visible_copy", "") == CONSOLE_LIBRARY_SEARCHING_COPY:
+            return CONSOLE_LIBRARY_SEARCHING_COPY
         return "Sending…"
     if status in {"retrying", "checking_citations"}:
         return run_state.visible_copy or status
