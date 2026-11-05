@@ -121,9 +121,10 @@ class SchemaPolicy:
     migration_steps: tuple[tuple[int, int, tuple[str, ...]], ...]
 
     def __post_init__(self) -> None:
-        def immutable(value: object) -> bool:
-            return type(value) in (str, int) or (
-                type(value) is tuple and all(immutable(item) for item in value)
+        def immutable(value: tuple) -> bool:
+            return all(
+                immutable(item) if type(item) is tuple else type(item) in (str, int)
+                for item in value
             )
 
         if not all(
