@@ -255,6 +255,8 @@ jobs:
     # step alone (plus the ~0.8 min of setup) the same 90 runs replay at
     # median 16.1 / max 20.8 min, 14 min under the cap. Add a job (a shard),
     # not minutes, when either nears its cap again.
+    # PR #3345 (2026-11-05): job127394826830 reached this unchanged cap.
+    # MCP workbench cases now run once across the existing UI shards.
     timeout-minutes: 35  # B1 (TASK-33910.2): owner decision 2026-10-09, raised 30 -> 35 to fit B1's mounted Roleplay suites (27m46s worst case at the merge-time re-read: worst run 23m40s + B1's files 4m06s)
 
     steps:
@@ -305,7 +307,6 @@ jobs:
             Tests/DB/test_automatic_wake_attempts.py \
             Tests/Model_Artifacts/test_operation_leases.py \
             Tests/Model_Artifacts/test_operation_leases_process.py \
-            Tests/UI/test_mcp_workbench.py \
             Tests/UI/test_mcp_tools_mode.py \
             Tests/Widgets/test_detach_safe_text_area.py \
             Tests/Web_Server/test_served_tab_isolation.py \
