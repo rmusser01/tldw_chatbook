@@ -114,7 +114,8 @@ GUARDED_CLOSE_DECISIONS: dict[str, str] = {
     "ConsoleVideoCapacityModal._perform_safe_cancel": CONFIRM_QUIT,
     "tldw_chatbook/UI/Screens/profile_interview_screen.py:"
     "ProfileInterviewScreen._perform_safe_cancel": CONFIRM_QUIT,
-    # TASK-38747: unsaved rule text asks; a rule test or save also refuses.
+    # TASK-38747: unsaved rule text asks; a rule test, save or pin change
+    # also refuses.
     "tldw_chatbook/Widgets/Console/response_rules_modal.py:"
     "ResponseRulesModal._perform_safe_cancel": CONFIRM_QUIT,
     # --- Exempt: the guard holds nothing quitting could lose.
@@ -152,8 +153,9 @@ GUARDED_CLOSE_DECISIONS: dict[str, str] = {
     ),
     "tldw_chatbook/Widgets/Persona_Widgets/portrait_composition_review.py:"
     "PortraitCompositionReview.action_close": (
-        "a read-only review of saved frames: Escape always retires and "
-        "closes it once mounted, and it holds no edit or write"
+        "a read-only review of a draft's candidate frames (the draft stays "
+        "with the Personas screen); Escape always retires and closes it once "
+        "mounted, and it holds no edit or write"
     ),
 }
 

@@ -712,8 +712,9 @@ class ResponseRulesModal(SafeModalDismissMixin, ModalScreen[None]):
     async def confirm_quit(self) -> bool:
         """Answer Ctrl+Q as Escape does (TASK-38747).
 
-        A test or save in flight refuses: Escape stops a test and stays.
-        Unsaved editor text asks before quitting discards it.
+        A test, save or pin change (Disable, Exclude, Delete local pin) in
+        flight refuses: Escape stops a test and stays. Unsaved editor text
+        asks before quitting discards it.
 
         Returns:
             True to let the quit proceed; False to stay.
@@ -724,7 +725,7 @@ class ResponseRulesModal(SafeModalDismissMixin, ModalScreen[None]):
             )
 
             return await refuse_quit_while_working(
-                self, "The response rule is still being tested or saved."
+                self, "The response rule change is still being tested or saved."
             )
         if not self._has_unsaved():
             return True

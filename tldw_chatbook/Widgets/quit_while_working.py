@@ -27,7 +27,8 @@ While that question covers the modal, the modal cannot be dismissed
 (``SafeModalDismissMixin`` dismisses only the top screen). So the modals
 here that close themselves once their operation finishes keep a close made
 under the question and finish it after Wait, as they would have uncovered,
-instead of sitting over finished work with Escape still refused: the fork
+instead of sitting over finished work with Escape still refused: the
+portrait region editor's save, the fork
 dialog, the Trace export, both personal-context reviews, the Console
 Prompts apply and the session switcher's fallback-open and Library-recovery
 closes through ``dismiss_safe_once_when_on_top``; ProfileInterviewScreen
