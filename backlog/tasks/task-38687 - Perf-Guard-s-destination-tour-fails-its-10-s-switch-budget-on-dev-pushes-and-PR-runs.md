@@ -5,7 +5,7 @@ status: Done
 assignee:
   - '@claude'
 created_date: 2026-11-03 11:40
-updated_date: '2026-11-05 10:05'
+updated_date: '2026-11-05 11:15'
 labels:
 - follow-up
 - ci
@@ -53,7 +53,7 @@ The other failed runs failed other Perf Guard tests. The dev push at 18482c1cf7 
 ## Implementation Notes
 
 <!-- SECTION:NOTES:BEGIN -->
-**Cause: an idle Console fed itself, so every `pilot.pause()` saw a busy process.** The switches themselves were within budget. One Console sync calls `ConsoleReadinessConfigProjection.tokenizer_ready` twice, with the provider spelled two ways: the chat's setting gives "OpenAI" and the display gives the config key "openai". The projection keeps a single tokenizer request. Each spelling replaced the other's request and reset its retry, which started a refresh worker. Each refresh then found the request changed and published a full `_sync_native_console_chat_ui`, and that sync asked again. The loop ran 16-28 full Console syncs a second for as long as the app ran, on every screen, because the Console stays mounted.
+**Cause: an idle Console fed itself, so every `pilot.pause()` saw a busy process.** The switches themselves were within budget. One Console sync calls `ConsoleReadinessConfigProjection.tokenizer_ready` twice, with the provider spelled two ways: the chat's setting gives "OpenAI" and the display gives the config key "openai". The projection keeps a single tokenizer request. Each spelling replaced the other's request and reset its retry, which started a refresh worker. Each refresh then found the request changed and made a `_sync_native_console_chat_ui` call, and that call asked again. The loop made 16-28 `_sync_native_console_chat_ui` calls a second for as long as the app ran, on every screen, because the Console stays mounted.
 
 Textual's `wait_for_idle` counts the process as busy when it uses more than 1 ms of CPU per 20 ms, across all threads. So each `pilot.pause()` in the tour waited its full 1 s.
 
@@ -82,12 +82,12 @@ Measured with my earlier, equivalent fix (probe, load 27-53):
 - settle 0.46-1.37 s, with no idle wait at its ceiling
 - per-destination totals 1.2-4.5 s
 
-**This branch adds the tour's idle-sync guard.** After the tour, `test_destination_tour_stays_under_switch_budgets` (Perf Guard) counts full Console syncs during 1 s of idle, with a limit of 1. It counts rather than times. With the loop present (dev before #3396) it fails: 16 syncs at load 30, 28 at load 17. With the fix it records 0.
+**This branch adds the tour's idle-sync guard.** After the tour, `test_destination_tour_stays_under_switch_budgets` (Perf Guard) counts calls to `_sync_native_console_chat_ui` during 1 s of idle, with a limit of 1. It counts rather than times. With the loop present (dev before #3396) it fails: 16 syncs at load 30, 28 at load 17. With the fix it records 0.
 
 **AC#2: 10 of 10 on this branch's HEAD** (47cc9a22ff, on dev 447628d08b, i.e. with #3396's fix). Command: the Perf Guard step, run serially as in the job (`pytest Tests/Performance/test_ui_latency_guardrails.py Tests/Utils/test_ui_responsiveness_stall_persist.py -v --timeout=300`), at load 6.8-10.5.
 - All 10 green, 13/13 tests each; the 10 s budget is unchanged.
 - Step 58-69 s; tour test 22.4-27.2 s.
-- A temporary, uncommitted probe printed what the test checks: 0 idle Console syncs in every run, and the slowest single switch was 1.58-2.18 s (`ctrl+9` or `ctrl+4`), against the 10 s budget.
+- A temporary, uncommitted probe printed what the test checks: 0 idle `_sync_native_console_chat_ui` calls in every run, and the slowest single switch was 1.58-2.18 s (`ctrl+9` or `ctrl+4`), against the 10 s budget.
 
 Before #3396, the same command on dev sources took 199 s (load 17.8), with the tour test at 75 s. On CI, #3396's own runs and the dev push 41994911006 took 85-117 s for the latency step; the median over the previous 40 green runs was 179 s.
 
