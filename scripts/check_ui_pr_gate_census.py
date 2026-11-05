@@ -792,6 +792,9 @@ MINIMUM_FILES = 1660
 # TASK-38740 (2026-11-05): append the narrow Settings sweep's six
 # (category, height) nodes at the tail.
 MINIMUM_FILES = 1666
+# TASK-38714 (2026-11-05): append the Settings ▸ Agents worker-connection
+# node at the tail. The floor is the measured entry count.
+MINIMUM_FILES = 1667
 
 
 def read_census(path: Path) -> list[str]:

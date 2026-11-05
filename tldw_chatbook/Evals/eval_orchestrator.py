@@ -300,7 +300,19 @@ class EvaluationOrchestrator:
         if getattr(db, "is_memory_db", None) is True:
             db.store_result(**store_kwargs)
             return
-        await asyncio.to_thread(db.store_result, **store_kwargs)
+
+        def store_and_retire() -> None:
+            # TASK-38714: close()/aclose() reach only the caller's thread-local
+            # connection, so retire the one this write opened, on its thread.
+            local = getattr(db, "_local", None)
+            opens_here = local is not None and getattr(local, "connection", None) is None
+            try:
+                db.store_result(**store_kwargs)
+            finally:
+                if opens_here:
+                    db.close()
+
+        await asyncio.to_thread(store_and_retire)
 
     async def create_task_from_file(
         self, task_file_path: str, format_type: str = "auto"

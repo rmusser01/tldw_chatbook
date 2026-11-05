@@ -6,6 +6,7 @@ import threading
 from typing import Dict
 from loguru import logger
 
+from tldw_chatbook.DB.base_db import operation_owned_connection
 from tldw_chatbook.DB.Client_Media_DB_v2 import MediaDatabase
 
 
@@ -51,6 +52,20 @@ def get_connection_pool(db_path: str, pool_size: int = 3) -> MediaDatabase:
             pool = MediaDatabase(db_path=db_path, client_id="rag_service_fts5")
             _connection_pools[db_path] = pool
         return pool
+
+
+def run_retiring_connection(pool, function, *args):
+    """Run ``function(*args)`` and retire the pool connection it opened.
+
+    TASK-38714: searches run on executor threads, and the pooled
+    ``MediaDatabase`` keeps one connection per thread. ``close_all_pools()``
+    reaches only the closing thread's, so each search retires the handle it
+    opened, on its own thread. A connection the thread already held stays.
+    """
+    # ponytail: one connection open per search; give each pool a one-thread
+    # executor if that open ever shows in search latency.
+    with operation_owned_connection(pool):
+        return function(*args)
 
 
 def close_all_pools():

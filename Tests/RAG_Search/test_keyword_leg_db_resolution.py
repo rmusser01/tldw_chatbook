@@ -286,3 +286,84 @@ def test_keyword_rows_render_their_real_title_in_library_evidence(tmp_path):
     assert LibraryRagResultRow.from_result(row).title == "Quokka Census Notes", (
         "row renders as 'Untitled source' in the evidence list"
     )
+
+
+@pytest.mark.asyncio
+async def test_keyword_search_leaves_no_executor_connection_after_close(
+    tmp_path, monkeypatch
+):
+    """TASK-38714: the FTS leg runs on an executor thread, and the pooled
+    MediaDatabase keeps one connection per thread. ``RAGService.close()``
+    reaches only the closing thread's, so each search must retire its own
+    executor-thread handle there."""
+    import sqlite3
+    import threading
+    from concurrent.futures import Future, ThreadPoolExecutor
+
+    from tldw_chatbook.DB.Client_Media_DB_v2 import MediaDatabase
+    from tldw_chatbook.RAG_Search.simplified import db_connection_pool
+
+    class ThreadPerCallExecutor(ThreadPoolExecutor):
+        """Every call on a new thread, as a busy default pool does."""
+
+        def __init__(self) -> None:
+            super().__init__()
+            self.threads: list[threading.Thread] = []
+
+        def submit(self, fn, /, *args, **kwargs):
+            future: Future = Future()
+
+            def run() -> None:
+                if not future.set_running_or_notify_cancel():
+                    return
+                try:
+                    future.set_result(fn(*args, **kwargs))
+                except BaseException as error:
+                    future.set_exception(error)
+
+            thread = threading.Thread(target=run, daemon=True)
+            self.threads.append(thread)
+            thread.start()
+            return future
+
+    db_path = tmp_path / "tldw_cli_media_v2.db"
+    seed = MediaDatabase(db_path=str(db_path), client_id="test_keyword_close")
+    media_id, _, message = seed.add_media_with_keywords(
+        title="Numbat Notes",
+        content="Notes about numbat foraging.",
+        media_type="article",
+    )
+    assert media_id is not None, f"seed failed: {message}"
+    seed.close_connection()
+
+    monkeypatch.setattr(db_connection_pool, "_connection_pools", {})
+    opened: list[tuple[threading.Thread, sqlite3.Connection]] = []
+    original = MediaDatabase._get_thread_connection
+
+    def recording(self):
+        connection = original(self)
+        if all(connection is not seen for _, seen in opened):
+            opened.append((threading.current_thread(), connection))
+        return connection
+
+    monkeypatch.setattr(MediaDatabase, "_get_thread_connection", recording)
+    executor = ThreadPerCallExecutor()
+    service = _make_service(tmp_path, media_db_path=db_path)
+
+    asyncio.get_running_loop().set_default_executor(executor)
+    try:
+        assert await service._keyword_search("numbat", top_k=5), "FTS row expected"
+    finally:
+        service.close()
+    for thread in executor.threads:
+        thread.join(5)
+
+    worker_handles = [
+        connection
+        for thread, connection in opened
+        if thread is not threading.current_thread()
+    ]
+    assert worker_handles, "the FTS leg must open an executor-thread handle"
+    for connection in worker_handles:
+        with pytest.raises(sqlite3.ProgrammingError, match="closed database"):
+            sqlite3.Connection.in_transaction.__get__(connection)

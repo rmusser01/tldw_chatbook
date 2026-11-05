@@ -757,7 +757,7 @@ class LibraryIngestQueueMixin:
         if ingest_store is None or operation_store is None:
             return
         try:
-            rows = await asyncio.to_thread(ingest_store.list_dispatch_held, limit=limit)
+            rows = ingest_store.list_dispatch_held(limit=limit)  # UI thread: TASK-38714
         except Exception:
             logger.opt(exception=True).warning(
                 "Research source held-job startup scan failed; jobs remain held"

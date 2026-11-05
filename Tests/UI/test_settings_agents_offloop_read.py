@@ -1,6 +1,7 @@
 """The Settings agents-panel definition read runs off the event loop."""
 
 import threading
+from concurrent.futures import Future, ThreadPoolExecutor
 from types import SimpleNamespace
 
 import pytest
@@ -111,3 +112,101 @@ async def test_review_team_config_load_and_atomic_save_run_offloop(
     finally:
         db.close()
         path.write_bytes(original)
+
+
+class _ThreadPerCallExecutor(ThreadPoolExecutor):
+    """Default executor that runs every call on a new thread (TASK-38714).
+
+    A busy pool hands each ``to_thread`` call a different thread; an idle
+    one often reuses the loop's last worker and hides per-thread handles.
+    """
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.threads: list[threading.Thread] = []
+
+    def submit(self, fn, /, *args, **kwargs):
+        future: Future = Future()
+
+        def run() -> None:
+            if not future.set_running_or_notify_cancel():
+                return
+            try:
+                future.set_result(fn(*args, **kwargs))
+            except BaseException as error:
+                future.set_exception(error)
+
+        thread = threading.Thread(target=run, daemon=True)
+        self.threads.append(thread)
+        thread.start()
+        return future
+
+    def shutdown(self, wait: bool = True, **kwargs) -> None:
+        if wait:
+            for thread in self.threads:
+                thread.join(5)
+        super().shutdown(wait, **kwargs)
+
+
+@pytest.mark.asyncio
+async def test_owned_runs_db_retires_every_worker_connection_at_unmount(
+    tmp_path, monkeypatch
+):
+    """TASK-38714: on_unmount's close runs on the UI thread and reaches only
+    that thread's connection. The definition read and the orphan reconcile
+    open their own on worker threads, so each must retire its own there."""
+    import asyncio
+    import sqlite3
+    from typing import ClassVar
+
+    from textual.app import App
+
+    from Tests.UI.consolidated_css import APP_STYLESHEETS
+    from tldw_chatbook.Agents.code_review_models import ReviewTeam
+    from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
+    from tldw_chatbook.Widgets import settings_agents_panel as module
+
+    opened: list[tuple[threading.Thread, sqlite3.Connection]] = []
+    original_open = AgentRunsDB._get_connection
+
+    def recording_open(self, *args, **kwargs):
+        connection = original_open(self, *args, **kwargs)
+        opened.append((threading.current_thread(), connection))
+        return connection
+
+    monkeypatch.setattr(AgentRunsDB, "_get_connection", recording_open)
+    monkeypatch.setattr(module, "get_code_review_team", lambda: ReviewTeam())
+    executor = _ThreadPerCallExecutor()
+    panel = module.AgentsSettingsPanel(
+        SimpleNamespace(
+            app_config={"agents": {"code_review": {}}},
+            chachanotes_db=SimpleNamespace(db_path=str(tmp_path / "chacha.db")),
+        )
+    )
+    assert panel._owns_runs_db
+
+    class Harness(App):
+        CSS_PATH: ClassVar[list[str]] = [str(p) for p in APP_STYLESHEETS]
+
+        def compose(self):
+            yield panel
+
+    asyncio.get_running_loop().set_default_executor(executor)
+    async with Harness().run_test(size=(80, 24)) as pilot:
+        await panel._reload_list()
+        await pilot.app.workers.wait_for_complete()
+        await pilot.pause()
+    executor.shutdown(wait=True)
+    for thread, _connection in opened:
+        if thread is not threading.current_thread():
+            thread.join(5)
+
+    worker_handles = [
+        connection
+        for thread, connection in opened
+        if thread is not threading.current_thread()
+    ]
+    assert worker_handles, "the read and the reconcile must open worker handles"
+    for connection in worker_handles:
+        with pytest.raises(sqlite3.ProgrammingError, match="closed database"):
+            sqlite3.Connection.in_transaction.__get__(connection)
