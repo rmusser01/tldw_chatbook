@@ -2393,3 +2393,7 @@ Tests/UI/test_console_send_resend_guard.py::test_an_enter_never_resends_a_draft_
 # TASK-38745: the pending-fragment display-owner refusals, after a rail sync
 # that rendered (the setup retries a deferred one); ~20-26 s serially.
 Tests/UI/test_console_pending_display_owner_controls.py
+# TASK-38755 (2026-11-05): the File Notes git panel's fixed-region copy refits
+# when the list surface's scrollbar narrows it and the panel keeps its size
+# (3 s). Appended at the tail.
+Tests/UI/test_library_file_notes_git.py::test_fixed_region_copy_refits_when_a_child_scrollbar_narrows_it
