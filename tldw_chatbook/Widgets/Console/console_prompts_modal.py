@@ -258,7 +258,8 @@ class ConsolePromptsModal(
         self._mixin_generation = 0
         self._mixin_flow = mixin_flow
         self._mixin_save_worker = None
-        self._mixin_leave_after_save: Callable[[], Any] | None = None
+        # A leave held for an in-flight save, with the editor draft it saw.
+        self._mixin_leave_after_save: tuple[Callable[[], Any], Any] | None = None
         self._capabilities = capabilities
         self._list_page = list_page
         self._search = search
@@ -541,10 +542,10 @@ class ConsolePromptsModal(
     def _mixin_save_in_flight(self) -> bool:
         """Whether a mix-in Save is still running (TASK-38686).
 
-        Its write runs in a thread. Save, Preview, Refresh and a toggle start
-        exclusive "console-mixins" workers, which would cancel it after the
-        write lands and skip the preference reconcile and the editor's saved
-        state.
+        Its write runs in a thread. Save, Preview, Refresh and every mix-in
+        intent (add, toggle, move, remove, inspect) start exclusive
+        "console-mixins" workers, which would cancel it after the write lands
+        and skip the preference reconcile and the editor's saved state.
         """
         worker = self._mixin_save_worker
         return worker is not None and not worker.is_finished
@@ -563,9 +564,13 @@ class ConsolePromptsModal(
         """
         if not self._mixin_save_in_flight():
             return False
-        self._mixin_leave_after_save = leave
+        self._mixin_leave_after_save = (leave, self._mixin_draft())
         self._show_mixin_saving()
         return True
+
+    def _mixin_draft(self) -> Any:
+        views = self.query(ConsolePromptMixinsView)
+        return self._mixin_editor_snapshot(views.first() if views else None)[1]
 
     async def on_worker_state_changed(self, event: Worker.StateChanged) -> None:
         worker = event.worker
@@ -585,9 +590,15 @@ class ConsolePromptsModal(
         # Covered (Ctrl+Q's question): keep the leave for on_screen_resume.
         if self._mixin_save_in_flight() or self.app.screen is not self:
             return
-        leave, self._mixin_leave_after_save = self._mixin_leave_after_save, None
-        if leave is not None:
-            await _maybe_await(leave())
+        pending, self._mixin_leave_after_save = self._mixin_leave_after_save, None
+        if pending is None:
+            return
+        leave, draft = pending
+        current = self._mixin_draft()
+        guard = self.query_one("#console-prompts-dirty-guard", Vertical)
+        if guard.display or (current is not None and current != draft):
+            return  # typed or asked again after the leave: that later choice wins
+        await _maybe_await(leave())
 
     @on(ConsolePromptMixinsView.SaveRequested)
     def _mixins_save(self) -> None:
@@ -2162,6 +2173,7 @@ class ConsolePromptsModal(
             open_library.can_focus = False
 
     def _show_dirty_guard(self) -> None:
+        self._mixin_leave_after_save = None  # asking again replaces a waiting leave
         guard = self.query_one("#console-prompts-dirty-guard", Vertical)
         if guard.display:
             return

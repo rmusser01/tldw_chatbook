@@ -327,6 +327,8 @@ _SECOND_PRESSES = [
     "clean-browse",
     "reverted-refresh",
     "reverted-toggle",
+    "discard-then-type",
+    "discard-then-escape",
 ]
 
 
@@ -347,7 +349,8 @@ async def test_press_during_contended_mixin_save_cannot_cancel_it(runtime, secon
     leave; ``covered``: one finished under Ctrl+Q's question runs after Wait).
     Ctrl+Q refuses during the save (``quit``). ``clean-*`` save an unchanged
     editor and ``reverted-*`` undo the edit after Save, so Close, Browse,
-    Refresh and a toggle skip the dirty guard.
+    Refresh and a toggle skip the dirty guard. Typing after the Discard, or
+    reopening the guard, replaces the waiting leave (``discard-then-*``).
     """
     import asyncio
     import sqlite3
@@ -382,14 +385,26 @@ async def test_press_during_contended_mixin_save_cannot_cancel_it(runtime, secon
     database.update_prompt_by_id = entering_update
     clean = second.startswith("clean-")
     reverted = second.startswith("reverted-")
-    discard = second in {"escape", "back", "close", "reopen", "keep", "fail", "covered"}
+    discard = second in {
+        "escape",
+        "back",
+        "close",
+        "reopen",
+        "keep",
+        "fail",
+        "covered",
+        "discard-then-type",
+        "discard-then-escape",
+    }
     leaves = second in {"escape", "back", "close", "covered", "clean-close"}
     to_browse = second in {"reopen", "clean-browse"}
+    kept_open = reverted or second == "discard-then-type"
+    on_browse = second in {"reopen", "discard-then-escape"}
     name = "Style" if clean else "Style saved"
-    app = WorkbenchHarness(runtime, "browse" if second == "reopen" else "mixins")
+    app = WorkbenchHarness(runtime, "browse" if on_browse else "mixins")
     async with app.run_test(size=(100, 30)) as pilot:
         app.pilot = pilot
-        if second == "reopen":
+        if on_browse:
             await until(lambda: bool(app.screen.query("#console-prompts-mixins")), "Browse")
             app.screen.query_one("#console-prompts-mixins", Button).press()
         await ready(app)
@@ -422,6 +437,7 @@ async def test_press_during_contended_mixin_save_cannot_cancel_it(runtime, secon
                 "preview": "#console-mixins-preview",
                 "back": "#console-prompts-back",
                 "reopen": "#console-prompts-back",
+                "discard-then-escape": "#console-prompts-back",
                 "close": "#console-prompts-close",
                 "clean-close": "#console-prompts-close",
                 "clean-browse": "#console-mixins-browse",
@@ -454,10 +470,15 @@ async def test_press_during_contended_mixin_save_cannot_cancel_it(runtime, secon
             if second == "reverted-toggle":
                 toggled = app.modal.query_one("#console-mixin-enabled-0", Checkbox)
                 assert toggled.value is enabled
-            if second == "keep":
+            if second in {"keep", "discard-then-escape"}:
                 await pilot.press("escape")
                 await pilot.pause()
+                assert app.screen.query_one("#console-prompts-dirty-guard").display
+            if second == "keep":
                 app.screen.query_one("#console-prompts-keep-editing", Button).press()
+                await pilot.pause()
+            if second == "discard-then-type":
+                app.modal.query_one("#mixin-name", Input).value = "Style typed"
                 await pilot.pause()
             if second == "covered":
                 assert await app.modal.confirm_quit() is False
@@ -494,6 +515,16 @@ async def test_press_during_contended_mixin_save_cannot_cancel_it(runtime, secon
             await pilot.click("#cancel-button")  # Wait
             await until(lambda: asked.is_finished, "Wait to answer")
             assert asked.result is False
+        if second == "discard-then-escape":
+            # The guard asked again, so the Discard before it no longer applies.
+            await app.workers.wait_for_complete()
+            await pilot.pause(0.2)
+            assert app.screen is app.modal and app.modal.query(
+                "#console-mixins-status"
+            ), "the replaced Discard still left Mix-ins"
+            assert app.screen.query_one("#console-prompts-dirty-guard").display
+            app.screen.query_one("#console-prompts-keep-editing", Button).press()
+            await pilot.pause()
         if leaves:
             await until(
                 lambda: app.modal not in app.screen_stack,
@@ -506,9 +537,12 @@ async def test_press_during_contended_mixin_save_cannot_cancel_it(runtime, secon
             )
         else:
             await ready(app)
-            assert app.screen is app.modal
-            if reverted:
+            assert app.screen is app.modal, "the Discard ran over a newer choice"
+            if kept_open:
                 assert "Earlier Library edit saved" in status_text()
+                if second == "discard-then-type":
+                    typed = app.modal.query_one("#mixin-name", Input).value
+                    assert typed == "Style typed"
             else:
                 assert not app.modal.query(PromptMixinEditor), "the editor kept version 1"
         await until(lambda: stored_version() == 2, "the write did not land")
@@ -522,7 +556,7 @@ async def test_press_during_contended_mixin_save_cannot_cancel_it(runtime, secon
             app.open_workbench()
             await ready(app)
 
-        if not app.modal.query(PromptMixinEditor):  # reverted-* keep it open
+        if not app.modal.query(PromptMixinEditor):  # kept_open cases keep it
             app.screen.query_one("#console-mixin-inspect-0", Button).press()
             await ready(app)
         app.screen.query_one("#mixin-name", Input).value = "Style again"
