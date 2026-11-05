@@ -1,7 +1,7 @@
 ---
 id: TASK-38532
 title: Expose workflow setup and phase controls in Console
-status: In Progress
+status: Done
 created_date: 2026-11-01 17:31
 dependencies:
 - TASK-38531
@@ -14,7 +14,7 @@ references:
 documentation:
 - Docs/superpowers/specs/2026-11-01-native-phased-agent-workflows-design.md
 - backlog/decisions/285-native-phased-agent-workflows.md
-updated_date: 2026-11-05 00:04
+updated_date: 2026-11-05 02:58
 ---
 
 ## Description
@@ -25,9 +25,9 @@ Deliver implementation slice 9 of the accepted native shared-worktree workflow d
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 Native workflow commands/setup/status/history expose exact revisions, current scope, limits, dirty input and change-review readiness without clearing drafts.
-- [ ] #2 Approval, revision, Pause, Stop, final acceptance and explicit Resume/recovery use their exact durable owners and remain usable across navigation.
-- [ ] #3 Existing fleet/Changes UI, finite DB offload/subscription patterns, design tokens, keyboard/focus and narrow/wide states are reused and verified.
+- [x] #1 Native workflow commands/setup/status/history expose exact revisions, current scope, limits, dirty input and change-review readiness without clearing drafts.
+- [x] #2 Approval, revision, Pause, Stop, final acceptance and explicit Resume/recovery use their exact durable owners and remain usable across navigation.
+- [x] #3 Existing fleet/Changes UI, finite DB offload/subscription patterns, design tokens, keyboard/focus and narrow/wide states are reused and verified.
 - [x] #4 Native planning receipts consumed by workflow controls certify the originally acquired configuration generator; substituting another same-runtime generator refuses without a completed receipt or release notification.
 <!-- AC:END -->
 
@@ -80,3 +80,12 @@ Fix round 2 confines workflow diagnostics and unavailable notices to safe operat
 
 **COST AND SCOPE.** One passive planning acquisition association and finite source/state checks can reduce availability on a changed or unproven receiver. Existing worker, root, claim, slot, cancellation, G metadata/pop, post-release error and shutdown-fence obligations still apply. The execution-only configuration transition remains separately owned. Preserve existing wake, accounting, consent and public coordinator contracts. Verify original acquisition and terminal substitution refusals and positive direct/coordinated delivery under the original private bounds. Task 38531 and Task 9 UI stay gated until independent prerequisite review reconciles the runtime signoff.
 <!-- TASK9-ORIGINAL-PLANNING-GENERATOR-END -->
+
+
+## Final implementation notes — Console workflow controls
+
+Console workflow setup, this-chat history, exact-revision phase/quality controls and status are independently accepted through `81ec86d2c854795274557e1bdd4725a317e7ba2a`. Existing Console/Goal forms, native coordinator, finite service readers, required checkpoint evidence, exact phase Changes links, fleet navigation and token-backed layout are reused. Native preparation derives frozen provider references from the passive setup; accepted execution remains runtime-owned. View reads drain before detach, modal completion respects the covering screen, and current native Recovery cannot be overridden by a view. ADR-285 and the existing safe-modal contract apply; no extra execution engine, poller, permission store, logger policy or schema was added.
+
+The original six Important findings and background-status Minor were addressed in the first scoped fix. The second scoped fix keeps malformed private record input out of warnings, structured diagnostics and unavailable notices while retaining safe storage errors and retry guidance. Independent final scoped review `dcc0509039f63cd87524e48b35458bfe057852cc7aab4622c68a410e57ba3d88` is SPEC PASS / QUALITY APPROVED with no open findings; prerequisite AC4 retains review `b17de773f415e0c49941b8d651197477a27a0f551edafaf9f2cf6b14c4596931`.
+
+Targeted native/mounted checks, original/fix capture sets, static checks and exact-path protection are recorded in the full report and review receipts. Original staged 61-path diff, 279 protected files and thirteen full support pairs remain preserved. Separate cohorts and adverse outcomes retain their source-specific qualifications, including the unattributed earlier mounted Default cleanup operation, expected retained shutdown cases, optional-library/unmounted-attention warnings and existing legacy/governance failures. No full-suite or clean standalone-branch claim. Full mounted application, live-provider file correction, process restart and profile backup/recovery remain the final qualification stage. The feature stays disabled by default.
