@@ -814,7 +814,10 @@ def endpoint_requirement(provider: str) -> str | None:
         "the server's base URL" for a local server, e.g. "your resource
         host" for Azure, or None when the provider ships a default URL.
     """
-    if provider_config_key(provider) in API_URL_PROVIDER_KEYS:
+    provider_key = provider_config_key(provider)
+    if provider_key == "koboldcpp":  # TASK-36516: the only route it saves
+        return "the server's /api/v1/generate address"
+    if provider_key in API_URL_PROVIDER_KEYS:
         return "the server's base URL"
     # Capture 01c: Azure, Cloudflare and Databricks ship no URL either.
     target = required_base_url_target(provider)

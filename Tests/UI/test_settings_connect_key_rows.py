@@ -381,6 +381,8 @@ async def test_an_endpoint_with_no_shipped_default_reads_required(
     [
         ("azure", dict(_SAVED_KEY), "your resource host"),
         ("llama_cpp", {}, "the server's base URL"),
+        # TASK-36516 review: Save refuses a koboldcpp base URL.
+        ("koboldcpp", {}, "the server's /api/v1/generate address"),
         ("openai", dict(_SAVED_KEY), None),
     ],
 )

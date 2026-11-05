@@ -135,6 +135,23 @@ async def test_focusing_the_visible_provider_picker_shows_the_provider_purpose(
             ), selector
 
 
+_KOBOLD_REFUSAL = (
+    "KoboldCpp needs its native /api/v1/generate address. "
+    "For an OpenAI-compatible server, choose Custom instead."
+)
+
+
+async def _save_provider_card(screen, pilot) -> str:
+    """Press Save and return the provider card's result line once it is set."""
+    await pilot.pause()
+    screen._provider_save_result = ""
+    await pilot.click("#settings-save-category")
+    deadline = time.monotonic() + 10
+    while not screen._provider_save_result and time.monotonic() < deadline:
+        await pilot.pause(0.05)
+    return screen._provider_save_result
+
+
 @pytest.mark.asyncio
 @private_profile_test
 async def test_koboldcpp_saves_only_the_native_route_its_send_posts_to(
@@ -169,13 +186,7 @@ async def test_koboldcpp_saves_only_the_native_route_its_send_posts_to(
     async def _save(screen, pilot, endpoint: str) -> str:
         screen.query_one("#settings-provider-endpoint-value", Input).value = endpoint
         screen.query_one("#settings-model-value", Input).value = "kobold-model"
-        await pilot.pause()
-        screen._provider_save_result = ""
-        await pilot.click("#settings-save-category")
-        deadline = time.monotonic() + 10
-        while not screen._provider_save_result and time.monotonic() < deadline:
-            await pilot.pause(0.05)
-        return screen._provider_save_result
+        return await _save_provider_card(screen, pilot)
 
     async with host.run_test(size=(211, 44)) as pilot:
         screen = _active_destination_screen(host)
@@ -189,10 +200,7 @@ async def test_koboldcpp_saves_only_the_native_route_its_send_posts_to(
         url_before = saved_before["api_settings"]["koboldcpp"].get("api_url")
 
         result = await _save(screen, pilot, "http://127.0.0.1:5001")
-        assert result == (
-            "KoboldCpp needs its native /api/v1/generate address. "
-            "For an OpenAI-compatible server, choose Custom instead."
-        )
+        assert result == _KOBOLD_REFUSAL
         saved = load_cli_config_and_ensure_existence(force_reload=True)
         assert saved["api_settings"]["koboldcpp"].get("api_url") == url_before
 
@@ -215,3 +223,49 @@ async def test_koboldcpp_saves_only_the_native_route_its_send_posts_to(
     assert url == native
     assert payload["prompt"] == "synthetic native prompt"
     assert "messages" not in payload
+
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_a_stored_koboldcpp_chat_route_refuses_only_saves_that_write_it(
+    request,
+) -> None:
+    """TASK-36516 review r8e-rev1: the native-route check ran before Save knew
+    what it writes, so a context-window save over a ``/v1/chat/completions``
+    route the old bug had stored was refused. That save now goes through and
+    leaves the route alone; a model change, which rewrites the endpoint, is
+    still refused (AC#1)."""
+    from tldw_chatbook.config import (
+        load_cli_config_and_ensure_existence,
+        save_settings_to_cli_config,
+    )
+
+    stored = "http://127.0.0.1:5001/v1/chat/completions"
+    assert save_settings_to_cli_config(
+        {
+            "chat_defaults": {"provider": "koboldcpp", "model": "kobold-model"},
+            "api_settings.koboldcpp": {"api_url": stored, "model": "kobold-model"},
+        }
+    )
+    host = DestinationHarness(_build_test_app(), "settings")
+
+    async with host.run_test(size=(211, 44)) as pilot:
+        screen = _active_destination_screen(host)
+        screen._select_category(SettingsCategoryId.PROVIDERS_MODELS.value)
+        await _wait_for_selector(screen, pilot, "#settings-model-value", timeout=30.0)
+        endpoint = screen.query_one("#settings-provider-endpoint-value", Input)
+        assert endpoint.value == stored
+
+        screen.query_one("#settings-model-context-window", Input).value = "4096"
+        result = await _save_provider_card(screen, pilot)
+        assert result.startswith("Provider settings saved"), result
+
+        screen.query_one("#settings-model-value", Input).value = "kobold-model-2"
+        assert await _save_provider_card(screen, pilot) == _KOBOLD_REFUSAL
+
+    saved = load_cli_config_and_ensure_existence(force_reload=True)
+    assert saved["api_settings"]["koboldcpp"]["api_url"] == stored
+    assert saved["api_settings"]["koboldcpp"]["model"] == "kobold-model"
+    windows = saved["model_capabilities"]["models"]
+    assert windows["kobold-model"]["context_window"] == 4096
+

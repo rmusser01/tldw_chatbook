@@ -16118,9 +16118,7 @@ class SettingsScreen(BaseAppScreen):
         return f"Endpoint key: api_settings.{provider_key}.{endpoint_key}"
 
     @staticmethod
-    def _validate_provider_endpoint(
-        endpoint: object, provider_key: str = ""
-    ) -> str | None:
+    def _validate_provider_endpoint(endpoint: object) -> str | None:
         endpoint_text = str(endpoint or "").strip()
         if not endpoint_text:
             return None
@@ -16128,19 +16126,24 @@ class SettingsScreen(BaseAppScreen):
             return (
                 "Endpoint must start with http:// or https:// and include a valid host."
             )
-        if provider_key == "koboldcpp":
-            # TASK-36516: chat_with_kobold posts KoboldAI's native payload to the
-            # saved URL; a root saves as an OpenAI chat route. Refuse as the wizard does.
-            from tldw_chatbook.Provider_Contract.provider_endpoint_contract import (
-                resolve_provider_endpoint,
-            )
-            from tldw_chatbook.UI.Wizards.first_run_setup_state import (
-                first_run_endpoint_refusal,
-            )
-
-            resolution = resolve_provider_endpoint(provider_key, endpoint_text)
-            return first_run_endpoint_refusal(provider_key, resolution.chat_url) or None
         return None
+
+    @staticmethod
+    def _provider_endpoint_route_refusal(endpoint: str, provider_key: str) -> str:
+        """TASK-36516: chat_with_kobold posts KoboldAI's native payload to the
+        saved URL, and a root saves as an OpenAI chat route; refuse as the
+        first-run wizard does. "" when the endpoint may be saved."""
+        if provider_key != "koboldcpp" or not endpoint:
+            return ""
+        from tldw_chatbook.Provider_Contract.provider_endpoint_contract import (
+            resolve_provider_endpoint,
+        )
+        from tldw_chatbook.UI.Wizards.first_run_setup_state import (
+            first_run_endpoint_refusal,
+        )
+
+        resolution = resolve_provider_endpoint(provider_key, endpoint)
+        return first_run_endpoint_refusal(provider_key, resolution.chat_url)
 
     @staticmethod
     def _validate_credential_env_var(credential_env_var: object) -> str | None:
@@ -33127,9 +33130,7 @@ class SettingsScreen(BaseAppScreen):
                     ).value = endpoint
                 except QueryError:
                     pass
-            endpoint_validation_error = self._validate_provider_endpoint(
-                endpoint, provider_key
-            )
+            endpoint_validation_error = self._validate_provider_endpoint(endpoint)
             if endpoint_validation_error:
                 self._provider_save_result = endpoint_validation_error
                 self._set_static_text(
@@ -33378,6 +33379,16 @@ class SettingsScreen(BaseAppScreen):
             section_values: dict[str, dict[str, object]] = {}
             delete_keys: dict[str, list[str]] = {}
             if connection_dirty:
+                # Only a save that writes the endpoint refuses (review r8e-rev1).
+                if refusal := self._provider_endpoint_route_refusal(
+                    endpoint, provider_key
+                ):
+                    self._provider_save_result = refusal
+                    self._set_static_text(
+                        "#settings-provider-save-result", self._provider_save_result
+                    )
+                    self.app.notify(refusal, severity="error", markup=False)
+                    return
                 credential_source = self._provider_current_credential_source(provider)
                 try:
                     setup_mutation = build_provider_setup_mutation(
