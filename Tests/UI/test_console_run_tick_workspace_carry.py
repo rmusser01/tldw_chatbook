@@ -40,16 +40,19 @@ from tldw_chatbook.Workspaces.display_state import build_console_workspace_state
 pytestmark = pytest.mark.bootstrap_profile
 
 
-def _count_builds(monkeypatch) -> list[int]:
-    """Count real workspace-context builds at their uncached seam."""
+def _count_builds(monkeypatch, console) -> list[int]:
+    """Count real workspace-context builds: each one runs the browser pipeline once."""
     builds: list[int] = []
-    original = workspace_module.build_console_workspace_state
+    controller = console._workspace
+    original = controller._with_console_conversation_browser_state
 
-    def counting(**kwargs):
+    def counting(*args, **kwargs):
         builds.append(1)
-        return original(**kwargs)
+        return original(*args, **kwargs)
 
-    monkeypatch.setattr(workspace_module, "build_console_workspace_state", counting)
+    monkeypatch.setattr(
+        controller, "_with_console_conversation_browser_state", counting
+    )
     return builds
 
 
@@ -103,8 +106,12 @@ async def _fresh_build_then_poll_tick(console, pilot, builds, between=None) -> i
     """
     for _ in range(8):
         await pilot.pause()
-        if await console._sync_native_console_chat_ui() is not True:
-            continue
+        start = len(builds)
+        if (
+            await console._sync_native_console_chat_ui() is not True
+            or len(builds) == start
+        ):
+            continue  # Deferred, or it reused its own predecessor's build.
         if between is not None:
             between()
         before = len(builds)
@@ -144,7 +151,7 @@ async def test_a_run_tick_projection_builds_no_workspace_context(monkeypatch):
     _, host = _ready_host()
     async with host.run_test(size=APP_SIZE) as pilot:
         console = await _settled_console(host, pilot)
-        builds = _count_builds(monkeypatch)
+        builds = _count_builds(monkeypatch, console)
         for _ in range(8):  # A cold checked display defers a projection.
             await pilot.pause()
             builds.clear()
@@ -163,7 +170,7 @@ async def test_a_control_bar_sync_builds_no_workspace_context(monkeypatch):
     _, host = _ready_host()
     async with host.run_test(size=APP_SIZE) as pilot:
         console = await _settled_console(host, pilot)
-        builds = _count_builds(monkeypatch)
+        builds = _count_builds(monkeypatch, console)
         for _ in range(8):  # A cold checked display defers the sync.
             await pilot.pause()
             builds.clear()
@@ -312,7 +319,7 @@ async def test_a_poll_tick_reuses_the_build_its_predecessor_made(monkeypatch):
     _, host = _ready_host()
     async with host.run_test(size=APP_SIZE) as pilot:
         console = await _settled_console(host, pilot)
-        builds = _count_builds(monkeypatch)
+        builds = _count_builds(monkeypatch, console)
         assert await _fresh_build_then_poll_tick(console, pilot, builds) == 0
         # The reuse is spent: the next completed tick builds.
         before = len(builds)
@@ -330,7 +337,7 @@ async def test_a_run_status_flip_that_moves_no_marker_still_reuses_the_build(
     async with host.run_test(size=APP_SIZE) as pilot:
         console = await _settled_console(host, pilot)
         _set_run_status(console, ConsoleRunStatus.VALIDATING)
-        builds = _count_builds(monkeypatch)
+        builds = _count_builds(monkeypatch, console)
         reused = await _fresh_build_then_poll_tick(
             console,
             pilot,
@@ -347,7 +354,7 @@ async def test_a_run_status_flip_that_moves_a_marker_rebuilds_on_the_next_tick(
     _, host = _ready_host()
     async with host.run_test(size=APP_SIZE) as pilot:
         console = await _settled_console(host, pilot)
-        builds = _count_builds(monkeypatch)
+        builds = _count_builds(monkeypatch, console)
         idle_markers = None
 
         def start_run():
@@ -360,20 +367,101 @@ async def test_a_run_status_flip_that_moves_a_marker_rebuilds_on_the_next_tick(
 
 
 @pytest.mark.asyncio
-async def test_an_explicit_sync_never_reuses_a_carried_build(monkeypatch):
-    """Only the poll's own tick reuses; a send transition's full sync builds."""
+async def test_a_send_transitions_full_sync_reuses_its_predecessors_build_once(
+    monkeypatch,
+):
+    """Explicit full syncs are run ticks too: the second of two reuses the first's."""
     _, host = _ready_host()
     async with host.run_test(size=APP_SIZE) as pilot:
         console = await _settled_console(host, pilot)
-        builds = _count_builds(monkeypatch)
-        completed = 0
+        builds = _count_builds(monkeypatch, console)
         for _ in range(8):
             await pilot.pause()
+            start = len(builds)
+            if (
+                await console._sync_native_console_chat_ui() is not True
+                or len(builds) == start
+            ):
+                continue  # Deferred, or it reused its own predecessor's build.
             before = len(builds)
             if await console._sync_native_console_chat_ui() is True:
-                completed += 1
-                assert len(builds) - before >= 1
-        assert completed >= 2
+                assert len(builds) - before == 0
+                before = len(builds)
+                if await console._sync_native_console_chat_ui() is True:
+                    assert len(builds) - before >= 1  # Never two reuses in a row.
+                break
+        else:
+            raise AssertionError("no two full syncs completed back to back")
+
+
+@pytest.mark.asyncio
+async def test_an_unmoved_registry_view_reuses_the_workspace_state_builder(monkeypatch):
+    _, host = _ready_host()
+    async with host.run_test(size=APP_SIZE) as pilot:
+        console = await _settled_console(host, pilot)
+        calls = []
+        original = workspace_module.build_console_workspace_state
+
+        def counting(**kwargs):
+            calls.append(1)
+            return original(**kwargs)
+
+        monkeypatch.setattr(workspace_module, "build_console_workspace_state", counting)
+        controller = console._workspace
+        first = controller._build_console_workspace_context_state()
+        second = controller._build_console_workspace_context_state()
+        assert len(calls) <= 1, f"the builder ran {len(calls)}x for an unmoved view"
+        assert second == first
+
+
+@pytest.mark.asyncio
+async def test_the_builder_memo_follows_a_registry_rename():
+    app, host = _ready_host()
+    async with host.run_test(size=APP_SIZE) as pilot:
+        console = await _settled_console(host, pilot)
+        registry = app.workspace_registry_service
+        controller = console._workspace
+        registry.create_workspace(workspace_id="workspace-memo", name="Memo")
+        registry.set_active_workspace("workspace-memo")
+        assert (
+            controller._build_console_workspace_context_state().workspace_name == "Memo"
+        )
+        registry.rename_workspace("workspace-memo", "Memo Renamed")
+        assert (
+            controller._build_console_workspace_context_state().workspace_name
+            == "Memo Renamed"
+        )
+
+
+def test_the_view_display_key_moves_with_what_its_reads_return():
+    class Service:
+        mutation_generation = 1
+
+        def get_active_workspace(self):
+            return "active"
+
+        def list_workspaces(self):
+            return ("w",)
+
+    service = Service()
+    view = workspace_module._ConsoleRegistryDisplayReads(service)
+    key = view.display_key()
+    assert view.display_key() == key  # Nothing read: unmoved.
+    view.get_active_workspace()
+    filled = view.display_key()
+    assert filled != key  # A live read filled the cache.
+    view.get_active_workspace()
+    assert view.display_key() == filled  # A cached read moves nothing.
+    service.mutation_generation = 2
+    renewed = view.display_key()
+    assert renewed != filled  # A new generation.
+    view.stale_reader = lambda *_args: None
+    assert view.display_key() != renewed  # Stale reads are their own key.
+    view.stale_reader = None
+    assert view.install(2, {("workspaces",): ("w",)}) is True
+    assert view.display_key() != renewed  # An installed re-read.
+    service.mutation_generation = True  # A double: caching does not apply.
+    assert view.display_key() is None
 
 
 @pytest.mark.asyncio

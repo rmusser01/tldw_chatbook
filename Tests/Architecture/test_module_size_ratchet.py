@@ -1305,6 +1305,11 @@ _BUDGETS: dict[str, int] = {
     # run markers it shows), the projection reads the workspace label alone,
     # and an unchanged folder-availability re-read no longer pushes a
     # rebuild: 8961 -> 9100 (+139).
+    # A run tick reuses its predecessor's unchanged build once (keyed on the
+    # run markers it shows), the workspace state builder is reused while the
+    # registry view's reads are unmoved, the projection reads the workspace
+    # label alone, and an unchanged folder-availability re-read no longer
+    # pushes a rebuild: 8961 -> 9147 (+186).
     "tldw_chatbook/UI/Console_Modules/workspace.py": 8958,
     # 2026-10-31, PR #3293: explicit user size-limit waiver; final review entry
     # credential/readiness repair, exact integrated measurement (8181 -> 8183).
