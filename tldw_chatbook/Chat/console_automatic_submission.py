@@ -350,6 +350,16 @@ async def legacy_submission_hook_input(controller, draft, session_id, hook_read=
     )
 
 
+#: TASK-38751: the chat, runtime or permission owner moved during the read.
+#: Nothing is wrong with the hooks, so this copy gives no hooks advice.
+_HOOK_ADMISSION_OWNER_CHANGED = "Chat changed during the hook check; send again."
+_HOOKS_UNAVAILABLE = "Hooks unavailable; review or disable hooks before sending."
+
+
+class _HookAdmissionOwnerChanged(RuntimeError):
+    """The admission read's owner moved; the read is void, not failed."""
+
+
 def hook_admission_reason(controller) -> str | None:
     from tldw_chatbook.Agents.run_hooks import inspect_hooks_config
     from tldw_chatbook.config import read_hooks_config_snapshot
@@ -397,7 +407,7 @@ def hook_admission_reason(controller) -> str | None:
             return None
         return "Hook review required; permission owner unavailable."
     except Exception:  # noqa: BLE001 -- unavailable authority must refuse admission
-        return "Hooks unavailable; review or disable hooks before sending."
+        return _HOOKS_UNAVAILABLE
 
 
 def run_hooks_engine(controller):
@@ -543,7 +553,7 @@ async def read_hook_admission_result(self) -> tuple[str | None, Any]:
                     )
                 )
             ):
-                raise RuntimeError("Console hook admission owner changed.")
+                raise _HookAdmissionOwnerChanged("Console hook admission owner changed.")
 
         observers = () if runtime is None else (runtime._preparation_reads,)
         reason = await run_hook_preparation_read(
@@ -556,10 +566,12 @@ async def read_hook_admission_result(self) -> tuple[str | None, Any]:
             source=source,
         )
         return reason, source.read
+    except _HookAdmissionOwnerChanged:
+        return _HOOK_ADMISSION_OWNER_CHANGED, None
     except Exception:
         # Keep the existing public reason-return contract; cancellation is
         # BaseException and escapes only after its real native read retires.
-        return "Hooks unavailable; review or disable hooks before sending.", None
+        return _HOOKS_UNAVAILABLE, None
 
 
 def shared_hook_owner(self, session_id: str | None) -> Any:

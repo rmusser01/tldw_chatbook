@@ -883,3 +883,58 @@ async def test_dispose_closes_previously_built_hooks(hook_file):
     assert runtime.ensure_run_hooks() is None
     # Existing per-run closures can retain the engine after runtime disposal.
     assert (await engine.fire_async("PreToolUse", session_id="s")).blocked
+
+
+# ---------------------------------------------------------------------------
+# TASK-38751 -- a send refused because the chat changed mid hook check.
+# ---------------------------------------------------------------------------
+
+
+async def _hook_admission_copy(accessor_effect):
+    """Run the stock admission read for one bound session.
+
+    ``accessor_effect(store, session)`` runs inside the permission read --
+    the window in which the user can switch or close the chat.
+    """
+    from types import SimpleNamespace
+
+    from tldw_chatbook.Chat.console_hook_preparation import (
+        bind_hook_preparation_session,
+    )
+
+    store = ConsoleChatStore()
+    session = store.create_session(session_id="hook-owner", ephemeral=True)
+    ready = SimpleNamespace(snapshot=lambda: SimpleNamespace(blocked_reason=None))
+
+    def accessor():
+        accessor_effect(store, session)
+        return ready
+
+    controller = ConsoleChatController(
+        store=store, provider_gateway=None, hook_permissions_accessor=accessor
+    )
+    with bind_hook_preparation_session(controller, session.id):
+        return await controller.hook_admission_reason()
+
+
+@pytest.mark.asyncio
+async def test_a_chat_closed_during_the_hook_check_says_send_again():
+    """The owner moved; nothing is wrong with the hooks, so no hooks advice."""
+
+    def close_chat(store, session):
+        assert store.close_session(session.id) is not None
+
+    reason = await _hook_admission_copy(close_chat)
+
+    assert reason == "Chat changed during the hook check; send again."
+    assert "review" not in reason and "disable" not in reason
+
+
+@pytest.mark.asyncio
+async def test_a_failed_hooks_read_still_says_review_or_disable_hooks():
+    def fail(_store, _session):
+        raise OSError("hooks file unreadable")
+
+    reason = await _hook_admission_copy(fail)
+
+    assert reason == "Hooks unavailable; review or disable hooks before sending."

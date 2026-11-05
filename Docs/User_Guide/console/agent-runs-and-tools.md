@@ -809,7 +809,11 @@ restrictions, never permissions.
   message.
   After consent succeeds, execution failures for this event **fail open**:
   a broken hook logs a warning and the send proceeds. Missing or changed consent
-  is a separate refusal and always keeps the Send blocked.
+  is a separate refusal and always keeps the Send blocked. If the hook
+  permissions cannot be read at all, the refusal reads "Hooks unavailable;
+  review or disable hooks before sending." If you switch or close the chat
+  while that check runs, it reads "Chat changed during the hook check; send
+  again." instead: nothing is wrong with your hooks, so send again.
 
 Precedence: stdout that parses as a JSON object with a `decision` key wins
 over the exit code (exit 2 is shorthand for the event's blocking
