@@ -657,7 +657,7 @@ class ConsoleComposerBar(Horizontal):
     #: (`css/features/_console.tcss`) style only the bar and its visible
     #: draft, so `_sync_interaction_classes` restyles just those.
     #: `Tests/UI/test_console_composer_state_restyle.py` fails when a rule
-    #: keyed on either class styles a node missing here.
+    #: keyed on either class, or on the bar's focus, styles a node missing here.
     INTERACTION_CLASSES = ("console-composer-focused", "console-composer-has-draft")
     INTERACTION_STYLED_DESCENDANTS = ("#console-command-visible-text",)
     DEFAULT_STATUS = "No active Console session."
@@ -2229,14 +2229,23 @@ class ConsoleComposerBar(Horizontal):
         }
         if any(self.has_class(name) != on for name, on in wanted.items()):
             self.update_classes(wanted, update=False)
-            nodes: list[Widget] = [self]
-            for selector in self.INTERACTION_STYLED_DESCENDANTS:
-                nodes.extend(self.query(selector))
-            try:
-                self.app.stylesheet.update_nodes(nodes, animate=True)
-            except NoActiveAppError:
-                pass
+            self.watch_has_focus(self.has_focus)
         self._sync_raw_cli_state()
+
+    def watch_has_focus(self, _has_focus: bool) -> None:
+        """Restyle only the bar and `INTERACTION_STYLED_DESCENDANTS`.
+
+        TASK-36511.2: Textual's focus watcher restyled the bar's whole subtree
+        (27 nodes, 8-13 ms of CPU per focus change in an attach). The focus
+        rules keyed on the bar style only those nodes too.
+        """
+        nodes: list[Widget] = [self]
+        for selector in self.INTERACTION_STYLED_DESCENDANTS:
+            nodes.extend(self.query(selector))
+        try:
+            self.app.stylesheet.update_nodes(nodes, animate=True)
+        except NoActiveAppError:
+            pass
 
     def has_sendable_payload(self) -> bool:
         """Return whether a Send now would carry anything: Send's readiness input.

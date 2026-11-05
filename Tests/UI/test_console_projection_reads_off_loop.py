@@ -1014,3 +1014,42 @@ def test_a_closing_console_arms_no_replay_and_counts_no_refusal():
     ChatScreen._request_console_control_bar_sync(screen, delayed=delay)
     ChatScreen._request_console_control_bar_sync(screen)
     assert scheduled == [], "a closing Console armed a replay"
+
+
+@pytest.mark.asyncio
+async def test_a_control_bar_sync_builds_the_workspace_context_once(monkeypatch):
+    """TASK-36511.2: a control-bar sync shares one workspace-context build.
+
+    Outside a run tick, the sync's Inspector leg and its rail-state leg each
+    built the workspace context from the same inputs: 2 builds per sync,
+    5.8-6.9 ms of its 27-31 ms of CPU (mounted, load 15). The sync now opens
+    the tick's fingerprint-validated build scope, as ``settle_stopped_poll``
+    does, so the second leg reuses the first build. Each sync still builds
+    afresh: the scope ends with the sync.
+    """
+    from Tests.UI.test_console_native_chat_flow import _sync_console_control_bar_now
+    from tldw_chatbook.UI.Console_Modules import workspace
+
+    host, gateway, _timeline = build()
+    async with host.run_test(size=(160, 45)) as pilot:
+        console, _composer = await ready_console(host, pilot, gateway)
+        await _sync_console_control_bar_now(console)
+        builds = []
+        real = workspace.build_console_workspace_state
+
+        def counted(*args, **kwargs):
+            builds.append(True)
+            return real(*args, **kwargs)
+
+        monkeypatch.setattr(workspace, "build_console_workspace_state", counted)
+        syncs = (
+            console._sync_console_control_bar,
+            console._sync_console_rail_and_controls,
+        )
+        for sync in syncs:
+            for _ in range(2):
+                builds.clear()
+                assert sync() is not False, f"{sync.__name__} deferred"
+                assert len(builds) == 1, (
+                    f"{sync.__name__} built the workspace context {len(builds)} times"
+                )
