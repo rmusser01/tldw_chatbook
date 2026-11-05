@@ -91,7 +91,7 @@ identify actual process boundaries, archives and source versions.
 
 ## Governing decisions
 
-ADR-126 (`126-complete-local-backup-and-recovery.md`, rev 4 with amendments), ADR-127 (`127-fresh-install-private-data-root-recovery.md`), ADR-125 (`125-lock-safe-private-sqlite-validation.md`). Specs/plans: the `2026-09-07-complete-local-backup-restore*` series, `2026-09-15-selectable-backup-groups*`, `2026-09-12-python-backup-encryption*` (under `Docs/superpowers/{specs,plans}/`). Tests: `Tests/Backup_Recovery/` (331 files).
+ADR-126 (`126-complete-local-backup-and-recovery.md`, rev 4 with amendments), ADR-127 (`127-fresh-install-private-data-root-recovery.md`), ADR-125 (`125-lock-safe-private-sqlite-validation.md`). Specs/plans: the `2026-09-07-complete-local-backup-restore*` series, `2026-09-15-selectable-backup-groups*`, `2026-09-12-python-backup-encryption*` (under `Docs/superpowers/{specs,plans}/`). Tests: `Tests/Backup_Recovery/`.
 
 ## Verified gotchas
 
@@ -100,6 +100,12 @@ ADR-126 (`126-complete-local-backup-and-recovery.md`, rev 4 with amendments), AD
 3. `settings_backup_helpers.py` documents a **retired** UI kept alive by tests and the TTS-profile backup contract — the user-facing surface is the Backup & Restore screen.
 4. Restoring an old DB does not auto-activate its contents — imported history stays inert until fresh live claims are allocated.
 5. The Settings Storage card warns that path changes apply on next launch (active DB handles keep current paths) — backup/restore works on the admitted set, not mid-flight handles.
+
+`Backup_Recovery/models.py::SchemaPolicy.__post_init__` checks primitive strings
+and integers inline and recurses only through exact tuple containers. Repeated
+installed policy construction still validates every value in its original order;
+no policy or validation verdict is cached. Exact catalogs, version checks,
+restricted SQLite connections and native ownership/durability remain unchanged.
 
 ## Related docs
 
