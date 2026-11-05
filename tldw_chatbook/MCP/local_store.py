@@ -1727,6 +1727,7 @@ _CONSOLE_STANDARD_METHODS = (
     ("load", _CONSOLE_STANDARD_LOAD),
     ("get_external_catalog", LocalMCPStore.get_external_catalog),
     ("get_catalog_bundle", LocalMCPStore.get_catalog_bundle),
+    ("catalog_fingerprint", LocalMCPStore.catalog_fingerprint),
 )
 
 
