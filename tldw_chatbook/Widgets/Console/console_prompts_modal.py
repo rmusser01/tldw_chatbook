@@ -61,6 +61,8 @@ from .console_prompts_state import (
 )
 
 if TYPE_CHECKING:
+    from textual.worker import Worker
+
     from .console_prompt_draft_editor import ConsolePromptDraftEditor
 
 _PER_PAGE = 10
@@ -257,6 +259,7 @@ class ConsolePromptsModal(
         self._mixin_generation = 0
         self._mixin_flow = mixin_flow
         self._mixin_save_worker = None
+        self._mixin_leave_after_save: Callable[[], Any] | None = None
         self._capabilities = capabilities
         self._list_page = list_page
         self._search = search
@@ -437,6 +440,8 @@ class ConsolePromptsModal(
         if self._holds_dirty_edit():
             self._show_dirty_guard()
             return
+        if self._defer_mixin_leave(self._mixins_browse):
+            return
         await self.enter_mode("browse")
         await self.reload_browse()
 
@@ -541,6 +546,26 @@ class ConsolePromptsModal(
         views = self.query(ConsolePromptMixinsView)
         if views:
             views.first().show_status("Saving Library changes…")
+
+    def _defer_mixin_leave(self, leave: Callable[[], Any]) -> bool:
+        """Hold a leave from Mix-ins until its save finishes (TASK-38748).
+
+        Dismissing the modal cancels its workers, and reopening Mix-ins from
+        Browse starts an exclusive one; either would cancel the save after
+        its write lands.
+        """
+        if not self._mixin_save_in_flight():
+            return False
+        self._mixin_leave_after_save = leave
+        self._show_mixin_saving()
+        return True
+
+    async def on_worker_state_changed(self, event: Worker.StateChanged) -> None:
+        if event.worker is not self._mixin_save_worker or not event.worker.is_finished:
+            return
+        leave, self._mixin_leave_after_save = self._mixin_leave_after_save, None
+        if leave is not None:
+            await _maybe_await(leave())
 
     @on(ConsolePromptMixinsView.SaveRequested)
     def _mixins_save(self) -> None:
@@ -758,6 +783,8 @@ class ConsolePromptsModal(
             self._recipe_selecting = False
         if self._holds_dirty_edit() and not discard:
             self._show_dirty_guard()
+            return
+        if self._defer_mixin_leave(lambda: self._back_internal(discard=discard)):
             return
         if len(self.state.mode_stack) == 1:
             self.dismiss(None)
@@ -2123,6 +2150,7 @@ class ConsolePromptsModal(
         guard.display = False
 
     def _keep_editing(self) -> None:
+        self._mixin_leave_after_save = None
         self._hide_dirty_guard()
         self.call_after_refresh(
             self._focus_widget,
@@ -2145,6 +2173,8 @@ class ConsolePromptsModal(
             return
         if self._holds_dirty_edit():
             self._show_dirty_guard()
+            return
+        if self._defer_mixin_leave(self._request_close):
             return
         self.dismiss_safe_once(None)
 

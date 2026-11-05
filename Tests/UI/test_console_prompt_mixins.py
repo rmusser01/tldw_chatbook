@@ -48,9 +48,10 @@ def runtime(tmp_path):
 class WorkbenchHarness(ConsolidatedCSSApp):
     CSS_PATH: ClassVar = list(APP_STYLESHEETS)
 
-    def __init__(self, runtime):
+    def __init__(self, runtime, initial_mode="mixins"):
         super().__init__()
         self.runtime = runtime
+        self.initial_mode = initial_mode
 
     def open_workbench(self):
         _, scope, store, origin, _, service = self.runtime
@@ -66,7 +67,7 @@ class WorkbenchHarness(ConsolidatedCSSApp):
             search=source.search,
             detail=source.detail,
             save=source.save,
-            initial_mode="mixins",
+            initial_mode=self.initial_mode,
             mixin_flow=self.flow,
         )
         self.push_screen(self.modal)
@@ -312,19 +313,26 @@ async def test_mixin_save_writes_the_prompt_off_the_event_loop(runtime):
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("second", ["save", "preview"])
+@pytest.mark.parametrize(
+    "second", ["save", "preview", "escape", "back", "close", "reopen", "keep"]
+)
 async def test_press_during_contended_mixin_save_cannot_cancel_it(runtime, second):
-    """Save or Preview pressed while a contended mix-in save waits cannot cancel it.
+    """A press while a contended mix-in save waits cannot cancel it.
 
     The save's write runs in a worker thread (AC#5) and here waits for another
-    writer's lock. Both buttons start exclusive "console-mixins" workers, which
-    used to cancel the save after its write landed. The editor then kept
+    writer's lock. Save and Preview start exclusive "console-mixins" workers,
+    which used to cancel the save after its write landed. The editor then kept
     version 1 as unsaved, the preferences were never reconciled, and the next
-    Save was refused (TASK-38686 review).
+    Save was refused (TASK-38686 review). Discard from Escape, Back or Close
+    used to dismiss a modal opened on Mix-ins, cancelling its workers; in a
+    modal opened on Browse it went back there, and reopening Mix-ins started
+    an exclusive worker (TASK-38748). Discard now waits for the save, and
+    Keep editing afterwards cancels that pending leave.
     """
     import asyncio
     import sqlite3
     import threading
+    from contextlib import closing
 
     from textual.widgets import Input, Static
 
@@ -339,37 +347,94 @@ async def test_press_during_contended_mixin_save_cannot_cancel_it(runtime, secon
         writing.set()
         return update(*args, **kwargs)
 
+    def status_text():
+        return str(app.modal.query_one("#console-mixins-status", Static).render())
+
     database.update_prompt_by_id = entering_update
-    app = WorkbenchHarness(runtime)
+    discard = second in {"escape", "back", "close", "reopen", "keep"}
+    app = WorkbenchHarness(runtime, "browse" if second == "reopen" else "mixins")
     async with app.run_test(size=(100, 30)) as pilot:
         app.pilot = pilot
+        if second == "reopen":
+            await _wait_for_condition(
+                pilot,
+                lambda: bool(app.screen.query("#console-prompts-mixins")),
+                message="Browse did not load",
+            )
+            app.screen.query_one("#console-prompts-mixins", Button).press()
         await ready(app)
         await add(app, "Style")
         app.screen.query_one("#console-mixin-inspect-0", Button).press()
         await ready(app)
         app.screen.query_one("#mixin-name", Input).value = "Style saved"
+        source = service.preferences(origin.id).entries[0].source
+
+        def stored_version():
+            with closing(sqlite3.connect(str(database.db_path))) as reader:
+                return reader.execute(
+                    "SELECT version FROM Prompts WHERE uuid = ?", (source.record_uuid,)
+                ).fetchone()[0]
+
         blocker = sqlite3.connect(str(database.db_path), isolation_level=None)
         try:
             blocker.execute("BEGIN IMMEDIATE")  # another writer holds the lock
             app.screen.query_one("#console-mixins-save", Button).press()
             # The save's write has started in its thread and waits for the lock.
             assert await asyncio.to_thread(writing.wait, 10)
-            target = f"#console-mixins-{second}"
-            app.screen.query_one(target, Button).press()
+            # Clear the Save press's own copy: the second press must show it.
+            app.modal.query_one("#console-mixins-status", Static).update("")
+            if second in {"save", "preview"}:
+                app.screen.query_one(f"#console-mixins-{second}", Button).press()
+            elif second in {"escape", "keep"}:
+                await pilot.press("escape")
+            else:
+                target = "close" if second == "close" else "back"
+                app.screen.query_one(f"#console-prompts-{target}", Button).press()
             await pilot.pause()
-            status = app.screen.query_one("#console-mixins-status", Static)
-            assert "Saving" in str(status.render())
+            if discard:
+                assert app.screen.query_one("#console-prompts-dirty-guard").display
+                app.screen.query_one("#console-prompts-discard", Button).press()
+                await pilot.pause()
+            assert app.screen is app.modal and app.modal.query(
+                "#console-mixins-status"
+            ), "the leave did not wait for the save"
+            assert "Saving" in status_text()
+            if second == "keep":
+                await pilot.press("escape")
+                await pilot.pause()
+                app.screen.query_one("#console-prompts-keep-editing", Button).press()
+                await pilot.pause()
         finally:
             blocker.execute("COMMIT")
             blocker.close()
-        await ready(app)
-        source = service.preferences(origin.id).entries[0].source
-        records = await scope.read_mixin_records(
-            mode="local", record_uuids=(source.record_uuid,)
+        if second in {"save", "preview", "keep"}:
+            await ready(app)
+            assert app.screen is app.modal
+            assert not app.modal.query(PromptMixinEditor), "the editor kept version 1"
+        elif second == "reopen":
+            await _wait_for_condition(
+                pilot,
+                lambda: bool(app.screen.query("#console-prompts-mixins")),
+                message="Discard did not go back to Browse after the save",
+            )
+        else:
+            await _wait_for_condition(
+                pilot,
+                lambda: app.screen is not app.modal,
+                message="Discard did not close the modal after the save",
+            )
+        await _wait_for_condition(
+            pilot, lambda: stored_version() == 2, message="the write did not land"
         )
-        assert records[0]["version"] == 2
-        assert not app.modal.query(PromptMixinEditor), "the editor kept version 1"
+        await app.workers.wait_for_complete()
+        # Checked before any reopen: a reopened projection reconciles on its own.
         assert service.preferences(origin.id).entries[0].name == "Style saved"
+        if second == "reopen":
+            app.screen.query_one("#console-prompts-mixins", Button).press()
+            await ready(app)
+        elif discard and second != "keep":
+            app.open_workbench()
+            await ready(app)
 
         app.screen.query_one("#console-mixin-inspect-0", Button).press()
         await ready(app)
