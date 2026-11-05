@@ -1,5 +1,5 @@
 ---
-id: TASK-38703
+id: TASK-38901
 title: Wait for painted Notes picker actions before the single test click
 status: In Progress
 created_date: 2026-11-05 01:00
@@ -11,7 +11,7 @@ references:
 - https://github.com/rmusser01/tldw_chatbook/actions/runs/41940008359/job/126963140839
 documentation:
 - backlog/docs/lessons-testing-evidence.md
-updated_date: 2026-11-05 01:12
+updated_date: 2026-11-05 14:56
 ---
 
 ## Description
@@ -48,6 +48,7 @@ The shared test picker helper now waits for a Textual frame, reacquires the live
 Diagnostic399 captured the same button moving while all three mouse events hit its old point. Permanent final arm403 fails the original modal assertion with the old helper; selector-setup run400 is retained but excluded from evidence. Exact UI17 cohort404 passed all96 cases in303.29s with the unchanged180s per-case limit. After mechanical import sorting, final file405 passed all3 in24.37s; Ruff passes. Both runs physically retired/source_changes[]. AST continuity preserves the original journey and all sibling behavior. All3488 production blobs equal Windows-qualified e0422a; original browser/mounted UAT inputs are unchanged.
 
 No ADR required: test-only synchronization within existing boundaries. Modified paths are the picker test, scoped QA note, incident lesson and this task. Local verification and source review are complete; exact committed-head review, publication and the new head's genuine hosted gates remain required. Keep In Progress until final reconciliation.
+Renumbered from this branch's former TASK-38703 before dev integration because the older upstream GGUF-source task owns that numeric ID. The installed Backlog renumber command preserved this picker task's body, creation metadata, ACs and status; prior source/history and RED/GREEN evidence remain retained. The scoped QA reference now uses this ID. New-head dev integration and CI/UAT qualification remain pending.
 <!-- SECTION:IMPLEMENTATION_NOTES:END -->
 
 ## Final Summary
