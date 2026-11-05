@@ -451,13 +451,16 @@ LibraryFileNotesGitPanel Button:disabled {
 
 /* TASK-36528: plain ink on an error tint, the pair Conflict and Offline use.
    $text-error on $error-darken-3 both derive from $error and painted
-   "Save failed" at 3.89:1 in textual-dark and 1.19:1 in textual-light. */
+   "Save failed" at 3.89:1 in textual-dark and 1.19:1 in textual-light.
+   TASK-38715: the tint now sits on an opaque $panel. Over the host's
+   $background it read 3.54:1 in litestep, whose $background is mid-tone. */
 .file-notes-git-commit-error,
 #file-notes-save-status.-error {
   opacity: 100%;
   text-opacity: 100%;
   color: $text;
-  background: $error 14%;
+  background: $panel;
+  background-tint: $error 14%;
 }
 
 /* TASK-15509: Session Git previously redeclared a fixed focus palette inside

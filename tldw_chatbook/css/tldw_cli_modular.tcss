@@ -2936,7 +2936,8 @@ LibraryFileNotesGitPanel Button:disabled {
   opacity: 100%;
   text-opacity: 100%;
   color: $text;
-  background: $error 14%;
+  background: $panel;
+  background-tint: $error 14%;
 }
 
 
