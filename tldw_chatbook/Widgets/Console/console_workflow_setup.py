@@ -13,7 +13,7 @@ from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.screen import ModalScreen
 from textual.widgets import Button, Collapsible, Input, Label, Select, Static, TextArea
 
-from tldw_chatbook.Agents.workflow_models import WorkflowSetup
+from tldw_chatbook.Agents.workflow_models import WorkflowAlreadyExists, WorkflowSetup
 from tldw_chatbook.UI.Console_Modules.workflows import (
     WORKFLOW_VIEW_ERRORS,
     workflow_view_error,
@@ -236,9 +236,20 @@ class ConsoleWorkflowSetup(SafeModalDismissMixin, ModalScreen):
 
     async def _submit(self, setup, generation):
         try:
-            snapshot = await asyncio.shield(
-                self.coordinator.start(setup, launch_id=self.launch_id)
-            )
+            try:
+                snapshot = await asyncio.shield(
+                    self.coordinator.start(setup, launch_id=self.launch_id)
+                )
+            except WorkflowAlreadyExists as error:
+                snapshot = await self.coordinator.get(error.workflow_id)
+                if snapshot.request.conversation_id != self.conversation_id:
+                    raise ValueError("Workflow belongs to another chat.") from None
+                if self.is_mounted and self._safe_mount_generation == generation:
+                    self.notify(
+                        "This chat already has an unfinished workflow. Opening it for review.",
+                        severity="warning",
+                        markup=False,
+                    )
             if self._safe_mount_generation == generation:
                 self.dismiss_safe_once_when_on_top(snapshot)
         except WORKFLOW_VIEW_ERRORS as error:

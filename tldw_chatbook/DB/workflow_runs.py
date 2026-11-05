@@ -16,6 +16,7 @@ from tldw_chatbook.Agents.workflow_models import (
     TOTAL_BYTES,
     WORKFLOW_BYTES,
     Identity,
+    WorkflowAlreadyExists,
     WorkflowDecision,
     WorkflowPayloadReservation,
     WorkflowPlan,
@@ -134,6 +135,14 @@ class WorkflowRunsStore:
                 ):
                     raise ValueError("launch_payload_conflict")
                 return self._snapshot(conn, row)
+            existing = conn.execute(
+                "SELECT id FROM workflow_runs WHERE conversation_id=? "
+                "AND status NOT IN ('stopped','completed','closed','removed') "
+                "ORDER BY created_at,id LIMIT 1",
+                (request.conversation_id,),
+            ).fetchone()
+            if existing:
+                raise WorkflowAlreadyExists(existing["id"])
             workflow_id = str(uuid4())
             self._capacity(conn, workflow_id, len(payload.encode()))
             chain_id = self.db.automatic_work._create_chain(

@@ -54,15 +54,20 @@ def test_create_rolls_back_chain_on_sql_failure(tmp_path):
             )
 
 
-def planned(db, tmp_path, launch="start"):
+def planned(db, tmp_path, launch="start", *, conversation_id="workflow-test-chat"):
     from Tests.Agents.workflow_support import make_workflow_request, plan_data
     from tldw_chatbook.Agents.workflow_models import WorkflowPlan
 
     store = db.workflow_runs
-    snapshot = store.create(make_workflow_request(tmp_path), launch_id=launch)
+    request = make_workflow_request(tmp_path).model_copy(
+        update={"conversation_id": conversation_id}
+    )
+    snapshot = store.create(request, launch_id=launch)
+    data = plan_data(tmp_path)
+    data["request"] = request.model_dump(mode="json")
     return store.save_plan(
         snapshot.id,
-        WorkflowPlan.model_validate_json(json.dumps(plan_data(tmp_path))),
+        WorkflowPlan.model_validate_json(json.dumps(data)),
         expected_control_revision=1,
     )
 
@@ -249,7 +254,10 @@ def test_workflow_and_aggregate_capacity_refuse_without_partial_reservations(tmp
     from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
 
     with closing(AgentRunsDB(tmp_path / "runs.db")) as db:
-        snapshots = [planned(db, tmp_path, launch=f"start-{i}") for i in range(34)]
+        snapshots = [
+            planned(db, tmp_path, launch=f"start-{i}", conversation_id=f"chat-{i}")
+            for i in range(34)
+        ]
         # Real owned rows represent full pre-dispatch slots, without allocating 128 MiB of log text.
         with db.automatic_work.transaction() as conn:
             for i, snap in enumerate(snapshots[:33]):

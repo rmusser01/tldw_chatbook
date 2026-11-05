@@ -124,6 +124,7 @@ def test_parallel_task_durations_count_once_and_unknown_drain_stays_open(
 
     db, snap, clock = workflow
     data = plan_data(tmp_path)
+    data["request"] = snap.request.model_dump(mode="json")
     second = copy.deepcopy(data["phases"][0]["tasks"][0])
     second["id"] = "task-2"
     data["phases"][0]["tasks"].append(second)
@@ -184,6 +185,7 @@ def _two_task_phase(workflow, tmp_path):
 
     db, snap, clock = workflow
     data = plan_data(tmp_path)
+    data["request"] = snap.request.model_dump(mode="json")
     second = copy.deepcopy(data["phases"][0]["tasks"][0])
     second["id"] = "task-2"
     data["phases"][0]["tasks"].append(second)

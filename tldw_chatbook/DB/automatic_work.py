@@ -2549,15 +2549,15 @@ class AutomaticWorkLedger:
                 )
                 if self._target_active(conn, row["conversation_id"]):
                     raise AutomaticWorkRefused("conversation_wake_active")
+                if decision is not None:
+                    store._save_decision(conn, decision, status="awaiting_approval")
+                    row = store._row(conn, workflow_id)
                 store._capacity(
                     conn,
                     workflow_id,
                     RECORD_BYTES * (len(tasks) or 1)
                     + (64 if _repair_digest is not None else 0),
                 )
-                if decision is not None:
-                    store._save_decision(conn, decision, status="awaiting_approval")
-                    row = store._row(conn, workflow_id)
                 attempt_id, reservation_id, phase_key = (
                     uuid4().hex,
                     uuid4().hex,

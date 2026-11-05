@@ -11,13 +11,18 @@ from pydantic import (
     ConfigDict,
     Field,
     StringConstraints,
+    TypeAdapter,
     field_serializer,
     field_validator,
     model_serializer,
     model_validator,
 )
 
-from .automatic_work_budget import AutomaticWorkLimits, AutomaticWorkSnapshot
+from .automatic_work_budget import (
+    AutomaticWorkLimits,
+    AutomaticWorkRefused,
+    AutomaticWorkSnapshot,
+)
 from .goal_models import GoalBindingRef, GoalProviderRef, VerificationSpec
 
 RECORD_BYTES = 128 * 1024
@@ -53,6 +58,14 @@ WorkflowRuntimeStatus = Literal[
     "completed",
     "removed",
 ]
+
+
+class WorkflowAlreadyExists(AutomaticWorkRefused):
+    """Refuse new work with only the existing workflow's actionable identity."""
+
+    def __init__(self, workflow_id: str):
+        self.workflow_id = TypeAdapter(Identity).validate_python(workflow_id)
+        super().__init__("workflow_already_exists")
 
 
 def _unique_pairs(pairs):

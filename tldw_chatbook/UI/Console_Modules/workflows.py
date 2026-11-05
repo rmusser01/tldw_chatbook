@@ -51,6 +51,7 @@ _VIEW_REASONS = frozenset(
         "Recovery required · uncertain_execution",
         "revision_conflict",
         "workflow_command_conflict",
+        "workflow_already_exists",
         "generation_budget",
         "child_launch_budget",
         "model_call_budget",

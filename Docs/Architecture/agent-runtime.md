@@ -341,17 +341,19 @@ saved ceilings intersect live settings without replenishing counters.
 session, conversation, database and recovered-content activation, then issues
 private custody only to the caller that wins FULL acceptance. Stored IDs never
 reconstruct custody. `AutomaticWorkContext` and the final tool registry invocation
-recheck that custody/control revision. `ConsoleSubmissionOrigin.WORKFLOW_PHASE` is
-recognized but deliberately refuses controller submission until the runtime phase
-coordinator is integrated; it never falls through to manual or fleet policy.
+recheck that custody/control revision. `ConsoleSubmissionOrigin.WORKFLOW_PHASE`
+refuses generic controller submission; the app-owned
+`ConsoleWorkflowCoordinator` uses the native planning and phase-wave producers.
+Workflow work never falls through to manual or fleet policy.
 
 `claim_workflow_task` returns a stable `reservation_id` and `launch_run_id`.
 The native AgentService launch must pass the reservation as
 `automatic_child_reservation` and the run identity as `requested_run_id` (or bind
 the same precreated run). Its existing commit is the exactly-once launch fence.
 `bind_workflow_task_run` records that exact native run; repeated claims are lookups,
-not permission to launch again. The native scheduling/physical-owner integration
-is a subsequent slice; these APIs do not create another scheduler or executor.
+not permission to launch again. `ConsoleWorkflowCoordinator` and the native
+phase-wave producer compose these claims with the existing physical owners;
+the passive reservation APIs alone grant no scheduling authority.
 
 Task preparation is now exposed by
 `Agents/workflow_task_scope.py::_prepare_workflow_task`. It retains one private
@@ -378,8 +380,9 @@ service; another preparation or later `run_turn` cannot replace its tree state.
 The earlier direct `_run_owned` workflow seam also seals this ownership and
 retains its supported no-log path. Task8B's private Console preparation consumer
 now supplies the real bridge result (see [console.md](./console.md#shared-native-preparation-adr-285));
-the finite phase-wave consumer now supplies snapshot ownership, while the public
-coordinator remains separate integration work. These seams do not enable public scheduling.
+the finite phase-wave consumer supplies snapshot ownership, and the public
+`ConsoleWorkflowCoordinator` owns scheduling through those original producers.
+The preparation seams alone grant no scheduling authority.
 Preparation detaches the task-only native message seed, including bounded
 required inputs/handoffs, and requires the approved instruction row exactly
 once. It never borrows the parent chat or silently truncates mandatory context;
@@ -534,8 +537,9 @@ retirement; missing proof never releases custody.
 Caller command identity is stored verbatim; the unique decision at R and
 attempt at R+1 are committed together. Only the never-run complement gets new
 ordinals/charges, and final quality checks retained plus new results. The public
-Console coordinator composes these native producers; UI integration remains
-separate. No scheduler or restored owner adoption is introduced.
+Console coordinator composes these native producers; Console setup, status and
+history views call that coordinator without owning execution. Restored history
+does not adopt an old owner or grant scheduling authority.
 
 ### Public native workflow coordination
 

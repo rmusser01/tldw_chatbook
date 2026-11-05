@@ -24,7 +24,7 @@ def workflow_fixture(tmp_path, monkeypatch):
             db, wall_clock=lambda: clock[0], monotonic_clock=lambda: clock[1]
         )
         db.automatic_work.recover(current_owner_id="owner")
-        yield db, planned(db, tmp_path), clock
+        yield db, planned(db, tmp_path, conversation_id="planned-chat"), clock
 
 
 def prepare(db, snap, **changes):
