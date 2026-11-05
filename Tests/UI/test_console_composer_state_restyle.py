@@ -405,63 +405,112 @@ async def test_a_focus_change_restyles_the_bar_and_its_draft_text_only(monkeypat
             assert _composer_styles(composer) == targeted, f"focused={focused}"
 
 
+def _compounds(selectors: list) -> list[list]:
+    """Split a selector into its compound selectors, left to right."""
+    compounds: list[list] = [[]]
+    for part in selectors:
+        if compounds[-1] and part.combinator != CombinatorType.SAME:
+            compounds.append([])
+        compounds[-1].append(part)
+    return compounds
+
+
+def _could_match(parts: list, node, classes: set[str]) -> bool:
+    """Whether a compound's type, id and class parts can all match ``node``."""
+    for part in parts:
+        if part.type == SelectorType.TYPE and part.name not in node._css_type_names:
+            return False
+        if part.type == SelectorType.ID and part.name != node.id:
+            return False
+        if part.type == SelectorType.CLASS and part.name not in classes:
+            return False
+    return True
+
+
+#: Pseudo-classes a focus change on the bar flips on the bar itself.
+_BAR_FOCUS_PSEUDO = frozenset({"focus", "focus-within", "blur"})
+
+
 @pytest.mark.asyncio
 async def test_rules_keyed_on_the_bars_focus_style_only_the_declared_nodes():
     """Guard for the scoped focus restyle above (TASK-36511.2).
 
-    Every rule that keys on the bar's ``:focus`` or ``:focus-within`` above
-    its subject must style the bar's draft text
-    (``INTERACTION_STYLED_DESCENDANTS``), and a focus rule on the bar itself
-    must not set a property its descendants read from it.
+    The bar's focus watcher restyles only the bar and
+    ``INTERACTION_STYLED_DESCENDANTS``. That is exact only while:
+
+    * every rule keyed on the bar's ``:focus``, ``:focus-within`` or
+      ``:blur`` above its subject styles one of those nodes. The bar is
+      matched with every class it can carry: its own, its state classes,
+      and any class a rule pairs with its id or type;
+    * no rule keyed on an ancestor's ``:focus-within`` styles another
+      composer descendant (Textual's own focus-within pass restyles only
+      the rule's subject when it is an ancestor of the focused widget);
+    * a focus rule on the bar itself sets no property its descendants read
+      from it.
     """
     from Tests.UI.test_console_projection_restyles import _ANCESTOR_READ_RULES
 
     host = _ready_host()
     async with host.run_test(size=(160, 45)) as pilot:
         composer = await _mounted_composer(host, pilot)
-        names = {
-            SelectorType.TYPE: set(composer._css_type_names),
-            SelectorType.ID: {composer.id},
-            SelectorType.CLASS: set(composer.classes),
-        }
+        rules = list(host.stylesheet.rules)
+        bar_classes = set(composer.classes) | set(
+            ConsoleComposerBar.INTERACTION_CLASSES
+        )
+        for rule in rules:
+            for selector_set in rule.selector_set:
+                for parts in _compounds(selector_set.selectors):
+                    if any(
+                        (part.type == SelectorType.ID and part.name == composer.id)
+                        or (
+                            part.type == SelectorType.TYPE
+                            and part.name == "ConsoleComposerBar"
+                        )
+                        for part in parts
+                    ):
+                        bar_classes |= {
+                            p.name for p in parts if p.type == SelectorType.CLASS
+                        }
         allowed = {
             selector.lstrip("#")
             for selector in ConsoleComposerBar.INTERACTION_STYLED_DESCENDANTS
         }
+        others = [n for n in composer.walk_children() if n.id not in allowed]
+        ancestors = list(composer.ancestors)
         keyed, offenders, inherited = 0, [], []
-        for rule in host.stylesheet.rules:
+        for rule in rules:
             declared = set(rule.styles.get_rules()) & _ANCESTOR_READ_RULES
             for selector_set in rule.selector_set:
-                selectors = selector_set.selectors
-                target = _target_compound(selectors)
-                start = len(selectors) - len(target)
-                compound: list = []
-                compounds: list = []
-                for part in selectors:
-                    if compound and part.combinator != CombinatorType.SAME:
-                        compounds.append(compound)
-                        compound = []
-                    compound.append(part)
-                compounds.append(compound)
-                for index, parts in enumerate(compounds):
-                    focus = {"focus", "focus-within"} & {
-                        name for part in parts for name in part.pseudo_classes
-                    }
-                    names_bar = any(
-                        part.name in names.get(part.type, ())
-                        or part.type == SelectorType.UNIVERSAL
-                        for part in parts
+                compounds = _compounds(selector_set.selectors)
+                subject = compounds[-1]
+                text = " ".join(part.css for part in selector_set.selectors)
+                for parts in compounds:
+                    pseudo = {name for part in parts for name in part.pseudo_classes}
+                    on_bar = bool(pseudo & _BAR_FOCUS_PSEUDO) and _could_match(
+                        parts, composer, bar_classes
                     )
-                    if not (focus and names_bar):
+                    on_ancestor = (
+                        parts is not subject
+                        and "focus-within" in pseudo
+                        and any(
+                            _could_match(parts, node, set(node.classes))
+                            for node in ancestors
+                        )
+                    )
+                    if not (on_bar or on_ancestor):
                         continue
                     keyed += 1
-                    text = " ".join(part.css for part in selectors)
-                    if index < len(compounds) - 1:
-                        ids = {s.name for s in target if s.type == SelectorType.ID}
+                    if parts is subject:
+                        if declared:
+                            inherited.append(
+                                f"{text} {{{', '.join(sorted(declared))}}}"
+                            )
+                    elif on_bar:
+                        ids = {s.name for s in subject if s.type == SelectorType.ID}
                         if not ids & allowed:
                             offenders.append(text)
-                    elif declared and start == sum(map(len, compounds[:-1])):
-                        inherited.append(f"{text} {{{', '.join(sorted(declared))}}}")
+                    elif any(_could_match(subject, n, set(n.classes)) for n in others):
+                        offenders.append(text)
         assert keyed, "No rule keys on the composer's focus."
         assert not offenders, (
             "These rules style a composer node from its focus that the scoped "
