@@ -28,7 +28,7 @@ Deliver implementation slice 9 of the accepted native shared-worktree workflow d
 - [ ] #1 Native workflow commands/setup/status/history expose exact revisions, current scope, limits, dirty input and change-review readiness without clearing drafts.
 - [ ] #2 Approval, revision, Pause, Stop, final acceptance and explicit Resume/recovery use their exact durable owners and remain usable across navigation.
 - [ ] #3 Existing fleet/Changes UI, finite DB offload/subscription patterns, design tokens, keyboard/focus and narrow/wide states are reused and verified.
-- [ ] #4 Native planning receipts consumed by workflow controls certify the originally acquired configuration generator; substituting another same-runtime generator refuses without a completed receipt or release notification.
+- [x] #4 Native planning receipts consumed by workflow controls certify the originally acquired configuration generator; substituting another same-runtime generator refuses without a completed receipt or release notification.
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -47,6 +47,8 @@ Reason: the existing physical-return and consumer contract requires the original
 ## Implementation Notes
 
 <!-- SECTION:IMPLEMENTATION_NOTES:BEGIN -->
+
+The blocking runtime prerequisite is independently accepted at `1bdfd5f3c6c6306bf89d4bd8a4403a56d2eb9f56`: planning retains its configuration generator at native acquisition, validates that same body before terminal effects, and requires its original exit at the strict receipt consumer. Ten targeted native cases pass; independent review `b17de773f415e0c49941b8d651197477a27a0f551edafaf9f2cf6b14c4596931` is SPEC PASS / QUALITY APPROVED. ADR-285 applies. The terminal substitution negative deliberately retains its original root without creator return. Existing optional-import and unmounted fleet-attention warnings remain disclosed; mounted UI, live provider and restart are separate qualification. UI acceptance criteria remain in progress.
 
 <!-- SECTION:IMPLEMENTATION_NOTES:END -->
 

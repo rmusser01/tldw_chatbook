@@ -1,7 +1,7 @@
 ---
 id: TASK-38531
 title: Schedule approved phases through the existing Console runtime
-status: In Progress
+status: Done
 created_date: 2026-11-01 17:31
 dependencies:
 - TASK-38524
@@ -22,7 +22,7 @@ documentation:
 - backlog/decisions/285-native-phased-agent-workflows.md
 assignee:
 - '@codex'
-updated_date: 2026-11-03 20:30
+updated_date: 2026-11-05 00:36
 ---
 
 ## Description
@@ -33,9 +33,9 @@ Deliver implementation slice 8 of the accepted native shared-worktree workflow d
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 Read-only planning and approved task phases dispatch through typed native authority with per-session/global capacity and whole-chain accounting.
-- [ ] #2 Host settlement events drive only approved eligible tasks; workflow-managed children do not independently trigger ordinary fleet wakes.
-- [ ] #3 Ordinary/native opaque activity honors worktree claims; Pause/Stop/replan revoke launch authority and preserve user files and durable results.
+- [x] #1 Read-only planning and approved task phases dispatch through typed native authority with per-session/global capacity and whole-chain accounting.
+- [x] #2 Host settlement events drive only approved eligible tasks; workflow-managed children do not independently trigger ordinary fleet wakes.
+- [x] #3 Ordinary/native opaque activity honors worktree claims; Pause/Stop/replan revoke launch authority and preserve user files and durable results.
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -195,6 +195,8 @@ Task8G final metadata original-helper closure (controller-approved before behavi
 
 
 Task8G positive runtime cancellation handoff (controller-approved before behavior). WHAT: only the explicit private original-runtime disposition of coordinator.close returns its saved caller cancellation after exact positive G commands/drivers/read/host/run disposition. Independent direct close retains ordinary cancellation redelivery. The original runtime.dispose caller passes its SAME runtime identity, continues the existing planning/wave/_dispose_owned path, and preserves native post-disposal cancellation plus independent finally drains. Unknown/source/producer/host errors still raise before downstream teardown. WHY: immediately redelivering proven G close cancellation skipped native downstream disposal; empty sets or caught arbitrary cancellation cannot prove original close returned. COST: one private passive runtime-identity option and saved cancellation local, no new task/lock/owner/authority or cleanup bypass. Strengthen the actual held-worker repeated-cancel test to observe native _disposed/capacity closure before first dispose cancellation; original creator return remains separately proved, and uncertain controls still forbid those destructive effects. Existing ADR285 applies; no new ADR.
+
+Runtime signoff prerequisite from the scoped whole review: retain the exact configuration generator from native planning acquisition, including preparation before a phase is assigned. Same-runtime generator substitution must refuse before terminal release and cannot produce a completion receipt or notification. Verify the original generator's actual exit and native direct/coordinated behavior under independent scoped review before closing this task. Original liveness is addressed; this physical-proof criterion remains blocking. Existing ADR285 applies; no new ADR, actor, policy or source-adoption path.
 
 <!-- SECTION:PLAN:END -->
 
@@ -659,3 +661,12 @@ A passive original F return tuple is evidence only at its exact original receivi
 
 **COST, scope and verification.** Finite passive source/return references and exact original receiving checks may conservatively refuse changed/custom source. A failed new post-release notification can leave pending results until a later genuine trigger/recovery; it is visible failure, not physical custody. Original direct-F result shape and native inactive-loop/disposal semantics remain. Genuine successor ownership is independent. Verify the same native RED journey GREEN with actual post-release retry/Handle/delivery/usage, direct F without G, source/association refusal before release, actual original worker/metadata ordering, unexpected notification error plus original cancellation, and original permanent shutdown with no new admission. Keep original10/4/5/60 bounds and primary/cleanup distinctions; do not fabricate retry/completion/owner/source, reset guards, rerun equivalent failures or broaden to a full sweep. Four-file append/readback precedes behavior; exact owned hunks preserve staged c5/61 and279 foreign bytes. Existing thirteen FULL contracts, scoped re-review and whole Task8 gate remain mandatory. Task38531 stays In Progress with parent AC unchanged.
 <!-- WHOLE-FIX1-GOVERNANCE-END -->
+
+
+## Final implementation notes — runtime signoff
+
+Runtime integration is accepted through `1bdfd5f3c6c6306bf89d4bd8a4403a56d2eb9f56`. The app-owned coordinator composes existing native planning, approval, task dispatch, settlement and recovery with shared-worktree claims and whole-chain accounting. Direct and coordinated physical release now drive pending ordinary delivery only after their own required return; the original configuration generator is retained at acquisition and consumed at the original exit/receipt boundary. Unknown or partial return retains its actual custody. Existing ADR-285 governs these changes; no second executor, poller, permission store or budget ledger was introduced.
+
+The whole-runtime review's wake finding and subsequent original-generator finding are addressed. Independent prerequisite review `b17de773f415e0c49941b8d651197477a27a0f551edafaf9f2cf6b14c4596931` is SPEC PASS / QUALITY APPROVED, with zero Critical/Important findings. Its ten separately bounded native cases cover early/terminal generator substitution, an active unrelated scope, direct/coordinated delivery, planning, source/partial-slot cleanup and execution consent. Targeted static checks pass; the original 61 staged changes, 279 protected files and thirteen full support pairs remain preserved. The six prerequisite paths are recorded in the commit; earlier native integration paths are recorded in the existing implementation notes.
+
+Historical mixed outcomes and source/fixture limitations remain part of the evidence: the prior whole-fix cohort was 12 passes and nine failures on its respective fixture versions. Existing missing optional `python-frontmatter`, unmounted fleet-attention `ScreenStackError`, and Git maintenance warnings are disclosed, without dependency changes or a mounted-attention claim. These are private unmounted Darwin/CPython journeys with a scripted provider. Full-suite, mounted UI, live-provider and restart qualification are not claimed by runtime signoff. Console controls and final qualification remain tracked in the accepted implementation plan; the feature remains disabled by default.
