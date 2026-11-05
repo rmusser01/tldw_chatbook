@@ -5,14 +5,14 @@ status: Done
 assignee:
 - '@claude'
 created_date: 2026-10-24 00:26
-updated_date: '2026-11-05 21:17'
+updated_date: '2026-11-05 22:16'
 labels:
 - follow-up
 - settings
 - providers
 priority: low
 references:
-- tldw_chatbook/Chat/provider_endpoint_contract.py
+- tldw_chatbook/Provider_Contract/provider_endpoint_contract.py
 - tldw_chatbook/LLM_Provider_Catalog/openai_compatible_model_discovery.py
 dependencies:
 - TASK-36380
@@ -46,7 +46,7 @@ Two readers of the same endpoint disagree. Discovery's own URL parse accepts und
 ## Implementation Notes
 
 The endpoint contract accepts an underscore in a host, so a Docker Compose name such as `http://kobold_cpp:5001/v1` resolves and saves for every provider it serves, as Discover models already listed from it.
-- `_valid_dns_label` (`Provider_Contract/provider_endpoint_contract.py`) allows `_` anywhere in a label. Every other host rule is unchanged: ASCII only, no `%`, no empty label, a hyphen never first or last, 1-63 characters per label, at most 253 per host, and not all digits and dots. Discovery needed no change. Its own parse (`validate_url`) already accepted such hosts, and koboldcpp's Discover follows the contract (TASK-36380), so it now accepts the native route on such a host too.
+- `valid_dns_label` (`Provider_Contract/provider_endpoint_contract.py`; private `_valid_dns_label` until review r8e-rev1 shared it) allows `_` anywhere in a label. Every other host rule is unchanged: ASCII only, no `%`, no empty label, a hyphen never first or last, 1-63 characters per label, at most 253 per host, and not all digits and dots. Discovery needed no change. Its own parse (`validate_url`) already accepted such hosts, and koboldcpp's Discover follows the contract (TASK-36380), so it now accepts the native route on such a host too.
 - How the criteria were read: AC#1 and AC#3 overlap on a host such as `-kobold_cpp`, which has an underscore and is also refused for another reason (here a leading hyphen). AC#3 decides it: such a host stays refused with the message it gets today, so AC#1 and AC#2 cover hosts whose only departure from the old rule is the underscore. Discovery's generic rules still accept some hosts the contract refuses for those other reasons, such as `-kobold`, `kob*old` or `1.2.3`, with or without an underscore. That disagreement is older than this task and is listed as a proposed follow-up, not changed here.
 - Tests, in `Tests/Chat/test_local_server_discovery.py` (run whole by the dreams-boundary lane):
   - `test_an_underscore_host_saves_and_discovers_like_its_hyphen_spelling`: 19 providers, the 16 `URL_BASED_PROVIDER_KEYS` plus openai, deepinfra and anthropic; koboldcpp on `/api/v1/generate`. The contract resolves `kobold_cpp`, `build_provider_setup_mutation` saves exactly what it saves for `kobold-cpp` with the host respelled, and `supports_openai_compatible_model_discovery` accepts both spellings.
@@ -55,5 +55,13 @@ The endpoint contract accepts an underscore in a host, so a Docker Compose name 
 - Red before the fix: with the base contract, all 19 underscore cases failed with `assert ('Endpoint UR...t and port.',) == ()`. The refusal test pins rules dev already keeps. Under a temporary edit that dropped the hyphen-edge rule and allowed `*`, it failed for 6 hosts (`-kobold`, `kobold-`, `-kobold_cpp`, `kobold_cpp-`, `kob*old`, `kob_*old`). Green after the fix.
 - Covering run (`-n 4`, run.sh, load average 43-54): the contract, discovery, console endpoints, setup persistence, setup facts, switcher probe targets, both local-server discovery files, evidence hardening, custom endpoint registry and engine swap, Kimi/Z.ai, QwenCloud and Strata provider files, and two wizard endpoint files. Result: 1129 passed, 1 failed. The failure is `test_qwencloud_provider_contract.py::test_chat_api_call_forwards_qwencloud_mode_base_and_tools` (`assert 'api_mode' not in {...}`), and it fails the same way with the base contract module.
 
-Files: `tldw_chatbook/Provider_Contract/provider_endpoint_contract.py`, `Tests/Chat/test_local_server_discovery.py`, `Tests/Chat/test_provider_endpoint_contract.py`.
+Review r8e-rev1 (AC#2): two Console helpers kept the old label rule. The Console settings modal could then discover from an underscore host but dropped it on Apply to chat and Make default for new chats. Settings and model-switcher endpoint compares also collapsed every underscore host into one "invalid endpoint" sentinel.
+- `Chat/console_settings_defaults.py::_is_valid_ascii_hostname`, which `parse_console_endpoint_preview` uses, and `Chat/console_provider_endpoints.py::_is_dotted_dns_name`, which `safe_endpoint_display` and `normalize_generic_endpoint_for_compare` use, now apply the contract's `valid_dns_label`. Each keeps its own whole-host checks (ASCII, at most 253 characters, and a dot for the dotted-name helper). Single-label hosts with a scheme still display as invalid, as before; the coordinator is filing that separately.
+- Tests:
+  - `test_endpoint_preview_exposes_only_authority_and_network_class` (`Tests/Chat/test_console_settings_defaults.py`, which pr-fast-lane runs) gained `kobold_cpp:5001` and `My_Proxy.corp` cases.
+  - Its refusal pin `https://bad_host.example/v1` is rewritten on purpose to `-bad_host`.
+  - New `test_an_underscore_host_displays_and_compares_as_itself` in `Tests/Chat/test_local_server_discovery.py`: the host displays as itself, two underscore hosts compare distinct, and leading- or trailing-hyphen labels still read "invalid endpoint".
+- Red at the round-1 head fd45ecd087: both preview cases failed with `assert None is not None`, and the display test with `'invalid endpoint' == 'http://my_proxy.corp/v1'`. Green after.
+
+Files: `tldw_chatbook/Provider_Contract/provider_endpoint_contract.py`, `tldw_chatbook/Chat/console_settings_defaults.py`, `tldw_chatbook/Chat/console_provider_endpoints.py`, `Tests/Chat/test_local_server_discovery.py`, `Tests/Chat/test_provider_endpoint_contract.py`, `Tests/Chat/test_console_settings_defaults.py`.
 

@@ -7,7 +7,12 @@ import httpx
 import pytest
 
 import tldw_chatbook.Chat.local_server_discovery as local_discovery_module
-from tldw_chatbook.Chat.console_provider_endpoints import DEFAULT_LLAMACPP_BASE_URL
+from tldw_chatbook.Chat.console_provider_endpoints import (
+    DEFAULT_LLAMACPP_BASE_URL,
+    generic_endpoint_differs,
+    normalize_generic_endpoint_for_compare,
+    safe_endpoint_display,
+)
 from tldw_chatbook.Chat.local_server_discovery import (
     DEFAULT_LLAMACPP_DISCOVERY_URL,
     DEFAULT_OLLAMA_DISCOVERY_URL,
@@ -960,3 +965,24 @@ def test_hosts_refused_for_another_reason_are_still_refused(host):
             "Endpoint URL must include a valid host and port.",
         ), provider
         assert _saved_endpoint(provider, endpoint) is None, provider
+
+
+def test_an_underscore_host_displays_and_compares_as_itself():
+    """TASK-36517 review: Console's display and compare helpers kept the old
+    label rule, so every underscore host read "invalid endpoint" and two
+    different ones compared equal, as one sentinel."""
+    first, second = "http://my_proxy.corp/v1", "http://other_proxy.corp/v1"
+
+    assert safe_endpoint_display(first) == first
+    assert normalize_generic_endpoint_for_compare(first) == (
+        "http://my_proxy.corp/v1/chat/completions"
+    )
+    assert normalize_generic_endpoint_for_compare(
+        second
+    ) != normalize_generic_endpoint_for_compare(first)
+    assert generic_endpoint_differs(first, {"api_url": second}) is True
+    assert generic_endpoint_differs(first, {"api_url": first}) is False
+    # The other label rules still refuse.
+    for refused in ("http://-my_proxy.corp/v1", "http://my_proxy-.corp/v1"):
+        assert safe_endpoint_display(refused) == "invalid endpoint"
+

@@ -558,14 +558,18 @@ def _canonical_host(hostname: str) -> str | None:
         return None
     if all(character.isdigit() or character == "." for character in host):
         return None
-    if not all(_valid_dns_label(label) for label in host.split(".")):
+    if not all(valid_dns_label(label) for label in host.split(".")):
         return None
     return host.lower()
 
 
-def _valid_dns_label(label: str) -> bool:
-    # TASK-36517: "_" as in Docker Compose names (kobold_cpp), which httpx and
-    # discovery accept; a hyphen still never starts or ends a label.
+def valid_dns_label(label: str) -> bool:
+    """Whether one host label is valid; callers check the host is ASCII.
+
+    TASK-36517: "_" as in Docker Compose names (kobold_cpp), which httpx and
+    discovery accept; a hyphen still never starts or ends a label. Console's
+    endpoint preview, display and compare helpers share this rule.
+    """
     return (
         1 <= len(label) <= 63
         and "-" not in (label[0], label[-1])

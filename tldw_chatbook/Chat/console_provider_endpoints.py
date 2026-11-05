@@ -10,6 +10,7 @@ from tldw_chatbook.Provider_Contract.provider_endpoint_contract import (
     URL_BASED_PROVIDER_KEYS,
     canonical_connection_identity,
     resolve_provider_endpoint,
+    valid_dns_label,
 )
 
 #: Chat settings' footer action that saves an unsaved endpoint.
@@ -436,22 +437,9 @@ def _is_allowed_endpoint_host(
 
 def _is_dotted_dns_name(hostname: str) -> bool:
     hostname = hostname.rstrip(".")
-    if "." not in hostname or len(hostname) > 253:
+    if "." not in hostname or len(hostname) > 253 or not hostname.isascii():
         return False
-    labels = hostname.split(".")
-    return all(_is_dns_label(label) for label in labels)
-
-
-def _is_dns_label(label: str) -> bool:
-    return (
-        1 <= len(label) <= 63
-        and label[0].isalnum()
-        and label[-1].isalnum()
-        and all(
-            character.isascii() and (character.isalnum() or character == "-")
-            for character in label
-        )
-    )
+    return all(valid_dns_label(label) for label in hostname.split("."))
 
 
 def _format_endpoint(
