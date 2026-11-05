@@ -79,4 +79,6 @@ Neither file is on a PR lane.
 
 **Docs.** `Docs/User_Guide/index.md`'s Ctrl+Q row names starting a goal, saving portrait regions, testing or saving a response rule, and a response rule's unsaved edits.
 
+**Lesson.** `backlog/docs/lessons-testing-evidence.md`: a modal that awaits its work in a message handler blocks Pilot and app shutdown.
+
 **Files.** `tldw_chatbook/Widgets/Console/console_goal_setup_modal.py`, `tldw_chatbook/Widgets/Console/response_rules_modal.py`, `tldw_chatbook/Widgets/Persona_Widgets/portrait_region_editor.py`, `Tests/Architecture/test_guarded_modal_quit_census.py`, `Tests/UI/test_app_quit_in_flight_modals.py`, `Tests/UI/test_modal_quit_in_flight_hooks.py`, `.github/workflows/derived-artifacts.yml`, `Tests/CI/test_ci_queue_pressure_contract.py`, `Docs/User_Guide/index.md`.
