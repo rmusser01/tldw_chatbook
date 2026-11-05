@@ -40,6 +40,8 @@ with a test that clicks a row, patches it in place, and clicks it again.
 
 from __future__ import annotations
 
+import asyncio
+from collections.abc import Callable
 from typing import Any, Sequence
 
 from tldw_chatbook.Utils.input_validation import escape_markup as escape
@@ -114,6 +116,48 @@ def set_display_under_console_rail(widget: Widget, visible: bool) -> None:
         setattr(widget, CONSOLE_RAIL_PRIOR_DISPLAY, bool(visible))
         return
     widget.styles.display = "block" if visible else "none"
+
+
+def hold_paints(app: Any) -> Callable[[], None]:
+    """Hold the app's paints until the returned release runs (TASK-38650).
+
+    A rebuild queued as a Console surface opens can lose to a screen tick
+    already woken in the same loop pass (``Timer.pause()`` cannot stop it),
+    which paints the rows held while hidden. The release ends the hold once,
+    however often it runs. asyncio's ``call_later`` also ends it after 1 s,
+    because a pump that drops its callbacks after an error never runs the
+    release, and a Textual one-shot timer can skip its only tick.
+    ponytail: worst case a 1 s pause in painting, never a freeze.
+
+    Args:
+        app: The running Textual app.
+
+    Returns:
+        The end-once release.
+    """
+    app._begin_batch()
+    ended = False
+
+    def release() -> None:
+        nonlocal ended
+        if not ended:
+            ended = True
+            app._end_batch()
+
+    asyncio.get_running_loop().call_later(1.0, release)
+    return release
+
+
+def hold_paints_until_rebuilt(widget: Widget) -> None:
+    """Hold paints until ``widget``'s pump has run the rebuild queued on it.
+
+    ``refresh(recompose=True)`` queues the rebuild with ``call_next``; the
+    release queued behind it runs right after it (TASK-38650).
+
+    Args:
+        widget: A widget whose rebuild has just been queued.
+    """
+    widget.call_next(hold_paints(widget.app))
 
 
 class ConsoleInspectorSection(RecomposeCaptureGuard, Vertical):

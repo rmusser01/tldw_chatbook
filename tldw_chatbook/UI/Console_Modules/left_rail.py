@@ -91,6 +91,7 @@ from ...Widgets.Console.console_agent_steering_bar import (
 from ...Widgets.Console.console_image_viewer_modal import ClickableAvatarBox
 from ...Widgets.Console.portrait_radio import PortraitRadio
 from ...Widgets.Console.console_character_context import ConsoleCharacterContext
+from ...Widgets.Console.console_inspector_section import hold_paints
 from ...Widgets.Console.console_workspace_details import ConsoleWorkspaceDetailsTray
 from ...Widgets.destination_rail import (
     RAIL_SECTION_TOGGLE_PREFIX,
@@ -3076,12 +3077,20 @@ class ConsoleLeftRail(Vertical):
             if section_id == "character" and not body.display:
                 # TASK-35970: a collapsed browser kept its newest snapshot
                 # unrendered; start that render before the body shows, and
-                # hold allocation passes until it has mounted.
+                # hold allocation passes until it has mounted. TASK-38698:
+                # hold paints too, or a screen tick already woken in this
+                # loop pass paints the old rows before the render's task runs.
                 for browser in body.query(ConsoleCharacterContext):
-                    if browser.render_deferred(
-                        on_rendered=self._character_render_settled
-                    ):
+                    release = hold_paints(self.app)
+
+                    def rendered(release: Callable[[], None] = release) -> None:
+                        release()
+                        self._character_render_settled()
+
+                    if browser.render_deferred(on_rendered=rendered):
                         self._character_renders_pending += 1
+                    else:
+                        release()
             body.styles.display = "block"
             bounded.set_presented(True)
         else:
