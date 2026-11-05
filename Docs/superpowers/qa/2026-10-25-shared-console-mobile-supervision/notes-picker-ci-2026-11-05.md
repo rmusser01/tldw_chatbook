@@ -25,7 +25,7 @@ helper (401 and final arm403); run400 was a retained selector-setup error and
 is not regression evidence. Independent review caught and corrected an initial
 regression-setup lookup that could precede button composition.
 
-TASK-38703 changes only test readiness: await a Textual refresh within the
+TASK-38901 changes only test readiness: await a Textual refresh within the
 existing ten-second readiness budget, reacquire the live enabled/visible button,
 and verify its exact origin is the effective current compositor target. Then
 issue the original single Pilot click. No click retry, direct handler call,
