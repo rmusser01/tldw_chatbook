@@ -338,6 +338,13 @@ a fix. For an API path before `/api/v1/generate` (such as
 `/v1/api/v1/generate`) it reads "Endpoint path has ambiguous API suffixes. Use
 the server's /api/v1/generate route, such as
 http://localhost:5001/api/v1/generate."
+Listing from a root does not make it a koboldcpp send address: a koboldcpp
+send posts KoboldAI's native payload to the saved endpoint, so **s** saves a
+koboldcpp endpoint only when it ends in `/api/v1/generate`, the address the
+Endpoint field's hint shows (`http://127.0.0.1:5001/api/v1/generate`). A bare
+root or an OpenAI path such as `/v1` is refused before anything is written:
+"KoboldCpp needs its native /api/v1/generate address. For an OpenAI-compatible
+server, choose Custom instead."
 
 The vLLM, TabbyAPI, Aphrodite, Custom and Custom 2 saved lists start empty and
 fill through **Discover models**. A config file written by an older version

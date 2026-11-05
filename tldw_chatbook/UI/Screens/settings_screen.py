@@ -1692,7 +1692,7 @@ PROVIDER_ENDPOINT_PLACEHOLDERS = {
     "custom_2": "https://your-openai-compatible-host/v1",
     "google": "https://generativelanguage.googleapis.com",
     "groq": "https://api.groq.com/openai/v1",
-    "koboldcpp": "http://127.0.0.1:5001",
+    "koboldcpp": "http://127.0.0.1:5001/api/v1/generate",
     "llama_cpp": "http://127.0.0.1:9099",
     "local_llamacpp": "http://127.0.0.1:9099",
     "local_ollama": "http://127.0.0.1:11434",
@@ -16118,7 +16118,9 @@ class SettingsScreen(BaseAppScreen):
         return f"Endpoint key: api_settings.{provider_key}.{endpoint_key}"
 
     @staticmethod
-    def _validate_provider_endpoint(endpoint: object) -> str | None:
+    def _validate_provider_endpoint(
+        endpoint: object, provider_key: str = ""
+    ) -> str | None:
         endpoint_text = str(endpoint or "").strip()
         if not endpoint_text:
             return None
@@ -16126,6 +16128,18 @@ class SettingsScreen(BaseAppScreen):
             return (
                 "Endpoint must start with http:// or https:// and include a valid host."
             )
+        if provider_key == "koboldcpp":
+            # TASK-36516: chat_with_kobold posts KoboldAI's native payload to the
+            # saved URL; a root saves as an OpenAI chat route. Refuse as the wizard does.
+            from tldw_chatbook.Provider_Contract.provider_endpoint_contract import (
+                resolve_provider_endpoint,
+            )
+            from tldw_chatbook.UI.Wizards.first_run_setup_state import (
+                first_run_endpoint_refusal,
+            )
+
+            resolution = resolve_provider_endpoint(provider_key, endpoint_text)
+            return first_run_endpoint_refusal(provider_key, resolution.chat_url) or None
         return None
 
     @staticmethod
@@ -33113,7 +33127,9 @@ class SettingsScreen(BaseAppScreen):
                     ).value = endpoint
                 except QueryError:
                     pass
-            endpoint_validation_error = self._validate_provider_endpoint(endpoint)
+            endpoint_validation_error = self._validate_provider_endpoint(
+                endpoint, provider_key
+            )
             if endpoint_validation_error:
                 self._provider_save_result = endpoint_validation_error
                 self._set_static_text(

@@ -11,8 +11,11 @@ test_settings_configuration_hub.py.
 
 from __future__ import annotations
 
+import time
+
+import httpx
 import pytest
-from textual.widgets import Input, Static
+from textual.widgets import Input, Select, Static
 
 from Tests.private_profile import private_profile_test
 from Tests.UI.test_destination_shells import (
@@ -130,3 +133,85 @@ async def test_focusing_the_visible_provider_picker_shows_the_provider_purpose(
                 "Purpose: Sets the provider new chats start with; open chats "
                 "nobody has used yet follow it."
             ), selector
+
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_koboldcpp_saves_only_the_native_route_its_send_posts_to(
+    request, monkeypatch
+) -> None:
+    """TASK-36516: Settings saved koboldcpp's suggested bare root as
+    ``<root>/v1/chat/completions``, where ``chat_with_kobold`` posts KoboldAI's
+    native payload, so the send failed. A bare root is now refused, naming the
+    native route, and writes nothing; the placeholder is that route, it saves
+    unchanged (AC#2), and a send then posts the native payload to it.
+    """
+    from tldw_chatbook.Chat.Chat_Functions import chat_api_call
+    from tldw_chatbook.config import load_cli_config_and_ensure_existence
+    from tldw_chatbook.LLM_Calls import LLM_API_Calls_Local as local
+
+    requests = []
+
+    class _Session:
+        def post(self, url, **kwargs):
+            requests.append((url, kwargs["json"]))
+            return httpx.Response(
+                200,
+                json={"results": [{"text": "synthetic-native-reply"}]},
+                request=httpx.Request("POST", url),
+            )
+
+    monkeypatch.setattr(local, "create_pooled_default_session", lambda **kw: _Session())
+    native = "http://127.0.0.1:5001/api/v1/generate"
+    app = _build_test_app()
+    host = DestinationHarness(app, "settings")
+
+    async def _save(screen, pilot, endpoint: str) -> str:
+        screen.query_one("#settings-provider-endpoint-value", Input).value = endpoint
+        screen.query_one("#settings-model-value", Input).value = "kobold-model"
+        await pilot.pause()
+        screen._provider_save_result = ""
+        await pilot.click("#settings-save-category")
+        deadline = time.monotonic() + 10
+        while not screen._provider_save_result and time.monotonic() < deadline:
+            await pilot.pause(0.05)
+        return screen._provider_save_result
+
+    async with host.run_test(size=(211, 44)) as pilot:
+        screen = _active_destination_screen(host)
+        screen._select_category(SettingsCategoryId.PROVIDERS_MODELS.value)
+        await _wait_for_selector(screen, pilot, "#settings-model-value", timeout=30.0)
+        provider = screen.query_one("#settings-provider-value", Select)
+        provider.value = "koboldcpp"
+        screen.handle_provider_value_changed(Select.Changed(provider, "koboldcpp"))
+        await pilot.pause()
+        saved_before = load_cli_config_and_ensure_existence(force_reload=True)
+        url_before = saved_before["api_settings"]["koboldcpp"].get("api_url")
+
+        result = await _save(screen, pilot, "http://127.0.0.1:5001")
+        assert result == (
+            "KoboldCpp needs its native /api/v1/generate address. "
+            "For an OpenAI-compatible server, choose Custom instead."
+        )
+        saved = load_cli_config_and_ensure_existence(force_reload=True)
+        assert saved["api_settings"]["koboldcpp"].get("api_url") == url_before
+
+        endpoint = screen.query_one("#settings-provider-endpoint-value", Input)
+        assert endpoint.placeholder == native
+        result = await _save(screen, pilot, endpoint.placeholder)
+        assert result.startswith("Provider settings saved"), result
+
+    saved = load_cli_config_and_ensure_existence(force_reload=True)
+    assert saved["api_settings"]["koboldcpp"]["api_url"] == native
+    reply = chat_api_call(
+        "koboldcpp",
+        [{"role": "user", "content": "synthetic native prompt"}],
+        model="kobold-model",
+        streaming=False,
+    )
+    assert reply["choices"][0]["message"]["content"] == "synthetic-native-reply"
+    assert len(requests) == 1
+    url, payload = requests[0]
+    assert url == native
+    assert payload["prompt"] == "synthetic native prompt"
+    assert "messages" not in payload
