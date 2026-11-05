@@ -827,7 +827,7 @@ _BUDGETS: dict[str, int] = {
     # (refresh blocked Skills rows after a trust Retry, +3) and c7b80bbf5a
     # (keep the pending Skills filter when that Retry completes, +3). No lane
     # ran this row, so dev carried the red. 3142 -> 3171.
-    "tldw_chatbook/UI/Library_Modules/library_skills_controller.py": 3171,
+    "tldw_chatbook/UI/Library_Modules/library_skills_controller.py": 3116,
 }
 
 #: Loose on purpose (see `test_screen_size_ratchet.py`'s own 200-line
