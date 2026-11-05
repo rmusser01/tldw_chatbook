@@ -93,6 +93,8 @@ _BUDGETS: dict[str, int] = {
     # 2026-11-19, TASK-41904 (owner rule: raise by the change's own lines):
     # 1567 -> 1571 (+4) -- a Send pressed during the first-send save waits.
     "tldw_chatbook/UI/Console_Modules/composer_run_controls.py": 1571,
+    # 2026-11-05, rebased onto dev 29592ecc9b: 1314 -> 1330 (polish-1b's
+    # own +16; same owner decision: expand limits, don't contort code).
     "tldw_chatbook/UI/Library_Modules/canvas_sync.py": 1314,
     "tldw_chatbook/Notes/notes_sync_startup.py": 34,
     "tldw_chatbook/UI/Console_Modules/session_prompt_seed.py": 109,
@@ -198,6 +200,8 @@ _BUDGETS: dict[str, int] = {
     # ``LocalFirstSyncService`` construction, so a purged note's queued
     # upsert never leaves the device. Missed by the wave's own ratchet
     # re-runs; found by the finishing pass's full Tests/Architecture pair.
+    # 2026-11-05, rebased onto dev 29592ecc9b: 3693 -> 3711 (polish-1b's
+    # own +18; same owner decision: expand limits, don't contort code).
     "tldw_chatbook/app_service_wiring.py": 3704,
     # TASK-33011: TldwCli's lifecycle, shutdown and quit flow moved verbatim
     # out of app.py (LifecycleMixin); governed there, so governed here.
@@ -939,6 +943,8 @@ _BUDGETS: dict[str, int] = {
     # of them on dev e78b62f0e7 the file measures 22552.
     # 2026-11-17, TASK-41310: 22552 -> 22544 (-8). The v86->v87 child trace
     # segment step and the v85->v86 step share DB/chachanotes_sql_steps.py.
+    # 2026-11-05, rebased onto dev 29592ecc9b: 25854 -> 26086 (polish-1b's
+    # own +232; same owner decision: expand limits, don't contort code).
     "tldw_chatbook/DB/ChaChaNotes_DB.py": 22544,
     # TASK-39147: the rebased report reader and workflow migrations cross 4000.
     # 2026-11-12, TASK-36948.1 (owner rule: a size ratchet raises the row with a dated
@@ -1031,6 +1037,8 @@ _BUDGETS: dict[str, int] = {
     # TASK-38982, 2026-11-06 (same waiver): 9835 -> 9873 (+38). ‹ Files keeps
     # focus, the narrow navigator offers Manage, and a failed refresh shows
     # on the authority line.
+    # 2026-11-05, rebased onto dev 29592ecc9b: 9674 -> 9714 (polish-1b's
+    # own +40; same owner decision: expand limits, don't contort code).
     "tldw_chatbook/Widgets/Library/library_file_notes_workspace.py": 9873,
     # 2026-11-02: +3 shared store-error import (TASK-36949.5).
     # TASK-38714 re-review, 2026-11-05: 9429 -> 9436 (+7). A failed
@@ -1224,6 +1232,8 @@ _BUDGETS: dict[str, int] = {
     # 2026-11-18, TASK-41522 (owner rule: raise by the change's own lines): +13,
     # OpenAI, Anthropic, Cohere, Google and Hugging Face check their base URL.
     "tldw_chatbook/LLM_Calls/LLM_API_Calls.py": 5202,
+    # 2026-11-05, rebased onto dev 29592ecc9b: 5167 -> 5220 (polish-1b's
+    # own +53; same owner decision: expand limits, don't contort code).
     "tldw_chatbook/Notes/notes_sync_runtime.py": 5167,
     "tldw_chatbook/Personal_Context/repository.py": 4997,
     # owner decision 2026-11-06 (expand limits, never contort code): TASK-39040
@@ -1257,6 +1267,8 @@ _BUDGETS: dict[str, int] = {
     # 2026-10-31 PR3259: exact integrated measurement under the user size-limit waiver.
     # TASK-38981 re-review 3, 2026-11-06 (owner size waiver): 4738 -> 4742
     # (+4). The list's resize reshape keeps the user's focused control.
+    # 2026-11-05, rebased onto dev 29592ecc9b: 4738 -> 5313 (polish-1b's
+    # own +575; same owner decision: expand limits, don't contort code).
     "tldw_chatbook/Widgets/Library/library_notes_canvas.py": 4742,
     "tldw_chatbook/Web_Scraping/WebSearch_APIs.py": 4611,
     # 2026-11-03 TASK-36945.3: +9, [rag.service] constants read when used.
