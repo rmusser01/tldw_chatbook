@@ -137,7 +137,7 @@ MAX_PASS_ADDED_MODULES = 558
 #: shows code that was already resident.
 MAX_PASS_ADDED_LOC = 426_512
 #: Historical B2b source pin only (TASK-33910.4): 425,347 -> 440,410;
-#: integration retains current dev 426,199 above. The old measurement at
+#: integration retains current dev 426,512 above. The old measurement at
 #: B2b's Task 5 (425,410) plus ADR-097's standard 15,000-line slack, modules
 #: unchanged (558). Task 5 is B2b's first commit over the ceiling, so the
 #: re-pin lands there (controller ruling, 2026-10-29: dev's own growth to

@@ -166,15 +166,16 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 # module itself plus `Utils.local_stt_providers`. Its heavier closure
 # (STT coordinator/registry/routing, Backup_Recovery, config) was already
 # resident through other boot legs, honestly attributed in the task notes.
-#: 1031 -> 1036 (2026-11-05, TASK-38765; owner size waiver 2026-10-31): five
+#: 1031 -> 1037 (2026-11-05, TASK-38765; owner size waiver 2026-10-31): five
 #: arch/p2 extractions merged red past this guard (the tour test failed first
 #: and skipped the step). Each splits an already-resident module, so no new
 #: code is resident: `DB.store_errors` (#3359, new exception bases),
 #: `Chat.approval_formatting` (#3362, out of `chat_approval_card`),
 #: `Chat.console_inspector_state` (#3363, out of `console_inspector_section`),
 #: `Chat.console_capture_policy` and `Canvas.config_policy` (#3375, out of
-#: `config.py`). Measured 1036 at dev 447628d08b.
-MAX_TLDW_MODULES_AT_UI_READY = 1036
+#: `config.py`). Measured 1036 at dev 447628d08b; limit = measured + the
+#: documented +/-1 warm-boot wobble, as TASK-32856 and PR #2223 pinned.
+MAX_TLDW_MODULES_AT_UI_READY = 1037
 
 #: Families that must not be resident anywhere in the first-paint window.
 #: The two package prefixes are TASK-21731's; the exact module names are the

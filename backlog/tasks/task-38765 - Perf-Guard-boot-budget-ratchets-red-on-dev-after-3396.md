@@ -5,7 +5,7 @@ status: Done
 assignee:
   - '@claude'
 created_date: '2026-11-05 10:20'
-updated_date: '2026-11-05 10:38'
+updated_date: '2026-11-05 11:17'
 labels:
 - follow-up
 - perf-guard
@@ -68,12 +68,12 @@ The other merges are renames that change no counts, such as `Provider_Contract`,
 - The pre-import +312 is `config.py` code, counted as baseline before, now in a module `settings_screen` imports. In the running app it is already resident at `_ui_ready` (the Console mount loads it), so making the import lazy would only move the census.
 - Re-pins, at the measured values under the owner size waiver 2026-10-31:
   - `MAX_TLDW_MODULE_COUNT` 686 -> 688 (measured 687; the guard is a strict `<`, as before)
-  - `MAX_TLDW_MODULES_AT_UI_READY` 1031 -> 1036
+  - `MAX_TLDW_MODULES_AT_UI_READY` 1031 -> 1037 (measured 1036, plus the guard's documented ±1 warm-boot wobble; TASK-32856 and PR #2223 pinned the same way. Review round 1 changed this from 1036.)
   - `MAX_PASS_ADDED_LOC` 426,199 -> 426,512 (LOC-only; modules 557 of 558)
-- Each constant has a dated comment, and ADR-097's exception ledger has a row for each.
+- Each constant has a dated comment, and ADR-097's exception ledger has a row for each. Review round 1 moved the three rows into the ledger table, along with the 2026-11-01 row that also sat below it, so they render; they had been appended after the prose. It also corrected the B2b note's "current dev 426,199" to 426,512.
 - The three snapshots were refreshed with `scripts/update_boot_budget_snapshots.py --only import-weight --only ui-ready --only preimport` (687 / 1036 / 557 modules, 426,512 LOC).
 
-**Red/green (AC#3).** Red on dev in CI (run 41994911006) and locally on this HEAD before the re-pin: `3 failed, 19 passed`, with 687/686, 1036/1031 and 426,512/426,199. After the re-pin, the three files pass. The Perf Guard boot step command passed `32 passed`, reporting 687/688, 1036/1036 and 557/558 modules with 426,512 LOC. `Tests/Performance/test_boot_budget_ratchet_messages.py` (the ADR/ledger pins) passed 11.
+**Red/green (AC#3).** Red on dev in CI (run 41994911006) and locally on this HEAD before the re-pin: `3 failed, 19 passed`, with 687/686, 1036/1031 and 426,512/426,199. After the re-pin, the three files pass. The Perf Guard boot step command passed `32 passed`, reporting 687/688, 1036/1037 and 557/558 modules with 426,512 LOC (after review round 1; `32 passed` again). `Tests/Performance/test_boot_budget_ratchet_messages.py` (the ADR/ledger pins) passed 11.
 
 Files: `Tests/Performance/test_app_import_weight.py`, `Tests/Performance/test_ui_ready_module_census.py`, `Tests/Performance/test_screen_preimport_payload_budget.py`, `Tests/Performance/boot_budget_snapshots/{boot_import_modules.txt,ui_ready_modules.txt,preimport_payload.json}`, `backlog/decisions/097-boot-budget-ratchets.md`.
 <!-- SECTION:NOTES:END -->
