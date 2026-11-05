@@ -45,7 +45,15 @@ def _resolve_is_admission_ledger_evidence() -> bool:
     first production frame must be ``storage_admission.py``'s
     ``_execution_selection_for`` -- so a resolve from private_sqlite, any
     DB owner module, or the backup helper still fails the test.
+
+    TASK-33620.15.47 routes that resolution through ``storage_admission``'s
+    ``_resolved``, which calls ``Path.resolve`` itself only where its one-walk
+    proof does not apply (a link in the chain, or a platform without macOS's
+    ``O_NOFOLLOW_ANY``, such as Linux CI). Such a call is allowed only when the
+    very next production frame is ``_execution_selection_for``: the origin is
+    unchanged, only one frame deeper.
     """
+    production = []
     for frame_info in inspect.stack()[1:]:
         filename = frame_info.filename
         if (
@@ -57,11 +65,17 @@ def _resolve_is_admission_ledger_evidence() -> bool:
             continue
         if "tldw_chatbook" not in filename:
             continue
-        return (
-            filename.endswith("Backup_Recovery/storage_admission.py")
-            and frame_info.function == "_execution_selection_for"
+        production.append(
+            (
+                filename.endswith("Backup_Recovery/storage_admission.py"),
+                frame_info.function,
+            )
         )
-    return False
+        if len(production) == 2 or production[0] != (True, "_resolved"):
+            break
+    if production and production[0] == (True, "_resolved"):
+        production = production[1:]
+    return bool(production) and production[0] == (True, "_execution_selection_for")
 
 
 @dataclass(frozen=True)
