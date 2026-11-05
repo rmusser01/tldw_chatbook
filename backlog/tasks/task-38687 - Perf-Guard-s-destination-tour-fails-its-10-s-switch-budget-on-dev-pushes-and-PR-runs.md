@@ -5,7 +5,7 @@ status: Done
 assignee:
   - '@claude'
 created_date: 2026-11-03 11:40
-updated_date: '2026-11-05 11:15'
+updated_date: '2026-11-05 15:23'
 labels:
 - follow-up
 - ci
@@ -83,6 +83,8 @@ Measured with my earlier, equivalent fix (probe, load 27-53):
 - per-destination totals 1.2-4.5 s
 
 **This branch adds the tour's idle-sync guard.** After the tour, `test_destination_tour_stays_under_switch_budgets` (Perf Guard) counts calls to `_sync_native_console_chat_ui` during 1 s of idle, with a limit of 1. It counts rather than times. With the loop present (dev before #3396) it fails: 16 syncs at load 30, 28 at load 17. With the fix it records 0.
+
+A second idle window now runs while Console is the active screen (Qodo on #3406: a loop confined to an active Console would never reach the post-tour window). Console idle records 0 in 3 of 3 runs. Under a temporary Console-only re-arming loop in `ChatScreen.on_mount` (reverted), the Console window failed with 22 calls while the post-tour window passed.
 
 **AC#2: 10 of 10 on this branch's HEAD** (47cc9a22ff, on dev 447628d08b, i.e. with #3396's fix). Command: the Perf Guard step, run serially as in the job (`pytest Tests/Performance/test_ui_latency_guardrails.py Tests/Utils/test_ui_responsiveness_stall_persist.py -v --timeout=300`), at load 6.8-10.5.
 - All 10 green, 13/13 tests each; the 10 s budget is unchanged.

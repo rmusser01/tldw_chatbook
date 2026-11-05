@@ -1597,6 +1597,7 @@ PERF_GUARD_LAST_STEP_TARGETS = (
 
 
 def test_perf_guard_runs_its_wall_clock_compact_gates_last() -> None:
+    """Perf Guard runs the Console compact-setup gates only in its last pytest step."""
     (job,) = _workflow("perf-guard.yml")["jobs"].values()
     *earlier, last = [step for step in job["steps"] if "pytest" in step.get("run", "")]
     assert _pytest_targets(last["run"]) == PERF_GUARD_LAST_STEP_TARGETS, last["name"]
