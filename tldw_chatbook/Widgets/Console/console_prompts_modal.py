@@ -595,9 +595,8 @@ class ConsolePromptsModal(
             return
         leave, draft = pending
         current = self._mixin_draft()
-        guard = self.query_one("#console-prompts-dirty-guard", Vertical)
-        if guard.display or (current is not None and current != draft):
-            return  # typed or asked again after the leave: that later choice wins
+        if current is not None and current != draft:
+            return  # typed after the leave: the newer text wins
         await _maybe_await(leave())
 
     @on(ConsolePromptMixinsView.SaveRequested)

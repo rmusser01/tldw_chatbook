@@ -327,6 +327,7 @@ _SECOND_PRESSES = [
     "clean-browse",
     "reverted-refresh",
     "reverted-toggle",
+    "reverted-close",
     "discard-then-type",
     "discard-then-escape",
 ]
@@ -349,8 +350,10 @@ async def test_press_during_contended_mixin_save_cannot_cancel_it(runtime, secon
     leave; ``covered``: one finished under Ctrl+Q's question runs after Wait).
     Ctrl+Q refuses during the save (``quit``). ``clean-*`` save an unchanged
     editor and ``reverted-*`` undo the edit after Save, so Close, Browse,
-    Refresh and a toggle skip the dirty guard. Typing after the Discard, or
-    reopening the guard, replaces the waiting leave (``discard-then-*``).
+    Refresh and a toggle skip the dirty guard; an undone edit's Close asks
+    once the save makes it unsaved again (``reverted-close``). Typing after
+    the Discard, or reopening the guard, replaces the waiting leave
+    (``discard-then-*``).
     """
     import asyncio
     import sqlite3
@@ -442,6 +445,7 @@ async def test_press_during_contended_mixin_save_cannot_cancel_it(runtime, secon
                 "clean-close": "#console-prompts-close",
                 "clean-browse": "#console-mixins-browse",
                 "reverted-refresh": "#console-mixins-search",
+                "reverted-close": "#console-prompts-close",
             }
             if second in buttons:
                 app.screen.query_one(buttons[second], Button).press()
@@ -535,6 +539,16 @@ async def test_press_during_contended_mixin_save_cannot_cancel_it(runtime, secon
                 lambda: bool(app.screen.query("#console-prompts-mixins")),
                 "the leave did not go back to Browse after the save",
             )
+        elif second == "reverted-close":
+            # The save made "Style" differ from what was saved, so Close asks.
+            await until(
+                lambda: app.modal.query_one("#console-prompts-dirty-guard").display,
+                "the undone edit's Close did not ask after the save",
+            )
+            assert app.screen is app.modal
+            assert "Earlier Library edit saved" in status_text()
+            app.screen.query_one("#console-prompts-keep-editing", Button).press()
+            await ready(app)
         else:
             await ready(app)
             assert app.screen is app.modal, "the Discard ran over a newer choice"
