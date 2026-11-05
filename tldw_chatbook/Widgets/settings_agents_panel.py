@@ -66,6 +66,7 @@ from tldw_chatbook.Provider_Contract.sampling_params import (
 )
 from tldw_chatbook.config import save_settings_to_cli_config
 from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
+from tldw_chatbook.DB.base_db import run_owned_db_call
 from tldw_chatbook.Widgets.state_checkbox import StateCheckbox
 from tldw_chatbook.Widgets.status_line import set_status_line
 
@@ -343,12 +344,13 @@ class AgentsSettingsPanel(Vertical):
         # TASK-32804.10 AC#3: run the deferred orphan-reconcile sweep off the
         # event loop (it was skipped at construction). Idempotent per file
         # per process, and AgentRunsDB uses thread-local connections.
+        # TASK-38714: on_unmount's close reaches only the UI thread's
+        # connection, so each worker retires the one it opens, on its thread.
         if self._owns_runs_db and self._runs_db is not None:
             self.run_worker(
-                self._runs_db.reconcile_orphaned_runs,
+                run_owned_db_call(self._runs_db, self._runs_db.reconcile_orphaned_runs),
                 name="agent-runs-reconcile",
                 group="agent-runs-reconcile",
-                thread=True,
                 exclusive=False,
             )
 
@@ -395,7 +397,9 @@ class AgentsSettingsPanel(Vertical):
         # and this coroutine runs on the event loop -- read it off the loop
         # (AgentRunsDB uses thread-local connections), and batch the row
         # appends into one extend instead of one await per row.
-        self._rows = await asyncio.to_thread(self._runs_db.list_agent_definitions)
+        self._rows = await run_owned_db_call(
+            self._runs_db, self._runs_db.list_agent_definitions
+        )
         items = [
             ListItem(
                 Static(

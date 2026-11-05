@@ -12,6 +12,7 @@ through the run's error path (run marked failed with the storage message).
 """
 
 import threading
+from concurrent.futures import Future, ThreadPoolExecutor
 from unittest.mock import patch
 
 import pytest
@@ -169,3 +170,82 @@ async def test_store_result_failure_still_surfaces(orchestrator):
     run = orchestrator.db.list_runs(limit=1)[0]
     assert run["status"] == "failed"
     assert "storage exploded" in run["error_message"]
+
+
+class _ThreadPerCallExecutor(ThreadPoolExecutor):
+    """Run every call on a new thread, as a busy default pool does."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.threads: list[threading.Thread] = []
+
+    def submit(self, fn, /, *args, **kwargs):
+        future: Future = Future()
+
+        def run() -> None:
+            if not future.set_running_or_notify_cancel():
+                return
+            try:
+                future.set_result(fn(*args, **kwargs))
+            except BaseException as error:
+                future.set_exception(error)
+
+        thread = threading.Thread(target=run, daemon=True)
+        self.threads.append(thread)
+        thread.start()
+        return future
+
+
+@pytest.mark.asyncio
+async def test_aclose_leaves_no_worker_thread_connection_open(tmp_path):
+    """TASK-38714: EvalsDB keeps one connection per thread and a close
+    reaches only the calling thread's. The off-loop writes share one write
+    thread and its one connection, which ``aclose()`` closes there."""
+    import asyncio
+    import sqlite3
+
+    from tldw_chatbook.DB.Evals_DB import EvalsDB
+
+    orch = EvaluationOrchestrator(db_path=str(tmp_path / "close_evals.db"))
+    task_id, model_id = _seed_run_inputs(orch)
+    opened: list[tuple[threading.Thread, sqlite3.Connection]] = []
+    real_get = EvalsDB._get_connection
+
+    def recording_get(self):
+        connection = real_get(self)
+        if all(connection is not seen for _, seen in opened):
+            opened.append((threading.current_thread(), connection))
+        return connection
+
+    executor = _ThreadPerCallExecutor()
+    asyncio.get_running_loop().set_default_executor(executor)
+    with (
+        patch.object(EvalsDB, "_get_connection", recording_get),
+        patch(
+            "tldw_chatbook.Evals.eval_orchestrator.EvalRunner",
+            return_value=_ControlledEvalRunner(
+                [_result("one"), _result("two"), _result("three")]
+            ),
+        ),
+    ):
+        run_id = await orch.run_evaluation(task_id, model_id)
+        await orch.aclose()
+    for thread in executor.threads:
+        thread.join(5)
+
+    worker_handles = [
+        connection
+        for thread, connection in opened
+        if thread is not threading.current_thread()
+    ]
+    # A connection open costs ~45 ms (a private-SQLite helper process), so
+    # three writes must share one.
+    assert len(worker_handles) == 1, worker_handles
+    for connection in worker_handles:
+        with pytest.raises(sqlite3.ProgrammingError, match="closed database"):
+            sqlite3.Connection.in_transaction.__get__(connection)
+    reopened = EvalsDB(str(tmp_path / "close_evals.db"))
+    try:
+        assert len(reopened.get_results_for_run(run_id)) == 3
+    finally:
+        reopened.close()

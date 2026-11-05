@@ -6751,6 +6751,22 @@ async def test_high_stakes_file_notes_states_are_legible_in_shipped_themes(
                 )
                 assert status.styles.padding.width == 0
 
+        # TASK-38715: the shared error rule (Save failed and the Git commit
+        # error) painted over litestep's mid-tone desktop $background, 3.54:1.
+        # paradise_virtua's mid-tone $surface is now the thinnest pass.
+        for theme_name in ("litestep", "paradise_virtua"):
+            pilot.app.theme = theme_name
+            workspace._set_save_state("error", "permission denied")
+            await pilot.pause()
+            await pilot.pause()
+            _assert_legible_painted_text(
+                pilot.app,
+                save_status,
+                "Save failed",
+                theme_name=theme_name,
+                minimum_ratio=4.5,
+            )
+
     await workspace.shutdown()
     replica.close()
 

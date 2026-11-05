@@ -1135,8 +1135,6 @@ class LibraryFileNotesWorkspace(Vertical):
     }
 
     #file-notes-save-status.-error {
-        color: $text;
-        background: $error 14%;
         text-style: bold;
     }
 

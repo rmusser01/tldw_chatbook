@@ -2367,3 +2367,6 @@ Tests/UI/test_settings_category_sweep.py::test_narrow_settings_categories_lay_ou
 Tests/UI/test_settings_category_sweep.py::test_narrow_settings_categories_lay_out_at_every_width_60_to_40[console-behavior-30]
 Tests/UI/test_settings_category_sweep.py::test_narrow_settings_categories_lay_out_at_every_width_60_to_40[theme-20]
 Tests/UI/test_settings_category_sweep.py::test_narrow_settings_categories_lay_out_at_every_width_60_to_40[theme-30]
+# TASK-38714: the owned AgentRunsDB keeps no worker-thread connection open
+# after the Settings ▸ Agents panel unmounts. Appended at the tail.
+Tests/UI/test_settings_agents_offloop_read.py::test_owned_runs_db_retires_every_worker_connection_at_unmount

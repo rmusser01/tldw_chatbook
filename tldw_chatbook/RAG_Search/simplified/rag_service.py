@@ -82,7 +82,7 @@ from ..fusion import (
 )
 from ..chunking_service import ChunkingService
 from .simple_cache import SimpleRAGCache
-from .db_connection_pool import get_connection_pool
+from .db_connection_pool import get_connection_pool, pool_executor
 from .indexing_helpers import (
     chunk_documents_batch,
     generate_embeddings_batch,
@@ -1982,17 +1982,17 @@ class RAGService:
                 "fts5_connection_pool_size",
                 _rag_const("FTS5_CONNECTION_POOL_SIZE"),
             )
-            pool = get_connection_pool(str(db_path), pool_size=pool_size)
 
-            # Perform FTS5 search directly using connection pool with retry
+            # Search with retry; each attempt re-fetches the pool a close rebuilds (TASK-38714)
             loop = asyncio.get_event_loop()
             retry_count = 0
             max_retries = 2
 
             while retry_count <= max_retries:
+                pool = get_connection_pool(str(db_path), pool_size=pool_size)
                 try:
                     search_results = await loop.run_in_executor(
-                        None,
+                        pool_executor(pool),
                         self._perform_fts5_search,
                         pool,
                         query,

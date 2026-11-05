@@ -4,8 +4,9 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import sqlite3
 import threading
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import Future, ThreadPoolExecutor
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
@@ -250,6 +251,50 @@ def _pending_source_operation(
         created_at="2026-08-24T10:00:00Z",
         updated_at="2026-08-24T10:00:00Z",
     )
+
+
+class _ThreadPerCallExecutor(ThreadPoolExecutor):
+    """Run every call on a new thread, as a busy default pool does."""
+
+    def submit(self, fn, /, *args, **kwargs):
+        future: Future = Future()
+
+        def run() -> None:
+            if not future.set_running_or_notify_cancel():
+                return
+            try:
+                future.set_result(fn(*args, **kwargs))
+            except BaseException as error:
+                future.set_exception(error)
+
+        threading.Thread(target=run, daemon=True).start()
+        return future
+
+
+@pytest.mark.asyncio
+async def test_held_job_scan_leaves_the_ingest_store_closable_at_shutdown(
+    tmp_path: Path,
+) -> None:
+    """TASK-38714: the store keeps one connection that only its opening
+    thread may close, and app shutdown closes it on the UI thread. A scan
+    that opened it on a pool thread left it open, silently."""
+
+    ingest_store = LibraryIngestJobsDB(tmp_path / "jobs.sqlite")
+    ingest_store.close()  # the restore worker hands the store over closed
+    assert ingest_store._conn is None
+    app = _minimal_app(media_db="present")
+    app._library_ingest_jobs_store = ingest_store
+    app.research_source_operation_store = object()  # no held rows to link
+    asyncio.get_running_loop().set_default_executor(_ThreadPerCallExecutor())
+
+    await app._reconcile_research_source_held_jobs(limit=1)
+
+    native = ingest_store._conn
+    assert native is not None
+    ingest_store.close()  # as app_lifecycle's unmount does, on this thread
+    assert ingest_store._conn is None
+    with pytest.raises(sqlite3.ProgrammingError, match="closed database"):
+        sqlite3.Connection.in_transaction.__get__(native)
 
 
 @pytest.mark.asyncio

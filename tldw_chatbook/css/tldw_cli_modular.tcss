@@ -2936,7 +2936,14 @@ LibraryFileNotesGitPanel Button:disabled {
   opacity: 100%;
   text-opacity: 100%;
   color: $text;
-  background: $error 14%;
+  background: $surface;
+  background-tint: $error 14%;
+}
+
+
+App:ansi .file-notes-git-commit-error,
+App:ansi #file-notes-save-status.-error {
+  background: $error;
 }
 
 
