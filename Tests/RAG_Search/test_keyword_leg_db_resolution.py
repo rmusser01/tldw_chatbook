@@ -292,10 +292,10 @@ def test_keyword_rows_render_their_real_title_in_library_evidence(tmp_path):
 async def test_keyword_search_leaves_no_executor_connection_after_close(
     tmp_path, monkeypatch
 ):
-    """TASK-38714: the FTS leg runs on an executor thread, and the pooled
-    MediaDatabase keeps one connection per thread. ``RAGService.close()``
-    reaches only the closing thread's, so each search must retire its own
-    executor-thread handle there."""
+    """TASK-38714: the pooled MediaDatabase keeps one connection per thread,
+    and a close reaches only the closing thread's. Every search runs on the
+    pool's own thread and reuses its one connection, and ``RAGService.close()``
+    closes that connection on that thread."""
     import sqlite3
     import threading
     from concurrent.futures import Future, ThreadPoolExecutor
@@ -353,6 +353,12 @@ async def test_keyword_search_leaves_no_executor_connection_after_close(
     asyncio.get_running_loop().set_default_executor(executor)
     try:
         assert await service._keyword_search("numbat", top_k=5), "FTS row expected"
+        opened_by_first_search = len(opened)
+        for _ in range(2):
+            assert await service._keyword_search("numbat", top_k=5)
+        # A connection open costs ~45 ms (a private-SQLite helper process);
+        # later searches must reuse the first one's.
+        assert len(opened) == opened_by_first_search
     finally:
         service.close()
     for thread in executor.threads:

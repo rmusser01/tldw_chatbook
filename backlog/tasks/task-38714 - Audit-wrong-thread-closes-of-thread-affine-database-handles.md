@@ -5,7 +5,7 @@ status: Done
 assignee:
 - '@claude'
 created_date: 2026-11-04 00:59
-updated_date: 2026-11-05 07:46
+updated_date: 2026-11-05 08:45
 labels:
 - follow-up
 - database
@@ -106,20 +106,29 @@ Reason: Four call-site fixes using existing retirement helpers; no new lifecycle
 **Fixes.** Each close now retires its handle on the thread that opened it.
 1. **`app_lifecycle.py:1292`, the Library ingest job store at app shutdown.** `_reconcile_research_source_held_jobs` read the store with `asyncio.to_thread`. If that read opened the store's single connection, the shutdown close on the UI thread was refused silently, and the connection stayed open. The read now runs on the UI thread. The module documents the store as UI-thread-only, and every registry write to it already runs there.
 2. **`Widgets/settings_agents_panel.py:420`, `on_unmount`.** The panel's own `AgentRunsDB` read definitions through `to_thread` and reconciled orphans on a thread worker. Each left a connection open on its thread, and the unmount close reaches only the UI thread's. Both now go through the existing `run_owned_db_call`, which retires the handle each call opened, on that call's thread.
-3. **`RAG_Search/simplified/db_connection_pool.py:61`, `close_all_pools`.** Keyword searches ran on executor threads, each caching a pooled `MediaDatabase` connection, and `close_all_pools` closes only the closing thread's. `_perform_fts5_search` now runs its query through `run_retiring_connection` (new, in `db_connection_pool.py`), which wraps the existing `operation_owned_connection`. The pooled database instance is still reused. Trade-off: each search opens a connection (marked `ponytail:` with the upgrade path).
-4. **`Evals/eval_orchestrator.py:1164/1173`, `aclose`/`close`.** Each off-loop `store_result` left an `EvalsDB` connection on its pool thread, and `aclose()` closes only the loop's. The write now closes the connection it opened, on its own thread, and leaves one its thread already held. Nothing in the app calls `aclose`/`close` today (the app never closes its orchestrator), but `DEVELOPER_GUIDE.md` documents `await orchestrator.aclose()`.
+3. **`RAG_Search/simplified/db_connection_pool.py:61`, `close_all_pools`.** Keyword searches ran on executor threads, each caching a pooled `MediaDatabase` connection, and `close_all_pools` closes only the closing thread's. Each pool entry now owns a one-thread executor (TASK-36531's pattern). The database is built on it, every `_perform_fts5_search` runs on it (`pool_executor`), and `close_all_pools` submits `close_connection` to it and then shuts it down. Searches reuse that one connection.
+4. **`Evals/eval_orchestrator.py:1164/1173`, `aclose`/`close`.** Each off-loop `store_result` left an `EvalsDB` connection on its pool thread, and `aclose()` closes only the loop's. The orchestrator now owns a lazily created one-thread write executor. Every off-loop write runs on it and reuses its connection. `aclose()`, `close()` and `_maintenance_drain` (once no run is left) call `_retire_write_thread`, which submits `db.close` to that thread and shuts it down; the next write reopens. Without the drain step, the held connection would keep the Evals participant's maintenance drain waiting. Nothing in the app calls `aclose`/`close` today (the app never closes its orchestrator), but `DEVELOPER_GUIDE.md` documents `await orchestrator.aclose()`.
 
 **Tests (AC#2).** Each installs a thread-per-call default executor, as TASK-36531's test does, captures the native handles the store opens and the thread that opened each, and asserts each worker handle raises "closed database" after the owner's close. The ingest test also asserts `_conn is None`. A thread-local slot on an exited thread cannot be read, so the native handle is the evidence there. Each was red with only its source fix reverted:
 - `Tests/App/test_submit_library_ingest_job.py::test_held_job_scan_leaves_the_ingest_store_closable_at_shutdown`: `assert <AdmittedConnection ...> is None`.
 - `Tests/UI/test_settings_agents_offloop_read.py::test_owned_runs_db_retires_every_worker_connection_at_unmount`: `DID NOT RAISE`. Appended to the UI PR-gate census tail, with the floor raised to the entry count.
-- `Tests/RAG_Search/test_keyword_leg_db_resolution.py::test_keyword_search_leaves_no_executor_connection_after_close`: `DID NOT RAISE`. Verified under a temporary `@private_profile_test` marker, then removed: this file's plain tests all fail locally with `RecoveryRequired: raw_source_selection_changed` (38 of 38 at base, TASK-38111).
-- `Tests/Evals/test_orchestrator_offloop_writes.py::test_aclose_leaves_no_worker_thread_connection_open`: `DID NOT RAISE`. It also checks both results are still durable.
+- `Tests/RAG_Search/test_keyword_leg_db_resolution.py::test_keyword_search_leaves_no_executor_connection_after_close`: three searches must open no connection after the first, and the pool thread's handle must be closed after `RAGService.close()`. It fails `assert 4 == 2` at base and at the first-round per-search retire, and `DID NOT RAISE` when `close_all_pools` closes on the caller's thread. Verified under a temporary `@private_profile_test` marker, then removed: this file's plain tests all fail locally with `RecoveryRequired: raw_source_selection_changed` (38 of 38 at base, TASK-38111).
+- `Tests/Evals/test_orchestrator_offloop_writes.py::test_aclose_leaves_no_worker_thread_connection_open`: three writes must open exactly one worker connection, and it must be closed after `aclose()`. It fails `assert 3 == 1` at base and at the first-round per-write retire, and `DID NOT RAISE` when `_retire_write_thread` skips the close. It also checks that all three results are durable.
 
 **Covering runs (`-n 4`, load 20-26).**
 - Settings panel, Evals, ingest-restore and worker-failure files: 120 passed, 9 failed. The 9 are `RecoveryRequired` default-path tests in `test_eval_orchestrator*.py`, the same set at base.
 - `test_submit_library_ingest_job.py`: 120 passed, 33 failed, the same 33 `RecoveryRequired` failures at base.
 - The RAG files: the base failure set, plus the new test, which fails locally only through that error.
 - `Tests/CI`: 1177 passed. Module size ratchet: 201 passed.
+
+**Review round (2026-11-05).** The first round retired a connection after every search and every write, so each paid a fresh `connect_private_sqlite` (a helper subprocess). The one-thread executors above replace that. Medians over 31 calls, through the wrapper, at load ~10:
+- **Search:** about 0.25 ms per search on a held connection; 37-40 ms with per-search retirement (round 1); 0.28-0.29 ms on the pool's thread now. End to end, `_keyword_search` takes about 3.1 ms now.
+- **Write:** about 0.25 ms per write on a held connection; 31-37 ms with per-write retirement (round 1); 0.32-0.38 ms end to end through `_store_result_off_loop` now.
+
+Covering runs this round (`-n 4`):
+- The RAG files: the same failure set as base (all `RecoveryRequired`), plus the new test, which fails only through that error. The pool thread-safety tests pass.
+- The Evals files plus `Tests/Backup_Recovery/test_eval_maintenance.py`: 60 passed, the same 19 `RecoveryRequired` failures as base, and the maintenance cases pass.
+- `test_projection_generation.py`, which calls `close_all_pools`: 41 passed. Its 2 failures are the same at base (installation identity in the subprocess).
 
 **Files.** `tldw_chatbook/app_ingest_queue.py`, `tldw_chatbook/Widgets/settings_agents_panel.py`, `tldw_chatbook/RAG_Search/simplified/db_connection_pool.py`, `tldw_chatbook/RAG_Search/simplified/rag_service.py`, `tldw_chatbook/Evals/eval_orchestrator.py`, the four test files above, `scripts/ui_pr_gate_census.txt`, `scripts/check_ui_pr_gate_census.py`.
 

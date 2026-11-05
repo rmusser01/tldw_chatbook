@@ -15,8 +15,10 @@ This is the main entry point for running evaluations.
 """
 
 import asyncio
+import functools
 import time
 import sqlite3
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
 from typing import Dict, List, Any, Optional, Callable, Tuple
 from pathlib import Path
@@ -85,6 +87,9 @@ class EvaluationOrchestrator:
 
         # Initialize database connection
         self.db = self._initialize_database(db_path, client_id)
+        # TASK-38714: off-loop result writes share one thread, so they reuse
+        # one EvalsDB connection, which _retire_write_thread closes there.
+        self._write_executor: ThreadPoolExecutor | None = None
 
         # Initialize task loader
         self.task_loader = TaskLoader()
@@ -102,6 +107,9 @@ class EvaluationOrchestrator:
             if remaining <= 0:
                 return False
             await asyncio.sleep(min(remaining, 0.02))
+        # A connection held open on the write thread would keep the storage
+        # pause waiting; the next write reopens it.
+        await asyncio.to_thread(self._retire_write_thread)
         return True
 
     def _maintenance_resume(self) -> None:
@@ -300,19 +308,22 @@ class EvaluationOrchestrator:
         if getattr(db, "is_memory_db", None) is True:
             db.store_result(**store_kwargs)
             return
+        if self._write_executor is None:
+            self._write_executor = ThreadPoolExecutor(1, thread_name_prefix="evals-writes")
+        await asyncio.get_running_loop().run_in_executor(
+            self._write_executor, functools.partial(db.store_result, **store_kwargs)
+        )
 
-        def store_and_retire() -> None:
-            # TASK-38714: close()/aclose() reach only the caller's thread-local
-            # connection, so retire the one this write opened, on its thread.
-            local = getattr(db, "_local", None)
-            opens_here = local is not None and getattr(local, "connection", None) is None
-            try:
-                db.store_result(**store_kwargs)
-            finally:
-                if opens_here:
-                    db.close()
+    def _retire_write_thread(self) -> None:
+        """Close the write thread's connection on that thread, then the thread.
 
-        await asyncio.to_thread(store_and_retire)
+        EvalsDB keeps one connection per thread and ``close()`` reaches only
+        the calling thread's (TASK-38714).
+        """
+        executor, self._write_executor = self._write_executor, None
+        if executor is not None:
+            executor.submit(self.db.close).result()
+            executor.shutdown(wait=True)
 
     async def create_task_from_file(
         self, task_file_path: str, format_type: str = "auto"
@@ -1173,6 +1184,7 @@ class EvaluationOrchestrator:
                 task.cancel()
         if tasks:
             await asyncio.gather(*tasks, return_exceptions=True)
+        await asyncio.to_thread(self._retire_write_thread)
         self.db.close()
 
     def close(self) -> None:
@@ -1182,6 +1194,7 @@ class EvaluationOrchestrator:
                 "Cannot close orchestrator while an active evaluation is running; "
                 "await aclose() instead"
             )
+        self._retire_write_thread()
         self.db.close()
 
 

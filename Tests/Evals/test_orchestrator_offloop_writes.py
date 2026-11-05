@@ -198,9 +198,9 @@ class _ThreadPerCallExecutor(ThreadPoolExecutor):
 
 @pytest.mark.asyncio
 async def test_aclose_leaves_no_worker_thread_connection_open(tmp_path):
-    """TASK-38714: EvalsDB keeps one connection per thread and ``aclose()``
-    retires only the caller's, so each off-loop write retires the
-    connection it opened, on its own thread."""
+    """TASK-38714: EvalsDB keeps one connection per thread and a close
+    reaches only the calling thread's. The off-loop writes share one write
+    thread and its one connection, which ``aclose()`` closes there."""
     import asyncio
     import sqlite3
 
@@ -223,7 +223,9 @@ async def test_aclose_leaves_no_worker_thread_connection_open(tmp_path):
         patch.object(EvalsDB, "_get_connection", recording_get),
         patch(
             "tldw_chatbook.Evals.eval_orchestrator.EvalRunner",
-            return_value=_ControlledEvalRunner([_result("one"), _result("two")]),
+            return_value=_ControlledEvalRunner(
+                [_result("one"), _result("two"), _result("three")]
+            ),
         ),
     ):
         run_id = await orch.run_evaluation(task_id, model_id)
@@ -236,12 +238,14 @@ async def test_aclose_leaves_no_worker_thread_connection_open(tmp_path):
         for thread, connection in opened
         if thread is not threading.current_thread()
     ]
-    assert len(worker_handles) >= 2, "each write must open a worker handle"
+    # A connection open costs ~45 ms (a private-SQLite helper process), so
+    # three writes must share one.
+    assert len(worker_handles) == 1, worker_handles
     for connection in worker_handles:
         with pytest.raises(sqlite3.ProgrammingError, match="closed database"):
             sqlite3.Connection.in_transaction.__get__(connection)
     reopened = EvalsDB(str(tmp_path / "close_evals.db"))
     try:
-        assert len(reopened.get_results_for_run(run_id)) == 2
+        assert len(reopened.get_results_for_run(run_id)) == 3
     finally:
         reopened.close()

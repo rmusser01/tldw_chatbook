@@ -82,7 +82,7 @@ from ..fusion import (
 )
 from ..chunking_service import ChunkingService
 from .simple_cache import SimpleRAGCache
-from .db_connection_pool import get_connection_pool, run_retiring_connection
+from .db_connection_pool import get_connection_pool, pool_executor
 from .indexing_helpers import (
     chunk_documents_batch,
     generate_embeddings_batch,
@@ -1992,7 +1992,7 @@ class RAGService:
             while retry_count <= max_retries:
                 try:
                     search_results = await loop.run_in_executor(
-                        None,
+                        pool_executor(str(db_path), pool),
                         self._perform_fts5_search,
                         pool,
                         query,
@@ -4348,7 +4348,7 @@ class RAGService:
 
         # The zero-row fallback lives INSIDE this helper so the caller's
         # retry wrapper cannot multiply it (TASK-15400).
-        return run_retiring_connection(pool, self._fts_rows_with_fallback, _run, expressions)
+        return self._fts_rows_with_fallback(_run, expressions)
 
     def _extract_context_from_results(
         self,

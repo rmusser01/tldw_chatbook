@@ -3,10 +3,10 @@ Simple database connection pool for FTS5 searches.
 """
 
 import threading
-from typing import Dict
+from concurrent.futures import ThreadPoolExecutor
+from typing import Dict, Optional, Tuple
 from loguru import logger
 
-from tldw_chatbook.DB.base_db import operation_owned_connection
 from tldw_chatbook.DB.Client_Media_DB_v2 import MediaDatabase
 
 
@@ -16,7 +16,12 @@ from tldw_chatbook.DB.Client_Media_DB_v2 import MediaDatabase
 # is the pooling behavior callers (`RAGService._perform_fts5_search`, via its
 # `pool.transaction()` call) need -- so the pool IS the `MediaDatabase`
 # instance, not a bare path/size record.
-_connection_pools: Dict[str, MediaDatabase] = {}
+#
+# TASK-38714: each pool also owns a one-thread executor. The database is
+# built on it and every search runs on it, so its one thread-local connection
+# is reused by every search and `close_all_pools()` can close it on the
+# thread that opened it (a close elsewhere reaches only that thread's own).
+_connection_pools: Dict[str, Tuple[MediaDatabase, ThreadPoolExecutor]] = {}
 
 # Qodo PR #1428 finding 3: the dict above was guarded only by an unlocked
 # check-then-set (`if db_path not in _connection_pools: ... [construct] ...`).
@@ -38,43 +43,47 @@ def get_connection_pool(db_path: str, pool_size: int = 3) -> MediaDatabase:
     capping a fixed pool.
     """
     # Fast path: no lock needed once the pool for this path already exists.
-    pool = _connection_pools.get(db_path)
-    if pool is not None:
-        return pool
+    entry = _connection_pools.get(db_path)
+    if entry is not None:
+        return entry[0]
 
     # Slow path: double-checked locking so only one thread ever constructs
     # the `MediaDatabase` for a given path, even under concurrent first
     # callers.
     with _connection_pools_lock:
-        pool = _connection_pools.get(db_path)
-        if pool is None:
+        entry = _connection_pools.get(db_path)
+        if entry is None:
             logger.debug(f"Opening pooled media database connection: {db_path}")
-            pool = MediaDatabase(db_path=db_path, client_id="rag_service_fts5")
-            _connection_pools[db_path] = pool
-        return pool
+            executor = ThreadPoolExecutor(1, thread_name_prefix="rag-fts5-pool")
+            try:
+                pool = executor.submit(
+                    MediaDatabase, db_path=db_path, client_id="rag_service_fts5"
+                ).result()
+            except BaseException:
+                executor.shutdown(wait=False)
+                raise
+            entry = _connection_pools[db_path] = (pool, executor)
+        return entry[0]
 
 
-def run_retiring_connection(pool, function, *args):
-    """Run ``function(*args)`` and retire the pool connection it opened.
+def pool_executor(db_path: str, pool: object) -> Optional[ThreadPoolExecutor]:
+    """Return the one thread ``pool``'s searches must run on.
 
-    TASK-38714: searches run on executor threads, and the pooled
-    ``MediaDatabase`` keeps one connection per thread. ``close_all_pools()``
-    reaches only the closing thread's, so each search retires the handle it
-    opened, on its own thread. A connection the thread already held stays.
+    ``None`` (the loop's default executor) for a pool this module does not
+    hold: a test double, or a pool ``close_all_pools()`` already retired.
     """
-    # ponytail: one connection open per search; give each pool a one-thread
-    # executor if that open ever shows in search latency.
-    with operation_owned_connection(pool):
-        return function(*args)
+    entry = _connection_pools.get(db_path)
+    return entry[1] if entry is not None and entry[0] is pool else None
 
 
 def close_all_pools():
-    """Close all pooled database connections."""
+    """Close each pool's connection on its own thread, then that thread."""
     with _connection_pools_lock:
-        for db_path, db in _connection_pools.items():
+        for db_path, (db, executor) in _connection_pools.items():
             try:
-                db.close_connection()
+                executor.submit(db.close_connection).result()
             except Exception as e:
                 logger.debug(f"Error closing pooled connection for {db_path}: {e}")
+            executor.shutdown(wait=True)
         _connection_pools.clear()
         logger.debug("Closed and cleared all connection pool references")
