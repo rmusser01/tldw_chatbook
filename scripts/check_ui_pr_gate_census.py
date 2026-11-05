@@ -858,6 +858,9 @@ MINIMUM_FILES = 1748
 # the poll tick's one reuse and its push and unit guards) as node entries at
 # the tail; the file runs about 60 s serially. The floor is the entry count.
 MINIMUM_FILES = 1755
+# TASK-36571.1 (2026-11-05): the run-status reuse pin and the unchanged
+# folder-availability re-read pin join them. The floor is the entry count.
+MINIMUM_FILES = 1757
 
 
 def read_census(path: Path) -> list[str]:

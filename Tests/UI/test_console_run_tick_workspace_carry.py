@@ -28,6 +28,7 @@ import pytest
 
 from Tests.UI.test_console_dictation import _ready_host
 from Tests.UI.test_console_run_tick_workspace_reads import APP_SIZE, _settled_console
+from tldw_chatbook.Chat.console_chat_models import ConsoleRunState, ConsoleRunStatus
 from tldw_chatbook.UI.Console_Modules import config_sync
 from tldw_chatbook.UI.Console_Modules import workspace as workspace_module
 from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
@@ -91,20 +92,35 @@ async def _completed_poll_tick(console, pilot, attempts: int = 8) -> None:
     raise AssertionError("no poll tick completed")
 
 
-async def _fresh_build_then_poll_tick(console, pilot, builds) -> int:
+async def _fresh_build_then_poll_tick(console, pilot, builds, between=None) -> int:
     """A completed explicit sync, then at once a completed poll tick.
 
     Returns the poll tick's own builds. Retries the pair when either sync
     defers (a cold checked display hands it to a whole-sync replay).
+
+    Args:
+        between: Called after the explicit sync and before the poll tick.
     """
     for _ in range(8):
         await pilot.pause()
         if await console._sync_native_console_chat_ui() is not True:
             continue
+        if between is not None:
+            between()
         before = len(builds)
         if await _poll_tick(console) is True:
             return len(builds) - before
     raise AssertionError("no explicit sync and poll tick completed back to back")
+
+
+def _set_run_status(console, status: ConsoleRunStatus) -> None:
+    controller = console._ensure_console_chat_controller()
+    controller._set_run_state(ConsoleRunState(status, f"{status.value} (test)"))
+
+
+def _row_markers(console) -> set[str]:
+    browser = _tray(console).state.conversation_browser
+    return {row.run_marker for section in browser.sections for row in section.rows}
 
 
 def _tray(console) -> ConsoleWorkspaceContextTray:
@@ -306,6 +322,44 @@ async def test_a_poll_tick_reuses_the_build_its_predecessor_made(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_a_run_status_flip_that_moves_no_marker_still_reuses_the_build(
+    monkeypatch,
+):
+    """A send flips VALIDATING -> STREAMING; the browser shows the same marker."""
+    _, host = _ready_host()
+    async with host.run_test(size=APP_SIZE) as pilot:
+        console = await _settled_console(host, pilot)
+        _set_run_status(console, ConsoleRunStatus.VALIDATING)
+        builds = _count_builds(monkeypatch)
+        reused = await _fresh_build_then_poll_tick(
+            console,
+            pilot,
+            builds,
+            between=lambda: _set_run_status(console, ConsoleRunStatus.STREAMING),
+        )
+        assert reused == 0
+
+
+@pytest.mark.asyncio
+async def test_a_run_status_flip_that_moves_a_marker_rebuilds_on_the_next_tick(
+    monkeypatch,
+):
+    _, host = _ready_host()
+    async with host.run_test(size=APP_SIZE) as pilot:
+        console = await _settled_console(host, pilot)
+        builds = _count_builds(monkeypatch)
+        idle_markers = None
+
+        def start_run():
+            nonlocal idle_markers
+            idle_markers = _row_markers(console)
+            _set_run_status(console, ConsoleRunStatus.STREAMING)
+
+        assert await _fresh_build_then_poll_tick(console, pilot, builds, start_run) == 1
+        assert _row_markers(console) != idle_markers  # The running marker shows.
+
+
+@pytest.mark.asyncio
 async def test_an_explicit_sync_never_reuses_a_carried_build(monkeypatch):
     """Only the poll's own tick reuses; a send transition's full sync builds."""
     _, host = _ready_host()
@@ -385,7 +439,10 @@ async def test_an_input_the_fingerprint_covers_reaches_the_tray_on_the_next_tick
 
 
 def test_a_carried_build_is_taken_once_and_only_by_the_next_tick(monkeypatch):
-    controller = SimpleNamespace(_console_carried_workspace_build=None)
+    controller = SimpleNamespace(
+        _console_carried_workspace_build=None,
+        _console_workspace_carry_key=lambda fingerprint: fingerprint,
+    )
     take = workspace_module.ConsoleWorkspaceController._take_carried_workspace_build
     clock = [100.0]
     monkeypatch.setattr(workspace_module.time, "monotonic", lambda: clock[0])
@@ -408,3 +465,45 @@ def test_a_carried_build_is_taken_once_and_only_by_the_next_tick(monkeypatch):
     assert take(controller, ("f",), 5) is None  # A poll that stopped and restarted.
     carry(4)
     assert take(controller, ("f",), None) is None
+    carry(4, fingerprint=None)
+    assert take(controller, ("f",), 5) is None  # An unreadable run display.
+
+
+@pytest.mark.asyncio
+async def test_an_unchanged_folder_availability_reread_pushes_nothing():
+    """The once-a-second availability re-read found nothing new and still pushed."""
+    _, host = _ready_host()
+    async with host.run_test(size=APP_SIZE) as pilot:
+        console = await _settled_console(host, pilot)
+        controller = console._workspace
+        pushes = []
+        original = controller._sync_workspace_context_fn
+        controller._sync_workspace_context_fn = lambda: (pushes.append(1), original())
+        try:
+            for _ in range(2):
+                controller._workspace_files_availability_cached_at = 0.0
+                controller._request_workspace_files_availability_refresh(
+                    (workspace_module.DEFAULT_WORKSPACE_ID,)
+                )
+                await host.workers.wait_for_complete()
+                await pilot.pause()
+            before = dict(controller._workspace_files_availability_by_id)
+            assert len(pushes) <= 1, f"an unchanged re-read pushed {len(pushes) - 1}x"
+            pushed = len(pushes)
+
+            # A changed snapshot still pushes.
+            controller._workspace_files_availability_by_id = (
+                workspace_module.MappingProxyType(
+                    {key: not value for key, value in before.items()}
+                )
+            )
+            controller._workspace_files_availability_cached_at = 0.0
+            controller._request_workspace_files_availability_refresh(
+                (workspace_module.DEFAULT_WORKSPACE_ID,)
+            )
+            await host.workers.wait_for_complete()
+            await pilot.pause()
+            assert len(pushes) == pushed + 1
+            assert dict(controller._workspace_files_availability_by_id) == before
+        finally:
+            controller._sync_workspace_context_fn = original

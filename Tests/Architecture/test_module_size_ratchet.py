@@ -849,9 +849,11 @@ _BUDGETS: dict[str, int] = {
     # The control-bar syncs' shared build reads the registry live.
     # TASK-36571.1, 2026-11-05: same waiver (owner rule: a fix over a size
     # ratchet raises the row by the branch's growth with a dated comment).
-    # A poll tick reuses its predecessor's unchanged build once, and the
-    # projection reads the workspace label alone: 8961 -> 9050 (+89).
-    "tldw_chatbook/UI/Console_Modules/workspace.py": 9050,
+    # A poll tick reuses its predecessor's unchanged build once (keyed on the
+    # run markers it shows), the projection reads the workspace label alone,
+    # and an unchanged folder-availability re-read no longer pushes a
+    # rebuild: 8961 -> 9100 (+139).
+    "tldw_chatbook/UI/Console_Modules/workspace.py": 9100,
     # 2026-10-31, PR #3293: explicit user size-limit waiver; final review entry
     # credential/readiness repair, exact integrated measurement (8181 -> 8183).
     # PR3304, 2026-11-01: user size waiver; exact integration measurement.

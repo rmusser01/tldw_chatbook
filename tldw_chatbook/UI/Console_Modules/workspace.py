@@ -586,11 +586,13 @@ class ConsoleTickWorkspaceBuilds:
 
     TASK-36571.1: the Conversations tray push rebuilt the browser on every
     0.2 s tick to find it unchanged. A poll tick (``carries``) reuses its
-    predecessor's build once while the fingerprint matches, so the inputs
-    it leaves out (stars, unseen and attention markers, appearance, folder
-    availability, fleet counts, collapse preferences, rail height, relative
-    ages) reach the rails at most one tick later. Any build outside a run
-    tick drops the carried build, so a push it made is never overwritten.
+    predecessor's build once while the carry key matches (the fingerprint,
+    with the run status read as the run markers and attention facts the
+    build shows), so the inputs it leaves out (stars, unread and receipt
+    markers, appearance, folder availability, fleet counts, collapse
+    preferences, rail height, relative ages) reach the rails at most one
+    tick later. Any build outside a run tick drops the carried build, so a
+    push it made is never overwritten.
     """
 
     __slots__ = (
@@ -658,7 +660,10 @@ class ConsoleTickWorkspaceBuilds:
         self._state = state
         if self._serial is not None and self._fingerprint is not None:
             controller._console_carried_workspace_build = (
-                self._serial, time.monotonic(), self._fingerprint, state
+                self._serial,
+                time.monotonic(),
+                controller._console_workspace_carry_key(self._fingerprint),
+                state,
             )
         return state
 
@@ -7056,19 +7061,21 @@ class ConsoleWorkspaceController:
 
         Returns:
             The previous run tick's own build when it is at most
-            ``CONSOLE_TICK_BUILD_CARRY_MAX_AGE_SECONDS`` old and its
-            ``fingerprint`` still matches, else ``None``. Taking it always
-            drops it, so the tick after a reuse builds.
+            ``CONSOLE_TICK_BUILD_CARRY_MAX_AGE_SECONDS`` old and its carry key
+            (``_console_workspace_carry_key``) still matches the one this
+            ``fingerprint`` gives, else ``None``. Taking it always drops it,
+            so the tick after a reuse builds.
         """
         carried = self._console_carried_workspace_build
         self._console_carried_workspace_build = None
         if carried is None or serial is None:
             return None
-        built_serial, built_at, built_fingerprint, state = carried
+        built_serial, built_at, built_key, state = carried
         if (
-            built_serial != serial - 1
+            built_key is None
+            or built_serial != serial - 1
             or time.monotonic() - built_at > CONSOLE_TICK_BUILD_CARRY_MAX_AGE_SECONDS
-            or built_fingerprint != fingerprint
+            or self._console_workspace_carry_key(fingerprint) != built_key
         ):
             return None
         return state
@@ -7502,23 +7509,32 @@ class ConsoleWorkspaceController:
                     and registry is getattr(self.app_instance, "workspace_registry_service", None)
                     and database is getattr(registry, "db", None)
                 ):
-                    self._workspace_files_availability_by_id = MappingProxyType(
-                        {
-                            workspace_id: bool(
-                                availability_snapshot.get(workspace_id, False)
-                            )
-                            for workspace_id in workspace_ids
-                        }
-                    )
-                    self._workspace_files_runtime_bindings_by_id = MappingProxyType(
-                        {
-                            workspace_id: tuple(bindings_snapshot.get(workspace_id, ()))
-                            for workspace_id in workspace_ids
-                        }
-                    )
+                    availability = {
+                        workspace_id: bool(availability_snapshot.get(workspace_id, False))
+                        for workspace_id in workspace_ids
+                    }
+                    bindings = {
+                        workspace_id: tuple(bindings_snapshot.get(workspace_id, ()))
+                        for workspace_id in workspace_ids
+                    }
+                    # TASK-36571.1: the once-a-second re-read usually finds
+                    # nothing new, and pushing it rebuilt the whole workspace
+                    # context on the UI loop (and dropped the tick's carried
+                    # build). An unchanged snapshot only renews its age.
+                    changed = availability != dict(
+                        self._workspace_files_availability_by_id
+                    ) or bindings != dict(self._workspace_files_runtime_bindings_by_id)
+                    if changed:
+                        self._workspace_files_availability_by_id = MappingProxyType(
+                            availability
+                        )
+                        self._workspace_files_runtime_bindings_by_id = MappingProxyType(
+                            bindings
+                        )
                     self._workspace_files_availability_cached_at = time.monotonic()
                     self._workspace_files_availability_refresh_in_flight = False
-                    self._sync_console_workspace_context()
+                    if changed:
+                        self._sync_console_workspace_context()
                     return
         except _WorkspaceAvailabilityObsolete:
             return
@@ -7671,7 +7687,6 @@ class ConsoleWorkspaceController:
                 active_session_id,
                 sessions_token,
                 queued_token,
-                run_status,
                 self._canonical_membership_revision,
                 self._console_persisted_rows_cache_token,
                 self._console_conversation_browser_query,
@@ -7692,12 +7707,47 @@ class ConsoleWorkspaceController:
                 attempts_token,
                 getattr(self.app_instance, "workspace_server_adapter_state", None),
                 getattr(self.app_instance, "workspace_acp_handoff_state", None),
+                run_status,  # Last: the carry key replaces it (TASK-36571.1).
             )
         except Exception:
             logger.debug(
                 "Console workspace build fingerprint unavailable; building live"
             )
             return None
+
+    def _console_workspace_carry_key(self, fingerprint: tuple) -> tuple | None:
+        """The fingerprint with its run status replaced by what the build shows of runs.
+
+        TASK-36571.1: a send's run flips VALIDATING -> STREAMING -> ... while
+        no session's run marker or attention facts move, and each flip forced
+        a rebuild that found the browser unchanged. The build reads runs only
+        through those (and the queued counts the fingerprint keeps), so a
+        poll tick may reuse a build across such a flip.
+
+        Returns:
+            The key, or ``None`` (never reuse) when the run display is unreadable.
+        """
+        store = self._console_chat_store
+        controller = self._console_chat_controller
+        try:
+            run_display: tuple = ()
+            if store is not None and controller is not None:
+                unseen = self._console_fleet_unseen_ids()
+                read_attention = getattr(controller, "conversation_attention_for", None)
+                run_display = (
+                    unseen,
+                    tuple(
+                        (
+                            session.id,
+                            self._console_run_marker_with_unseen(controller, session, unseen),
+                            tuple(read_attention(session.id)) if callable(read_attention) else (),
+                        )
+                        for session in store.sessions()
+                    ),
+                )
+        except Exception:  # noqa: BLE001 - an unreadable display never reuses.
+            return None
+        return (*fingerprint[:-1], run_display)
 
     @staticmethod
     def _console_workspace_row_key(row: ConsoleWorkspaceConversationRow) -> str:
