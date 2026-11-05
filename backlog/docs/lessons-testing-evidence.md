@@ -25011,3 +25011,24 @@ The original 15-case mobile UAT failed its third lost-ACK case after the first s
 ## Observe actual pointer events when a button click produces no request (PR3345, 2026-11-04)
 
 The same UAT retained a cold Send with no ticket or effect request; a natural passive rerun passed and did not establish that occurrence's cause. A controlled real-asset probe in Chromium and WebKit then held refresh metadata while injecting a normal change hint between physical pointer-down/up. The same button stayed under the pointer, but becoming disabled suppressed click and submit, yielding zero commands. The no-hint control dispatched once. The regression keeps metadata held through actual command acceptance; releasing it before the assertion could falsely qualify a deferred command queue. Ordinary hints now refresh without revoking prior confirmation; genuine reset/loss still pauses controls and never replays the gesture.
+
+
+## App construction can queue native reads before mounting (PR #3345, 2026-11-04)
+
+**Incident.** A Windows retained-Eval timeout diagnostic instead stopped before
+restore with native capture `scope_changed`. Source inspection found that App
+construction queues a Console attention read, although the fixture never mounts
+the App. Its synchronous preview ran before the first loop yield, which allowed
+capture to overlap the queued native transaction and checkpoint. A real-App regression
+reproduced the pending task before preview. Awaiting the retained task before
+both shared previews passed the original capture/reopen/deletion journeys and
+native concurrent-snapshot refusal controls.
+
+**What to do.** Complete the actual accepted initialization task before a fixture
+reviews a supposedly settled source. Verify its real native read and physical
+handle retirement. A projection can correctly discard a completed read after the
+fixture changes its store, and this fixture creates three attention marks; an
+empty projection or empty result was an invalid oracle. Do not replace native
+snapshot refusals with a retry, disable the read, or infer Windows restore speed
+from a Mac helper profile. The separate original 45-second restore gate still
+requires its own uninstrumented Windows evidence.
