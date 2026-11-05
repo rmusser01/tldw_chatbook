@@ -28,10 +28,31 @@ from tldw_chatbook.Backup_Recovery.control_records import bind_profile
 pytestmark = pytest.mark.skipif(os.name == "nt", reason="ordinary reuse is POSIX-only")
 
 
-def _derivations(monkeypatch):
-    """Call through every expensive seam; never replace its returned authority."""
+_MONITORS = []
+
+
+@pytest.fixture(autouse=True)
+def _release_derivation_monitors():
+    yield
+    monitoring = sys.monitoring
+    while _MONITORS:
+        tool, codes = _MONITORS.pop()
+        for code in codes:
+            monitoring.set_local_events(tool, code, 0)
+        monitoring.register_callback(tool, monitoring.events.PY_START, None)
+        monitoring.free_tool_id(tool)
+
+
+def _derivations():
+    """Count entries into every expensive seam, observed in place.
+
+    Since 3e618d7119 the witness and pause reuse paths decline reuse when any
+    reader they skip has been replaced, so a wrapping counter disables the
+    cache it measures. Seams are matched by code identity instead.
+    """
     counts = Counter()
     active = [False]
+    seams = {}
     for owner, name in (
         (bootstrap, "startup_permission"),
         (bootstrap, "_control_records"),
@@ -41,14 +62,25 @@ def _derivations(monkeypatch):
         (Admission, "_groups"),
         (raw, "_open_verified_parent"),
     ):
-        original = getattr(owner, name)
+        # The parent walk is private_paths' one closure, shared with bootstrap;
+        # only raw's calls through it were ever counted.
+        caller = vars(raw) if owner is raw else None
+        seams[getattr(owner, name).__code__] = name, caller
+    monitoring = sys.monitoring
+    tool = next(i for i in range(6) if monitoring.get_tool(i) is None)
+    monitoring.use_tool_id(tool, "guarded-evidence-derivations")
+    _MONITORS.append((tool, tuple(seams)))
 
-        def observed(*args, _original=original, _name=name, **kwargs):
-            if active[0]:
-                counts[_name] += 1
-            return _original(*args, **kwargs)
+    def started(code, _offset):
+        name, caller = seams[code]
+        if active[0] and (
+            caller is None or sys._getframe(1).f_back.f_globals is caller
+        ):
+            counts[name] += 1
 
-        monkeypatch.setattr(owner, name, observed)
+    monitoring.register_callback(tool, monitoring.events.PY_START, started)
+    for code in seams:
+        monitoring.set_local_events(tool, code, monitoring.events.PY_START)
     return counts, active
 
 
@@ -68,7 +100,7 @@ def test_actual_warm_mcp_readers_skip_all_admission_derivations(
     source = mcp_sources[index]
     read = source.read_recent if index == 4 else source.load
     _warm(read)
-    counts, active = _derivations(monkeypatch)
+    counts, active = _derivations()
     active[0] = True
     result = read()
     active[0] = False
@@ -94,7 +126,7 @@ def test_actual_warm_native_probe_reuses_group_but_observes_native_gates(
     with storage.acquire_storage() as lease:
         hold = storage._holds[lease._key]
         _warm(storage._local_pause_requested)
-        counts, active = _derivations(monkeypatch)
+        counts, active = _derivations()
         active[0] = True
         assert storage._local_pause_requested() is False
         active[0] = False
@@ -155,7 +187,7 @@ def test_complete_witness_and_pause_reuse_matches_original_mutation_verdict(
             else storage._local_pause_requested()
         )
         _warm(call)
-        counts, active = _derivations(monkeypatch)
+        counts, active = _derivations()
         active[0] = True
         before = _verdict(call)
         active[0] = False
@@ -245,7 +277,7 @@ def test_witness_cache_covers_every_input_of_the_complete_original_reader(
     with storage.acquire_storage(path) as lease:
         call = lambda: generation_witnesses._witnesses(path, lease)
         _warm(call)
-        counts, active = _derivations(monkeypatch)
+        counts, active = _derivations()
         active[0] = True
         assert call() == []
         active[0] = False
@@ -309,7 +341,7 @@ def test_warm_witness_requirements_have_exact_original_refusals(
     with storage.acquire_storage(path) as lease:
         call = lambda: generation_witnesses._witnesses(path, lease)
         _warm(call)
-        counts, active = _derivations(monkeypatch)
+        counts, active = _derivations()
         active[0] = True
         value = call()
         active[0] = False
@@ -363,7 +395,7 @@ def test_complete_historical_chain_witness_falls_back_on_retarget(
     with storage.acquire_storage(path) as lease:
         call = lambda: generation_witnesses._witnesses(path, lease)
         _warm(call)
-        counts, active = _derivations(monkeypatch)
+        counts, active = _derivations()
         active[0] = True
         assert call() == []
         active[0] = False
@@ -426,7 +458,7 @@ def test_warm_bound_config_companions_keep_foreign_member_refusal(
     monkeypatch.setattr(storage, "_EVIDENCE_SETTLE_NS", 0)
     read = config.read_cli_config_serialized
     _warm(read)
-    counts, active = _derivations(monkeypatch)
+    counts, active = _derivations()
     active[0] = True
     assert read() is not None
     active[0] = False
@@ -450,7 +482,7 @@ def test_warm_bound_history_keeps_fresh_temporary_authority(bound_config, monkey
     monkeypatch.setattr(storage, "_EVIDENCE_SETTLE_NS", 0)
     source = MCPExecutionLog(config.get_user_data_dir() / "mcp_execution_log.jsonl")
     _warm(source.read_recent)
-    counts, active = _derivations(monkeypatch)
+    counts, active = _derivations()
     selections = []
     original = mcp_source_participants.members
 
@@ -483,7 +515,7 @@ def test_fresh_descendant_reuse_matches_complete_original(
     monkeypatch.setattr(storage, "_EVIDENCE_SETTLE_NS", 0)
     with storage.acquire_storage(data / "seed.json"):
         _warm(lambda: _verdict(lambda: _acquire_result(data / "seed.json")))
-        counts, active = _derivations(monkeypatch)
+        counts, active = _derivations()
         active[0] = True
         assert _acquire_result(data / "fresh-before.json") == ("profile",)
         active[0] = False
@@ -846,7 +878,7 @@ def test_concurrent_full_witness_reads_cannot_demote_confirmed_evidence(
             proceed.set()
             worker.join(5)
         assert not worker.is_alive() and not failures
-        counts, active = _derivations(monkeypatch)
+        counts, active = _derivations()
         active[0] = True
         assert call() == []
         active[0] = False
@@ -862,7 +894,7 @@ def test_witness_content_still_requires_the_original_settle_margin(
     with storage.acquire_storage(data / "source.json") as lease:
         call = lambda: generation_witnesses._witnesses(data / "source.json", lease)
         _warm(call)
-        counts, active = _derivations(monkeypatch)
+        counts, active = _derivations()
         active[0] = True
         assert call() == []
         active[0] = False
@@ -870,7 +902,7 @@ def test_witness_content_still_requires_the_original_settle_margin(
 
 
 @pytest.mark.parametrize("reuse", (True, False))
-def test_actual_permission_parse_pause_matches_original_refusal(
+def test_actual_permission_parse_pause_matches_original_admitted_write(
     mcp_sources, monkeypatch, reuse
 ):
     import json
@@ -881,7 +913,7 @@ def test_actual_permission_parse_pause_matches_original_refusal(
     source.set_kill_switch(False)
     assert source.path.exists(), "a default False no-op alone leaves no document"
     _warm(source.load)
-    counts, active = _derivations(monkeypatch)
+    counts, active = _derivations()
     active[0] = True
     source.load()
     active[0] = False
@@ -895,17 +927,16 @@ def test_actual_permission_parse_pause_matches_original_refusal(
             pauses.append(storage._begin_local_pause())
         return result
 
-    before = source.path.read_bytes()
     monkeypatch.setattr(storage, "_EVIDENCE_REUSE", reuse)
     _scope_loads(monkeypatch, parse_then_pause)
     try:
-        with pytest.raises(bootstrap.RecoveryRequired) as refusal:
-            source.set_kill_switch(True)
-        # Binding validation starts a fresh original acquisition after pause.
-        # This task preserves that existing refusal and never publishes bytes.
-        assert str(refusal.value) == "storage_locally_paused"
+        # Since 3e618d7119 the write's binding check reuses the lease the RMW
+        # was admitted under, so a pause after the parse no longer forces a
+        # fresh (refused) acquisition. Same answer as the lifetimes pin
+        # test_permission_rmw_admitted_before_pause_finishes.
+        source.set_kill_switch(True)
         assert len(pauses) == 1
-        assert source.path.read_bytes() == before
+        assert original(source.path.read_text())["kill_switch"] is True
     finally:
         for pause in pauses:
             pause.resume()

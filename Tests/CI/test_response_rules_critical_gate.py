@@ -133,6 +133,7 @@ INHERITED = {
         "Tests/Chat/test_provider_tls_failures.py",  # TASK-38717
         "Tests/Architecture/test_guarded_modal_quit_census.py",  # TASK-38747
         "Tests/Chat/test_console_rail_state_prune.py",  # TASK-38722
+        "Tests/Backup_Recovery/test_guarded_raw_evidence_reuse.py",  # TASK-38758
         "--timeout=180",
         "--tb=short",
     ],
