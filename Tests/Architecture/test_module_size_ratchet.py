@@ -186,7 +186,10 @@ _BUDGETS: dict[str, int] = {
     "tldw_chatbook/app_command_providers.py": 1121,
     # TASK-33011: TldwCli's per-feature glue moved verbatim out of app.py
     # (FeatureGlueMixin); governed there, so governed here.
-    "tldw_chatbook/app_feature_glue.py": 742,
+    # 2026-11-04 (TASK-38462 regression fix): 742 -> 753 (+11) -- the
+    # ChaChaNotes FTS backfill skips a profile with no database instead of
+    # creating one in an uncancellable boot worker.
+    "tldw_chatbook/app_feature_glue.py": 753,
     # TASK-35190: the rebaser's endpoint choice moved to
     # console_settings_apply.rebased_endpoint: 29,182 -> 29,150.
     # Rebased onto dev 0fef489ece, whose TASK-35444 Console refresh deferral is +1: 29,151.
@@ -867,7 +870,15 @@ _BUDGETS: dict[str, int] = {
     # 5,706); this branch's fold changes -- the bundled fold_path_part, git
     # exclusion pathspecs in both spellings, grep's ``re`` at module scope --
     # add 17: 5,722, the exact measurement of a fresh build.
-    "tldw_chatbook/Tools/remote_worker_bundle.py": 5722,
+    # 2026-11-03, TASK-38463 (same owner rule): dev 335f984bd2's bundle is
+    # fresh at 5,722; the bundled git exclusion check (folded matcher over
+    # stored non-ASCII names, byte-exact pathspecs, status filter) adds 73:
+    # 5,795, the exact measurement of a fresh build.
+    # 2026-11-03, TASK-38463 PR review round (same owner rule): the bundled
+    # git exclusion fixes (stored-byte brackets, one neutral refusal, a
+    # scope-limited scan, one rule snapshot per call) measure 5,810, the exact
+    # measurement of a fresh build.
+    "tldw_chatbook/Tools/remote_worker_bundle.py": 5810,
     "tldw_chatbook/UI/Screens/scheduling/schedules_workbench.py": 5532,
     "tldw_chatbook/LLM_Calls/LLM_API_Calls.py": 5167,
     "tldw_chatbook/Notes/notes_sync_runtime.py": 5167,

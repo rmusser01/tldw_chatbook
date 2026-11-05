@@ -62,7 +62,7 @@ async def exercise():
             await until(lambda: held[0] not in app.console_runtime._preparation_reads)
             await until(lambda: type(app.screen).__name__ == 'ChatScreen')
             projection = app.screen._console_readiness_config_projection
-            await until(lambda: projection._tokenizer_prepared is not None)
+            await until(lambda: any(slot.prepared for slot in projection._tokenizers.values()))
             assert custom._tokenizer_manager is not None
             composer = app.screen.query_one('#console-native-composer')
             composer.focus_draft_from(None)

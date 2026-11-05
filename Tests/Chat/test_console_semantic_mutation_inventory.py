@@ -6,8 +6,10 @@ import ast
 import hashlib
 import re
 import textwrap
+from collections.abc import Iterator
 from dataclasses import dataclass
 from functools import cache
+from itertools import pairwise
 from pathlib import Path
 from types import MappingProxyType
 from typing import AbstractSet, Mapping
@@ -18,6 +20,34 @@ import pytest
 REPO_ROOT = Path(__file__).resolve().parents[2]
 PACKAGE_ROOT = REPO_ROOT / "tldw_chatbook"
 INVENTORY_PATH = REPO_ROOT / "Docs/Development/console-semantic-mutation-inventory.md"
+
+
+@pytest.fixture(autouse=True)
+def cleanup_file_descriptors() -> Iterator[None]:
+    """Skip Tests/Chat's per-test ``gc.collect()`` for this pure-AST census.
+
+    Overrides the root conftest fixture of this name. Nothing here mounts an
+    app, and a full collection walks the ~8.5M cached AST nodes of the whole
+    package: 13-40 s per test, which made this file take 14 min (TASK-38702).
+    """
+    yield
+
+
+@pytest.fixture(autouse=True, scope="module")
+def _release_repository_scan_caches() -> Iterator[None]:
+    """Free the package-wide AST caches (~2.5 GB) before the next test file."""
+    yield
+    for cached in (
+        _production_modules,
+        _production_functions,
+        _direct_sql_routes,
+        _boundary_call_routes,
+        _carried_writer_actions,
+        _derived_production_target_evidence,
+    ):
+        cached.cache_clear()
+    _STORE_CONSTRUCTIONS.clear()
+
 
 CLASSIFICATIONS = {
     "model-visible",
@@ -58,7 +88,7 @@ DIRECT_SQL_ROUTE_CLASSIFICATION: dict[str, str] = {
     **dict.fromkeys(
         {
             "tldw_chatbook/Canvas/repository.py::CanvasRepository.hard_purge_conversation::sql:delete:conversations(cascades-messages)",
-            "tldw_chatbook/Chatbooks/chatbook_importer.py::ChatbookImporter._import_conversations::sql:update:messages",
+            "tldw_chatbook/Chatbooks/chatbook_importer.py::ChatbookImporter._import_conversations_with_database::sql:update:messages",
             "tldw_chatbook/DB/ChaChaNotes_DB.py::CharactersRAGDB.create_message_variant::sql:update:messages",
             "tldw_chatbook/DB/ChaChaNotes_DB.py::CharactersRAGDB.select_message_variant::sql:update:messages",
             "tldw_chatbook/DB/ChaChaNotes_DB.py::CharactersRAGDB.soft_delete_message::sql:update:messages",
@@ -72,7 +102,7 @@ DIRECT_SQL_ROUTE_CLASSIFICATION: dict[str, str] = {
         {
             "tldw_chatbook/Chat/library_activity.py::LibraryActivityContribution.write::sql:insert:message_trajectory_metadata",
             "tldw_chatbook/Chat/library_preparation.py::LibraryPreparationContribution.write::sql:insert:message_trajectory_metadata",
-            "tldw_chatbook/Chat/console_trace_maintenance.py::LegacyTraceMaintenance.run_batch::sql:delete:message_exchanges",
+            "tldw_chatbook/Chat/console_trace_maintenance.py::LegacyTraceMaintenance._run_admitted_batch::sql:delete:message_exchanges",
             "tldw_chatbook/DB/ChaChaNotes_DB.py::CharactersRAGDB.append_message_attachment_with_metadata.append_attachment::sql:insert:message_generation_metadata",
             "tldw_chatbook/DB/ChaChaNotes_DB.py::CharactersRAGDB._set_message_feedback_uncoordinated::sql:update:messages",
             "tldw_chatbook/DB/ChaChaNotes_DB.py::CharactersRAGDB.append_message_exchanges_local::sql:insert:message_exchanges",
@@ -83,6 +113,13 @@ DIRECT_SQL_ROUTE_CLASSIFICATION: dict[str, str] = {
             "tldw_chatbook/DB/ChaChaNotes_DB.py::CharactersRAGDB.update_message_metadata_local::sql:update:messages",
             "tldw_chatbook/DB/ChaChaNotes_DB.py::CharactersRAGDB.update_message_usage_local::sql:update:messages",
             "tldw_chatbook/DB/ChaChaNotes_DB.py::CharactersRAGDB.upsert_trajectory_rows::sql:insert:message_trajectory_metadata",
+            # TASK-38702 (from #3346): both write only the assistant row's
+            # metadata_json mix-in attempt marker (attempt id + schema version),
+            # as update_message_metadata_local does; the provider-visible
+            # envelope is unchanged. A retry reads the marker to pick the
+            # recorded mix-in snapshot -- request preparation, not a revision.
+            "tldw_chatbook/DB/console_prompt_mixins.py::_mark_assistant::sql:update:messages",
+            "tldw_chatbook/DB/console_prompt_mixins.py::write_fork_state::sql:update:messages",
         },
         "presentation-only",
     ),
@@ -101,6 +138,13 @@ BOUNDARY_CALL_ROUTE_CLASSIFICATION: dict[str, str] = {
             "tldw_chatbook/Character_Chat/local_character_persona_service.py::LocalCharacterPersonaService.update_character_chat_message::call:db:update_message",
             "tldw_chatbook/Chat/chat_persistence_service.py::ChatPersistenceService.append_message_attachment::call:db:append_message_attachment_with_metadata",
             "tldw_chatbook/Chat/chat_persistence_service.py::ChatPersistenceService.commit_durable_turn::call:dispatch:insert_with_messages",
+            # TASK-38702: each creates canonical message rows. The voice pair
+            # (#2504) inserts the user/assistant turn, the agent fork copy
+            # (#2643) re-inserts the source's active path verbatim, and the
+            # mix-in attempt (#3346) creates the pending assistant row.
+            "tldw_chatbook/Chat/chat_persistence_service.py::ChatPersistenceService.commit_completed_voice_pair::call:db:add_message",
+            "tldw_chatbook/Chat/chat_conversation_service.py::ChatConversationService.copy_conversation_active_path::call:db:add_message",
+            "tldw_chatbook/Chat/chat_persistence_service.py::ChatPersistenceService.save_conversation_mixin_attempt::call:persistence:create_message",
             "tldw_chatbook/Chat/chat_persistence_service.py::ChatPersistenceService.create_message::call:db:add_message_with_semantic_sidecars",
             "tldw_chatbook/Chat/chat_persistence_service.py::ChatPersistenceService.fork_console_conversation_bundle::call:persistence:create_message",
             "tldw_chatbook/Chat/chat_persistence_service.py::ChatPersistenceService.keep_message_attachment::call:db:swap_message_attachment_with_scalar",
@@ -116,7 +160,7 @@ BOUNDARY_CALL_ROUTE_CLASSIFICATION: dict[str, str] = {
             "tldw_chatbook/Chat/console_chat_store.py::ConsoleChatStore._persist_generation_variant::call:persistence:replace_assistant_generation_projection",
             "tldw_chatbook/Chat/console_chat_store.py::ConsoleChatStore._persist_new_message::call:persistence:create_message",
             "tldw_chatbook/Chat/console_chat_store.py::ConsoleChatStore._promote_ephemeral_session_atomically::call:persistence:promote_console_conversation_bundle",
-            "tldw_chatbook/Chat/console_chat_store.py::ConsoleChatStore._settle_dispatch_recovery::call:dispatch:settle_with_assistant",
+            "tldw_chatbook/Chat/console_native_commit.py::_store_settle_dispatch_recovery::call:dispatch:settle_with_assistant",
             "tldw_chatbook/Chat/console_chat_store.py::ConsoleChatStore._append_generation_variant::call:persistence:append_message_attachment",
             "tldw_chatbook/Chat/console_chat_store.py::ConsoleChatStore.commit_durable_turn::call:persistence:commit_durable_turn",
             "tldw_chatbook/Chat/console_chat_store.py::ConsoleChatStore._keep_generation_variant::call:persistence:keep_message_attachment",
@@ -125,8 +169,8 @@ BOUNDARY_CALL_ROUTE_CLASSIFICATION: dict[str, str] = {
             "tldw_chatbook/Chat/console_chat_store.py::ConsoleChatStore.persist_provider_continuation_event::call:db:update_provider_continuation",
             "tldw_chatbook/Chat/console_chat_store.py::ConsoleChatStore.persist_roleplay_projection_plan::call:persistence:update_message_content",
             "tldw_chatbook/Chat/console_chat_store.py::ConsoleChatStore.transition_dispatch_recovery_for_retry::call:dispatch:cas_state",
-            "tldw_chatbook/Chatbooks/chatbook_importer.py::ChatbookImporter._import_conversations::call:db:add_message",
-            "tldw_chatbook/Chatbooks/chatbook_importer.py::ChatbookImporter._import_conversations::call:db:add_message_with_semantic_sidecars",
+            "tldw_chatbook/Chatbooks/chatbook_importer.py::ChatbookImporter._import_conversations_with_database::call:db:add_message",
+            "tldw_chatbook/Chatbooks/chatbook_importer.py::ChatbookImporter._import_conversations_with_database::call:db:add_message_with_semantic_sidecars",
             "tldw_chatbook/DB/ChaChaNotes_DB.py::CharactersRAGDB.append_chat_message::call:db:add_message",
             "tldw_chatbook/Research_Interop/chat_handoff.py::insert_research_completion_message::call:db:add_message",
             "tldw_chatbook/Sync_Interop/domain_adapters/chat.py::ChatSyncAdapter.apply::call:db:append_chat_message",
@@ -140,7 +184,7 @@ BOUNDARY_CALL_ROUTE_CLASSIFICATION: dict[str, str] = {
     **dict.fromkeys(
         {
             "tldw_chatbook/Character_Chat/Character_Chat_Lib.py::remove_message_from_conversation::call:db:soft_delete_message",
-            "tldw_chatbook/Character_Chat/local_character_persona_service.py::LocalCharacterPersonaService.delete_character_chat_message::call:db:soft_delete_message",
+            "tldw_chatbook/Character_Chat/local_character_persona_service.py::LocalCharacterPersonaService._delete_character_chat_message::call:db:soft_delete_message",
             "tldw_chatbook/Chat/chat_persistence_service.py::ChatPersistenceService.delete_message_subtree::call:db:soft_delete_message_subtree",
             "tldw_chatbook/Chat/chat_persistence_service.py::ChatPersistenceService.restore_message_subtree::call:db:restore_message_subtree",
             "tldw_chatbook/Chat/console_subtree_delete.py::write_subtree_delete::call:persistence:delete_message_subtree",
@@ -313,6 +357,32 @@ class _ImportedConstantTargetEvidence:
 
 
 @dataclass(frozen=True)
+class _LoopTargetEvidence:
+    """Each dynamic target is the variable of an enclosing loop over literals.
+
+    The loop iterates an inline tuple/list of literal strings, or the
+    ``.items()`` of a function-local dict whose keys are literal strings
+    (an immutable producer, checked as ``mapping-keys``).
+    """
+
+    function_qualname: str
+
+
+@dataclass(frozen=True)
+class _SpecFieldTargetEvidence:
+    """Each dynamic target is ``self.spec.<field>`` of one frozen spec class.
+
+    ``store`` holds the spec it is constructed with; every construction must
+    pass a literal spec, and every spec construction the fields as literals.
+    """
+
+    function_qualname: str
+    store: str
+    spec: str
+    fields: tuple[str, ...]
+
+
+@dataclass(frozen=True)
 class _DerivedTargetEvidence:
     targets: frozenset[str]
     fingerprint: str
@@ -340,7 +410,11 @@ class _SqlFunctionScan:
 
 _DYNAMIC_TARGET_EVIDENCE: dict[
     str,
-    _CallTargetEvidence | _ContainerTargetEvidence | _ImportedConstantTargetEvidence,
+    _CallTargetEvidence
+    | _ContainerTargetEvidence
+    | _ImportedConstantTargetEvidence
+    | _LoopTargetEvidence
+    | _SpecFieldTargetEvidence,
 ] = {
     "tldw_chatbook/DB/Client_Media_DB_v2.py::MediaDatabase.undelete_media": (
         _ContainerTargetEvidence(
@@ -500,6 +574,33 @@ _DYNAMIC_TARGET_EVIDENCE: dict[
         mode="mapping-value-tuples",
         tuple_index=0,
     ),
+    # TASK-38702: literal-loop producers (#3204 project index, #2563 goal
+    # ledger, #2946 plugin authority) and the keyword spec (#3120).
+    **{
+        identity: _LoopTargetEvidence(identity.split("::", 1)[1])
+        for identity in (
+            "tldw_chatbook/DB/Workspace_Project_Index_DB.py::WorkspaceProjectIndexDB._publish_page",
+            "tldw_chatbook/DB/Workspace_Project_Index_DB.py::WorkspaceProjectIndexDB.clear_owned_namespace",
+            "tldw_chatbook/DB/Workspace_Project_Index_DB.py::WorkspaceProjectIndexDB.clear_revoked",
+            "tldw_chatbook/DB/goal_runs.py::GoalRunsStore.remove_payloads",
+            "tldw_chatbook/Plugins/coordinator.py::PluginCoordinator._apply_review",
+            "tldw_chatbook/Plugins/registry.py::PluginRegistry.restore_authority",
+        )
+    },
+    **{
+        f"tldw_chatbook/DB/keyword_store.py::KeywordStore.{method}": (
+            _SpecFieldTargetEvidence(
+                f"KeywordStore.{method}", "KeywordStore", "KeywordStoreSpec", fields
+            )
+        )
+        for method, fields in (
+            ("add_keyword_full", ("keywords_table",)),
+            ("delete_fts", ("fts_table",)),
+            ("soft_delete_keyword", ("keywords_table", "link_table")),
+            ("update_fts", ("fts_table",)),
+            ("update_keywords_for_entity", ("link_table",)),
+        )
+    },
 }
 
 # A changed producer/caller/import structure requires an explicit review-record
@@ -550,9 +651,11 @@ _DYNAMIC_TARGET_EVIDENCE_FINGERPRINTS = {
     "NotesOrganizationRepository._materialize_keyword_link": (
         "584697035ed0463e93b57b5db947e6039b6de113a5dc3603e6122f325ec1e414"
     ),
+    # TASK-38702 re-review: #2862 (fd8e1ec4b9) added a consumer_id keyword to
+    # both callers; their literal tables are unchanged.
     "tldw_chatbook/Personal_Context/repository.py::"
     "PersonalContextRepository._commit_local_body": (
-        "642432fe97af07beed72ae9d24c9217f0fc13d3dba5d6a0ede81b7b28670697d"
+        "f1f4f73db266f0d080f0febe2002b56c1466bb6912bdc94df69df57a6d6969d1"
     ),
     "tldw_chatbook/Personal_Context/repository.py::"
     "PersonalContextRepository.apply_reviewed_link": (
@@ -613,6 +716,40 @@ _DYNAMIC_TARGET_EVIDENCE_FINGERPRINTS = {
     "LocalWritingService.restore_trash": (
         "a0cabdc74d34c32ae2ed059024f0d152e69dd5b6378a4f05abc8e257a569961b"
     ),
+    # TASK-38702: the families reviewed for the first time.
+    "tldw_chatbook/DB/Workspace_Project_Index_DB.py::WorkspaceProjectIndexDB._publish_page": (
+        "db86216052f9f1600446a115ef97b91dcc52ea5aa1dc40a2c4f3d9da00f4eca8"
+    ),
+    "tldw_chatbook/DB/Workspace_Project_Index_DB.py::WorkspaceProjectIndexDB.clear_owned_namespace": (
+        "ffa72b65df8268759a76bf18d9d30ff66bd8e1cb7a578a5cc3ca124f21db49d4"
+    ),
+    "tldw_chatbook/DB/Workspace_Project_Index_DB.py::WorkspaceProjectIndexDB.clear_revoked": (
+        "ffa72b65df8268759a76bf18d9d30ff66bd8e1cb7a578a5cc3ca124f21db49d4"
+    ),
+    "tldw_chatbook/DB/goal_runs.py::GoalRunsStore.remove_payloads": (
+        "b34212e85af3a48b5b7a03b71cc496b287c3b69f56d31563b7edf7420e857f59"
+    ),
+    "tldw_chatbook/Plugins/coordinator.py::PluginCoordinator._apply_review": (
+        "e8d935a14f366a3f0ce191b7e3e3e115d5b64819354234f33134c9c7dfac7b6b"
+    ),
+    "tldw_chatbook/Plugins/registry.py::PluginRegistry.restore_authority": (
+        "4a3b2c2af3146f9d6c79f3e0ee4b8a2cdf28cf36459d698f159d7ec39ee2b4f7"
+    ),
+    "tldw_chatbook/DB/keyword_store.py::KeywordStore.add_keyword_full": (
+        "4c6a6cf34e3610c6f9f31d03d4844b1972d2fcd83d1f392bfccf92b63e5801b6"
+    ),
+    "tldw_chatbook/DB/keyword_store.py::KeywordStore.delete_fts": (
+        "1297c6b7411a2e3e9f783b62287ff6411e829380906d7629a1bc54cb2649a5e8"
+    ),
+    "tldw_chatbook/DB/keyword_store.py::KeywordStore.soft_delete_keyword": (
+        "bc2837e535b987caa7a38e322672265a3ee7f80f922c239b7da9928f93d259f3"
+    ),
+    "tldw_chatbook/DB/keyword_store.py::KeywordStore.update_fts": (
+        "1297c6b7411a2e3e9f783b62287ff6411e829380906d7629a1bc54cb2649a5e8"
+    ),
+    "tldw_chatbook/DB/keyword_store.py::KeywordStore.update_keywords_for_entity": (
+        "1717df70b2ec8022f86ae2fc4ea86934ebc88a5e89cc1f8d5e5b5c071d3eedad"
+    ),
 }
 
 
@@ -623,9 +760,10 @@ def _reviewed_dynamic_sql_site(
     *,
     domain: str,
     exact_targets: frozenset[str],
+    executor: str = "execute",
 ) -> tuple[str, _DynamicSqlReview]:
     site = _UnresolvedDynamicSqlSite(
-        executor="execute",
+        executor=executor,
         occurrence=1,
         template=template,
         source=source,
@@ -1107,6 +1245,228 @@ _PROVEN_NON_SEMANTIC_DYNAMIC_SQL = dict(
                 }
             ),
         ),
+        # TASK-38702: reviewed after #3120/#3204/#2563/#2946 added them.
+        _reviewed_dynamic_sql_site(
+            "tldw_chatbook/DB/Workspace_Project_Index_DB.py::WorkspaceProjectIndexDB._publish_page",
+            "DELETE FROM {expression} WHERE path=? OR (path>=? AND path<?)",
+            "f'DELETE FROM {table} WHERE path=? OR (path>=? AND path<?)'",
+            domain="workspace project index rows",
+            exact_targets=frozenset({"directories", "entries", "files", "scan_seen"}),
+        ),
+        _reviewed_dynamic_sql_site(
+            "tldw_chatbook/DB/Workspace_Project_Index_DB.py::WorkspaceProjectIndexDB.clear_owned_namespace",
+            "DELETE FROM {expression}",
+            "f'DELETE FROM {table}'",
+            domain="workspace project index rows",
+            exact_targets=frozenset(
+                {
+                    "chunk_fts",
+                    "chunks",
+                    "directories",
+                    "entries",
+                    "files",
+                    "scan_pages",
+                    "scan_seen",
+                }
+            ),
+        ),
+        _reviewed_dynamic_sql_site(
+            "tldw_chatbook/DB/Workspace_Project_Index_DB.py::WorkspaceProjectIndexDB.clear_revoked",
+            "DELETE FROM {expression}",
+            "f'DELETE FROM {table}'",
+            domain="workspace project index rows",
+            exact_targets=frozenset(
+                {
+                    "chunk_fts",
+                    "chunks",
+                    "directories",
+                    "entries",
+                    "files",
+                    "scan_pages",
+                    "scan_seen",
+                }
+            ),
+        ),
+        _reviewed_dynamic_sql_site(
+            "tldw_chatbook/DB/goal_runs.py::GoalRunsStore.remove_payloads",
+            "DELETE FROM {expression} WHERE goal_id=?",
+            "f'DELETE FROM {table} WHERE goal_id=?'",
+            domain="goal run private payload rows",
+            exact_targets=frozenset(
+                {
+                    "goal_checkpoints",
+                    "goal_evidence",
+                    "goal_payload_reservations",
+                    "goal_reports",
+                    "goal_waits",
+                }
+            ),
+        ),
+        _reviewed_dynamic_sql_site(
+            "tldw_chatbook/DB/keyword_store.py::KeywordStore.add_keyword_full",
+            "INSERT INTO {expression} (keyword, uuid, last_modified, version, client_id, deleted) VALUES (?, ?, ?, ?, ?, 0)",
+            "f'INSERT INTO {self.spec.keywords_table} (keyword, uuid, last_modified, version, client_id, deleted) VALUES (?, ?, ?, ?, ?, 0)'",
+            domain="media and prompt keyword rows",
+            exact_targets=frozenset({"Keywords", "PromptKeywordsTable"}),
+        ),
+        _reviewed_dynamic_sql_site(
+            "tldw_chatbook/DB/keyword_store.py::KeywordStore.add_keyword_full",
+            "UPDATE {expression} SET deleted=0, last_modified=?, version=?, client_id=? WHERE id=? AND version=?",
+            "f'UPDATE {self.spec.keywords_table} SET deleted=0, last_modified=?, version=?, client_id=? WHERE id=? AND version=?'",
+            domain="media and prompt keyword rows",
+            exact_targets=frozenset({"Keywords", "PromptKeywordsTable"}),
+        ),
+        _reviewed_dynamic_sql_site(
+            "tldw_chatbook/DB/keyword_store.py::KeywordStore.delete_fts",
+            "DELETE FROM {expression} WHERE rowid = ?",
+            "f'DELETE FROM {self.spec.fts_table} WHERE rowid = ?'",
+            domain="media and prompt keyword rows",
+            exact_targets=frozenset({"keyword_fts", "prompt_keywords_fts"}),
+        ),
+        _reviewed_dynamic_sql_site(
+            "tldw_chatbook/DB/keyword_store.py::KeywordStore.soft_delete_keyword",
+            "DELETE FROM {expression} WHERE keyword_id = ?",
+            "f'DELETE FROM {self.spec.link_table} WHERE keyword_id = ?'",
+            domain="media and prompt keyword rows",
+            exact_targets=frozenset(
+                {
+                    "Keywords",
+                    "MediaKeywords",
+                    "PromptKeywordLinks",
+                    "PromptKeywordsTable",
+                }
+            ),
+        ),
+        _reviewed_dynamic_sql_site(
+            "tldw_chatbook/DB/keyword_store.py::KeywordStore.soft_delete_keyword",
+            "DELETE FROM {expression} WHERE keyword_id = ? AND {expression} IN ({expression})",
+            "f'DELETE FROM {self.spec.link_table} WHERE keyword_id = ? AND {self.spec.entity_fk} IN ({placeholders})'",
+            domain="media and prompt keyword rows",
+            exact_targets=frozenset(
+                {
+                    "Keywords",
+                    "MediaKeywords",
+                    "PromptKeywordLinks",
+                    "PromptKeywordsTable",
+                }
+            ),
+        ),
+        _reviewed_dynamic_sql_site(
+            "tldw_chatbook/DB/keyword_store.py::KeywordStore.soft_delete_keyword",
+            "UPDATE {expression} SET deleted=1, last_modified=?, version=?, client_id=? WHERE id=? AND version=?",
+            "f'UPDATE {self.spec.keywords_table} SET deleted=1, last_modified=?, version=?, client_id=? WHERE id=? AND version=?'",
+            domain="media and prompt keyword rows",
+            exact_targets=frozenset(
+                {
+                    "Keywords",
+                    "MediaKeywords",
+                    "PromptKeywordLinks",
+                    "PromptKeywordsTable",
+                }
+            ),
+        ),
+        _reviewed_dynamic_sql_site(
+            "tldw_chatbook/DB/keyword_store.py::KeywordStore.update_fts",
+            "INSERT OR REPLACE INTO {expression} (rowid, keyword) VALUES (?, ?)",
+            "f'INSERT OR REPLACE INTO {self.spec.fts_table} (rowid, keyword) VALUES (?, ?)'",
+            domain="media and prompt keyword rows",
+            exact_targets=frozenset({"keyword_fts", "prompt_keywords_fts"}),
+        ),
+        _reviewed_dynamic_sql_site(
+            "tldw_chatbook/DB/keyword_store.py::KeywordStore.update_keywords_for_entity",
+            "DELETE FROM {expression} WHERE {expression} = ? AND keyword_id IN ({expression})",
+            "f'DELETE FROM {self.spec.link_table} WHERE {self.spec.entity_fk} = ? AND keyword_id IN ({remove_placeholders})'",
+            domain="media and prompt keyword rows",
+            exact_targets=frozenset({"MediaKeywords", "PromptKeywordLinks"}),
+        ),
+        _reviewed_dynamic_sql_site(
+            "tldw_chatbook/DB/keyword_store.py::KeywordStore.update_keywords_for_entity",
+            "INSERT OR IGNORE INTO {expression} ({expression}, keyword_id) VALUES (?, ?)",
+            "f'INSERT OR IGNORE INTO {self.spec.link_table} ({self.spec.entity_fk}, keyword_id) VALUES (?, ?)'",
+            domain="media and prompt keyword rows",
+            exact_targets=frozenset({"MediaKeywords", "PromptKeywordLinks"}),
+            executor="executemany",
+        ),
+        _reviewed_dynamic_sql_site(
+            "tldw_chatbook/Plugins/coordinator.py::PluginCoordinator._apply_review",
+            "DELETE FROM {expression} WHERE installation_id=?",
+            "f'DELETE FROM {table} WHERE installation_id=?'",
+            domain="plugin installation authority rows",
+            exact_targets=frozenset(
+                {
+                    "activation",
+                    "authority_generations",
+                    "components",
+                    "installations",
+                    "mappings",
+                    "revision_trust",
+                    "revisions",
+                    "selections",
+                    "sources",
+                }
+            ),
+        ),
+        _reviewed_dynamic_sql_site(
+            "tldw_chatbook/Plugins/coordinator.py::PluginCoordinator._apply_review",
+            "DELETE FROM {expression} WHERE installation_id=? AND revision_digest=?",
+            "f'DELETE FROM {table} WHERE installation_id=? AND revision_digest=?'",
+            domain="plugin installation authority rows",
+            exact_targets=frozenset(
+                {
+                    "activation",
+                    "authority_generations",
+                    "components",
+                    "installations",
+                    "mappings",
+                    "revision_trust",
+                    "revisions",
+                    "selections",
+                    "sources",
+                }
+            ),
+        ),
+        _reviewed_dynamic_sql_site(
+            "tldw_chatbook/Plugins/registry.py::PluginRegistry.restore_authority",
+            "DELETE FROM {expression}",
+            "f'DELETE FROM {table}'",
+            domain="plugin installation authority rows",
+            exact_targets=frozenset(
+                {
+                    "activation",
+                    "authority_generations",
+                    "components",
+                    "data_roots",
+                    "installations",
+                    "mappings",
+                    "revision_trust",
+                    "revisions",
+                    "selections",
+                    "sources",
+                    "tombstones",
+                }
+            ),
+        ),
+        _reviewed_dynamic_sql_site(
+            "tldw_chatbook/Plugins/registry.py::PluginRegistry.restore_authority",
+            "INSERT INTO {expression} ({expression}) VALUES ({expression})",
+            "f\"INSERT INTO {table} ({','.join(fields)}) VALUES ({placeholders})\"",
+            domain="plugin installation authority rows",
+            exact_targets=frozenset(
+                {
+                    "activation",
+                    "authority_generations",
+                    "components",
+                    "data_roots",
+                    "installations",
+                    "mappings",
+                    "revision_trust",
+                    "revisions",
+                    "selections",
+                    "sources",
+                    "tombstones",
+                }
+            ),
+        ),
     ]
 )
 
@@ -1206,6 +1566,30 @@ def _literal_string_value(node: ast.AST) -> str | None:
     ):
         return "".join(value.value for value in node.values)  # type: ignore[union-attr]
     return None
+
+
+def _literal_string_choices(node: ast.AST) -> frozenset[str] | None:
+    """Every string ``node`` can evaluate to, or None unless statically finite.
+
+    Beyond one literal: a conditional between such choices, or a subscript of
+    an inline dict literal whose every value is one (TASK-38702: Personal
+    Context picks an id attribute name this way).
+    """
+    literal = _literal_string_value(node)
+    if literal is not None:
+        return frozenset({literal})
+    if isinstance(node, ast.IfExp):
+        branches = (
+            _literal_string_choices(node.body),
+            _literal_string_choices(node.orelse),
+        )
+    elif isinstance(node, ast.Subscript) and isinstance(node.value, ast.Dict):
+        branches = tuple(_literal_string_choices(value) for value in node.value.values)
+    else:
+        return None
+    if any(branch is None for branch in branches):
+        return None
+    return frozenset().union(*branches)
 
 
 def _module_string_constants(tree: ast.Module) -> tuple[tuple[str, str], ...]:
@@ -1312,17 +1696,17 @@ def _assert_direct_helper_references(
             and node.func.id == "getattr"
             and len(node.args) >= 2
         ):
-            reflected_name = _literal_string_value(node.args[1])
-            if reflected_name is None:
+            reflected_names = _literal_string_choices(node.args[1])
+            if reflected_names is None:
                 raise AssertionError(
                     "runtime-dynamic helper reflection cannot exclude a reviewed "
                     "dynamic SQL helper"
                 )
-            if reflected_name not in helpers:
+            if not reflected_names & helpers:
                 continue
             raise AssertionError(
-                f"reviewed dynamic SQL helper {reflected_name!r} was forwarded "
-                "through getattr()"
+                f"reviewed dynamic SQL helper {min(reflected_names & helpers)!r} "
+                "was forwarded through getattr()"
             )
 
 
@@ -1872,6 +2256,9 @@ def _container_targets(
     if evidence.mode == "mapping-values":
         assert isinstance(value, ast.Dict)
         return frozenset(_literal_string(item) for item in value.values)
+    if evidence.mode == "mapping-keys":
+        assert isinstance(value, ast.Dict)
+        return frozenset(_literal_string(item) for item in value.keys)
     if evidence.mode == "mapping-value-tuples":
         assert isinstance(value, ast.Dict)
         assert evidence.tuple_index is not None
@@ -2075,7 +2462,479 @@ def _derive_target_evidence(
             frozenset(targets),
             _evidence_fingerprint(fingerprint_parts),
         )
+    if isinstance(evidence, _LoopTargetEvidence):
+        return _derive_loop_targets(tree, evidence)
+    if isinstance(evidence, _SpecFieldTargetEvidence):
+        return _derive_spec_field_targets(tree, evidence, modules)
     raise AssertionError(f"unknown dynamic SQL target evidence: {evidence!r}")
+
+
+_DYNAMIC_TARGET_PREFIX = re.compile(
+    r"(?:insert(?:\s+or\s+\w+)?\s+into|update|delete\s+from)\s+$",
+    re.IGNORECASE,
+)
+
+
+def _evidence_function(
+    tree: ast.Module, qualname: str
+) -> ast.FunctionDef | ast.AsyncFunctionDef:
+    function = next(
+        (node for name, node in _function_nodes(tree) if name == qualname), None
+    )
+    assert function is not None, (
+        f"dynamic SQL evidence function disappeared: {qualname}"
+    )
+    return function
+
+
+def _dynamic_target_expressions(
+    tree: ast.Module,
+    function: ast.FunctionDef | ast.AsyncFunctionDef,
+) -> list[ast.expr]:
+    """Return the interpolated table of each of the function's dynamic sites.
+
+    Every site the SQL scan reports must be an inline f-string executor
+    argument, so each target is tied to the expression that supplies it.
+    """
+    sites = {
+        site.source
+        for site in _scan_sql_function(
+            function, dict(_module_string_constants(tree))
+        ).unresolved_sites
+    }
+    found: list[ast.expr] = []
+    for node in _function_body_nodes(function):
+        if not (
+            isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Attribute)
+            and node.func.attr in {"execute", "executemany"}
+            and node.args
+            and _normalize_site_text(ast.unparse(node.args[0])) in sites
+        ):
+            continue
+        assert isinstance(node.args[0], ast.JoinedStr), (
+            "dynamic SQL target evidence needs an inline f-string site"
+        )
+        values = node.args[0].values
+        targets = [
+            value.value
+            for before, value in pairwise(values)
+            if isinstance(value, ast.FormattedValue)
+            and isinstance(before, ast.Constant)
+            and isinstance(before.value, str)
+            and _DYNAMIC_TARGET_PREFIX.search(_SQL_COMMENT.sub(" ", before.value))
+        ]
+        assert targets, "dynamic SQL site has no interpolated mutation target"
+        found.extend(targets)
+    assert found, "dynamic SQL evidence function has no dynamic mutation target"
+    return found
+
+
+def _derive_loop_targets(
+    tree: ast.Module, evidence: _LoopTargetEvidence
+) -> _DerivedTargetEvidence:
+    function = _evidence_function(tree, evidence.function_qualname)
+    parents = {
+        id(child): parent
+        for parent in ast.walk(function)
+        for child in ast.iter_child_nodes(parent)
+    }
+    targets: set[str] = set()
+    fingerprint_parts: list[str] = []
+    for expression in _dynamic_target_expressions(tree, function):
+        assert isinstance(expression, ast.Name), (
+            "dynamic SQL loop target must be a plain loop variable"
+        )
+        name = expression.id
+        loop = parents.get(id(expression))
+        while loop is not None and not (
+            isinstance(loop, ast.For)
+            and (
+                (isinstance(loop.target, ast.Name) and loop.target.id == name)
+                or (
+                    isinstance(loop.target, ast.Tuple)
+                    and loop.target.elts
+                    and isinstance(loop.target.elts[0], ast.Name)
+                    and loop.target.elts[0].id == name
+                )
+            )
+        ):
+            assert not isinstance(loop, (ast.FunctionDef, ast.AsyncFunctionDef)), (
+                f"dynamic SQL target {name!r} is not bound by an enclosing loop"
+            )
+            loop = parents.get(id(loop))
+        assert loop is not None, (
+            f"dynamic SQL target {name!r} is not bound by an enclosing loop"
+        )
+        for statement in [*loop.body, *loop.orelse]:
+            for node in ast.walk(statement):
+                assert not (
+                    isinstance(node, ast.Name)
+                    and node.id == name
+                    and isinstance(node.ctx, (ast.Store, ast.Del))
+                ), f"dynamic SQL loop target {name!r} is rebound inside its loop"
+        fingerprint_parts.append(
+            f"loop:{ast.dump(loop.target, include_attributes=False)}:"
+            f"{ast.dump(loop.iter, include_attributes=False)}"
+        )
+        if isinstance(loop.target, ast.Name) and isinstance(
+            loop.iter, (ast.Tuple, ast.List)
+        ):
+            targets.update(_literal_string(item) for item in loop.iter.elts)
+            continue
+        mapping = loop.iter
+        assert (
+            isinstance(loop.target, ast.Tuple)
+            and isinstance(mapping, ast.Call)
+            and not mapping.args
+            and not mapping.keywords
+            and isinstance(mapping.func, ast.Attribute)
+            and mapping.func.attr == "items"
+            and isinstance(mapping.func.value, ast.Name)
+        ), "dynamic SQL loop must iterate literal tables or a local mapping's items()"
+        assignment = _container_assignment(
+            tree,
+            _ContainerTargetEvidence(
+                symbol=mapping.func.value.id,
+                mode="mapping-keys",
+                function_qualname=evidence.function_qualname,
+            ),
+        )
+        fingerprint_parts.append(
+            f"container:{ast.dump(assignment, include_attributes=False)}"
+        )
+        targets.update(
+            _container_targets(
+                assignment,
+                _ContainerTargetEvidence(
+                    symbol=mapping.func.value.id, mode="mapping-keys"
+                ),
+            )
+        )
+    return _DerivedTargetEvidence(
+        frozenset(targets), _evidence_fingerprint(fingerprint_parts)
+    )
+
+
+_STORE_CONSTRUCTIONS: dict[
+    tuple[int, str, bool],
+    tuple[ast.Module, tuple[ast.Call, ...], frozenset[str]],
+] = {}
+_REFLECTIVE_WRITERS = frozenset({"setattr", "delattr", "__setattr__", "__delattr__"})
+_NAMESPACE_WRITERS = frozenset(
+    {"update", "setdefault", "pop", "__setitem__", "__delitem__"}
+)
+
+
+def _zero_arg_super_init(statement: ast.stmt) -> bool:
+    call = statement.value if isinstance(statement, ast.Expr) else None
+    return (
+        isinstance(call, ast.Call)
+        and isinstance(call.func, ast.Attribute)
+        and call.func.attr == "__init__"
+        and isinstance(call.func.value, ast.Call)
+        and isinstance(call.func.value.func, ast.Name)
+        and call.func.value.func.id == "super"
+        and not call.func.value.args
+        and not call.func.value.keywords
+    )
+
+
+def _guarded_spec_bindings(module: ast.Module, store: str, *, own: bool) -> set[int]:
+    """``self.spec`` bindings that no ``store`` instance can reach.
+
+    In the store's own module, its ``__init__`` (bound once from its ``spec``
+    parameter, checked by the caller). Anywhere else (production: the Console
+    video and generation cards), an ``__init__`` whose first statement is a
+    zero-argument ``super().__init__(...)``: that raises ``TypeError`` for a
+    receiver that is not an instance of the class, and the store has no base
+    classes and cannot be named as one, so even ``Card.__init__(store, other)``
+    stops before the binding. ``self`` must not be rebound, nor ``super`` in
+    the module.
+    """
+    super_rebound = any(
+        (
+            isinstance(node, ast.Name)
+            and node.id == "super"
+            and not isinstance(node.ctx, ast.Load)
+        )
+        or (
+            isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef))
+            and node.name == "super"
+        )
+        or (isinstance(node, ast.alias) and (node.asname or node.name) == "super")
+        for node in ast.walk(module)
+    )
+    allowed: set[int] = set()
+    for owner in ast.walk(module):
+        if not isinstance(owner, ast.ClassDef):
+            continue
+        for method in owner.body:
+            if not (
+                isinstance(method, (ast.FunctionDef, ast.AsyncFunctionDef))
+                and method.name == "__init__"
+                and not method.decorator_list
+                and method.args.args
+                and method.args.args[0].arg == "self"
+            ):
+                continue
+            nodes = _function_body_nodes(method)
+            body = [
+                statement
+                for index, statement in enumerate(method.body)
+                if not (
+                    index == 0
+                    and isinstance(statement, ast.Expr)
+                    and _literal_string_value(statement.value) is not None
+                )
+            ]
+            if any(
+                isinstance(node, ast.Name)
+                and node.id == "self"
+                and not isinstance(node.ctx, ast.Load)
+                for node in nodes
+            ) or not (
+                (own and owner.name == store)
+                or (not super_rebound and body and _zero_arg_super_init(body[0]))
+            ):
+                continue
+            allowed.update(
+                id(node)
+                for node in nodes
+                if isinstance(node, ast.Attribute)
+                and node.attr == "spec"
+                and isinstance(node.ctx, ast.Store)
+                and isinstance(node.value, ast.Name)
+                and node.value.id == "self"
+            )
+    return allowed
+
+
+def _is_namespace(node: ast.AST) -> bool:
+    return (isinstance(node, ast.Attribute) and node.attr == "__dict__") or (
+        isinstance(node, ast.Call) and _call_name(node) == "vars"
+    )
+
+
+def _namespace_keys(call: ast.Call) -> set[str]:
+    """Literal keys a ``__dict__``/``vars()`` mutator call writes."""
+    if isinstance(call.func, ast.Attribute) and call.func.attr == "update":
+        keys = [keyword.arg for keyword in call.keywords]
+        keys.extend(
+            _literal_string_value(key)
+            for argument in call.args
+            if isinstance(argument, ast.Dict)
+            for key in argument.keys
+            if key is not None
+        )
+    else:
+        keys = [_literal_string_value(call.args[0])] if call.args else []
+    return {key for key in keys if key is not None}
+
+
+def _store_constructions(
+    module: ast.Module, store: str, *, own: bool
+) -> tuple[tuple[ast.Call, ...], frozenset[str]]:
+    """Every direct ``store(...)`` call in ``module``; any other use fails closed.
+
+    The same walk returns every attribute name ``module`` writes or deletes
+    by literal name -- through ``setattr``/``__setattr__`` (and the ``del``
+    forms) or an instance namespace (``x.__dict__[...]``, ``vars(x)[...]`` and
+    their mutators) -- for the caller to check against the reviewed fields,
+    and fails on a ``.spec`` write outside ``_guarded_spec_bindings``.
+    Memoized per module object: each keyword-store review re-reads the whole
+    production tree, and one walk of it costs seconds.
+
+    Limits: dynamic names and keys are not resolved (``setattr(store, name,
+    x)``, ``vars(store)[name] = x``, ``clear()``), nor are ``__dict__`` or
+    ``__class__`` assignment, an explicit ``store.__init__(...)``, aliases
+    (``d = vars(store)``, ``f = setattr``), ``exec``/``eval`` or ``pickle``;
+    this census pins static shapes and is not a sandbox.
+    """
+    key = (id(module), store, own)
+    cached = _STORE_CONSTRUCTIONS.get(key)
+    if cached is not None and cached[0] is module:
+        return cached[1], cached[2]
+    nodes = list(ast.walk(module))
+    calls = tuple(
+        node
+        for node in nodes
+        if isinstance(node, ast.Call) and _call_name(node) == store
+    )
+    direct = {id(call.func) for call in calls}
+    spec_writes = [
+        node
+        for node in nodes
+        if isinstance(node, ast.Attribute)
+        and node.attr == "spec"
+        and isinstance(node.ctx, (ast.Store, ast.Del))
+    ]
+    if spec_writes:
+        guarded = _guarded_spec_bindings(module, store, own=own)
+        assert all(id(node) in guarded for node in spec_writes), (
+            ".spec was written outside its own class's __init__, or in an "
+            "__init__ that does not open with a zero-argument super().__init__()"
+        )
+    reflected = {
+        attribute
+        for node in nodes
+        if isinstance(node, ast.Call) and _call_name(node) in _REFLECTIVE_WRITERS
+        for argument in node.args[:2]
+        if (attribute := _literal_string_value(argument)) is not None
+    }
+    for node in nodes:
+        if (
+            isinstance(node, ast.Subscript)
+            and isinstance(node.ctx, (ast.Store, ast.Del))
+            and _is_namespace(node.value)
+            and (attribute := _literal_string_value(node.slice)) is not None
+        ):
+            reflected.add(attribute)
+        elif (
+            isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Attribute)
+            and node.func.attr in _NAMESPACE_WRITERS
+            and _is_namespace(node.func.value)
+        ):
+            reflected.update(_namespace_keys(node))
+    for node in nodes:
+        referenced = (
+            node.id
+            if isinstance(node, ast.Name)
+            else node.attr
+            if isinstance(node, ast.Attribute)
+            else None
+        )
+        assert referenced != store or id(node) in direct, (
+            f"{store} was forwarded instead of constructed directly"
+        )
+        assert not (
+            isinstance(node, ast.alias)
+            and node.name == store
+            and node.asname not in (None, store)
+        ), f"{store} was imported under another name"
+        assert not (
+            isinstance(node, ast.Call)
+            and _call_name(node) == "getattr"
+            and len(node.args) >= 2
+            and _literal_string_value(node.args[1]) == store
+        ), f"{store} was reflected through getattr()"
+    frozen = frozenset(reflected)
+    _STORE_CONSTRUCTIONS[key] = (module, calls, frozen)
+    return calls, frozen
+
+
+def _derive_spec_field_targets(
+    tree: ast.Module,
+    evidence: _SpecFieldTargetEvidence,
+    modules: Mapping[str, ast.Module],
+) -> _DerivedTargetEvidence:
+    function = _evidence_function(tree, evidence.function_qualname)
+    used = set()
+    for expression in _dynamic_target_expressions(tree, function):
+        assert (
+            isinstance(expression, ast.Attribute)
+            and isinstance(expression.value, ast.Attribute)
+            and expression.value.attr == "spec"
+            and isinstance(expression.value.value, ast.Name)
+            and expression.value.value.id == "self"
+        ), "dynamic SQL spec target must read self.spec.<field>"
+        used.add(expression.attr)
+    assert used == set(evidence.fields), (
+        f"dynamic SQL spec fields changed: {sorted(used)}"
+    )
+    spec_class = next(
+        (
+            node
+            for node in tree.body
+            if isinstance(node, ast.ClassDef) and node.name == evidence.spec
+        ),
+        None,
+    )
+    assert spec_class is not None and any(
+        isinstance(decorator, ast.Call)
+        and _call_name(decorator) == "dataclass"
+        and any(
+            keyword.arg == "frozen"
+            and isinstance(keyword.value, ast.Constant)
+            and keyword.value.value is True
+            for keyword in decorator.keywords
+        )
+        for decorator in spec_class.decorator_list
+    ), f"{evidence.spec} must be a @dataclass(frozen=True) beside {evidence.store}"
+    stores = [
+        node
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Attribute)
+        and node.attr == "spec"
+        and isinstance(node.ctx, (ast.Store, ast.Del))
+    ]
+    store_class = next(
+        (
+            node
+            for node in tree.body
+            if isinstance(node, ast.ClassDef) and node.name == evidence.store
+        ),
+        None,
+    )
+    # A guarded ``super().__init__()`` elsewhere relies on this: an instance
+    # of a base-less store is never an instance of another class.
+    assert store_class is not None and not (
+        store_class.bases or store_class.keywords
+    ), f"{evidence.store} must have no base classes"
+    init = _evidence_function(tree, f"{evidence.store}.__init__")
+    assignment = next(
+        (
+            node
+            for node in _function_body_nodes(init)
+            if isinstance(node, ast.Assign) and node.targets[0] in stores
+        ),
+        None,
+    )
+    assert (
+        len(stores) == 1
+        and assignment is not None
+        and isinstance(assignment.value, ast.Name)
+        and assignment.value.id == "spec"
+        and "spec" in {arg.arg for arg in init.args.args}
+    ), f"{evidence.store}.spec must be bound once, from its spec parameter"
+    fingerprint_parts = [f"bind:{ast.dump(assignment, include_attributes=False)}"]
+    targets: set[str] = set()
+    constructions = 0
+    unique = {
+        id(module): (name, module) for name, module in {**modules, "": tree}.items()
+    }
+    reviewed = {"spec", *evidence.fields}
+    for module_name, module in sorted(unique.values(), key=lambda item: item[0]):
+        calls, reflected = _store_constructions(
+            module, evidence.store, own=module is tree
+        )
+        assert not reflected & reviewed, (
+            f"{evidence.store}.spec or a reviewed {evidence.spec} field is "
+            "written reflectively"
+        )
+        for node in calls:
+            constructions += 1
+            spec = _literal_call_argument(node, _LiteralCallTarget("", 1, "spec"))
+            if isinstance(spec, ast.Name):
+                spec = _assigned_module_value(module, spec.id)
+            assert (
+                isinstance(spec, ast.Call)
+                and _call_name(spec) == evidence.spec
+                and not spec.args
+                and all(keyword.arg is not None for keyword in spec.keywords)
+            ), f"{evidence.store} must be built from a keyword-literal {evidence.spec}"
+            for field in evidence.fields:
+                value = next(
+                    (kw.value for kw in spec.keywords if kw.arg == field), None
+                )
+                assert value is not None, f"{evidence.spec} lacks {field}"
+                targets.add(_literal_string(value))
+                fingerprint_parts.append(f"spec:{module_name}:{field}={value.value}")
+    assert constructions, f"{evidence.store} has no construction evidence"
+    return _DerivedTargetEvidence(
+        frozenset(targets), _evidence_fingerprint(fingerprint_parts)
+    )
 
 
 def _module_name(path: Path) -> str:
@@ -2305,10 +3164,100 @@ def _assert_exact_dynamic_sql_reviews(
     return actual
 
 
+# TASK-38702: a backup archive staging rewrite copies one staged member's whole
+# catalog (ChaChaNotes included, so `messages`) into a fresh private file that
+# then replaces the staged member. It opens no live profile database, so --
+# like the `_migrate_from_*` bodies -- it is not a live mutation route. Its
+# exact dynamic sites stay pinned, and each must write through the connection
+# the function opened on its own uuid-named destination.
+_ARCHIVE_STAGING_REWRITE_SITES: Mapping[str, frozenset[str]] = MappingProxyType(
+    {
+        "tldw_chatbook/Backup_Recovery/credentials.py::_rewrite_database": frozenset(
+            {
+                (
+                    "tldw_chatbook/Backup_Recovery/credentials.py::_rewrite_database::"
+                    "dynamic-sql:execute:1:DELETE FROM {expression} <= "
+                    "f'DELETE FROM {quote(name)}'"
+                ),
+                (
+                    "tldw_chatbook/Backup_Recovery/credentials.py::_rewrite_database::"
+                    "dynamic-sql:execute:1:INSERT INTO {expression} ({expression}) "
+                    'VALUES ({expression}) <= f"INSERT INTO {quote(name)} '
+                    "({selectors}) VALUES ({','.join(('?' for _ in values))})\""
+                ),
+            }
+        ),
+    }
+)
+
+
+def _assert_fresh_staging_writes(
+    function: ast.FunctionDef | ast.AsyncFunctionDef,
+    constants: Mapping[str, str],
+) -> None:
+    """Every dynamic mutation must execute on a connection to a fresh file."""
+    nodes = _function_body_nodes(function)
+    bindings: dict[str, int] = {}
+    for node in nodes:
+        if isinstance(node, ast.Name) and isinstance(node.ctx, (ast.Store, ast.Del)):
+            bindings[node.id] = bindings.get(node.id, 0) + 1
+    fresh_paths = {
+        node.targets[0].id
+        for node in nodes
+        if isinstance(node, ast.Assign)
+        and len(node.targets) == 1
+        and isinstance(node.targets[0], ast.Name)
+        and any(
+            isinstance(call, ast.Call) and _call_name(call) == "uuid4"
+            for call in ast.walk(node.value)
+        )
+    }
+    opened = {
+        item.optional_vars.id: item.context_expr.args[0].args[1].id
+        for node in nodes
+        if isinstance(node, (ast.With, ast.AsyncWith))
+        for item in node.items
+        if isinstance(item.optional_vars, ast.Name)
+        and isinstance(item.context_expr, ast.Call)
+        and _call_name(item.context_expr) == "closing"
+        and len(item.context_expr.args) == 1
+        and isinstance(item.context_expr.args[0], ast.Call)
+        and _call_name(item.context_expr.args[0]) == "connect_private_sqlite"
+        and len(item.context_expr.args[0].args) == 2
+        and isinstance(item.context_expr.args[0].args[1], ast.Name)
+    }
+    writes = 0
+    for node in nodes:
+        if not (
+            isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Attribute)
+            and node.func.attr in {"execute", "executemany"}
+            and node.args
+        ):
+            continue
+        template = _sql_template(node.args[0], constants)
+        if template is None or not _DYNAMIC_MUTATION_TARGET.search(
+            _SQL_COMMENT.sub(" ", template)
+        ):
+            continue
+        receiver = node.func.value
+        destination = (
+            opened.get(receiver.id) if isinstance(receiver, ast.Name) else None
+        )
+        assert (
+            destination in fresh_paths
+            and bindings.get(receiver.id) == 1
+            and bindings.get(destination) == 1
+        ), "archive staging rewrite writes outside its fresh destination connection"
+        writes += 1
+    assert writes, "archive staging rewrite has no dynamic writes left to pin"
+
+
 @cache
 def _direct_sql_routes() -> frozenset[str]:
     routes: set[_Route] = set()
     seen_dynamic_reviews: set[str] = set()
+    seen_archive_rewrites: set[str] = set()
     constants_by_path = {
         path: dict(constants) for path, _tree, constants in _production_modules()
     }
@@ -2321,15 +3270,26 @@ def _direct_sql_routes() -> frozenset[str]:
             constants_by_path[path],
             scan_return_values=identity in _SQL_RETURN_HELPERS,
         )
-        seen_dynamic_reviews.update(
-            _assert_exact_dynamic_sql_reviews(
-                identity,
-                scan.unresolved_sites,
-                _PROVEN_NON_SEMANTIC_DYNAMIC_SQL,
+        if identity in _ARCHIVE_STAGING_REWRITE_SITES:
+            assert {
+                site.key(identity) for site in scan.unresolved_sites
+            } == _ARCHIVE_STAGING_REWRITE_SITES[identity], identity
+            _assert_fresh_staging_writes(function, constants_by_path[path])
+            seen_archive_rewrites.add(identity)
+        else:
+            seen_dynamic_reviews.update(
+                _assert_exact_dynamic_sql_reviews(
+                    identity,
+                    scan.unresolved_sites,
+                    _PROVEN_NON_SEMANTIC_DYNAMIC_SQL,
+                )
             )
-        )
         for action in scan.actions:
             routes.add(_Route(_relative(path), qualname, action))
+    assert seen_archive_rewrites == _ARCHIVE_STAGING_REWRITE_SITES.keys(), (
+        "stale archive staging rewrite pins: "
+        f"{sorted(_ARCHIVE_STAGING_REWRITE_SITES.keys() - seen_archive_rewrites)}"
+    )
     assert seen_dynamic_reviews == _PROVEN_NON_SEMANTIC_DYNAMIC_SQL.keys(), (
         "reviewed non-semantic dynamic SQL sites changed; remove stale entries or "
         "review and classify new sites\n"
@@ -2805,7 +3765,7 @@ def test_inventory_document_exists_and_names_the_contract() -> None:
     assert "ADR-337" in inventory
     assert "Hard deletion" in inventory
     assert "Generated and dynamic SQL" in inventory
-    assert "41 live SQL sink identities and 62 boundary call" in inventory
+    assert "43 live SQL sink identities and 65 boundary call" in inventory
     all_classifications = (
         *DIRECT_SQL_ROUTE_CLASSIFICATION.values(),
         *BOUNDARY_CALL_ROUTE_CLASSIFICATION.values(),
@@ -2814,11 +3774,11 @@ def test_inventory_document_exists_and_names_the_contract() -> None:
         classification: all_classifications.count(classification)
         for classification in CLASSIFICATIONS
     } == {
-        "model-visible": 64,
+        "model-visible": 67,
         "visibility/ownership-only": 13,
-        "presentation-only": 26,
+        "presentation-only": 28,
     }
-    assert "64 model-visible, 13 visibility/ownership-only, and 26" in inventory
+    assert "67 model-visible, 13 visibility/ownership-only, and 28" in inventory
     for phrase in (
         "generation settlement",
         "Edit and regeneration replacement",
@@ -4120,6 +5080,401 @@ def public_caller(table_name):
 
     with pytest.raises(AssertionError, match="derived dynamic SQL targets changed"):
         _assert_review_target_evidence("fixture::write", review, result)
+
+
+# TASK-38702: Personal Context picks an id attribute name from a literal dict
+# or a conditional; every name such a getattr can take is checked.
+@pytest.mark.parametrize(
+    ("name_expression", "error"),
+    [
+        ('{"manifest": "profile_id", "scope": "scope_id"}[kind]', None),
+        ('"current_version_id" if kind else "version_id"', None),
+        (
+            '{"manifest": "profile_id", "scope": "_update_row"}[kind]',
+            "helper.*forwarded",
+        ),
+        ('"profile_id" if kind else "_update_row"', "helper.*forwarded"),
+        ('{"manifest": "profile_id", "scope": attribute}[kind]', "runtime-dynamic"),
+        ("{**names}[kind]", "runtime-dynamic"),
+    ],
+)
+def test_dynamic_target_evidence_checks_every_finite_reflected_name(
+    name_expression: str, error: str | None
+) -> None:
+    tree = ast.parse(
+        f"""
+def update_project(self):
+    self._update_row(table="writing_projects", row_id="project-id")
+
+def read(value, kind):
+    return getattr(value, {name_expression})
+"""
+    )
+    evidence = _CallTargetEvidence(
+        calls=(_LiteralCallTarget("_update_row", 0, "table"),)
+    )
+    if error is None:
+        assert _derive_target_evidence(tree, evidence).targets == {"writing_projects"}
+        return
+    with pytest.raises(AssertionError, match=error):
+        _derive_target_evidence(tree, evidence)
+
+
+def _loop_store(body: str) -> ast.Module:
+    return ast.parse(
+        "class Store:\n    def clear(self, conn, rows, tables):\n"
+        + textwrap.indent(textwrap.dedent(body), " " * 8)
+    )
+
+
+def test_loop_target_evidence_derives_literal_loop_and_mapping_key_tables() -> None:
+    tree = _loop_store(
+        """
+        for table in ("files", "entries"):
+            conn.execute(f"DELETE FROM {table} WHERE path=?", ("p",))
+        columns = {"selections": ("id",), "activation": ("id", "intent")}
+        for table, fields in columns.items():
+            conn.execute(f"INSERT INTO {table} ({','.join(fields)}) VALUES (?)", rows)
+        """
+    )
+
+    assert _derive_target_evidence(
+        tree, _LoopTargetEvidence("Store.clear")
+    ).targets == {
+        "files",
+        "entries",
+        "selections",
+        "activation",
+    }
+
+
+@pytest.mark.parametrize(
+    ("body", "error"),
+    [
+        (
+            'for table in tables:\n    conn.execute(f"DELETE FROM {table}")',
+            "literal tables or a local mapping",
+        ),
+        (
+            (
+                'for table in ("files",):\n'
+                "    table = rows[0]\n"
+                '    conn.execute(f"DELETE FROM {table}")'
+            ),
+            "rebound inside its loop",
+        ),
+        (
+            (
+                "name = rows[0]\n"
+                'for table in ("files",):\n'
+                '    conn.execute(f"DELETE FROM {name}")'
+            ),
+            "not bound by an enclosing loop",
+        ),
+        (
+            'for table in ("files",):\n    conn.execute(f"DELETE FROM {self.table}")',
+            "plain loop variable",
+        ),
+        (
+            (
+                'for table in ("files",):\n'
+                '    sql = f"DELETE FROM {table}"\n'
+                "    conn.execute(sql)"
+            ),
+            "inline f-string site",
+        ),
+        (
+            (
+                'columns = {"selections": ("id",)}\n'
+                'columns["messages"] = ("id",)\n'
+                "for table, fields in columns.items():\n"
+                '    conn.execute(f"DELETE FROM {table}")'
+            ),
+            "producer.*mutated",
+        ),
+    ],
+)
+def test_loop_target_evidence_rejects_unproven_loop_targets(
+    body: str, error: str
+) -> None:
+    with pytest.raises(AssertionError, match=error):
+        _derive_target_evidence(_loop_store(body), _LoopTargetEvidence("Store.clear"))
+
+
+_SPEC_STORE_SOURCE = """
+@dataclass(frozen=True)
+class KeywordStoreSpec:
+    link_table: str
+
+
+class KeywordStore:
+    def __init__(self, db, spec):
+        self.spec = spec
+
+    def drop(self, conn):
+        conn.execute(f"DELETE FROM {self.spec.link_table} WHERE keyword_id = ?", (1,))
+"""
+_SPEC_EVIDENCE = _SpecFieldTargetEvidence(
+    "KeywordStore.drop", "KeywordStore", "KeywordStoreSpec", ("link_table",)
+)
+
+
+def _spec_hosts(*sources: str) -> dict[str, ast.Module]:
+    return {
+        f"fixture.host{index}": ast.parse(source)
+        for index, source in enumerate(sources)
+    }
+
+
+def test_spec_field_evidence_derives_every_literal_construction() -> None:
+    hosts = _spec_hosts(
+        'SPEC = KeywordStoreSpec(link_table="MediaKeywords")\n'
+        "store = KeywordStore(db, SPEC)",
+        'store = KeywordStore(db, spec=KeywordStoreSpec(link_table="PromptKeywordLinks"))',
+    )
+
+    derived = _derive_target_evidence(
+        ast.parse(_SPEC_STORE_SOURCE), _SPEC_EVIDENCE, imported_modules=hosts
+    )
+
+    assert derived.targets == {"MediaKeywords", "PromptKeywordLinks"}
+
+
+@pytest.mark.parametrize(
+    ("host", "error"),
+    [
+        (
+            'store = KeywordStore(db, replace(SPEC, link_table="messages"))',
+            "built from a keyword-literal",
+        ),
+        (
+            "store = KeywordStore(db, KeywordStoreSpec(link_table=name))",
+            "literal string",
+        ),
+        (
+            (
+                "factory = KeywordStore\n"
+                'store = factory(db, KeywordStoreSpec(link_table="MediaKeywords"))'
+            ),
+            "forwarded instead of constructed",
+        ),
+        (
+            (
+                "from fixture import KeywordStore as Store\n"
+                'store = Store(db, KeywordStoreSpec(link_table="MediaKeywords"))'
+            ),
+            "imported under another name",
+        ),
+        (
+            (
+                'store = getattr(module, "KeywordStore")(\n'
+                '    db, KeywordStoreSpec(link_table="MediaKeywords")\n)'
+            ),
+            "reflected through getattr",
+        ),
+    ],
+)
+def test_spec_field_evidence_rejects_unproven_constructions(
+    host: str, error: str
+) -> None:
+    with pytest.raises(AssertionError, match=error):
+        _derive_target_evidence(
+            ast.parse(_SPEC_STORE_SOURCE),
+            _SPEC_EVIDENCE,
+            imported_modules=_spec_hosts(host),
+        )
+
+
+@pytest.mark.parametrize(
+    ("store_source", "error"),
+    [
+        (
+            _SPEC_STORE_SOURCE
+            + "\n    def swap(self, other):\n        self.spec = other\n",
+            "bound once",
+        ),
+        (
+            _SPEC_STORE_SOURCE.replace("link_table}", "keywords_table}"),
+            "spec fields changed",
+        ),
+        (
+            _SPEC_STORE_SOURCE.replace(
+                "class KeywordStore:", "class KeywordStore(Card):"
+            ),
+            "no base classes",
+        ),
+    ],
+)
+def test_spec_field_evidence_rejects_a_rebound_or_unreviewed_field(
+    store_source: str, error: str
+) -> None:
+    hosts = _spec_hosts(
+        'store = KeywordStore(db, KeywordStoreSpec(link_table="Links"))'
+    )
+
+    with pytest.raises(AssertionError, match=error):
+        _derive_target_evidence(
+            ast.parse(store_source), _SPEC_EVIDENCE, imported_modules=hosts
+        )
+
+
+@pytest.mark.parametrize(
+    ("host", "error"),
+    [
+        ('store.spec = KeywordStoreSpec(link_table="messages")', "spec was written"),
+        ("del store.spec", "spec was written"),
+        ("holder.store.spec = other", "spec was written"),
+        ("def rebind(self, spec):\n    self.spec = spec", "spec was written"),
+        ('object.__setattr__(SPEC, "link_table", "messages")', "reflectively"),
+        ('setattr(store, "spec", other)', "reflectively"),
+        ('store.__setattr__("spec", other)', "reflectively"),
+        ('delattr(store, "spec")', "reflectively"),
+        # Re-review 2026-11-03: each of these was accepted while the
+        # derivation still returned {"Links"}.
+        (
+            (
+                "class Card:\n"
+                "    def rebind(self, other):\n"
+                "        self.spec = other\n"
+                "Card.rebind(store, other)"
+            ),
+            "spec was written",
+        ),
+        (
+            (
+                "class Card:\n"
+                "    def __init__(self, spec):\n"
+                "        self.spec = spec\n"
+                "Card.__init__(store, other)"
+            ),
+            "spec was written",
+        ),
+        (
+            (
+                "class Card:\n"
+                "    def __init__(self, spec):\n"
+                "        self.spec = spec\n"
+                "        super().__init__()"
+            ),
+            "spec was written",
+        ),
+        (
+            (
+                "class Card:\n"
+                "    def __init__(self, spec, store):\n"
+                "        super().__init__()\n"
+                "        self = store\n"
+                "        self.spec = spec"
+            ),
+            "spec was written",
+        ),
+        (
+            (
+                "def super():\n"
+                "    return object()\n"
+                "class Card:\n"
+                "    def __init__(self, spec):\n"
+                "        super().__init__()\n"
+                "        self.spec = spec"
+            ),
+            "spec was written",
+        ),
+        ('store.__dict__["spec"] = other', "reflectively"),
+        ('vars(store)["spec"] = other', "reflectively"),
+        ('del vars(store)["spec"]', "reflectively"),
+        ('SPEC.__dict__["link_table"] = "messages"', "reflectively"),
+        ("store.__dict__.update(spec=other)", "reflectively"),
+        ('vars(store).setdefault("spec", other)', "reflectively"),
+    ],
+)
+def test_spec_field_evidence_rejects_a_spec_rewritten_outside_its_store(
+    host: str, error: str
+) -> None:
+    """A host that swaps the store's spec, or forces a field of the frozen
+    spec, changes the table without touching any construction."""
+    hosts = _spec_hosts(
+        'store = KeywordStore(db, KeywordStoreSpec(link_table="Links"))\n' + host
+    )
+
+    with pytest.raises(AssertionError, match=error):
+        _derive_target_evidence(
+            ast.parse(_SPEC_STORE_SOURCE), _SPEC_EVIDENCE, imported_modules=hosts
+        )
+
+
+def test_spec_field_evidence_allows_another_class_own_spec_attribute() -> None:
+    """Another class's ``self.spec`` and unrelated literal writes are not the
+    store's spec (production: the Console video and generation cards). Its
+    ``__init__`` opens with a zero-argument ``super().__init__()``, which
+    raises ``TypeError`` for any receiver that is not a ``Card``, so even
+    ``Card.__init__(store, other)`` never reaches the binding."""
+    hosts = _spec_hosts(
+        'store = KeywordStore(db, KeywordStoreSpec(link_table="Links"))\n'
+        "class Card:\n"
+        "    def __init__(self, spec):\n"
+        '        """A card."""\n'
+        "        super().__init__()\n"
+        "        self.spec = spec\n"
+        'setattr(widget, "label", "x")\n'
+        'vars(widget)["label"] = "x"\n'
+        'widget.__dict__.pop("label", None)\n'
+        'vars(module).update({"LABEL": "x"})'
+    )
+
+    derived = _derive_target_evidence(
+        ast.parse(_SPEC_STORE_SOURCE), _SPEC_EVIDENCE, imported_modules=hosts
+    )
+
+    assert derived.targets == {"Links"}
+
+
+@pytest.mark.parametrize(
+    "decorator",
+    ["", "@dataclass\n", "@dataclass(frozen=False)\n", "@other(frozen=True)\n"],
+)
+def test_spec_field_evidence_requires_a_frozen_spec_class(decorator: str) -> None:
+    hosts = _spec_hosts(
+        'store = KeywordStore(db, KeywordStoreSpec(link_table="Links"))'
+    )
+    store_source = _SPEC_STORE_SOURCE.replace("@dataclass(frozen=True)\n", decorator)
+
+    with pytest.raises(AssertionError, match="frozen"):
+        _derive_target_evidence(
+            ast.parse(store_source), _SPEC_EVIDENCE, imported_modules=hosts
+        )
+
+
+_STAGING_REWRITE = """
+def rewrite(staging, source, names):
+    destination = {destination}
+    with closing(connect_private_sqlite("recovery.credentials", destination)) as output:
+        for name in names:
+            {receiver}.execute(f"DELETE FROM {{quote(name)}}")
+"""
+_FRESH_DESTINATION = 'staging / (".credential-" + uuid4().hex + ".sqlite")'
+
+
+@pytest.mark.parametrize(
+    ("destination", "receiver", "accepted"),
+    [
+        (_FRESH_DESTINATION, "output", True),
+        (_FRESH_DESTINATION, "source", False),
+        ('staging / "chachanotes.db"', "output", False),
+    ],
+)
+def test_archive_staging_rewrite_writes_only_its_fresh_destination(
+    destination: str, receiver: str, accepted: bool
+) -> None:
+    function = ast.parse(
+        _STAGING_REWRITE.format(destination=destination, receiver=receiver)
+    ).body[0]
+    assert isinstance(function, ast.FunctionDef)
+
+    if accepted:
+        _assert_fresh_staging_writes(function, {})
+        return
+    with pytest.raises(AssertionError, match="outside its fresh destination"):
+        _assert_fresh_staging_writes(function, {})
 
 
 def test_all_dynamic_sql_reviews_match_derived_production_targets() -> None:

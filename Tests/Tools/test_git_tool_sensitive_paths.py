@@ -344,9 +344,12 @@ def test_every_pathspec_this_family_builds_carries_explicit_magic() -> None:
     ``--`` ends OPTION parsing, not pathspec-magic parsing, so a bare
     value after it is a repository-supplied injection point: a file
     legitimately named ``:(exclude)notes.txt`` inverts the scope of
-    whatever command it lands in. Only two shapes are allowed through --
+    whatever command it lands in. Only these shapes are allowed through --
     ``_literal_pathspec(...)``, which disables magic for one value, and a
-    splat of ``_denylist_pathspecs(...)``, which renders its own.
+    splat of ``_denylist_pathspecs(...)`` or (TASK-38463)
+    ``_withheld_name_pathspecs(...)``, which render their own; the scan's
+    ``_NON_ASCII_PATHSPECS`` constant and the byte-exact renderer are pinned
+    to explicit magic directly below.
 
     Checked over EVERY list literal in the module that contains ``"--"``,
     and THROUGH a local list that is splatted into one. An earlier form of
@@ -401,7 +404,7 @@ def test_every_pathspec_this_family_builds_carries_explicit_magic() -> None:
             allowed = (
                 {"_literal_pathspec"}
                 if node.func.attr == "append"
-                else {"_denylist_pathspecs"}
+                else {"_denylist_pathspecs", "_withheld_name_pathspecs"}
             )
             if node.func.attr not in {"append", "extend"}:
                 bad.append(f"{name}.{node.func.attr}(...)")
@@ -447,6 +450,13 @@ def test_every_pathspec_this_family_builds_carries_explicit_magic() -> None:
         "repository file named ':(exclude)x' can invert the command's scope: "
         f"{offenders}"
     )
+    assert all(
+        spec.startswith(":(glob)") for spec in git_tool_impls._NON_ASCII_PATHSPECS
+    )
+    for subtree in (False, True):
+        assert git_tool_impls._exact_exclude_pathspec(
+            ":(top)x", subtree=subtree
+        ).startswith(":(exclude,")
 
 
 # ---------------------------------------------------------------------------
@@ -727,6 +737,368 @@ def test_an_exclusion_hides_the_other_normalization_from_git(
     assert "keep.txt" in out
 
 
+# ---------------------------------------------------------------------------
+# TASK-38463: the folded matcher, not git's ASCII-only ``icase``, decides.
+# ---------------------------------------------------------------------------
+
+SECRET_38463 = "SECRET-38463"
+#: git_diff's one refusal when the withheld-name check cannot be completed.
+UNVERIFIED_EXCLUSIONS = "git diff output withheld: could not verify path exclusions"
+#: Neither NFC nor NFD: a composed ``é`` beside a decomposed ``è``.
+MIXED_NAME = (
+    unicodedata.normalize("NFC", "é") + unicodedata.normalize("NFD", "è") + ".txt"
+)
+
+
+def _nfc(value: str) -> str:
+    return unicodedata.normalize("NFC", value)
+
+
+def _nfd(value: str) -> str:
+    return unicodedata.normalize("NFD", value)
+
+
+def _plumbing(repo: Path, *args: str, stdin: bytes | None = None) -> str:
+    return subprocess.run(
+        ["git", *args], cwd=repo, check=True, capture_output=True, input=stdin
+    ).stdout.decode()
+
+
+def _plumbed_repo(root: Path, *, precompose: str, stored: str) -> Path:
+    """A repo whose ``stored`` name has EXACT bytes, changed in every diff mode.
+
+    The index is written through plumbing (``hash-object`` + ``update-index
+    --index-info``), so the name keeps the bytes given here whatever APFS or
+    ``core.precomposeunicode`` would make of a ``git add``. Versions: commit 1
+    holds v1, commit 2 v2, the index v3 and the worktree v4, so a commit
+    range, ``--cached`` and the worktree diff all carry the secret.
+    ``keep.txt`` and the non-ASCII ``café.txt`` change beside it and must stay
+    visible. ``core.quotepath=false`` keeps names unescaped in patch and stat
+    output, so the name checks below can see them.
+    """
+    repo = (root / f"project-precompose-{precompose}").resolve()
+    _init(repo)
+    _git(repo, "config", "core.precomposeunicode", precompose)
+    _git(repo, "config", "core.quotepath", "false")
+    names = (stored, "keep.txt", _nfc("café.txt"))
+
+    def _content(name: str, version: int) -> str:
+        secret = f" {SECRET_38463}" if name == stored else ""
+        return f"{name} v{version}{secret}\n"
+
+    def _stage(version: int) -> None:
+        records = []
+        for name in names:
+            blob = _content(name, version).encode()
+            oid = _plumbing(repo, "hash-object", "-w", "--stdin", stdin=blob).strip()
+            records.append(f"100644 {oid}\t{name}\n")
+        _plumbing(
+            repo,
+            "update-index",
+            "--add",
+            "--index-info",
+            stdin="".join(records).encode(),
+        )
+
+    _stage(1)
+    _git(repo, "commit", "-m", "v1")
+    _stage(2)
+    _git(repo, "commit", "-m", "v2")
+    _stage(3)
+    for name in names:
+        (repo / name).parent.mkdir(parents=True, exist_ok=True)
+        (repo / name).write_text(_content(name, 4))
+    assert _plumbing(repo, "ls-files", "-z").split("\0").count(stored) == 1, (
+        "fixture drifted: the stored name must keep its exact bytes"
+    )
+    return repo
+
+
+def _assert_withheld(output: str, stem: str, label: str) -> None:
+    from tldw_chatbook.Utils.path_validation import fold_path_part
+
+    assert SECRET_38463 not in output, (
+        f"{label} leaked the excluded file's CONTENT:\n{output}"
+    )
+    assert fold_path_part(stem) not in fold_path_part(output), (
+        f"{label} named the excluded file:\n{output}"
+    )
+    assert "keep.txt" in output, f"{label} over-excluded keep.txt:\n{output}"
+    assert fold_path_part("café") in fold_path_part(output), (
+        f"{label} over-excluded an unrelated non-ASCII name:\n{output}"
+    )
+
+
+def _every_view(repo: Path, exclusions: tuple | None) -> list[tuple[str, str]]:
+    kwargs = {} if exclusions is None else {"sensitive_exclusions": exclusions}
+    return [
+        ("git_diff(worktree)", git_diff(repo, **kwargs)),
+        ("git_diff(staged)", git_diff(repo, staged=True, **kwargs)),
+        ("git_diff(range)", git_diff(repo, commit_range="HEAD~1..HEAD", **kwargs)),
+        (
+            "git_diff(stat)",
+            git_diff(repo, commit_range="HEAD~1..HEAD", stat=True, **kwargs),
+        ),
+        ("git_status", git_status(repo, **kwargs)),
+    ]
+
+
+#: case id -> (stored name, rule kind, rule value, folded stem of the name)
+_WITHHELD_CASES = {
+    "rule-upper-stored-lower": (_nfc("naïve.txt"), "file", _nfc("NAÏVE.TXT"), "naïve"),
+    "rule-lower-stored-upper": (_nfc("NAÏVE.TXT"), "file", _nfc("naïve.txt"), "naïve"),
+    "case-and-normalization": (_nfd("naïve.txt"), "file", _nfc("NAÏVE.TXT"), "naïve"),
+    "mixed-name-nfc-rule": (MIXED_NAME, "file", _nfc(MIXED_NAME), "éè"),
+    "mixed-name-nfd-rule": (MIXED_NAME, "file", _nfd(MIXED_NAME), "éè"),
+    "directory-rule": (
+        _nfd("DONNÉES") + "/secret.txt",
+        "subtree",
+        _nfc("Données"),
+        "données",
+    ),
+    "name-rule": ("sub/" + _nfd("naïve.txt"), "name", _nfc("NAÏVE.TXT"), "naïve"),
+    "rule-folds-to-ascii": ("STRASSE.TXT", "file", _nfc("Straße.txt"), "strasse"),
+}
+
+
+@pytest.mark.parametrize("precompose", ("true", "false"))
+@pytest.mark.parametrize("case", sorted(_WITHHELD_CASES))
+def test_a_folded_exclusion_withholds_every_stored_spelling_from_git(
+    tmp_path: Path, case: str, precompose: str
+) -> None:
+    """TASK-38463 AC1/AC2: git_diff and git_status agree with the matcher.
+
+    git's ``icase`` folds ASCII only, and with ``core.precomposeunicode`` on
+    (``git init``'s default on macOS) git precomposes its argv, so before this
+    fix an NFD or mixed stored name leaked under BOTH rule spellings
+    (measured on git 2.39.5).
+    """
+    from tldw_chatbook.Utils.sensitive_paths import SensitiveExclusion
+
+    stored, kind, value, stem = _WITHHELD_CASES[case]
+    repo = _plumbed_repo(tmp_path, precompose=precompose, stored=stored)
+    rules = (SensitiveExclusion(kind, value),)
+
+    for label, out in _every_view(repo, rules):
+        _assert_withheld(out, stem, label)
+
+
+@pytest.mark.parametrize("precompose", ("true", "false"))
+def test_a_live_user_exclusion_withholds_a_non_ascii_case_variant(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, precompose: str
+) -> None:
+    """The same, through the live denylist (no parent-admitted snapshot)."""
+    import tldw_chatbook.Tools.git_tool_impls as gti
+    from tldw_chatbook.Utils.sensitive_paths import merge_sensitive_context
+
+    repo = _plumbed_repo(tmp_path, precompose=precompose, stored=_nfd("naïve.txt"))
+    real_resolve = gti.resolve_sensitive_context
+    monkeypatch.setattr(
+        gti,
+        "resolve_sensitive_context",
+        lambda: merge_sensitive_context(
+            real_resolve(), extra_files=[repo / _nfc("NAÏVE.TXT")]
+        ),
+    )
+
+    for label, out in _every_view(repo, None):
+        _assert_withheld(out, "naïve", label)
+
+
+def test_git_diff_refuses_when_a_withheld_name_is_left_in_the_diff(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Fail closed: a name the scan missed (a race) is caught after the run.
+
+    Stubbing the renderer to exclude nothing stands in for the file changing
+    between the pre-run scan and the diff itself; the post-run check must
+    refuse, and the refusal must not carry the content or the name.
+    """
+    import tldw_chatbook.Tools.git_tool_impls as gti
+    from tldw_chatbook.Utils.path_validation import fold_path_part
+    from tldw_chatbook.Utils.sensitive_paths import SensitiveExclusion
+
+    repo = _plumbed_repo(tmp_path, precompose="true", stored=_nfc("NAÏVE.TXT"))
+    rules = (SensitiveExclusion("file", _nfc("naïve.txt")),)
+    monkeypatch.setattr(gti, "_withheld_name_pathspecs", lambda *a, **k: [])
+
+    with pytest.raises(LocalToolError) as refused:
+        git_diff(repo, sensitive_exclusions=rules)
+
+    assert str(refused.value) == UNVERIFIED_EXCLUSIONS
+    assert SECRET_38463 not in str(refused.value)
+    assert fold_path_part("naïve") not in fold_path_part(str(refused.value))
+
+
+def test_a_git_timeout_does_not_echo_the_exclusion_pathspecs() -> None:
+    """The pathspecs after ``--`` name excluded paths (TASK-38463 adds their
+    stored spellings); a timeout's model-facing error must not repeat them."""
+    from tldw_chatbook.Tools.git_tool_impls import _run_git_bytes
+
+    with pytest.raises(LocalToolError, match="timed out") as refused:
+        _run_git_bytes(
+            ["git", "diff", "--", ":(exclude,glob)SECRET-38463.txt"], timeout=0.0
+        )
+
+    assert "SECRET-38463" not in str(refused.value)
+
+
+@pytest.mark.parametrize(
+    "bound", ("_WITHHELD_SCAN_MAX_BYTES", "_WITHHELD_PATHSPEC_BUDGET")
+)
+def test_git_diff_refuses_when_the_withheld_check_cannot_be_bounded(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, bound: str
+) -> None:
+    """Fail closed past either bound instead of running with a partial list.
+
+    The refusal is the same neutral sentence for every cause: naming excluded
+    paths would announce that an exclusion took effect, which git_diff never
+    does, and "retry" invited a loop on a refusal that can be deterministic.
+    """
+    import tldw_chatbook.Tools.git_tool_impls as gti
+    from tldw_chatbook.Utils.sensitive_paths import SensitiveExclusion
+
+    repo = _plumbed_repo(tmp_path, precompose="false", stored=_nfc("NAÏVE.TXT"))
+    rules = (SensitiveExclusion("file", _nfc("naïve.txt")),)
+    monkeypatch.setattr(gti, bound, 4)
+
+    with pytest.raises(LocalToolError) as refused:
+        git_diff(repo, sensitive_exclusions=rules)
+
+    assert str(refused.value) == UNVERIFIED_EXCLUSIONS
+
+
+@pytest.mark.parametrize(
+    ("bound", "limit"),
+    (("_WITHHELD_SCAN_MAX_BYTES", 12), ("_WITHHELD_PATHSPEC_BUDGET", 4)),
+)
+def test_a_scoped_git_diff_ignores_withheld_names_outside_its_scope(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, bound: str, limit: int
+) -> None:
+    """git ORs positive pathspecs, so a scan given the scope AND the non-ASCII
+    globs listed every non-ASCII name in the repository: a withheld name
+    outside the scope spent the scan and pathspec bounds and refused a diff
+    that never touched it. ``keep.txt`` scans to 9 bytes and withholds nothing.
+    """
+    import tldw_chatbook.Tools.git_tool_impls as gti
+    from tldw_chatbook.Utils.sensitive_paths import SensitiveExclusion
+
+    repo = _plumbed_repo(tmp_path, precompose="false", stored=_nfc("NAÏVE.TXT"))
+    rules = (SensitiveExclusion("file", _nfc("naïve.txt")),)
+    monkeypatch.setattr(gti, bound, limit)
+
+    out = git_diff(repo, path="keep.txt", sensitive_exclusions=rules)
+
+    assert "+keep.txt v4" in out
+    assert SECRET_38463 not in out
+
+
+@pytest.mark.parametrize("precompose", ("true", "false"))
+def test_a_scoped_git_diff_still_withholds_inside_its_scope(
+    tmp_path: Path, precompose: str
+) -> None:
+    """Fail closed inside the scope: every name under it is scanned."""
+    from tldw_chatbook.Utils.path_validation import fold_path_part
+    from tldw_chatbook.Utils.sensitive_paths import SensitiveExclusion
+
+    stored = "sub/" + _nfd("naïve.txt")
+    repo = _plumbed_repo(tmp_path, precompose=precompose, stored=stored)
+    rules = (SensitiveExclusion("name", _nfc("NAÏVE.TXT")),)
+
+    for kwargs in ({}, {"staged": True}, {"commit_range": "HEAD~1..HEAD"}):
+        out = git_diff(repo, path="sub", sensitive_exclusions=rules, **kwargs)
+        assert SECRET_38463 not in out, kwargs
+        assert fold_path_part("naïve") not in fold_path_part(out), kwargs
+
+
+def test_a_byte_exact_exclusion_re_encodes_names_as_they_were_decoded(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The scan decodes git's names as UTF-8 with surrogateescape, so the
+    brackets must re-encode them the same way. ``os.fsencode`` follows the
+    filesystem encoding: under a Latin-1 one, ``é`` became ``[\\xe9]``, the
+    stored ``\\xc3\\xa9`` stayed in the diff and every git_diff was refused."""
+    from types import SimpleNamespace
+
+    import tldw_chatbook.Tools.git_tool_impls as gti
+
+    latin1 = SimpleNamespace(
+        name="posix", fsencode=lambda value: value.encode("latin-1", "surrogateescape")
+    )
+    monkeypatch.setattr(gti, "os", latin1)
+    stored = "dir/caf\u00e9-\udcff.txt"  # an undecodable byte survives as \udcff
+
+    spec = gti._exact_exclude_pathspec(stored, subtree=False)
+
+    escaped = "".join(f"[{chr(0xDC00 + byte)}]" for byte in b"\xc3\xa9")
+    assert spec == f":(exclude,glob)dir/caf{escaped}-[{chr(0xDCFF)}].txt"
+
+
+def test_ascii_exclusion_pathspecs_stay_byte_identical(
+    ordinary_repo: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """AC3: ASCII rules render exactly as before, and an unmatched non-ASCII
+    name adds nothing to the argv (the check only ever ADDS exclusions for
+    names the folded matcher denies)."""
+    import tldw_chatbook.Tools.git_tool_impls as gti
+    from tldw_chatbook.Utils.sensitive_paths import SensitiveExclusion
+
+    cafe = ordinary_repo / _nfc("café.txt")
+    cafe.write_text("v1\n")
+    _git(ordinary_repo, "add", "-A")
+    _git(ordinary_repo, "commit", "-m", "cafe")
+    cafe.write_text("v1\nv2\n")
+    rules = (
+        SensitiveExclusion("file", "Secret.TXT"),
+        SensitiveExclusion("subtree", "build"),
+        SensitiveExclusion("direct_children", "state"),
+        SensitiveExclusion("name", ".netrc"),
+    )
+    expected = [
+        ":(exclude,literal,icase)Secret.TXT",
+        ":(exclude,literal,icase)build",
+        ":(exclude,glob,icase)state/*",
+        ":(exclude,glob,icase)**/.netrc",
+    ]
+    seen: list[list[str]] = []
+    real_run_git = gti.run_git
+
+    def _spy(argv: list[str], **kwargs: object) -> object:
+        seen.append(list(argv))
+        return real_run_git(argv, **kwargs)
+
+    monkeypatch.setattr(gti, "run_git", _spy)
+    git_diff(ordinary_repo, sensitive_exclusions=rules)
+    git_status(ordinary_repo, sensitive_exclusions=rules)
+
+    assert [argv for argv in seen if "diff" in argv] == [
+        [
+            "git",
+            "--no-pager",
+            "diff",
+            "--no-ext-diff",
+            "--no-textconv",
+            "--no-color",
+            "--unified=3",
+            "--",
+            *expected,
+        ]
+    ]
+    assert [argv for argv in seen if "status" in argv] == [
+        [
+            "git",
+            "--no-pager",
+            "status",
+            "--porcelain=v2",
+            "-z",
+            "--branch",
+            "--untracked-files=all",
+            "--",
+            *expected,
+        ]
+    ]
+
+
 def test_a_location_exclusion_survives_a_case_variant_directory_spelling() -> None:
     """The same fold, on the LOCATION rules -- the case that was unpinned.
 
@@ -934,6 +1306,36 @@ def test_git_status_and_git_diff_resolve_the_denylist_context_exactly_once(
         f"git_log resolved the sensitive-path context {len(calls)} times "
         "in one call; expected exactly 1"
     )
+
+
+@pytest.mark.parametrize("admitted", (False, True))
+def test_git_status_and_git_diff_read_the_exclusion_rules_once(
+    ordinary_repo: Path, monkeypatch: pytest.MonkeyPatch, admitted: bool
+) -> None:
+    """One rule snapshot per call: the pathspecs and the folded matcher that
+    backs them up must judge the same rules (TASK-38463 review round)."""
+    import tldw_chatbook.Tools.git_tool_impls as gti
+    from tldw_chatbook.Utils.sensitive_paths import SensitiveExclusion
+
+    kwargs = (
+        {"sensitive_exclusions": (SensitiveExclusion("file", "Secret.TXT"),)}
+        if admitted
+        else {}
+    )
+    real = gti._repo_exclusions
+    calls: list[int] = []
+
+    def _counting(*args: object, **inner: object) -> object:
+        calls.append(1)
+        return real(*args, **inner)
+
+    monkeypatch.setattr(gti, "_repo_exclusions", _counting)
+
+    git_status(ordinary_repo, ".", **kwargs)
+    assert len(calls) == 1, f"git_status read the rules {len(calls)} times"
+    calls.clear()
+    git_diff(ordinary_repo, **kwargs)
+    assert len(calls) == 1, f"git_diff read the rules {len(calls)} times"
 
 
 def test_review_tree_and_blob_share_sensitive_exclusions(tmp_path):

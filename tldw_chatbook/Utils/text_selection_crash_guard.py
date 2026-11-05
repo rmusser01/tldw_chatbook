@@ -6,7 +6,9 @@ docstring), ``ThreadWorkerContextGuard`` (TASK-33264, see its class),
 ``UserInputTap`` (TASK-33620.15.3: keeps the idle heap re-freeze off typing)
 and ``DetachedFocusGuard`` (TASK-34000.26: a removed widget under focus must
 not swallow the next key).
-The aggregate also selects a resize-capable native Windows driver (TASK-37173).
+The aggregate also selects a resize-capable native Windows driver (TASK-37173),
+and on Windows ``ThreadWorkerContextGuard`` keeps Textual's timer sleeps off the
+default executor (TASK-38462, ``install_windows_timer_sleep``).
 It tracks clipboard write intent so older asynchronous copies cannot publish
 over a later user copy (TASK-37300).
 They share a module so a new App-level guard costs neither another ``app.py``
@@ -64,12 +66,14 @@ from __future__ import annotations
 import asyncio
 import contextvars
 import sys
+import time
 from concurrent.futures import Future, ThreadPoolExecutor
 from types import FrameType
 from typing import Any, Callable, Optional
 
 from loguru import logger
 from textual import constants, events
+from textual import timer as textual_timer
 from textual.driver import Driver
 from textual.message import Message
 from textual.screen import Screen
@@ -83,6 +87,7 @@ __all__ = [
     "TextualAppGuards",
     "ThreadWorkerContextGuard",
     "UserInputTap",
+    "install_windows_timer_sleep",
     "match_selection_begin_container_crash",
 ]
 
@@ -182,6 +187,63 @@ class FreshContextExecutor(ThreadPoolExecutor):
         return super().submit(contextvars.Context().run, fn, *args, **kwargs)
 
 
+#: On Windows, a timer wait at least this long uses ``asyncio.sleep`` and holds
+#: no thread: the ~15.6 ms Windows timer tick is at most ~6% of it.
+_WINDOWS_COARSE_TIMER_WAIT = 0.25
+#: Shorter waits' own pool, made on the first Windows ``Load``. 32 is asyncio's
+#: own default-executor cap; at most 15 short waits ran at once in the GGUF
+#: keyboard tests under the TASK-38206 proxy.
+_windows_timer_pool: ThreadPoolExecutor | None = None
+
+
+async def _windows_timer_sleep(secs: float) -> None:
+    """Textual's timer sleep on Windows, kept off the loop's default executor.
+
+    Args:
+        secs: Seconds to wait.
+    """
+    if secs >= _WINDOWS_COARSE_TIMER_WAIT:
+        await asyncio.sleep(secs)
+        return
+    # Textual's allowances (_win_sleep.py): 1 ms of overhead, no wait under
+    # 0.5 ms -- but still a yield, as Textual's Windows sleep always gives one.
+    sleep_for = secs - 0.001
+    if sleep_for < 0.0005:
+        await asyncio.sleep(0)
+        return
+    # CPython 3.11+ time.sleep is a high-resolution waitable timer on Windows,
+    # the wait _win_sleep runs. A cancel returns at once; the thread finishes
+    # its sub-0.25 s sleep and rejoins this pool, so a cancel needs no job.
+    await asyncio.get_running_loop().run_in_executor(
+        _windows_timer_pool, time.sleep, sleep_for
+    )
+
+
+def install_windows_timer_sleep() -> None:
+    """Keep Textual's timer sleeps off the default executor on Windows (TASK-38462).
+
+    Textual 8.2.8's Windows sleep (``textual/_win_sleep.py``) runs each timer
+    wait as a blocking job on the loop's default executor and each cancel as a
+    second one. That pool has min(32, cores + 4) threads, so three 24 h timers
+    and a handful of minute timers park most of it, and ``thread=True``
+    workers and a recompose's timer cancels queue behind them for tens of
+    seconds (TASK-38206). Other platforms keep Textual's sleep untouched.
+    """
+    # ponytail: replaces a private Textual 8.2.8 seam (``textual.timer.sleep``,
+    # the global Timer._run awaits), and waits of 0.25 s or more keep only the
+    # Windows tick's precision. Tests/App/test_windows_timer_sleep.py fails
+    # when a Textual upgrade moves the seam or stops using the default executor
+    # on Windows; drop this function then (the upstream fix).
+    global _windows_timer_pool
+    if sys.platform != "win32":
+        return
+    if _windows_timer_pool is None:
+        _windows_timer_pool = ThreadPoolExecutor(
+            max_workers=32, thread_name_prefix="textual-timer"
+        )
+    textual_timer.sleep = _windows_timer_sleep
+
+
 class ThreadWorkerContextGuard:
     """App mixin: stop thread workers pinning departed screens (TASK-33264).
 
@@ -200,7 +262,8 @@ class ThreadWorkerContextGuard:
     whatever the job sets is dropped when it returns. ``asyncio.to_thread``
     is unaffected: it already submits a ``Context.run`` partial carrying the
     caller's copied context. ``Load`` is the first event an App dispatches on
-    its running loop, before any screen can start a worker.
+    its running loop, before any screen can start a worker -- or a timer, so
+    it also installs the Windows timer sleep that keeps timers off this pool.
     """
 
     def on_load(self) -> None:
@@ -211,6 +274,7 @@ class ThreadWorkerContextGuard:
         a host's, a test fixture's or an earlier app's pool would otherwise
         keep its threads (Qodo, #2897).
         """
+        install_windows_timer_sleep()
         loop = asyncio.get_running_loop()
         previous = getattr(loop, "_default_executor", None)
         if isinstance(previous, FreshContextExecutor):

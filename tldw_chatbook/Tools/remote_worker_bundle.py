@@ -3716,7 +3716,8 @@ def _run_git_bytes(argv: list[str], *, cwd: Path | None=None, executable: Path |
             _kill_process(process, own_process_group=own_process_group)
             with contextlib.suppress(Exception):
                 process.wait()
-            raise LocalToolError(f'git command timed out after {timeout} seconds: {list(argv)}')
+            shown = argv[:argv.index('--')] if '--' in argv else argv
+            raise LocalToolError(f'git command timed out after {timeout} seconds: {list(shown)}')
         try:
             name, data = done.get(timeout=min(remaining, 0.05))
         except queue.Empty:
@@ -3771,7 +3772,7 @@ def _literal_pathspec(relative_posix: str) -> str:
     """
     return f':(literal){relative_posix}'
 
-def _denylist_pathspecs(repo_root: Path, context: SensitivePathContext | None=None, *, workspace_root: Path | None=None, sensitive_exclusions: tuple[SensitiveExclusion, ...] | None=None) -> tuple[str, ...]:
+def _denylist_pathspecs(repo_root: Path, context: SensitivePathContext | None=None, *, workspace_root: Path | None=None, sensitive_exclusions: tuple[SensitiveExclusion, ...] | None=None, exclusions: tuple[SensitiveExclusion, ...] | None=None) -> tuple[str, ...]:
     """Render the sensitive-path denylist as git exclude pathspecs.
 
     The TASK-19632 fix, in one place. ``git_status``/``git_diff`` hand a
@@ -3781,8 +3782,12 @@ def _denylist_pathspecs(repo_root: Path, context: SensitivePathContext | None=No
 
     Excluding by PATHSPEC rather than filtering git's output is the
     deliberate choice: git stays the authority on what matches, and no
-    unified-diff or porcelain text is ever parsed to decide what to
-    withhold -- a half-parsed diff is worse than none. Direct callers
+    unified-diff text is ever parsed to decide what to withhold -- a
+    half-parsed diff is worse than none. TASK-38463 adds the folded matcher
+    behind these pathspecs, because git's ``icase`` is ASCII-only:
+    ``git_status`` drops denied entries from the ``-z`` records it already
+    parses to render, and ``git_diff`` excludes denied stored names
+    byte-exactly (``_withheld_names``). Direct callers
     recompute the live denylist on each call. The pinned helper instead
     consumes the bounded snapshot admitted by its parent before the helper
     environment is scrubbed.
@@ -3821,6 +3826,9 @@ def _denylist_pathspecs(repo_root: Path, context: SensitivePathContext | None=No
             process's working directory.
         context: Optional pre-resolved ``SensitivePathContext``, so one
             tool call resolves the denylist once.
+        exclusions: The rules already read by ``_repo_exclusions``; when
+            given, nothing is read again, so the folded matcher a caller runs
+            beside these pathspecs judges the same snapshot.
 
     Returns:
         Exclude pathspecs, possibly empty of location-based entries but
@@ -3833,15 +3841,14 @@ def _denylist_pathspecs(repo_root: Path, context: SensitivePathContext | None=No
             or the denylist produced an exclusion kind this renderer does
             not know how to express.
     """
-    if sensitive_exclusions is None:
-        exclusions = sensitive_exclusions_under(repo_root, context=context)
-    else:
-        if workspace_root is None:
-            raise LocalToolError('workspace root is required for admitted exclusions')
-        exclusions = _repo_relative_exclusions(Path(workspace_root).resolve(), repo_root, sensitive_exclusions)
+    if exclusions is None:
+        exclusions = _repo_exclusions(repo_root, context, workspace_root=workspace_root, sensitive_exclusions=sensitive_exclusions)
     specs: list[str] = []
     for kind, raw_value in exclusions:
-        for value in dict.fromkeys((unicodedata.normalize(form, raw_value) for form in ('NFC', 'NFD'))):
+        spellings = [unicodedata.normalize(form, raw_value) for form in ('NFC', 'NFD')]
+        if not raw_value.isascii() and (folded := fold_path_part(raw_value)).isascii():
+            spellings.append(folded)
+        for value in dict.fromkeys(spellings):
             if kind in {'subtree', 'file'}:
                 if not value:
                     raise LocalToolError(f'repository root ({repo_root}) is a protected path; refusing')
@@ -3854,6 +3861,77 @@ def _denylist_pathspecs(repo_root: Path, context: SensitivePathContext | None=No
             else:
                 raise LocalToolError(f'unsupported sensitive-path exclusion kind: {kind!r}')
     return tuple(specs)
+
+def _repo_exclusions(repo_root: Path, context: SensitivePathContext | None, *, workspace_root: Path | None, sensitive_exclusions: tuple[SensitiveExclusion, ...] | None) -> tuple[SensitiveExclusion, ...]:
+    """The denylist rules, relative to ``repo_root`` (live or parent-admitted)."""
+    if sensitive_exclusions is None:
+        return sensitive_exclusions_under(repo_root, context=context)
+    if workspace_root is None:
+        raise LocalToolError('workspace root is required for admitted exclusions')
+    return _repo_relative_exclusions(Path(workspace_root).resolve(), repo_root, sensitive_exclusions)
+_NON_ASCII_PATHSPECS = (':(glob)**/*[!\x01-\x7f]*', ':(glob)**/*[!\x01-\x7f]*/**')
+_WITHHELD_SCAN_MAX_BYTES = 8000000
+_WITHHELD_PATHSPEC_BUDGET = 16000
+_UNVERIFIED_EXCLUSIONS = 'git diff output withheld: could not verify path exclusions'
+
+def _exact_exclude_pathspec(stored: str, *, subtree: bool) -> str:
+    """Exclude exactly the stored bytes of ``stored`` (``subtree``: and below).
+
+    With ``core.precomposeunicode`` on (macOS's default) git precomposes its
+    argv, so a literal NFD or mixed-normalization name is rewritten to NFC
+    before it is matched and misses the stored entry (measured, git 2.39.5).
+    Each non-ASCII byte therefore goes in its own bracket: wildmatch compares
+    bytes, and an element that is not valid UTF-8 is left alone by the
+    precomposition. The bytes are the stored ones: ``stored`` was decoded as
+    UTF-8 with surrogateescape (``_withheld_names``), so it is re-encoded the
+    same way, never by the filesystem encoding. Windows git does not
+    precompose and its argv is UTF-16, so it gets the literal form, whose
+    plain prefix already covers a subtree.
+    """
+    if os.name == 'nt':
+        return f':(exclude,literal){stored}'
+    pattern = ''.join((_glob_escape(char) if char.isascii() else ''.join((f'[{chr(56320 + byte)}]' for byte in char.encode('utf-8', 'surrogateescape'))) for char in stored))
+    return f":(exclude,glob){pattern}{('/**' if subtree else '')}"
+
+def _withheld_names(mode_args: list[str], pathspecs: list[str], exclusions: tuple[SensitiveExclusion, ...], *, scoped: bool, cwd: Path, executable: Path | None, own_process_group: bool) -> list[str]:
+    """Names ``pathspecs`` let into the diff but the folded matcher denies.
+
+    Unscoped, scans every non-ASCII name. ``scoped`` (``pathspecs`` carries
+    the diff's ``path``): scans every name under that scope and nothing else,
+    since git ORs positive pathspecs and the non-ASCII globs would add names
+    from the whole repository. ``--no-renames``: both sides of a rename are
+    listed. ``-z``: names come back as stored, unquoted. A truncated or failed
+    scan refuses.
+    """
+    argv = ['git', '--no-pager', 'diff', '--no-ext-diff', '--no-textconv', '--no-renames', '--name-only', '-z', *mode_args, '--', *pathspecs]
+    if not scoped:
+        argv.extend(_NON_ASCII_PATHSPECS)
+    result = _run_git_bytes(argv, cwd=cwd, executable=executable, own_process_group=own_process_group, max_output_bytes=_WITHHELD_SCAN_MAX_BYTES)
+    if result.truncated:
+        raise LocalToolError(_UNVERIFIED_EXCLUSIONS)
+    if result.returncode != 0:
+        gist = result.stderr.decode('utf-8', errors='replace').strip().splitlines()
+        raise LocalToolError(f'git diff failed: {(gist[0][:200] if gist else result.returncode)}')
+    folded = _folded_exclusions(exclusions)
+    names = (raw.decode('utf-8', 'surrogateescape') for raw in result.stdout.split(b'\x00'))
+    return [name for name in dict.fromkeys(names) if name and _is_relative_sensitive_path(PurePosixPath(name), exclusions, is_directory=False, folded_exclusions=folded)]
+
+def _withheld_name_pathspecs(names: list[str], exclusions: tuple[SensitiveExclusion, ...]) -> list[str]:
+    """Byte-exact exclusions for ``names``; a denied directory covers its files."""
+    subtrees = tuple((rule for rule in exclusions if rule.kind == 'subtree'))
+    folded_subtrees = _folded_exclusions(subtrees)
+    specs: dict[str, None] = {}
+    for name in names:
+        parts = name.split('/')
+        for depth in range(1, len(parts)):
+            if _is_relative_sensitive_path(PurePosixPath(*parts[:depth]), subtrees, is_directory=True, folded_exclusions=folded_subtrees):
+                specs[_exact_exclude_pathspec('/'.join(parts[:depth]), subtree=True)] = None
+                break
+        else:
+            specs[_exact_exclude_pathspec(name, subtree=False)] = None
+    if sum((len(spec) for spec in specs)) > _WITHHELD_PATHSPEC_BUDGET:
+        raise LocalToolError(_UNVERIFIED_EXCLUSIONS)
+    return list(specs)
 
 def _repo_relative_exclusions(workspace_root: Path, repo_root: Path, exclusions: tuple[SensitiveExclusion, ...]) -> tuple[SensitiveExclusion, ...]:
     """Translate parent-admitted workspace exclusions to repository-relative."""
@@ -4062,9 +4140,10 @@ def git_status(workspace_root: Path, path: str='.', *, sensitive_exclusions: tup
     pathspecs: list[str] = []
     if path not in (None, '.'):
         pathspecs.append(_literal_pathspec(_repo_relative_path(workspace_root, repo_root, path, context=context, sensitive_exclusions=sensitive_exclusions)))
-    pathspecs.extend(_denylist_pathspecs(repo_root, context=context, workspace_root=workspace_root, sensitive_exclusions=sensitive_exclusions))
+    exclusions = _repo_exclusions(repo_root, context, workspace_root=workspace_root, sensitive_exclusions=sensitive_exclusions)
+    pathspecs.extend(_denylist_pathspecs(repo_root, exclusions=exclusions))
     result = _run_git_checked(['git', '--no-pager', 'status', '--porcelain=v2', '-z', '--branch', '--untracked-files=all', '--', *pathspecs], subcommand='status', cwd=_git_cwd(workspace_root, repo_root, own_process_group=own_process_group), executable=executable, own_process_group=own_process_group)
-    branch, entries, truncated = _parse_status_porcelain_v2(result.stdout, limit=GIT_STATUS_MAX_ENTRIES)
+    branch, entries, truncated = _parse_status_porcelain_v2(result.stdout, limit=GIT_STATUS_MAX_ENTRIES, exclusions=exclusions)
     lines = [_format_branch_header(branch)]
     lines.extend((_format_status_entry(entry) for entry in entries))
     if not entries:
@@ -4073,7 +4152,8 @@ def git_status(workspace_root: Path, path: str='.', *, sensitive_exclusions: tup
         lines.append('… (more entries, truncated)')
     return '\n'.join(lines)
 
-def _parse_status_porcelain_v2(stdout: str, *, limit: int) -> tuple[dict[str, object], list[dict[str, object]], bool]:
+def _parse_status_porcelain_v2(stdout: str, *, limit: int, exclusions: tuple[SensitiveExclusion, ...]=()) -> tuple[dict[str, object], list[dict[str, object]], bool]:
+    folded = _folded_exclusions(exclusions)
     branch: dict[str, object] = {'branch': None, 'upstream': None, 'ahead': None, 'behind': None}
     entries: list[dict[str, object]] = []
     total = 0
@@ -4084,7 +4164,7 @@ def _parse_status_porcelain_v2(stdout: str, *, limit: int) -> tuple[dict[str, ob
         if record.startswith('! '):
             continue
         entry = _parse_status_entry(record)
-        if entry is None:
+        if entry is None or _is_relative_sensitive_path(PurePosixPath(str(entry['path'])), exclusions, is_directory=False, folded_exclusions=folded):
             continue
         total += 1
         if len(entries) < limit:
@@ -4292,16 +4372,24 @@ def git_diff(workspace_root: Path, *, staged: bool=False, commit_range: str | No
         argv.append('--stat')
     else:
         argv.append('--unified=3')
-    if staged:
-        argv.append('--cached')
+    mode_args = ['--cached'] if staged else []
     if commit_range is not None:
-        argv.append(commit_range)
+        mode_args.append(commit_range)
+    argv.extend(mode_args)
     pathspecs: list[str] = []
     if path is not None:
         pathspecs.append(_literal_pathspec(_repo_relative_path(workspace_root, repo_root, path, context=context, sensitive_exclusions=sensitive_exclusions)))
-    pathspecs.extend(_denylist_pathspecs(repo_root, context=context, workspace_root=workspace_root, sensitive_exclusions=sensitive_exclusions))
+    exclusions = _repo_exclusions(repo_root, context, workspace_root=workspace_root, sensitive_exclusions=sensitive_exclusions)
+    pathspecs.extend(_denylist_pathspecs(repo_root, exclusions=exclusions))
+    cwd = _git_cwd(workspace_root, repo_root, own_process_group=own_process_group)
+
+    def _scan() -> list[str]:
+        return _withheld_names(mode_args, pathspecs, exclusions, scoped=path is not None, cwd=cwd, executable=executable, own_process_group=own_process_group)
+    pathspecs.extend(_withheld_name_pathspecs(_scan(), exclusions))
     argv.extend(['--', *pathspecs])
-    result = _run_git_checked(argv, subcommand='diff', cwd=_git_cwd(workspace_root, repo_root, own_process_group=own_process_group), executable=executable, own_process_group=own_process_group)
+    result = _run_git_checked(argv, subcommand='diff', cwd=cwd, executable=executable, own_process_group=own_process_group)
+    if _scan():
+        raise LocalToolError(_UNVERIFIED_EXCLUSIONS)
     return result.stdout if result.stdout.strip() else '(no changes)'
 
 def git_blame(workspace_root: Path, path: str, *, start_line: int | None=None, end_line: int | None=None, sensitive_exclusions: tuple[SensitiveExclusion, ...] | None=None, executable: Path | None=None, own_process_group: bool=True) -> str:
@@ -5719,4 +5807,4 @@ REMOTE_SENSITIVE_PATHS: tuple[str, ...] = (
 #: ``build_remote_worker_bundle.expected_bundle_stamp``. The remote
 #: worker's ``ping`` echoes it so callers can confirm which bundle the
 #: remote actually executed.
-BUNDLE_SHA256 = _enter_worker_exchange("ec1ee4c4e895b8cfb41951cc18bbc6d600e6010a978768bd6541129d34c156bd")
+BUNDLE_SHA256 = _enter_worker_exchange("d89080f8267d02d2992ecea12e0274a9b93110d8f99c3cbaed5f07da316d8e85")

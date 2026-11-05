@@ -539,6 +539,11 @@ _NON_ENTRY_WORKSPACE_HELPERS = frozenset(
     {
         "tldw_chatbook.Tools.git_tool_impls._denylist_pathspecs",
         "tldw_chatbook.Tools.git_tool_impls._repo_relative_exclusions",
+        # TASK-38463: `_denylist_pathspecs`'s rule lookup, extracted so
+        # git_diff/git_status hand the same rules to the folded matcher. It
+        # translates rules relative to an already-discovered (and
+        # denylist-checked) repo root; it never resolves a tool target.
+        "tldw_chatbook.Tools.git_tool_impls._repo_exclusions",
         "tldw_chatbook.Tools.git_tool_impls._git_cwd",
         # Filters inherited executable-search directories against an already
         # admitted canonical root; it never resolves a tool-supplied target.
@@ -617,6 +622,7 @@ def test_every_workspace_rooted_function_uses_the_choke_point():
         {
             "tldw_chatbook.Tools.git_tool_impls._denylist_pathspecs",
             "tldw_chatbook.Tools.git_tool_impls._repo_relative_exclusions",
+            "tldw_chatbook.Tools.git_tool_impls._repo_exclusions",
             "tldw_chatbook.Tools.git_tool_impls._git_cwd",
             "tldw_chatbook.Tools.workspace_tool_executor.workspace_worker_environment",
         }

@@ -3,7 +3,7 @@ id: TASK-38206
 title: GGUF source-mode recompose test times out on Windows CI intermittently
 status: In Progress
 created_date: 2026-10-30 10:50
-updated_date: '2026-10-31 09:55'
+updated_date: '2026-11-03 14:30'
 labels:
 - ci
 - flaky-test
@@ -64,6 +64,20 @@ Tests/UI/test_llm_gguf_source_modes.py::test_claim_authority_survives_screen_rec
 **Review round (2026-10-31, claude/burn-fixB).** The 60 s budget applied per wait, so several waits in one test could sum past the 180 s node timeout and turn an assertion into a pytest-timeout kill. Windows settles now share one deadline per test, 120 s from its setup (autouse fixture), leaving 60 s of the node timeout for teardown; other platforms keep 10 s per wait. No assertion changed. `test_windows_settles_share_one_deadline_per_test` pins it (RED: missing; GREEN); the whole file passes locally (32, bootstrap-profile aid).
 
 **Review round 3.** The budget test compared two real `time.monotonic()` reads 10 ms apart, which is flaky where the clock is coarser than that (Windows 3.12). The deadline now reads an injectable `_settle_clock`, and the test drives it with a fake clock (budgets exactly 120 then 90; spent at the deadline). RED under a frozen clock: `assert 120.0 > 120.0`; GREEN.
+
+**Follow-up finding (2026-11-03, TASK-38703, claude/bd-38703 on dev 335f984bd2).**
+
+From 2026-11-02 the job failed on all three OSes. On Windows it was this test's "screen recompose did not reach deferred mount" again. That was a different cause, not this starvation: a Console refresh loop that dev gained in PR #3166 (e017592b44, merged 2026-10-31 21:32Z). The cost chip and the context estimates fed the single-slot tokenizer gate "OpenAI" and "openai". Each sync then recaptured the request and re-ran the readiness config read, and the read's publication ran another sync: about 15 a second, even under the pushed LLM screen. With the process never idle, every `pilot.pause()` ran to its 1 s cap. Locally the keyboard nodes took 114 s and 193 s instead of 20-33 s. TASK-38703 fixes it by keying the gate on the provider config key; after the fix the recompose node takes 10.7-17.0 s on macOS in 5 of 5 runs.
+
+Three things to know when reading the red Windows runs:
+- Every red run before 335f984bd2 ran with the old 10 s budget. This task's 120 s shared deadline reached dev only in that merge (#3352).
+- The loop's worker reads (`console-readiness-config`, thread reads through storage admission) also took default-executor threads, the same pool the Windows timer sleeps hold. So on Windows the loop made the starvation worse.
+- With the loop gone, the starvation itself is unchanged. TASK-38462 still owns the source fix.
+
+AC#2 still needs 10 consecutive Windows passes in CI, counted from a head that has both this task's deadline and the TASK-38703 fix.
+
+**The 120 s Windows deadline stays for now.** TASK-38462 (claude/bd-38462, e08f7653a2) moves Windows Textual timer sleeps off the default executor. Waits of 0.25 s or more use `asyncio.sleep`, and shorter ones a dedicated pool. If Windows CI then shows the recompose wait back near macOS, under 1 s, the Windows branch can return to the shared 10 s budget. Pinning that needs Windows job timings. The time to decide is AC#2's 10-run streak: lower the budget only if those runs carry TASK-38462 and their recompose waits fit inside 10 s with margin.
+**Windows run 1 of 10 (AC#2):** passed in run 41784255481 at d0d26a6fdc (2026-11-04). The 7 full-app nodes took 13.4-23.8 s and the 31 backend tests passed, with no teardown errors. The head carries the TASK-38703 loop fix, the TASK-38462 timer fix and the 120 s Windows deadline. AC#2 needs 9 more consecutive passing Windows runs.
 <!-- SECTION:IMPLEMENTATION_NOTES:END -->
 
 ## Final Summary

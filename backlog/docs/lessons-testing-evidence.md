@@ -6,6 +6,18 @@
 
 **What to do.** When a red-on-dev test names a refusal, assert the refusal's own copy or notice in the failure message, not only the outcome it causes. A "not sent" outcome has several causes. For a check that runs after an awaited step, make sure the edit you inject cannot run a handler that ends the flow before the check.
 
+## A census that caches the whole package's AST pays Tests/Chat's per-test gc on every test (TASK-38702, 2026-11-03)
+
+**Incident.** `Tests/Chat/test_console_semantic_mutation_inventory.py` parses every module under `tldw_chatbook/` into `@cache`d ASTs (2,939 files, ~8.5M nodes, ~2.5 GB RSS). `Tests/conftest.py`'s `cleanup_file_descriptors` runs `gc.collect()` after every test under `Tests/Chat/` (an app-mounting directory), and one collection over that heap took 13 s alone and 30-40 s in a run: the 135-test file took 14 min serially, every teardown showing ~35 s in `--durations`. It was red on dev at the same time, which made it worse: the first unreviewed dynamic SQL site raised inside `_direct_sql_routes`, `functools.cache` does not store an exception, so every test that touched the scan re-parsed the package. The inventory had been red since at least 2026-09-05 (#2432, the oldest drift found), and its sibling fork census since #3346 (2026-11-02); no PR lane ran either.
+
+**What to do.** In a pure-AST test module that caches large trees, override `cleanup_file_descriptors` with a no-op fixture of the same name, and release the caches in a module-scoped fixture so later files in the same lane process do not inherit the heap (here: 14 min to 110 s serially). Before adding a census file to a lane, time it serially with `--durations` and read the teardown column, not only the call column.
+
+## A git Unicode test pinned with `core.precomposeunicode=false` misses the macOS default (TASK-38463, 2026-11-03)
+
+TASK-37655 emitted each git exclusion rule in both NFC and NFD, and its regression test passed in both directions. That test set `core.precomposeunicode=false`. `git init` on macOS writes `true`, and with `true` git precomposes its argv, so the NFD spelling is rewritten to NFC before matching. A probe on git 2.39.5 (Apple) wrote index names byte-exact with `hash-object -w --stdin` plus `update-index --index-info`, under the macOS default. An NFD-stored `naïve.txt` leaked its content under both the NFC and the NFD rule. A mixed-normalization name leaked under every rule spelling, including its own exact bytes. No literal pathspec can name such an entry. What did work, with precompose on and off, was a `:(exclude,glob)` pathspec that writes each non-ASCII byte as a one-byte bracket: wildmatch compares bytes, and an argv element that is not valid UTF-8 is left alone by the precomposition.
+
+**What to do:** test git path behaviour with precompose both on and off, and create the names through index plumbing. `git add` and the filesystem may renormalize them on APFS, so the test may never hold the bytes it claims. Use `ls-files -z` to check that the stored bytes are the ones you meant.
+
 ## A held config lock does not defer a Console control-bar sync while its checked display proof is valid (TASK-38645, 2026-11-03)
 
 The task blamed the nonblocking config-lock probe in `run_console_config_sync` for the deferred control-bar sync behind the Send-readiness flakes. So the first negative control for the fix held `_config_file_lock()` from another thread around a bare `console._sync_console_control_bar()`. Both arms passed. The bare call still returned True, and the control would have "shown" that the wait was unnecessary. The mounted harness's config value is disk-loaded, so the sync runs through the checked readiness display (`ConsoleReadinessConfigProjection.run` / `_run_checked_display_sync`), which does not reach the native-lock probe while its display proof is valid. Without a proof (a harness that patches `chat_screen.load_settings`, or changed pricing sources), `_checked_display_status` returns None, and the nonblocking lock probe in `run_console_config_sync` can still defer the sync. Setting the projection's `value = None` just before the bare call made it return False with Send stale, `(True, True) == (False, False)`, the CI failure. `_sync_console_control_bar_now` waited and passed. A version that slept 1.1 s with no config lock held, to age the proof, also passed both arms, because the app re-synced during the sleep.
@@ -352,6 +364,32 @@ queueing, which CPU load does not reproduce -- as one deadline shared by the
 test's waits, not a budget per wait: the first fix gave each wait 60 s, and
 review caught that three slow waits sum past the job's 180 s node timeout,
 which kills the test instead of failing its assertion.
+
+**Update (TASK-38462, 2026-11-03).** On Windows the app now installs its own
+timer sleep at `Load` (`install_windows_timer_sleep`), so the default executor
+carries no timer jobs. If a Windows dump again shows `asyncio_N` threads in
+`wait_inner`, the install did not happen. Check the Textual pin in
+`Tests/App/test_windows_timer_sleep.py` first. Reproducing with the proxy has a
+trap: `@private_profile_test` runs the test body in a child pytest that drops
+`PYTEST_ADDOPTS` and every `-p` plugin, so a proxy loaded only in the parent
+measures plain Textual. Hand the proxy over through `PYTEST_PLUGINS` and
+`PYTHONPATH` in `os.environ`, set from `pytest_configure` in the process that
+runs the test. Do not set them in an xdist controller: on the first try here
+every worker then died at startup with `Error importing plugin`, and the run
+reported "no tests ran".
+
+**Second update (TASK-38462, 2026-11-04): a faster body moves late work into
+teardown.** The first Windows run with the timer fix ERRORed three GGUF nodes in
+teardown with "Native app workers remain uncertain". The 3 s default-executor
+join timed out, but no timer job was involved. The bodies had dropped from 33-40 s
+to 17-24 s. The staggered FTS backfill, which on the test factory's fresh profile
+CREATES ChaChaNotes (v0 to v86 plus seeding, seconds on Windows, and impossible to
+cancel), used to finish inside the starved body and now straddled the app's exit.
+Each failing node's captured teardown log showed it ("Current version: 0"). The
+race never shows on macOS, because creation there takes 0.5 s. A 5 s sleep put
+into the suspect step reproduced the CI error exactly. So when a speed fix turns
+into teardown errors, read the captured teardown log for work that started in
+the body. Reproduce it by slowing that one step, not by emulating the platform.
 
 ## A child kept across its parent's rebuild defeats an "every child is unlaid" guard (TASK-33622.6, 2026-10-29)
 
@@ -24544,3 +24582,12 @@ Run on its own at load average 34, the resize loop ended 9.3 s after mount. In a
 - Close a thread-affine repository on the thread that opened it. The fix gives the workspace a one-thread executor for both open and close.
 - To prove a close, capture the native handle beforehand and assert that the handle raises afterwards. Reusing the repository proves nothing.
 - Do not let the pool's scheduling decide the test. An idle default pool often hands the open and the close the same thread. Once the test stopped loading the pool, it passed with the fix reverted. Install a default executor that gives every call a new thread (`_ThreadPerCallExecutor` in `Tests/UI/test_library_file_notes_workspace.py`); then the leak fails every run.
+
+## A Pilot test that times out on every OS can be a busy app, not a hang, and pytest-timeout can report it as passed (TASK-38703, 2026-11-03)
+
+**Incident.** From 2026-11-02 the GGUF source evidence job failed on ubuntu, macOS and Windows. Its keyboard tests hit `--timeout=60`, and the recompose test missed its settle. No stack showed a hang. The macOS job printed a pytest-timeout dump and then `1 passed, 1 warning in 240.78s` (run 41595165317): the timeout's `Failed` was raised inside a `WeakSet` callback and swallowed as an unraisable warning. Locally the same nodes "passed" in 114 s and 193 s, against 20-33 s on the last green run. Every `pilot.pause()` and `pilot.press()` awaits `wait_for_idle`, which waits up to 1 s while the process burns CPU on any thread. An idle Console under the pushed LLM screen was refreshing about 15 times a second, so most of the test's pauses cost a full second instead of milliseconds. The loop was a single-slot tokenizer cache that two callers keyed with "OpenAI" and "openai". A bisection that timed one node, rather than reading pass or fail, found the introducing commit in 17 probes. The first instrumented run was fast (24 s, not 228 s): a plugin that imported and patched the modules in `pytest_sessionstart` changed what `tokenizer_display` captured at import, and the loop disappeared. The same patches applied in `pytest_runtest_call` reproduced it.
+
+**What to do.**
+- When a Pilot test slows down on every OS at once, time the node and sample stacks before suspecting a hang or the runner. Look for a worker group that keeps restarting.
+- Judge a local run by its duration as well as its result. A `--timeout` overrun can still be reported as passed.
+- Install diagnostic patches at `pytest_runtest_call`, not at session start, in modules that capture function identities at import.

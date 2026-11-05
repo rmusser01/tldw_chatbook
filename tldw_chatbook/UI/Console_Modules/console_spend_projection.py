@@ -205,6 +205,27 @@ REFRESH_AHEAD_SHARE = 0.5
 #: controls still converge once it clears.
 RETRY_FIRST_DELAY = 0.2
 RETRY_MAX_DELAY = 5.0
+#: TASK-38703: tokenizer preparations one projection keeps, one per (model,
+#: provider config key). The cost chip asks for the selected model and the
+#: context estimates for the session's; with a single slot each ask recaptured
+#: the other's request, and every recapture refreshed and synced again.
+# ponytail: least-recently-asked eviction; a sync asking for more pairs than
+# this would recapture again, so raise it if a surface ever shows more models.
+TOKENIZER_SLOTS = 8
+
+
+@dataclass(eq=False)
+class _TokenizerSlot:
+    """One captured stock-tokenizer preparation and its last finite outcome."""
+
+    request: Callable[[], bool]
+    prepared: bool = False
+    retry_at: float = 0.0
+    #: Asked for since the last refresh began. Only asked slots make a
+    #: refresh due or are read by one, so a slot left behind when its screen
+    #: moved to another model stops costing every refresh (re-review
+    #: 2026-11-03).
+    asked: bool = True
 
 
 class ConsoleReadinessConfigProjection:
@@ -226,9 +247,7 @@ class ConsoleReadinessConfigProjection:
         self._read_request = None
         self._reads = set()
         self._runtime_owner = None
-        self._tokenizer_request = None
-        self._tokenizer_prepared = None
-        self._tokenizer_retry_at = 0.0
+        self._tokenizers: dict[tuple[str, str], _TokenizerSlot] = {}
         self._retry_delay = 0.0
         self._failed_key = None
         self._retry_timer = None
@@ -406,10 +425,10 @@ class ConsoleReadinessConfigProjection:
         life = self.max_age
         if getattr(screen, "_console_transcript_sync_timer", None) is not None:
             life *= REFRESH_AHEAD_SHARE
-        tokenizer_due = (
-            self._tokenizer_request is not None
-            and self._tokenizer_prepared is not self._tokenizer_request
-            and time.monotonic() >= self._tokenizer_retry_at
+        now = time.monotonic()
+        tokenizer_due = any(
+            slot.asked and not slot.prepared and now >= slot.retry_at
+            for slot in self._tokenizers.values()
         )
         if (
             not current or time.monotonic() - self.at >= life or tokenizer_due
@@ -448,25 +467,30 @@ class ConsoleReadinessConfigProjection:
         runtime = _readiness_runtime(self.screen)
         if getattr(self.screen, "_closing", False) or getattr(runtime, "_disposed", False):
             return False
-        request = self._tokenizer_request
-        if (
-            request is None
-            or (request.model, request.provider) != (model, provider)
-            or not _tokenizer_display.preparation_current(request)
-        ):
+        # TASK-38703: callers pass a provider's label ("OpenAI") or its config
+        # key ("openai"), and the cost chip and the context estimates may ask
+        # for different models; one slot per pair, or each recapture
+        # re-refreshes (``TOKENIZER_SLOTS``).
+        key = (model, _tldw_config.normalize_provider_config_key(provider))
+        # Pop and re-insert so the dict's order is least recently asked first.
+        slot = self._tokenizers.pop(key, None)
+        if slot is None or not _tokenizer_display.preparation_current(slot.request):
             request = _tokenizer_display.capture_tokenizer_preparation(model, provider)
-            self._tokenizer_request = request
-            self._tokenizer_prepared = None
-            self._tokenizer_retry_at = 0.0
-        # Unqualified/custom backends retain their original synchronous route.
-        if request is None:
-            return True
+            # Unqualified/custom backends retain their original synchronous route.
+            if request is None:
+                return True
+            slot = _TokenizerSlot(request)
+        slot.asked = True
+        self._tokenizers[key] = slot
+        while len(self._tokenizers) > TOKENIZER_SLOTS:
+            del self._tokenizers[next(iter(self._tokenizers))]
         self.run(lambda: None)
         return (
-            self._tokenizer_prepared is request
+            slot.prepared
+            and self._tokenizers.get(key) is slot
             and self._runtime_owner is runtime
             and _same_readiness_key(self._key(), self.key)
-            and _tokenizer_display.preparation_current(request)
+            and _tokenizer_display.preparation_current(slot.request)
         )
 
     async def warm(self) -> bool:
@@ -504,8 +528,12 @@ class ConsoleReadinessConfigProjection:
         retry = True
         try:
             reader = self.read_current
-            tokenizer_request = self._tokenizer_request
-            tokenizer_prepared = False
+            # Only slots asked for before this read may be marked by it; an
+            # ask that arrives while it runs is kept for the next refresh.
+            tokenizers = [item for item in self._tokenizers.items() if item[1].asked]
+            for _slot_key, slot in tokenizers:
+                slot.asked = False
+            tokenizers_prepared = set()
             store = getattr(self.screen, "_console_chat_store", None)
             settings_reader = getattr(store, "session_settings", None)
             settings = (
@@ -539,24 +567,26 @@ class ConsoleReadinessConfigProjection:
                 require_current=lambda: None,
             )
             read_at = time.monotonic()
-            if (
-                tokenizer_request is not None
-                and tokenizer_request is self._tokenizer_request
-                and _same_readiness_key(key, self._key())
-                and not getattr(self.screen, "_closing", False)
-                and not getattr(runtime, "_disposed", False)
-            ):
-                tokenizer_prepared = (
-                    tokenizer_request is self._tokenizer_prepared
-                    and _tokenizer_display.preparation_current(tokenizer_request)
+            for slot_key, slot in tokenizers:
+                if (
+                    self._tokenizers.get(slot_key) is not slot
+                    or not _same_readiness_key(key, self._key())
+                    or getattr(self.screen, "_closing", False)
+                    or getattr(runtime, "_disposed", False)
+                ):
+                    continue
+                if (
+                    slot.prepared
+                    and _tokenizer_display.preparation_current(slot.request)
                 ) or await run_preparation_read(
-                    tokenizer_request,
+                    slot.request,
                     creator=self,
                     session_id=key[5],
                     reads=self._reads,
                     observers=observers,
                     require_current=lambda: None,
-                )
+                ):
+                    tokenizers_prepared.add(slot_key)
             if (
                 getattr(self.screen, "_closing", False)
                 or getattr(runtime, "_disposed", False)
@@ -597,20 +627,18 @@ class ConsoleReadinessConfigProjection:
                 or self.pricing != result.pricing
                 or self.model_token_caps != result.model_token_caps
             )
-            if (
-                tokenizer_request is self._tokenizer_request
-                and tokenizer_request is not None
-            ):
-                if tokenizer_prepared and _tokenizer_display.preparation_current(
-                    tokenizer_request
+            retry_at = time.monotonic() + self.max_age
+            for slot_key, slot in tokenizers:
+                if self._tokenizers.get(slot_key) is not slot:
+                    continue
+                if slot_key in tokenizers_prepared and (
+                    _tokenizer_display.preparation_current(slot.request)
                 ):
-                    changed = (
-                        changed or self._tokenizer_prepared is not tokenizer_request
-                    )
-                    self._tokenizer_prepared = tokenizer_request
+                    changed = changed or not slot.prepared
+                    slot.prepared = True
                 else:
-                    self._tokenizer_prepared = None
-                self._tokenizer_retry_at = time.monotonic() + self.max_age
+                    slot.prepared = False
+                slot.retry_at = retry_at
             self._runtime_owner = runtime
             self.key, self.value, self.at = current_key, value, read_at
             self.context_policy = result.context_policy

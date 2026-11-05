@@ -821,7 +821,7 @@ async def test_tokenizer_wait_never_renews_original_checked_display(
     database, _store, _controller, screen, tasks = _screen(tmp_path)
     projection = spend.ConsoleReadinessConfigProjection.for_screen(screen)
     request = HeldPreparation("model", "provider")
-    projection._tokenizer_request = request
+    projection._tokenizers[("model", "provider")] = spend._TokenizerSlot(request)
     original_current = spend._tokenizer_display.preparation_current
     monkeypatch.setattr(
         spend._tokenizer_display,
@@ -853,7 +853,7 @@ async def test_tokenizer_wait_never_renews_original_checked_display(
         request.release.set()
         await asyncio.gather(*tasks)
         assert not projection._reads
-        assert projection._tokenizer_prepared is request
+        assert projection._tokenizers[("model", "provider")].prepared
         with _actual_calls() as calls:
             accepted = run_console_presentation_sync(
                 screen, lambda: rendered.append(True)
