@@ -1013,6 +1013,9 @@ MINIMUM_FILES = 2785
 # the tail; the file runs about 60 s serially. The floor is the entry count.
 MINIMUM_FILES = 2792
 MINIMUM_FILES = 2785
+# TASK-36571.1 (2026-11-05): the run-status reuse pin and the unchanged
+# folder-availability re-read pin join them. The floor is the entry count.
+MINIMUM_FILES = 2787
 
 # TASK-34601.1 (2026-11-11): feedback handoff, Stop and actual image-reader
 # shutdown and held-read input join the gate without moving earlier shards.
@@ -1370,6 +1373,8 @@ MINIMUM_FILES = 2811
 MINIMUM_FILES = 2812
 # 2026-11-26: re-counted after rebasing onto dev 434eb71f95. The floor is the measured entry count.
 MINIMUM_FILES = 2819
+# 2026-11-22: re-counted after rebasing onto dev fe8c87e3e2. The floor is the measured entry count.
+MINIMUM_FILES = 2821
 def read_census(path: Path) -> list[str]:
     """Read the census, dropping comments and blank lines.
 
