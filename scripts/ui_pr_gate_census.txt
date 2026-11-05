@@ -2414,3 +2414,11 @@ Tests/UI/test_modal_wide_tier.py::test_split_modal_tier_rules_stay_off_the_boot_
 # focus chain, so its Tab walks went from 32.6-33.7 s to 4.9-5.3 s (call,
 # serial, three runs at load 7-8). Appended at the tail.
 Tests/UI/test_library_file_notes_workspace.py::test_library_notes_source_choices_render_and_switch_by_keyboard[size0]
+# TASK-38757 review (2026-11-05): on the real Library screen at 50 columns the
+# hidden work pane comes forward for a selected deleted note, a failed open, an
+# autosave that fails after Back, and New (5-6 s each at load 30). Appended at
+# the tail.
+Tests/UI/test_library_file_notes_workspace.py::test_file_notes_hidden_work_pane_comes_forward_on_the_library_screen[deleted]
+Tests/UI/test_library_file_notes_workspace.py::test_file_notes_hidden_work_pane_comes_forward_on_the_library_screen[open-error]
+Tests/UI/test_library_file_notes_workspace.py::test_file_notes_hidden_work_pane_comes_forward_on_the_library_screen[save-error]
+Tests/UI/test_library_file_notes_workspace.py::test_file_notes_hidden_work_pane_comes_forward_on_the_library_screen[new]

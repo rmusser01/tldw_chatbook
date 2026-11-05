@@ -2073,6 +2073,28 @@ class LibraryFileNotesWorkspace(Vertical):
             and layout.reader_width < _NARROW_WORK_MIN_WIDTH
         )
 
+    def _set_narrow_view(self, view: Literal["navigator", "editor"]) -> None:
+        """Switch the narrow view and re-lay out whichever shell owns it.
+
+        The Library screen resolves an external shell's layout, so it is
+        asked to re-resolve: ``_apply_responsive_layout`` alone does not reach
+        it (TASK-38757 review: a selected deleted note stayed hidden).
+        """
+        self._narrow_view = view
+        self._apply_responsive_layout(self.size.width)
+        if self._reader_shell_external:
+            self._sync_body_panes()
+            self.post_message(AdaptiveReaderShellResized())
+
+    def _bring_work_forward(self) -> None:
+        """Show a hidden narrow work pane whose content must be seen.
+
+        TASK-38757 review: below 60 columns the navigator hides the work pane,
+        so a failure, a refusal or a path task written there showed nowhere.
+        """
+        if self._navigator_hides_work(self._reader_layout):
+            self._set_narrow_view("editor")
+
     def _ensure_standalone_reader_shell(self) -> LibraryAdaptiveReaderShell:
         """Supply the shared structure for direct workspace harnesses."""
         if self._reader_shell is None:
@@ -2331,6 +2353,8 @@ class LibraryFileNotesWorkspace(Vertical):
         self._path_task_editor_lease = path_task_lease
         path = self.query_one("#file-notes-path", Input)
         path.value = self._current_path if task == "move" else ""
+        # New opens from the navigator; its form is in the work pane.
+        self._bring_work_forward()
         self._sync_path_task_surface(focus_target=True)
         return True
 
@@ -3638,6 +3662,8 @@ class LibraryFileNotesWorkspace(Vertical):
             # document. Transition-only on purpose: while ALREADY narrow,
             # Back's explicit navigator choice must keep winning.
             self._narrow_view = "editor"
+            if self._reader_shell_external:
+                self.post_message(AdaptiveReaderShellResized())
         back = self.query_one("#file-notes-back", Button)
         back.display = self._narrow and self._narrow_view == "editor"
         if not self._reader_shell_external:
@@ -5685,6 +5711,7 @@ class LibraryFileNotesWorkspace(Vertical):
             self._start_git_refresh()
 
     def _set_save_state(self, state: SaveState, detail: str = "") -> None:
+        entering_failure = state in {"conflict", "error"} and state != self._save_state
         self._save_state = state
         self._save_detail = detail
         if state != "conflict":
@@ -5695,6 +5722,8 @@ class LibraryFileNotesWorkspace(Vertical):
             status.set_class(state == "error", "-error")
             self._render_status_channels()
             self._update_controls()
+            if entering_failure:
+                self._bring_work_forward()
 
     def _set_action_status(self, text: str) -> None:
         self._action_detail = text
@@ -6571,6 +6600,9 @@ class LibraryFileNotesWorkspace(Vertical):
         ):
             return False
         if self._opened is not None and not await self.flush_pending_work():
+            # The refusal's reason (a failed save, a conflict) is in the work
+            # pane; show it rather than ignore the open (TASK-38757 review).
+            self._bring_work_forward()
             return False
         if (
             not self._active
@@ -6582,6 +6614,7 @@ class LibraryFileNotesWorkspace(Vertical):
             return False
         with self._hold_path_transition() as transition:
             if transition is None:
+                self._bring_work_forward()
                 return False
             try:
                 opened = await asyncio.to_thread(
@@ -6590,6 +6623,7 @@ class LibraryFileNotesWorkspace(Vertical):
                 )
             except Exception as error:
                 self._set_action_status(f"Open failed: {error}")
+                self._bring_work_forward()
                 return False
             if (
                 not self._active
@@ -6636,10 +6670,7 @@ class LibraryFileNotesWorkspace(Vertical):
             self._root_action_reason = ""
             self._update_root_surface()
         if self._narrow:
-            self._narrow_view = "editor"
-            self._apply_responsive_layout(self.size.width)
-            if self._reader_shell_external:
-                self.post_message(AdaptiveReaderShellResized())
+            self._set_narrow_view("editor")
         self._update_controls()
         self._sync_work_mode()
         if announce_editable and opened.editable:
@@ -6696,8 +6727,7 @@ class LibraryFileNotesWorkspace(Vertical):
         self._fit_path_surfaces()
         self._set_action_status("Ready to restore.")
         if self._narrow:
-            self._narrow_view = "editor"
-            self._apply_responsive_layout(self.size.width)
+            self._set_narrow_view("editor")
         self._update_controls()
         return True
 
@@ -7685,10 +7715,7 @@ class LibraryFileNotesWorkspace(Vertical):
     @on(Button.Pressed, "#file-notes-back")
     def _back_to_navigator(self, event: Button.Pressed) -> None:
         event.stop()
-        self._narrow_view = "navigator"
-        self._apply_responsive_layout(self.size.width)
-        if self._reader_shell_external:
-            self.post_message(AdaptiveReaderShellResized())
+        self._set_narrow_view("navigator")
 
     @on(Button.Pressed, "#file-notes-session-changes")
     def _session_git_pressed(self, event: Button.Pressed) -> None:
@@ -9007,10 +9034,7 @@ class LibraryFileNotesWorkspace(Vertical):
         self._work_mode = "manage"
         self._sync_work_mode()
         if self._narrow:
-            self._narrow_view = "editor"
-            self._apply_responsive_layout(self.size.width)
-            if self._reader_shell_external:
-                self.post_message(AdaptiveReaderShellResized())
+            self._set_narrow_view("editor")
 
     @on(Button.Pressed, "#file-notes-maintenance-toggle")
     def _toggle_maintenance_actions(self) -> None:

@@ -798,7 +798,10 @@ _BUDGETS: dict[str, int] = {
     # Save failed fill; the widget rule keeps only its bold.
     # TASK-38757, 2026-11-05 (same waiver): 9674 -> 9706 (+32). The narrow
     # navigator hides a work-pane sliver, and New fits its header row.
-    "tldw_chatbook/Widgets/Library/library_file_notes_workspace.py": 9706,
+    # TASK-38757 review, 2026-11-05 (same waiver): 9706 -> 9730 (+24). Narrow
+    # view switches re-resolve the screen-owned shell too, and a failure,
+    # refusal or New brings the hidden work pane forward.
+    "tldw_chatbook/Widgets/Library/library_file_notes_workspace.py": 9730,
     # 2026-11-02: +3 shared store-error import (TASK-36949.5).
     # TASK-38714 re-review, 2026-11-05: 9429 -> 9436 (+7). A failed
     # connection build closes the connection it opened instead of leaking it.

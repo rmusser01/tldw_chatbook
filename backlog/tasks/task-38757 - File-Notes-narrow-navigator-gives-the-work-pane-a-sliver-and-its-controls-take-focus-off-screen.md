@@ -5,7 +5,7 @@ status: Done
 assignee:
 - '@claude'
 created_date: 2026-11-05 07:11
-updated_date: 2026-11-05 22:06
+updated_date: 2026-11-05 22:58
 labels:
 - follow-up
 - library
@@ -42,6 +42,7 @@ So between 40 and 79 columns the navigator shows a work pane too thin to use, an
 - [x] #3 In the narrow editor view (after opening a file, and after Back), the work pane and its controls still show and take focus as before
 - [x] #4 A width-sweep test over 40-79, in the navigator and editor views, pins #1-#3 and is red before the change
 - [x] #5 If the narrow layout changes, the File Notes User Guide page describes it
+- [x] #6 When the narrow navigator hides the work pane, anything that must be seen there brings it forward on the real Library screen too: a selected deleted note (Restore visible and focusable), New's path field, and an open or save that fails or is refused (its message and recovery painted)
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -64,4 +65,18 @@ So between 40 and 79 columns the navigator shows a work pane too thin to use, an
 - Covering run: `test_library_file_notes_workspace.py`, `_git.py`, `_git_push.py`, `_delete_safety.py`, `_history.py`, `test_non_obscuring_focus_contract.py` and `test_widget_css_consolidation.py` (`-n 4`): 625 passed, 6 failed. The 6 are TASK-32185's known reds, and they are red on the base workspace source with the same command. In the wider Library run, the other failures were the local `RecoveryRequired` trap, or red on base as well (`test_the_trust_dialog_never_breaks_the_path_it_asks_consent_for`, `test_library_modal_inventory_*`).
 - The three nodes are appended at the census tail. The `library_file_notes_workspace.py` module-size row goes 9674 -> 9706 under the owner's waiver. The User Guide's Layout tour now describes the narrow layout. A lesson is added to `lessons-textual.md`.
 - Files: `tldw_chatbook/Widgets/Library/library_file_notes_workspace.py`, `Tests/UI/test_library_file_notes_workspace.py`, `Docs/User_Guide/library/file-notes.md`, `scripts/ui_pr_gate_census.txt`, `scripts/check_ui_pr_gate_census.py`, `Tests/Architecture/test_module_size_ratchet.py`, `backlog/docs/lessons-textual.md`.
+
+### Review fixes (r8f-rev1)
+
+- **A deleted note selected at 40-59 columns showed nothing on the Library screen.** `select_deleted` switched to the editor view without asking the screen, which owns the external shell's layout, to re-resolve. Every narrow-view switch now goes through `_set_narrow_view`: open, deleted-note select, Back and Manage. When the shell is external, it re-syncs the body panes and posts `AdaptiveReaderShellResized`. The one remaining direct assignment is the enter-narrow transition inside `_apply_responsive_layout`; it now posts the message too.
+- **Failures showed nowhere while the work pane was hidden.** `_bring_work_forward` switches to the editor view when the navigator hides the work pane. It runs in four places:
+  - when the save state enters `error` or `conflict` (an autosave that fails after Back);
+  - in `open_path`, on a flush refusal, a refused path transition, or "Open failed";
+  - when New opens its path form, which lives in the work pane. I found this one myself: New is reachable only from the navigator, and its form and focused field were hidden.
+- **New at wide sizes.** `test_file_notes_delete_is_spatially_separated_from_new` now measures New's cells inside its clip with `_seen_cells`, the helper the sweep now shares, and gains 211x44 and 235x52.
+- **Red and green evidence.**
+  - New test `test_file_notes_hidden_work_pane_comes_forward_on_the_library_screen[deleted|open-error|save-error|new]` runs the real Library screen at 50x24. All four cases are red on `d0f946520c`, each with "... did not come forward", and green after (5-6 s each at load 30).
+  - The strengthened New check is red on the pre-fix source `29592ecc9b` at 120, 211 and 235 (`assert 0 == 16`), and green now.
+- Covering run after the fixes, `-n 4`, over the workspace, git, git_push, delete_safety, history, retention and search_debounce files, the riders, w4 and wave File Notes files, `test_non_obscuring_focus_contract.py` and `test_widget_css_consolidation.py`: 665 passed, 6 failed. The 6 are the same TASK-32185 known reds as before.
+- The four new nodes are appended at the census tail. The module-size row goes 9706 -> 9730. The User Guide bullet now says "until you open or select a file", and that New or a failed or refused open or save brings the work area forward.
 

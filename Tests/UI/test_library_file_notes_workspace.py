@@ -31,6 +31,7 @@ from textual.color import Color
 from textual.containers import Horizontal, Vertical
 from textual.css.query import NoMatches
 from textual.errors import NoWidget
+from textual.widget import Widget
 from textual.widgets import Button, Input, Static, TextArea, Tree
 
 import Tests.UI._optional_module_stubs  # noqa: F401
@@ -358,6 +359,21 @@ def _painted_style_of_text(app: App, region, needle: str):
                 return segment.style
             x += len(segment.text)
     return None
+
+
+def _seen_cells(widget: Widget) -> int:
+    """Columns of ``widget`` inside its compositor clip and the screen.
+
+    TASK-38757: ``region.width > 0`` holds for a widget laid out wholly past
+    its parent's clip, so it cannot show a control is visible.
+    """
+    screen = widget.screen
+    try:
+        clip = screen.find_widget(widget).clip
+    except NoWidget:
+        return 0
+    region = widget.region
+    return min(region.right, clip.right, screen.size.width) - max(region.x, clip.x, 0)
 
 
 def _painted_text_in_region(app: App, region) -> str:
@@ -7046,20 +7062,11 @@ async def test_file_notes_narrow_views_lay_out_at_every_width_40_to_79(
             await _wait_until(pilot, settled, f"layout did not settle at {width}")
             await pilot.pause()
 
-        def seen_width(widget, width: int) -> int:
-            """Cells of ``widget`` inside its clip and the screen, across."""
-            try:
-                clip = screen.find_widget(widget).clip
-            except NoWidget:
-                return 0
-            region = widget.region
-            return min(region.right, clip.right, width) - max(region.x, clip.x, 0)
-
-        def off_screen(width: int) -> list[tuple[str | None, int, int]]:
+        def off_screen() -> list[tuple[str | None, int, int]]:
             return [
                 (widget.id, widget.region.x, widget.region.width)
                 for widget in screen.focus_chain
-                if seen_width(widget, width) <= 0
+                if _seen_cells(widget) <= 0
             ]
 
         async def sweep_navigator() -> None:
@@ -7074,13 +7081,13 @@ async def test_file_notes_narrow_views_lay_out_at_every_width_40_to_79(
                     width,
                     work.region.width,
                 )
-                assert not off_screen(width), (width, off_screen(width))
+                assert not off_screen(), (width, off_screen())
                 tree.focus()
                 await pilot.press("tab")
                 await pilot.pause()
                 landing = screen.focused
                 assert landing is not None, width
-                assert seen_width(landing, width) > 0, (width, landing.id)
+                assert _seen_cells(landing) > 0, (width, landing.id)
 
         async def sweep_editor(widths: range | tuple[int, ...]) -> None:
             back = workspace.query_one("#file-notes-back", Button)
@@ -7090,7 +7097,7 @@ async def test_file_notes_narrow_views_lay_out_at_every_width_40_to_79(
                 assert shell.work.display, width
                 assert shell.work.region.width == width - 10, width
                 assert back.display and back in screen.focus_chain, width
-                assert not off_screen(width), (width, off_screen(width))
+                assert not off_screen(), (width, off_screen())
             back.focus()
             await pilot.pause()
             assert back.has_focus
@@ -7114,6 +7121,116 @@ async def test_file_notes_narrow_views_lay_out_at_every_width_40_to_79(
             await sweep_editor((79, 40))
     await workspace.shutdown()
     replica.close()
+
+
+@pytest.mark.parametrize("case", ["deleted", "open-error", "save-error", "new"])
+@pytest.mark.asyncio
+async def test_file_notes_hidden_work_pane_comes_forward_on_the_library_screen(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    case: str,
+) -> None:
+    """TASK-38757 review: at 50 columns the navigator hides the work pane, and
+    the Library screen owns the shell's layout. Selecting a deleted note, an
+    open that fails, an autosave that fails after Back, and New (whose path
+    form is in the work pane) each write to the work pane, so each must bring
+    it forward: Restore visible and focusable, "Open failed" and "Save
+    failed" painted, the path field painted and focused."""
+    root = tmp_path / "notes"
+    root.mkdir()
+    (root / "one.md").write_text("first", encoding="utf-8")
+    (root / "gone.md").write_text("gone", encoding="utf-8")
+    workspace = LibraryFileNotesWorkspace(
+        root=root,
+        replica_path=tmp_path / "owned.sqlite",
+        poll_interval=10,
+        autosave_delay=30,
+    )
+    app = _build_test_app()
+    _seed_conversations(
+        app,
+        _two_conversations(),
+        notes=[{"title": "Database note", "id": "db-note-1"}],
+    )
+    screen = LibraryScreen(app, file_notes_workspace_factory=lambda: workspace)
+
+    def refuse(*_args: object, **_kwargs: object) -> object:
+        raise PermissionError("permission denied")
+
+    async with LibraryHarness(app, screen=screen).run_test(size=(50, 24)) as pilot:
+        await _wait_for_library_shell(screen, pilot)
+        await screen._select_library_rail_row(LIBRARY_ROW_BROWSE_NOTES)
+        await _wait_until(
+            pilot,
+            lambda: bool(screen.query("#library-notes-source-files")),
+            "Notes source strip did not compose",
+        )
+        screen.query_one("#library-notes-source-files", Button).press()
+        await _wait_until(
+            pilot,
+            lambda: workspace.initialized and workspace.is_mounted,
+            "File Notes workspace did not mount",
+        )
+        shell = workspace.query_one(
+            "#library-file-notes-reader-shell", LibraryAdaptiveReaderShell
+        )
+
+        async def wait_for_hidden_work() -> None:
+            await _wait_until(
+                pilot,
+                lambda: workspace.navigator_visible and not shell.work.display,
+                "the 50-column navigator did not hide its work pane",
+            )
+
+        await wait_for_hidden_work()
+        service = workspace._service
+        assert service is not None
+        if case == "deleted":
+            assert service.delete_file("gone.md").status == "ok"
+            assert await workspace.refresh_files()
+            assert workspace.select_deleted("gone.md")
+            target = workspace.query_one("#file-notes-restore", Button)
+            expected = "Restore"
+        elif case == "open-error":
+            monkeypatch.setattr(service, "open_file", refuse)
+            assert not await workspace.open_path("one.md")
+            target = workspace.query_one("#file-notes-action-status", Static)
+            expected = "Open failed"
+        elif case == "save-error":
+            assert await workspace.open_path("one.md")
+            _replace_editor_text(workspace._editor_widget, "draft after Back")
+            workspace.query_one("#file-notes-back", Button).press()
+            await wait_for_hidden_work()
+            assert workspace.save_state == "dirty"
+            monkeypatch.setattr(service, "save_file", refuse)
+            workspace._start_autosave()  # what the autosave timer runs
+            target = workspace.query_one("#file-notes-save-status", Static)
+            expected = "Save failed"
+        else:
+            workspace.query_one("#file-notes-new", Button).press()
+            target = workspace.query_one("#file-notes-path", Input)
+            expected = "relative/path.md"
+
+        await _wait_until(
+            pilot,
+            lambda: (
+                workspace.editor_visible
+                and shell.work.display
+                and _seen_cells(target) > 0
+                and expected in _painted_text_in_region(pilot.app, target.region)
+            ),
+            f"{case}: {expected!r} did not come forward",
+        )
+        if case == "deleted":
+            assert target in screen.focus_chain
+            target.focus()
+            await pilot.pause()
+            assert target.has_focus
+        elif case == "new":
+            await _wait_until(
+                pilot, lambda: target.has_focus, "New did not focus its path field"
+            )
+    await workspace.shutdown()
 
 
 @pytest.mark.asyncio
@@ -8626,7 +8743,7 @@ async def test_file_notes_discloses_actions_by_editor_state_and_redirects_focus(
     replica.close()
 
 
-@pytest.mark.parametrize("size", ((120, 40), (40, 20)))
+@pytest.mark.parametrize("size", ((120, 40), (40, 20), (211, 44), (235, 52)))
 @pytest.mark.asyncio
 @pytest.mark.allow_network
 async def test_file_notes_delete_is_spatially_separated_from_new(
@@ -8676,10 +8793,12 @@ async def test_file_notes_delete_is_spatially_separated_from_new(
         assert new.display and delete.display
         assert str(new.label) == "New"
         assert delete.render_line(0).text.strip() == "Delete"
-        if size[0] == 120:
+        if size[0] >= 120:
             assert not workspace.has_class("-stack-editor-actions")
             assert spacer.display
-            assert new.region.width > 0
+            # TASK-38757 review: every cell of New inside its header row's clip.
+            assert new.region.width >= len("New")
+            assert _seen_cells(new) == new.region.width
             assert delete.region.width > 0
             assert not new.region.overlaps(delete.region)
         else:

@@ -814,6 +814,10 @@ MINIMUM_FILES = 1688
 # TASK-38741 (2026-11-05): append the 40x20 Notes source choices keyboard
 # case at the tail. The floor is the measured entry count.
 MINIMUM_FILES = 1689
+# TASK-38757 review (2026-11-05): append the four Library-screen nodes for
+# the hidden work pane coming forward at the tail. The floor is the measured
+# entry count.
+MINIMUM_FILES = 1693
 
 
 def read_census(path: Path) -> list[str]:
