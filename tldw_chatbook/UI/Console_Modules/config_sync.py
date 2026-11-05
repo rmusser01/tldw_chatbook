@@ -429,6 +429,11 @@ def _held_for_durable_commit(screen: Any, *, poll: bool) -> bool:
     return True
 
 
+def poll_sync_running() -> bool:
+    """Whether the calling task runs the 0.2 s poll's own sync (TASK-36571.1)."""
+    return _POLL_SYNC.get()
+
+
 def begin_console_sync(screen: Any) -> bool:
     """Classify a sync at its entry; every sync but the poll's asks to project.
 

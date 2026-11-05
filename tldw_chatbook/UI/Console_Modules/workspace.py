@@ -119,6 +119,7 @@ from ...Workspaces.display_state import (
     _recompute_filesystem_binding_status,
     build_console_workspace_state,
     console_workspace_conversation_result_copy,
+    console_workspace_label,
 )
 from ...Workspaces.models import (
     RuntimeBindingKind,
@@ -160,6 +161,10 @@ CONSOLE_PERSISTED_ROWS_CACHE_TTL_SECONDS = 10.0
 # made elsewhere show up promptly, while the several merges inside one
 # state build share one read.
 CONSOLE_APPEARANCE_MAP_CACHE_TTL_SECONDS = 2.0
+#: TASK-36571.1: the oldest run-tick build the next poll tick may reuse. Two
+#: poll intervals: a tick the host delayed still reuses its predecessor's
+#: build, and a poll that stopped and restarted never reuses an old one.
+CONSOLE_TICK_BUILD_CARRY_MAX_AGE_SECONDS = 0.4
 CONSOLE_SAVED_CONVERSATION_RESUME_FAILURE_COPY = (
     "Couldn't resume this saved conversation: it was deleted or couldn't be read.\n"
     "Your previous Console chat is still active."
@@ -568,27 +573,40 @@ class ConsoleTickWorkspaceBuilds:
     * a ``None`` fingerprint (reduced doubles, any component failure) means
       every read builds live, exactly the pre-cache behavior.
 
-    Task-scoped and never shared across ticks: ``accepts_current_task``
-    admits only the coroutine task that opened the scope, so workers,
-    message handlers, and search settles interleaving during the tick's
-    awaits keep building live -- a mutation followed by a push can never be
-    masked. Inputs outside the fingerprint changing DURING one tick are
-    repainted by the next tick, at most 0.2 s later -- the same cadence
-    every other tick-driven surface repaints at. TASK-36511.2:
-    ``_sync_console_control_bar`` and ``_sync_console_rail_and_controls``
-    open the scope too (``live_workspace_build_scope``), so one such sync
-    pays for one build, for that sync, read live (``stale_reads=False``).
+    Task-scoped: ``accepts_current_task`` admits only the coroutine task
+    that opened the scope, so workers, message handlers, and search settles
+    interleaving during the tick's awaits keep building live -- a mutation
+    followed by a push can never be masked. Inputs outside the fingerprint
+    changing DURING one tick are repainted by the next tick, at most 0.2 s
+    later -- the same cadence every other tick-driven surface repaints at.
+    TASK-36511.2: ``_sync_console_control_bar`` and
+    ``_sync_console_rail_and_controls`` open the scope too
+    (``live_workspace_build_scope``), so one such sync pays for one build,
+    for that sync, read live (``stale_reads=False``).
+
+    TASK-36571.1: the Conversations tray push rebuilt the browser on every
+    0.2 s tick to find it unchanged. A poll tick (``carries``) reuses its
+    predecessor's build once while the fingerprint matches, so the inputs
+    it leaves out (stars, unseen and attention markers, appearance, folder
+    availability, fleet counts, collapse preferences, rail height, relative
+    ages) reach the rails at most one tick later. Any build outside a run
+    tick drops the carried build, so a push it made is never overwritten.
     """
 
     __slots__ = (
-        "_controller", "_task", "_fingerprint", "_state", "_building", "_stale_reads"
+        "_controller", "_task", "_fingerprint", "_state", "_building", "_stale_reads",
+        "_serial", "_carries",
     )
 
     def __init__(
-        self, controller: "ConsoleWorkspaceController", *, stale_reads: bool = True
+        self, controller: "ConsoleWorkspaceController", *, stale_reads: bool = True,
+        serial: int | None = None, carries: bool = False,
     ) -> None:
         self._controller = controller
         self._stale_reads = stale_reads
+        # TASK-36571.1: the run tick's number (None: never carried) and
+        # whether this poll tick may reuse its predecessor's build.
+        self._serial, self._carries = serial, carries
         try:
             self._task = asyncio.current_task()
         except RuntimeError:
@@ -620,6 +638,12 @@ class ConsoleTickWorkspaceBuilds:
             and fingerprint == self._fingerprint
         ):
             return self._state
+        if self._state is None and self._carries and fingerprint is not None:
+            carried = controller._take_carried_workspace_build(fingerprint, self._serial)
+            if carried is not None:
+                self._fingerprint = fingerprint
+                self._state = carried
+                return carried
         self._building = True
         try:
             reads = controller._stale_display_reads() if self._stale_reads else nullcontext()
@@ -632,7 +656,18 @@ class ConsoleTickWorkspaceBuilds:
         # token must describe the state actually cached.
         self._fingerprint = controller._console_workspace_build_fingerprint()
         self._state = state
+        if self._serial is not None and self._fingerprint is not None:
+            controller._console_carried_workspace_build = (
+                self._serial, time.monotonic(), self._fingerprint, state
+            )
         return state
+
+    def workspace_label(self) -> str:
+        """The build's label: one display read under this build's read rule (TASK-36571.1)."""
+        controller = self._controller
+        reads = controller._stale_display_reads() if self._stale_reads else nullcontext()
+        with reads:
+            return console_workspace_label(controller._console_registry_reads_view())
 
 
 def _availability_methods_current(owner, originals):
@@ -6994,11 +7029,62 @@ class ConsoleWorkspaceController:
         if getattr(self, "_console_tick_builds", None) is not None:
             yield
             return
-        self._console_tick_builds = ConsoleTickWorkspaceBuilds(self, stale_reads=stale_reads)
+        serial = None
+        carries = False
+        if stale_reads:  # A run tick: number it; a poll tick may reuse (TASK-36571.1).
+            from .config_sync import poll_sync_running
+
+            serial = self._console_run_tick_serial = self._console_run_tick_serial + 1
+            carries = poll_sync_running()
+        self._console_tick_builds = ConsoleTickWorkspaceBuilds(
+            self, stale_reads=stale_reads, serial=serial, carries=carries
+        )
         try:
             yield
         finally:
             self._console_tick_builds = None
+
+    #: TASK-36571.1: run ticks opened so far, and the last run tick's own build
+    #: as ``(tick serial, monotonic time, fingerprint, state)`` -- or ``None``
+    #: once it was reused or anything built outside a run tick. CLASS
+    #: defaults, like ``_console_tick_builds``, for hand-built fixtures.
+    _console_run_tick_serial: int = 0
+    _console_carried_workspace_build: tuple | None = None
+
+    def _take_carried_workspace_build(self, fingerprint: tuple, serial: int | None) -> Any:
+        """Hand a poll tick its predecessor's build, at most once (TASK-36571.1).
+
+        Returns:
+            The previous run tick's own build when it is at most
+            ``CONSOLE_TICK_BUILD_CARRY_MAX_AGE_SECONDS`` old and its
+            ``fingerprint`` still matches, else ``None``. Taking it always
+            drops it, so the tick after a reuse builds.
+        """
+        carried = self._console_carried_workspace_build
+        self._console_carried_workspace_build = None
+        if carried is None or serial is None:
+            return None
+        built_serial, built_at, built_fingerprint, state = carried
+        if (
+            built_serial != serial - 1
+            or time.monotonic() - built_at > CONSOLE_TICK_BUILD_CARRY_MAX_AGE_SECONDS
+            or built_fingerprint != fingerprint
+        ):
+            return None
+        return state
+
+    def console_workspace_label(self) -> str:
+        """The context build's workspace label, read without the build.
+
+        TASK-36571.1: the rail badge and the Inspector's conversation rows
+        show only this label, and each projection built the whole
+        Conversations browser for it. A run tick's or control-bar sync's
+        scope lends its display-read rule; elsewhere it reads live.
+        """
+        builds = getattr(self, "_console_tick_builds", None)
+        if builds is not None and builds.accepts_current_task():
+            return builds.workspace_label()
+        return console_workspace_label(self._console_registry_reads_view())
 
     def live_workspace_build_scope(self):
         """One shared context build for a user-triggered sync, read live.
@@ -7450,6 +7536,9 @@ class ConsoleWorkspaceController:
         builds = getattr(self, "_console_tick_builds", None)
         if builds is not None and builds.accepts_current_task():
             return builds.state()
+        # TASK-36571.1: this build may be pushed; a carried, older one must not
+        # overwrite it. A run tick's own build re-records it after this.
+        self._console_carried_workspace_build = None
         current_conversation = self._current_console_conversation_id()
         # The generation-keyed display-read view stands in for the raw
         # service (TASK-22201): the builder's read set (active workspace,
