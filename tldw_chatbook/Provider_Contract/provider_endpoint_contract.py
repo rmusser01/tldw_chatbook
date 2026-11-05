@@ -569,6 +569,13 @@ def valid_dns_label(label: str) -> bool:
     TASK-36517: "_" as in Docker Compose names (kobold_cpp), which httpx and
     discovery accept; a hyphen still never starts or ends a label. Console's
     endpoint preview, display and compare helpers share this rule.
+
+    Args:
+        label: One host label, without dots.
+
+    Returns:
+        True when the label is 1-63 characters, does not start or end with a
+        hyphen, and holds only letters, digits, hyphens and underscores.
     """
     return (
         1 <= len(label) <= 63
