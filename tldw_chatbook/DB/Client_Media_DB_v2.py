@@ -36,7 +36,7 @@ import sqlite3
 import threading
 import time
 import uuid  # For UUID generation
-from contextlib import contextmanager
+from contextlib import contextmanager, suppress
 from datetime import datetime, timezone, timedelta  # Use timezone-aware UTC
 from math import ceil
 from pathlib import Path
@@ -1220,8 +1220,9 @@ class MediaDatabase:
                     self._local.conn = None
 
         if is_closed:
+            unpublished = None
             try:
-                conn = connect_private_sqlite(
+                conn = unpublished = connect_private_sqlite(
                     "db.media.primary",
                     self.db_path_str,
                     detect_types=sqlite3.PARSE_DECLTYPES | sqlite3.PARSE_COLNAMES,
@@ -1253,6 +1254,7 @@ class MediaDatabase:
                     conn.close()
                     raise
                 self._local.conn = conn
+                unpublished = None
                 logging.debug("Media database connection opened.")
             except (sqlite3.Error, PrivatePathError) as error:
                 logging.error(
@@ -1260,6 +1262,11 @@ class MediaDatabase:
                     type(error).__name__,
                 )
                 self._local.conn = None
+                # TASK-38714: retire this allocation (a failed PRAGMA, such as
+                # on a file that is not SQLite, used to leave it registered).
+                if unpublished is not None:
+                    with suppress(Exception):  # a failed close retains its lease
+                        unpublished.close()
                 # `from error`, NOT `from None` (TASK-19569): the raised
                 # message stays scrubbed (no path, no driver text), but the
                 # private-path contract identifies its boundary failure by

@@ -1989,8 +1989,8 @@ class RAGService:
             max_retries = 2
 
             while retry_count <= max_retries:
+                pool = get_connection_pool(str(db_path), pool_size=pool_size)
                 try:
-                    pool = get_connection_pool(str(db_path), pool_size=pool_size)
                     search_results = await loop.run_in_executor(
                         pool_executor(pool),
                         self._perform_fts5_search,

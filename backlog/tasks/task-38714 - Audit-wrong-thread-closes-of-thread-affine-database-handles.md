@@ -5,7 +5,7 @@ status: Done
 assignee:
 - '@claude'
 created_date: 2026-11-04 00:59
-updated_date: 2026-11-05 09:22
+updated_date: 2026-11-05 09:45
 labels:
 - follow-up
 - database
@@ -138,5 +138,16 @@ Covering runs this round (`-n 4`):
 - **Test.** `test_a_search_racing_close_all_pools_leaves_no_connection_open[queued_behind_close|after_shutdown]` forces each ordering and requires every connection it recorded to be closed at the end. Both cases failed `DID NOT RAISE` at 2fddbe3bbe and pass now, under a temporary `@private_profile_test` marker, since removed.
 - **Runs.** The RAG files (`-n 4`) show the base failure set plus the three new tests, all of them `RecoveryRequired` only. Under the marker, the three new tests and the pool thread-safety file give 6 passed. Module size ratchet: 201 passed.
 
-**Files.** `tldw_chatbook/app_ingest_queue.py`, `tldw_chatbook/Widgets/settings_agents_panel.py`, `tldw_chatbook/RAG_Search/simplified/db_connection_pool.py`, `tldw_chatbook/RAG_Search/simplified/rag_service.py`, `tldw_chatbook/Evals/eval_orchestrator.py`, the four test files above, `scripts/ui_pr_gate_census.txt`, `scripts/check_ui_pr_gate_census.py`.
+**Re-review 3 (2026-11-05).**
+- **Pool fetch moved before `try:`.** The per-attempt `get_connection_pool` call now sits at the top of the retry loop body, just before `try:`. A pool-build error goes straight to `_keyword_search`'s outer handler and returns `[]` as at base, instead of being retried; the change is line-neutral.
+- **Leak on a failed build.** The reviewer found that `MediaDatabase._get_thread_connection` leaked one registered handle per failed build: when a PRAGMA failed, for example on a file that is not SQLite, it cleared the slot without closing the connection it had just opened. It now closes that unpublished allocation on the failure path, as the function's other failure paths do (`AdmittedConnection.close` updates the owner registry). A failed close keeps its lease.
+- **Test.** `Tests/DB/test_connection_liveness_ping_gate.py::test_a_failed_media_connection_build_closes_the_connection_it_opened` failed `DID NOT RAISE` before the fix and passes after.
+- **Ratchet.** The `Client_Media_DB_v2.py` row is re-pinned 9429 -> 9436 with a dated comment.
+- **Runs.**
+  - Keyword-leg and pool files under temporary markers (`@private_profile_test` on the async tests, `bootstrap_profile` on the module), since removed: 13 passed.
+  - Plain RAG files: the same failure set as the previous round, all `RecoveryRequired`.
+  - Media DB files (9): 216 passed; the same 5 `rag_indexing` failures as at a87ad50425.
+  - Module size ratchet: 201 passed.
+
+**Files.** `tldw_chatbook/app_ingest_queue.py`, `tldw_chatbook/Widgets/settings_agents_panel.py`, `tldw_chatbook/RAG_Search/simplified/db_connection_pool.py`, `tldw_chatbook/RAG_Search/simplified/rag_service.py`, `tldw_chatbook/Evals/eval_orchestrator.py`, `tldw_chatbook/DB/Client_Media_DB_v2.py`, the four test files above, `Tests/DB/test_connection_liveness_ping_gate.py`, `Tests/Architecture/test_module_size_ratchet.py`, `scripts/ui_pr_gate_census.txt`, `scripts/check_ui_pr_gate_census.py`.
 

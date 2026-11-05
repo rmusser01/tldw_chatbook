@@ -793,7 +793,10 @@ _BUDGETS: dict[str, int] = {
     # TASK-38715 review, 2026-11-05: 9676 -> 9674 (-2). The app tier owns the
     # Save failed fill; the widget rule keeps only its bold.
     "tldw_chatbook/Widgets/Library/library_file_notes_workspace.py": 9674,
-    "tldw_chatbook/DB/Client_Media_DB_v2.py": 9429,  # 2026-11-02: +3 shared store-error import (TASK-36949.5)
+    # 2026-11-02: +3 shared store-error import (TASK-36949.5).
+    # TASK-38714 re-review, 2026-11-05: 9429 -> 9436 (+7). A failed
+    # connection build closes the connection it opened instead of leaking it.
+    "tldw_chatbook/DB/Client_Media_DB_v2.py": 9436,
     # TASK-37270: bounded template reads moved to local_reasoning_metadata.
     # 2026-10-29, TASK-33622.6 (owner decision: raise with a dated comment):
     # 8747 -> 8763 (+16). The flat Conversations lane filters its rows and
