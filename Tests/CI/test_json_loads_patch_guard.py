@@ -15,6 +15,10 @@ attribute name only at run time: rebinding (``j = json`` then
 ``importlib.import_module("json")``, ``setitem`` on ``json.__dict__`` or
 ``vars(json)``, or an attribute name held in a variable
 (``setattr(json, attr, ...)``).
+
+TASK-38754: the same scan guards ``load`` and ``loads`` on the stdlib
+``tomllib`` module, which the config import hygiene tests patched for the
+whole process. Patch ``tldw_chatbook.config``'s own ``tomllib`` name instead.
 """
 
 from __future__ import annotations
@@ -33,22 +37,24 @@ _CANDIDATE = re.compile(r"""["']loads["']|json\.loads["']|\bloads\s*=(?!=)""")
 _PATCHERS = {"setattr", "delattr", "patch", "object", "multiple"}
 
 
-def _process_wide_loads_patches(source: str) -> list[int]:
-    """Return the line of every patch of ``loads`` on the stdlib json module."""
+def _process_wide_patches(
+    source: str, module: str = "json", attrs: frozenset[str] = frozenset({"loads"})
+) -> list[int]:
+    """Return the line of every patch of ``attrs`` on the stdlib ``module``."""
     tree = ast.parse(source)
     # `import json as j` and `from pkg import json [as j]` bind the stdlib module.
-    names = {"json"} | {
+    names = {module} | {
         alias.asname or alias.name
         for node in ast.walk(tree)
         if isinstance(node, (ast.Import, ast.ImportFrom))
         for alias in node.names
-        if alias.name == "json"
+        if alias.name == module
     }
 
-    def is_json(node: ast.AST | None) -> bool:
-        # `json` (or an alias) and `<anything>.json` are both the stdlib module.
+    def is_target(node: ast.AST | None) -> bool:
+        # `module` (or an alias) and `<anything>.<module>` are the stdlib module.
         return (isinstance(node, ast.Name) and node.id in names) or (
-            isinstance(node, ast.Attribute) and node.attr == "json"
+            isinstance(node, ast.Attribute) and node.attr == module
         )
 
     lines = []
@@ -68,11 +74,11 @@ def _process_wide_loads_patches(source: str) -> list[int]:
             text = getattr(first, "value", None)
             if called == "multiple":
                 # patch.multiple(json | "json" | "pkg.mod.json", loads=stub)
-                hit = "loads" in keywords and (
-                    is_json(first)
+                hit = bool(attrs & keywords.keys()) and (
+                    is_target(first)
                     or (
                         isinstance(text, str)
-                        and (text == "json" or text.endswith(".json"))
+                        and (text == module or text.endswith("." + module))
                     )
                 )
             else:
@@ -80,10 +86,13 @@ def _process_wide_loads_patches(source: str) -> list[int]:
                 # positional or target=/name=/attribute=; or a "json.loads" /
                 # "pkg.mod.json.loads" string target.
                 hit = (
-                    is_json(first) and getattr(second, "value", None) == "loads"
+                    is_target(first) and getattr(second, "value", None) in attrs
                 ) or (
                     isinstance(text, str)
-                    and (text == "json.loads" or text.endswith(".json.loads"))
+                    and any(
+                        text == f"{module}.{attr}" or text.endswith(f".{module}.{attr}")
+                        for attr in attrs
+                    )
                 )
             if hit:
                 lines.append(node.lineno)
@@ -93,8 +102,8 @@ def _process_wide_loads_patches(source: str) -> list[int]:
                 node.lineno
                 for target in node.targets
                 if isinstance(target, ast.Attribute)
-                and target.attr == "loads"
-                and is_json(target.value)
+                and target.attr in attrs
+                and is_target(target.value)
             )
     return lines
 
@@ -127,7 +136,7 @@ def _process_wide_loads_patches(source: str) -> list[int]:
 )
 def test_the_scan_recognises_each_process_wide_form(planted):
     assert _CANDIDATE.search(planted), "the text pre-filter skips this file"
-    assert _process_wide_loads_patches(planted)
+    assert _process_wide_patches(planted)
 
 
 @pytest.mark.parametrize(
@@ -139,7 +148,7 @@ def test_the_scan_recognises_each_process_wide_form(planted):
     ],
 )
 def test_the_scan_allows_the_module_scoped_form(scoped):
-    assert _process_wide_loads_patches(scoped) == []
+    assert _process_wide_patches(scoped) == []
 
 
 def test_no_test_patches_loads_on_the_stdlib_json_module():
@@ -149,7 +158,7 @@ def test_no_test_patches_loads_on_the_stdlib_json_module():
         if "loads" not in source or not _CANDIDATE.search(source):
             continue
         try:
-            lines = _process_wide_loads_patches(source)
+            lines = _process_wide_patches(source)
         except SyntaxError:
             continue  # a file Python cannot parse cannot install a patch either
         offenders.extend(
@@ -160,3 +169,59 @@ def test_no_test_patches_loads_on_the_stdlib_json_module():
         "test's own `json` name instead (see this file's docstring):\n"
         + "\n".join(offenders)
     )
+
+
+# --- TASK-38754: tomllib.load / tomllib.loads ---------------------------------
+
+_TOMLLIB = ("tomllib", frozenset({"load", "loads"}))
+
+
+@pytest.mark.parametrize(
+    "planted",
+    [
+        'monkeypatch.setattr(tomllib, "loads", stub)',
+        'monkeypatch.setattr(config_mod.tomllib, "load", stub)',
+        'import tomllib as toml\nmonkeypatch.setattr(toml, "load", stub)',
+        'mock.patch.object(tomllib, "loads", stub)',
+        'monkeypatch.setattr("tomllib.load", stub)',
+        'mock.patch("tldw_chatbook.config.tomllib.loads")',
+        'mock.patch.multiple("tomllib", load=stub)',
+        "tomllib.loads = stub",
+    ],
+)
+def test_the_scan_recognises_each_process_wide_tomllib_form(planted):
+    assert "tomllib" in planted, "the text pre-filter skips this file"
+    assert _process_wide_patches(planted, *_TOMLLIB)
+
+
+@pytest.mark.parametrize(
+    "scoped",
+    [
+        'monkeypatch.setattr(config_mod, "tomllib", SimpleNamespace(loads=stub))',
+        'mock.patch.multiple("tldw_chatbook.config", tomllib=fake_tomllib)',
+        'monkeypatch.setattr(json, "load", stub)',
+    ],
+)
+def test_the_scan_allows_the_module_scoped_tomllib_form(scoped):
+    assert _process_wide_patches(scoped, *_TOMLLIB) == []
+
+
+def test_no_test_patches_load_or_loads_on_the_stdlib_tomllib_module():
+    offenders = []
+    for path in sorted(TESTS_ROOT.rglob("*.py")):
+        source = path.read_text(encoding="utf-8", errors="replace")
+        if "tomllib" not in source:
+            continue
+        try:
+            lines = _process_wide_patches(source, *_TOMLLIB)
+        except SyntaxError:
+            continue
+        offenders.extend(
+            f"{path.relative_to(TESTS_ROOT.parent).as_posix()}:{line}" for line in lines
+        )
+    assert not offenders, (
+        "These patch tomllib.load or tomllib.loads for the whole process; "
+        "patch the module under test's own `tomllib` name instead (see this "
+        "file's docstring):\n" + "\n".join(offenders)
+    )
+

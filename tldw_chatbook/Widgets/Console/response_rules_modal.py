@@ -683,6 +683,9 @@ class ResponseRulesModal(SafeModalDismissMixin, ModalScreen[None]):
             )
         finally:
             self._busy = False
+            from tldw_chatbook.Widgets.quit_while_working import forget_quit_refusal
+
+            forget_quit_refusal(self)
             if self.is_mounted:
                 self._buttons()
 
@@ -708,3 +711,31 @@ class ResponseRulesModal(SafeModalDismissMixin, ModalScreen[None]):
             )
             return
         self.dismiss_safe_once(None)
+
+    async def confirm_quit(self) -> bool:
+        """Answer Ctrl+Q as Escape does (TASK-38747).
+
+        A test, save or pin change (Disable, Exclude, Delete local pin) in
+        flight refuses: Escape stops a test and stays. Unsaved editor text
+        asks before quitting discards it.
+
+        Returns:
+            True to let the quit proceed; False to stay.
+        """
+        if self._busy:
+            from tldw_chatbook.Widgets.quit_while_working import (
+                refuse_quit_while_working,
+            )
+
+            return await refuse_quit_while_working(
+                self, "The response rule change is still being tested or saved."
+            )
+        if not self._has_unsaved():
+            return True
+        from tldw_chatbook.Widgets.confirmation_dialog import (
+            confirm_quit_discarding_edits,
+        )
+
+        return await confirm_quit_discarding_edits(
+            self, "Your edits to this response rule are not saved."
+        )

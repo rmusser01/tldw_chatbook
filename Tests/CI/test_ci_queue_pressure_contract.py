@@ -365,6 +365,13 @@ DREAMS_BOUNDARY_TARGETS = (
     # ~9 s and ~44 s serial (3 of 3 each, load 43-59 on 18 CPUs).
     "Tests/Chat/test_local_server_discovery_engines.py",
     "Tests/Chat/test_provider_tls_failures.py",
+    # TASK-38747: every modal that guards its own close has a Ctrl+Q decision
+    # (pure AST scan of the modal family, a few seconds serial). It was red on
+    # dev in no PR lane. TASK-38722: the launch-time Console rail-preference
+    # prune (TASK-36518's key filter and dispatch; pure, a few seconds). Here,
+    # not in pr-fast-lane, which is at its 35-min cap (as TASK-36532).
+    "Tests/Architecture/test_guarded_modal_quit_census.py",
+    "Tests/Chat/test_console_rail_state_prune.py",
 )
 #: TASK-34929: the Dreams tracking tests, gated whole in their own job.
 DREAMS_TRACKING_TARGET = "Tests/Dreams/test_track_service.py"

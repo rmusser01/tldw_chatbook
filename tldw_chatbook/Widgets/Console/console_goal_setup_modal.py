@@ -256,6 +256,20 @@ class ConsoleGoalSetupModal(ModalScreen[GoalSnapshot | None]):
         if not self._busy:
             self.dismiss(None)
 
+    async def confirm_quit(self) -> bool:
+        """Refuse Ctrl+Q while the launch runs, as Escape does (TASK-38747).
+
+        Returns:
+            True to let the quit proceed; False to stay.
+        """
+        if not self._busy:
+            return True
+        from tldw_chatbook.Widgets.quit_while_working import (
+            refuse_quit_while_working,
+        )
+
+        return await refuse_quit_while_working(self, "The goal is still being set up.")
+
     @on(Button.Pressed, "#goal-cancel")
     def cancel_pressed(self) -> None:
         self.action_cancel()
@@ -398,5 +412,8 @@ class ConsoleGoalSetupModal(ModalScreen[GoalSnapshot | None]):
             )
         finally:
             self._busy = False
+            from tldw_chatbook.Widgets.quit_while_working import forget_quit_refusal
+
+            forget_quit_refusal(self)
             if self.is_mounted and self.is_current:
                 self._update_controls()

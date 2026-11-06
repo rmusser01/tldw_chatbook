@@ -91,6 +91,11 @@ GUARDED_CLOSE_DECISIONS: dict[str, str] = {
     "BulkSourcesModal.action_cancel": CONFIRM_QUIT,
     "tldw_chatbook/Widgets/Console/console_session_switcher_modal.py:"
     "ConsoleSessionSwitcherModal._perform_safe_cancel": CONFIRM_QUIT,
+    # TASK-38747: a goal launch, and a portrait-region save.
+    "tldw_chatbook/Widgets/Console/console_goal_setup_modal.py:"
+    "ConsoleGoalSetupModal.action_cancel": CONFIRM_QUIT,
+    "tldw_chatbook/Widgets/Persona_Widgets/portrait_region_editor.py:"
+    "PortraitRegionEditor.action_cancel": CONFIRM_QUIT,
     # --- Ask before Escape discards something: Ctrl+Q asks the same
     # (confirm_quit_discarding_edits, TASK-33622.10 / .14 / .15).
     "tldw_chatbook/UI/Screens/scheduling/forms/reminder_form.py:"
@@ -109,6 +114,10 @@ GUARDED_CLOSE_DECISIONS: dict[str, str] = {
     "ConsoleVideoCapacityModal._perform_safe_cancel": CONFIRM_QUIT,
     "tldw_chatbook/UI/Screens/profile_interview_screen.py:"
     "ProfileInterviewScreen._perform_safe_cancel": CONFIRM_QUIT,
+    # TASK-38747: unsaved rule text asks; a rule test, save or pin change
+    # also refuses.
+    "tldw_chatbook/Widgets/Console/response_rules_modal.py:"
+    "ResponseRulesModal._perform_safe_cancel": CONFIRM_QUIT,
     # --- Exempt: the guard holds nothing quitting could lose.
     "tldw_chatbook/Third_Party/textual_fspicker/base_dialog.py:"
     "FileSystemPickerScreen._perform_safe_cancel": (
@@ -134,6 +143,19 @@ GUARDED_CLOSE_DECISIONS: dict[str, str] = {
     "_SettlingGuardedConfirmationDialog.action_cancel_dialog_if_settled": (
         "only absorbs a reflexive second Escape before the dialog has "
         "painted; the wizard keeps every step already completed"
+    ),
+    # TASK-38747: two paths the scan reads as guards that hold nothing.
+    "tldw_chatbook/Widgets/Console/console_hooks_review_modal.py:"
+    "ConsoleHooksReviewModal._perform_safe_cancel": (
+        "Escape always closes it: _submit_result keeps the review open only "
+        "for a ready result, never for this cancel, so quitting loses "
+        "nothing Escape keeps"
+    ),
+    "tldw_chatbook/Widgets/Persona_Widgets/portrait_composition_review.py:"
+    "PortraitCompositionReview.action_close": (
+        "a read-only review of a draft's candidate frames (the draft stays "
+        "with the Personas screen); Escape always retires and closes it once "
+        "mounted, and it holds no edit or write"
     ),
 }
 
