@@ -407,6 +407,52 @@ async def test_gemini_lists_chat_models_only_and_verifies_the_key() -> None:
     assert "key=" not in str(request.url)  # the key never rides in the URL
 
 
+#: Recorded from Google's models.list on 2026-11-05 (name, displayName and
+#: description as served). "Nano Banana" is Google's brand for its image
+#: models; ``gemini-nano-banana-2.1`` names no image token in its id.
+_GOOGLE_IMAGE_BRAND_MODELS = [
+    {
+        "name": "models/gemini-nano-banana-2.1",
+        "displayName": "Nano Banana 2.1",
+        "description": "Gemini Nano Banana 2.1.",
+        "supportedGenerationMethods": ["generateContent", "countTokens", "batchGenerateContent"],
+    },
+    {
+        "name": "models/gemini-3.1-flash-image",
+        "displayName": "Nano Banana 2",
+        "description": "Gemini 3.1 Flash Image.",
+        "supportedGenerationMethods": ["generateContent", "countTokens"],
+    },
+    {
+        "name": "models/gemini-3.5-flash",
+        "displayName": "Gemini 3.5 Flash",
+        "description": "Gemini 3.5 Flash",
+        "supportedGenerationMethods": ["generateContent", "countTokens"],
+    },
+]
+
+
+@pytest.mark.asyncio
+async def test_gemini_lists_no_image_model_under_googles_image_brand() -> None:
+    """Review IV-3: setup listed ``gemini-nano-banana-2.1`` ('Nano Banana
+    2.1', Google's image-model brand) as a chat model; a free-tier key gets
+    429 'limit: 0' on it. An id or display name that carries the brand, or
+    any non-chat token, keeps a model out of the chat list."""
+    result, _seen = await _discover(
+        "google",
+        _GOOGLE_BASE,
+        {
+            f"{_GOOGLE_BASE}/models": httpx.Response(
+                200, json={"models": _GOOGLE_IMAGE_BRAND_MODELS}
+            ),
+        },
+        api_key="AIza-test-google-key",
+    )
+
+    assert result.status == "success"
+    assert [model.model_id for model in result.models] == ["gemini-3.5-flash"]
+
+
 @pytest.mark.asyncio
 async def test_gemini_follows_next_page_tokens() -> None:
     pages = iter(
