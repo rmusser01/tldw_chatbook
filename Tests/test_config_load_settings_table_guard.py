@@ -543,7 +543,8 @@ def test_guard_reports_a_dropped_table(loaded_settings, derived_reads):
     # TASK-34100.2 AC#8 (rewritten on purpose): Reader Generate and the
     # ingest job read the table through one resolver,
     # Library/ingest_analysis.py's effective_analysis_defaults (the Media
-    # panel that also read it went with TASK-38605's Widgets/Media purge).
+    # panel that also read it went with TASK-38605's Widgets/Media purge, so
+    # this holds on dev too: a regression pin for the one resolver).
     assert any("ingest_analysis.py" in site for site in missing["analysis_defaults"])
 
 
@@ -708,8 +709,10 @@ def test_propagation_follows_imports_not_names():
 # the retired OpenAI/Anthropic/Google catalog ids and Google's model replaced
 # (AC#6, AC#17), the Gemini rolling-alias vision row, `template_sample = true`
 # on the placeholder local sections (AC#9) and `streaming = true` on Custom /
-# Custom 2 (AC#10).
-_TEMPLATE_SHA256 = "0beb23637e2e208a7a2d3c427fc7ad745c6edcce484bf8ae8d33468b43d785a5"
+# Custom 2 (AC#10). Review IV-1 (2026-11-05): the four OpenAI ids the live
+# smoke found retired replaced in the [providers] OpenAI list, re-pinned on
+# purpose.
+_TEMPLATE_SHA256 = "bef7e13cbc89cdf234b2846544635857781e238c10733e82299a93cfc90bed93"
 _TEMPLATE_RELATIVE = "tldw_chatbook/Config_Files/default_config.toml"
 
 
