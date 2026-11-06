@@ -166,7 +166,9 @@ before it clears marks. In the search box, Escape clears them too while the
 message shows; while the search lists matches, it moves to the list.
 
 A kind switch blanks the old kind's rows at once; a slow list says
-"Loading lore books…" after a quarter second. A list that could not load
+"Loading lore books…" after a quarter second, whether you clicked the
+mode's chip, pressed its key or took an **Also in:** target, and the
+screen keeps answering keys while the list loads. A list that could not load
 says so ("Lore books could not be loaded.") with a **Retry** button. A
 database error while reading characters counts as a list that could not
 load, never as an empty library, and with nothing open the centre pane says
