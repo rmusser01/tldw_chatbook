@@ -10,8 +10,9 @@ such a run never reuses a kept catalog, so its fingerprint decided nothing.
 These run the stock route a live send takes (installed stores, the default
 manifest provider, the shared preparation) with nothing replaced on it; the
 fingerprint is counted on the service instance, which no stock check reads.
-Both are red on origin/dev, which takes a fingerprint before every
-composition. ``Tests/UI/test_console_mcp_catalog_anchor.py`` pins how the
+The first two are red on origin/dev, which takes a fingerprint before every
+composition; the last two pin how a pending composition is settled (origin/dev
+keeps none). ``Tests/UI/test_console_mcp_catalog_anchor.py`` pins how the
 next run start proves or refuses a composition kept without one.
 """
 
@@ -125,3 +126,49 @@ async def test_a_first_stock_run_start_takes_no_fingerprint_and_the_next_reuses(
     assert not composed, "the proven composition was not reused"
     assert fingerprints.calls == 1
     assert _names(second) == _names(first)
+
+
+@pytest.mark.asyncio
+async def test_a_failed_proving_fingerprint_drops_the_pending_composition(
+    stock_case, monkeypatch
+):
+    """The proving run's fingerprint fails: it composes, and nothing stays kept.
+
+    A pending composition is proven only by a fingerprint read after it; a
+    run whose fingerprint failed has none, so the pending entry is dropped
+    rather than left for a later run to prove.
+    """
+    case = stock_case
+    loop = asyncio.get_running_loop()
+    first = MCPToolProvider(service=case.service, main_loop=loop)
+    assert await tools.compose_run_mcp_provider(case.service, first) is first
+    assert tools._entry is not None and tools._entry.anchor is not None
+    real = case.service.run_catalog_fingerprint
+    failed = []
+
+    async def fail_once(*args, **kwargs):
+        if not failed:
+            failed.append(True)
+            raise PermissionError("mcp_catalog_source_changed")
+        return await real(*args, **kwargs)
+
+    monkeypatch.setattr(case.service, "run_catalog_fingerprint", fail_once)
+    second = MCPToolProvider(service=case.service, main_loop=loop)
+    with compositions() as composed:
+        assert await tools.compose_run_mcp_provider(case.service, second) is second
+    assert failed and composed, "the run did not compose from the stores"
+    assert _names(second) == _names(first)
+    assert tools._entry is None, "the unproven pending composition was kept"
+
+
+def test_settling_a_pending_entry_never_replaces_a_newer_one(stock_case, monkeypatch):
+    """A run start that kept its own entry meanwhile keeps it (concurrent run starts)."""
+    pending, newer, proof = object(), object(), object()
+    monkeypatch.setattr(tools, "_entry", newer)
+    tools._settle_pending(pending, proof)
+    assert tools._entry is newer, "the proof replaced a newer entry"
+    tools._settle_pending(pending, None)
+    assert tools._entry is newer, "the refusal dropped a newer entry"
+    monkeypatch.setattr(tools, "_entry", pending)
+    tools._settle_pending(pending, proof)
+    assert tools._entry is proof
