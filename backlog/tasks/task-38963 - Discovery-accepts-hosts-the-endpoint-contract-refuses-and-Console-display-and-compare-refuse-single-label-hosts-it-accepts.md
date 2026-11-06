@@ -5,7 +5,7 @@ status: Done
 assignee:
 - '@claude'
 created_date: 2026-11-06 01:21
-updated_date: '2026-11-06 04:50'
+updated_date: '2026-11-06 06:13'
 labels:
 - follow-up
 - providers
@@ -81,6 +81,22 @@ Discover models, the provider save, and Console's endpoint display and compare n
   - 28 targets across Chat, LLM_Calls, LLM_Provider_Catalog, Backup_Recovery and Wizards (load 13-18): 2656 passed, 11 failed. The same 11 failed at base (2616 passed). The 40 extra passes are the new tests.
   - 21 Console, Settings and wizard UI files (load 25-72; this run also held the TASK-38964..38966 changes): 1285 passed, 19 failed, against 1280 passed and 22 failed at base. One failure is new here, `test_providers_models_state_line_names_its_scope_in_one_row`. It then passed 3 of 3 alone at load 48 and in the whole-file run. Three base failures passed here. All four are load-timing failures.
 - Docs: `Docs/User_Guide/settings.md` (Discover models reads the host as **s** does) and `Docs/User_Guide/console.md` (the adoption notice names the address; single-label endpoints compare as distinct servers).
+Review r10e-rev1:
+- Single-label hosts without a port still merged in compare. `http://kobold/v1` and `http://other/v1` compared as one sentinel, the guard let a vllm or koboldcpp session on another such server send (`ready=True`), and the KoboldCpp toast for `http://kobold_cpp/api/v1/generate` read "invalid endpoint".
+  - `normalize_generic_endpoint_for_compare` now asks the contract's identity (`canonical_connection_identity`) before the display rule, so two different endpoints never share the sentinel.
+  - Display accepts a single label with a port or a path. A bare `http://kobold` still displays as "invalid endpoint" because it could be a pasted key, but it compares by its identity. The three token pins in `Tests/Chat/test_console_provider_endpoints.py` hold.
+  - Tests: port-less pairs (with a path, the native route, bare) in `test_a_single_label_host_displays_and_compares_as_itself`; a koboldcpp and a vllm port-less pair in the now parametrized gateway test; a port-less KoboldCpp toast case. Red first: `'invalid endpoint' == 'http://kobold/v1'`, the guard `assert True is False` twice, and the toast read "invalid endpoint". Green after.
+- Discover's copy for a refused host asked for an http:// /v1 endpoint the URL already was. `contract_refusal_reason` now gives the contract's first error for every provider whose key the contract knows, not only koboldcpp. The catalog service shows it, with koboldcpp's route hint for koboldcpp and no hint otherwise.
+  - New `test_discover_names_the_contracts_reason_for_a_refused_host` (vllm, custom): red, `'This endpoin...els endpoint.' == 'Endpoint URL...ost and port.'`.
+  - `test_a_kobold_endpoint_the_contract_refuses_gives_the_contracts_reason` pinned `reason("vllm", ambiguous) is None`; it is rewritten on purpose to the contract's reason, plus a `None` case for an accepted vllm endpoint.
+- `Docs/User_Guide/settings.md` no longer says Discover lists "only" from what **s** saves. It names the zone-id exception: for providers other than KoboldCpp and QwenCloud, a probe listed `http://[fe80::1%25en0]:5001/v1` for all 14 others. It also says Discover now gives the reason **s** gives. `Docs/User_Guide/console.md` says what is shown: a service name with a port or a path names itself, and a bare name reads "invalid endpoint" but compares as itself.
+- `test_providers_models_state_line_names_its_scope_in_one_row` (1 in 20 red at its first `content_region` read) waits for the banner's first layout (`banner.size.width > 0`). It then passed 10 of 10 at `-n 4`, load 16-29.
+- Runs after the review (run.sh):
+  - Changed files: 827 passed.
+  - The 28-target set: 2675 passed, 10 failed, all 10 among base's 11 (the 11th was the QwenCloud test TASK-38966 fixed).
+  - The 21-file UI set: 1286 passed, 18 failed, all 18 among base's 22.
+  - `Tests/CI` with the size ratchets: 1416 passed, 1 skipped. Preflight passed. `bootbudget.sh`: 32 passed.
+
 - Proposed follow-ups, not changed here: Discover models still accepts a bracketed IPv6 zone id that the save refuses (pinned on purpose by discovery's test), and QwenCloud's Discover refuses a schemeless loopback endpoint (`localhost:5001/v1`) that the save accepts.
 
-Files: `tldw_chatbook/Provider_Contract/provider_endpoint_contract.py`, `tldw_chatbook/LLM_Provider_Catalog/openai_compatible_model_discovery.py`, `tldw_chatbook/Chat/console_provider_endpoints.py`, `Tests/Chat/test_local_server_discovery.py`, `Docs/User_Guide/settings.md`, `Docs/User_Guide/console.md`.
+Files: `tldw_chatbook/Provider_Contract/provider_endpoint_contract.py`, `tldw_chatbook/LLM_Provider_Catalog/openai_compatible_model_discovery.py`, `tldw_chatbook/LLM_Provider_Catalog/local_llm_provider_catalog_service.py`, `tldw_chatbook/Chat/console_provider_endpoints.py`, `Tests/Chat/test_local_server_discovery.py`, `Tests/LLM_Provider_Catalog/test_openai_compatible_model_discovery.py`, `Tests/UI/test_settings_provider_save_scope.py`, `Docs/User_Guide/settings.md`, `Docs/User_Guide/console.md`.

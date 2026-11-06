@@ -568,7 +568,9 @@ def test_kobold_shapes_discoverys_url_checks_refuse_stay_refused(endpoint):
 
 def test_a_kobold_endpoint_the_contract_refuses_gives_the_contracts_reason():
     """TASK-36380 AC#2: Settings names why the contract refuses a koboldcpp
-    endpoint. Other providers keep their own rules, so no reason for them."""
+    endpoint. TASK-38963's review gives every provider the contract's reason
+    (rewritten on purpose: vllm got None, and Settings asked a refused host
+    for an http:// /v1 endpoint it already was)."""
     reason = openai_compatible_model_discovery.contract_refusal_reason
 
     ambiguous = "http://localhost:5001/v1/api/v1/generate"
@@ -577,7 +579,8 @@ def test_a_kobold_endpoint_the_contract_refuses_gives_the_contracts_reason():
         "Endpoint URL must not include a query."
     )
     assert reason("koboldcpp", "http://localhost:5001") is None
-    assert reason("vllm", ambiguous) is None
+    assert reason("vllm", ambiguous) == "Endpoint path has ambiguous API suffixes."
+    assert reason("vllm", "http://localhost:8000/v1") is None
 
 
 def test_kobold_with_explicit_v1_endpoint_is_eligible():

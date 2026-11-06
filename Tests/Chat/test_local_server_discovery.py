@@ -1111,22 +1111,48 @@ def test_a_single_label_host_displays_and_compares_as_itself():
     ) is False
     # A single label with no port can still be a pasted key: never echoed.
     assert safe_endpoint_display("http://unit-test-key") == "invalid endpoint"
+    # Review r10e-rev1: without a port, a path still says it is an endpoint,
+    # and two different servers never compare as the one sentinel.
+    for endpoint in ("http://kobold/v1", "http://kobold_cpp/api/v1/generate"):
+        assert safe_endpoint_display(endpoint) == endpoint
+    for saved, other in (
+        ("http://kobold/v1", "http://other/v1"),
+        ("http://kobold/api/v1/generate", "http://other/api/v1/generate"),
+        ("http://kobold", "http://other"),
+    ):
+        assert generic_endpoint_differs(other, {"api_url": saved}) is True, saved
+        assert generic_endpoint_differs(f"{saved}/", {"api_url": saved}) is False
+        assert adoption_endpoints_differ("koboldcpp", saved, other) is True, saved
+    assert safe_endpoint_display("http://kobold") == "invalid endpoint"
 
 
 @pytest.mark.asyncio
-async def test_a_different_single_label_session_endpoint_is_blocked_as_unsaved():
+@pytest.mark.parametrize(
+    ("provider", "saved", "session"),
+    [
+        (
+            "koboldcpp",
+            "http://kobold_cpp:5001/api/v1/generate",
+            "http://other_kobold:5001/api/v1/generate",
+        ),
+        # Review r10e-rev1: the same servers without a port.
+        ("koboldcpp", "http://kobold/api/v1/generate", "http://other/api/v1/generate"),
+        ("vllm", "http://vllm/v1", "http://other_vllm/v1"),
+    ],
+)
+async def test_a_different_single_label_session_endpoint_is_blocked_as_unsaved(
+    provider, saved, session
+):
     """TASK-38963 AC#3: both single-label endpoints compared as the one
     "invalid endpoint" sentinel, so the unsaved-endpoint guard let a session
     on another server send as though it were the saved one."""
-    saved = "http://kobold_cpp:5001/api/v1/generate"
-    session = "http://other_kobold:5001/api/v1/generate"
 
     def no_send(**_kwargs: object) -> dict[str, object]:
         raise AssertionError("a blocked endpoint never sends")
 
     gateway = ConsoleProviderGateway(
         config_provider=lambda: {
-            "api_settings": {"koboldcpp": {"api_url": saved, "model": "m"}}
+            "api_settings": {provider: {"api_url": saved, "model": "m"}}
         },
         environ={},
         chat_api_call_fn=no_send,
@@ -1134,12 +1160,12 @@ async def test_a_different_single_label_session_endpoint_is_blocked_as_unsaved()
 
     blocked = await gateway.resolve_for_send(
         ConsoleProviderSelection(
-            provider="koboldcpp", base_url=session, explicit_model="m", streaming=False
+            provider=provider, base_url=session, explicit_model="m", streaming=False
         )
     )
     same = await gateway.resolve_for_send(
         ConsoleProviderSelection(
-            provider="koboldcpp", base_url=saved, explicit_model="m", streaming=False
+            provider=provider, base_url=saved, explicit_model="m", streaming=False
         )
     )
 
@@ -1225,6 +1251,12 @@ def _adopt(monkeypatch, provider: str, saved: str, detected: str):
             "koboldcpp",
             "KoboldCpp",
             "http://kobold_cpp:5001/api/v1/generate",
+            "http://127.0.0.1:5001",
+        ),
+        (
+            "koboldcpp",
+            "KoboldCpp",
+            "http://kobold_cpp/api/v1/generate",
             "http://127.0.0.1:5001",
         ),
         ("llama_cpp", "llama.cpp", "http://llama_cpp:8080", "http://127.0.0.1:9099"),
@@ -1381,3 +1413,36 @@ def test_koboldcpp_route_rule_lives_in_the_contract_alone():
         or "first_run_endpoint_refusal" in text
     ]
     assert checks == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("provider", ["vllm", "custom"])
+async def test_discover_names_the_contracts_reason_for_a_refused_host(provider):
+    """Review r10e-rev1 of TASK-38963: Discover refused ``-kobold`` with
+    "Configure an explicit http:// or https:// /v1 models endpoint", which
+    that URL already is. It names the contract's reason, as **s** would."""
+    from unittest.mock import AsyncMock
+
+    from tldw_chatbook.LLM_Provider_Catalog.local_llm_provider_catalog_service import (
+        LocalLLMProviderCatalogService,
+    )
+
+    client = AsyncMock()
+    service = LocalLLMProviderCatalogService(
+        provider_catalog_loader=lambda: {provider: []},
+        settings_loader=lambda: {
+            "providers": {provider: []},
+            "api_settings": {provider: {"api_url": "http://-kobold:8000/v1"}},
+        },
+        discovery_client=client,
+    )
+
+    result = await service.discover_models(provider=provider)
+
+    assert result.status == "unsupported"
+    assert result.error.message == "Endpoint URL must include a valid host and port."
+    assert result.error.recovery_hint == ""
+    assert (
+        _saved_endpoint(provider, "http://-kobold:8000/v1") is None
+    )  # the save refuses it for that reason
+    client.assert_not_awaited()

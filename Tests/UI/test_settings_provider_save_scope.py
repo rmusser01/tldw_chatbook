@@ -48,6 +48,11 @@ async def test_providers_models_state_line_names_its_scope_in_one_row(request) -
         screen._select_category(category.value)
         await _wait_for_selector(screen, pilot, "#settings-model-value", timeout=30.0)
         banner = screen.query_one("#settings-category-state-banner", Static)
+        # TASK-38963 review r10e-rev1: the banner can exist before its first
+        # layout (1 run in 20 read a content_region of height 0); wait for it.
+        deadline = time.monotonic() + 10
+        while banner.size.width == 0 and time.monotonic() < deadline:
+            await pilot.pause()
         scope = screen._category_state_scope_text(category)
         assert scope == (
             "Applies to new and unused open chats · used chats keep theirs "

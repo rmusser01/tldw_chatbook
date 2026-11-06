@@ -778,10 +778,12 @@ For KoboldCpp, **Save endpoint & use model** saves only its native
 `/api/v1/generate` address: a bare root or an OpenAI path such as `/v1` is
 refused with "KoboldCpp needs its native /api/v1/generate address. For an
 OpenAI-compatible server, choose Custom instead." and nothing is written.
-A Docker Compose service name with a port, such as `http://kobold_cpp:5001`,
-is an endpoint like any other: two different ones are different servers, so a
-chat on one that is not saved is blocked until you save it, and the blocked
-message names both addresses.
+A Docker Compose service name, such as `http://kobold_cpp:5001` or
+`http://vllm/v1`, is an endpoint like any other: two different ones are
+different servers, so a chat on one that is not saved is blocked until you
+save it, and the blocked message names both addresses. A bare name with no
+port and no path, such as `http://kobold`, is compared the same way but shown
+as "invalid endpoint", because it could be a key pasted into the field.
 
 **Use saved defaults** is how a chat that already holds work picks up
 defaults you saved later (a chat nobody has used yet follows them on its

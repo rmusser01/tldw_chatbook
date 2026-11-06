@@ -382,12 +382,17 @@ def normalize_generic_endpoint_for_compare(url: str | None) -> str:
         Normalized endpoint identity. Empty input returns an empty string, while
         malformed input returns a non-secret invalid sentinel.
     """
-    parsed_endpoint = _parse_http_endpoint(url)
-    if parsed_endpoint is None:
-        return "" if not str(url or "").strip() else _INVALID_ENDPOINT_DISPLAY
+    if not str(url or "").strip():
+        return ""
+    # TASK-38963 review: the contract's identity comes before the display
+    # rule, so two different endpoints that display alike (``http://kobold``,
+    # ``http://other``) never compare as the one sentinel.
     identity = canonical_connection_identity("custom", url)
     if identity is not None:
         return identity[1]
+    parsed_endpoint = _parse_http_endpoint(url)
+    if parsed_endpoint is None:
+        return _INVALID_ENDPOINT_DISPLAY
     return _format_endpoint(parsed_endpoint, drop_default_port=True)
 
 
@@ -424,17 +429,17 @@ def _parse_http_endpoint(
     if scheme not in {"http", "https"} or not hostname:
         return None
     hostname = hostname.lower()
-    if not _is_allowed_endpoint_host(hostname, port=port):
-        return None
     path = parsed.path.rstrip("/")
+    if not _is_allowed_endpoint_host(hostname, port=port, path=path):
+        return None
     return (has_scheme, scheme, hostname, port, path)
 
 
-def _is_allowed_endpoint_host(hostname: str, *, port: int | None) -> bool:
-    """The endpoint contract's host rule, plus a port for a single label.
+def _is_allowed_endpoint_host(hostname: str, *, port: int | None, path: str) -> bool:
+    """The endpoint contract's host rule, plus a port or path for a single label.
 
-    TASK-38963: a host the contract accepts displays and compares as itself.
-    A single label other than localhost also needs a port, with or without a
+    TASK-38963: a host the contract accepts displays as itself. A single
+    label other than localhost also needs a port or a path, with or without a
     scheme, so a key pasted into the endpoint field is never echoed. An IPv6
     zone id, which the contract refuses, still compares as itself.
     """
@@ -445,7 +450,7 @@ def _is_allowed_endpoint_host(hostname: str, *, port: int | None) -> bool:
         pass
     host = canonical_endpoint_host(hostname)
     return host is not None and (
-        "." in host or host == "localhost" or port is not None
+        "." in host or host == "localhost" or port is not None or bool(path)
     )
 
 

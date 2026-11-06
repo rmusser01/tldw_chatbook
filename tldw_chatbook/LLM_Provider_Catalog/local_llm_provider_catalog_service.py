@@ -647,8 +647,10 @@ class LocalLLMProviderCatalogService:
             provider_key, endpoint
         ) or not validate_url(models_url):
             # TASK-36380: koboldcpp names the endpoint contract's reason and
-            # points at the native /api/v1/generate route its sends need.
+            # points at the native /api/v1/generate route its sends need;
+            # TASK-38963 review: every provider names the contract's reason.
             reason = contract_refusal_reason(provider_key, endpoint)
+            hint = KOBOLDCPP_ENDPOINT_HINT if provider_key == "koboldcpp" else ""
             return ModelDiscoveryResult(
                 provider=provider,
                 provider_list_key=provider_resolution.provider_list_key,
@@ -658,7 +660,7 @@ class LocalLLMProviderCatalogService:
                     kind="unsupported_endpoint",
                     message=reason
                     or "This endpoint is not a valid OpenAI-compatible models endpoint.",
-                    recovery_hint=KOBOLDCPP_ENDPOINT_HINT
+                    recovery_hint=hint
                     if reason
                     else "Configure an explicit http:// or https:// /v1 models endpoint before discovering models.",
                 ),

@@ -461,21 +461,25 @@ def _kobold_contract(
 def contract_refusal_reason(
     provider_identity: str | None, endpoint: str | None
 ) -> str | None:
-    """Return why the endpoint contract refuses a koboldcpp endpoint, else None.
+    """Return why the endpoint contract refuses an endpoint, else None.
 
-    Settings shows it, with ``KOBOLDCPP_ENDPOINT_HINT``, in place of its
-    generic unsupported-endpoint copy (TASK-36380). Other providers'
-    discovery has its own rules, so they get no contract reason.
+    Settings shows it in place of its generic unsupported-endpoint copy, which
+    asks for an http:// /v1 endpoint even when the URL is one: koboldcpp
+    since TASK-36380 (with ``KOBOLDCPP_ENDPOINT_HINT``), every provider since
+    TASK-38963's review (a refused host such as ``-kobold``).
 
     Args:
         provider_identity: Provider name/identity.
         endpoint: The configured or staged endpoint.
 
     Returns:
-        The contract's first error for a koboldcpp endpoint it refuses.
+        The contract's first error for an endpoint it refuses, or None when
+        it accepts the endpoint or does not know the provider's key.
     """
-    resolution = _kobold_contract(provider_identity, endpoint)
-    if resolution is None or not resolution.errors:
+    resolution = resolve_provider_endpoint(
+        _normalized_provider_identity(provider_identity), endpoint
+    )
+    if not resolution.provider_key or not resolution.errors:
         return None
     return resolution.errors[0]
 

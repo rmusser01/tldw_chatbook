@@ -323,11 +323,15 @@ was for, such as "OpenAI: Could not save discovered models to the providers list
 Changing provider, endpoint or credentials clears the old results, and a model
 chosen from them no longer joins the list on **s**; a delayed operation cannot
 replace the new form’s results or Model value.
-**Discover models** reads the endpoint's host as **s** does, so it lists only
-from an endpoint **s** would save: a host such as `-kobold`, `kob*old` or
-`1.2.3`, or a remote address typed without `http://` or `https://`, is refused
-by both, and a Docker Compose service name such as `http://kobold_cpp:5001` is
-accepted by both.
+**Discover models** reads the endpoint's host as **s** does: a host such as
+`-kobold`, `kob*old` or `1.2.3`, or a remote address typed without `http://`
+or `https://`, is refused by both, and a Docker Compose service name such as
+`http://kobold_cpp:5001` is accepted by both. When the address is one **s**
+would refuse, the line beside **Discover models** gives the reason **s** gives,
+such as "Endpoint URL must include a valid host and port." One exception: for
+providers other than KoboldCpp and QwenCloud, an IPv6 address with a zone ID,
+such as `http://[fe80::1%25en0]:5001/v1`, is listed from, though **s** refuses
+it.
 For koboldcpp at its shipped endpoint, KoboldAI's native
 `http://localhost:5001/api/v1/generate`, **Discover models** lists what the
 server serves at `http://localhost:5001/v1/models`, the list Switch model
