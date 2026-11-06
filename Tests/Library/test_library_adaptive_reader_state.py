@@ -30,6 +30,9 @@ from tldw_chatbook.Library.library_media_reader_state import (
     resolve_media_reader_layout,
 )
 from tldw_chatbook.UI.Library_Modules import screen_constants
+from tldw_chatbook.UI.Library_Modules.library_artifacts_controller import (
+    ARTIFACT_READER_PROFILE,
+)
 from tldw_chatbook.UI.Library_Modules.screen_constants import (
     LIBRARY_COLLECTIONS_READER_PROFILE,
     LIBRARY_CONVERSATION_READER_PROFILE,
@@ -883,6 +886,7 @@ _LIST_STAGE_PROFILES = (
     pytest.param(
         screen_constants.LIBRARY_CONVERSATION_READER_PROFILE, id="conversations"
     ),
+    pytest.param(ARTIFACT_READER_PROFILE, id="artifacts"),
 )
 
 
@@ -892,9 +896,10 @@ def test_an_opened_list_beside_an_open_item_never_leaves_it_a_sliver(
 ) -> None:
     """TASK-38981: every Library destination but File Notes resolved an
     opened list beside an open item as 32 cells of list and ``width - 42`` of
-    work (1 at 40). From 40 to 79 the work pane now has no columns (the list
-    takes the stage) or at least the profile's floor."""
-    for width in range(40, 80):
+    work (1 at 40). From 40 to 82 (where the whole stage still fits the list's
+    72-cell ceiling) the work pane now has no columns, the list taking the
+    stage, or at least the profile's floor."""
+    for width in range(40, 83):
         layout = resolve_adaptive_reader_layout(
             width,
             AdaptiveReaderLayoutPreferences(),

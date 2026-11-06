@@ -515,6 +515,7 @@ from ...Library.library_shell_state import (
     LIBRARY_ROW_CREATE_SKILL,
     library_disabled_action_label,
 )
+from ...Utils.adaptive_reader_state import list_holds_the_stage
 from ...Widgets.Library import (
     LIBRARY_ADAPTIVE_READER_GRIP_CLASS,
     LibraryMediaCanvas,
@@ -3136,6 +3137,14 @@ class LibraryMediaController:
         if self._library_media_editor_dirty():
             self._notify_media_editor_dirty_veto()
             return
+        layout = self._media_state.reader_layout
+        if list_holds_the_stage(layout):
+            # TASK-38981 review: an item opened from the list holding the
+            # stage takes the stage back instead of loading behind it. A
+            # focus move's preview select keeps the list (browsing it).
+            self._media_state.reader_layout = dataclasses.replace(
+                layout, priority_pane=None
+            )
         if self._library_pending_list_entry_focus:
             self._disarm_library_list_entry_focus()
         self._library_media_viewer_return = None

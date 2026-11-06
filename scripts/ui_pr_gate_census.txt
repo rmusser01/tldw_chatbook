@@ -2483,3 +2483,23 @@ Tests/UI/test_library_adaptive_reader_closeout.py::test_prompts_list_takes_the_n
 # compact transition's two restores keeps the user's focus (11-12 s; 20 of 20
 # at -n 4, load 21-25). Appended at the tail.
 Tests/UI/test_library_file_notes_workspace.py::test_folder_files_user_focus_between_compact_restores_is_kept
+# TASK-38981 review (2026-11-06): an item picked from the list holding the
+# stage takes the stage back (six destinations at 60 columns), an empty
+# narrow stage leaves no invisible work-pane Tab stop, and Items opened beside
+# an open artifact take the stage with F6 still revealing the reader. TASK-38983
+# review: Retry after a disk change ends in Conflict and writes nothing.
+# Appended at the tail.
+Tests/UI/test_library_adaptive_reader_closeout.py::test_an_item_picked_from_the_stage_list_takes_the_stage_back[notes]
+Tests/UI/test_library_adaptive_reader_closeout.py::test_an_item_picked_from_the_stage_list_takes_the_stage_back[media]
+Tests/UI/test_library_adaptive_reader_closeout.py::test_an_item_picked_from_the_stage_list_takes_the_stage_back[conversations]
+Tests/UI/test_library_adaptive_reader_closeout.py::test_an_item_picked_from_the_stage_list_takes_the_stage_back[collections]
+Tests/UI/test_library_adaptive_reader_closeout.py::test_an_item_picked_from_the_stage_list_takes_the_stage_back[skills]
+Tests/UI/test_library_adaptive_reader_closeout.py::test_an_item_picked_from_the_stage_list_takes_the_stage_back[prompts]
+Tests/UI/test_library_adaptive_reader_closeout.py::test_an_empty_narrow_stage_leaves_no_invisible_work_tab_stop[collections]
+Tests/UI/test_library_adaptive_reader_closeout.py::test_an_empty_narrow_stage_leaves_no_invisible_work_tab_stop[skills]
+Tests/UI/test_library_adaptive_reader_closeout.py::test_an_empty_narrow_stage_leaves_no_invisible_work_tab_stop[prompts]
+Tests/UI/test_library_adaptive_reader_closeout.py::test_an_empty_narrow_stage_leaves_no_invisible_work_tab_stop[conversations-empty]
+Tests/UI/test_library_artifacts_focus.py::test_items_opened_beside_an_open_artifact_take_the_stage[size0]
+Tests/UI/test_library_artifacts_focus.py::test_items_opened_beside_an_open_artifact_take_the_stage[size1]
+Tests/UI/test_library_artifacts_focus.py::test_items_opened_beside_an_open_artifact_take_the_stage[size2]
+Tests/UI/test_library_file_notes_workspace.py::test_file_notes_retry_after_the_file_changed_on_disk_ends_in_conflict

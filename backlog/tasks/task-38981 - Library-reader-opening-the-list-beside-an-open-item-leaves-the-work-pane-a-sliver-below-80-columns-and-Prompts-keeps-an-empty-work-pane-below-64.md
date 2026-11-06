@@ -5,7 +5,7 @@ status: Done
 assignee:
 - '@claude'
 created_date: 2026-11-06 01:42
-updated_date: 2026-11-06 07:04
+updated_date: 2026-11-06 09:00
 labels:
 - follow-up
 - library
@@ -81,11 +81,11 @@ Found in round 8 of the 2026-10-23 burn-down. Checked on dev 29592ecc9b and on t
 ## Implementation Notes
 
 - **Resolver.** `AdaptiveReaderLayoutProfile` gains an opt-in `list_stage_over_starved_work`. Take an explicit list request (`priority="items"`) with an item open, in the width-starved branch. If it would leave the work pane under the profile's `work_min_width`, and the whole stage fits `list_max_width`, the list takes the stage and the work pane gets 0 columns. The default is off. File Notes resolves its narrow navigator with the same priority and keeps TASK-38757's rule: 18 cells beside the navigator from 60 columns. The golden-grid digest is unchanged, because its literal profiles do not set the flag.
-- **Shell.** `AdaptivePaneShell.sync_layout` hides the work pane when an explicit list priority holds the whole stage (`reader_width == 0`, items open, `priority_pane == "items"`), so none of its controls stay in the focus chain at zero width. The item stays mounted.
-  - Focus inside the work pane moves into the list.
+- **Shell.** `AdaptivePaneShell.sync_layout` hides the work pane whenever another pane holds the whole stage (`reader_width == 0` with a pane open), so none of its controls stay in the focus chain at zero width. The item stays mounted.
+  - Focus inside the work pane moves into the pane that took the stage.
   - When the pane shows again, focus returns to the last work-pane focus (tracked in `on_descendant_focus`), or the first work-pane control, if focus was on a grip, was None, or was being evacuated.
-  - It is scoped to the explicit priority. An empty list's narrow stage (`list_first_when_empty`, no priority) keeps its zero-width work pane, because Artifacts' F6 reveals its reader through it (`test_narrow_f6_reveals_reader_and_returns_through_items_grip`). My first cut hid every zero-width work pane and turned those Artifacts tests red.
-- **Profiles.** The flag is on Notes, Media, Prompts, Skills, Collections and Conversations: the six Library profiles beside File Notes in the task's "7 profiles". `list_first_when_empty` is added to Prompts (AC#4) and, as TASK-34851 asks, to Collections, Conversations and Skills. Artifacts is not changed; see the follow-ups.
+  - A shell whose focus reveals a zero-width reader opts out with `hide_zero_width_work = False`. That is Artifacts' `LibraryArtifactsReaderShell`: F6 or Tab into its body runs `reveal_focused_reader`, as `test_narrow_f6_reveals_reader_and_returns_through_items_grip` pins. My first cut hid every zero-width work pane with no opt-out and turned those tests red. The second cut hid only under an explicit list priority, which left the empty narrow stage's controls as invisible Tab stops; the review found that.
+- **Profiles.** The flag is on every Library profile but File Notes: Notes, Media, Prompts, Skills, Collections, Conversations and Artifacts. `list_first_when_empty` is added to Prompts (AC#4) and, as TASK-34851 asks, to Collections, Conversations and Skills. The stage applies while the whole stage fits the list's 72-cell ceiling: up to 82 columns, not only below 80.
 - **Tests.**
   - AC#5, on the real Library screen through the closeout harness (`@private_profile_test`): `test_opening_the_list_beside_an_open_item_leaves_no_work_sliver[notes|media × 40|50|60|70]` covers every width from 40 to 79, ten per case. At each width it focuses a control in the open item, clicks the list grip, and checks three things: the work pane is hidden or at least the profile floor, no work-pane control in the focus chain is outside its clip, and focus is visible. It then clicks the grip again and checks that focus is inside the open item.
   - `test_every_other_list_destination_gives_an_opened_list_the_stage[prompts|skills|collections|conversations]` runs the same check at 60 and 44.
@@ -102,4 +102,27 @@ Found in round 8 of the 2026-10-23 burn-down. Checked on dev 29592ecc9b and on t
 - **Green times.** The sweep cases take 16-18 s each, and the other-destination and empty-list cases 9-30 s (`-n 4`, load 13-26). The fifteen nodes are appended at the census tail, floor 1722.
 - **User Guide.** Media and Conversations, Notes, Prompts, Skills and Collections describe the list taking the stage beside an open item, and the narrow empty list.
 - Files: `tldw_chatbook/Utils/adaptive_reader_state.py`, `tldw_chatbook/Widgets/adaptive_pane_shell.py`, `tldw_chatbook/UI/Library_Modules/screen_constants.py`, `tldw_chatbook/Library/library_media_reader_state.py`, `Tests/Library/test_library_adaptive_reader_state.py`, `Tests/Library/test_library_media_reader_state.py`, `Tests/UI/test_adaptive_pane_shell.py`, `Tests/UI/test_library_adaptive_reader_closeout.py`, `scripts/ui_pr_gate_census.txt`, `scripts/check_ui_pr_gate_census.py`, five `Docs/User_Guide/library/` pages, `backlog/docs/lessons-textual.md`.
+
+
+
+### Review fixes (r10l-rev1)
+
+- **CRITICAL: an item picked from the list holding the stage stayed hidden** (Media, Conversations, Collections). The layout kept its explicit `priority_pane="items"`, and later resolves inherited it.
+  - A small `list_holds_the_stage(layout)` helper in `adaptive_reader_state` recognises that layout.
+  - An explicit open drops the priority so the opened item takes the stage back:
+    - Media: `_open_library_media_viewer` (a row's Enter or click). A focus move's preview select keeps the list, so moving through the rows with the arrow keys still browses it. My first cut released the stage in the open-time width restore, which also runs for the preview select. The list then came back through the grip.
+    - Conversations: `_start_library_conversation_reader_selection`, through `_hand_the_list_stage_to_the_reader`.
+    - Collections: `_select_library_collection_capture`.
+  - Notes, Skills and Prompts already dropped it.
+  - Test: `test_an_item_picked_from_the_stage_list_takes_the_stage_back[notes|media|conversations|collections|skills|prompts]` at 60 columns. It opens the list beside an open item, presses Enter on another row, and requires the new item open, the work pane shown at the profile floor or wider, and focus on a visible control. Red on HEAD for media, conversations and collections ("work shown False", the layout still priority "items"). Prompts was red only on my stricter first assertion that focus land inside the item: Prompts and Media leave it on a grip, and the test now asks for a visible control.
+- **Important: invisible Tab stops in the empty narrow stage** (Skills, Conversations with none). The shell now hides the zero-width work pane in that stage too, with the opt-out above. Test: `test_an_empty_narrow_stage_leaves_no_invisible_work_tab_stop[collections|skills|prompts|conversations-empty]`. On HEAD it was red with `('skills', ['library-skill-work-pane'])` and `('conversations-empty', ['library-conversation-reader-read', '…-info', '…-find', '…-messages'])`.
+- **Important: Artifacts.** The flag is on `ARTIFACT_READER_PROFILE`, and AC#1 now holds for Artifacts too, so it stays ticked. Its reader stays displayed at zero width while the list holds the stage, and F6 or Tab into the body reveals it at full width, as before. Evidence:
+  - the reviewer's Artifacts suites (focus, canvas, navigation and navigation-mounted): 46 of 46;
+  - `Tests/UI/test_library_artifacts_focus.py::test_items_opened_beside_an_open_artifact_take_the_stage[size0|size1|size2]` (80, 64 and 50 columns), red with the flag off (`items_width=32, reader_width=8` at 50);
+  - the resolver pin `test_an_opened_list_beside_an_open_item_never_leaves_it_a_sliver`, which now covers seven profiles, Artifacts included, at every width 40-82.
+- **Minor.** The User Guide and these notes say "up to 82 columns". The two stale comments are corrected (the Media resolver test's "narrow 32", and the CI pin's times). The pre-import record now credits the modules that are in the library route: `adaptive_pane_shell` +43, `screen_constants` +17, `library_screen` +3, `library_media_reader_state` +2, total 426,539 → 426,604. `adaptive_reader_state` is not in the route. The snapshot was regenerated with `--only preimport`.
+- **Changed-files run** (the reviewer's 7 files plus the Artifacts, Conversations, Collections, Media and reader-shell suites; 25 files, `-n 4`, load 8-15): mine 324 failed, 1168 passed; `fu-base-r10` 334 failed, 1092 passed. Nothing fails only on mine. Ten fail only on base: the round's fixed reds (the modal inventory and the trust dialog) and one route-cycle flake.
+- **New nodes** at the census tail: the six picks, the four empty-stage cases, the three Artifacts sizes and TASK-38983's Retry conflict test. Floor 1737.
+- Files: `tldw_chatbook/Widgets/adaptive_pane_shell.py`, `tldw_chatbook/Utils/adaptive_reader_state.py`, `tldw_chatbook/UI/Library_Modules/library_media_controller.py`, `tldw_chatbook/UI/Library_Modules/library_conversation_reader_controller.py`, `tldw_chatbook/UI/Library_Modules/library_collections_controller.py`, `tldw_chatbook/UI/Library_Modules/library_artifacts_controller.py`, `tldw_chatbook/Widgets/Library/library_artifacts_reader_shell.py`, `Tests/UI/test_library_adaptive_reader_closeout.py`, `Tests/UI/test_library_artifacts_focus.py`, `Tests/Library/test_library_adaptive_reader_state.py`, `Tests/Library/test_library_media_reader_state.py`, `Tests/CI/test_ci_queue_pressure_contract.py`, `Tests/Performance/test_screen_preimport_payload_budget.py`, `Tests/Performance/boot_budget_snapshots/preimport_payload.json`, the census files, and four `Docs/User_Guide/library/` pages.
+- **Follow-up.** After a pick from the stage list, Media leaves focus on its Items grip and Prompts on its Library grip, both visible. Focus could go into the opened item instead.
 

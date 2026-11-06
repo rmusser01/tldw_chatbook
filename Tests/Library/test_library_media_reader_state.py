@@ -194,7 +194,8 @@ def test_returning_width_restores_target_widths_not_intermediate_widths() -> Non
     wide = resolve_media_reader_layout(160, preferences, previous=narrow)
 
     assert wide.library_width == project_default_library_width(160)
-    # The intermediate width this test guards against is the narrow 32 above.
+    # The intermediate width this test guards against is the narrow step's
+    # list above (32 cells before TASK-38981; 70 now that it holds the stage).
     # The width the return restores is the automatic one for 160 columns:
     # ITEMS_TARGET_WIDTH (40) before task-31633, the growth ceiling now that
     # Media's list shares the Reader's surplus (AC#1).

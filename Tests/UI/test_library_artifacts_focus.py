@@ -149,3 +149,35 @@ async def test_reader_reveal_does_not_refocus_after_a_newer_f6(
             callback(*args, **kwargs)
         await pilot.pause()
         assert screen.focused is grip
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("size", [(80, 25), (64, 30), (50, 25)])
+@private_profile_test
+async def test_items_opened_beside_an_open_artifact_take_the_stage(
+    tmp_path, request, size
+):
+    """TASK-38981: with an artifact open, opening Items beside it left the
+    reader a ``width - 42`` sliver (38 cells at 80, 8 at 50). The list now
+    takes the stage, and F6 still reveals the reader at full width."""
+    async with artifact_library(tmp_path, size=size) as (screen, pilot):
+        controller = screen._artifacts_controller
+        controller.focus_items()
+        await pilot.pause()
+        screen.action_focus_next_workbench_pane()
+        await pilot.pause()
+        body = screen.query_one("#library-artifacts-body")
+        assert controller.reader_open and screen.focused is body
+        grip = screen.query_one("#library-artifacts-items-grip")
+        screen.set_focus(grip)
+        await pilot.pause()
+        await pilot.press("enter")
+        await pilot.pause()
+        layout = controller.layout
+        assert layout.items_open
+        assert layout.reader_width == 0, layout
+        screen.action_focus_next_workbench_pane()
+        await pilot.pause()
+        assert screen.focused is body
+        assert body.region.width >= 30
+        assert body.region.right <= screen.size.width

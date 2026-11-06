@@ -26,7 +26,13 @@ if TYPE_CHECKING:
     )
     from ..Screens.library_screen import LibraryScreen
 
-ARTIFACT_READER_PROFILE = AdaptiveReaderLayoutProfile(list_first_when_empty=True)
+ARTIFACT_READER_PROFILE = AdaptiveReaderLayoutProfile(
+    list_first_when_empty=True,
+    # TASK-38981: an explicitly opened list beside an open artifact takes the
+    # stage. Its reader stays displayed at zero width (the shell's
+    # ``hide_zero_width_work`` opt-out), so F6 or Tab into the body reveals it.
+    list_stage_over_starved_work=True,
+)
 
 
 @dataclass(frozen=True)

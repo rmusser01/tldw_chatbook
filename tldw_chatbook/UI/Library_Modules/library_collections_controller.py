@@ -46,7 +46,10 @@ from ...Library.collections_capture_models import (
 )
 from ...Library.library_shell_state import LIBRARY_ROW_BROWSE_COLLECTIONS
 from ...Third_Party.textual_fspicker import FileSave
-from ...Utils.adaptive_reader_state import resolve_adaptive_reader_layout
+from ...Utils.adaptive_reader_state import (
+    list_holds_the_stage,
+    resolve_adaptive_reader_layout,
+)
 from ...Utils.input_validation import (
     validate_navigation_context_text,
     validate_text_input,
@@ -571,6 +574,15 @@ class LibraryCollectionsController:
             )
         except CollectionsCaptureError as exc:
             self._notify_library_collections_warning(exc.reason)
+            return
+        layout = self._library_collections_reader_layout
+        if list_holds_the_stage(layout):
+            # TASK-38981 review: a capture picked from the list holding the
+            # stage takes the stage back instead of loading behind it.
+            self._library_collections_reader_layout = dataclasses.replace(
+                layout, priority_pane=None
+            )
+            self._sync_library_collections_reader_layout_from_shell()
 
     @on(Button.Pressed, ".library-collections-scope-row")
     async def select_library_collection_capture_scope(

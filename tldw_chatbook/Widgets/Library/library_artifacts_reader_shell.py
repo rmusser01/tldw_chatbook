@@ -25,6 +25,10 @@ if TYPE_CHECKING:
 
 
 class LibraryArtifactsReaderShell(LibraryAdaptiveReaderShell):
+    #: TASK-38981: focusing the zero-width reader body reveals the reader
+    #: (``reveal_focused_reader``, F6), so it stays displayed.
+    hide_zero_width_work = False
+
     def __init__(
         self, library: LibraryRail, controller: LibraryArtifactsController
     ) -> None:

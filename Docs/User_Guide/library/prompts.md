@@ -410,7 +410,7 @@ The fixed action area shows only actions valid for the current lifecycle:
 
 Below 64 columns, with no prompt open, the list takes the whole stage, as in
 Notes and Media; opening a prompt hands the width to the editor. With a
-prompt open on a narrow terminal (under about 80 columns), reopening the list
+prompt open on a narrow terminal (up to 82 columns), reopening the list
 with its grip gives the list the stage instead of squeezing the editor beside
 it, and the same grip returns to the prompt with focus in it.
 

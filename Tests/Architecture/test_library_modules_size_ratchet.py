@@ -165,7 +165,9 @@ _BUDGETS: dict[str, int] = {
     # library_conversation_reader_freshness.py with its new transcript re-check.
     # 964 -> 967 (2026-10-03, Qodo #2989): a completed load calls that module's
     # recheck_settled_load, so a load a list read found in flight is re-checked.
-    "tldw_chatbook/UI/Library_Modules/library_conversation_reader_controller.py": 967,
+    # 967 -> 983 (2026-11-06, TASK-38981 review; owner size waiver): a
+    # conversation picked from the list holding the narrow stage takes it back.
+    "tldw_chatbook/UI/Library_Modules/library_conversation_reader_controller.py": 983,
     "tldw_chatbook/UI/Library_Modules/library_conversations_controller.py": 1800,
     # 2026-10-21, TASK-34000.22 fix round 1 (owner decision 2026-10-04: raise
     # the row to the measured value): 1453 -> 1492. Dev itself was already
@@ -463,7 +465,9 @@ _BUDGETS: dict[str, int] = {
     # act on the loaded item in the list view too), the highlight hold also
     # holds while a form is dirty in any view, and the trash confirm's title
     # derives from the same target id as the Delete press. Exact measurement.
-    "tldw_chatbook/UI/Library_Modules/library_media_controller.py": 5246,
+    # 2026-11-06, TASK-38981 review (owner size waiver): 5246 -> 5255 (+9): an
+    # item opened from the list holding the narrow stage takes it back.
+    "tldw_chatbook/UI/Library_Modules/library_media_controller.py": 5255,
     # 2026-09-08, wave-8 task 2 (notes controller PR, notes series 2/N):
     # born governed. 185 moved methods carrying 3,934 source lines of body,
     # plus the module docstring, imports, the constructor's 93 keyword-only
@@ -889,7 +893,9 @@ _BUDGETS["tldw_chatbook/UI/Library_Modules/library_unavailable_navigation.py"] =
 # standing "Watchlists" button while the items pane offers the empty-state
 # one; plus the reused schedule's name handed to the consent copy (F3).
 # Measured with `len(read_text().splitlines())`.
-_BUDGETS["tldw_chatbook/UI/Library_Modules/library_artifacts_controller.py"] = 1057
+# 2026-11-06, TASK-38981 review (owner size waiver): 1057 -> 1063 (+6): the
+# Artifacts profile opts into the list taking the stage beside an open item.
+_BUDGETS["tldw_chatbook/UI/Library_Modules/library_artifacts_controller.py"] = 1063
 _BUDGETS["tldw_chatbook/UI/Library_Modules/library_artifacts_share_controller.py"] = 339
 
 # 2026-09-25, TASK-32954 (ruling R14): initial exact pin for the built-in

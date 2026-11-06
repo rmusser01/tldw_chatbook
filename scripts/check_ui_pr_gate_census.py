@@ -840,6 +840,10 @@ MINIMUM_FILES = 1723
 # TASK-38957 (2026-11-06): append the Folder files focus-supersede node at
 # the tail. The floor is the measured entry count.
 MINIMUM_FILES = 1724
+# TASK-38981 / TASK-38983 review (2026-11-06): append the fourteen
+# stage-pick, empty-stage, Artifacts-stage and Retry-conflict nodes at the
+# tail. The floor is the measured entry count.
+MINIMUM_FILES = 1738
 
 
 def read_census(path: Path) -> list[str]:

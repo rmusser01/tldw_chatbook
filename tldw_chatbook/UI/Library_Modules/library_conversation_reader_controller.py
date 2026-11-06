@@ -108,7 +108,11 @@ from ...Library.library_conversation_reader_state import (
     settle_conversation_unavailable,
 )
 from ...Library.library_shell_state import LIBRARY_ROW_BROWSE_CONVERSATIONS
-from ...Utils.adaptive_reader_state import PaneName, resolve_adaptive_reader_layout
+from ...Utils.adaptive_reader_state import (
+    PaneName,
+    list_holds_the_stage,
+    resolve_adaptive_reader_layout,
+)
 from ...Widgets.Library import LibraryAdaptiveReaderShell, LibraryConversationReader
 from .library_conversations_state import (
     CONVERSATIONS_PLURAL_STATE_FIELDS,
@@ -495,6 +499,7 @@ class LibraryConversationReaderController:
                 bulk_selected_count=0,
                 bulk_loaded_preview_selected=None,
             )
+            self._hand_the_list_stage_to_the_reader()
             self._sync_library_conversation_reader()
             self.run_worker(
                 self._bootstrap_library_conversation_reader(
@@ -510,12 +515,23 @@ class LibraryConversationReaderController:
             version=version,
         )
         self._library_conversation_reader_state = state
+        self._hand_the_list_stage_to_the_reader()
         self._sync_library_conversation_reader()
         self.run_worker(
             self._load_library_conversation_reader(request),
             exclusive=True,
             group="library_conversation_reader",
         )
+
+    def _hand_the_list_stage_to_the_reader(self) -> None:
+        """TASK-38981 review: a conversation picked from the list holding the
+        stage takes the stage back instead of loading behind it."""
+        layout = self._library_conversation_reader_layout
+        if list_holds_the_stage(layout):
+            self._library_conversation_reader_layout = dataclasses.replace(
+                layout, priority_pane=None
+            )
+            self._sync_library_conversation_reader_layout_from_shell()
 
     async def _bootstrap_library_conversation_reader(
         self, conversation_id: str, bootstrap_generation: int

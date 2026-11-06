@@ -2082,3 +2082,179 @@ async def test_prompts_list_takes_the_narrow_stage_and_an_open_prompt_takes_it_b
             )
     finally:
         prompt_db.close()
+
+
+#: TASK-38981 review: the row picked from the list that holds the stage, and
+#: how to read which item each destination then has open.
+_PICKED_ROWS = {
+    "notes": ("#library-notes-tree-note-1", "note_id"),
+    "media": ("#library-media-row-0", "media_id"),
+    "conversations": ("#library-conversation-row-0", "conversation_id"),
+    "collections": ("#library-collections-row-0", "capture_identity"),
+    "skills": ("#library-skill-row-release-notes", "skill_name"),
+    "prompts": (".library-prompt-row", "prompt_id"),
+}
+
+
+def _open_item_identity(screen, destination: str) -> object:
+    """The identity of the item a destination has open right now."""
+    if destination == "notes":
+        return str(screen._notes_state.selected_note_id or "")
+    if destination == "media":
+        return str(screen._media_state.reader_session.selected_id or "")
+    if destination == "conversations":
+        return str(screen._conversations_state.reader_state.selected_id or "")
+    if destination == "collections":
+        state = screen._library_collections_capture_controller.state
+        return state.selected_identity
+    if destination == "skills":
+        return str(screen._skills_state.selected_skill_name or "")
+    return str(screen._prompts_state.selected_prompt_id or "")
+
+
+@private_profile_test
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "destination",
+    ["notes", "media", "conversations", "collections", "skills", "prompts"],
+)
+async def test_an_item_picked_from_the_stage_list_takes_the_stage_back(
+    destination: str,
+    tmp_path: Path,
+    request: pytest.FixtureRequest,
+) -> None:
+    """TASK-38981 review: once the list held the stage beside an open item,
+    the layout kept its explicit list priority, so picking another row loaded
+    that item behind the hidden work pane (Media, Conversations, Collections).
+    At 60 columns the picked item now takes the stage, and focus stays on a
+    control the user can see."""
+    app, prompt_db = await _seed_closeout_app(tmp_path)
+    host = LibraryProductionCSSHarness(app)
+    selector = DESTINATION_CONTRACT[destination][1]
+    layout_name = DESTINATION_CONTRACT[destination][4]
+    row_selector, identity_attribute = _PICKED_ROWS[destination]
+
+    def layout():
+        return operator.attrgetter(layout_name)(screen)
+
+    try:
+        async with host.run_test(size=(160, 50)) as pilot:
+            screen = _active_library_screen(host)
+            await _wait_for_library_shell(screen, pilot)
+            await _open_destination(screen, pilot, destination)
+            await pilot.resize_terminal(60, 30)
+            await _wait_for_condition(
+                pilot,
+                lambda: screen.size.width == 60
+                and screen.query_one(selector).region.width
+                == (
+                    layout().library_width
+                    + layout().items_width
+                    + layout().reader_width
+                    + 2 * layout().grip_width
+                ),
+                message="the 60-column layout did not settle",
+            )
+            await pilot.pause()
+            shell = screen.query_one(selector)
+            if layout().items_open:
+                await pilot.click(shell.items_grip)
+                await _wait_for_condition(
+                    pilot,
+                    lambda: not layout().items_open and shell.work.display,
+                    message="the open item did not take the stage",
+                )
+            before = _open_item_identity(screen, destination)
+            await pilot.click(shell.items_grip)
+            await _wait_for_condition(
+                pilot,
+                lambda: layout().items_open and not shell.work.display,
+                message="the list did not take the stage beside the open item",
+            )
+            rows = [
+                row
+                for row in screen.query(row_selector)
+                if getattr(row, identity_attribute, None) is not None
+            ]
+            row = next(
+                candidate
+                for candidate in rows
+                if str(getattr(candidate, identity_attribute)) != str(before)
+            )
+            picked = getattr(row, identity_attribute)
+            screen.set_focus(row)
+            await pilot.pause()
+            await pilot.press("enter")
+            def current_work():
+                # Collections remounts its reader shell as a pick settles.
+                return screen.query_one(selector).work
+
+            await _wait_for_condition(
+                pilot,
+                lambda: (
+                    str(_open_item_identity(screen, destination)) == str(picked)
+                    and current_work().display
+                    and _work_cells(current_work()) >= _WORK_FLOORS[destination]
+                    and screen.focused is not None
+                    and _work_cells(screen.focused) > 0
+                ),
+                message=(
+                    f"{destination}: picking {picked!r} left "
+                    f"{_open_item_identity(screen, destination)!r} open, "
+                    f"work shown {current_work().display}, layout {layout()}, "
+                    f"focus {screen.focused!r}"
+                ),
+            )
+    finally:
+        prompt_db.close()
+
+
+@private_profile_test
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "destination", ["collections", "skills", "prompts", "conversations-empty"]
+)
+async def test_an_empty_narrow_stage_leaves_no_invisible_work_tab_stop(
+    destination: str,
+    tmp_path: Path,
+    request: pytest.FixtureRequest,
+) -> None:
+    """TASK-38981 review: with nothing open below 64 columns the list takes
+    the stage with no priority, and the shell left the zero-width work pane
+    displayed, so its controls stayed in the focus chain off screen (Skills'
+    work pane at x=60; Read, Info, Find and Messages with no conversations)."""
+    if destination == "conversations-empty":
+        app = _build_test_app()
+        _seed_conversations(app, [], notes=[], media=[])
+        prompt_db = None
+        key = "conversations"
+    else:
+        app, prompt_db = await _seed_closeout_app(tmp_path)
+        key = destination
+    rail, selector, _row, _preferences, layout_name = DESTINATION_CONTRACT[key]
+    host = LibraryProductionCSSHarness(app)
+    try:
+        async with host.run_test(size=(60, 24)) as pilot:
+            screen = _active_library_screen(host)
+            await _wait_for_library_shell(screen, pilot)
+            screen.query_one(rail, Button).press()
+            shell = await _wait_for_selector(screen, pilot, selector)
+            if key == "prompts":
+                await _open_prompts_list(screen, pilot)
+            await _wait_for_condition(
+                pilot,
+                lambda: operator.attrgetter(layout_name)(screen).items_open,
+                message=f"{destination}: the list did not take the narrow stage",
+            )
+            for _ in range(5):
+                await pilot.pause()
+            unseen = [
+                target.id or type(target).__name__
+                for target in screen.focus_chain
+                if shell.work in target.ancestors_with_self
+                and _work_cells(target) <= 0
+            ]
+            assert not unseen, (destination, unseen)
+    finally:
+        if prompt_db is not None:
+            prompt_db.close()

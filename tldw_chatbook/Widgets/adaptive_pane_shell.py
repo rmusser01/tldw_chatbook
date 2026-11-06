@@ -320,6 +320,10 @@ class AdaptivePaneShell(Horizontal):
 
     #: The grip class this shell builds.
     grip_type: ClassVar[type[AdaptivePaneGrip]] = AdaptivePaneGrip
+    #: TASK-38981: hide the work pane while another pane holds the whole
+    #: stage. A destination whose focus reveals a zero-width reader (Artifacts)
+    #: keeps it displayed.
+    hide_zero_width_work: ClassVar[bool] = True
 
     def __init__(
         self,
@@ -526,22 +530,25 @@ class AdaptivePaneShell(Horizontal):
             self.work.add_class("w-fill")
             self.work.styles.min_width = 0
             self.work.add_class("h-full")
-        # TASK-38981: a list explicitly given the whole stage (no work columns)
-        # hides the work pane, so none of its controls stay in the focus chain
-        # at zero width. Its item stays mounted; showing it again returns focus
-        # there. Only the explicit list priority: an empty list's narrow stage
-        # keeps its zero-width work pane, which Artifacts' F6 reveals.
+        # TASK-38981: a pane given the whole stage (no work columns) hides the
+        # work pane, so none of its controls stay in the focus chain at zero
+        # width. Its item stays mounted; showing it again returns focus there.
         work_shown = not (
-            layout.reader_width == 0
-            and layout.items_open
-            and layout.priority_pane == "items"
+            self.hide_zero_width_work
+            and layout.reader_width == 0
+            and (layout.items_open or layout.library_open)
         )
         work_return_target: Widget | None = None
         if self.work.display != work_shown:
             if not work_shown:
                 if focused is not None and self.work in focused.ancestors_with_self:
+                    stage, stage_grip = (
+                        (self.items, self.items_grip)
+                        if layout.items_open
+                        else (self.library, self.library_grip)
+                    )
                     evacuation_target = next(
-                        iter(self._pane_focus_chain(self.items)), self.items_grip
+                        iter(self._pane_focus_chain(stage)), stage_grip
                     )
                 self.work.display = False
             else:

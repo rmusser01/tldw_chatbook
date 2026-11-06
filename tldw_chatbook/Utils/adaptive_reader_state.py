@@ -595,6 +595,19 @@ def resolve_adaptive_reader_layout(
     )
 
 
+def list_holds_the_stage(layout: AdaptiveReaderEffectiveLayout) -> bool:
+    """Whether an explicit list priority holds the whole stage (TASK-38981).
+
+    A destination that opens another item from that list drops the priority
+    before re-resolving, so the item it opened takes the stage back.
+    """
+    return (
+        layout.items_open
+        and layout.reader_width == 0
+        and layout.priority_pane == "items"
+    )
+
+
 # Neutral names for destinations that are not the Library (Roleplay frame B0;
 # the shared adaptive-pane-shell ADR). The SAME objects, not subclasses, so behaviour is byte-identical
 # by construction; the golden grid in
