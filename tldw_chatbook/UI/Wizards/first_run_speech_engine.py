@@ -88,8 +88,6 @@ CLOUD_NO_KEY_SUMMARY = (
     "OpenAI Whisper, but no OpenAI key is available — add one in "
     f"{OPENAI_KEY_PAGE}"
 )
-#: Fields of ``[transcription.remote_whisper]`` that name a server's own key.
-REMOTE_KEY_FIELDS = ("api_key", "api_key_env_var")
 CLOUD_DETAIL = (
     "Used when you transcribe audio and video files; it uses your OpenAI key. "
     "Live dictation in Console stays on this computer and needs an engine "
@@ -398,6 +396,32 @@ def _model_fits(engine: str, model: str) -> bool:
     return engine in WHISPER_ID_ENGINES or model not in TEMPLATE_WHISPER_MODELS
 
 
+def _own_key_blanks(remote: Mapping[str, Any]) -> dict[str, str]:
+    """The writes that leave a remote-whisper table no key of its own.
+
+    Cloud means the OpenAI provider's key, which the transcription service
+    sends only when the table yields none: it tries the table's ``api_key``,
+    then the variable ``api_key_env_var`` names (``REMOTE_WHISPER_API_KEY``
+    when the table names none). Each of those still set is blanked, so a key
+    or variable kept from before -- a self-hosted server's (review R1), or one
+    in a disabled table already at OpenAI's endpoint (Qodo review 2026-11-05)
+    -- is never sent to OpenAI. An absent ``api_key_env_var`` is written
+    empty, because absent means the default variable.
+
+    Args:
+        remote: The saved ``[transcription.remote_whisper]`` table.
+
+    Returns:
+        ``{field: ""}`` for each credential source still set.
+    """
+    blanks: dict[str, str] = {}
+    if str(remote.get("api_key") or "").strip():
+        blanks["api_key"] = ""
+    if str(remote.get("api_key_env_var", REMOTE_KEY_ENV_DEFAULT) or "").strip():
+        blanks["api_key_env_var"] = ""
+    return blanks
+
+
 def build_engine_commit(
     engine: str, *, facts: EngineFacts, transcription: Mapping[str, Any]
 ) -> dict[str, dict[str, Any]]:
@@ -405,7 +429,9 @@ def build_engine_commit(
 
     "none" writes nothing; "parakeet" is the managed install's own commit.
     The engine's own model is written with it, except that a model the user
-    already gave that same engine stays (review R4).
+    already gave that same engine stays (review R4). "cloud" also leaves the
+    remote-whisper table no key of its own, so the OpenAI provider's key is
+    the one sent (``_own_key_blanks``).
     """
     provider = str(transcription.get("default_provider") or "")
     model = str(transcription.get("default_model") or "")
@@ -422,24 +448,21 @@ def build_engine_commit(
     if engine == ENGINE_CLOUD and facts.openai_key:
         remote = transcription.get("remote_whisper")
         remote = remote if isinstance(remote, Mapping) else {}
+        blanks = _own_key_blanks(remote)
         if (
             provider == REMOTE_WHISPER_PROVIDER
             and model == OPENAI_WHISPER_MODEL
             and bool(remote.get("enabled"))
             and remote.get("api_endpoint") == OPENAI_TRANSCRIPTIONS_URL
+            and not blanks
         ):
             return {}
         repointed = {
             "enabled": True,
             "api_endpoint": OPENAI_TRANSCRIPTIONS_URL,
             "model": OPENAI_WHISPER_MODEL,
+            **blanks,
         }
-        if not is_openai_endpoint(remote.get("api_endpoint")):
-            # Review R1: a key issued for the server being replaced (or the
-            # variable naming one) would otherwise go to api.openai.com.
-            repointed.update(
-                {field: "" for field in REMOTE_KEY_FIELDS if str(remote.get(field) or "").strip()}
-            )
         return {
             "transcription": {
                 "default_provider": REMOTE_WHISPER_PROVIDER,

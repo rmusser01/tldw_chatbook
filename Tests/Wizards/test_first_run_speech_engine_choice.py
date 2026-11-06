@@ -156,26 +156,31 @@ async def test_cloud_whisper_points_remote_whisper_at_openai_without_a_key_copy(
         ok, _ = await step.commit()
     assert ok
     committed = wizard.commit_config.await_args.args[0]
+    # No key is copied; naming no variable stops the service reading
+    # REMOTE_WHISPER_API_KEY in place of the OpenAI key (Qodo review 2026-11-05).
     assert committed == {
         "transcription": {"default_provider": "remote-whisper", "default_model": "whisper-1"},
         "transcription.remote_whisper": {
             "enabled": True,
             "api_endpoint": "https://api.openai.com/v1/audio/transcriptions",
             "model": "whisper-1",
+            "api_key_env_var": "",
         },
     }
     assert wizard_state.commit_sections_allowed(committed)
-    assert "api_key" not in str(committed)
+    assert "api_key" not in committed["transcription.remote_whisper"]
     assert "Live dictation in Console stays on this computer" in detail
 
 
 def test_a_rerun_with_cloud_saved_starts_on_cloud_and_writes_nothing_unchanged() -> None:
+    # The table as the Cloud choice saves it.
     transcription = {
         "default_provider": "remote-whisper",
         "default_model": "whisper-1",
         "remote_whisper": {
             "enabled": True,
             "api_endpoint": engines.OPENAI_TRANSCRIPTIONS_URL,
+            "api_key_env_var": "",
         },
     }
     assert engines.saved_engine(transcription, FACTS) == engines.ENGINE_CLOUD
@@ -706,11 +711,14 @@ def test_choosing_cloud_over_a_self_hosted_server_drops_that_servers_key() -> No
     commit = engines.build_engine_commit(
         engines.ENGINE_CLOUD, facts=FACTS, transcription=SELF_HOSTED
     )
+    # The table names no variable, so the service would read
+    # REMOTE_WHISPER_API_KEY; the commit names none (Qodo review 2026-11-05).
     assert commit["transcription.remote_whisper"] == {
         "enabled": True,
         "api_endpoint": engines.OPENAI_TRANSCRIPTIONS_URL,
         "model": engines.OPENAI_WHISPER_MODEL,
         "api_key": "",
+        "api_key_env_var": "",
     }
     by_env = {
         "default_provider": "faster-whisper",
@@ -725,19 +733,111 @@ def test_choosing_cloud_over_a_self_hosted_server_drops_that_servers_key() -> No
     )["transcription.remote_whisper"]
     assert remote["api_key_env_var"] == ""
     assert "api_key" not in remote
-    # A key the user gave this same OpenAI endpoint stays theirs.
-    own_openai = {
+
+
+# -- Qodo review (2026-11-05): Cloud sends the OpenAI provider's key only -------
+
+#: Set while each case runs: the variables a retained table could name.
+_FOREIGN_ENV = {
+    "OTHER_SERVICE_TOKEN": "tok-other-env",
+    "REMOTE_WHISPER_API_KEY": "tok-remote-default-env",
+}
+
+
+@pytest.mark.parametrize(
+    "remote",
+    [
+        {"api_endpoint": engines.OPENAI_TRANSCRIPTIONS_URL, "api_key": "tok-other-service"},
+        {"api_endpoint": engines.OPENAI_TRANSCRIPTIONS_URL, "api_key_env_var": "OTHER_SERVICE_TOKEN"},
+        {"api_endpoint": engines.OPENAI_TRANSCRIPTIONS_URL},
+        {"api_endpoint": "http://whisper.lan:9000/v1/audio/transcriptions", "api_key": "x"},
+    ],
+    ids=["key-at-openai", "named-var-at-openai", "default-var-at-openai", "default-var-self-hosted"],
+)
+def test_cloud_leaves_remote_whisper_no_credential_of_its_own(remote) -> None:
+    """Qodo review (2026-11-05): a table already at OpenAI's endpoint kept its
+    ``api_key`` / ``api_key_env_var``, and a table naming no variable kept the
+    service's REMOTE_WHISPER_API_KEY default, so a disabled table's token for
+    another service was revived and sent to OpenAI in place of the OpenAI
+    provider's key. After the Cloud commit the table sends none of its own."""
+    transcription = {
         "default_provider": "faster-whisper",
+        "remote_whisper": {"enabled": False, **remote},
+    }
+    commit = engines.build_engine_commit(
+        engines.ENGINE_CLOUD, facts=FACTS, transcription=transcription
+    )
+    written = {**transcription["remote_whisper"], **commit["transcription.remote_whisper"]}
+    assert written["api_endpoint"] == engines.OPENAI_TRANSCRIPTIONS_URL
+    assert written["enabled"] is True
+    assert not engines.remote_whisper_own_key(written, _FOREIGN_ENV)
+
+
+def test_cloud_over_a_saved_openai_whisper_with_its_own_key_uses_the_provider_key() -> None:
+    """The "unchanged" shortcut held only on endpoint and model, so a saved
+    table at OpenAI with a key of its own kept sending that key, while the
+    Cloud row says it uses the OpenAI provider's key."""
+    transcription = {
+        "default_provider": "remote-whisper",
+        "default_model": "whisper-1",
         "remote_whisper": {
-            "enabled": False,
+            "enabled": True,
             "api_endpoint": engines.OPENAI_TRANSCRIPTIONS_URL,
-            "api_key": "sk-their-own",
+            "api_key": "tok-retained",
+            "api_key_env_var": "",
         },
     }
-    remote = engines.build_engine_commit(
-        engines.ENGINE_CLOUD, facts=FACTS, transcription=own_openai
-    )["transcription.remote_whisper"]
-    assert "api_key" not in remote and "api_key_env_var" not in remote
+    commit = engines.build_engine_commit(
+        engines.ENGINE_CLOUD, facts=FACTS, transcription=transcription
+    )
+    assert commit["transcription.remote_whisper"]["api_key"] == ""
+
+
+def test_the_cloud_choice_never_sends_a_retained_key_to_openai(tmp_path, monkeypatch) -> None:
+    """End to end over the real loader and the real remote-whisper request: a
+    disabled table at OpenAI's endpoint holding another service's token (and
+    naming that service's variable) is switched on by Cloud; the request to
+    api.openai.com carries the OpenAI provider's key and neither retained one."""
+    import sys
+
+    from tldw_chatbook.Local_Ingestion import transcription_service as ts
+
+    toml_text = _PROVIDER_KEY + (
+        '[transcription]\ndefault_provider = "faster-whisper"\n'
+        "[transcription.remote_whisper]\nenabled = false\n"
+        f'api_endpoint = "{engines.OPENAI_TRANSCRIPTIONS_URL}"\n'
+        'api_key = "tok-other-service"\napi_key_env_var = "OTHER_SERVICE_TOKEN"\n'
+    )
+    _real_config(tmp_path, monkeypatch, toml_text, _FOREIGN_ENV)
+    fresh = sys.modules["tldw_chatbook.config"]
+    saved = fresh.load_cli_config_and_ensure_existence()["transcription"]
+    commit = engines.build_engine_commit(
+        engines.ENGINE_CLOUD, facts=FACTS, transcription=saved
+    )
+    assert fresh.save_settings_to_cli_config(commit)
+    fresh.load_cli_config_and_ensure_existence(force_reload=True)
+    fresh.load_settings(force_reload=True)
+
+    audio = tmp_path / "clip.wav"
+    audio.write_bytes(b"RIFF0000WAVE")
+    sent: list[tuple[str, dict]] = []
+
+    class _Sent(Exception):
+        pass
+
+    def _post(url, **kwargs):
+        sent.append((url, dict(kwargs.get("headers") or {})))
+        raise _Sent()
+
+    monkeypatch.setattr(ts.requests, "post", _post)
+    with pytest.raises(Exception):
+        ts._LegacyTranscriptionBackend._transcribe_with_remote_whisper(
+            SimpleNamespace(), str(audio)
+        )
+    assert [url for url, _ in sent] == [engines.OPENAI_TRANSCRIPTIONS_URL]
+    headers = sent[0][1]
+    assert headers.get("Authorization") == "Bearer sk-provider-key"
+    assert "tok-" not in str(headers)
 
 
 def test_summary_names_openai_only_for_openais_endpoint() -> None:
