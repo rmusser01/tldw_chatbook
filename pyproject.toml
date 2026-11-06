@@ -714,7 +714,7 @@ exclude = [
     "tldw_chatbook/Local_Ingestion/API_Endpoint_Sample.py",
 ]
 
-# Lint gate (TASK-38600, ADR 287): F must stay at zero; B/ASYNC/PLE debt is
+# Lint gate (TASK-38600, ADR 355): F must stay at zero; B/ASYNC/PLE debt is
 # ratcheted down via Tests/lint/ruff_baseline.txt. CI pins the ruff version
 # (see .github/workflows/lint.yml); the version that produced the current
 # baseline is recorded in that file's header.
@@ -723,3 +723,8 @@ target-version = "py312"
 
 [tool.ruff.lint]
 select = ["F", "B", "ASYNC", "PLE"]
+
+[tool.ruff.lint.per-file-ignores]
+# The screen re-exports its moved support layer; Tests/Architecture/
+# test_library_support_layer_surface.py pins every name.
+"tldw_chatbook/UI/Screens/library_screen.py" = ["F401"]

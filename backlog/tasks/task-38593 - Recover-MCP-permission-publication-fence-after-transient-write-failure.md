@@ -26,6 +26,8 @@ The fence uncertain flag is never cleared and begin is not paired with complete 
 
 <!-- SECTION:IMPLEMENTATION_NOTES:BEGIN -->
 
+
+**Not fixable on dev (2026-11-06).** The fence this task repairs, `_PermissionPathFence` in `MCP/permission_store.py` (the `pending`/`uncertain` publication state read by passive MCP hook grants), exists only in the native-workflow work: it was added by `e7dc47f289` ("revalidate original MCP grants for passive hook context"), which is now in draft PR #3411, not on dev. PR #3361 was first opened on a local dev branch that carried that work, so its fix commit `8162e28ded` applied there. When #3361 was rebuilt on dev with only its audit commits, that commit was left out. #3411's `permission_store.py` still has the stuck-`pending` bug (`observe` returns early while `pending or uncertain`). Land `8162e28ded` (fix, `Tests/MCP/test_permission_publication_fence.py`, `Tests/Backup_Recovery/test_activation_mcp.py`) on #3411's branch, or after #3411 merges.
 <!-- SECTION:IMPLEMENTATION_NOTES:END -->
 
 ## Final Summary

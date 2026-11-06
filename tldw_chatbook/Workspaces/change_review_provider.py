@@ -9,7 +9,20 @@ from __future__ import annotations
 
 import os
 from dataclasses import dataclass
-from typing import Callable, Sequence
+from typing import TYPE_CHECKING, Callable, Sequence
+
+if TYPE_CHECKING:
+    from tldw_chatbook.Workspaces.change_revert import (
+        RevertOutcome,
+        RevertPreflight,
+    )
+    from tldw_chatbook.Workspaces.git_workspace import (
+        CommitResult,
+        CurrentRootStatus,
+        GitWorkspaceInfo,
+        GitWorkspaceRefusal,
+        PushResult,
+    )
 
 from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
 from tldw_chatbook.Workspaces.change_tracking import (
