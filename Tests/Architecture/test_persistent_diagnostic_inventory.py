@@ -60,10 +60,8 @@ REVIEWED_METADATA_ONLY_DIAGNOSTICS = {
         "Local tool approval callback failed": (),
     },
     "tldw_chatbook/Agents/mcp_tool_provider.py": {
-        "MCPToolProvider: persona_policy_provider failed": (
-            "tool.name",
-            "type(exc).__name__",
-        ),
+        # TASK-39060: the class is bound, not formatted; the tool name is gone.
+        "MCPToolProvider: persona_policy_provider failed": ("type(exc).__name__",),
     },
     "tldw_chatbook/Agents/persona_policy.py": {
         "Dropping non-mapping persona policy rule": ("type(entry).__name__",),

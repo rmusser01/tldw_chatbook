@@ -185,6 +185,8 @@ def test_every_blanket_handler_in_the_module_records_something():
 #: must be reviewed here: the value must be a class name, never data.
 EXCEPTION_TYPE_BIND_SITES = frozenset(
     {
+        # TASK-39060: binds type(exc).__name__.
+        ("tldw_chatbook/Agents/mcp_tool_provider.py", "MCPToolProvider._persona_floor"),
         ("tldw_chatbook/Persona_Buddy/controller.py", "load_local_persona_portrait"),
         (
             "tldw_chatbook/Persona_Buddy/controller.py",
@@ -361,7 +363,7 @@ def test_bounded_exception_type_returns_only_a_class_name():
     assert _bounded_exception_type(odd()) == "Exception"
 
 
-#: TASK-38989 review r10a-rev5: a package-wide tripwire. The 7-site census above
+#: TASK-38989 review r10a-rev5: a package-wide tripwire. The bind-site census above
 #: sees only direct ``bind``/``contextualize`` calls, so an alias (``b =
 #: logger.bind``), ``functools.partial``, ``logger.configure(extra=...)``,
 #: ``logger.patch`` or a ``**`` dict built in another module would slip past
@@ -369,6 +371,7 @@ def test_bounded_exception_type_returns_only_a_class_name():
 #: in the package is therefore a reviewed row: (count, why it is not an
 #: unreviewed loguru ``extra`` value). A new occurrence fails until reviewed.
 EXCEPTION_TYPE_TOKEN_ROWS: dict[tuple[str, str, str], tuple[int, str]] = {
+    ("tldw_chatbook/Agents/mcp_tool_provider.py", "MCPToolProvider._persona_floor", "keyword"): (1, "loguru bind; also held to a class name by the bind-site census above"),
     ("tldw_chatbook/Audio/voice_phrase_sequencer.py", "PhraseSpeechSequencer._drain_phrases", "string"): (1, "structured metadata dict field, not loguru extra"),
     ("tldw_chatbook/Audio/voice_process_core.py", "ConsoleSpeculativeVoiceSession._fail_transport.preserve_and_report", "keyword"): (1, "persistent-diagnostics event/metadata keyword, not loguru extra"),
     ("tldw_chatbook/Audio/voice_transcription.py", "_stt_failure_metadata", "string"): (2, "structured metadata dict field, not loguru extra"),
@@ -387,13 +390,13 @@ EXCEPTION_TYPE_TOKEN_ROWS: dict[tuple[str, str, str], tuple[int, str]] = {
     ("tldw_chatbook/MCP/unified_control_plane_service.py", "UnifiedMCPControlPlaneService._record_local_hub_outcome", "keyword"): (1, "MCP execution record field, not loguru extra"),
     ("tldw_chatbook/MCP/unified_control_plane_service.py", "UnifiedMCPControlPlaneService._record_tool_execution", "keyword"): (1, "MCP execution record field, not loguru extra"),
     ("tldw_chatbook/MCP/unified_control_plane_service.py", "UnifiedMCPControlPlaneService.execute_hub_tool", "keyword"): (5, "MCP execution record field, not loguru extra"),
-    ("tldw_chatbook/Persona_Buddy/controller.py", "PersonaBuddyController._current_reduced_motion", "keyword"): (1, "loguru bind; also held to a class name by the 7-site census above"),
-    ("tldw_chatbook/Persona_Buddy/controller.py", "PersonaBuddyController._read_graph", "keyword"): (1, "loguru bind; also held to a class name by the 7-site census above"),
-    ("tldw_chatbook/Persona_Buddy/controller.py", "PersonaBuddyController._read_local_buddy", "keyword"): (1, "loguru bind; also held to a class name by the 7-site census above"),
-    ("tldw_chatbook/Persona_Buddy/controller.py", "PersonaBuddyController._read_local_persona", "keyword"): (1, "loguru bind; also held to a class name by the 7-site census above"),
-    ("tldw_chatbook/Persona_Buddy/controller.py", "PersonaBuddyController._resolve_runtime", "keyword"): (1, "loguru bind; also held to a class name by the 7-site census above"),
-    ("tldw_chatbook/Persona_Buddy/controller.py", "load_local_persona_portrait", "keyword"): (1, "loguru bind; also held to a class name by the 7-site census above"),
-    ("tldw_chatbook/Persona_Buddy/preferences.py", "persist_persona_buddy_preferences", "keyword"): (1, "loguru bind; also held to a class name by the 7-site census above"),
+    ("tldw_chatbook/Persona_Buddy/controller.py", "PersonaBuddyController._current_reduced_motion", "keyword"): (1, "loguru bind; also held to a class name by the bind-site census above"),
+    ("tldw_chatbook/Persona_Buddy/controller.py", "PersonaBuddyController._read_graph", "keyword"): (1, "loguru bind; also held to a class name by the bind-site census above"),
+    ("tldw_chatbook/Persona_Buddy/controller.py", "PersonaBuddyController._read_local_buddy", "keyword"): (1, "loguru bind; also held to a class name by the bind-site census above"),
+    ("tldw_chatbook/Persona_Buddy/controller.py", "PersonaBuddyController._read_local_persona", "keyword"): (1, "loguru bind; also held to a class name by the bind-site census above"),
+    ("tldw_chatbook/Persona_Buddy/controller.py", "PersonaBuddyController._resolve_runtime", "keyword"): (1, "loguru bind; also held to a class name by the bind-site census above"),
+    ("tldw_chatbook/Persona_Buddy/controller.py", "load_local_persona_portrait", "keyword"): (1, "loguru bind; also held to a class name by the bind-site census above"),
+    ("tldw_chatbook/Persona_Buddy/preferences.py", "persist_persona_buddy_preferences", "keyword"): (1, "loguru bind; also held to a class name by the bind-site census above"),
     ("tldw_chatbook/UI/Console_Modules/dictation.py", "ConsoleDictationController._notify_console_dictation_error", "keyword"): (1, "persistent-diagnostics event/metadata keyword, not loguru extra"),
     ("tldw_chatbook/UI/Console_Modules/realtime.py", "ConsoleRealtimeController._console_realtime_connect_failed", "keyword"): (1, "persistent-diagnostics event/metadata keyword, not loguru extra"),
     ("tldw_chatbook/UI/MCP_Modules/mcp_inspector.py", "audit_entry_detail_payload", "string"): (2, "MCP audit display field, not loguru extra"),

@@ -1,8 +1,11 @@
 ---
 id: TASK-39060
 title: "The persona workspace diagnostics boundary test is red on dev because the MCP persona-policy failure log formats the tool name and error class"
-status: To Do
+status: In Progress
+assignee:
+- '@claude'
 created_date: 2026-11-06 12:31
+updated_date: 2026-11-06 14:47
 labels:
 - follow-up
 - logging
@@ -49,3 +52,11 @@ Found in round 10 of the 2026-10-23 burn-down; checked on dev b2c618185f and on 
 <!-- AC:END -->
 
 Possible approach (not required): after TASK-38989 the forwarder renders a bound `exception_type` (a plain class name only), so a constant message plus `logger.bind(exception_type=...)`, the shape the Persona Buddy logs use, would keep the class visible.
+
+## Implementation Plan
+
+1. Confirm the red at base: `test_persona_workspace_diagnostics_do_not_interpolate_private_values` fails with `assert 3 == 1` on the persona-policy failure log.
+2. Add a test that runs a raising `persona_policy_provider` through `MCPToolProvider._persona_floor` and the real forwarder (`_forward_loguru_to_standard`), and asserts the forwarded line. Show it red while the old three-argument call is in place.
+3. Change the log to a constant message, with the class bound as `exception_type` (the Persona Buddy shape), so the forwarder renders `<message>: <ErrorClass>`.
+4. Update the pins this touches: the `exception_type` bind-site census (`Tests/Persona_Buddy/test_controller_failure_logging.py`), the reviewed metadata fields in `Tests/Architecture/test_persistent_diagnostic_inventory.py`, and the production diagnostic inventory (read the drifted rows before regenerating).
+5. Lane `Tests/test_persistent_diagnostic_boundary.py` whole on the Architecture guards job in place of its one-node entry, then time the job command three times.

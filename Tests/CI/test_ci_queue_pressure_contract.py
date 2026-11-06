@@ -428,12 +428,15 @@ ARCHITECTURE_GUARD_TARGETS = (
     "Tests/Architecture/test_task2062_3_legacy_downloader_retirement.py",
     "Tests/Architecture/test_worker_exclusive_group_inventory.py",
     # TASK-38989 review r10a-rev4: the forwarder's exception_type pins. The
-    # boundary file runs one chosen node, not "all but" a list, so it needs no
-    # completeness pin: its other tests stay off while one is red on dev.
+    # boundary file runs chosen nodes, not "all but" a list, so it needs no
+    # completeness pin: its other tests stay off while one is red on dev
+    # (TASK-39060 found nine more offenders behind the first).
     "Tests/Persona_Buddy/test_controller_failure_logging.py",
     "Tests/test_persistent_diagnostic_boundary.py::test_forwarder_renders_only_a_plain_bound_exception_type",
     # TASK-39053: the backup owner inventory, red since it landed, now matches.
     "Tests/Architecture/test_backup_owner_inventory.py",
+    # TASK-39060: the persona-policy failure line, through the real forwarder.
+    "Tests/test_persistent_diagnostic_boundary.py::test_persona_policy_failure_forwards_only_its_error_class",
     # TASK-39061: the shared log sanitizer.
     "Tests/Utils/test_log_sanitizer.py",
 )
