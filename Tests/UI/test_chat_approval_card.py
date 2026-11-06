@@ -508,9 +508,7 @@ def test_persistent_decisions_name_where_to_undo_them():
     )
 
     assert "Settings ▸ Tools & MCP ▸ Tools" in DECISION_SCOPE_COPY["allow_matching"]
-    assert (
-        "Settings ▸ Tools & MCP ▸ Permissions" in DECISION_SCOPE_COPY["always_allow"]
-    )
+    assert "Settings ▸ Tools & MCP ▸ Permissions" in DECISION_SCOPE_COPY["always_allow"]
 
 
 @pytest.mark.unit
