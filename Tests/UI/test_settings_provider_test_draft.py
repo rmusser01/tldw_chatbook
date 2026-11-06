@@ -1978,6 +1978,9 @@ def test_discovery_row_reads_a_fresh_models_capability_from_its_listing():
     read the listing's vision hint, as the model pickers do, instead of
     calling every such model "capabilities unknown"."""
     screen = _bare_settings_screen({})
+    # TASK-38966: the rows mark saved models since TASK-33007.6, reading the
+    # provider from its widget, which a screen with no DOM does not have.
+    screen._provider_widget_value = lambda: "Custom"
     screen._model_discovery_selected_model_ids = set()
     screen._model_discovery_models = normalize_models_response(
         {
@@ -1998,12 +2001,21 @@ def test_discovery_row_reads_a_fresh_models_capability_from_its_listing():
         now_iso="2026-10-11T00:00:00Z",
     )
 
-    labels = [label for label, _id, _sel in screen._model_discovery_selection_options()]
+    rows = [
+        (model_id, label.plain)
+        for label, model_id, _sel in screen._model_discovery_selection_options()
+    ]
 
-    assert labels[0].startswith("vendor/sees-images")
-    assert "capabilities inferred" in labels[0]
-    assert labels[1].startswith("vendor/text-only")
-    assert "capabilities unknown" in labels[1]
+    # TASK-38966, rewritten on purpose: since TASK-33007.6 a row is Text and
+    # starts with its selected word, so the id is read from the option.
+    assert [model_id for model_id, _label in rows] == [
+        "vendor/sees-images",
+        "vendor/text-only",
+    ]
+    assert " · vendor/sees-images · " in rows[0][1]
+    assert rows[0][1].endswith("capabilities inferred")
+    assert " · vendor/text-only · " in rows[1][1]
+    assert rows[1][1].endswith("capabilities unknown")
 
 
 # --- Pilot tests: the clickable Test button path (AC#2/AC#3) + widget wiring ---

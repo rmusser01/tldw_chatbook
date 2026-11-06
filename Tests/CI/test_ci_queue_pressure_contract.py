@@ -383,6 +383,9 @@ DREAMS_BOUNDARY_TARGETS = (
     "Tests/Backup_Recovery/test_guarded_raw_evidence_reuse.py",
     # TASK-38759: the vLLM repair-path file, red locally in no PR lane.
     "Tests/LLM_Management/test_vllm_profiles.py",
+    # TASK-38966: the QwenCloud provider contract file, red on dev in no PR
+    # lane. Pure, 7 tests; 2.7 s at -n 4 on dev, 1.8-2.1 s serial (load 36-38).
+    "Tests/Chat/test_qwencloud_provider_contract.py",
 )
 #: TASK-34929: the Dreams tracking tests, gated whole in their own job.
 DREAMS_TRACKING_TARGET = "Tests/Dreams/test_track_service.py"
