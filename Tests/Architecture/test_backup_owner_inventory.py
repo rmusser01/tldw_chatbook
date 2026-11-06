@@ -18,6 +18,10 @@ PRODUCER_CALLS = frozenset(
         "write_bytes",
         "writelines",
         "dump",
+        # yaml serializers (TASK-39053 review: EvalConfigLoader.save).
+        "safe_dump",
+        "safe_dump_all",
+        "dump_all",
         "mkdir",
         "makedirs",
         "copy2",
@@ -57,8 +61,14 @@ PRODUCER_CALLS = frozenset(
         "renameatx_np",
         "os.replace",
         "os.unlink",
+        "os.rename",
+        "os.link",
     }
 )
+
+
+# os-module publication seams counted as `os.<name>` (rename/link: TASK-39053 review).
+NATIVE_OS_CALLS = frozenset({"replace", "unlink", "rename", "link"})
 
 
 def census(source: str) -> Counter:
@@ -66,6 +76,9 @@ def census(source: str) -> Counter:
 
     tree = ast.parse(source)
     imported_candidates = {}
+    # Assignment aliases of native seams are lexical: keyed by the enclosing
+    # function node (None = module), visible to that function and its nested ones.
+    assigned_candidates = {}
     # `import os` and any `from <shim> import os` (Utils/platform_files) bind os.
     os_names = {
         alias.asname or alias.name
@@ -80,7 +93,7 @@ def census(source: str) -> Counter:
             if value.attr == "renameatx_np":
                 return "renameatx_np"
             if (
-                value.attr in {"replace", "unlink"}
+                value.attr in NATIVE_OS_CALLS
                 and getattr(value.value, "id", None) in os_names
             ):
                 return f"os.{value.attr}"
@@ -94,28 +107,60 @@ def census(source: str) -> Counter:
             for alias in node.names:
                 imported_candidates.setdefault(alias.asname or alias.name, set()).add(
                     f"os.{alias.name}"
-                    if node.module == "os" and alias.name in {"replace", "unlink"}
+                    if node.module == "os" and alias.name in NATIVE_OS_CALLS
                     else alias.name
                 )
-        if isinstance(node, ast.Assign):
-            for target in node.targets:
-                # `fn, flags = libc.renameatx_np, 4` pairs element-wise.
-                pairs = (
-                    zip(target.elts, node.value.elts)
-                    if isinstance(target, ast.Tuple)
-                    and isinstance(node.value, ast.Tuple)
-                    and len(target.elts) == len(node.value.elts)
-                    else ((target, node.value),)
-                )
-                for name, value in pairs:
-                    if isinstance(name, ast.Name) and (
-                        candidate := native_candidate(value)
-                    ):
-                        imported_candidates.setdefault(name.id, set()).add(candidate)
+
+    def collect_assignments(node, owner):
+        for child in ast.iter_child_nodes(node):
+            if isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda)):
+                collect_assignments(child, child)
+                continue
+            if isinstance(child, ast.Assign):
+                for target in child.targets:
+                    # `fn, flags = libc.renameatx_np, 4` pairs element-wise.
+                    pairs = (
+                        zip(target.elts, child.value.elts)
+                        if isinstance(target, ast.Tuple)
+                        and isinstance(child.value, ast.Tuple)
+                        and len(target.elts) == len(child.value.elts)
+                        else ((target, child.value),)
+                    )
+                    for name, value in pairs:
+                        if isinstance(name, ast.Name) and (
+                            candidate := native_candidate(value)
+                        ):
+                            assigned_candidates.setdefault(owner, {}).setdefault(
+                                name.id, set()
+                            ).add(candidate)
+            collect_assignments(child, owner)
+
+    collect_assignments(tree, None)
 
     class Visitor(ast.NodeVisitor):
         def __init__(self):
             self.scope = []
+            self.functions = [None]
+
+        def candidates_for(self, value, argument=False):
+            """Producer names an expression can denote, as a callee or a callable argument.
+
+            A bare name passed as an argument counts only through an imported or
+            assigned binding: a parameter called ``open`` or ``write`` is a value.
+            """
+            name = (
+                value.attr
+                if isinstance(value, ast.Attribute)
+                else getattr(value, "id", "")
+            )
+            found = set() if argument and isinstance(value, ast.Name) else {name}
+            if candidate := native_candidate(value):
+                found.add(candidate)
+            if isinstance(value, ast.Name):
+                found.update(imported_candidates.get(value.id, ()))
+                for owner in self.functions:
+                    found.update(assigned_candidates.get(owner, {}).get(value.id, ()))
+            return found & PRODUCER_CALLS
 
         def visit_ClassDef(self, node):
             self.scope.append(node.name)
@@ -127,26 +172,34 @@ def census(source: str) -> Counter:
 
         def visit_FunctionDef(self, node):
             self.scope.append(node.name)
+            self.functions.append(node)
             self.generic_visit(node)
+            self.functions.pop()
             self.scope.pop()
 
         visit_AsyncFunctionDef = visit_FunctionDef
 
+        def visit_Lambda(self, node):
+            self.functions.append(node)
+            self.generic_visit(node)
+            self.functions.pop()
+
         def visit_Call(self, node):
-            name = (
-                node.func.attr
-                if isinstance(node.func, ast.Attribute)
-                else getattr(node.func, "id", "")
-            )
-            candidates = {name}
-            if candidate := native_candidate(node.func):
-                candidates.add(candidate)
-            if isinstance(node.func, ast.Name):
-                candidates.update(imported_candidates.get(node.func.id, ()))
+            symbol = ".".join(self.scope) or "<module>"
             # Even literal read-only opens remain candidates: parameters, local
             # assignments and other ordinary bindings can change their meaning.
-            for candidate in candidates & PRODUCER_CALLS:
-                result[(".".join(self.scope) or "<module>", candidate)] += 1
+            for candidate in self.candidates_for(node.func):
+                result[(symbol, candidate)] += 1
+            # A producer passed by reference runs elsewhere, for example
+            # `asyncio.to_thread(path.write_bytes, data)` (TASK-39053 review).
+            # `x.open` / `x.connect` values are not counted here: in this tree they
+            # are widget state (`header.open`) or `webbrowser.open`, and a call
+            # through them is still counted where it happens.
+            for argument in (*node.args, *(keyword.value for keyword in node.keywords)):
+                if isinstance(argument, (ast.Attribute, ast.Name)):
+                    for candidate in self.candidates_for(argument, argument=True):
+                        if candidate not in {"open", "connect"}:
+                            result[(symbol, candidate)] += 1
             self.generic_visit(node)
 
     Visitor().visit(tree)
@@ -335,6 +388,69 @@ def publish():
     assert census(source)[("publish", "renameatx_np")] == 1
 
 
+def test_census_native_alias_assignment_is_lexically_scoped():
+    # TASK-39053 review: `fn` bound to renameatx_np in one function must not turn
+    # an unrelated `fn = libc.fstatfs; fn(...)` elsewhere into a producer.
+    source = """
+import ctypes
+
+native = ctypes.CDLL(None).renameatx_np
+
+def publish():
+    fn, flags = libc.renameatx_np, 0x4
+    def retry():
+        fn(source_fd, source_name, target_fd, target_name, flags)
+    fn(source_fd, source_name, target_fd, target_name, flags)
+
+def identity():
+    fn = libc.fstatfs
+    fn(fd, data)
+
+def module_alias():
+    native(source_fd, source_name, target_fd, target_name, 4)
+"""
+    result = census(source)
+    assert result[("publish", "renameatx_np")] == 1
+    assert result[("publish.retry", "renameatx_np")] == 1
+    assert result[("identity", "renameatx_np")] == 0
+    assert result[("module_alias", "renameatx_np")] == 1
+
+
+def test_census_counts_producer_callables_passed_by_reference():
+    # TASK-39053 review: the Personas exports write through asyncio.to_thread.
+    source = """
+import asyncio
+from tldw_chatbook.Utils.atomic_file_ops import atomic_write_text
+
+async def export(path, data, archive):
+    await asyncio.to_thread(path.parent.mkdir, parents=True, exist_ok=True)
+    await asyncio.to_thread(path.write_bytes, data)
+    drain_thread(archive.write_bytes)
+    await loop.run_in_executor(None, atomic_write_text, path, "x")
+    submit(callback=path.write_text)
+"""
+    result = census(source)
+    assert result[("export", "mkdir")] == 1
+    assert result[("export", "write_bytes")] == 2
+    assert result[("export", "atomic_write_text")] == 1
+    assert result[("export", "write_text")] == 1
+
+
+def test_census_counts_yaml_safe_dump_serializers():
+    # TASK-39053 review: EvalConfigLoader.save writes through yaml.safe_dump into
+    # a stream from a non-vocabulary opener.
+    source = """
+import yaml
+yaml.safe_dump(snapshot, stream)
+yaml.safe_dump_all(documents, stream)
+yaml.dump_all(documents, stream)
+"""
+    result = census(source)
+    assert result[("<module>", "safe_dump")] == 1
+    assert result[("<module>", "safe_dump_all")] == 1
+    assert result[("<module>", "dump_all")] == 1
+
+
 def test_census_native_replace_is_distinct_from_string_replace():
     assert census('value.replace("a", "b")') == Counter()
     source = """
@@ -357,6 +473,23 @@ native.unlink(stage)
 """
     assert census(source)[("<module>", "os.replace")] == 1
     assert census(source)[("<module>", "os.unlink")] == 1
+
+
+def test_census_tracks_native_rename_and_link_publication():
+    # TASK-39053 review: os.rename/os.link publish like os.replace (snapshot
+    # store moves, Model_Artifacts promotion, backup crypto transform).
+    source = """
+import os as filesystem
+from tldw_chatbook.Utils.platform_files import os
+from os import rename as move_record
+filesystem.rename(stage, destination)
+os.link(stage, destination)
+move_record(stage, destination)
+profile.rename(name)
+"""
+    result = census(source)
+    assert result[("<module>", "os.rename")] == 2
+    assert result[("<module>", "os.link")] == 1
 
 
 def test_census_records_native_intent_removal_boundary():
