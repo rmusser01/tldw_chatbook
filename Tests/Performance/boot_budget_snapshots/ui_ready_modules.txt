@@ -1,5 +1,5 @@
 # tldw_chatbook.* modules resident at _ui_ready (warm second boot).
-# 1037 modules; warm boots wobble +/-1 (see the guard's docstring). Written ONLY by scripts/update_boot_budget_snapshots.py (ADR-097).
+# 1038 modules; warm boots wobble +/-1 (see the guard's docstring). Written ONLY by scripts/update_boot_budget_snapshots.py (ADR-097).
 tldw_chatbook
 tldw_chatbook.ACP_Interop
 tldw_chatbook.ACP_Interop.runtime_process
@@ -293,6 +293,7 @@ tldw_chatbook.DB.VisualIdentity_DB
 tldw_chatbook.DB.Workspace_DB
 tldw_chatbook.DB.base_db
 tldw_chatbook.DB.canvas_payload_validation
+tldw_chatbook.DB.character_conversation_search
 tldw_chatbook.DB.keyword_store
 tldw_chatbook.DB.library_search_engine
 tldw_chatbook.DB.private_sqlite
@@ -895,7 +896,6 @@ tldw_chatbook.Widgets
 tldw_chatbook.Widgets.AppFooterStatus
 tldw_chatbook.Widgets.Chat_Widgets
 tldw_chatbook.Widgets.Chat_Widgets.chat_approval_card
-tldw_chatbook.Widgets.Chat_Widgets.chat_resume_panel
 tldw_chatbook.Widgets.Chat_Widgets.chat_task_cards
 tldw_chatbook.Widgets.Chat_Widgets.skill_install_confirm_card
 tldw_chatbook.Widgets.Chat_Widgets.skill_script_confirm_card
@@ -1006,6 +1006,7 @@ tldw_chatbook.app_lifecycle
 tldw_chatbook.app_navigation
 tldw_chatbook.app_served
 tldw_chatbook.app_service_wiring
+tldw_chatbook.app_services
 tldw_chatbook.app_shutdown
 tldw_chatbook.app_skill_wiring
 tldw_chatbook.chunking_engine_version
