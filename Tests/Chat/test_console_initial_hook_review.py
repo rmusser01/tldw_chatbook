@@ -614,28 +614,84 @@ async def test_new_modal_token_survives_delayed_old_modal_unmount(review_runtime
     assert state.controller.pending_decision_projection(state.session.id) is None
 
 
+_SCREEN_NAMES = {"view", "screen", "current", "modal", "top"}
+
+
+def _private_screen_reads(source: str) -> list[int]:
+    """Lines reading ``_x`` off a screen-valued expression (attr or getattr).
+
+    Screen-valued: names in _SCREEN_NAMES, ``.view`` / ``.screen`` attributes,
+    ``screen_stack[...]``, and any local bound by iterating ``screen_stack`` or
+    assigned from such an expression. Anything else is not statically a screen;
+    the bound is that every screen enters the runtime through these names.
+    """
+    import ast
+
+    tree = ast.parse(source)
+    names = set(_SCREEN_NAMES)
+
+    def is_screen(n):
+        if isinstance(n, ast.Name):
+            return n.id in names
+        if isinstance(n, ast.Attribute):
+            return n.attr in {"view", "screen"}
+        if isinstance(n, ast.Subscript):
+            return "screen_stack" in ast.unparse(n.value)
+        return False
+
+    for _ in range(2):  # propagate through simple assignments / loops
+        for n in ast.walk(tree):
+            if isinstance(n, (ast.For, ast.comprehension)) and isinstance(
+                n.target, ast.Name
+            ) and "screen_stack" in ast.unparse(n.iter):
+                names.add(n.target.id)
+            if (
+                isinstance(n, ast.Assign)
+                and len(n.targets) == 1
+                and isinstance(n.targets[0], ast.Name)
+                and is_screen(n.value)
+            ):
+                names.add(n.targets[0].id)
+    hits = []
+    for n in ast.walk(tree):
+        if (
+            isinstance(n, ast.Attribute)
+            and n.attr.startswith("_")
+            and not n.attr.startswith("__")
+            and is_screen(n.value)
+        ):
+            hits.append(n.lineno)
+        elif (
+            isinstance(n, ast.Call)
+            and getattr(n.func, "id", None) == "getattr"
+            and len(n.args) >= 2
+            and isinstance(n.args[1], ast.Constant)
+            and isinstance(n.args[1].value, str)
+            and n.args[1].value.startswith("_")
+            and is_screen(n.args[0])
+        ):
+            hits.append(n.lineno)
+    return hits
+
+
+@pytest.mark.parametrize(
+    "snippet",
+    [
+        "for screen in app.screen_stack:\n    screen._x",
+        "def f(self):\n    return self.view._x",
+        "def f(app):\n    s = app.screen\n    return getattr(s, '_x', None)",
+        "def f(app):\n    return app.screen_stack[-1]._x",
+    ],
+)
+def test_private_screen_read_detector_catches_each_shape(snippet):
+    assert _private_screen_reads(snippet)
+
+
 def test_console_runtime_reads_no_private_screen_attribute():
     """ConsoleRuntime must use public screen state, never ``screen._x``."""
-    import ast
     from pathlib import Path
 
     import tldw_chatbook.Chat.console_runtime as module
 
-    tree = ast.parse(Path(module.__file__).read_text())
-    offenders = []
-    for node in ast.walk(tree):
-        if isinstance(node, ast.Attribute) and node.attr.startswith("_"):
-            base = node.value
-            if isinstance(base, ast.Attribute) and base.attr == "screen":
-                offenders.append(node.lineno)
-        if (
-            isinstance(node, ast.Call)
-            and getattr(node.func, "id", None) == "getattr"
-            and len(node.args) >= 2
-            and isinstance(node.args[1], ast.Constant)
-            and isinstance(node.args[1].value, str)
-            and node.args[1].value.startswith("_")
-            and "screen" in ast.unparse(node.args[0])
-        ):
-            offenders.append(node.lineno)
+    offenders = _private_screen_reads(Path(module.__file__).read_text())
     assert not offenders, f"private screen attribute read at lines {offenders}"
