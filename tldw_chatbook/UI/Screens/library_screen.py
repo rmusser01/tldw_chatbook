@@ -334,6 +334,7 @@ from ...Library.library_shell_state import (
     LIBRARY_MEDIA_ANALYSIS_ALREADY_SAVING_COPY,
     LIBRARY_MEDIA_CHANGE_IN_PROGRESS_COPY,
     LIBRARY_SKILL_SAVE_DELETE_ARMED_COPY,
+    LIBRARY_SKILL_SAVE_PLUGIN_OWNED_COPY,
     LIBRARY_CANVAS_KIND_NOTES_CREATE,
     LIBRARY_ROW_BROWSE_COLLECTIONS,
     LIBRARY_ROW_BROWSE_CONVERSATIONS,
@@ -9469,8 +9470,14 @@ class LibraryScreen(BaseAppScreen):
             self._save_library_media_edit_from_form()
 
     def _library_skill_save_key_refusal(self) -> str:
-        """Why Ctrl+S would not save the open skill now, or "" (N-33)."""
+        """Why Ctrl+S would not save the open skill now, or "" (N-33).
+
+        A plugin-owned skill is read-only package content with no Save
+        (PR #3423 review m-6): the key says so rather than "no changes".
+        """
         state = self._skills_state
+        if getattr(state.editor_state, "plugin_owned", False):
+            return LIBRARY_SKILL_SAVE_PLUGIN_OWNED_COPY
         if state.conflict:
             return "conflict"
         if state.confirming_delete:
