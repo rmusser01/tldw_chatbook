@@ -1,8 +1,10 @@
 ---
 id: TASK-39047
 title: "Worker-thread handles of the media, Dreams and Guardian stores are never retired, so their storage leases outlive the worker and the app's quit"
-status: To Do
+status: In Progress
+assignee: ['@claude']
 created_date: 2026-11-06 10:09
+updated_date: 2026-11-06 14:55
 labels:
 - follow-up
 - database
@@ -71,3 +73,11 @@ Found in round 10 of the 2026-10-23 burn-down; checked on dev b2c618185f, 2026-1
 - [ ] #4 The quit close never aborts a straggler's write and stays within its time bound: the TASK-38955 quit tests in `Tests/DB/test_sync_log_retention.py` stay green by name, and an equivalent straggler test exists for each newly retired store
 - [ ] #5 The owner decides whether worker handles that block a live backup's local pause are in scope here (TASK-31993.18 AC#2 keeps them blocking on purpose); the decision is recorded
 <!-- AC:END -->
+
+## Implementation Plan
+
+1. Red tests in `Tests/DB/test_sync_log_retention.py`: the real scope-picker tag lister (media), and `asyncio.to_thread` reads of a DreamsDB and a GuardianDB, each on a pool thread kept alive across a real `on_unmount`; assert no live lease is left on the store's file on any thread.
+2. Give MediaDatabase, DreamsDB and GuardianDB the file's `SQLiteConnectionQuiescenceRegistry` (`sqlite_connection_quiescence_registry`, as ChaChaNotes): register each held connection when it is published, unregister it on every close, and hold a registry acquisition across each getter so the idle close never closes a handle a getter is returning. The kernel (`store_kernel.py`) does this for any kernel store that keeps a registry; only Dreams and Guardian opt in.
+3. `close_if_idle` also refuses while a counted core operation is running on the file (every media, Dreams and Guardian transaction is one), checked under the registry lock; each store gets `close_idle_connections()`.
+4. `_close_main_databases` runs the idle close for ChaChaNotes, media, Dreams and Guardian, and leaves a busy store to close with the process.
+5. Straggler tests (a worker writing transactions across the quit close) for media, Dreams and Guardian; the TASK-38955 quit tests stay green by name.

@@ -435,41 +435,44 @@ class LifecycleMixin:
             )
 
     async def _close_main_databases(self) -> None:
-        """Retire the ChaChaNotes and media handles at quit (TASK-38955).
+        """Retire the main stores' handles at quit (TASK-38955, TASK-39047).
 
-        ChaChaNotes closes its handles on every thread only if none is in
-        use, so a straggler worker's write is never aborted; a busy store is
-        left to close with the process. Each store then closes this thread's
-        handle with its checkpoint wait bounded. Media worker threads retire
-        their own. In-memory stores keep their data. Failures never abort.
+        ChaChaNotes, media, Dreams and Guardian each close their handles on
+        every thread only if none is in use, so a straggler worker's write is
+        never aborted; a busy store is left to close with the process. Each
+        idle store then closes this thread's handle with its checkpoint wait
+        bounded. In-memory stores keep their data. Failures never abort.
         """
-        notes = getattr(self, "chachanotes_db", None)
-        stores = [getattr(self, "media_db", None)]
-        if notes is not None and not notes.is_memory_db:
+        for name, label in (
+            ("chachanotes_db", "ChaChaNotes"),
+            ("media_db", "Media"),
+            ("dreams_db", "Dreams"),
+            ("guardian_db", "Guardian"),
+        ):
+            db = getattr(self, name, None)
+            if db is None or db.is_memory_db:
+                continue
             try:
-                idle = await asyncio.to_thread(notes.close_idle_connections)
+                idle = await asyncio.to_thread(db.close_idle_connections)
             except Exception as exc:  # noqa: BLE001 - quit must go on regardless
                 idle = False
                 self.loguru_logger.error(
-                    f"Error closing ChaChaNotes at quit: {type(exc).__name__}"
+                    f"Error closing {label} at quit: {type(exc).__name__}"
                 )
-            if idle:
-                stores.insert(0, notes)
-            else:
+            if not idle:
                 self.loguru_logger.info(
-                    "ChaChaNotes still in use at quit; its handles close with the process"
+                    f"{label} still in use at quit; its handles close with the process"
                 )
-        for db in stores:
-            if db is None or db.is_memory_db:
                 continue
-            conn = getattr(db._local, "conn", None)
             try:
+                local = getattr(db, "_local", None) or db._thread_local
+                conn = getattr(local, "conn", None)
                 if conn is not None:
                     with contextlib.suppress(sqlite3.Error):  # already retired
                         conn.execute(
                             f"PRAGMA busy_timeout = {int(_QUIT_CLOSE_BUSY_SECONDS * 1000)}"
                         )
-                db.close_connection()
+                db.close()
             except Exception as exc:  # noqa: BLE001 - quit must go on regardless
                 self.loguru_logger.error(
                     f"Error closing a main database at quit: {type(exc).__name__}"

@@ -352,23 +352,32 @@ class SQLiteConnectionQuiescenceRegistry:
             connection.close()
             self.unregister(connection)
 
-    def close_if_idle(self) -> bool:
+    def close_if_idle(self, repository: object | None = None) -> bool:
         """Close every registered handle now, or none while any is in use.
 
         Unlike a quiescence barrier it sets no barrier: a fresh acquisition
         waits for the lock and then reopens, but a handle fetched before the
         close fails loudly on its next statement (TASK-38955 quit close).
 
+        Args:
+            repository: A store on this file whose counted core operations
+                (``participants.core_operation``) also count as in use
+                (TASK-39047). They are read under this registry's lock, which
+                is taken before the storage lock, as each close below does.
+
         Returns:
             ``True`` when every handle was closed; ``False``, closing nothing,
-            while a barrier, acquisition, managed use or transaction is active.
+            while a barrier, acquisition, managed use, core operation or
+            transaction is active.
         """
+        from tldw_chatbook.Backup_Recovery.participants import core_operation_active
 
         with self._condition:
             if (
                 self._quiescence_token is not None
                 or self._active_uses
                 or self._active_acquisitions
+                or (repository is not None and core_operation_active(repository))
             ):
                 return False
             connections = tuple(self._connections.values())
@@ -408,6 +417,28 @@ class SQLiteConnectionQuiescenceRegistry:
 
         with self._condition:
             return len(self._connections)
+
+
+def registry_acquisition[**P, R](getter: Callable[P, R]) -> Callable[P, R]:
+    """Hold a registry acquisition across a held-connection getter (TASK-39047).
+
+    ``close_if_idle`` refuses while one is held and keeps the registry lock
+    while it closes, so the getter never returns a handle being closed. A
+    store without a ``_connection_quiescence`` registry is unaffected.
+    """
+
+    @functools.wraps(getter)
+    def acquiring(*args: P.args, **kwargs: P.kwargs) -> R:
+        registry = getattr(args[0], "_connection_quiescence", None)
+        if registry is None:
+            return getter(*args, **kwargs)
+        registry.begin_acquisition()
+        try:
+            return getter(*args, **kwargs)
+        finally:
+            registry.finish_acquisition()
+
+    return acquiring
 
 
 _QUIESCENCE_REGISTRIES: WeakValueDictionary[str, SQLiteConnectionQuiescenceRegistry] = (

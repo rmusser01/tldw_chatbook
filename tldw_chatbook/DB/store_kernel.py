@@ -39,6 +39,7 @@ from tldw_chatbook.Backup_Recovery.participants import (
     core_transaction,
     register_core_connection,
 )
+from tldw_chatbook.DB.base_db import registry_acquisition
 from tldw_chatbook.DB.private_sqlite import connect_private_sqlite
 
 
@@ -74,6 +75,10 @@ class SQLiteStoreKernel:
     db_path_str: str = ""
     #: whether the store targets ``:memory:`` (subclasses must set).
     is_memory_db: bool = False
+    #: The file's cross-thread ``SQLiteConnectionQuiescenceRegistry``, for a
+    #: store the app closes idle at quit (TASK-39047); set before the first
+    #: connection. Held connections then join it while they are open.
+    _connection_quiescence = None
 
     def _init_store_kernel(self) -> None:
         """Initialize the per-thread connection state.
@@ -154,6 +159,7 @@ class SQLiteStoreKernel:
         return conn
 
     @core_getter
+    @registry_acquisition
     def _held_connection(
         self, *, operation_deadline: float | None = None
     ) -> sqlite3.Connection:
@@ -198,6 +204,7 @@ class SQLiteStoreKernel:
                         sqlite3.Connection.in_transaction.__get__(conn)
                     except sqlite3.ProgrammingError:
                         conn.close()
+                        self._unregister_connection(conn)
                     else:
                         raise
                     conn = None
@@ -210,6 +217,8 @@ class SQLiteStoreKernel:
             )
             self._thread_local.conn = conn
             self._on_connection_opened(conn)
+            if self._connection_quiescence is not None:
+                self._connection_quiescence.register(conn)
         if operation_deadline is not None and time.monotonic() >= operation_deadline:
             if opened_here:
                 self.close()
@@ -296,3 +305,19 @@ class SQLiteStoreKernel:
                 except Exception:  # noqa: BLE001 - preserve retryable native cache
                     return
                 self._thread_local.conn = None
+                self._unregister_connection(conn)
+
+    def _unregister_connection(self, conn: sqlite3.Connection) -> None:
+        """Forget a closed connection in the store's registry, if it keeps one."""
+        if self._connection_quiescence is not None:
+            self._connection_quiescence.unregister(conn)
+
+    def close_idle_connections(self) -> bool:
+        """Close every same-file handle unless one is in use; sets no barrier.
+
+        Only for a store that keeps a ``_connection_quiescence`` registry.
+
+        Returns:
+            Whether the handles were closed; see ``close_if_idle``.
+        """
+        return self._connection_quiescence.close_if_idle(self)

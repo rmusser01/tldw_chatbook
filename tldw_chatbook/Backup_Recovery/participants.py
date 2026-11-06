@@ -439,6 +439,23 @@ def core_operation(repository):
             yield
 
 
+def core_operation_active(repository):
+    """Whether a counted core operation is running on this repository's file.
+
+    Every same-file instance counts: the file's connection registry closes
+    their handles together (TASK-39047).
+    """
+    if repository.is_memory_db or type(repository) not in repository_types():
+        return False
+    from . import storage_admission as storage
+
+    with storage._lock:
+        return any(
+            operation.participant.path == repository.db_path
+            for operation in storage._operations
+        )
+
+
 def core_transaction(function):
     @wraps(function)
     @contextmanager
