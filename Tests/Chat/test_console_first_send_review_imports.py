@@ -347,6 +347,7 @@ def test_every_stage_request_names_a_review_word(text):
         ("yes", object(), None, True),  # an offer answer needs the owner's state
         (None, object(), None, True),
         ("hello", None, object(), True),  # an accepted review wake
+        (["not text"], None, None, True),  # composition owns any failure
     ],
 )
 def test_review_turn_possible_is_false_only_for_an_ordinary_turn(
