@@ -2519,22 +2519,24 @@ def _counted_server(records: list[dict], *, total: bool, found: int):
 
 
 @pytest.mark.parametrize(
-    ("total", "found", "unfiltered", "searched"),
+    ("total", "found", "unfiltered", "searched", "failed_reload"),
     [
-        (True, 12, "Characters 340", "Characters 12 of 340"),
-        (False, 12, "Characters 100+", "Characters 12 of 100+"),
-        (True, 100, "Characters 340", "Characters 100+ of 340"),
+        (True, 12, "Characters 340", "Characters 12 of 340", False),
+        (False, 12, "Characters 100+", "Characters 12 of 100+", False),
+        (True, 100, "Characters 340", "Characters 100+ of 340", False),
+        (True, 12, "Characters 340", "Characters 12 of 340", True),
     ],
-    ids=["known-total", "full-page-no-total", "capped-search"],
+    ids=["known-total", "full-page-no-total", "capped-search", "failed-reload"],
 )
 async def test_a_server_search_title_reads_n_of_the_last_unfiltered_total(
-    mock_app_instance, total, found, unfiltered, searched
+    mock_app_instance, total, found, unfiltered, searched, failed_reload
 ):
     """TASK-33910.37 (owner decision 2026-11-05: "12 of 340" / "12 of 100+"):
     a search on server characters reads N of the last unfiltered total, or of
     ``100+`` when that page was full with no total; a search page full with no
-    total reads ``100+`` too. The M costs no server call. On dev the title
-    said a bare "Characters 12"; fixed here."""
+    total reads ``100+`` too. The last total outlives a reload that failed
+    (the owner's "last unfiltered total"). The M costs no server call. On dev
+    the title said a bare "Characters 12"; fixed here."""
     records = [{"id": n, "name": f"Remote {n:03d}"} for n in range(1, 341)]
     service, calls = _counted_server(records, total=total, found=found)
     mock_app_instance.runtime_backend = "server"
@@ -2550,6 +2552,13 @@ async def test_a_server_search_title_reads_n_of_the_last_unfiltered_total(
         await settle(pilot)
         pane = screen.query_one("#personas-library-pane")
         assert str(pane.border_title) == unfiltered
+        if failed_reload:
+            listed = service.list_characters
+            service.list_characters = AsyncMock(side_effect=RuntimeError("gone"))
+            await screen._reload_character_page()
+            await settle(pilot)
+            assert str(pane.border_title) == "Characters (?)"
+            service.list_characters = listed
         before = dict(calls)
         await _search_settled(pilot, screen, "Remote")
         assert len(visible_item_ids(screen)) == found
@@ -2558,25 +2567,41 @@ async def test_a_server_search_title_reads_n_of_the_last_unfiltered_total(
 
 
 @pytest.mark.parametrize(
-    "unknown",
-    ["unfiltered-read-failed", "another-server", "source-change", "outgrown-total"],
+    ("unknown", "found", "searched"),
+    [
+        ("unfiltered-read-failed", 12, "Characters 12"),
+        ("another-server", 12, "Characters 12"),
+        ("source-change", 12, "Characters 12"),
+        ("outgrown-total", 12, "Characters 12"),
+        ("full-page-at-the-total", 100, "Characters 100+"),
+        ("full-pages-and-no-totals", 100, "Characters 100+"),
+    ],
 )
 async def test_a_server_search_with_no_unfiltered_total_keeps_its_bare_count(
-    mock_app_instance, unknown
+    mock_app_instance, unknown, found, searched
 ):
     """TASK-33910.37: with no unfiltered total known for this server (its
-    unfiltered read failed, the total came from another server, or from
-    before a source change whose own read failed), or a known one the search
-    outgrew (the server listed 5 and its search found 12), the title keeps
-    dev's bare count ("Characters 12"), never a stale or made-up M.
-    Unchanged from dev."""
+    first unfiltered read failed, the total came from another server, or from
+    before a source change whose own read failed), or one the title cannot
+    honestly use, it keeps dev's bare count ("Characters 12", or "Characters
+    100+" for a full search page), never a stale or made-up M. Unusable: a
+    known total the search outgrew (the server listed 5, its search found
+    12), a full search page against a known total of exactly 100 (dev's bare
+    form; this PR's second commit read "100+ of 100"), and a full page on
+    both sides with no totals (it read "100+ of 100+"). Unchanged from dev."""
     records = [{"id": n, "name": f"Remote {n:03d}"} for n in range(1, 341)]
-    service, calls = _counted_server(records, total=True, found=12)
+    service, calls = _counted_server(
+        records, total=unknown != "full-pages-and-no-totals", found=found
+    )
     if unknown == "unfiltered-read-failed":
         service.list_characters = AsyncMock(side_effect=RuntimeError("unreachable"))
-    elif unknown == "outgrown-total":
+    elif unknown in ("outgrown-total", "full-page-at-the-total"):
+        listed = 5 if unknown == "outgrown-total" else 100
         service.list_characters = AsyncMock(
-            return_value={"items": [dict(r) for r in records[:5]], "total": 5}
+            return_value={
+                "items": [dict(r) for r in records[:listed]],
+                "total": listed,
+            }
         )
     mock_app_instance.runtime_backend = "server"
     mock_app_instance.active_server_id = "server-a"
@@ -2588,7 +2613,13 @@ async def test_a_server_search_with_no_unfiltered_total_keeps_its_bare_count(
             pilot,
             lambda: (
                 str(pane.border_title)
-                in ("Characters 340", "Characters 5", "Characters (?)")
+                in (
+                    "Characters 340",
+                    "Characters 5",
+                    "Characters 100",
+                    "Characters 100+",
+                    "Characters (?)",
+                )
             ),
             what="the unfiltered server read",
         )
@@ -2603,8 +2634,8 @@ async def test_a_server_search_with_no_unfiltered_total_keeps_its_bare_count(
             await settle(pilot)
             assert str(pane.border_title) == "Characters (?)"
         await _search_settled(pilot, screen, "Remote")
-        assert len(visible_item_ids(screen)) == 12
-        assert str(pane.border_title) == "Characters 12"
+        assert len(visible_item_ids(screen)) == found
+        assert str(pane.border_title) == searched
         assert calls["search"] == 1
 
 
@@ -4760,6 +4791,45 @@ async def test_a_database_fault_shows_the_recovery_row_and_the_centre_says_so_un
         assert list_state(screen).state == "rows" and not retry.display
         assert str(pane.border_title) == "Characters 349"
         assert str(centre.render()) == "Pick a character from the list to see it here."
+
+
+@pytest.mark.parametrize("read", ["list", "tags"])
+async def test_a_database_fault_toasts_fixed_text_never_the_database_error(
+    mock_app_instance, volume_348, monkeypatch, read
+):
+    """TASK-38228 review: a failed character list or tag read toasts a fixed
+    line. The error's own text carries SQL, or the database file's path for a
+    failed connection; it is never shown. On dev the wrappers swallowed the
+    error, so neither toast fired for a database fault; this PR's first
+    commit let the error through and toasted its text ("Could not load
+    characters: Query execution failed: no such table: character_cards");
+    fixed here."""
+    expected = {
+        "list": "Could not load characters.",
+        "tags": "Could not read character tags.",
+    }[read]
+    async with open_styled_roleplay(
+        "mock", mock_app_instance, size=SIZE, character_db=volume_348
+    ) as pilot:
+        screen = pilot.app.screen
+        if read == "list":
+            await screen._apply_mode("lore")
+            await settle(pilot)
+        notices = _record_notices(monkeypatch, screen)
+        _fault_character_table(volume_348, on=True)
+        try:
+            if read == "list":
+                await screen._apply_mode("characters")
+            else:
+                assert await pilot.click("#personas-library-tag")
+            await wait_until(pilot, lambda: bool(notices), what="the failure toast")
+            await settle(pilot)
+        finally:
+            _fault_character_table(volume_348, on=False)
+        shown = "\n".join(notices)
+        assert "no such table" not in shown and "character_cards" not in shown
+        assert str(volume_348.db_path) not in shown
+        assert notices == [expected]
 
 
 async def test_a_failed_server_read_says_so_in_the_centre_and_an_empty_one_does_not(
