@@ -617,3 +617,47 @@ async def test_a_cached_label_read_enters_no_stale_read_context(monkeypatch):
             entered.clear()
             assert controller.console_workspace_label() == label
             assert entered == [], "a cached label read entered the stale-read context"
+
+
+def test_a_reused_builder_result_still_asks_again_for_a_failed_stale_reread():
+    """A stale read asks for its off-loop re-read on every build; a reuse must too."""
+
+    class Service:
+        mutation_generation = 1
+
+        def get_active_workspace(self):
+            return "active"
+
+    service = Service()
+    view = workspace_module._ConsoleRegistryDisplayReads(service)
+    view.get_active_workspace()  # Cached for generation 1.
+    service.mutation_generation = 2  # The cache becomes the previous generation's.
+    asked = []
+    view.stale_reader = lambda reads, generation: asked.append(generation)
+    view.renew_stale_requests()
+    assert asked == [2]
+    view.stale_reader = None
+    view.renew_stale_requests()  # Live reads: nothing to ask for.
+    assert asked == [2]
+    view.stale_reader = lambda reads, generation: asked.append(generation)
+    assert view.install(2, {("active",): "active"}) is True
+    view.renew_stale_requests()  # Re-read landed: nothing stale left.
+    assert asked == [2]
+
+
+@pytest.mark.asyncio
+async def test_a_reused_workspace_state_builder_renews_stale_requests(monkeypatch):
+    _, host = _ready_host()
+    async with host.run_test(size=APP_SIZE) as pilot:
+        console = await _settled_console(host, pilot)
+        renewed = []
+        monkeypatch.setattr(
+            workspace_module._ConsoleRegistryDisplayReads,
+            "renew_stale_requests",
+            lambda self: renewed.append(self),
+        )
+        controller = console._workspace
+        controller._build_console_workspace_context_state()
+        renewed.clear()
+        controller._build_console_workspace_context_state()  # The builder's memo hit.
+        assert renewed == [controller._console_registry_reads_view()]
