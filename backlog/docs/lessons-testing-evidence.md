@@ -294,6 +294,22 @@ The first fix warmed the display after the evidence settle, just before the poll
 
 **What to do.** Before you size or file census drift, import the test module and recompute the whole comparison with its own helpers, for every cluster or table. Do not read the truncated assertion diff, and do not stop at the first failing cluster. Record the full counts in the task, so a review-sized drift is scoped as one before anyone starts on it.
 
+## An installed-wheel source guard also excludes a virtualenv inside the checkout (PR3345, 2026-11-06)
+
+**Incident.** Packaging reproduction595 stopped before importing the installed
+app because `INSTALLED_PROBE` rejects every `sys.path` entry under the checkout,
+including its local `.venv/site-packages`. It was not evidence for the missing
+mobile assets. A private external virtualenv reusing installed dependencies,
+without editable paths, let unchanged596 reach the real `tldw-serve --help`
+FileNotFoundError. Final597 passed35 including the original immutable full-App
+journey and both wheel origins. A subsequent audit initially counted pytest's
+`current` symlink as a second wheel; both names resolved to the same inode.
+
+**What to do.** Keep source-exclusion guards intact. Select a test interpreter
+outside the forbidden checkout and keep installed children pointed only at their
+private target. Count actual resolved artifact identities, retaining and checking
+all aliases; do not rerun passing tests to correct an audit's path assumption.
+
 ## A privacy pin that forbids a small id looks self-contradictory; check the id seed and the stored case first (TASK-38756, 2026-11-05)
 
 **Incident.** Two Prompts DB privacy pins forbid `str(second_id)` in a log that must contain `count=2`, and the filed task called them self-contradictory: `second_id` was 2. The tests meant to seed ids 71,234,567 and 81,234,567 by INSERTing a `sqlite_sequence` row. The v5->v6 mix-in migration (7970fbcada) rebuilds `Prompts` and keeps its sequence, so a fresh database already has a `('Prompts', 0)` row; SQLite reads the first row and ignored the test's second, and the ids fell back to 1 and 2. Dropping the id check, the obvious "fix", would have weakened a privacy pin. The negative controls then found a second hole: stored keywords are lower-cased, so `"PRIVATE KEYWORD"` never matched a leaked keyword (2 passed with the keyword logged).
