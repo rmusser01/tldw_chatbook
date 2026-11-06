@@ -86,6 +86,10 @@ ALLOWED_BOOT_WORKERS: frozenset[tuple[str, str]] = frozenset(
             "research-quick-notes-startup-reconciliation",
         ),
         ("_sweep_research_paste_staging", "research_paste_staging_startup"),
+        # TASK-38954: Research held-job startup reconcile, one bounded scan
+        # (limit 50) once the ingest restore attaches its store. It was
+        # always meant to start here; it never did, so it had no row.
+        ("_reconcile_research_source_held_jobs", "research_source_held_startup"),
         ("deferred_actor_pack_recovery", "actor_pack_recovery"),
         ("deferred_actor_pack_staging_sweep", "actor_pack_staging_sweep"),
         ("restore_ingest_jobs", "ingest_restore"),

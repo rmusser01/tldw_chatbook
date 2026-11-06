@@ -147,7 +147,10 @@ _BUDGETS: dict[str, int] = {
     # 2026-10-31 backlog owner size waiver: explicit URL source handoff.
     # TASK-38714 Qodo fold, 2026-11-05 (same waiver): 5020 -> 5021 (+1). The
     # held-job scan's UI-thread note records its measured startup cost.
-    "tldw_chatbook/app_ingest_queue.py": 5021,
+    # 2026-11-06, TASK-38954 (owner size waiver: a fix over a size ratchet
+    # raises the row): 5021 -> 5057 (+36) -- the Research startup work is
+    # queued from the asynchronous restore's completion, not before it.
+    "tldw_chatbook/app_ingest_queue.py": 5057,
     # TASK-33011: TldwCli's service composition moved verbatim out of app.py.
     # It was governed there; without its own row, wiring code could regrow in
     # the mixin unchecked.
@@ -168,7 +171,11 @@ _BUDGETS: dict[str, int] = {
     # TASK-33621.13: 2,140 -> 2,134 (keep-alive dead-pump handling moved
     # into app_keep_alive.py).
     # PR3303, 2026-10-31: explicit user size waiver; exact integrated measurement.
-    "tldw_chatbook/app_lifecycle.py": 2147,
+    # 2026-11-06, TASK-38955 (owner size waiver): 2147 -> 2189 (+42) -- quit
+    # retires the ChaChaNotes and media handles; the retention pass retires its.
+    # Review fix, same waiver: 2189 -> 2200 (+11) -- the quit close never
+    # raises a barrier, skips a busy store, bounds its checkpoint wait.
+    "tldw_chatbook/app_lifecycle.py": 2200,
     # TASK-33011: TldwCli's screen navigation moved verbatim out of app.py
     # (NavigationMixin); governed there, so governed here.
     # TASK-34000.27 (2026-10-09): 1110 -> 1195 (+85), owner decision
@@ -766,7 +773,11 @@ _BUDGETS: dict[str, int] = {
     # Console rail filter's count and page match titles, as a literal
     # substring), threaded through the shared filter and the page query.
     # 2026-10-30: re-measured after rebasing onto dev 134108dd84 (owner rule: the row is the exact measurement): 25693 -> 25705.
-    "tldw_chatbook/DB/ChaChaNotes_DB.py": 25854,  # 2026-11-03: +3 shared store-error import (TASK-36949.5)
+    # 2026-11-06, TASK-38972 (owner size waiver): 25854 -> 25861 (+7) --
+    # close_connection forgets a handle quiescence already retired.
+    # TASK-38955 review fix, same waiver: 25861 -> 25870 (+9) --
+    # close_idle_connections for the quit close.
+    "tldw_chatbook/DB/ChaChaNotes_DB.py": 25870,  # 2026-11-03: +3 shared store-error import (TASK-36949.5)
     #: 2026-10-31, PR #3155 / TASK-18925: explicit user size-limit waiver.
     #: The OS notification defaults add 12 lines; pin the exact measurement.
     # PR3304, 2026-11-01: user size waiver; exact integration measurement.

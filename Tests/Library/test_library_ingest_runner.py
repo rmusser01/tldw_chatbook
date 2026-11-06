@@ -23,6 +23,7 @@ that a spawned process can run ``run_parse_job``.
 
 from __future__ import annotations
 
+import asyncio
 import concurrent.futures
 import hashlib
 import multiprocessing
@@ -53,6 +54,7 @@ from tldw_chatbook.DB.Workspace_DB import WorkspaceDB
 from tldw_chatbook.Library.library_ingest_jobs import (
     IngestJobState,
     LibraryIngestJob,
+    LibraryIngestJobRegistry,
 )
 from tldw_chatbook.Local_Ingestion.ingest_parse_worker import (
     initialize_ingest_parse_worker,
@@ -862,11 +864,65 @@ async def test_clearing_terminal_history_prunes_research_schedule_dedupe(
     assert app._research_source_terminal_jobs_scheduled == set()
 
 
-def test_real_app_wires_research_association_and_restores_before_startup_resume(
+async def _wait_until(predicate: Callable[[], Any], seconds: float = 10.0) -> None:
+    """Poll with ``asyncio.sleep``: the restore runs on a worker thread."""
+
+    deadline = time.monotonic() + seconds
+    while not predicate() and time.monotonic() < deadline:
+        await asyncio.sleep(_POLL_INTERVAL)
+
+
+def _persist_restore_history(path: Path, jobs: list[LibraryIngestJob]) -> None:
+    """Write the prior session's history where the startup restore reads it."""
+
+    store = LibraryIngestJobsDB(path)
+    try:
+        for job in jobs:
+            store.upsert_job(job)
+    finally:
+        store.close()
+
+
+def _run_restore_for_real(
+    app: _IngestRunnerHarness,
+    monkeypatch: pytest.MonkeyPatch,
+    groups: list[str],
+) -> list[Any]:
+    """Keep the real threaded restore; record and close every other worker.
+
+    Returns the stores the restore attaches, for the test to close.
+    """
+
+    real_run_worker = app.run_worker
+    attached: list[Any] = []
+    registry = app.library_ingest_jobs
+    real_attach = registry.attach_store
+
+    def queue_worker(work, **kwargs):
+        if kwargs.get("group") == "ingest_restore":
+            return real_run_worker(work, **kwargs)
+        groups.append(kwargs["group"])
+        work.close()
+
+    def attach(store) -> None:
+        attached.append(store)
+        real_attach(store)
+
+    monkeypatch.setattr(app, "run_worker", queue_worker)
+    monkeypatch.setattr(registry, "attach_store", attach)
+    return attached
+
+
+@pytest.mark.asyncio
+async def test_real_app_wires_research_association_and_restores_before_startup_resume(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
     request: pytest.FixtureRequest,
 ) -> None:
+    # TASK-38954: moved onto the real threaded restore. The synchronous
+    # `_restore_ingest_jobs` stand-in seeded the registry inside the startup
+    # call, which production never does, and so hid that every startup
+    # worker was queued before the restore landed.
     workspace_db = _service_wiring_module.WorkspaceDB(
         tmp_path / "app-workspaces.sqlite",
         client_id="app-wiring-test",
@@ -876,7 +932,7 @@ def test_real_app_wires_research_association_and_restores_before_startup_resume(
     server_service = (
         _app_module.ServerNotesWorkspaceService.from_server_context_provider(provider)
     )
-    app = _app_module.TldwCli.__new__(_app_module.TldwCli)
+    app = _IngestRunnerHarness(None)
     app.local_workspace_db = workspace_db
     app.workspace_registry_service = (
         _service_wiring_module.LocalWorkspaceRegistryService(workspace_db)
@@ -885,11 +941,10 @@ def test_real_app_wires_research_association_and_restores_before_startup_resume(
         workspace_id="restore-workspace",
         name="Restore workspace",
     )
-    app._init_library_ingest_runtime_state()
     app.server_context_provider = provider
     app.server_notes_workspace_service = server_service
 
-    app._wire_research_source_association()
+    _app_module.TldwCli._wire_research_source_association(app)
 
     scheduler = app.research_source_association_scheduler
     coordinator = app.research_source_association_coordinator
@@ -976,79 +1031,160 @@ def test_real_app_wires_research_association_and_restores_before_startup_resume(
             limit=50
         )
     ] == ["research-op-restored-058", "research-op-restored-059"]
+    jobs_path = tmp_path / "restored-jobs.sqlite"
+    _persist_restore_history(jobs_path, restored_jobs)
+    monkeypatch.setattr(
+        _ingest_queue_module, "get_library_ingest_jobs_db_path", lambda: jobs_path
+    )
 
     groups: list[str] = []
     ui_observations: list[int] = []
     app.library_ingest_jobs.add_listener(
         lambda: ui_observations.append(len(app.library_ingest_jobs.jobs()))
     )
+    attached = _run_restore_for_real(app, monkeypatch, groups)
+    try:
+        async with app.run_test():
+            app._restore_ingest_jobs_and_schedule_research_sources()
+            assert groups == [], "startup work was queued before the restore landed"
+            await _wait_until(lambda: groups)
 
-    def queue_worker(awaitable, *, group: str):
-        groups.append(group)
-        awaitable.close()
+            assert len(app.library_ingest_jobs.jobs()) == 60
+            assert ui_observations == [60]
+            assert groups == [
+                "research_source_held_startup",
+                "research_source_association_startup",
+                "research_paste_staging_startup",
+            ]
+            # The 60 restored terminal jobs belong to the bounded resume_startup:
+            # neither the seeding nor a later mutation starts one worker each.
+            assert app._research_source_terminal_jobs_scheduled == {
+                job.job_id for job in restored_jobs
+            }
+            live = app.library_ingest_jobs.submit(
+                source_path="/live-after-restore.txt",
+                research_source_operation_id="research-op-live-after-restore",
+            )
+            app.library_ingest_jobs.mark_failed(live.job_id, error="live failure")
+            assert groups[3:] == ["research_source_association"]
+    finally:
+        for store in attached:
+            store.close()
 
-    def restore_real_registry() -> None:
-        app.library_ingest_jobs.restore(restored_jobs, next_id=61)
 
-    monkeypatch.setattr(app, "_restore_ingest_jobs", restore_real_registry)
-    monkeypatch.setattr(app, "run_worker", queue_worker)
-
-    app._restore_ingest_jobs_and_schedule_research_sources()
-
-    assert len(app.library_ingest_jobs.jobs()) == 60
-    assert ui_observations == [60]
-    assert groups == [
-        "research_source_association_startup",
-        "research_paste_staging_startup",
-    ]
-    assert app._research_source_terminal_jobs_scheduled == set()
-
-
-def test_restore_suppression_cleans_up_after_exception_and_empty_repeats(
+@pytest.mark.asyncio
+async def test_restore_suppression_cleans_up_after_exception_and_empty_repeats(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
-    app = _IngestRunnerHarness(_make_db(tmp_path))
+    # TASK-38954: moved onto the real threaded restore, for the reason given
+    # in the test above. The exception now comes from the seeding itself.
+    jobs_path = tmp_path / "jobs.sqlite"
+    monkeypatch.setattr(
+        _ingest_queue_module, "get_library_ingest_jobs_db_path", lambda: jobs_path
+    )
+    app = _IngestRunnerHarness(None)
     app.research_source_association_scheduler = _RecordingAssociationScheduler()
+    registry = app.library_ingest_jobs
     groups: list[str] = []
+    attached = _run_restore_for_real(app, monkeypatch, groups)
+    real_merge = registry.merge_restored
 
-    def queue_worker(awaitable, *, group: str) -> None:
-        groups.append(group)
-        awaitable.close()
-
-    def fail_restore() -> None:
+    def fail_merge(jobs, next_id) -> None:
         raise RuntimeError("restore failed")
 
-    monkeypatch.setattr(app, "run_worker", queue_worker)
-    monkeypatch.setattr(app, "_restore_ingest_jobs", fail_restore)
+    monkeypatch.setattr(registry, "merge_restored", fail_merge)
+    try:
+        async with app.run_test():
+            app._restore_ingest_jobs_and_schedule_research_sources()
+            assert groups == [], "startup work was queued before the restore landed"
+            await _wait_until(lambda: groups)
 
-    with pytest.raises(RuntimeError, match="restore failed"):
-        app._restore_ingest_jobs_and_schedule_research_sources()
+            assert groups == ["research_source_association_startup"]
+            assert app._research_source_restore_in_progress is False
+            live = registry.submit(
+                source_path="/live-after-restore.txt",
+                research_source_operation_id="research-op-live-after-restore",
+            )
+            registry.mark_failed(live.job_id, error="live failure")
+            assert groups[1:] == ["research_source_association"]
+            assert app._research_source_terminal_jobs_scheduled == {live.job_id}
 
-    assert app._research_source_restore_in_progress is False
-    live = app.library_ingest_jobs.submit(
-        source_path="/live-after-restore.txt",
-        research_source_operation_id="research-op-live-after-restore",
+            groups.clear()
+            monkeypatch.setattr(registry, "merge_restored", real_merge)
+            for repeat in (1, 2):
+                app._restore_ingest_jobs_and_schedule_research_sources()
+                await _wait_until(lambda repeat=repeat: len(groups) == repeat)
+
+            assert groups == [
+                "research_source_association_startup",
+                "research_source_association_startup",
+            ]
+            assert app._research_source_terminal_jobs_scheduled == {live.job_id}
+            assert app._research_source_restore_in_progress is False
+    finally:
+        for store in attached:
+            store.close()
+
+
+@pytest.mark.asyncio
+async def test_startup_restore_links_a_held_research_job_once_the_store_attaches(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """TASK-38954: the held reconcile needs the restored store, which the
+    restore worker attaches later, on the UI thread. It was checked for while
+    the worker was only starting, so it never ran."""
+
+    jobs_path = tmp_path / "jobs.sqlite"
+    seeding_store = LibraryIngestJobsDB(jobs_path)
+    seeding = LibraryIngestJobRegistry()
+    seeding.attach_store(seeding_store)
+    held = seeding.submit(
+        source_path=str(tmp_path / "managed.txt"),
+        origin="local",
+        research_source_operation_id="operation-held-at-restart",
+        dispatch_held=True,
+        require_persisted=True,
     )
-    app.library_ingest_jobs.mark_failed(live.job_id, error="live failure")
-    assert groups == ["research_source_association"]
-    assert app._research_source_terminal_jobs_scheduled == {live.job_id}
+    seeding_store.close()
+    workspace_db = WorkspaceDB(tmp_path / "workspace.sqlite")
+    operation_store = ResearchSourceOperationStore(workspace_db)
+    operation_store.create(
+        ResearchSourceOperation(
+            operation_id="operation-held-at-restart",
+            idempotency_key="idempotency-operation-held-at-restart",
+            data_source=WorkspaceDataSource.LOCAL,
+            workspace_id="workspace-local",
+            canonical_item_type=CanonicalItemType.LOCAL_LIBRARY,
+            desired_selected=True,
+            created_at="2026-08-24T10:00:00Z",
+            updated_at="2026-08-24T10:00:00Z",
+        )
+    )
+    monkeypatch.setattr(
+        _ingest_queue_module, "get_library_ingest_jobs_db_path", lambda: jobs_path
+    )
+    app = _IngestRunnerHarness(None)
+    app.research_source_operation_store = operation_store
+    dispatched: list[str] = []
+    monkeypatch.setattr(app, "_dispatch_research_source_catalog_job", dispatched.append)
+    try:
+        async with app.run_test():
+            app._restore_ingest_jobs_and_schedule_research_sources()
+            await _wait_until(lambda: dispatched)
 
-    groups.clear()
-
-    def restore_empty_registry() -> None:
-        app.library_ingest_jobs.restore([], next_id=1)
-
-    monkeypatch.setattr(app, "_restore_ingest_jobs", restore_empty_registry)
-    app._restore_ingest_jobs_and_schedule_research_sources()
-    app._restore_ingest_jobs_and_schedule_research_sources()
-
-    assert groups == [
-        "research_source_association_startup",
-        "research_source_association_startup",
-    ]
-    assert app._research_source_terminal_jobs_scheduled == set()
-    assert app._research_source_restore_in_progress is False
+            assert dispatched == [held.job_id]
+            assert app.library_ingest_jobs.get_job(held.job_id).dispatch_held is False
+        operation = operation_store.get("operation-held-at-restart")
+        assert operation is not None
+        assert operation.catalog_status is SourceOperationStatus.IN_PROGRESS
+        assert operation.ingest_job_id == held.job_id
+    finally:
+        store = getattr(app, "_library_ingest_jobs_store", None)
+        if store is not None:
+            store.close()
+        workspace_db.close()
 
 
 @pytest.mark.asyncio

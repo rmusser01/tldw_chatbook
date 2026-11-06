@@ -82,6 +82,10 @@ DEFERRED_MEDIA_CLEANUP_DELAY_SECONDS = 5.0
 # thread worker that will not notice cancellation at all.
 WORKER_CANCELLATION_GRACE_SECONDS = 3.0
 
+# TASK-38955: the longest a quit-time close waits on another writer's lock
+# for its WAL checkpoint, on the loop (exit watchdog: 120 s).
+_QUIT_CLOSE_BUSY_SECONDS = 0.5
+
 # TASK-1240. The `component` this module passes to `persist_event`. It is a
 # bounded metadata token (`persist_event` raises `ValueError` otherwise) and is
 # used raw to build the diagnostics logger name, so the four emit sites in this
@@ -429,6 +433,47 @@ class LifecycleMixin:
             self.loguru_logger.error(
                 f"Error closing local research service: {type(exc).__name__}"
             )
+
+    async def _close_main_databases(self) -> None:
+        """Retire the ChaChaNotes and media handles at quit (TASK-38955).
+
+        ChaChaNotes closes its handles on every thread only if none is in
+        use, so a straggler worker's write is never aborted; a busy store is
+        left to close with the process. Each store then closes this thread's
+        handle with its checkpoint wait bounded. Media worker threads retire
+        their own. In-memory stores keep their data. Failures never abort.
+        """
+        notes = getattr(self, "chachanotes_db", None)
+        stores = [getattr(self, "media_db", None)]
+        if notes is not None and not notes.is_memory_db:
+            try:
+                idle = await asyncio.to_thread(notes.close_idle_connections)
+            except Exception as exc:  # noqa: BLE001 - quit must go on regardless
+                idle = False
+                self.loguru_logger.error(
+                    f"Error closing ChaChaNotes at quit: {type(exc).__name__}"
+                )
+            if idle:
+                stores.insert(0, notes)
+            else:
+                self.loguru_logger.info(
+                    "ChaChaNotes still in use at quit; its handles close with the process"
+                )
+        for db in stores:
+            if db is None or db.is_memory_db:
+                continue
+            conn = getattr(db._local, "conn", None)
+            try:
+                if conn is not None:
+                    with contextlib.suppress(sqlite3.Error):  # already retired
+                        conn.execute(
+                            f"PRAGMA busy_timeout = {int(_QUIT_CLOSE_BUSY_SECONDS * 1000)}"
+                        )
+                db.close_connection()
+            except Exception as exc:  # noqa: BLE001 - quit must go on regardless
+                self.loguru_logger.error(
+                    f"Error closing a main database at quit: {type(exc).__name__}"
+                )
 
     async def _shutdown_file_notes_session_owner(self) -> None:
         """Settle the process-owned File Notes Git lifecycle exactly once."""
@@ -1297,6 +1342,9 @@ class LifecycleMixin:
         # Release the research store's held SQLite connections (TASK-21127).
         await self._close_local_research_service()
 
+        # Last: the main stores, once every owner above has settled (TASK-38955).
+        await self._close_main_databases()
+
         # Nothing this app owns is left to ask; a signal from here on has
         # no orderly path to offer and should unwind the main thread.
         unregister_running_app(self)
@@ -1531,18 +1579,23 @@ class LifecycleMixin:
                 return  # Documented off-switch (ADR-229).
             from datetime import timedelta
 
+            from .DB.base_db import operation_owned_connection
             from .Utils.timestamps import to_utc_iso, utc_now
 
             # Shared UTC helper (ADR-173 ratchet): same canonical
             # millisecond-Z shape the hand-rolled strftime produced.
             cutoff = to_utc_iso(utc_now() - timedelta(days=retention_days))
+
+            def prune(db):
+                # Retire the pool-thread handle this opens (TASK-38955).
+                with operation_owned_connection(db):
+                    return db.delete_sync_log_entries_older_than(cutoff)
+
             for attr in ("chachanotes_db", "media_db"):
                 db = getattr(self, attr, None)
                 if db is None:
                     continue
-                pruned = await asyncio.to_thread(
-                    db.delete_sync_log_entries_older_than, cutoff
-                )
+                pruned = await asyncio.to_thread(prune, db)
                 if pruned:
                     self.loguru_logger.info(
                         f"Sync-log retention pruned {pruned} rows older than "

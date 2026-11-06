@@ -4992,8 +4992,8 @@
       "reason": "remaining Chatbook production diagnostic owner"
     },
     {
-      "call_count": 48,
-      "diagnostic_digest": "e6e5898e2333fdd79aef",
+      "call_count": 49,
+      "diagnostic_digest": "00cead18bb07588b3a8b",
       "owner": "TASK-494",
       "path": "tldw_chatbook/app_ingest_queue.py",
       "reason": "remaining Chatbook production diagnostic owner"
@@ -5006,8 +5006,8 @@
       "reason": "remaining Chatbook production diagnostic owner"
     },
     {
-      "call_count": 65,
-      "diagnostic_digest": "5e0d3bcbc0435c924383",
+      "call_count": 68,
+      "diagnostic_digest": "c46b822c484dde5b5029",
       "owner": "TASK-494",
       "path": "tldw_chatbook/app_lifecycle.py",
       "reason": "remaining Chatbook production diagnostic owner"
@@ -9648,7 +9648,7 @@
           "path_expressions": [
             "db_path"
           ],
-          "scope": "close_all_pools",
+          "scope": "_retire_pool",
           "status": "legacy_unreviewed"
         },
         {

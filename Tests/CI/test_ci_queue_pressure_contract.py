@@ -340,7 +340,8 @@ FAST_LANE_TARGETS = (
 DREAMS_BOUNDARY_TARGETS = (
     # TASK-38759: the history participant lifetimes file, red on dev in no PR
     # lane. First, because its pauses drain every live lease in the process
-    # and five Guardian nodes here leave storage leases open. Sandboxed.
+    # and five Guardian nodes here left storage leases open (closed by
+    # TASK-38986, whose --storage-lease-guard now fails any new leak). Sandboxed.
     "Tests/Backup_Recovery/test_async_file_participant_lifetimes.py",
     "Tests/Dreams/test_dispatch_currentness.py",
     "Tests/Dreams/test_cycle_service.py::test_mixed_profile_cycle_keeps_topic_and_goal_stories_without_changing_budgets",
@@ -1734,15 +1735,19 @@ def _assert_dreams_required_steps(workflow: dict) -> None:
                   for step in candidate.get("steps", ()) if step.get("name") == name]
         assert owners == ["dreams-boundary"]
     assert not job.get("continue-on-error", False)
-    for name, targets, limit in (
-        ("Run Dreams and Guardian boundary contracts", DREAMS_BOUNDARY_TARGETS, 180),
-        ("Run Dreams admission-sensitive contracts", DREAMS_ADMISSION_TARGETS, 300),
+    # TASK-38986: the boundary step fails a test that leaves a new live lease.
+    for name, targets, flags, limit in (
+        ("Run Dreams and Guardian boundary contracts", DREAMS_BOUNDARY_TARGETS,
+         ("--storage-lease-guard",), 180),
+        ("Run Dreams admission-sensitive contracts", DREAMS_ADMISSION_TARGETS, (), 300),
     ):
         step = _named_step(job, name)
         assert step["if"] == "${{ !cancelled() }}"
         assert not step.get("continue-on-error", False)
         tokens = tuple(shlex.split(step["run"].replace("\\\n", " "), comments=True))
-        assert tokens == ("pytest", *targets, f"--timeout={limit}", "--tb=short")
+        assert tokens == (
+            "pytest", *targets, *flags, f"--timeout={limit}", "--tb=short"
+        )
         assert len(set(targets)) == len(targets)
         for target in targets:
             assert (PROJECT_ROOT / target.split("::", 1)[0]).is_file()

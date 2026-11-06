@@ -7,6 +7,7 @@ import pytest
 
 from Tests.Dreams.test_cycle_service import _deps, dreams_db, settings
 from tldw_chatbook.DB.Guardian_DB import GuardianDB
+from tldw_chatbook.DB.base_db import operation_owned_connection
 from tldw_chatbook.Dreams.cycle_service import _refresh_profile_signals
 from tldw_chatbook.Dreams.interest_profile import snapshot
 from tldw_chatbook.Dreams.query_synthesis import synthesize_queries
@@ -83,7 +84,11 @@ async def test_revocation_during_cycle_wait_prevents_next_external_call(
         original = dreams_db.usage_reserve
 
         def revoke():
-            guardian.upsert_rule(id=rule, feeds_discovery=0)
+            # Dreams calls this on its worker thread. Retire the handle the
+            # write opens there; guardian.close() below runs on this thread
+            # and cannot reach it (TASK-38986).
+            with operation_owned_connection(guardian):
+                guardian.upsert_rule(id=rule, feeds_discovery=0)
             revoked[0] = True
 
         def reserve(*args, **kwargs):

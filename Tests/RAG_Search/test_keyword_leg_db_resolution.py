@@ -463,3 +463,66 @@ async def test_a_search_racing_close_all_pools_leaves_no_connection_open(
     for connection in opened:
         with pytest.raises(sqlite3.ProgrammingError, match="closed database"):
             sqlite3.Connection.in_transaction.__get__(connection)
+
+
+@pytest.mark.asyncio
+async def test_closing_a_discarded_service_keeps_the_survivors_pool(
+    tmp_path, monkeypatch
+):
+    """TASK-38956: pools are shared by db_path, and closing any RAGService
+    closed them all. A build discarded after losing a race, which never
+    searched, retired the pool the surviving shared service was using."""
+    import sqlite3
+
+    from loguru import logger as loguru_logger
+
+    from tldw_chatbook.DB.Client_Media_DB_v2 import MediaDatabase
+    from tldw_chatbook.RAG_Search.simplified import db_connection_pool
+
+    db_path = tmp_path / "tldw_cli_media_v2.db"
+    seed = MediaDatabase(db_path=str(db_path), client_id="test_keyword_survivor")
+    media_id, _, message = seed.add_media_with_keywords(
+        title="Numbat Notes", content="Notes about numbat foraging.", media_type="article"
+    )
+    assert media_id is not None, f"seed failed: {message}"
+    seed.close_connection()
+
+    monkeypatch.setattr(db_connection_pool, "_connection_pools", {})
+    opened: list[sqlite3.Connection] = []
+    original = MediaDatabase._get_thread_connection
+
+    def recording(self):
+        connection = original(self)
+        if all(connection is not seen for seen in opened):
+            opened.append(connection)
+        return connection
+
+    monkeypatch.setattr(MediaDatabase, "_get_thread_connection", recording)
+    retries: list[str] = []
+    sink = loguru_logger.add(
+        lambda m: retries.append(str(m)),
+        level="WARNING",
+        filter=lambda record: "FTS5 search attempt" in record["message"],
+    )
+    survivor = _make_service(tmp_path, media_db_path=db_path)
+    discarded = _make_service(tmp_path, media_db_path=db_path)
+    try:
+        assert await survivor._keyword_search("numbat", top_k=5)
+        pool = db_connection_pool.get_connection_pool(str(db_path))
+        connections = list(opened)
+
+        discarded.close()
+        assert await survivor._keyword_search("numbat", top_k=5)
+
+        # (same pool, same connections, no retry)
+        assert (
+            db_connection_pool.get_connection_pool(str(db_path)) is pool,
+            opened == connections,
+            retries,
+        ) == (True, True, [])
+    finally:
+        loguru_logger.remove(sink)
+        survivor.close()
+    for connection in opened:
+        with pytest.raises(sqlite3.ProgrammingError, match="closed database"):
+            sqlite3.Connection.in_transaction.__get__(connection)

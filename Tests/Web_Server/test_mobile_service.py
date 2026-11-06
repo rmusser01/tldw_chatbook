@@ -503,6 +503,50 @@ async def test_default_workspace_session_has_no_folder_tools(tmp_path: Path) -> 
         await _shutdown(service, subscriber)
 
 
+async def test_shutdown_retires_chachanotes_handles_once_without_close_errors(
+    tmp_path: Path,
+) -> None:
+    """TASK-38972: shutdown quiesces ChaChaNotes, which closes every
+    registered handle, then closes the store. That close met this thread's
+    already-closed cached handle, logged a ProgrammingError and kept it."""
+    from loguru import logger as loguru_logger
+
+    from tldw_chatbook.Backup_Recovery import storage_admission
+    from tldw_chatbook.Utils.private_paths import lexical_path
+
+    warnings: list[str] = []
+    sink = loguru_logger.add(lambda m: warnings.append(str(m)), level="WARNING")
+    gateway = AgentModeGateway()
+    service = MobileChatService(data_dir=tmp_path, provider_gateway=gateway)
+    got: list[Any] = []
+    subscriber = asyncio.create_task(_subscribe(service, got))
+    try:
+        try:
+            session = await service.create_session(title="shutdown")
+            await service.send(session["id"], "hello before shutdown")
+            await _wait_for(
+                lambda: any(e.type == "run_completed" for e in got),
+                timeout=15,
+                what="run_completed event",
+            )
+            db = service._engine.store.persistence.db
+        finally:
+            await _shutdown(service, subscriber)
+    finally:
+        loguru_logger.remove(sink)
+
+    assert not [w for w in warnings if "SQLite connection close" in w], warnings
+    assert db.registered_connection_count() == 0
+    with storage_admission._lock:
+        leases = [
+            lease
+            for lease in storage_admission._live_leases
+            if lease.resource_path == lexical_path(db.db_path)
+        ]
+    assert leases == []
+    assert getattr(db._local, "conn", None) is None
+
+
 async def test_messages_cursor(tmp_path: Path) -> None:
     gateway = AgentModeGateway()
     service = MobileChatService(data_dir=tmp_path, provider_gateway=gateway)

@@ -3255,6 +3255,15 @@ DELETE FROM keywords
 
         return self._connection_quiescence.connection_count()
 
+    def close_idle_connections(self) -> bool:
+        """Close every same-file handle unless one is in use; sets no barrier.
+
+        Returns:
+            Whether the handles were closed; see ``close_if_idle``.
+        """
+
+        return self._connection_quiescence.close_if_idle()
+
     def get_console_trace_compaction_status(self) -> dict[str, object]:
         """Return content-free physical trace-maintenance status and metrics.
 
@@ -3489,7 +3498,14 @@ DELETE FROM keywords
         """
         local = self._local
         conn = getattr(local, "conn", None)
-        if conn is not None:
+        if conn is not None and not self._connection_quiescence.is_registered(conn):
+            # Already retired (quiesce_connections closes every registered
+            # handle): forget it, as the getter does (TASK-38972).
+            local.conn = None
+            local.canvas_revision_deletion_authorization = None
+            local.semantic_mutation_authorization = None
+            local.voice_trace_import_authorization = None
+        elif conn is not None:
             self._close_connection_handle(conn, local, self._connection_quiescence)
 
     def _close_connection_handle(self, conn, local, registry, *, strict=False):

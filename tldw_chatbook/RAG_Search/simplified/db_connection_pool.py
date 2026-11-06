@@ -65,17 +65,25 @@ _pool_threads: "weakref.WeakKeyDictionary[object, _PoolThread]" = (
 )
 
 
-def get_connection_pool(db_path: str, pool_size: int = 3) -> MediaDatabase:
+# The services using each pool (TASK-38956). Pools are shared by db_path, so a
+# service's close retires only the pools no other live service still uses.
+_pool_users: "dict[str, weakref.WeakSet[object]]" = {}
+
+
+def get_connection_pool(
+    db_path: str, pool_size: int = 3, *, user: object = None
+) -> MediaDatabase:
     """
     Get or create the pooled `MediaDatabase` connection for the given database.
 
     `pool_size` is accepted for backward API compatibility but unused --
     `MediaDatabase` hands out one connection per calling thread rather than
-    capping a fixed pool.
+    capping a fixed pool. A `user` keeps the pool open until it calls
+    `release_pools`.
     """
     # Fast path: no lock needed once the pool for this path already exists.
     pool = _connection_pools.get(db_path)
-    if pool is not None:
+    if pool is not None and (user is None or user in _pool_users.get(db_path, ())):
         return pool
 
     # Slow path: double-checked locking so only one thread ever constructs
@@ -95,6 +103,8 @@ def get_connection_pool(db_path: str, pool_size: int = 3) -> MediaDatabase:
                 raise
             _pool_threads[pool] = thread
             _connection_pools[db_path] = pool
+        if user is not None:
+            _pool_users.setdefault(db_path, weakref.WeakSet()).add(user)
         return pool
 
 
@@ -114,15 +124,36 @@ def pool_executor(pool: object) -> Optional[ThreadPoolExecutor]:
         return None
 
 
+def _retire_pool(db_path: str, db: MediaDatabase) -> None:
+    """Close one pool's connection on its own thread, then that thread."""
+    thread = _pool_threads[db]
+    try:
+        thread.submit(thread.retire, db).result()
+    except Exception as e:
+        logger.debug(f"Error closing pooled connection for {db_path}: {e}")
+    thread.shutdown(wait=True)
+
+
+def release_pools(user: object) -> None:
+    """Drop ``user`` from its pools, retiring each one it was the last user of."""
+    with _connection_pools_lock:
+        for db_path, users in list(_pool_users.items()):
+            if user not in users:
+                continue
+            users.discard(user)
+            if users:
+                continue
+            del _pool_users[db_path]
+            db = _connection_pools.pop(db_path, None)
+            if db is not None:
+                _retire_pool(db_path, db)
+
+
 def close_all_pools():
     """Close each pool's connection on its own thread, then that thread."""
     with _connection_pools_lock:
         for db_path, db in _connection_pools.items():
-            thread = _pool_threads[db]
-            try:
-                thread.submit(thread.retire, db).result()
-            except Exception as e:
-                logger.debug(f"Error closing pooled connection for {db_path}: {e}")
-            thread.shutdown(wait=True)
+            _retire_pool(db_path, db)
         _connection_pools.clear()
+        _pool_users.clear()
         logger.debug("Closed and cleared all connection pool references")
