@@ -37,7 +37,6 @@ PROJECTED_METHOD_CEILING = 532
 _, LIVE_SCREEN_LINE_CEILING, LIVE_SCREEN_METHOD_CEILING = _SCREEN_SIZE_BUDGETS[
     "tldw_chatbook/UI/Screens/chat_screen.py"
 ]
-LIVE_SCREEN_COUNTS = (LIVE_SCREEN_LINE_CEILING, LIVE_SCREEN_METHOD_CEILING)
 #: The screen-size ratchet row this file holds unraised, re-pinned the same day.
 LIVE_RATCHET_ROW = ("ChatScreen", 24_616, 741)
 MAX_DELEGATE_LINES = 5
@@ -531,7 +530,12 @@ def test_build_console_controllers_is_the_single_explicit_constructor() -> None:
 def test_chat_screen_remains_within_reviewed_projection_without_ratchet_raise() -> None:
     """The extraction earns the conservative screen reduction itself."""
     source = CHAT_SCREEN_PATH.read_text(encoding="utf-8")
-    assert _counts(source) <= LIVE_SCREEN_COUNTS
+    # Lines and methods separately (a tuple `<=` is lexicographic), and the
+    # methods as the ratchet counts them: direct definitions, not unique names
+    # (review r10a-rev2).
+    owner = _class_from_source(source, "ChatScreen")
+    assert len(source.splitlines()) <= LIVE_SCREEN_LINE_CEILING
+    assert sum(_method_counts(owner).values()) <= LIVE_SCREEN_METHOD_CEILING
     ratchet_tree = ast.parse(RATCHET_PATH.read_text(encoding="utf-8"))
     assignment = next(
         node

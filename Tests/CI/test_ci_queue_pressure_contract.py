@@ -391,7 +391,8 @@ DREAMS_BOUNDARY_TARGETS = (
 #: TASK-34929: the Dreams tracking tests, gated whole in their own job.
 DREAMS_TRACKING_TARGET = "Tests/Dreams/test_track_service.py"
 #: TASK-38989: Architecture guards red on dev in no PR lane, in their own job.
-#: The profile inventory runs by node: preflight already runs its CLI test.
+#: The profile inventory runs by node, without its CLI test: preflight runs the
+#: same CLI (without `--print-occurrences`, so that one check is unlaned).
 ARCHITECTURE_GUARD_TARGETS = (
     "Tests/Architecture/test_actor_pack_boundary.py",
     "Tests/Architecture/test_app_extracted_patch_targets.py",
@@ -1236,6 +1237,28 @@ def test_architecture_guards_lane_is_one_serial_minimal_python_312_job() -> None
     assert len(set(ARCHITECTURE_GUARD_TARGETS)) == len(ARCHITECTURE_GUARD_TARGETS)
     for target in ARCHITECTURE_GUARD_TARGETS:
         assert (PROJECT_ROOT / target.split("::", 1)[0]).is_file()
+    # The by-node listing is complete: a new test in the profile inventory
+    # cannot silently run on no lane (review r10a-rev2).
+    profile = "Tests/Architecture/test_profile_owned_path_inventory.py"
+    tree = ast.parse((PROJECT_ROOT / profile).read_text(encoding="utf-8"))
+    assert not any(
+        isinstance(node, ast.ClassDef) and node.name.startswith("Test")
+        for node in tree.body
+    ), "class-scoped tests need their own node ids here"
+    defined = {
+        node.name
+        for node in tree.body
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+        and node.name.startswith("test")
+    }
+    listed = {
+        target.split("::", 1)[1]
+        for target in ARCHITECTURE_GUARD_TARGETS
+        if target.startswith(profile + "::")
+    }
+    # Bare names: a parametrized test runs every case from its function id.
+    assert all("[" not in name for name in listed)
+    assert listed == defined - {"test_cli_prints_the_real_source_census_and_enforces_it"}
     # Each target runs once: no other PR-lane step lists its file.
     files = {target.split("::", 1)[0] for target in ARCHITECTURE_GUARD_TARGETS}
     others = [

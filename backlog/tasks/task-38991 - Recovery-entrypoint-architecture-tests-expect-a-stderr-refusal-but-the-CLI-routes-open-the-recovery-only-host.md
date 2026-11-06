@@ -5,7 +5,7 @@ status: Done
 assignee:
 - '@claude'
 created_date: 2026-11-06 01:42
-updated_date: 2026-11-06 04:43
+updated_date: 2026-11-06 09:27
 labels:
 - follow-up
 - backup
@@ -88,7 +88,7 @@ Test-only change in `Tests/Architecture/test_recovery_entrypoints.py`; the produ
       - `Tools/workspace_tool_worker.py`
       - `Web_Server/artifact_share_server.py` (`artifact_share`)
     - `config_fenced_worker`: `Chunking/lab_runner.py`. The app spawns it, but its import chain (`Chunking/__init__` -> `Chunk_Lib`) loads `tldw_chatbook.config`, which writes `config.toml` under a fresh HOME and puts the child behind config's import-time recovery fence.
-    - `external_read_only_worker`: `Tools/project_index_scan_worker.py`, a stdlib-only scanner like `_grep_worker`.
+    - `external_read_only_worker`: `Tools/project_index_scan_worker.py`, a read-only scanner like `_grep_worker`. It is not stdlib-only (review r10a-rev2): it imports 6 tldw_chatbook modules directly and 17 load in all. None of them is config; checked by importing it in a scratch HOME.
     - `development_tool`: `Tools/build_remote_worker_bundle.py`.
     - `remote_host_worker`: `Tools/remote_worker_bundle.py`, the generated bundle, which runs on the SSH host.
 - **Evidence (AC#4).**

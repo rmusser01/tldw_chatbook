@@ -5,7 +5,7 @@ status: Done
 assignee:
 - '@claude'
 created_date: 2026-11-06 01:42
-updated_date: 2026-11-06 08:53
+updated_date: 2026-11-06 09:27
 labels:
 - follow-up
 - tests
@@ -111,3 +111,7 @@ TASK-35306's node, review-selection `…without_ratchet_raise`, closes with this
 - All four now read their live ceiling from `Tests/Architecture/test_screen_size_ratchet.py::_BUDGETS`. The review-selection and closeout row pins, `("ChatScreen", 24_616, 741)` and `<= (24_616, 741)`, still fail on any raise of the row.
 - Negative control: 13 temporary lines take chat_screen.py to 24,617, one past the row, and all six ceiling nodes go red (6 failed, 53 passed). Reverted.
 
+**Review r10a-rev2 fix: lines and methods compared separately.**
+- A tuple `<=` is lexicographic, so the method half of the review-selection and closeout live ceilings could never fail while the line count stayed under its ceiling. Both now compare lines and methods separately.
+- Review-selection now counts direct method definitions, as the ratchet does (741), instead of unique names (709), so it compares like with like.
+- Negative control: a temporary one-line extra ChatScreen method (742 methods, lines still under the row) turned both nodes red. Reverted.

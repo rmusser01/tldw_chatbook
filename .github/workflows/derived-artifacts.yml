@@ -1191,8 +1191,9 @@ jobs:
     # TASK-38989: Architecture guards that were red on dev in no PR lane. Its
     # own job, as dreams-tracking: no existing job had the minutes (review
     # r10a-rev1). Serial; the four files that `git show` frozen revisions stay
-    # off (this checkout is shallow), and preflight's census step already runs
-    # the profile inventory's CLI test.
+    # off (this checkout is shallow). The profile inventory's CLI test is left
+    # out: preflight's census step runs the same CLI (but not its
+    # `--print-occurrences` check, which is unlaned).
     name: Architecture guard contracts
     if: github.event_name == 'pull_request' || (github.event_name == 'workflow_dispatch' && (inputs.pr != '' || github.ref != 'refs/heads/dev'))
     runs-on: ubuntu-latest

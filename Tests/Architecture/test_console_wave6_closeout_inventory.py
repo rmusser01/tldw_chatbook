@@ -35,7 +35,6 @@ FINAL_CLOSEOUT_COUNTS = (17_037, 564)
 _, LIVE_SCREEN_LINE_CEILING, LIVE_SCREEN_METHOD_CEILING = _SCREEN_SIZE_BUDGETS[
     "tldw_chatbook/UI/Screens/chat_screen.py"
 ]
-LIVE_SCREEN_COUNTS = (LIVE_SCREEN_LINE_CEILING, LIVE_SCREEN_METHOD_CEILING)
 LIVE_RATCHET_BUDGET = (24_616, 741)
 
 # Each tuple is (task base, delivered revision, base counts, delivered counts).
@@ -409,8 +408,10 @@ def test_closeout_evidence_explains_the_remaining_absolute_deficit() -> None:
         AMENDMENT_COUNTS[1] - IMMUTABLE_BUDGETS[1],
     ) == (2_157, 39)
 
-    live_counts = _counts(_SCREEN_PATH.read_text(encoding="utf-8"))
-    assert live_counts <= LIVE_SCREEN_COUNTS
+    # Lines and methods separately: a tuple `<=` is lexicographic (r10a-rev2).
+    live_lines, live_methods = _counts(_SCREEN_PATH.read_text(encoding="utf-8"))
+    assert live_lines <= LIVE_SCREEN_LINE_CEILING
+    assert live_methods <= LIVE_SCREEN_METHOD_CEILING
 
     ratchet_tree = ast.parse(_RATCHET_PATH.read_text(encoding="utf-8"))
     budget_assignment = next(

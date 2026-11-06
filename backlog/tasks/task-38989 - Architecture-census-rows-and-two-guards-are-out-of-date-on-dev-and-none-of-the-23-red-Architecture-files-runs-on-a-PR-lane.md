@@ -5,7 +5,7 @@ status: Done
 assignee:
 - '@claude'
 created_date: 2026-11-06 01:42
-updated_date: 2026-11-06 09:04
+updated_date: 2026-11-06 09:27
 labels:
 - follow-up
 - tests
@@ -141,7 +141,9 @@ Found in round 8 of the 2026-10-23 burn-down. Checked on dev 29592ecc9b on 2026-
   - Job shape: `needs: [preflight]`, the lanes' `if:`, `timeout-minutes: 20`, the fast-lane install line, and one serial step with `--timeout=180 --tb=short`. It sits after `dreams-tracking`, before `derived-artifacts`.
   - Wiring: the job is in the aggregate's `needs`, and a "Require successful Architecture guard contracts" verdict step was added. dreams-boundary is back to its base argv.
   - The 14 files: actor_pack_boundary, app_extracted_patch_targets, bare_chat_screen_shells, console_fleet_ownership, framework_armed_clock_inventory, library_cluster_membership_census, library_export_wiring, persona_buddy_boundary, persona_visual_runtime_boundary, profile_owned_path_inventory, progress_widget_clock_guard, recovery_entrypoints, task2062_3, worker_exclusive_group_inventory.
-  - The profile inventory runs as its other 14 node ids, without `test_cli_prints_the_real_source_census_and_enforces_it`, because preflight's census step already runs the same script. The test itself stays. The repo's lane tests reject `--deselect`, so the node ids are listed explicitly.
+  - The profile inventory runs as its other 14 node ids, without `test_cli_prints_the_real_source_census_and_enforces_it`, because preflight's census step runs the same CLI. The test itself stays. The repo's lane tests reject `--deselect`, so the node ids are listed explicitly.
+  - Review r10a-rev2: preflight runs that CLI without `--print-occurrences`. That test's print-and-empty-stderr check is therefore **unlaned**; it runs only in a full local `Tests/Architecture` run.
+  - The lane test now pins the by-node listing as complete. The listed names must equal the file's AST `test_*` functions minus the CLI test. It also asserts there are no class-scoped tests and no parametrize ids. A dummy `test_r10a_dummy` added to the file turned it red.
 - **Pins updated.**
   - `ARCHITECTURE_GUARD_TARGETS`, with its own argv pin test, and the job lists in `_assert_required_aggregation` (`test_ci_queue_pressure_contract.py`). Plus 3 continue-on-error mutation cases.
   - `VERDICTS`, the job order, and the disjoint-targets step lists (`test_derived_artifacts_workflow.py`).
