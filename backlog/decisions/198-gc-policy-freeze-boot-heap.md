@@ -488,6 +488,14 @@ generators only; the host's idle CPU at the send ranged 0-95% (20 blocks at
 - Enter to POST, paired per block: fix minus dev a median -72 ms (bootstrap
   95% CI -130 to +6); fix minus revert +10 ms (-130 to +38). Main-thread GC
   in that span: -1.8 ms (-9.1 to +2.4) and -3.5 ms (-11.4 to +4.4).
+- Those medians hide a fatter tail. Counting every generation, main-thread
+  GC wall time in that span below 15% idle (16 launches per arm): the fix's
+  four largest totals were 154, 162, 169 and 344 ms, against maxima of
+  134 ms (dev) and 139 (revert). All four exceed every dev and revert value
+  in that bucket (about a 1% chance if the arms did not differ, by
+  permutation). Paired, fix minus dev was +64 to +268 ms in 5 of 36 blocks,
+  four of them at 0% idle. TASK-33620.15.60 takes this tail, not the
+  median, as its acceptance test.
 - Generation-2 passes on the UI loop in that span: two or more in 12 fix,
   14 dev and 15 revert launches, and 553, 516 and 572 ms of CPU in all. With
   the host at least 15% idle (20 launches per arm), the median total was
@@ -509,6 +517,11 @@ blocks of one launch per arm, 8 per cell, and the host was below 15% idle for
   completion: medians of 31 ms (dev), 42 (fix) and 72 (revert). Paired,
   dev minus revert was -41 ms (dev faster in 8 of 8), fix minus revert -29
   (fix faster in 6 of 8), and fix minus dev +18 (fix slower in 6 of 8).
+  Two fix keys took 78 and 112 ms against a dev maximum of 45. In both,
+  the closing re-freeze (5.0 and 6.3 ms) had ended 14.9 and 41.2 ms before
+  the key; the delay was a 20 ms Console poll timer in one and a late
+  insert in the other. With 8 per cell, "keeps #3336's wins" holds only to
+  this resolution on a loaded host.
 - Follow-up round n1 (16 dev/fix pairs, 12 with both launches at least 15%
   idle) put fix minus dev at +0.1 ms (fix slower in 8 of 16; medians 12.8 and
   13.2 ms). In all 24 fix launches, the closing re-freeze ended 0.2-41 ms
@@ -561,8 +574,9 @@ The owner plans to move from 3.12 to 3.13 and then 3.14. Checked against the 3.1
   `refreeze_now` (runs with a compaction owed and leaves it owed, never
   walks, books what it froze before the first look as growth, satisfies a
   pending request, freezes nothing while another collection runs, off under
-  pytest) and, with the real collector, that live foreground objects it
-  freezes make a compaction due where a boot point's would not.
+  pytest by the default gate unless `TLDW_IDLE_HEAP_REFREEZE` overrides)
+  and, with the real collector, that live foreground objects it freezes
+  make a compaction due where a boot point's would not.
   `test_console_idle_heap_refreeze.py` pins the hold while either
   pre-import thread runs and the completion's re-freeze, fallback request
   and stranded request. `test_console_first_send_preimport.py` runs the real
