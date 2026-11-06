@@ -366,7 +366,8 @@ DREAMS_BOUNDARY_TARGETS = (
     # PR runs (2026-11-03), this one median 6.2 / max 7.2 of its 20.
     "Tests/Chat/test_local_server_discovery.py",
     # TASK-38717: its two sibling suites from TASK-34100.6, sandboxed too;
-    # ~9 s and ~44 s serial (3 of 3 each, load 43-59 on 18 CPUs).
+    # ~9 s and ~44 s serial (3 of 3 each, load 43-59 on 18 CPUs). TASK-38965:
+    # the TLS file's 30 s handler sleep is gone, 10.2-10.6 s (load 23-25).
     "Tests/Chat/test_local_server_discovery_engines.py",
     "Tests/Chat/test_provider_tls_failures.py",
     # TASK-38747: every modal that guards its own close has a Ctrl+Q decision

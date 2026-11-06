@@ -240,10 +240,17 @@ async def _serve(handler, *, tls: ssl.SSLContext | None = None):
 
 
 async def _never_answer(reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
+    """Read what arrives and never answer, until the client hangs up.
+
+    TASK-38965: it slept 30 s after its first read, and leaving ``async with
+    server`` waits for every handler, so the handshake-stall case took 32 s.
+    The 30 s ceiling is only a backstop for a client that never hangs up.
+    """
     try:
-        await reader.read(65536)
-        await asyncio.sleep(30)
-    except (asyncio.CancelledError, ConnectionError):
+        async with asyncio.timeout(30):
+            while await reader.read(65536):
+                pass
+    except (asyncio.CancelledError, OSError):  # OSError: a reset, TLS or timeout
         pass
     finally:
         writer.close()
