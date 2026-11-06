@@ -359,6 +359,12 @@ FAST_LANE_TARGETS = (
     # ConsoleAgentBridge( passes a light-surface reader, so no new builder
     # can hand plain chat the full agent surface again (pure AST, <1 s).
     "Tests/Architecture/test_console_agent_bridge_light_surface_wiring.py",
+    # TASK-34100.5.3.2: the one-time Full agent tools upgrade -- the decision
+    # over real tmp WorkspaceDB/AgentRunsDB files and a real config.toml
+    # (about 20 s), and the app's boot worker running it on a seeded
+    # private profile (two private-profile boots, about 50 s).
+    "Tests/Agents/test_full_agent_tools_upgrade.py",
+    "Tests/App/test_full_agent_tools_upgrade_boot.py",
     # TASK-42137 (2026-11-21): the revert and commit engines' run-active
     # refusal copy, on no lane before (real git; 11 tests in 31.3 s and 20 in
     # 9.6 s serially with this step's flags at load 46-49).

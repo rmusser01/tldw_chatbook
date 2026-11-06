@@ -514,6 +514,8 @@ jobs:
             Tests/Chat/test_provider_usage.py \
             Tests/Chat/test_trajectory_projection.py \
             Tests/Architecture/test_console_agent_bridge_light_surface_wiring.py \
+            Tests/Agents/test_full_agent_tools_upgrade.py \
+            Tests/App/test_full_agent_tools_upgrade_boot.py \
             Tests/Workspaces/test_change_revert.py \
             Tests/Workspaces/test_git_workspace_commit.py \
             --timeout=180 \
