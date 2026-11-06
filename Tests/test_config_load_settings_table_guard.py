@@ -710,7 +710,16 @@ def test_propagation_follows_imports_not_names():
 # Review round 1: a section includes its leading comment lines and inner blank
 # lines (house style), and the generated block's header no longer names a file.
 # TASK-42482: a commented moved-HOME Keychain opt-in line under auth_source.
-_TEMPLATE_SHA256 = "0758e29c359c37ba64f0c12ca02020db2f943a5c8b4b9e5306b56941bca6a2cc"
+# TASK-34100.13 (2026-11-05, rebase onto 29592ecc9b): the [embedding_config.models]
+# table made well-formed (AC#6: quoted bge keys, the two sample rows commented
+# out, 3-small 1536 / 3-large 3072, no api_key placeholder) -- re-pinned on purpose.
+# TASK-34100.13 (2026-11-12, rebase onto dev 4b90eb860b): re-measured over dev's
+# TASK-39147 workflow settings plus the AC#6 table above.
+# TASK-34100.13 (2026-11-19, rebase onto dev a6df4d8d48): re-measured over dev's
+# TASK-41145 MLX-LM host/port plus the AC#6 table above.
+# TASK-34100.13 (2026-11-23, port round 24 onto dev b31e3e9241 + #3519): re-measured
+# over dev's TASK-42002/42153/36946.3/42482 lines above plus the AC#6 table.
+_TEMPLATE_SHA256 = "53e6e5dbe007a99ac794fc1681e8e55efeff6f2fb7d3f9251ff5a606d10d7c90"
 _TEMPLATE_RELATIVE = "tldw_chatbook/Config_Files/default_config.toml"
 
 
