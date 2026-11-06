@@ -1906,7 +1906,7 @@ it`. The skill editor had the same shape since task-424: the old
 open skill from the Skills filter (`Ctrl+S on Input(id='library-skills-filter')
 saved the skill open beside it`).
 
-- A key that must act only where the user is (ADR-031 rule (d)) needs a FOCUS
+- A key that must act only where the user is (ADR-299 rule (d)) needs a FOCUS
   test — an id on an ancestor of `screen.focused`
   (`LibraryScreen._library_focus_within("library-note-work-pane")`, the
   `_library_note_work_pane_owns_tab` idiom) — on top of any view flag.

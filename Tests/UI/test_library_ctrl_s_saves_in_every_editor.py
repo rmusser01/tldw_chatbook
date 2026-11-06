@@ -3,7 +3,7 @@
 The 2026-10-02 review found four save models on one screen: Ctrl+S saved a
 skill, and did nothing in a note (the status sat on "Unsaved changes" until the
 2 s autosave), a prompt or a Folder files document. The owner ruled
-(ADR-031 refinement 2026-10-03; settled 2026-10-27): Ctrl+S performs the
+(ADR-299 refinement 2026-10-03; settled 2026-10-27): Ctrl+S performs the
 focused editor's visible commit, flushes an autosaving editor at once, says
 why at the editor when it refuses, and is unbound outside an editor.
 

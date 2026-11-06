@@ -169,7 +169,7 @@ LIBRARY_NOTES_SORT_FILTERED_TOOLTIP = (
 #: drift out of alignment.
 LIBRARY_ACTION_LABEL_PAD = " " * (cell_len(LIBRARY_DISABLED_ACTION_MARKER) + 1)
 
-#: TASK-34000.40 (N-33): Ctrl+S saves in every Library editor (ADR-031
+#: TASK-34000.40 (N-33): Ctrl+S saves in every Library editor (ADR-299
 #: refinement 2026-10-03). Controller ruling T9-g (2026-10-27): ONE sentence
 #: for "nothing unsaved" -- the note Save button's answer, which the notes
 #: session coordinator gives for a clean explicit save -- said by every

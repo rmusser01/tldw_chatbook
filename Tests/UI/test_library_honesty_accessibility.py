@@ -660,7 +660,7 @@ def _ctrl_s_fake(target, *, refusal="", pending=True, compact=False, prompt_id=7
 
 
 def test_ctrl_s_chip_appears_in_every_editor_tier_and_nowhere_else():
-    """TASK-34000.40 (N-33), ADR-031 rule (e): ONE chip seam for six editors.
+    """TASK-34000.40 (N-33), ADR-299 rule (e): ONE chip seam for six editors.
 
     Rewritten 2026-10-27 from ``test_notes_ctrl_s_is_absent_from_binding_
     footer_and_f1_while_skill_keeps_it``, which pinned the split the owner
