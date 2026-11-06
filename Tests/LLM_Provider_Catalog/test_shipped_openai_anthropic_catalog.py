@@ -9,6 +9,13 @@ send. The replacements are ids the providers' own model lists returned on
 2026-10-04 (``chat-latest`` is OpenAI's rolling alias for the ChatGPT chat
 model).
 
+On 2026-11-05 the same smoke found four more OpenAI ids retired (HTTP 404
+'has been deprecated'): ``o4-mini-2025-04-16``, ``o3-mini-2025-01-31``,
+``o1-2024-12-17`` and ``gpt-4.1-nano-2025-04-14`` (review IV-1). They are
+replaced by dated snapshots OpenAI's own model list returned that day, each
+answering the smoke's 1-output-token call, and their capability rows go with
+them.
+
 These tests pin the offline half; the smoke script is the live half. A
 value the user set in their own config is never rewritten: only the shipped
 template and the code catalog change.
@@ -19,10 +26,20 @@ from __future__ import annotations
 import pytest
 
 from tldw_chatbook.config import API_MODELS_BY_PROVIDER, DEFAULT_CONFIG_FROM_TOML
+from tldw_chatbook.model_capabilities import DEFAULT_MODEL_CAPABILITIES
 
-#: Measured 2026-10-04 with real keys: HTTP 404 on a 1-output-token call.
+#: Measured with real keys: HTTP 404 on a 1-output-token call (2026-10-04,
+#: and the four dated OpenAI ids on 2026-11-05).
 RETIRED_IDS = {
-    "OpenAI": frozenset({"chatgpt-4o-latest"}),
+    "OpenAI": frozenset(
+        {
+            "chatgpt-4o-latest",
+            "o4-mini-2025-04-16",
+            "o3-mini-2025-01-31",
+            "o1-2024-12-17",
+            "gpt-4.1-nano-2025-04-14",
+        }
+    ),
     "Anthropic": frozenset(
         {
             "claude-opus-4-20250514",
@@ -60,3 +77,11 @@ def test_the_shipped_default_model_is_in_the_catalog_and_not_retired(
 
     assert default not in RETIRED_IDS[provider]
     assert default in DEFAULT_CONFIG_FROM_TOML["providers"][provider]
+
+
+def test_no_openai_capability_row_names_a_retired_id() -> None:
+    """IV-1: OpenAI's capability rows mirror its shipped catalog, so a retired
+    id's row goes with it (a user's own config may still name it; its send
+    then reads 'model not found', which no capability row changes). The
+    claude-3 rows predate this task and are not the catalog's mirror."""
+    assert sorted(RETIRED_IDS["OpenAI"].intersection(DEFAULT_MODEL_CAPABILITIES)) == []
