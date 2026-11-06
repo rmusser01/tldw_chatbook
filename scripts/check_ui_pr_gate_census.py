@@ -1003,6 +1003,9 @@ MINIMUM_FILES = 2038
 # folder-availability re-read pin join them, then the full-sync reuse, the
 # workspace state builder reuse and the view key pins. The floor is the
 # entry count.
+# workspace state builder reuse, the view key and the cached label read
+# pins. The floor is the entry count.
+MINIMUM_FILES = 2042
 MINIMUM_FILES = 2041
 
 # TASK-34601.1 (2026-11-11): feedback handoff, Stop and actual image-reader
@@ -1013,6 +1016,7 @@ MINIMUM_FILES = 2034
 
 
 MINIMUM_FILES = 2041
+MINIMUM_FILES = 2047
 def read_census(path: Path) -> list[str]:
     """Read the census, dropping comments and blank lines.
 

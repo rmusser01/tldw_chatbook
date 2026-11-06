@@ -489,7 +489,13 @@ class _ConsoleRegistryDisplayReads:
         """
         if not self._cacheable():
             return None
-        return (id(self), self._generation, self._revision, self.stale_reader is not None)
+        # The view itself, not its id: a key held past a registry swap keeps
+        # its view alive, so a new view can never inherit its identity.
+        return (self, self._generation, self._revision, self.stale_reader is not None)
+
+    def serves_cached(self, key: tuple) -> bool:
+        """Whether ``key``'s read returns its cached value for this generation."""
+        return self._cacheable() and key in self._cache
 
     def _read(self, key: tuple, method_name: str, *args: Any) -> Any:
         cacheable = self._cacheable()
@@ -611,7 +617,7 @@ class ConsoleTickWorkspaceBuilds:
 
     __slots__ = (
         "_controller", "_task", "_fingerprint", "_state", "_building", "_stale_reads",
-        "_serial", "_carries", "_label",
+        "_serial", "_carries",
     )
 
     def __init__(
@@ -623,7 +629,6 @@ class ConsoleTickWorkspaceBuilds:
         # TASK-36571.1: the run tick's number (None: never carried) and
         # whether this tick may reuse its predecessor's build.
         self._serial, self._carries = serial, carries
-        self._label: tuple | None = None  # (view display key, label)
         try:
             self._task = asyncio.current_task()
         except RuntimeError:
@@ -685,19 +690,16 @@ class ConsoleTickWorkspaceBuilds:
     def workspace_label(self) -> str:
         """The build's label: one display read under this build's read rule (TASK-36571.1).
 
-        Read again only when the view's reads moved since this tick's last one.
+        A read the view already caches returns the same value under either
+        rule, so only a miss enters the build's stale-read context.
         """
         controller = self._controller
         view = controller._console_registry_reads_view()
-        key = view.display_key() if view is not None else None
-        if key is not None and self._label is not None and self._label[0] == key:
-            return self._label[1]
+        if view is None or view.serves_cached(("active",)):
+            return console_workspace_label(view)
         reads = controller._stale_display_reads() if self._stale_reads else nullcontext()
         with reads:
-            label = console_workspace_label(view)
-        if view is not None and (key := view.display_key()) is not None:
-            self._label = (key, label)
-        return label
+            return console_workspace_label(view)
 
 
 def _availability_methods_current(owner, originals):
