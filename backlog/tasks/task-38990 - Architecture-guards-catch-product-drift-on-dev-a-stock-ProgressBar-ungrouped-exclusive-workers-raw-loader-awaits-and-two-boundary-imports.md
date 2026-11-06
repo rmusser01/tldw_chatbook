@@ -5,7 +5,7 @@ status: Done
 assignee:
 - '@claude'
 created_date: 2026-11-06 01:42
-updated_date: 2026-11-06 04:44
+updated_date: 2026-11-06 08:53
 labels:
 - follow-up
 - ui
@@ -119,4 +119,12 @@ Files:
   - `test_actor_pack_boundary.py`
   - `test_persona_visual_runtime_boundary.py`
   - `Tests/Watchlists/test_watchlists_artifacts_refresh_states.py`
+
+**Review r10a-rev1 fixes.**
+- **The exemption exempted too much.** `_exclusive_helper_scopes` exempted every nested body of a helper that had *any* exclusive, literal-group `run_worker`. Now it exempts only the body that such a call names as its first argument (`_load`, or `refresh()`). It also requires the helper to schedule into exactly one literal group. Two new cases in `test_raw_loader_in_an_ungrouped_or_uninventoried_body_is_flagged`, both red against the old exemption and green with the fix:
+  - a sibling `_bypass` body run with `self.run_worker(_bypass())`;
+  - the same sibling run in an `'unrelated'` group.
+  
+  Production's two helper bodies still pass: 23 passed.
+- **The coordinated failure banner had no test.** New `test_coordinated_failed_receipt_shows_the_generation_failed_state`: a failed coordinated receipt ends at `view_state == "failed"` with "Briefing generation failed. Last good content is still shown." after `_settle_briefings_load`. It passed 2 of 2 under a temporary `@private_profile_test` mark, since removed. It went red when the follower temporarily passed `generation_failed=False`.
 

@@ -636,6 +636,48 @@ async def test_coordinated_briefing_follow_releases_ui_when_receipt_stays_genera
 
 
 @pytest.mark.asyncio
+async def test_coordinated_failed_receipt_shows_the_generation_failed_state():
+    """TASK-38990 review: a failed coordinated receipt reaches the failure banner.
+
+    The coordinated follower hands `generation_failed` to the loader group's
+    refresh, which raises the banner after its own load lands.
+    """
+    app_instance = _build_test_app()
+    watchlist_id, briefing_id = _seed_complete_briefing(app_instance)
+    db = app_instance.watchlist_bundle_service.db
+    failed_id = db.insert_briefing(watchlist_id, status="failed")
+    host = ArtifactsScreenHarness(app_instance, "watchlists_collections")
+
+    class Coordinator:
+        async def accept_briefing(self, _watchlist_id, _preset_id):
+            return {"id": failed_id}
+
+    async with host.run_test(size=(220, 52)) as pilot:
+        screen = host.screen_stack[-1]
+        screen.tree_scope = TreeScope(kind="watchlist", watchlist_id=watchlist_id)
+        screen.active_section = "artifacts"
+        await pilot.pause()
+        await host.workers.wait_for_complete()
+        screen._selected_briefing = next(
+            row for row in screen._loaded_briefings if row["id"] == briefing_id
+        )
+        screen._apply_briefing_state_to_pane()
+        await pilot.pause()
+
+        await screen._follow_coordinated_briefing(
+            db, watchlist_id, None, Coordinator()
+        )
+        await _settle_briefings_load(host, pilot)
+
+        pane = screen.query_one("#watchlists-artifacts-pane", ArtifactsPane)
+        assert pane.view_state == "failed"
+        assert (
+            "Briefing generation failed. Last good content is still shown."
+            in str(pane.query_one("#artifacts-state-message", Static).render())
+        )
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("coordinated", [False, True])
 async def test_generation_completion_does_not_publish_into_a_new_watchlist_scope(
     monkeypatch,

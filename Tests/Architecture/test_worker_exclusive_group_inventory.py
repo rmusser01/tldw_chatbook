@@ -259,16 +259,18 @@ def _forbidden_inline_loader_awaits(
 def _exclusive_helper_scopes(
     tree: ast.Module, owners: dict[int, str], helpers: set[str]
 ) -> set[str]:
-    """Return the qualified names of helpers that ARE the loader-group dispatch.
+    """Return the qualified names of the worker bodies that ARE the dispatch.
 
     TASK-38990: a helper may wrap its loader in a nested worker body (to pass
     arguments, or to act after the load) and schedule that body with
-    ``self.run_worker(..., exclusive=True, group=<name>)``. The raw await in
-    that body runs inside the exclusive group, so it is the dispatch, not a
-    bypass. Only an inventoried helper whose own ``run_worker`` names a
-    literal group qualifies; the await must sit in a function nested in it.
+    ``self.run_worker(<body>, exclusive=True, group=<name>)``. The raw await
+    in that body runs inside the exclusive group, so it is the dispatch, not a
+    bypass. Only the body named by that call's first argument (``_load`` or
+    ``refresh()``) qualifies, and only in an inventoried helper that schedules
+    into exactly one literal group: a sibling body scheduled without the group,
+    or into another one, is still a bypass (review r10a-rev1).
     """
-    scopes: set[str] = set()
+    groups_by_helper: dict[str, dict[str, set[str]]] = {}
     for node in ast.walk(tree):
         if not isinstance(node, ast.Call) or _self_call_name(node) != "run_worker":
             continue
@@ -277,15 +279,26 @@ def _exclusive_helper_scopes(
             continue
         exclusive = _keyword(node, "exclusive")
         group = _keyword(node, "group")
+        body = node.args[0] if node.args else _keyword(node, "work")
+        if isinstance(body, ast.Call):
+            body = body.func
         if (
             isinstance(exclusive, ast.Constant)
             and exclusive.value is True
             and isinstance(group, ast.Constant)
             and isinstance(group.value, str)
             and group.value not in ("", "default")
+            and isinstance(body, ast.Name)
         ):
-            scopes.add(owner)
-    return scopes
+            groups = groups_by_helper.setdefault(owner, {})
+            groups.setdefault(group.value, set()).add(body.id)
+    return {
+        f"{owner}.{name}"
+        for owner, groups in groups_by_helper.items()
+        if len(groups) == 1
+        for names in groups.values()
+        for name in names
+    }
 
 
 def _mutation_refresh_violations_in_tree(
@@ -310,7 +323,9 @@ def _mutation_refresh_violations_in_tree(
 
     for lineno, loader in _forbidden_inline_loader_awaits(tree, forbidden_loaders):
         owner = owners.get(lineno, "<module>")
-        if any(owner.startswith(scope + ".") for scope in dispatch_scopes):
+        if any(
+            owner == scope or owner.startswith(scope + ".") for scope in dispatch_scopes
+        ):
             continue
         issues.setdefault(owner, []).append(
             f"await self.{loader}(...) is forbidden; dispatch through "
@@ -916,3 +931,30 @@ def test_raw_loader_in_an_ungrouped_or_uninventoried_body_is_flagged() -> None:
         assert "await self.load_tasks(...) is forbidden" in violations.get(
             f"ScratchScreen.{helper}._load", ""
         ), (helper, schedule)
+
+    # Review r10a-rev1: a properly grouped body exempts only itself, never a
+    # sibling scheduled without the group or into an unrelated one.
+    for sibling_schedule in (
+        "self.run_worker(_bypass())",
+        "self.run_worker(_bypass(), exclusive=True, group='unrelated')",
+    ):
+        tree = ast.parse(
+            "class ScratchScreen:\n"
+            "    def _request_tasks_refresh(self):\n"
+            "        async def _load():\n"
+            "            await self.load_tasks()\n"
+            "        self.run_worker(_load, exclusive=True, group='scratch-load')\n"
+            "        async def _bypass():\n"
+            "            await self.load_tasks()\n"
+            f"        {sibling_schedule}\n"
+        )
+
+        violations = _mutation_refresh_violations_in_tree(
+            tree,
+            forbidden_loaders={"load_tasks"},
+            owner_helpers={"ScratchScreen._mutate": "_request_tasks_refresh"},
+        )
+
+        assert "await self.load_tasks(...) is forbidden" in violations.get(
+            "ScratchScreen._request_tasks_refresh._bypass", ""
+        ), sibling_schedule
