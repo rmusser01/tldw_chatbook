@@ -30,6 +30,12 @@ Bypassing the claim's own check therefore turned nothing red. Second, a sequenti
 
 **What to do.** In a mounted test, call `await ConsoleReadinessConfigProjection.for_screen(console).warm()` until it returns True before you hand-call the poll, or any sync that renders through the checked display. Then read the painted state straight after the call, before any pause. A pause lets a queued repaint, such as the attach reconcile's, paint the state for the call you meant to test.
 
+## Counting syncs at the projection reads a refused or replayed sync as held (TASK-38960, 2026-11-06)
+
+**Incident.** The durable-commit hold tests counted calls to `project_console_tick`. Run serially at load 44-90, one run in 10 failed with "the commit held a second time" (`3 == 4`). A probe that logged every `begin_console_sync` verdict showed that the hold had admitted that sync. The tick before it had run `sync_console_core_state` while config was cold, and that set `_console_control_bar_replay_whole_sync`. The next explicit sync returned at that flag, before the projection, so the test read it as held. A refused `prepare_console_presentation_sync` takes the same path. Forcing one refusal inside the commit window reproduced both filed failures exactly (`1 == 2`, and `0 == 1` in the no-poll test).
+
+**What to do.** Count at the decision the test pins: here, the hold's own verdict (`begin_console_sync` not held, in the test's task). Before opening the window, wait until no whole-sync replay is pending. A replay runs in another task and can take the commit's first sync.
+
 ## A privacy pin that forbids a small id looks self-contradictory; check the id seed and the stored case first (TASK-38756, 2026-11-05)
 
 **Incident.** Two Prompts DB privacy pins forbid `str(second_id)` in a log that must contain `count=2`, and the filed task called them self-contradictory: `second_id` was 2. The tests meant to seed ids 71,234,567 and 81,234,567 by INSERTing a `sqlite_sequence` row. The v5->v6 mix-in migration (7970fbcada) rebuilds `Prompts` and keeps its sequence, so a fresh database already has a `('Prompts', 0)` row; SQLite reads the first row and ignored the test's second, and the ids fell back to 1 and 2. Dropping the id check, the obvious "fix", would have weakened a privacy pin. The negative controls then found a second hole: stored keywords are lower-cased, so `"PRIVATE KEYWORD"` never matched a leaked keyword (2 passed with the keyword logged).
