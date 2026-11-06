@@ -2380,10 +2380,14 @@ def build_summary_rows(
     ):
         # TASK-34100.13 (voice-speech-15): the Speech step's cloud choice,
         # or a Whisper server of the user's own (named by host, review R1).
+        # Review LV1-F1: OpenAI's endpoint with no key to send is no tick.
+        keyless = engines.saved_openai_whisper_lacks_key(
+            _section(app_config, "transcription"), app_config, environ
+        )
         speech_row = SummaryRow(
             "Speech transcription",
-            ROW_CONFIGURED,
-            engines.remote_whisper_summary(remote),
+            ROW_ATTENTION if keyless else ROW_CONFIGURED,
+            engines.CLOUD_NO_KEY_SUMMARY if keyless else engines.remote_whisper_summary(remote),
         )
     elif not speech_configured and speech_prefill.provider_id in installed_stt:
         # An engine already installed here (the template's platform pick, or

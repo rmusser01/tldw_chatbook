@@ -377,7 +377,10 @@ provider is set to use no key, or names a variable that isn't set; live
 dictation in the Console stays on this computer. If audio files already go to a
 Whisper server of your own, **No dictation for now** is chosen and says it
 keeps that server; choosing Cloud instead points it at OpenAI and clears that
-server's own key so it is never sent to OpenAI. Under Parakeet the
+server's own key so it is never sent to OpenAI. If audio files are set to go to
+OpenAI Whisper but no OpenAI key is available, **No dictation for now** says
+so and points to Settings ▸ Providers & Models, and the Summary's Speech row is
+marked for attention instead of ticked. Under Parakeet the
 step reads choice first, then action: a "Recommended:" card with the download
 size, a Language list, **Review and install…**, and an **Advanced** section
 with precision, "Use model from disk…" and the transcribe.cpp GGUF option.
