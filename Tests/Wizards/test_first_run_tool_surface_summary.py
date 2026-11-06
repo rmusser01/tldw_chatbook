@@ -170,3 +170,98 @@ def test_review_rerun_intro_respects_prefilled_enabled_switches(gate):
     posture = tools_step_posture(summarize_tool_surface(config))
     assert "Everything below is off" not in posture
     assert "switches" in posture.lower()
+
+
+def _tools_step_over(app_config):
+    """A Tools step over one real, mutable ``app_config`` dict."""
+    from unittest.mock import AsyncMock, MagicMock
+
+    from tldw_chatbook.UI.Wizards.BaseWizard import WizardStepConfig
+    from tldw_chatbook.UI.Wizards.FirstRunSetupWizard import ToolsStep
+
+    wizard = SimpleNamespace(
+        app_instance=MagicMock(app_config=app_config),
+        commit_config=AsyncMock(return_value=True),
+        rerun=False,
+    )
+    step = ToolsStep(
+        wizard=wizard,
+        config=WizardStepConfig(id="tools", title="Tools", step_number=5),
+    )
+    return wizard, step
+
+
+@pytest.mark.asyncio
+async def test_the_tools_step_shows_and_keeps_the_full_agent_tools_upgrade():
+    """TASK-34100.5.3.2 review round 1 (F2-3), deterministic, not a race.
+
+    The wizard composes every step when it mounts, and the app pushes it
+    before ``_ui_ready``; the one-time Full agent tools upgrade is a
+    staggered boot worker that runs after. So on an upgraded profile whose
+    setup is incomplete, the Tools step composed its switch OFF, the upgrade
+    then mirrored ``full_agent_tools_enabled = true`` into ``app_config``,
+    and the step's commit -- comparing the stale OFF switch with the live
+    ON value -- wrote ``false``, undoing the upgrade for good.
+    """
+    from textual.widgets import Switch
+
+    from Tests.Wizards.test_first_run_setup_wizard import _StepHost
+    from tldw_chatbook.Agents.full_agent_tools_upgrade import _mirror_into_app_config
+
+    app_config: dict = {}
+    wizard, step = _tools_step_over(app_config)
+    async with _StepHost(step).run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        switch = step.query_one("#setup-tool-full_agent_tools", Switch)
+        assert switch.value is False  # composed before the upgrade landed
+
+        _mirror_into_app_config(app_config)  # the upgrade's UI-thread mirror
+        step.on_show()  # BaseWizard.show_step, when the user reaches Tools
+        await pilot.pause()
+
+        assert switch.value is True, "the Tools step must show the upgrade"
+        ok, _ = await step.commit()
+        assert ok
+        wizard.commit_config.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_an_upgrade_landing_while_the_tools_step_is_open_is_never_undone():
+    from Tests.Wizards.test_first_run_setup_wizard import _StepHost
+    from tldw_chatbook.Agents.full_agent_tools_upgrade import _mirror_into_app_config
+
+    app_config: dict = {}
+    wizard, step = _tools_step_over(app_config)
+    async with _StepHost(step).run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        step.on_show()
+        _mirror_into_app_config(app_config)  # lands after the step was shown
+
+        ok, _ = await step.commit()  # the user never touched the switch
+
+        assert ok
+        wizard.commit_config.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_turning_the_upgraded_switch_off_in_setup_writes_false():
+    from textual.widgets import Switch
+
+    from Tests.Wizards.test_first_run_setup_wizard import _StepHost
+    from tldw_chatbook.Agents.full_agent_tools_upgrade import _mirror_into_app_config
+
+    app_config: dict = {}
+    wizard, step = _tools_step_over(app_config)
+    async with _StepHost(step).run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        _mirror_into_app_config(app_config)
+        step.on_show()
+        switch = step.query_one("#setup-tool-full_agent_tools", Switch)
+        assert switch.value is True
+        switch.value = False  # the user's own choice
+
+        ok, _ = await step.commit()
+
+        assert ok
+        committed = wizard.commit_config.call_args.args[0]
+        assert committed == {"tools": {"full_agent_tools_enabled": False}}
