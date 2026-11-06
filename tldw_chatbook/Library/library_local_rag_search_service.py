@@ -1211,11 +1211,18 @@ class LibraryLocalRagSearchService:
         }
         if not candidates:
             return rows, ()
-        service = getattr(self._app, "notes_scope_service", None)
+        app = self._app
+        try:
+            service = app.notes_scope_service
+        except AttributeError:
+            service = None
         lookup = getattr(service, "live_local_note_ids", None)
         if not callable(lookup):
             return rows, ()
-        user_id = getattr(self._app, "notes_user_id", None) or "default_user"
+        try:
+            user_id = app.notes_user_id or "default_user"
+        except AttributeError:
+            user_id = "default_user"
         route_notes: tuple[str, ...] = ()
         try:
             live = set(await lookup(sorted(candidates), user_id=user_id))
