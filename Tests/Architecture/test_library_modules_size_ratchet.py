@@ -751,6 +751,12 @@ _BUDGETS: dict[str, int] = {
     # waits…" otherwise: 8917 -> 8923 (measured).
     # 2026-11-05, rebased onto dev 29592ecc9b: 7423 -> 8952 (polish-1b's
     # own +1529; same owner decision: expand limits, don't contort code).
+    # 2026-11-05, PR #3423 review fixes (same owner decision: expand limits,
+    # don't contort code): the purge and its kept-file read resolve lasting
+    # sync with _prepare_runtime (I-1), the bulk keyword worker goes through
+    # the scope service (I-2), the transfer focus return yields to the
+    # user's move (m-3), and twelve app lookups become attribute reads
+    # (m-1): 8952 -> 9037 (measured).
     "tldw_chatbook/UI/Library_Modules/library_notes_controller.py": 7425,
     # See the dev-side-controller note above the character-repair row. Dev
     # landed this file at 195 lines; the +3 is this merge's own port -- the

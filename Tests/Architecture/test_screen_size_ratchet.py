@@ -1435,6 +1435,10 @@ _BUDGETS: dict[str, tuple[str, int, int]] = {
     #: 2026-11-05, rebased onto dev 29592ecc9b: 38177 -> 38894 lines,
     #: 1373 -> 1400 methods (polish-1b's own +717 lines, +27 methods;
     #: same owner decision: expand limits, don't contort code).
+    #: 2026-11-05, PR #3423 review m-6 (same owner decision: expand limits,
+    #: don't contort code): Ctrl+S on a plugin-owned skill answers the
+    #: read-only refusal: 38894 -> 38901 lines, 1400 methods (measured with
+    #: ``_measure``).
     "tldw_chatbook/UI/Screens/library_screen.py": ("LibraryScreen", 38164, 1376),
 }
 
