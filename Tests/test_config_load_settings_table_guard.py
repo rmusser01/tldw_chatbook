@@ -723,7 +723,18 @@ def test_propagation_follows_imports_not_names():
 # TASK-41145 MLX-LM host/port plus the AC#6 table above.
 # TASK-34100.13 (2026-11-23, port round 24 onto dev b31e3e9241 + #3519): re-measured
 # over dev's TASK-42002/42153/36946.3/42482 lines above plus the AC#6 table.
-_TEMPLATE_SHA256 = "53e6e5dbe007a99ac794fc1681e8e55efeff6f2fb7d3f9251ff5a606d10d7c90"
+# TASK-34100.2 (2026-11-05, rebased onto dev 29592ecc9b; again 2026-11-12 onto
+# dev 4b90eb860b, over TASK-39147's workflow settings; again 2026-11-19 onto
+# dev a6df4d8d48, over TASK-41145's MLX-LM host and port): re-pinned on purpose
+# for the template edits it carried in config.py's literal before the move --
+# the retired OpenAI/Anthropic/Google catalog ids and Google's model replaced
+# (AC#6, AC#17), the Gemini rolling-alias vision row, `template_sample = true`
+# on the placeholder local sections (AC#9) and `streaming = true` on Custom /
+# Custom 2 (AC#10).
+# Port of PR #3517 (round 24, 2026-11-23, onto dev b31e3e9241): re-measured on
+# this base, over dev's schema version 3, engine-preset placeholder and
+# TASK-42482 opt-in line, from the test's failure output.
+_TEMPLATE_SHA256 = "e623bcfb26d67b7701ff57d29622107dae8e2a6ad06a1a70aa430db5c76d257c"
 _TEMPLATE_RELATIVE = "tldw_chatbook/Config_Files/default_config.toml"
 
 
