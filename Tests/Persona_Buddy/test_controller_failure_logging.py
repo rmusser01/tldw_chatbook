@@ -319,3 +319,90 @@ def test_bounded_exception_type_returns_only_a_class_name():
     odd = type("not a / class name", (Exception,), {})
     assert _bounded_exception_type(odd()) == "Exception"
 
+
+#: TASK-38989 review r10a-rev5: a package-wide tripwire. The 7-site census above
+#: sees only direct ``bind``/``contextualize`` calls, so an alias (``b =
+#: logger.bind``), ``functools.partial``, ``logger.configure(extra=...)``,
+#: ``logger.patch`` or a ``**`` dict built in another module would slip past
+#: it. Every ``exception_type`` keyword and every ``"exception_type"`` string
+#: in the package is therefore a reviewed row: (count, why it is not an
+#: unreviewed loguru ``extra`` value). A new occurrence fails until reviewed.
+EXCEPTION_TYPE_TOKEN_ROWS: dict[tuple[str, str, str], tuple[int, str]] = {
+    ("tldw_chatbook/Audio/voice_phrase_sequencer.py", "PhraseSpeechSequencer._drain_phrases", "string"): (1, "structured metadata dict field, not loguru extra"),
+    ("tldw_chatbook/Audio/voice_process_core.py", "ConsoleSpeculativeVoiceSession._fail_transport.preserve_and_report", "keyword"): (1, "persistent-diagnostics event/metadata keyword, not loguru extra"),
+    ("tldw_chatbook/Audio/voice_transcription.py", "_stt_failure_metadata", "string"): (2, "structured metadata dict field, not loguru extra"),
+    ("tldw_chatbook/Chat/console_send_diagnostics.py", "record_send_stage", "string"): (1, "structured metadata dict field, not loguru extra"),
+    ("tldw_chatbook/Chat/console_speculative_voice_session.py", "SpeculativeVoiceAttemptEffects._on_provider_failed", "keyword"): (1, "persistent-diagnostics event/metadata keyword, not loguru extra"),
+    ("tldw_chatbook/Chat/console_speculative_voice_session.py", "SpeculativeVoiceAttemptEffects._on_tts_failed", "keyword"): (1, "persistent-diagnostics event/metadata keyword, not loguru extra"),
+    ("tldw_chatbook/Chat/console_speculative_voice_session.py", "SpeculativeVoiceAttemptEffects._prepare", "keyword"): (1, "persistent-diagnostics event/metadata keyword, not loguru extra"),
+    ("tldw_chatbook/Chat/console_speculative_voice_session.py", "create_console_speculative_voice_session.preserve_original_draft", "keyword"): (1, "persistent-diagnostics event/metadata keyword, not loguru extra"),
+    ("tldw_chatbook/Chat/console_voice_process.py", "ConsoleVoiceProcess._deliver_recovery", "keyword"): (1, "draft-preservation argument, not loguru extra"),
+    ("tldw_chatbook/Local_Ingestion/ingest_parse_worker.py", "run_parse_job", "string"): (1, "ingest error detail field, not loguru extra"),
+    ("tldw_chatbook/Logging_Config.py", "_with_bound_exception_type", "string"): (1, "the forwarder's own reader of the bound key"),
+    ("tldw_chatbook/MCP/execution_log.py", "MCPExecutionLog._metadata_only_payload", "string"): (3, "structured metadata dict field, not loguru extra"),
+    ("tldw_chatbook/MCP/execution_log.py", "build_record", "keyword"): (1, "MCP execution record field, not loguru extra"),
+    ("tldw_chatbook/MCP/tools.py", "MCPTools._write_character", "keyword"): (1, "persistent-diagnostics event/metadata keyword, not loguru extra"),
+    ("tldw_chatbook/MCP/unified_control_plane_service.py", "UnifiedMCPControlPlaneService._record_bridge_failure.publish", "keyword"): (1, "MCP execution record field, not loguru extra"),
+    ("tldw_chatbook/MCP/unified_control_plane_service.py", "UnifiedMCPControlPlaneService._record_local_hub_outcome", "keyword"): (1, "MCP execution record field, not loguru extra"),
+    ("tldw_chatbook/MCP/unified_control_plane_service.py", "UnifiedMCPControlPlaneService._record_tool_execution", "keyword"): (1, "MCP execution record field, not loguru extra"),
+    ("tldw_chatbook/MCP/unified_control_plane_service.py", "UnifiedMCPControlPlaneService.execute_hub_tool", "keyword"): (5, "MCP execution record field, not loguru extra"),
+    ("tldw_chatbook/Persona_Buddy/controller.py", "PersonaBuddyController._current_reduced_motion", "keyword"): (1, "loguru bind; also held to a class name by the 7-site census above"),
+    ("tldw_chatbook/Persona_Buddy/controller.py", "PersonaBuddyController._read_graph", "keyword"): (1, "loguru bind; also held to a class name by the 7-site census above"),
+    ("tldw_chatbook/Persona_Buddy/controller.py", "PersonaBuddyController._read_local_buddy", "keyword"): (1, "loguru bind; also held to a class name by the 7-site census above"),
+    ("tldw_chatbook/Persona_Buddy/controller.py", "PersonaBuddyController._read_local_persona", "keyword"): (1, "loguru bind; also held to a class name by the 7-site census above"),
+    ("tldw_chatbook/Persona_Buddy/controller.py", "PersonaBuddyController._resolve_runtime", "keyword"): (1, "loguru bind; also held to a class name by the 7-site census above"),
+    ("tldw_chatbook/Persona_Buddy/controller.py", "load_local_persona_portrait", "keyword"): (1, "loguru bind; also held to a class name by the 7-site census above"),
+    ("tldw_chatbook/Persona_Buddy/preferences.py", "persist_persona_buddy_preferences", "keyword"): (1, "loguru bind; also held to a class name by the 7-site census above"),
+    ("tldw_chatbook/UI/Console_Modules/dictation.py", "ConsoleDictationController._notify_console_dictation_error", "keyword"): (1, "persistent-diagnostics event/metadata keyword, not loguru extra"),
+    ("tldw_chatbook/UI/Console_Modules/realtime.py", "ConsoleRealtimeController._console_realtime_connect_failed", "keyword"): (1, "persistent-diagnostics event/metadata keyword, not loguru extra"),
+    ("tldw_chatbook/UI/MCP_Modules/mcp_inspector.py", "audit_entry_detail_payload", "string"): (2, "MCP audit display field, not loguru extra"),
+    ("tldw_chatbook/UI/Wizards/first_run_step_guard.py", "_persist", "keyword"): (1, "persistent-diagnostics event/metadata keyword, not loguru extra"),
+    ("tldw_chatbook/Utils/persistent_diagnostics.py", "<module>", "string"): (1, "persistent-diagnostics allowed field name"),
+    ("tldw_chatbook/app_ingest_queue.py", "LibraryIngestQueueMixin._run_library_ingest_queue", "string"): (1, "ingest error detail field, not loguru extra"),
+    ("tldw_chatbook/app_lifecycle.py", "LifecycleMixin._handle_exception", "keyword"): (1, "persistent-diagnostics event/metadata keyword, not loguru extra"),
+    ("tldw_chatbook/app_lifecycle.py", "LifecycleMixin.on_worker_state_changed", "keyword"): (1, "persistent-diagnostics event/metadata keyword, not loguru extra"),
+}
+
+
+def _exception_type_tokens(package: Path) -> dict[tuple[str, str, str], int]:
+    """Count ``exception_type`` keywords and string constants per owner."""
+    counts: dict[tuple[str, str, str], int] = {}
+    for path in sorted(package.rglob("*.py")):
+        source = path.read_text(encoding="utf-8")
+        if "exception_type" not in source:
+            continue  # sound: both shapes spell the token literally
+        relative = path.relative_to(package.parent).as_posix()
+        _count_tokens(ast.parse(source), [], relative, counts)
+    return counts
+
+
+def _count_tokens(
+    node: ast.AST,
+    stack: list[str],
+    relative: str,
+    counts: dict[tuple[str, str, str], int],
+) -> None:
+    scoped = isinstance(node, (ast.ClassDef, ast.FunctionDef, ast.AsyncFunctionDef))
+    if scoped:
+        stack.append(node.name)
+    owner = ".".join(stack) or "<module>"
+    kind = None
+    if isinstance(node, ast.keyword) and node.arg == "exception_type":
+        kind = "keyword"
+    elif isinstance(node, ast.Constant) and node.value == "exception_type":
+        kind = "string"
+    if kind is not None:
+        key = (relative, owner, kind)
+        counts[key] = counts.get(key, 0) + 1
+    for child in ast.iter_child_nodes(node):
+        _count_tokens(child, stack, relative, counts)
+    if scoped:
+        stack.pop()
+
+
+def test_every_exception_type_token_in_the_package_is_reviewed():
+    """No alias, partial, configure, patch or cross-file ``**`` dict can bind
+    ``exception_type`` without a reviewed row (the forwarder renders it)."""
+    expected = {key: count for key, (count, _reason) in EXCEPTION_TYPE_TOKEN_ROWS.items()}
+    assert _exception_type_tokens(_PACKAGE) == expected
+
