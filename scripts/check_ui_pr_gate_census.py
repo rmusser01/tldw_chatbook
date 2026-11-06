@@ -799,6 +799,9 @@ MINIMUM_FILES = 1667
 # tests as node entries at the tail (the file runs 113-118 s serially).
 # The floor is the measured entry count.
 MINIMUM_FILES = 1682
+# TASK-38745 (2026-11-05): append the pending display-owner controls file at
+# the tail. The floor is the measured entry count.
+MINIMUM_FILES = 1683
 
 
 def read_census(path: Path) -> list[str]:

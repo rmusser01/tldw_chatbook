@@ -4,6 +4,7 @@ The existing held-original-reader test proves the cold count1/deny0 behavior.
 These post-candidate controls preserve its actual stock fixture and callbacks.
 """
 
+import time
 from dataclasses import replace
 
 import pytest
@@ -30,8 +31,16 @@ from tldw_chatbook.Widgets.Console.console_run_inspector import ConsoleRunInspec
 async def _prepared(app, pilot):
     console, controller, store, session_id = await original._seed_console(app, pilot)
     projection = spend.ConsoleReadinessConfigProjection.for_screen(console)
-    assert await projection.warm()
-    assert console._sync_console_rail_and_controls() is not False
+    # TASK-38745: warm() accepts a display up to its 1 s life, so the checked
+    # proof can expire mid-sync (or the storage-admission lock be busy) and
+    # the sync defers. Retry until one sync renders.
+    deadline = time.monotonic() + 30
+    while True:
+        assert await projection.warm()
+        if console._sync_console_rail_and_controls() is not False:
+            break
+        assert time.monotonic() < deadline, "the rail sync kept deferring"
+        await pilot.pause(0.05)
     await pilot.pause()
     inspector = console.query_one("#console-run-inspector-state", ConsoleRunInspector)
     owner = pending_display._console_pending_display_owner(console)

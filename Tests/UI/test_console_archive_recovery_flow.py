@@ -1641,6 +1641,10 @@ async def test_receipt_refresh_refusal_keeps_native_source_safe(
                 await wait_until(
                     rig.pilot, lambda: not any(rig.recovery._searches.values())
                 )
+                # TASK-38753: the awaited sync can defer before it reaches the
+                # archive-recovery view; wait for the view to show the new chat.
+                view = rig.console._archive_recovery_view()
+                await wait_until(rig.pilot, lambda: view._session_id == other.id)
             await rig.pilot.pause()
             assert rig.host.is_running
             if failure == "source_switch":

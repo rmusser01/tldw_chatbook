@@ -13,11 +13,13 @@ dies with the app (restart drops pendings, which is the accepted trade).
 import asyncio
 from io import BytesIO
 from types import SimpleNamespace
+import sys
 import threading
 import time
 
 import pytest
 from PIL import Image as PILImage
+from textual.css.query import NoMatches
 from textual.widgets import Button
 
 from Tests.private_profile import private_profile_test
@@ -120,7 +122,10 @@ def _patch_h3_enabled(monkeypatch) -> None:
 
 async def _wait_for_h3_state(pilot, predicate, *, detail: str) -> None:
     """Bounded event-loop polling for asynchronous Textual settlement."""
-    deadline = time.monotonic() + 2.0
+    # TASK-38752: late H3 settlements took up to 1.16 s (medians 0.83-0.91 s)
+    # at load 16-24, rising with load, against the old 2 s; it returns as soon
+    # as the predicate holds.
+    deadline = time.monotonic() + 10.0
     while time.monotonic() < deadline:
         if predicate():
             return
@@ -732,7 +737,9 @@ async def test_fresh_mounted_screen_settles_late_h3_outcome_in_dom_and_controls(
             old_generation = operation.generation
             saved_state = old.save_state()
 
-            await asyncio.wait_for(host.pop_screen(), timeout=0.5)
+            # The pop must not wait for the held edit (``release.wait(10)``);
+            # 0.5 s timed out at load ~30-36 in 2 of 30 runs (TASK-38752).
+            await asyncio.wait_for(host.pop_screen(), timeout=5.0)
 
             async def _stale_sync_tripwire():
                 raise AssertionError("unmounted screen UI sync")
@@ -747,25 +754,51 @@ async def test_fresh_mounted_screen_settles_late_h3_outcome_in_dom_and_controls(
             await fresh._sync_native_console_chat_ui()
             assert fresh._native_run_status_copy() == "Stopping image edit…"
             stop = fresh.query_one("#console-stop-generation", Button)
-            assert stop.styles.display != "none"
-            assert not stop.disabled
+            # TASK-38752: the sync above often returns at once (a sync already
+            # in flight, or the whole-sync replay pending), so a sync before or
+            # after it paints Stop. The held edit keeps Stop live for 10 s.
+            await _wait_for_h3_state(
+                pilot,
+                lambda: stop.styles.display != "none" and not stop.disabled,
+                detail="the adopted screen's Stop control",
+            )
 
             settlement_events: list[str] = []
             original_reconcile = fresh._image._reconcile_h3_image_edit_completions
             original_transcript_sync = fresh._sync_native_console_chat_ui
             original_control_sync = fresh._request_console_control_bar_sync
+            settle_code = type(fresh._image)._settle_current_h3_outcome.__code__
+            native_code = type(fresh)._sync_native_console_chat_ui.__code__
+
+            def _from_settlement() -> bool:
+                # TASK-38752: Console ticks also sync, reconcile and request
+                # controls, and so does the settlement's own nested native
+                # sync. Count a call only when the settlement itself made it:
+                # the nearest of the two owners on the recorder's caller stack.
+                frame = sys._getframe(2)
+                while frame is not None:
+                    if frame.f_code is settle_code:
+                        return True
+                    if frame.f_code is native_code:
+                        return False
+                    frame = frame.f_back
+                return False
 
             def _record_reconcile(store=None):
-                settlement_events.append("reconcile")
+                if _from_settlement():
+                    settlement_events.append("reconcile")
                 original_reconcile(store)
 
             async def _record_transcript_sync():
-                settlement_events.append("transcript")
+                if _from_settlement():
+                    settlement_events.append("transcript")
                 await original_transcript_sync()
 
-            def _record_control_sync():
-                settlement_events.append("controls")
-                original_control_sync()
+            def _record_control_sync(*args, **kwargs):
+                # A deferred sync re-requests with ``delayed=``: forward it.
+                if _from_settlement():
+                    settlement_events.append("controls")
+                original_control_sync(*args, **kwargs)
 
             fresh._image._reconcile_h3_image_edit_completions = _record_reconcile
             fresh._sync_native_console_chat_ui = _record_transcript_sync
@@ -781,8 +814,10 @@ async def test_fresh_mounted_screen_settles_late_h3_outcome_in_dom_and_controls(
                 ),
             }.get(terminal_kind)
 
+            settlement_order = ["reconcile", "transcript", "controls"]
+
             def _settled() -> bool:
-                if "controls" not in settlement_events:
+                if settlement_events != settlement_order:
                     return False
                 if stop.styles.display != "none":
                     return False
@@ -797,7 +832,12 @@ async def test_fresh_mounted_screen_settles_late_h3_outcome_in_dom_and_controls(
                 ]
                 if len(matching) != 1:
                     return False
-                return bool(fresh.query(f"#console-message-{matching[0].id}"))
+                # The row mounts before its Markdown body (TASK-38752).
+                try:
+                    text = _message_row_plain_text(fresh, matching[0].id)
+                except NoMatches:
+                    return False
+                return expected_content in text
 
             await _wait_for_h3_state(
                 pilot,
@@ -806,12 +846,7 @@ async def test_fresh_mounted_screen_settles_late_h3_outcome_in_dom_and_controls(
             )
             assert fresh._native_run_status_copy() == ""
             assert stop.styles.display == "none"
-            assert settlement_events.index("reconcile") < settlement_events.index(
-                "transcript"
-            )
-            assert settlement_events.index("transcript") < settlement_events.index(
-                "controls"
-            )
+            assert settlement_events == settlement_order
             if expected_content is None:
                 assert (
                     fresh._ensure_console_chat_store().messages_for_session(session.id)
@@ -853,28 +888,43 @@ async def test_fresh_mounted_screen_settles_late_h3_outcome_in_dom_and_controls(
                     lambda: stop.styles.display != "none",
                     detail="newer H3 controls",
                 )
+                reconciles = 0
                 transcript_syncs = 0
                 control_syncs = 0
+                newer_reconcile = fresh._image._reconcile_h3_image_edit_completions
                 newer_transcript_sync = fresh._sync_native_console_chat_ui
                 newer_control_sync = fresh._request_console_control_bar_sync
 
+                def _count_reconcile(store=None):
+                    nonlocal reconciles
+                    if _from_settlement():
+                        reconciles += 1
+                    newer_reconcile(store)
+
                 async def _count_transcript_sync():
                     nonlocal transcript_syncs
-                    transcript_syncs += 1
+                    if _from_settlement():
+                        transcript_syncs += 1
                     await newer_transcript_sync()
 
-                def _count_control_sync():
+                def _count_control_sync(*args, **kwargs):
                     nonlocal control_syncs
-                    control_syncs += 1
-                    newer_control_sync()
+                    if _from_settlement():
+                        control_syncs += 1
+                    newer_control_sync(*args, **kwargs)
 
+                fresh._image._reconcile_h3_image_edit_completions = _count_reconcile
                 fresh._sync_native_console_chat_ui = _count_transcript_sync
                 fresh._request_console_control_bar_sync = _count_control_sync
                 await fresh._image._settle_current_h3_outcome(
                     session.id, old_generation
                 )
+                assert reconciles == 0
                 assert transcript_syncs == 0
                 assert control_syncs == 0
+                # The stale settlement leaves the newer edit running.
+                assert app.console_image_edit_operations.active(session.id) is newer
+                assert not newer.cancel_event.is_set()
                 assert stop.styles.display != "none"
                 newer_release.set()
                 await newer.task
@@ -882,9 +932,12 @@ async def test_fresh_mounted_screen_settles_late_h3_outcome_in_dom_and_controls(
                 await fresh._image._settle_current_h3_outcome(
                     session.id, old_generation
                 )
+                assert reconciles == 0
                 assert transcript_syncs == 0
                 assert control_syncs == 0
-                assert stop.styles.display != "none"
+                # No Stop check here: the newer edit has ended, so any Console
+                # repaint may now hide Stop (TASK-38752). The counters above pin
+                # that this stale settlement requested no sync of its own.
     finally:
         db.close_connection()
 
