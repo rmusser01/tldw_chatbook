@@ -394,6 +394,72 @@ within a launch (36 ms on the first send, 121 ms by the fifth).
 **Measured.** See TASK-33620.15.3's Implementation Notes: paired live sends
 against origin/dev, and memory across conversation switches and run cycles.
 
+## Amendment (2026-11-06, TASK-33620.15.57): the warm-up's end re-freezes; maintenance waits out the pre-import passes
+
+**Context.** The 2026-11-01 amendment left the first-send warm-up's objects to
+the Console's idle maintenance: the warm-up's completion requested it, and it
+ran 2 s later at the earliest, after 2 s without input. On dev 29592ecc9b
+(TASK-33620.15.51, 36 launches) the timer found a compaction already due in 4,
+waited for 5 s of quiet, and the first send dropped the request. Those sends
+ran with the warm-up's modules unfrozen, and the first reply's maintenance
+compacted for 241-298 ms on the UI loop.
+
+The refreezer's accounting, recorded live at every budget check on dev
+e8eeae7db9 (@@ATTR@@), shows why a compaction was due. The Console requests a
+re-freeze when it first paints a conversation, about 0.5 s into the
+screen-route pre-import pass, and the request's timer fires 2 s later. When
+the pass is still importing then, that runtime re-freeze freezes the routes
+imported so far, and they count as growth; the pass's own boot freeze then
+credits only what is left. The warm-up's request is checked 2 s after the
+warm-up, so it met that growth. On 29592ecc9b, in all 4 compacting launches
+the paint re-freeze ran 0.03-0.25 s before the pass ended, and the pass's boot
+freeze then moved only 0.4-18.5K objects; in the 3 dev launches whose paint
+re-freeze ran 0.34-1.37 s before the end (24-66K left), none compacted.
+
+**Decision.**
+
+1. **No runtime maintenance inside a pre-import pass.** The Console's busy
+   check (`_console_heap_busy`) also holds while the app's initial-screen or
+   whole-registry pre-import thread runs, so a pass's modules are frozen by
+   its boot freeze (credited to the baseline, as decision 1 intends) and
+   never as growth. A request that meets the hold is dropped, as any busy
+   request is; the warm-up's end, which ends the pass, takes its place.
+2. **The warm-up's completion re-freezes at once.** It is dispatched behind
+   the same park and 0.15 s input wait as each warm-up step, and on the UI
+   loop, on an idle attached Console, it calls
+   `IdleHeapRefreezer.refreeze_now`. That is a runtime re-freeze, not a boot
+   point (the 2026-11-01 amendment's reason stands): a full collection, then
+   a freeze, and what it freezes counts as growth. Before the refreezer's
+   first look it counts the unfrozen generations instead of walking the
+   frozen set (garbage the collection then reclaims included, so it can only
+   overstate the growth the first look books); after it, it marks the
+   measured size stale. It runs even while a compaction is due, which stays
+   owed, so the frozen set can outgrow its baseline by the budget plus two
+   re-freezes, once per process. A pending request is satisfied by it.
+3. **No second re-freeze after it.** The completion requests idle
+   maintenance only when it could not re-freeze (a covered or busy Console)
+   or a compaction is owed for stranded garbage. A first version requested
+   it as before; 2 s later that re-freeze collected a nearly empty unfrozen
+   heap (0.2-0.9 ms). CPython runs an automatic full collection once a
+   quarter of what the last full collection kept is pending, so one that
+   keeps almost nothing brings the next ones forward: in that version's
+   first two launches the first send ran two generation-2 passes on the UI
+   loop (18.7 + 17.9 ms and 38.0 + 63.4 ms) where dev's ran one or none.
+   The consequence above that "each re-freeze resets" CPython's habit of
+   frequent full collections holds only for a re-freeze whose collection
+   keeps a sizeable heap.
+4. **Unchanged.** The compaction budget and its 50K floor (the owner's
+   2026-10-22 ruling), the quiet times, the stranded-garbage policy, and the
+   boot freezes and their count-without-walk.
+
+The warm-up's own objects number about 29K live (unfrozen at its end, 19K of
+them reachable from the modules it imported), below the 50K floor, so they
+cannot make a compaction due on their own;
+`Tests/UI/test_console_first_send_preimport.py` pins that with the real pass
+and collector.
+
+**Measured.** @@MEASURED@@
+
 ## Python versions
 
 The owner plans to move from 3.12 to 3.13 and then 3.14. Checked against the 3.14 documentation on 2026-09-29:
@@ -432,3 +498,18 @@ The owner plans to move from 3.12 to 3.13 and then 3.14. Checked against the 3.1
   provider call; the paint policy notes stranded garbage only when a freeze
   ran while the outgoing conversation was shown, and never when a new chat
   gains its conversation id.
+- TASK-33620.15.57 (2026-11-06 amendment): `test_gc_idle_refreeze.py` pins
+  `refreeze_now` (runs with a compaction owed and leaves it owed, never
+  walks, books what it froze before the first look as growth, satisfies a
+  pending request, freezes nothing while another collection runs, off under
+  pytest) and, with the real collector, that live foreground objects it
+  freezes make a compaction due where a boot point's would not.
+  `test_console_idle_heap_refreeze.py` pins the hold while either
+  pre-import thread runs and the completion's re-freeze, fallback request
+  and stranded request. `test_console_first_send_preimport.py` runs the real
+  pass and completion with the real refreezer: every module the warm-up
+  imported is frozen when the completion returns, with growth below the
+  50K floor and no second request. `test_first_send_warmup_gc_overlap.py`
+  runs the completion on the event loop after an overlapping navigation or
+  custody cycle retired: the closing re-freeze's full collection reclaims
+  it (the boot-freeze control retains it).
