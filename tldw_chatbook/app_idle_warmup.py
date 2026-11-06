@@ -4,7 +4,7 @@ from typing import Any
 
 
 def request_idle_heap_refreeze(app: Any) -> None:
-    """Request existing runtime maintenance for the current UI-loop attachment."""
+    """Re-freeze at once, or request maintenance, for the current UI-loop attachment."""
     try:
         shutting_down = app._shutting_down
     except AttributeError:
@@ -19,7 +19,7 @@ def request_idle_heap_refreeze(app: Any) -> None:
     if view is None:
         return
     from tldw_chatbook.UI.Console_Modules.transcript import (
-        request_console_heap_refreeze,
+        finish_console_heap_warm_up,
     )
 
-    request_console_heap_refreeze(view, "first_send_preimport")
+    finish_console_heap_warm_up(view, "first_send_preimport")
