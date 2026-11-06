@@ -435,6 +435,126 @@ async def test_speech_playground_reports_no_pause_or_stop_after_a_hand_off(
     ]
 
 
+# Fix round 1 (TASK-39040 review, Important 2 and Minor 3). The first commit
+# checked only the GIVEN path's suffix: a link `clip.mp3 -> payload.exe`, an
+# alternate data stream `x.bat:evil.mp3` and a UNC path all passed it.
+
+_NOT_AUDIO = "not an audio file type"
+_STREAM = "an alternate data stream"
+_NETWORK = "a network or device path"
+
+_HAND_OFF_REFUSED = (
+    (
+        r"C:\briefings\clip.mp3",
+        r"C:\briefings\payload.exe",
+        _NOT_AUDIO,
+        "link-to-program",
+    ),
+    (r"C:\briefings\x.bat:evil.mp3", None, _STREAM, "alternate-data-stream"),
+    (r"\\host\share\x.mp3", None, _NETWORK, "unc-path"),
+    (r"C:\briefings\x.bat.", None, _NOT_AUDIO, "trailing-dot"),
+    (r"C:\briefings\x.bat ", None, _NOT_AUDIO, "trailing-space"),
+    (r"C:\briefings\x.mp3.bat", None, _NOT_AUDIO, "audio-name-batch-suffix"),
+    (r"C:\briefings\clip.mp3", r"\\host\share\clip.mp3", _NETWORK, "link-to-unc"),
+)
+
+
+@pytest.mark.parametrize(
+    ("given", "resolved", "rule"),
+    [case[:3] for case in _HAND_OFF_REFUSED],
+    ids=[case[3] for case in _HAND_OFF_REFUSED],
+)
+def test_hand_off_refusal_parses_windows_paths(given, resolved, rule):
+    """The pure predicate, on `PureWindowsPath`, so Windows parsing (drives,
+    UNC roots, streams, suffixes) is exercised on any host. Each case names
+    the rule that refuses it."""
+    from pathlib import PureWindowsPath
+
+    from tldw_chatbook.TTS.windows_audio_launch import hand_off_refusal
+
+    target = PureWindowsPath(resolved or given)
+    assert hand_off_refusal(PureWindowsPath(given), target) == rule
+
+
+@pytest.mark.parametrize(
+    "given",
+    (
+        r"C:\briefings\clip.mp3",
+        r"C:\briefings\X.MP3",
+        r"C:\briefings\x.Mp3",
+        "C:clip.wav",
+    ),
+)
+def test_hand_off_refusal_accepts_audio_names_in_any_case(given):
+    """Suffixes compare case-insensitively, as Windows does; a drive-relative
+    path's drive colon is not a stream."""
+    from pathlib import PureWindowsPath
+
+    from tldw_chatbook.TTS.windows_audio_launch import hand_off_refusal
+
+    path = PureWindowsPath(given)
+    assert hand_off_refusal(path, path) is None
+
+
+def test_windows_fallback_refuses_a_link_whose_target_is_not_audio(
+    tmp_path, monkeypatch
+):
+    """Through `play()` with a real link: `clip.mp3 -> payload.exe` is
+    resolved and refused, so ShellExecute never runs the program."""
+    spawned, opened = _windows_host(monkeypatch)
+    payload = tmp_path / "payload.exe"
+    payload.write_bytes(b"MZ")
+    link = tmp_path / "clip.mp3"
+    try:
+        link.symlink_to(payload)
+    except OSError as exc:  # Windows without the symlink privilege
+        pytest.skip(f"cannot create a symlink here: {exc}")
+
+    assert SimpleAudioPlayer().play(link) is False
+
+    assert spawned == []
+    assert opened == []
+
+
+def test_windows_fallback_accepts_an_upper_case_audio_suffix(tmp_path, monkeypatch):
+    """`X.MP3` is audio: the case of the suffix does not matter."""
+    spawned, opened = _windows_host(monkeypatch)
+    clip = tmp_path / "X.MP3"
+    clip.write_bytes(b"fixture")
+
+    assert SimpleAudioPlayer().play(clip) is True
+
+    assert spawned == []
+    assert [call[0] for call in opened] == [str(clip)]
+
+
+def test_windows_hand_off_failure_neither_toasts_nor_records_playing(
+    tmp_path, monkeypatch
+):
+    """When `os.startfile` raises (no app is registered for the type), play()
+    fails: no "Playing in your default audio app" toast, and the player
+    records nothing as playing."""
+    _windows_host(monkeypatch)
+
+    def no_association(path, *args, **kwargs):
+        raise OSError("no application is associated with this file")
+
+    monkeypatch.setattr(os, "startfile", no_association, raising=False)
+    clip = tmp_path / "clip.opus"
+    clip.write_bytes(b"fixture")
+    app = _NoticeRecordingApp()
+    player = SimpleAudioPlayer()
+    token = _active_app_var().set(app)
+    try:
+        assert player.play(clip) is False
+    finally:
+        _active_app_var().reset(token)
+
+    assert app.notices == []
+    assert player.get_state() is not PlaybackState.PLAYING
+    assert player.get_current_file() is None
+
+
 def test_no_audio_playback_module_builds_a_cmd_exe_argv():
     """A static guard over every audio playback package: no list or tuple
     literal names cmd.exe or its `/c` / `/k` switches. dev before TASK-39040

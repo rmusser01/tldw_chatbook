@@ -22,7 +22,7 @@ resident on macOS or Linux.
 from __future__ import annotations
 
 import os
-from pathlib import Path
+from pathlib import Path, PureWindowsPath
 
 from loguru import logger
 
@@ -51,12 +51,44 @@ def wmplayer_argv(file_path: Path) -> list[str] | None:
     return [str(WMPLAYER_PATH), "/play", "/close", str(file_path)]
 
 
+#: The suffixes ShellExecute may open, compared lower-case as Windows does.
+_AUDIO_SUFFIXES = frozenset(f".{audio_format}" for audio_format in _ALL_FILE_FORMATS)
+
+
+def hand_off_refusal(given: PureWindowsPath, resolved: PureWindowsPath) -> str | None:
+    """Why `given`, which resolves to `resolved`, must not reach ShellExecute.
+
+    ShellExecute runs whatever program a name's extension is registered to
+    run, so both names must end in an audio suffix: a link ``clip.mp3`` whose
+    target is ``payload.exe`` is refused (TASK-39040 review). A ``:`` after
+    the drive names an alternate data stream (``x.bat:evil.mp3`` is a stream
+    of a batch file), and a UNC or device root (``\\\\host\\share``) would open
+    a remote file and send this user's credentials to that host.
+
+    Args:
+        given: The path as the caller passed it, parsed with Windows rules.
+        resolved: The same path with every link followed.
+
+    Returns:
+        Which rule refused the path (a fixed phrase, never the path), or None
+        when the hand-off may go ahead.
+    """
+    for path in (given, resolved):
+        text = str(path)
+        if text.startswith("\\\\"):
+            return "a network or device path"
+        if ":" in text[len(path.drive) :]:
+            return "an alternate data stream"
+        if path.suffix.lower() not in _AUDIO_SUFFIXES:
+            return "not an audio file type"
+    return None
+
+
 def hand_off(file_path: Path) -> bool:
     """Open `file_path` in the user's default audio app via `os.startfile`.
 
-    ShellExecute runs whatever program an extension is registered to run, so
-    only the audio extensions `SimpleAudioPlayer` knows are handed off: a row
-    naming ``payload.bat`` is refused here rather than executed.
+    The path is resolved first (links followed) and both names are checked by
+    `hand_off_refusal`; a refused or unresolvable path is never opened.
 
     Args:
         file_path: The clip to open, passed to `os.startfile` unchanged.
@@ -64,8 +96,18 @@ def hand_off(file_path: Path) -> bool:
     Returns:
         True when the default app was asked to open the clip.
     """
-    if file_path.suffix.lstrip(".").lower() not in _ALL_FILE_FORMATS:
-        logger.warning("Windows audio hand-off refused: not an audio file type")
+    try:
+        resolved = file_path.resolve(strict=True)
+    except (OSError, RuntimeError):
+        refusal: str | None = "the file cannot be resolved"
+    else:
+        refusal = hand_off_refusal(
+            PureWindowsPath(file_path), PureWindowsPath(resolved)
+        )
+    if refusal is not None:
+        # Literal text: the category is derived from the path, and no part of
+        # a path is logged.
+        logger.warning("Windows audio hand-off refused: not a local audio file")
         return False
     try:
         os.startfile(os.fspath(file_path))  # type: ignore[attr-defined]  # nosec B606

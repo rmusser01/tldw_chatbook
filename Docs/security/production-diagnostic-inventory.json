@@ -2830,7 +2830,7 @@
     },
     {
       "call_count": 3,
-      "diagnostic_digest": "40e373b94759b18056b5",
+      "diagnostic_digest": "4a60661a01df047838de",
       "owner": "TASK-494",
       "path": "tldw_chatbook/TTS/windows_audio_launch.py",
       "reason": "remaining Chatbook production diagnostic owner"
