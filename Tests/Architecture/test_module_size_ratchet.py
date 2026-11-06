@@ -99,7 +99,9 @@ _BUDGETS: dict[str, int] = {
     "tldw_chatbook/app_shutdown.py": 225,
     # 2026-10-31: re-measured after rebasing onto dev 4d6764b132 (owner rule: exact, or dev's row + this branch's growth where dev exceeds it): 2873 -> 2899.
     # PR3301, 2026-10-31: user size waiver; exact integrated measurement.
-    "tldw_chatbook/Chat/console_display_state.py": 2875,
+    # owner decision 2026-10-04 (expand limits): TASK-34100.2 +22
+    # (rebased onto dev 29592ecc9b, measured 2,875 -> 2,897).
+    "tldw_chatbook/Chat/console_display_state.py": 2897,
     "tldw_chatbook/Widgets/Console/console_selection.py": 379,
     # PR #3361, 2026-11-07 (owner size waiver, 2026-11-02 audit TASK-38580..38613):
     # 244 -> 257 (+13), TASK-38585 renders labels literally, not as markup.
@@ -1160,9 +1162,9 @@ _BUDGETS: dict[str, int] = {
     "tldw_chatbook/DB/private_sqlite.py": 4035,
     # owner decision 2026-10-04 (expand limits): TASK-34100.2 +755 -- its
     # first-chat readiness (capacity blocker, send-outcome ledger, template
-    # samples, per-model words) took the module from 3,474 on dev 0923ec0ca2
-    # past the 4,000-line guard: born governed at its measured size.
-    "tldw_chatbook/Chat/console_session_settings.py": 4229,
+    # samples, per-model words) takes the module from 3,440 on dev 29592ecc9b
+    # past the 4,000-line guard: born governed at its measured size, 4,195.
+    "tldw_chatbook/Chat/console_session_settings.py": 4195,
 }
 
 #: Same tolerance as the Library controller ratchet: loose enough that
