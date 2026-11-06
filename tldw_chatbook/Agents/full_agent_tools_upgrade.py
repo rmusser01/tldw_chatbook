@@ -105,7 +105,10 @@ FULL_AGENT_TOOLS_UPGRADE_MARKER = "full_agent_tools_upgrade"
 #: profile stays light and the next launch retries). Every read is over a
 #: small table except the step-log scan, which a heavy profile can make long
 #: (measured: about 1 s for 200,000 steps on a loaded machine); the budget
-#: bounds it.
+#: bounds it. The scan stops at the first non-light call, so only a profile
+#: with a very long history and no such call nears it. Such a profile pays
+#: at most this on a worker thread at each launch, holding the staggered
+#: boot tier's one slot (``Utils/boot_worker_policy.py``) -- never the UI.
 DETECTION_BUDGET_SECONDS = 5.0
 
 #: SQLite VM steps between budget checks: often enough to stop a long scan

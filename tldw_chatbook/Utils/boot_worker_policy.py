@@ -26,10 +26,21 @@ Two tiers:
 ``STAGGERED``
     Started after ``_ui_ready``, in the declared order, at most
     :data:`MAX_CONCURRENT_STAGGERED_BOOT_WORKERS` at a time; each completion
-    admits the next. Every member here is either a *prefetch* for a surface
-    that re-runs the same work itself behind a once-gate, or a resumable
-    background rebuild that no surface waits on. That is the property that
-    makes delaying one safe, and it is recorded per row in ``unblocks``.
+    admits the next. Every member here but one is either a *prefetch* for a
+    surface that re-runs the same work itself behind a once-gate, or a
+    resumable background rebuild that no surface waits on. That is the
+    property that makes delaying one safe, and it is recorded per row in
+    ``unblocks``.
+
+    The exception is ``full_agent_tools_upgrade`` (TASK-34100.5.3.2), which
+    has a soft waiter: until it lands, plain chat on an upgraded profile that
+    uses agent features is offered the light tool set. Delaying it is still
+    safe, because the light set is the safe default (a send made meanwhile
+    gets fewer tools, never a broken answer), and it fails closed. It is
+    first so that nothing else delays it. Its cost is bounded by its own time
+    budget (``Agents.full_agent_tools_upgrade.DETECTION_BUDGET_SECONDS``), on
+    a worker thread, so a profile whose scan always runs past that budget
+    holds the one slot for at most that long at each launch.
 
 The honest lever is ORDER and CONCURRENCY, not more sleeping: a sleep cannot
 subdivide one ``import_module`` or one ``BEGIN IMMEDIATE`` chunk (TASK-21113,
@@ -116,14 +127,16 @@ class BootWorkerSpec:
 #:
 #: Priority reasoning, recorded because it is the reviewable part:
 #:
-#: 0. ``full_agent_tools_upgrade`` (TASK-34100.5.3.2) is first: the first
-#:    plain chat send on an upgraded profile that uses agent features reads
-#:    its result, and it is a few time-budgeted reads, once per profile.
+#: 0. ``full_agent_tools_upgrade`` (TASK-34100.5.3.2) is first, the tier's
+#:    one member with a waiter (see the module docstring): the first plain
+#:    chat send on an upgraded profile that uses agent features reads its
+#:    result. It is a few reads under a time budget (milliseconds on a
+#:    typical profile, at most the budget), then recorded once per profile.
 #: 1. ``actor_pack_recovery`` and ``actor_pack_staging_sweep`` are prefetches
 #:    for surfaces that gate on the SAME once-lock (Personas' first library
 #:    read / ``create_persona``; the importer's ``inspect_archive``). If the
 #:    worker has not run, the surface runs the work itself -- on the event
-#:    loop. They are short one-shots, so they go first: finishing them frees
+#:    loop. They are short one-shots, so they go next: finishing them frees
 #:    the slots quickly and removes the inline-cost risk.
 #: 2. The two FTS backfills go last, and behind each other (the cap is 1, so
 #:    the order IS the schedule). Nothing waits on either -- search fills in
@@ -181,7 +194,8 @@ BOOT_WORKER_POLICY: tuple[BootWorkerSpec, ...] = (
             "Nothing hard: the Personas screen's first library read and every "
             "create_persona gate on the coordinator's own once-lock. This "
             "worker is the prefetch that keeps that gate from running SQLite "
-            "recovery on the event loop -- so it is first among the staggered."
+            "recovery on the event loop -- so it is first among the prefetches, "
+            "right after the one-time Full agent tools check."
         ),
     ),
     BootWorkerSpec(
@@ -232,8 +246,8 @@ BOOT_WORKER_POLICY: tuple[BootWorkerSpec, ...] = (
 #: the worst shape in the fleet, two whole-table re-tokenizations running at
 #: once, is exactly what the cap would still permit. Serializing costs the
 #: prefetches nothing measurable (they are ahead of the backfills, and their
-#: own durations are milliseconds on a healthy profile), and nothing else in
-#: the tier has a waiter.
+#: own durations are milliseconds on a healthy profile), and the tier's one
+#: member with a waiter, the Full agent tools check, is first.
 #:
 #: What still runs alongside: the screen pre-importer's daemon thread, the
 #: immediate tier, and the event loop itself. This cap bounds the staggered
