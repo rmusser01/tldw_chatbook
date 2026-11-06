@@ -199,6 +199,12 @@ finished saving when you cancelled, in which case the folder line says
 "Folder change finished before it could be stopped · now linked to the new
 folder." and the new folder is the one in use.
 
+A folder change never drops a draft that is not saved yet. While a save has
+failed or conflicts, the change is refused and the folder line reads "Folder
+not changed · your draft is not saved yet." until the draft saves, you start
+another folder change, or you open a file. Save the draft first (**Retry
+save** or **Save Copy**, below), then change the folder.
+
 Abandoning a folder change — by **Cancel**, by **Choose another**, or by
 letting it time out — also stops the folder scan itself. Picking a different
 folder afterwards works normally; you do not have to restart the app.
@@ -212,8 +218,8 @@ notification instead: "Folder change cancelled · previous folder kept".
 
 **Edit** is the ordinary writing view. It keeps the file body prominent and
 shows only safe actions that become relevant to the current state, such as
-Restore, Compare, Resolve conflict, Reload from disk, or Save Copy. Saving is
-automatic; there is no ordinary Save button.
+Restore, Compare, Resolve conflict, Retry save, Reload from disk, or Save Copy.
+Saving is automatic; there is no ordinary Save button.
 
 **Manage** keeps less-frequent controls in clearly named sections:
 
@@ -239,13 +245,21 @@ contextual and restores the recently deleted path without asking for a target.
 | **Restore** | Brings back the most recently deleted file |
 | **Protect** / **Unprotect** | Toggles protection on the open file ("Protected." / "Unprotected."); every save to a protected file first stores a checkpoint of its previous contents in the local recovery database |
 | **Reload** / **Reload from disk** / **Discard draft and reload** | Re-reads the open file from disk. **Reload from disk** becomes immediately visible in Conflict; in Error, the destructive label is shown. The first activation opens a confirmation with **Cancel** focused; only **Discard draft and load disk** replaces the editor contents |
+| **Retry save** | Appears only after a save fails (Error). Runs the save again with the editor text unchanged and returns focus to the file body; no typing needed. A Conflict does not offer it: there the choices are **Compare**, **Resolve conflict**, **Reload from disk** and **Save Copy** |
 | **Compare** | Appears only for a Conflict and opens a read-only Base / Draft / Disk comparison without resolving the conflict or changing the editor |
 | **Resolve conflict** | Appears only for a Conflict and discloses the three bounded choices described below; none overwrites the changed disk file |
 | **Save copy** | Opens a **Save copy as** task; **Save Copy** writes the complete editor draft to that absent path. It is available as an ordinary Manage action and as a safe recovery action when relevant |
 | **Export exact copy** | Replaces **Save copy** for a large read-only file and opens a named path task that streams the complete current disk bytes, not the visible excerpt, to an absent path |
 | **Refresh** | Re-scans the folder and rebuilds the **Files** tree |
 
-Saving is automatic: edit and the status walks Dirty → Saving → Saved. If the
+Saving is automatic: edit and the status walks Dirty → Saving → Saved. If a
+save fails, the status reads "Save failed — your draft remains in the editor.
+Next: Save Copy." and **Retry save** tries again. If the linked folder cannot
+be reached while a draft is not saved (a failed save or a conflict), the status
+ends "Next: Reconnect the folder.": a folder change would drop the draft, and
+Save Copy writes into the same folder, so neither works until the folder is
+back. Once it is, the next step returns to Save Copy, and **Retry save** writes
+the draft. If the
 file changes on disk underneath you, the status shows Conflict and keeps the
 draft in the editor. **Compare** identifies Base (the body loaded into the
 editor or last saved), Draft (the current editor body), and Disk (the latest

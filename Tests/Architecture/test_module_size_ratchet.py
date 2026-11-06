@@ -825,7 +825,10 @@ _BUDGETS: dict[str, int] = {
     # failure keeps the work pane in view through a resize.
     # TASK-38757 rev3, 2026-11-05 (same waiver): 9779 -> 9802 (+23). An
     # explicit navigator choice (Back, the Files grip) wins over a failure.
-    "tldw_chatbook/Widgets/Library/library_file_notes_workspace.py": 9802,
+    # TASK-38983, 2026-11-06 (same waiver): 9802 -> 9835 (+33). A refused
+    # folder change says why, offline drafts name a step that works, and a
+    # failed save offers Retry save.
+    "tldw_chatbook/Widgets/Library/library_file_notes_workspace.py": 9835,
     # 2026-11-02: +3 shared store-error import (TASK-36949.5).
     # TASK-38714 re-review, 2026-11-05: 9429 -> 9436 (+7). A failed
     # connection build closes the connection it opened instead of leaking it.

@@ -231,6 +231,10 @@ def resolve_file_note_status_channels(
         content, safe = "No file open.", None
     else:
         content, safe = "Saved", None
+    if unavailable and root is not None and (conflict or save_failed or saving or dirty):
+        # TASK-38983: an unsaved draft refuses a folder change, and Save Copy
+        # writes into the same unreachable folder, so neither step works.
+        safe = "Reconnect the folder"
 
     if git_failure:
         failure_lower = git_failure.casefold()
@@ -304,6 +308,8 @@ ROOT_CHANGE_TIMEOUT_SECONDS = 30.0
 #: beside a folder change, long enough not to spin.
 SERVICE_LOCK_POLL_SECONDS = 0.05
 ROOT_CHANGE_CANCELLED_COPY = "Folder change cancelled · previous folder kept"
+#: TASK-38983: the leave guard refused a folder change; it used to say nothing.
+ROOT_CHANGE_DRAFT_COPY = "Folder not changed · your draft is not saved yet."
 ROOT_CHANGE_TIMEOUT_COPY = (
     "Folder change timed out · previous folder kept. "
     "Try again or choose a different folder."
@@ -1926,6 +1932,11 @@ class LibraryFileNotesWorkspace(Vertical):
                     Button(
                         "Resolve conflict",
                         id="file-notes-resolve-conflict",
+                        compact=True,
+                    ),
+                    Button(
+                        "Retry save",
+                        id="file-notes-recovery-retry",
                         compact=True,
                     ),
                     Button(
@@ -5787,6 +5798,9 @@ class LibraryFileNotesWorkspace(Vertical):
         self._save_detail = detail
         if state != "conflict":
             self._conflict_resolution_active = False
+        if state == "saved" and self._root_action_reason == ROOT_CHANGE_DRAFT_COPY:
+            self._root_action_reason = ""
+            self._update_root_surface()
         if self._active and self.is_mounted:
             status = self.query_one("#file-notes-save-status", Static)
             status.set_class(state == "conflict", "-conflict")
@@ -6028,6 +6042,7 @@ class LibraryFileNotesWorkspace(Vertical):
                 "file-notes-save-copy",
                 "file-notes-recovery-save-copy",
                 "file-notes-recovery-reload",
+                "file-notes-recovery-retry",
                 "file-notes-refresh",
                 "file-notes-maintenance-toggle",
             }
@@ -6147,6 +6162,9 @@ class LibraryFileNotesWorkspace(Vertical):
                 reload_button.parent.refresh(layout=True)
         recovery_reload.label = reload_label
         recovery_reload.disabled = reload_button.disabled
+        self.query_one("#file-notes-recovery-retry", Button).disabled = (
+            reload_button.disabled
+        )
         self._sync_editor_action_visibility()
         self.query_one(
             "#file-notes-reload-cancel", Button
@@ -6264,6 +6282,7 @@ class LibraryFileNotesWorkspace(Vertical):
                 )
             ),
             "file-notes-refresh": has_service,
+            "file-notes-recovery-retry": has_document and self._save_state == "error",
             "file-notes-recovery-reload": (
                 has_document and self._save_state in {"conflict", "error"}
             ),
@@ -6548,6 +6567,8 @@ class LibraryFileNotesWorkspace(Vertical):
         if not self._active or self._path_transitioning or self._shutdown:
             return False
         if not await self.flush_pending_work():
+            if self._save_state in {"conflict", "error"}:
+                self._report_root_change_reason(ROOT_CHANGE_DRAFT_COPY)
             return False
         if not self._active or self._path_transitioning or self._shutdown:
             return False
@@ -9781,6 +9802,18 @@ class LibraryFileNotesWorkspace(Vertical):
     @on(Button.Pressed, "#file-notes-recovery-reload")
     async def _reload_from_recovery(self, event: Button.Pressed) -> None:
         await self._reload_file(event)
+
+    @on(Button.Pressed, "#file-notes-recovery-retry")
+    def _retry_failed_save(self, event: Button.Pressed) -> None:
+        """Re-run a failed save from the unchanged editor text (TASK-38983)."""
+        event.stop()
+        if self._save_state != "error" or self._opened is None:
+            return
+        # The button hides as the state leaves "error"; move focus first
+        # (synchronously, so the hide's focus fallback sees it).
+        self.screen.set_focus(self._editor_widget)
+        self._set_save_state("dirty")
+        self._start_autosave()
 
     @on(Button.Pressed, "#file-notes-resolution-save-new")
     async def _save_conflict_draft_as_new_note(

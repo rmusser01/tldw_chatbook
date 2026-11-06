@@ -6638,9 +6638,10 @@ async def test_high_stakes_file_notes_states_keep_explicit_labels_and_classes(
         )
         assert root_status.has_class("-offline")
         assert root_status.has_class("-warning")
+        # TASK-38983: Save Copy writes into the offline folder, so it fails.
         assert _static_text(workspace, "#file-notes-save-status") == (
             "Conflict — the disk file changed; your draft is preserved. "
-            "Next: Save Copy."
+            "Next: Reconnect the folder."
         )
         assert _static_text(workspace, "#file-notes-save-detail") == (
             "Content detail: file changed on disk"
@@ -7915,18 +7916,83 @@ async def test_file_notes_combined_non_ready_authority_matrix_paints_at_60x20(
             assert "Git · 1" not in painted
             if push_copy:
                 assert push_copy not in painted
+            # TASK-38983: offline, neither Choose folder (the draft refuses
+            # it) nor Save Copy (same folder) works.
             expected_next = (
-                "Next: Save Copy."
-                if save_state == "conflict"
-                else (
-                    "Next: Choose folder."
-                    if root_state == "offline"
-                    else "Next: Save Copy."
-                )
+                "Next: Reconnect the folder."
+                if root_state == "offline"
+                else "Next: Save Copy."
             )
             assert expected_next in content_words
 
     await workspace.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_file_notes_failed_save_names_a_working_step_and_retries_unchanged(
+    tmp_path: Path,
+) -> None:
+    """TASK-38983: with the folder renamed away under a failed autosave, the
+    hint names a step that works (not Choose folder, which the leave guard
+    refuses), a refused folder change says why on the folder row, and once
+    the folder is back Retry save writes the unchanged draft."""
+    root = tmp_path / "notes"
+    root.mkdir()
+    (root / "one.md").write_text("first", encoding="utf-8")
+    other = tmp_path / "other"
+    other.mkdir()
+    replica = FileNotesReplica(":memory:")
+    workspace = LibraryFileNotesWorkspace(
+        root=root,
+        replica=replica,
+        poll_interval=10,
+        autosave_delay=30,
+    )
+    async with _WorkspaceHarness(workspace).run_test(size=(120, 40)) as pilot:
+        await _wait_until(pilot, lambda: workspace.initialized, "scan did not finish")
+        assert await workspace.open_path("one.md")
+        _replace_editor_text(workspace._editor_widget, "draft kept")
+        await _wait_until(
+            pilot, lambda: workspace.save_state == "dirty", "edit was not dirty"
+        )
+        away = tmp_path / "away"
+        root.rename(away)
+        workspace._start_autosave()  # what the autosave timer runs
+        await _wait_until(
+            pilot, lambda: workspace.save_state == "error", "save did not fail"
+        )
+        await workspace.refresh_files()  # the poll marks the folder offline
+        assert workspace._root_offline is True
+        status = _static_text(workspace, "#file-notes-save-status")
+        assert "Next: Reconnect the folder." in status, status
+
+        linked = workspace.root
+        assert not await workspace.set_root(other)
+        assert workspace.root == linked
+        assert _static_text(workspace, "#file-notes-root-status") == (
+            "Folder not changed · your draft is not saved yet."
+        )
+
+        away.rename(root)
+        assert await workspace.refresh_files()
+        assert workspace._root_offline is False
+        assert "Next: Save Copy." in _static_text(workspace, "#file-notes-save-status")
+        retry = workspace.query_one("#file-notes-recovery-retry", Button)
+        assert retry.display and not retry.disabled
+        assert str(retry.label) == "Retry save"
+        retry.focus()
+        await pilot.press("enter")
+        await _wait_until(
+            pilot, lambda: workspace.save_state == "saved", "Retry did not save"
+        )
+        assert (root / "one.md").read_text(encoding="utf-8") == "draft kept"
+        assert workspace._editor_widget.text == "draft kept"
+        assert workspace._editor_widget.has_focus, workspace.app.focused
+        assert "Linked" in _static_text(workspace, "#file-notes-root-status")
+        assert await workspace.set_root(other)
+
+    await workspace.shutdown()
+    replica.close()
 
 
 @pytest.mark.asyncio
@@ -8644,6 +8710,7 @@ async def test_file_notes_primary_actions_follow_editor_state(
                 "file-notes-recovery-save-copy",
             },
             "error": {
+                "file-notes-recovery-retry",
                 "file-notes-recovery-reload",
                 "file-notes-recovery-save-copy",
             },

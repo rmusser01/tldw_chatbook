@@ -2442,3 +2442,8 @@ Tests/UI/test_library_file_notes_workspace.py::test_file_notes_narrow_navigator_
 # read its provider widget (TASK-33007.6); a bare screen, ~3 s alone. Appended
 # at the tail.
 Tests/UI/test_settings_provider_test_draft.py::test_discovery_row_reads_a_fresh_models_capability_from_its_listing
+# TASK-38983 (2026-11-06): a failed save into a folder renamed away names a
+# step that works, a refused folder change says why on the folder row, and
+# Retry save writes the unchanged draft once the folder is back (1.4-1.5 s).
+# Appended at the tail.
+Tests/UI/test_library_file_notes_workspace.py::test_file_notes_failed_save_names_a_working_step_and_retries_unchanged
