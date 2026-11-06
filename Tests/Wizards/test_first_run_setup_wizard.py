@@ -1539,25 +1539,63 @@ async def test_rapid_double_escape_during_first_render_keeps_skip_setup_open():
     Escape presses sent within 5ms of the wizard's first paint left the
     dialog closed and the wizard showing, before this fix). The
     confirmation flow must stay up through a reflexive double-press, not
-    revert."""
+    revert.
+
+    Review TEF-1 (TASK-34100.13): ``pilot.press("escape", "escape")`` waits
+    for the app to go idle between the two keys, so the second press reached
+    the dialog only after its first frame plus that wait. Under load (an
+    8.9 s call) the wait outlasted the 0.5 s grace and the second Escape
+    was, by the dialog's own rule, deliberate. The keys now go in the way a
+    terminal delivers a reflexive double-press: both queued before the app
+    handles the first. The test then waits on the real conditions, not a
+    window: the second press reached the dialog's guarded binding, and the
+    dialog painted."""
+    from textual import events
+
+    from tldw_chatbook.UI.Wizards.FirstRunSetupWizard import (
+        _SettlingGuardedConfirmationDialog,
+    )
+
+    reached: list[bool] = []
+    guarded = _SettlingGuardedConfirmationDialog.action_cancel_dialog_if_settled
+
+    async def spy(dialog) -> None:
+        reached.append(dialog._opened_at is not None)  # painted yet?
+        await guarded(dialog)
+
     wizard = _make_wizard()
     app = _HostApp(wizard)
-    async with app.run_test(size=(120, 40)) as pilot:
-        await pilot.press("escape", "escape")
-        await pilot.pause()
-        from tldw_chatbook.UI.Wizards.FirstRunSetupWizard import (
-            _SettlingGuardedConfirmationDialog,
+    with pytest.MonkeyPatch.context() as patch:
+        patch.setattr(
+            _SettlingGuardedConfirmationDialog, "action_cancel_dialog_if_settled", spy
         )
+        async with app.run_test(size=(120, 40)) as pilot:
+            for _ in range(2):
+                app._driver.send_message(events.Key("escape", None))
 
-        # TASK-34100.13 review TE-2: under xdist load the first render (ten
-        # composed steps) can outlast one pause, so wait for the dialog to be
-        # pushed. A dialog the second Escape dismissed never comes back, so
-        # this still fails on the TASK-2314 regression.
-        await _until(
-            pilot, lambda: isinstance(app.screen, _SettlingGuardedConfirmationDialog)
-        )
-        assert isinstance(app.screen, _SettlingGuardedConfirmationDialog)
-        assert app.wizard_result == "UNSET"
+            def settled() -> bool:
+                screen = app.screen
+                return (
+                    bool(reached)
+                    and isinstance(screen, _SettlingGuardedConfirmationDialog)
+                    and screen._opened_at is not None
+                )
+
+            await _until(pilot, settled)
+            await pilot.pause()
+            screen = app.screen
+            dialogs = [
+                s
+                for s in app.screen_stack
+                if isinstance(s, _SettlingGuardedConfirmationDialog)
+            ]
+    # A dialog the second Escape dismissed never comes back, and a second
+    # press that missed the dialog never calls its guarded binding: either
+    # way this still fails on the TASK-2314 regression.
+    assert reached, "the second Escape never reached the dialog's binding"
+    assert isinstance(screen, _SettlingGuardedConfirmationDialog)
+    assert len(dialogs) == 1  # the second press opened no second dialog
+    assert app.wizard_result == "UNSET"
 
 
 @pytest.mark.asyncio
