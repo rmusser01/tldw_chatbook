@@ -5,7 +5,7 @@ status: Done
 assignee:
   - '@claude'
 created_date: 2026-11-05 07:11
-updated_date: 2026-11-06 00:00
+updated_date: 2026-11-06 00:17
 labels:
 - follow-up
 - tests
@@ -82,6 +82,16 @@ Each recorder (and both `[cancel]` counters) now counts a call only when `_settl
 - The previous version passed 30 of 30 (load 10.4-47.9).
 - No TypeError and no failure.
 - The reorder control, re-run on the final node, was still red in all 3 cases.
+
+**Re-review r8c-rev3 hardenings (`[cancel]`).**
+- After the first stale settlement, while the newer edit is still active, the test now asserts that the registry's active operation is still `newer` and that `newer.cancel_event` is not set.
+- A frame-attributed reconcile counter joins the transcript and control counters, asserted at 0 after both stale settlements.
+
+Red/green, each a temporary edit of `_settle_current_h3_outcome`'s active-operation guard, reverted (load ~9):
+- **The stale settlement cancels the newer edit** (`request_cancel` before returning): red at `assert not True`.
+- **The stale settlement reconciles before its guard returns:** red at `assert 1 == 0`. The edit puts the reconcile on the guard's early-return path. Moving it above every guard would also double the main settlement's reconcile and fail the node earlier, before the counter runs.
+
+After this commit the node passed 10 of 10 `-n 4` runs, 3 of 3 cases each, at load 9.2-14.2 (1-minute average).
 
 **Whole file** (`-n 4`): 8 other plain nodes fail with `RecoveryRequired: raw_source_selection_changed` on the branch and at base with the same command. That is TASK-38111's trap. At base the same run also failed this node's `[success]` and `[failure]` cases.
 <!-- SECTION:NOTES:END -->

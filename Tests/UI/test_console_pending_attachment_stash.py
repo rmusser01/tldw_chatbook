@@ -888,10 +888,18 @@ async def test_fresh_mounted_screen_settles_late_h3_outcome_in_dom_and_controls(
                     lambda: stop.styles.display != "none",
                     detail="newer H3 controls",
                 )
+                reconciles = 0
                 transcript_syncs = 0
                 control_syncs = 0
+                newer_reconcile = fresh._image._reconcile_h3_image_edit_completions
                 newer_transcript_sync = fresh._sync_native_console_chat_ui
                 newer_control_sync = fresh._request_console_control_bar_sync
+
+                def _count_reconcile(store=None):
+                    nonlocal reconciles
+                    if _from_settlement():
+                        reconciles += 1
+                    newer_reconcile(store)
 
                 async def _count_transcript_sync():
                     nonlocal transcript_syncs
@@ -905,13 +913,18 @@ async def test_fresh_mounted_screen_settles_late_h3_outcome_in_dom_and_controls(
                         control_syncs += 1
                     newer_control_sync(*args, **kwargs)
 
+                fresh._image._reconcile_h3_image_edit_completions = _count_reconcile
                 fresh._sync_native_console_chat_ui = _count_transcript_sync
                 fresh._request_console_control_bar_sync = _count_control_sync
                 await fresh._image._settle_current_h3_outcome(
                     session.id, old_generation
                 )
+                assert reconciles == 0
                 assert transcript_syncs == 0
                 assert control_syncs == 0
+                # The stale settlement leaves the newer edit running.
+                assert app.console_image_edit_operations.active(session.id) is newer
+                assert not newer.cancel_event.is_set()
                 assert stop.styles.display != "none"
                 newer_release.set()
                 await newer.task
@@ -919,6 +932,7 @@ async def test_fresh_mounted_screen_settles_late_h3_outcome_in_dom_and_controls(
                 await fresh._image._settle_current_h3_outcome(
                     session.id, old_generation
                 )
+                assert reconciles == 0
                 assert transcript_syncs == 0
                 assert control_syncs == 0
                 # No Stop check here: the newer edit has ended, so any Console
