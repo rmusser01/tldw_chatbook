@@ -7226,8 +7226,8 @@ class LibraryNotesController:
         _sync_library_canvas(self, "notes", then=focus_opener_then_ask)
     def _choose_library_notes_bulk_move_target(self, note_ids: tuple[str, ...]) -> None:
         """Push the all-folders picker for a bulk move (TASK-34000.29 N-14)."""
-        # Imported here (ADR-097): its module already loads at boot for the
-        # Name dialog, and this keeps the boot import graph unchanged.
+        # Imported here (ADR-097): dev's ab43a0303b made the folder dialog a
+        # lazy import, so this keeps it out of the boot import graph.
         from ...Widgets.Library.library_note_folder_dialog import (
             LibraryNoteFolderTargetDialog,
         )
