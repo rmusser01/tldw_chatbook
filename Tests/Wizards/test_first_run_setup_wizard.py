@@ -2565,23 +2565,19 @@ async def test_probe_resolves_exact_credential_only_at_request_boundary(
 @pytest.mark.parametrize(
     ("provider", "configured_endpoint", "endpoint_edit", "test_state"),
     [
-        # TASK-34100.2 AC#3/#5: Anthropic, Gemini, Hugging Face and OpenRouter
-        # are checked by the shared discovery (their keys' own checks), not
-        # by Settings' OpenAI-compatible probe -- which has no target for the
-        # first three and cannot fail an OpenRouter key.
-        ("anthropic", None, None, "shared-check"),
-        ("anthropic", "https://api.anthropic.com/v1", None, "shared-check"),
+        ("anthropic", None, None, "unsupported"),
+        ("anthropic", "https://api.anthropic.com/v1", None, "unsupported"),
         ("cohere", None, None, "unsupported"),
         ("deepseek", None, None, "ready"),
-        ("google", None, None, "shared-check"),
+        ("google", None, None, "unsupported"),
         ("groq", None, None, "ready"),
-        ("huggingface", None, None, "shared-check"),
+        ("huggingface", None, None, "unsupported"),
         ("mistral", None, None, "ready"),
         ("MistralAI", None, None, "ready"),
         ("moonshot", None, None, "unsupported"),
         ("openai", None, None, "ready"),
         ("OpenAI", "https://gateway.example.test/openai/v1", None, "ready"),
-        ("openrouter", None, None, "shared-check"),
+        ("openrouter", None, None, "ready"),
         ("qwencloud", None, None, "ready"),
         ("qwencloud", None, "", "invalid-endpoint"),
         ("qwencloud", None, "https://bad host/v1", "invalid-endpoint"),
@@ -2657,16 +2653,6 @@ async def test_cloud_provider_test_is_enabled_only_with_compatible_probe_target(
             probe.assert_awaited_once()
             assert probe.await_args.args[0] == target
             assert probe.await_args.kwargs["provider"] == canonical_provider
-        elif test_state == "shared-check":
-            assert not test_button.disabled
-            test_button.press()
-            await pilot.pause(0.1)
-            probe.assert_not_awaited()
-            copy = str(
-                step.query_one("#setup-provider-key-status", Static).renderable
-            ).lower()
-            assert "connection testing is unavailable" not in copy
-            assert "valid endpoint" not in copy
         else:
             assert test_button.disabled
             assert not target

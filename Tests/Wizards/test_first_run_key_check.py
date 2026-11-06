@@ -11,6 +11,17 @@ authenticated listing); Enter now runs it and shows its verdict, a
 public-listing provider without a key endpoint (NVIDIA NIM, Novita) reads
 'key not checked' and never ✓, and the Model step and Summary use the same
 words.
+
+Rebase onto dev 29592ecc9b (TASK-34100.6, PR #3294): dev's Provider step now
+owns 'Check key' (Enter in the key field runs it) and words its verdict
+(``first_run_provider_check.key_check_line``: '✓ Key works — <provider>
+returned N models.', "... can't confirm this one here" for a public listing
+nothing checked). This branch's own Provider-step copy is gone; its
+authenticated checks feed that verdict through ``key_verified``, and a
+rejected key's line still carries the provider's reason
+(``key_check.with_provider_reason``). The mounted tests below are rewritten
+on purpose to dev's words; each still pins the seam (the typed key reached
+the shared discovery, the endpoint probe never ran).
 """
 
 from __future__ import annotations
@@ -127,7 +138,8 @@ async def test_gemini_enter_checks_the_key_with_google() -> None:
         "google", _verified("google", "gemini-flash-latest", "gemini-3.8-flash")
     )
 
-    assert status == "✓ Google accepted this key — found 2 model(s)."
+    # Rebase onto dev (TASK-34100.6): dev's Check key words the verdict.
+    assert status == "✓ Key works — Google Gemini returned 2 models."
     assert "Connection testing is unavailable" not in staged
     assert "Enter a valid endpoint" not in status
     assert scope.discover_models.await_count >= 1
@@ -146,7 +158,8 @@ async def test_a_wrong_openrouter_key_reads_openrouters_reason() -> None:
     assert status == "✗ OpenRouter rejected this key: User not found."
     assert "Reached the server" not in status
     probe.assert_not_awaited()  # the public listing can't fail a key
-    assert "press Enter to check it with OpenRouter" in staged
+    # Rebase onto dev (TASK-34100.6): the staged line offers dev's Check key.
+    assert "Press Check key" in staged
 
 
 @pytest.mark.asyncio
@@ -155,8 +168,10 @@ async def test_nvidia_nim_reads_key_not_checked_never_a_tick() -> None:
         "nvidia", _typed_model_discovery_result("nvidia", "meta/llama-3.1-8b")
     )
 
-    assert "key not checked" in staged
-    assert "key not checked" in status
+    # Rebase onto dev (TASK-34100.6): NIM's listing answers any key and NIM
+    # has no key check (its record), so the verdict never confirms the key.
+    assert "Press Check key" in staged
+    assert "can't confirm this one here" in status
     assert "✓" not in status
 
 
@@ -166,7 +181,7 @@ async def test_anthropic_enter_checks_the_key_with_its_listing() -> None:
         "anthropic", _typed_model_discovery_result("anthropic", "claude-sonnet-5")
     )
 
-    assert status == "✓ Anthropic accepted this key — found 1 model(s)."
+    assert status == "✓ Key works — Anthropic returned 1 model."
     assert "Connection testing is unavailable" not in staged
     probe.assert_not_awaited()
 
@@ -204,7 +219,11 @@ async def test_a_refused_key_with_no_reason_reads_as_every_providers_refusal() -
     shared discovery, said '✗ Anthropic rejected this key.' and its Model
     step 'Anthropic rejected this key. Go Back to fix it, ...'. A refusal
     with no reason of the provider's own now reads TASK-33008's lines on
-    every surface; only a provider's own reason replaces them."""
+    every surface; only a provider's own reason replaces them.
+
+    Rebase onto dev (TASK-34100.6): the Provider step's line is now dev's
+    Check key verdict for a rejected key; the Model step keeps TASK-33008's
+    lines."""
     from collections import namedtuple
 
     from tldw_chatbook.UI.Wizards import first_run_setup_state as wizard_state
@@ -215,7 +234,7 @@ async def test_a_refused_key_with_no_reason_reads_as_every_providers_refusal() -
     discovery_key = namedtuple("Key", "provider_key")("anthropic")
     wizard = SimpleNamespace(_first_run_selected_provider_outcomes={discovery_key: no_reason})
 
-    assert status == "✗ " + copy.provider_line.format(display="Anthropic")
+    assert status == "✗ Anthropic rejected this key."
     assert key_check.rejected_text(wizard, discovery_key) == copy.model_line
     assert key_check.continue_prompt(wizard, discovery_key) == copy.confirm
     probe.assert_not_awaited()
@@ -343,41 +362,13 @@ def _unauthorized_listing(provider: str) -> ModelDiscoveryResult:
     return _rejected(provider, f"{provider} listing needs a key.", "")
 
 
-def test_a_keyed_listing_with_no_key_sent_is_never_a_rejected_key() -> None:
-    """Live F1: selecting OpenAI or Anthropic, before any key was typed, read
-    '✗ OpenAI rejected this key.' -- the unauthenticated listing's 401 was
-    worded as a verdict on a key nobody sent. A real wrong key read the same,
-    so 'no key yet' and 'wrong key' were indistinguishable."""
-    no_key = key_check.discovery_status_copy(
-        "openai",
-        "OpenAI",
-        _unauthorized_listing("openai"),
-        models=(),
-        failed=True,
-        attempted=True,
-        key_sent=False,
-        failure_copy=lambda: "Couldn't discover models for OpenAI. Add a key. Or go Back.",
-    )
-    wrong_key = key_check.discovery_status_copy(
-        "openai",
-        "OpenAI",
-        _unauthorized_listing("openai"),
-        models=(),
-        failed=True,
-        attempted=True,
-        key_sent=True,
-        failure_copy=lambda: "OpenAI rejected this API key. Update it, or continue anyway.",
-    )
-
-    assert "rejected" not in no_key
-    assert no_key == "Couldn't discover models for OpenAI. Add a key. Or go Back."
-    # A refusal with no reason of the provider's own reads the step's
-    # TASK-33008 line, marked as a refusal.
-    assert wrong_key == "✗ OpenAI rejected this API key. Update it, or continue anyway."
-
-
 @pytest.mark.asyncio
 async def test_selecting_a_keyed_provider_with_no_key_never_says_rejected() -> None:
+    """Live F1: selecting OpenAI or Anthropic, before any key was typed, read
+    '✗ OpenAI rejected this key.' -- the unauthenticated listing's 401 was
+    worded as a verdict on a key nobody sent. (Rebase onto dev: its unit twin
+    on this branch's retired ``discovery_status_copy`` is gone; dev's
+    ``_render_discovery_outcome`` words a verdict only for a sent key.)"""
     wizard = _wizard_with(_unauthorized_listing("anthropic"))
     step = _provider_step(wizard=wizard, probe=AsyncMock())
     app = _StepHost(step)
@@ -410,16 +401,7 @@ def test_a_providers_reason_is_shown_as_text_never_as_markup(reason: str) -> Non
     from textual.content import Content
 
     result = _rejected("openai", f"OpenAI rejected this key: {reason}", reason)
-    status = key_check.discovery_status_copy(
-        "openai",
-        "OpenAI",
-        result,
-        models=(),
-        failed=True,
-        attempted=True,
-        key_sent=True,
-        failure_copy=lambda: "unused",
-    )
+    status = key_check.with_provider_reason("✗ OpenAI rejected this key.", result)
     discovery_key = namedtuple("Key", "provider_key")("openai")
     wizard = SimpleNamespace(_first_run_selected_provider_outcomes={discovery_key: result})
 
