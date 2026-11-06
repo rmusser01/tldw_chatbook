@@ -121,11 +121,6 @@ def _model_discovery_ui_outcome(result: object) -> tuple[list[str], str, str]:
     if code is not None:
         return [], "connection_failed", f"HTTP {code}" if code else "HTTP error"
     error_kind = result.error.kind if result.error is not None else ""
-    if error_kind == "missing_credentials" and result.error.category == "forbidden":
-        # TASK-34100.2 (R2-8): a 403 refuses the LISTING, not the key (a
-        # Gemini 403 is 'Google refused this request'); Settings shows it as
-        # 'listing not permitted', so setup offers a typed model id instead.
-        return [], "listing_unavailable", ""
     category = {
         "invalid_response": "invalid response",
         "missing_credentials": "authentication",
