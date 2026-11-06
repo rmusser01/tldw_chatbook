@@ -29,6 +29,15 @@ pytestmark = pytest.mark.skipif(os.name == "nt", reason="ordinary reuse is POSIX
 
 
 _MONITORS = []
+_SEAMS = (
+    (bootstrap, "startup_permission"),
+    (bootstrap, "_control_records"),
+    (bootstrap, "_registry"),
+    (storage, "_scope"),
+    (Admission, "_read"),
+    (Admission, "_groups"),
+    (raw, "_open_verified_parent"),
+)
 
 
 @pytest.fixture(autouse=True)
@@ -53,21 +62,14 @@ def _derivations():
     counts = Counter()
     active = [False]
     seams = {}
-    for owner, name in (
-        (bootstrap, "startup_permission"),
-        (bootstrap, "_control_records"),
-        (bootstrap, "_registry"),
-        (storage, "_scope"),
-        (Admission, "_read"),
-        (Admission, "_groups"),
-        (raw, "_open_verified_parent"),
-    ):
+    for owner, name in _SEAMS:
         # The parent walk is private_paths' one closure, shared with bootstrap;
         # only raw's calls through it were ever counted.
         caller = vars(raw) if owner is raw else None
         seams[getattr(owner, name).__code__] = name, caller
     monitoring = sys.monitoring
-    tool = next(i for i in range(6) if monitoring.get_tool(i) is None)
+    # Skip DEBUGGER_ID (0), so a debugger attaching mid-test still gets it.
+    tool = next(i for i in range(1, 6) if monitoring.get_tool(i) is None)
     monitoring.use_tool_id(tool, "guarded-evidence-derivations")
     _MONITORS.append((tool, tuple(seams)))
 
@@ -899,6 +901,19 @@ def test_witness_content_still_requires_the_original_settle_margin(
         assert call() == []
         active[0] = False
         assert counts["startup_permission"] and counts["_control_records"]
+
+
+def test_every_counted_seam_is_seen_when_reuse_is_off(mcp_sources, monkeypatch):
+    """Positive control: a seam the product stops entering cannot pass silently."""
+    source = mcp_sources[0]
+    monkeypatch.setattr(storage, "_EVIDENCE_SETTLE_NS", 0)
+    _warm(source.load)
+    monkeypatch.setattr(storage, "_EVIDENCE_REUSE", False)
+    counts, active = _derivations()
+    active[0] = True
+    assert source.load() is not None
+    active[0] = False
+    assert set(counts) == {name for _, name in _SEAMS}
 
 
 @pytest.mark.parametrize("reuse", (True, False))

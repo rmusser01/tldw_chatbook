@@ -4,7 +4,7 @@ title: "Guarded raw-evidence reuse tests are red on dev and run on no PR lane"
 status: Done
 assignee: ['@claude']
 created_date: 2026-11-05 07:11
-updated_date: 2026-11-05 23:26
+updated_date: 2026-11-06 00:24
 labels:
 - follow-up
 - tests
@@ -64,5 +64,7 @@ The file's last two commits are the 2026-11-02 public-name refactors (b5e0256e72
 **AC#3.** 3 of 3 `-n 4` runs passed (54 passed in 12.7 s, 14.1 s and 15.3 s; load average 19-22). Serial with `--timeout=180`: 54 passed in 28.8 s.
 
 **AC#4.** Lane: dreams-boundary's sandboxed step "Run Dreams and Guardian boundary contracts", appended after the TASK-36532 rider. I read 25 successful dev pull_request runs (2026-10-31 to 2026-11-05). This job took median 6.2 / max 7.2 min of its 20, and the step 1.8 / 2.4. The others had less room: PR Fast Lane 31.6 / 34.8 of 35; admission 20.6 / 24.9, admission-2 26.4 / 28.5 and admission-3 19.0 / 24.1, all of 35; Console P0 18.1 / 19.5 of 20; Dreams tracking 7.1 / 10.2 of 20. The file is sandboxed, not bootstrap_profile. Measured with the step's exact command (all 20 targets in order, `--timeout=180 --tb=short`, serial, through the scratch wrapper, load 18-27), the step gave 277 passed in 178.3 s, and this file took 21.9 s of it (junit sum, 54 tests). Pins updated: `DREAMS_BOUNDARY_TARGETS` (`Tests/CI/test_ci_queue_pressure_contract.py`) and `INHERITED` (`Tests/CI/test_response_rules_critical_gate.py`). Removing either entry fails its contract. Tests/CI: 1199 passed, 1 skipped. Not verified on Linux: the lane's ubuntu run will be the first.
+
+**Review r9r-rev1 fixes.** The old positive control required only 2 of the 7 seams. A new node, `test_every_counted_seam_is_seen_when_reuse_is_off`, warms `mcp_sources[0].load`, turns reuse off, measures one read, and requires all seven seam names (`_SEAMS`). Red control: temporarily pointing `_scope`'s seam at a never-called lambda's code object failed it ("Extra items in the right set: '_scope'"), while the five warm-MCP nodes still passed: the silent vacuity it now catches. The monitor skips `sys.monitoring.DEBUGGER_ID` (it scans ids 1-5). After the fixes, 3 of 3 `-n 4` runs passed (55 passed in 10.4 / 11.2 / 11.9 s, load average 13-14). The dreams-boundary step's targets, run serially with CI flags, gave 399 passed in 161.9 s, and this file took 18.3 s of it. Tests/CI: 1199 passed, 1 skipped. Preflight passed.
 
 **Files.** `Tests/Backup_Recovery/test_guarded_raw_evidence_reuse.py`, `.github/workflows/derived-artifacts.yml`, `Tests/CI/test_ci_queue_pressure_contract.py`, `Tests/CI/test_response_rules_critical_gate.py`, `backlog/docs/lessons-testing-evidence.md` (the wrapping-counter trap).
